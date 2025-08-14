@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "strix-agent"
-version = "0.1.8"
+version = "0.1.9"
 description = "Open-source AI Hackers for your apps"
 authors = ["Strix <hi@usestrix.com>"]
 readme = "README.md"
@@ -28,7 +28,7 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
 ]
 packages = [
-  { include = "strix", format = "sdist" }
+  { include = "strix", format = ["sdist", "wheel"] }
 ]
 include = [
   "LICENSE",
