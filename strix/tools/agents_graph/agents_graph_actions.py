@@ -192,16 +192,6 @@ def create_agent(
         if prompt_modules:
             module_list = [m.strip() for m in prompt_modules.split(",") if m.strip()]
 
-        if "root_agent" in module_list:
-            return {
-                "success": False,
-                "error": (
-                    "The 'root_agent' module is reserved for the main agent "
-                    "and cannot be used by sub-agents"
-                ),
-                "agent_id": None,
-            }
-
         if len(module_list) > 3:
             return {
                 "success": False,

@@ -59,19 +59,13 @@ Use this tool when:
   <tool name="create_agent">
     <description>Create and spawn a new agent to handle a specific subtask.
 
-MANDATORY REQUIREMENT: You MUST call view_agent_graph FIRST before creating any new agent to check if there is already an agent working on the same or similar task. Only create a new agent if no existing agent is handling the specific task.</description>
+Only create a new agent if no existing agent is handling the specific task.</description>
     <details>The new agent inherits the parent's conversation history and context up to the point
   of creation, then continues with its assigned subtask. This enables decomposition
   of complex penetration testing tasks into specialized sub-agents.
 
   The agent runs asynchronously and independently, allowing the parent to continue
   immediately while the new agent executes its task in the background.
-
-  CRITICAL: Before calling this tool, you MUST first use view_agent_graph to:
-  - Examine all existing agents and their current tasks
-  - Verify no agent is already working on the same or similar objective
-  - Avoid duplication of effort and resource waste
-  - Ensure efficient coordination across the multi-agent system
 
   If you as a parent agent don't absolutely have anything to do while your subagents are running, you can use wait_for_message tool. The subagent will continue to run in the background, and update you when it's done.
   </details>
@@ -93,9 +87,6 @@ MANDATORY REQUIREMENT: You MUST call view_agent_graph FIRST before creating any 
       <description>Response containing: - agent_id: Unique identifier for the created agent - success: Whether the agent was created successfully - message: Status message - agent_info: Details about the created agent</description>
     </returns>
     <examples>
-  # REQUIRED: First check agent graph before creating any new agent
-  <function=view_agent_graph>
-  </function>
   # REQUIRED: Check agent graph again before creating another agent
   <function=view_agent_graph>
   </function>
@@ -108,7 +99,6 @@ MANDATORY REQUIREMENT: You MUST call view_agent_graph FIRST before creating any 
   <parameter=prompt_modules>sql_injection</parameter>
   </function>
 
-  # Create specialized authentication testing agent with multiple modules (comma-separated)
   <function=create_agent>
   <parameter=task>Test authentication mechanisms, JWT implementation, and session management
               for security vulnerabilities and bypass techniques.</parameter>

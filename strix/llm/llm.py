@@ -28,6 +28,39 @@ api_key = os.getenv("LLM_API_KEY")
 if api_key:
     litellm.api_key = api_key
 
+MODELS_WITHOUT_STOP_WORDS = [
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5-nano',
+    'o1-mini',
+    'o1-preview',
+    'o1',
+    'o1-2024-12-17',
+    'o3',
+    'o3-2025-04-16',
+    'o3-mini-2025-01-31',
+    'o3-mini',
+    'o4-mini',
+    'o4-mini-2025-04-16',
+    'grok-4-0709',
+]
+
+REASONING_EFFORT_SUPPORTED_MODELS = [
+    'gpt-5',
+    'gpt-5-mini',
+    'gpt-5-nano',
+    'o1-2024-12-17',
+    'o1',
+    'o3',
+    'o3-2025-04-16',
+    'o3-mini-2025-01-31',
+    'o3-mini',
+    'o4-mini',
+    'o4-mini-2025-04-16',
+    'gemini-2.5-flash',
+    'gemini-2.5-pro',
+]
+
 
 class StepRole(str, Enum):
     AGENT = "agent"
@@ -240,6 +273,32 @@ class LLM:
             "supported": supports_prompt_caching(self.config.model_name),
         }
 
+    def _should_include_stop_param(self) -> bool:
+        if not self.config.model_name:
+            return True
+        
+        actual_model_name = self.config.model_name.split('/')[-1].lower()
+        model_name_lower = self.config.model_name.lower()
+        
+        return not any(
+            actual_model_name == unsupported_model.lower() or
+            model_name_lower == unsupported_model.lower()
+            for unsupported_model in MODELS_WITHOUT_STOP_WORDS
+        )
+
+    def _should_include_reasoning_effort(self) -> bool:
+        if not self.config.model_name:
+            return False
+        
+        actual_model_name = self.config.model_name.split('/')[-1].lower()
+        model_name_lower = self.config.model_name.lower()
+        
+        return any(
+            actual_model_name == supported_model.lower() or
+            model_name_lower == supported_model.lower()
+            for supported_model in REASONING_EFFORT_SUPPORTED_MODELS
+        )
+
     async def _make_request(
         self,
         messages: list[dict[str, Any]],
@@ -248,8 +307,13 @@ class LLM:
             "model": self.config.model_name,
             "messages": messages,
             "temperature": self.config.temperature,
-            "stop": ["</function>"],
         }
+        
+        if self._should_include_stop_param():
+            completion_args["stop"] = ["</function>"]
+
+        if self._should_include_reasoning_effort():
+            completion_args["reasoning_effort"] = "low"
 
         queue = get_global_queue()
         response = await queue.make_request(completion_args)
