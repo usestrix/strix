@@ -45,7 +45,7 @@ strix = "strix.cli.main:main"
 python = "^3.12"
 fastapi = "*"
 uvicorn = "*"
-litellm = {git = "https://github.com/BerriAI/litellm.git", extras = ["proxy"]}
+litellm = {version = "^1.75.7", extras = ["proxy"]}
 tenacity = "^9.0.0"
 numpydoc = "^1.8.0"
 pydantic = {extras = ["email"], version = "^2.11.3"}

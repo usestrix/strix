@@ -15,7 +15,7 @@
 
 <advanced_enumeration>
 - Boundary values: 0, -1, null, empty string, max int
-- Different formats: {"id":123} vs {"id":"123"}
+- Different formats: {% raw %}{"id":123} vs {"id":"123"}{% endraw %}
 - ID patterns: increment, decrement, similar patterns
 - Wildcard testing: *, %, _, all
 - Array notation: id[]=123&id[]=456
@@ -51,7 +51,7 @@ for i in range(1, 10000):
 <type_confusion>
 - String where int expected: "123" vs 123
 - Array where single value expected: [123] vs 123
-- Object injection: {"id": {"$ne": null}}
+- Object injection: {% raw %}{"id": {"$ne": null}}{% endraw %}
 </type_confusion>
 </exploitation_techniques>
 
@@ -106,7 +106,7 @@ query { u1: user(id: 123) { data } u2: user(id: 456) { data } }
 
 <websocket_idor>
 Subscribe to other users' channels:
-{"subscribe": "user_456_notifications"}
+{% raw %}{"subscribe": "user_456_notifications"}{% endraw %}
 </websocket_idor>
 
 <file_path_idor>

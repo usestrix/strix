@@ -91,7 +91,7 @@ evil.dtd:
 
 <specific_contexts>
 <json_xxe>
-{"name": "test", "content": "<?xml version='1.0'?><!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><x>&xxe;</x>"}
+{% raw %}{"name": "test", "content": "<?xml version='1.0'?><!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><x>&xxe;</x>"}{% endraw %}
 </json_xxe>
 
 <soap_xxe>

@@ -63,6 +63,10 @@
       - When you need multiple characters sent as a single unit
   12. Do NOT use terminal actions for file editing or writing. Use the replace_in_file,
       write_to_file, or read_file tools instead.
+  13. PREFER SIMPLE COMMANDS: Avoid complex multiline commands with nested quotes or
+      complex syntax. Break down complex operations into simpler, individual commands
+      for better reliability and readability. Never send multiple commands in a single
+      input list with multiple "Enter" keys - execute one command at a time instead.
     </notes>
     <examples>
   # Create new terminal with Node.js (default terminal)

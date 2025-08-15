@@ -152,9 +152,9 @@ PostgreSQL:
 
 <nosql_injection>
 <mongodb>
-{"username": {"$ne": null}, "password": {"$ne": null}}
-{"$where": "this.username == 'admin'"}
-{"username": {"$regex": "^admin"}}
+{% raw %}{"username": {"$ne": null}, "password": {"$ne": null}}{% endraw %}
+{% raw %}{"$where": "this.username == 'admin'"}{% endraw %}
+{% raw %}{"username": {"$regex": "^admin"}}{% endraw %}
 </mongodb>
 
 <graphql>

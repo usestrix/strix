@@ -2334,49 +2334,51 @@ test = ["coverage", "pytest", "pytest-cov"]
 
 [[package]]
 name = "litellm"
-version = "1.75.5"
+version = "1.75.7"
 description = "Library to easily interface with LLM API providers"
 optional = false
-python-versions = ">=3.8.1,<4.0, !=3.9.7"
+python-versions = "!=2.7.*,!=3.0.*,!=3.1.*,!=3.2.*,!=3.3.*,!=3.4.*,!=3.5.*,!=3.6.*,!=3.7.*,>=3.8"
 groups = ["main"]
-files = []
-develop = false
+files = [
+    {file = "litellm-1.75.7-py3-none-any.whl", hash = "sha256:ac42ac0986d43923ce712005e307079d99eebb3901c15399644eba7c79978727"},
+    {file = "litellm-1.75.7.tar.gz", hash = "sha256:147c2027b0c57c93252d5e479294b480ddf3389cf886e0b94658a58b2b36e767"},
+]
 
 [package.dependencies]
 aiohttp = ">=3.10"
-apscheduler = {version = "^3.10.4", optional = true}
-azure-identity = {version = "^1.15.0", optional = true}
-azure-storage-blob = {version = "^12.25.1", optional = true}
-backoff = {version = "*", optional = true}
-boto3 = {version = "1.34.34", optional = true}
+apscheduler = {version = ">=3.10.4,<4.0.0", optional = true, markers = "extra == \"proxy\""}
+azure-identity = {version = ">=1.15.0,<2.0.0", optional = true, markers = "extra == \"proxy\" or extra == \"extra-proxy\""}
+azure-storage-blob = {version = ">=12.25.1,<13.0.0", optional = true, markers = "extra == \"proxy\""}
+backoff = {version = "*", optional = true, markers = "extra == \"proxy\""}
+boto3 = {version = "1.34.34", optional = true, markers = "extra == \"proxy\""}
 click = "*"
-cryptography = {version = "^43.0.1", optional = true}
-fastapi = {version = "^0.115.5", optional = true}
-fastapi-sso = {version = "^0.16.0", optional = true}
-gunicorn = {version = "^23.0.0", optional = true}
+cryptography = {version = ">=43.0.1,<44.0.0", optional = true, markers = "extra == \"proxy\""}
+fastapi = {version = ">=0.115.5,<0.116.0", optional = true, markers = "extra == \"proxy\""}
+fastapi-sso = {version = ">=0.16.0,<0.17.0", optional = true, markers = "extra == \"proxy\""}
+gunicorn = {version = ">=23.0.0,<24.0.0", optional = true, markers = "extra == \"proxy\""}
 httpx = ">=0.23.0"
 importlib-metadata = ">=6.8.0"
-jinja2 = "^3.1.2"
-jsonschema = "^4.22.0"
-litellm-enterprise = {version = "0.1.19", optional = true}
-litellm-proxy-extras = {version = "0.2.17", optional = true}
-mcp = {version = "^1.10.0", optional = true, markers = "python_version >= \"3.10\""}
+jinja2 = ">=3.1.2,<4.0.0"
+jsonschema = ">=4.22.0,<5.0.0"
+litellm-enterprise = {version = "0.1.19", optional = true, markers = "extra == \"proxy\""}
+litellm-proxy-extras = {version = "0.2.17", optional = true, markers = "extra == \"proxy\""}
+mcp = {version = ">=1.10.0,<2.0.0", optional = true, markers = "python_version >= \"3.10\" and extra == \"proxy\""}
 openai = ">=1.99.5"
-orjson = {version = "^3.9.7", optional = true}
-polars = {version = "^1.31.0", optional = true, markers = "python_version >= \"3.10\""}
-pydantic = "^2.5.0"
-PyJWT = {version = "^2.8.0", optional = true}
-pynacl = {version = "^1.5.0", optional = true}
+orjson = {version = ">=3.9.7,<4.0.0", optional = true, markers = "extra == \"proxy\""}
+polars = {version = ">=1.31.0,<2.0.0", optional = true, markers = "python_version >= \"3.10\" and extra == \"proxy\""}
+pydantic = ">=2.5.0,<3.0.0"
+PyJWT = {version = ">=2.8.0,<3.0.0", optional = true, markers = "extra == \"proxy\""}
+pynacl = {version = ">=1.5.0,<2.0.0", optional = true, markers = "extra == \"proxy\""}
 python-dotenv = ">=0.2.0"
-python-multipart = {version = "^0.0.18", optional = true}
-pyyaml = {version = "^6.0.1", optional = true}
-rich = {version = "13.7.1", optional = true}
-rq = {version = "*", optional = true}
+python-multipart = {version = ">=0.0.18,<0.0.19", optional = true, markers = "extra == \"proxy\""}
+pyyaml = {version = ">=6.0.1,<7.0.0", optional = true, markers = "extra == \"proxy\""}
+rich = {version = "13.7.1", optional = true, markers = "extra == \"proxy\""}
+rq = {version = "*", optional = true, markers = "extra == \"proxy\""}
 tiktoken = ">=0.7.0"
 tokenizers = "*"
-uvicorn = {version = "^0.29.0", optional = true}
-uvloop = {version = "^0.21.0", optional = true, markers = "sys_platform != \"win32\""}
-websockets = {version = "^13.1.0", optional = true}
+uvicorn = {version = ">=0.29.0,<0.30.0", optional = true, markers = "extra == \"proxy\""}
+uvloop = {version = ">=0.21.0,<0.22.0", optional = true, markers = "sys_platform != \"win32\" and extra == \"proxy\""}
+websockets = {version = ">=13.1.0,<14.0.0", optional = true, markers = "extra == \"proxy\""}
 
 [package.extras]
 caching = ["diskcache (>=5.6.1,<6.0.0)"]
@@ -2385,12 +2387,6 @@ mlflow = ["mlflow (>3.1.4)"]
 proxy = ["PyJWT (>=2.8.0,<3.0.0)", "apscheduler (>=3.10.4,<4.0.0)", "azure-identity (>=1.15.0,<2.0.0)", "azure-storage-blob (>=12.25.1,<13.0.0)", "backoff", "boto3 (==1.34.34)", "cryptography (>=43.0.1,<44.0.0)", "fastapi (>=0.115.5,<0.116.0)", "fastapi-sso (>=0.16.0,<0.17.0)", "gunicorn (>=23.0.0,<24.0.0)", "litellm-enterprise (==0.1.19)", "litellm-proxy-extras (==0.2.17)", "mcp (>=1.10.0,<2.0.0)", "orjson (>=3.9.7,<4.0.0)", "polars (>=1.31.0,<2.0.0)", "pynacl (>=1.5.0,<2.0.0)", "python-multipart (>=0.0.18,<0.0.19)", "pyyaml (>=6.0.1,<7.0.0)", "rich (==13.7.1)", "rq", "uvicorn (>=0.29.0,<0.30.0)", "uvloop (>=0.21.0,<0.22.0)", "websockets (>=13.1.0,<14.0.0)"]
 semantic-router = ["semantic-router"]
 utils = ["numpydoc"]
-
-[package.source]
-type = "git"
-url = "https://github.com/BerriAI/litellm.git"
-reference = "HEAD"
-resolved_reference = "cd893134b7974d9f21477049a373b469fff747a5"
 
 [[package]]
 name = "litellm-enterprise"
@@ -6292,4 +6288,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "c6a32332149588877e34fd79f7194891e888fa7f7f4d1c09db831dd22983f953"
+content-hash = "5bd9cfa879c53b476b1dfdfc7e59b8dff002838a6a83db21b1f0daaba4232819"

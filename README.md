@@ -30,7 +30,7 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 pipx install strix-agent
 
 # Configure AI provider
-export STRIX_LLM="anthropic/claude-opus-4-1-20250805"
+export STRIX_LLM="openai/gpt-5"
 export LLM_API_KEY="your-api-key"
 
 # Run security assessment
@@ -93,7 +93,7 @@ strix --target api.your-app.com --instruction "Prioritize authentication and aut
 
 ```bash
 # Required
-export STRIX_LLM="anthropic/claude-opus-4-1-20250805"
+export STRIX_LLM="openai/gpt-5"
 export LLM_API_KEY="your-api-key"
 
 # Recommended

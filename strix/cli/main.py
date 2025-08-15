@@ -8,11 +8,11 @@ import asyncio
 import logging
 import os
 import secrets
+import shutil
 import sys
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
-import shutil
 
 import docker
 import litellm
@@ -74,7 +74,7 @@ def validate_environment() -> None:
         error_text.append("• ", style="white")
         error_text.append("STRIX_LLM", style="bold cyan")
         error_text.append(
-            " - Model name to use with litellm (e.g., 'anthropic/claude-opus-4-1-20250805')\n",
+            " - Model name to use with litellm (e.g., 'openai/gpt-5')\n",
             style="white",
         )
         error_text.append("• ", style="white")
@@ -91,9 +91,7 @@ def validate_environment() -> None:
             )
 
         error_text.append("\nExample setup:\n", style="white")
-        error_text.append(
-                "export STRIX_LLM='anthropic/claude-opus-4-1-20250805'\n", style="dim white"
-        )
+        error_text.append("export STRIX_LLM='openai/gpt-5'\n", style="dim white")
         error_text.append("export LLM_API_KEY='your-api-key-here'\n", style="dim white")
         if missing_optional_vars:
             error_text.append(
@@ -127,7 +125,9 @@ def check_docker_installed() -> None:
         error_text.append("DOCKER NOT INSTALLED", style="bold red")
         error_text.append("\n\n", style="white")
         error_text.append("The 'docker' CLI was not found in your PATH.\n", style="white")
-        error_text.append("Please install Docker and ensure the 'docker' command is available.\n\n", style="white")
+        error_text.append(
+            "Please install Docker and ensure the 'docker' command is available.\n\n", style="white"
+        )
 
         panel = Panel(
             error_text,
@@ -144,7 +144,7 @@ async def warm_up_llm() -> None:
     console = Console()
 
     try:
-        model_name = os.getenv("STRIX_LLM", "anthropic/claude-opus-4-1-20250805")
+        model_name = os.getenv("STRIX_LLM", "openai/gpt-5")
         api_key = os.getenv("LLM_API_KEY")
 
         if api_key:

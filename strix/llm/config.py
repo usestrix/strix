@@ -9,7 +9,7 @@ class LLMConfig:
         enable_prompt_caching: bool = True,
         prompt_modules: list[str] | None = None,
     ):
-        self.model_name = model_name or os.getenv("STRIX_LLM", "anthropic/claude-opus-4-1-20250805")
+        self.model_name = model_name or os.getenv("STRIX_LLM", "openai/gpt-5")
 
         if not self.model_name:
             raise ValueError("STRIX_LLM environment variable must be set and not empty")

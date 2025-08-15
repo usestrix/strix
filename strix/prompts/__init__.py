@@ -49,25 +49,21 @@ def generate_modules_description() -> str:
     if not available_modules:
         return "No prompt modules available"
 
-    description_parts = []
+    all_module_names = get_all_module_names()
 
-    for category, modules in available_modules.items():
-        modules_str = ", ".join(modules)
-        description_parts.append(f"{category} ({modules_str})")
+    if not all_module_names:
+        return "No prompt modules available"
+
+    sorted_modules = sorted(all_module_names)
+    modules_str = ", ".join(sorted_modules)
 
     description = (
-        f"List of prompt modules to load for this agent (max 3). "
-        f"Available modules: {', '.join(description_parts)}. "
+        f"List of prompt modules to load for this agent (max 3). Available modules: {modules_str}. "
     )
 
-    example_modules = []
-    for modules in available_modules.values():
-        example_modules.extend(modules[:2])
-        if len(example_modules) >= 2:
-            break
-
+    example_modules = sorted_modules[:2]
     if example_modules:
-        example = f"Example: {example_modules[:2]} for specialized agent"
+        example = f"Example: {', '.join(example_modules)} for specialized agent"
         description += example
 
     return description
