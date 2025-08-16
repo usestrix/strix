@@ -9,7 +9,9 @@ import logging
 import os
 import secrets
 import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -202,6 +204,84 @@ def generate_run_name() -> str:
     noun = secrets.choice(nouns)
     number = secrets.randbelow(900) + 100
     return f"{adj}-{noun}-{number}"
+
+
+def clone_repository(repo_url: str, run_name: str) -> str:
+    console = Console()
+
+    git_executable = shutil.which("git")
+    if git_executable is None:
+        raise FileNotFoundError("Git executable not found in PATH")
+
+    temp_dir = Path(tempfile.gettempdir()) / "strix_repos" / run_name
+    temp_dir.mkdir(parents=True, exist_ok=True)
+
+    repo_name = Path(repo_url).stem if repo_url.endswith(".git") else Path(repo_url).name
+
+    clone_path = temp_dir / repo_name
+
+    if clone_path.exists():
+        shutil.rmtree(clone_path)
+
+    try:
+        with console.status(f"[bold cyan]Cloning repository {repo_name}...", spinner="dots"):
+            subprocess.run(  # noqa: S603
+                [
+                    git_executable,
+                    "clone",
+                    "--depth=1",
+                    "--no-recurse-submodules",
+                    "--single-branch",
+                    repo_url,
+                    str(clone_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+
+        return str(clone_path.absolute())
+
+    except subprocess.CalledProcessError as e:
+        error_text = Text()
+        error_text.append("❌ ", style="bold red")
+        error_text.append("REPOSITORY CLONE FAILED", style="bold red")
+        error_text.append("\n\n", style="white")
+        error_text.append(f"Could not clone repository: {repo_url}\n", style="white")
+        error_text.append(
+            f"Error: {e.stderr if hasattr(e, 'stderr') and e.stderr else str(e)}", style="dim red"
+        )
+
+        panel = Panel(
+            error_text,
+            title="[bold red]🛡️  STRIX CLONE ERROR",
+            title_align="center",
+            border_style="red",
+            padding=(1, 2),
+        )
+        console.print("\n")
+        console.print(panel)
+        console.print()
+        sys.exit(1)
+    except FileNotFoundError:
+        error_text = Text()
+        error_text.append("❌ ", style="bold red")
+        error_text.append("GIT NOT FOUND", style="bold red")
+        error_text.append("\n\n", style="white")
+        error_text.append("Git is not installed or not available in PATH.\n", style="white")
+        error_text.append("Please install Git to clone repositories.\n", style="white")
+
+        panel = Panel(
+            error_text,
+            title="[bold red]🛡️  STRIX CLONE ERROR",
+            title_align="center",
+            border_style="red",
+            padding=(1, 2),
+        )
+        console.print("\n")
+        console.print(panel)
+        console.print()
+        sys.exit(1)
 
 
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:
@@ -544,15 +624,22 @@ def main() -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    args = parse_arguments()
+
     check_docker_installed()
     pull_docker_image()
 
     validate_environment()
     asyncio.run(warm_up_llm())
 
-    args = parse_arguments()
     if not args.run_name:
         args.run_name = generate_run_name()
+
+    if args.target_type == "repository":
+        repo_url = args.target_dict["target_repo"]
+        cloned_path = clone_repository(repo_url, args.run_name)
+
+        args.target_dict["cloned_repo_path"] = cloned_path
 
     asyncio.run(run_strix_cli(args))
 

@@ -80,7 +80,7 @@ Only create a new agent if no existing agent is handling the specific task.</des
         <description>Whether the new agent should inherit parent's conversation history and context</description>
       </parameter>
       <parameter name="prompt_modules" type="string" required="false">
-        <description>Comma-separated list of prompt modules to use for the agent. Most agents should have at least one module in order to be useful. {{DYNAMIC_MODULES_DESCRIPTION}}</description>
+        <description>Comma-separated list of prompt modules to use for the agent (MAXIMUM 3 modules allowed). Most agents should have at least one module in order to be useful. Agents should be highly specialized - use 1-3 related vulnerability modules only. {{DYNAMIC_MODULES_DESCRIPTION}}</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
@@ -104,6 +104,22 @@ Only create a new agent if no existing agent is handling the specific task.</des
               for security vulnerabilities and bypass techniques.</parameter>
   <parameter=name>Auth Specialist</parameter>
   <parameter=prompt_modules>authentication_jwt, business_logic</parameter>
+  </function>
+
+  # Example of single-module specialization (most focused)
+  <function=create_agent>
+  <parameter=task>Perform comprehensive XSS testing including reflected, stored, and DOM-based
+              variants across all identified input points.</parameter>
+  <parameter=name>XSS Specialist</parameter>
+  <parameter=prompt_modules>xss</parameter>
+  </function>
+
+  # Example of maximum 3 related modules (borderline acceptable)
+  <function=create_agent>
+  <parameter=task>Test for server-side vulnerabilities including SSRF, XXE, and potential
+              RCE vectors in file upload and XML processing endpoints.</parameter>
+  <parameter=name>Server-Side Attack Specialist</parameter>
+  <parameter=prompt_modules>ssrf, xxe, rce</parameter>
   </function>
     </examples>
   </tool>

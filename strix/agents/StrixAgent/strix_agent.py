@@ -26,9 +26,21 @@ class StrixAgent(BaseAgent):
         task_parts = []
 
         if scan_type == "repository":
-            task_parts.append(
-                f"Perform a security assessment of the Git repository: {target['target_repo']}"
-            )
+            repo_url = target["target_repo"]
+            cloned_path = target.get("cloned_repo_path")
+
+            if cloned_path:
+                shared_workspace_path = "/shared_workspace"
+                task_parts.append(
+                    f"Perform a security assessment of the Git repository: {repo_url}. "
+                    f"The repository has been cloned from '{repo_url}' to '{cloned_path}' "
+                    f"(host path) and then copied to '{shared_workspace_path}' in your environment."
+                    f"Analyze the codebase at: {shared_workspace_path}"
+                )
+            else:
+                task_parts.append(
+                    f"Perform a security assessment of the Git repository: {repo_url}"
+                )
 
         elif scan_type == "web_application":
             task_parts.append(

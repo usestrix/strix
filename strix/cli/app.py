@@ -248,6 +248,8 @@ class StrixCLIApp(App):  # type: ignore[misc]
 
         if args.target_type == "local_code" and "target_path" in args.target_dict:
             config["local_source_path"] = args.target_dict["target_path"]
+        elif args.target_type == "repository" and "cloned_repo_path" in args.target_dict:
+            config["local_source_path"] = args.target_dict["cloned_repo_path"]
 
         return config
 
