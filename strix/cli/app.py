@@ -878,7 +878,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
         result = tool_data.get("result")
 
         tool_colors = {
-            "terminal_action": "#22c55e",
+            "terminal_execute": "#22c55e",
             "browser_action": "#06b6d4",
             "python_action": "#3b82f6",
             "agents_graph_action": "#fbbf24",

@@ -1,6 +1,7 @@
 import contextlib
 import inspect
 import json
+import types
 from collections.abc import Callable
 from typing import Any, Union, get_args, get_origin
 
@@ -48,7 +49,7 @@ def convert_arguments(func: Callable[..., Any], kwargs: dict[str, Any]) -> dict[
 
 def convert_string_to_type(value: str, param_type: Any) -> Any:
     origin = get_origin(param_type)
-    if origin is Union or origin is type(str | None):
+    if origin is Union or isinstance(param_type, types.UnionType):
         args = get_args(param_type)
         for arg_type in args:
             if arg_type is not type(None):

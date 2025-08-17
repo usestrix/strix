@@ -8,7 +8,7 @@ from .registry import register_tool_renderer
 
 @register_tool_renderer
 class TerminalRenderer(BaseToolRenderer):
-    tool_name: ClassVar[str] = "terminal_action"
+    tool_name: ClassVar[str] = "terminal_execute"
     css_classes: ClassVar[list[str]] = ["tool-call", "terminal-tool"]
 
     @classmethod
@@ -17,11 +17,12 @@ class TerminalRenderer(BaseToolRenderer):
         status = tool_data.get("status", "unknown")
         result = tool_data.get("result", {})
 
-        action = args.get("action", "unknown")
-        inputs = args.get("inputs", [])
+        command = args.get("command", "")
+        is_input = args.get("is_input", False)
         terminal_id = args.get("terminal_id", "default")
+        timeout = args.get("timeout")
 
-        content = cls._build_sleek_content(action, inputs, terminal_id, result)
+        content = cls._build_sleek_content(command, is_input, terminal_id, timeout, result)
 
         css_classes = cls.get_css_classes(status)
         return Static(content, classes=css_classes)
@@ -29,71 +30,102 @@ class TerminalRenderer(BaseToolRenderer):
     @classmethod
     def _build_sleek_content(
         cls,
-        action: str,
-        inputs: list[str],
+        command: str,
+        is_input: bool,
         terminal_id: str,  # noqa: ARG003
+        timeout: float | None,  # noqa: ARG003
         result: dict[str, Any],  # noqa: ARG003
     ) -> str:
         terminal_icon = ">_"
 
-        if action in {"create", "new_terminal"}:
-            command = cls._format_command(inputs) if inputs else "bash"
-            return f"{terminal_icon} [#22c55e]${command}[/]"
+        if not command.strip():
+            return f"{terminal_icon} [dim]getting logs...[/]"
 
-        if action == "send_input":
-            command = cls._format_command(inputs)
-            return f"{terminal_icon} [#22c55e]${command}[/]"
+        control_sequences = {
+            "C-c",
+            "C-d",
+            "C-z",
+            "C-a",
+            "C-e",
+            "C-k",
+            "C-l",
+            "C-u",
+            "C-w",
+            "C-r",
+            "C-s",
+            "C-t",
+            "C-y",
+            "^c",
+            "^d",
+            "^z",
+            "^a",
+            "^e",
+            "^k",
+            "^l",
+            "^u",
+            "^w",
+            "^r",
+            "^s",
+            "^t",
+            "^y",
+        }
+        special_keys = {
+            "Enter",
+            "Escape",
+            "Space",
+            "Tab",
+            "BTab",
+            "BSpace",
+            "DC",
+            "IC",
+            "Up",
+            "Down",
+            "Left",
+            "Right",
+            "Home",
+            "End",
+            "PageUp",
+            "PageDown",
+            "PgUp",
+            "PgDn",
+            "PPage",
+            "NPage",
+            "F1",
+            "F2",
+            "F3",
+            "F4",
+            "F5",
+            "F6",
+            "F7",
+            "F8",
+            "F9",
+            "F10",
+            "F11",
+            "F12",
+        }
 
-        if action == "wait":
-            return f"{terminal_icon} [dim]waiting...[/]"
+        is_special = (
+            command in control_sequences
+            or command in special_keys
+            or command.startswith(("M-", "S-", "C-S-", "C-M-", "S-M-"))
+        )
 
-        if action == "close":
-            return f"{terminal_icon} [dim]close[/]"
+        if is_special:
+            return f"{terminal_icon} [#ef4444]{command}[/]"
 
-        if action == "get_snapshot":
-            return f"{terminal_icon} [dim]snapshot[/]"
+        if is_input:
+            formatted_command = cls._format_command_display(command)
+            return f"{terminal_icon} [#3b82f6]>>>[/] [#22c55e]{formatted_command}[/]"
 
-        return f"{terminal_icon} [dim]{action}[/]"
+        formatted_command = cls._format_command_display(command)
+        return f"{terminal_icon} [#22c55e]$ {formatted_command}[/]"
 
     @classmethod
-    def _format_command(cls, inputs: list[str]) -> str:
-        if not inputs:
+    def _format_command_display(cls, command: str) -> str:
+        if not command:
             return ""
-
-        command_parts = []
-
-        for input_item in inputs:
-            if input_item == "Enter":
-                break
-            if input_item.startswith("literal:"):
-                command_parts.append(input_item[8:])
-            elif input_item in [
-                "Space",
-                "Tab",
-                "Backspace",
-                "Up",
-                "Down",
-                "Left",
-                "Right",
-                "Home",
-                "End",
-                "PageUp",
-                "PageDown",
-                "Insert",
-                "Delete",
-                "Escape",
-            ] or input_item.startswith(("^", "C-", "S-", "A-", "F")):
-                if input_item == "Space":
-                    command_parts.append(" ")
-                elif input_item == "Tab":
-                    command_parts.append("\t")
-                continue
-            else:
-                command_parts.append(input_item)
-
-        command = "".join(command_parts).strip()
 
         if len(command) > 200:
             command = command[:197] + "..."
 
-        return cls.escape_markup(command) if command else "bash"
+        return cls.escape_markup(command)

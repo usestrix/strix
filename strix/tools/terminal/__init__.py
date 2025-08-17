@@ -1,4 +1,4 @@
-from .terminal_actions import terminal_action
+from .terminal_actions import terminal_execute
 
 
-__all__ = ["terminal_action"]
+__all__ = ["terminal_execute"]

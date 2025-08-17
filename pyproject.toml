@@ -59,6 +59,7 @@ textual = "^4.0.0"
 xmltodict = "^0.13.0"
 pyte = "^0.8.1"
 requests = "^2.32.0"
+libtmux = "^0.46.2"
 
 [tool.poetry.group.dev.dependencies]
 # Type checking and static analysis
@@ -126,6 +127,7 @@ module = [
     "gql.*",
     "textual.*",
     "pyte.*",
+    "libtmux.*",
 ]
 ignore_missing_imports = true
 

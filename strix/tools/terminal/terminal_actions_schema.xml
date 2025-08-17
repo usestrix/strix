@@ -1,117 +1,130 @@
 <tools>
-  <tool name="terminal_action">
-    <description>Perform terminal actions using a terminal emulator instance. Each terminal instance
-  is PERSISTENT and remains active until explicitly closed, allowing for multi-step
-  workflows and long-running processes.</description>
+  <tool name="terminal_execute">
+    <description>Execute a bash command in a persistent terminal session. The terminal maintains state (environment variables, current directory, running processes) between commands.</description>
     <parameters>
-      <parameter name="action" type="string" required="true">
-        <description>The terminal action to perform: - new_terminal: Create a new terminal instance. This MUST be the first action   for each terminal tab. - send_input: Send keyboard input to the specified terminal. - wait: Pause execution for specified number of seconds. Can be also used to get   the current terminal state (screenshot, output, etc.) after using other tools. - close: Close the specified terminal instance. This MUST be the final action   for each terminal tab.</description>
+      <parameter name="command" type="string" required="true">
+        <description>The bash command to execute. Cannot be empty - must provide a valid command or special key sequence.
+
+        Supported special keys and sequences (based on official tmux key names):
+        - Control sequences: C-c, C-d, C-z, C-a, C-e, C-k, C-l, C-u, C-w, etc. (also ^c, ^d, etc.)
+        - Navigation keys: Up, Down, Left, Right, Home, End
+        - Page keys: PageUp, PageDown, PgUp, PgDn, PPage, NPage
+        - Function keys: F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12
+        - Special keys: Enter, Escape, Space, Tab, BTab, BSpace, DC, IC
+        - Note: Use official tmux names (BSpace not Backspace, DC not Delete, IC not Insert, Escape not Esc)
+        - Meta/Alt sequences: M-key (e.g., M-f, M-b) - tmux official modifier
+        - Shift sequences: S-key (e.g., S-F6, S-Tab, S-Left)
+        - Combined modifiers: C-S-key, C-M-key, S-M-key, etc.
+
+        These are useful for interacting with vim, emacs, REPLs, and other interactive applications.</description>
       </parameter>
-      <parameter name="inputs" type="string" required="false">
-        <description>Required for 'new_terminal' and 'send_input' actions: - List of inputs to send to terminal.   Each element in the list MUST be one of the following:   - Regular text: "hello", "world", etc.   - Literal text (not interpreted as special keys): prefix with "literal:"     e.g., "literal:Home", "literal:Escape", "literal:Enter" to send these as text   - Enter   - Space   - Backspace   - Escape: "Escape", "^[", "C-["   - Tab: "Tab"   - Arrow keys: "Left", "Right", "Up", "Down"   - Navigation: "Home", "End", "PageUp", "PageDown"   - Function keys: "F1" through "F12"   Modifier keys supported with prefixes:   - ^ or C- : Control (e.g., "^c", "C-c")   - S- : Shift (e.g., "S-F6")   - A- : Alt (e.g., "A-Home")   - Combined modifiers for arrows: "S-A-Up", "C-S-Left"   - Inputs MUST in all cases be sent as a LIST of strings, even if you are only     sending one input.   - Sending Inputs as a single string will NOT work.</description>
+      <parameter name="is_input" type="boolean" required="false">
+        <description>If true, the command is sent as input to a currently running process. If false (default), the command is executed as a new bash command. Use this to interact with running processes.</description>
       </parameter>
-      <parameter name="time" type="string" required="false">
-        <description>Required for 'wait' action. Number of seconds to pause execution. Can be fractional (e.g., 0.5 for half a second).</description>
+      <parameter name="timeout" type="number" required="false">
+        <description>Optional timeout in seconds for command execution. If not provided, uses default timeout behavior. Set to higher values for long-running commands like installations or tests.</description>
       </parameter>
       <parameter name="terminal_id" type="string" required="false">
-        <description>Identifier for the terminal instance. Required for all actions except the first 'new_terminal' action. Allows managing multiple concurrent terminal tabs. - For 'new_terminal': if not provided, a default terminal is created. If provided,   creates a new terminal with that ID. - For other actions: specifies which terminal instance to operate on. - Default terminal ID is "default" if not specified.</description>
+        <description>Identifier for the terminal session. Defaults to "default". Use different IDs to manage multiple concurrent terminal sessions.</description>
+      </parameter>
+      <parameter name="no_enter" type="boolean" required="false">
+        <description>If true, don't automatically add Enter/newline after the command. Useful for:
+        - Interactive prompts where you want to send keys without submitting
+        - Navigation keys in full-screen applications
+
+        Examples:
+        - terminal_execute("gg", is_input=true, no_enter=true)  # Vim: go to top
+        - terminal_execute("5j", is_input=true, no_enter=true)  # Vim: move down 5 lines
+        - terminal_execute("i", is_input=true, no_enter=true)   # Vim: insert mode</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing: - snapshot: raw representation of current terminal state where you can see the   output of the command - terminal_id: the ID of the terminal instance that was operated on</description>
+      <description>Response containing:
+      - content: Command output
+      - exit_code: Exit code of the command (only for completed commands)
+      - command: The executed command
+      - terminal_id: The terminal session ID
+      - status: Command status ('completed', 'timeout', 'running')
+      - working_dir: Current working directory after command execution</description>
     </returns>
     <notes>
   Important usage rules:
-  1. PERSISTENCE: Terminal instances remain active and maintain their state (environment
-     variables, current directory, running processes) until explicitly closed with the
-     'close' action. This allows for multi-step workflows across multiple tool calls.
-  2. MULTIPLE TERMINALS: You can run multiple terminal instances concurrently by using
-     different terminal_id values. Each terminal operates independently.
-  3. Terminal interaction MUST begin with 'new_terminal' action for each terminal instance.
-  4. Only one action can be performed per call.
-  5. Input handling:
-     - Regular text is sent as-is
-     - Literal text: prefix with "literal:" to send special key names as literal text
-     - Special keys must match supported key names
-     - Modifier combinations follow specific syntax
-     - Control can be specified as ^ or C- prefix
-     - Shift (S-) works with special keys only
-     - Alt (A-) works with any character/key
-  6. Wait action:
-      - Time is specified in seconds
-      - Can be used to wait for command completion
-      - Can be fractional (e.g., 0.5 seconds)
-      - Snapshot and output are captured after the wait
-      - You should estimate the time it will take to run the command and set the wait time accordingly.
-      - It can be from a few seconds to a few minutes, choose wisely depending on the command you are running and the task.
-  7. The terminal can operate concurrently with other tools. You may invoke
-     browser, proxy, or other tools (in separate assistant messages) while maintaining
-     active terminal sessions.
-  8. You do not need to close terminals after you are done, but you can if you want to
-     free up resources.
-  9. You MUST end the inputs list with an "Enter" if you want to run the command, as
-     it is not sent automatically.
-  10. AUTOMATIC SPACING BEHAVIOR:
-      - Consecutive regular text inputs have spaces automatically added between them
-      - This is helpful for shell commands: ["ls", "-la"] becomes "ls -la"
-      - This causes problems for compound commands: [":", "w", "q"] becomes ": w q"
-      - Use "literal:" prefix to bypass spacing: [":", "literal:wq"] becomes ":wq"
-      - Special keys (Enter, Space, etc.) and literal strings never trigger spacing
-  11. WHEN TO USE LITERAL PREFIX:
-      - Vim commands: [":", "literal:wq", "Enter"] instead of [":", "w", "q", "Enter"]
-      - Any sequence where exact character positioning matters
-      - When you need multiple characters sent as a single unit
-  12. Do NOT use terminal actions for file editing or writing. Use the replace_in_file,
-      write_to_file, or read_file tools instead.
-  13. PREFER SIMPLE COMMANDS: Avoid complex multiline commands with nested quotes or
-      complex syntax. Break down complex operations into simpler, individual commands
-      for better reliability and readability. Never send multiple commands in a single
-      input list with multiple "Enter" keys - execute one command at a time instead.
+  1. PERSISTENT SESSION: The terminal maintains state between commands. Environment variables,
+     current directory, and running processes persist across multiple tool calls.
+
+  2. COMMAND EXECUTION: Execute one command at a time. For multiple commands, chain them with
+     && or ; operators, or make separate tool calls.
+
+  3. LONG-RUNNING COMMANDS:
+     - For commands that run indefinitely, run them in background: 'python app.py > server.log 2>&1 &'
+     - For commands that take time, set appropriate timeout parameter
+     - Use is_input=true to interact with running processes
+
+  4. TIMEOUT HANDLING:
+     - Commands have a default soft timeout (30 seconds of no output changes)
+     - Set custom timeout for longer operations
+     - When timeout occurs, you can send empty command to get more output
+     - Use control sequences (C-c, C-d, C-z) to interrupt processes
+
+  5. MULTIPLE TERMINALS: Use different terminal_id values to run multiple concurrent sessions.
+
+  6. INTERACTIVE PROCESSES: Use is_input=true to send input to running processes like:
+     - Interactive shells, REPLs, or prompts
+     - Long-running applications waiting for input
+     - Background processes that need interaction
+     - Use no_enter=true for stuff like Vim navigation, password typing, or multi-step commands
+
+  7. WORKING DIRECTORY: The terminal tracks and returns the current working directory.
+     Use absolute paths or cd commands to change directories as needed.
+
+  8. OUTPUT HANDLING: Large outputs are automatically truncated. The tool provides
+     the most relevant parts of the output for analysis.
     </notes>
     <examples>
-  # Create new terminal with Node.js (default terminal)
-  <function=terminal_action>
-  <parameter=action>new_terminal</parameter>
-  <parameter=inputs>["node", "Enter"]</parameter>
+  # Execute a simple command
+  <function=terminal_execute>
+  <parameter=command>ls -la</parameter>
   </function>
 
-  # Create a second (parallel) terminal instance for Python
-  <function=terminal_action>
-  <parameter=action>new_terminal</parameter>
-  <parameter=terminal_id>python_terminal</parameter>
-  <parameter=inputs>["python3", "Enter"]</parameter>
+  # Run a command with custom timeout
+  <function=terminal_execute>
+  <parameter=command>npm install</parameter>
+  <parameter=timeout>120</parameter>
   </function>
 
-  # Send command to the default terminal
-  <function=terminal_action>
-  <parameter=action>send_input</parameter>
-  <parameter=inputs>["require('crypto').randomBytes(1000000).toString('hex')",
-                     "Enter"]</parameter>
+  # Start a background service
+  <function=terminal_execute>
+  <parameter=command>python app.py > server.log 2>&1 &</parameter>
   </function>
 
-  # Wait for previous action on default terminal
-  <function=terminal_action>
-  <parameter=action>wait</parameter>
-  <parameter=time>2.0</parameter>
+  # Interact with a running process
+  <function=terminal_execute>
+  <parameter=command>y</parameter>
+  <parameter=is_input>true</parameter>
   </function>
 
-  # Send multiple inputs with special keys to current terminal
-  <function=terminal_action>
-  <parameter=action>send_input</parameter>
-  <parameter=inputs>["sqlmap -u 'http://example.com/page.php?id=1' --batch", "Enter", "y",
-               "Enter", "n", "Enter", "n", "Enter"]</parameter>
+  # Interrupt a running process
+  <function=terminal_execute>
+  <parameter=command>C-c</parameter>
   </function>
 
-  # WRONG: Vim command with automatic spacing (becomes ": w q")
-  <function=terminal_action>
-  <parameter=action>send_input</parameter>
-  <parameter=inputs>[":", "w", "q", "Enter"]</parameter>
+  # Send Escape key (use official tmux name)
+  <function=terminal_execute>
+  <parameter=command>Escape</parameter>
+  <parameter=is_input>true</parameter>
   </function>
 
-  # CORRECT: Vim command using literal prefix (becomes ":wq")
-  <function=terminal_action>
-  <parameter=action>send_input</parameter>
-  <parameter=inputs>[":", "literal:wq", "Enter"]</parameter>
+  # Use a different terminal session
+  <function=terminal_execute>
+  <parameter=command>python3</parameter>
+  <parameter=terminal_id>python_session</parameter>
+  </function>
+
+  # Send input to Python REPL in specific session
+  <function=terminal_execute>
+  <parameter=command>print("Hello World")</parameter>
+  <parameter=is_input>true</parameter>
+  <parameter=terminal_id>python_session</parameter>
   </function>
     </examples>
   </tool>
