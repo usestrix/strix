@@ -45,7 +45,8 @@ strix = "strix.cli.main:main"
 python = "^3.12"
 fastapi = "*"
 uvicorn = "*"
-litellm = {version = "^1.75.7", extras = ["proxy"]}
+litellm = { version = "~1.75.8", extras = ["proxy"] }
+openai = ">=1.99.5,<1.100.0"
 tenacity = "^9.0.0"
 numpydoc = "^1.8.0"
 pydantic = {extras = ["email"], version = "^2.11.3"}
