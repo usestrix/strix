@@ -239,6 +239,9 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.sandbox_token = sandbox_info["auth_token"]
             self.state.sandbox_info = sandbox_info
 
+            if "agent_id" in sandbox_info:
+                self.state.sandbox_info["agent_id"] = sandbox_info["agent_id"]
+
         if not self.state.task:
             self.state.task = task
 

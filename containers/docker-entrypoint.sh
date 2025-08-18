@@ -1,8 +1,8 @@
 #!/bin/bash
 set -e
 
-if [ -z "$CAIDO_PORT" ] || [ -z "$STRIX_TOOL_SERVER_PORT" ]; then
-    echo "Error: CAIDO_PORT and STRIX_TOOL_SERVER_PORT must be set."
+if [ -z "$CAIDO_PORT" ]; then
+    echo "Error: CAIDO_PORT must be set."
     exit 1
 fi
 
@@ -114,14 +114,8 @@ sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
 
-echo "Starting tool server..."
-cd /app && \
-STRIX_SANDBOX_MODE=true \
-STRIX_SANDBOX_TOKEN=${STRIX_SANDBOX_TOKEN} \
-CAIDO_API_TOKEN=${TOKEN} \
-poetry run uvicorn strix.runtime.tool_server:app --host 0.0.0.0 --port ${STRIX_TOOL_SERVER_PORT} &
-
-echo "✅ Tool server started in background"
+echo "Container initialization complete - agents will start their own tool servers as needed"
+echo "✅ Shared container ready for multi-agent use"
 
 cd /workspace
 

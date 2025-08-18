@@ -57,10 +57,10 @@ def _run_agent_in_thread(
         - Work independently with your own approach
         - Use agent_finish when complete to report back to parent
         - You are a SPECIALIST for this specific task
-        - The previous browser, sessions, proxy history, and files in /workspace were for your
-          parent agent. Do not depend on them.
-        - You are starting with a fresh context. Fresh proxy, browser, and files.
-          Only stuff in /shared_workspace is passed to you from context.
+        - You share the same container as other agents but have your own tool server instance
+        - All agents share /workspace directory and proxy history for better collaboration
+        - You can see files created by other agents and proxy traffic from previous work
+        - Build upon previous work but focus on your specific delegated task
     </instructions>
 </agent_delegation>"""
 

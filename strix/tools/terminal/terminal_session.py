@@ -33,7 +33,6 @@ class TerminalSession:
         self.work_dir = str(Path(work_dir).resolve())
         self._closed = False
         self._cwd = self.work_dir
-        self.NO_CHANGE_TIMEOUT_SECONDS = 30
 
         self.server: libtmux.Server | None = None
         self.session: libtmux.Session | None = None
@@ -200,55 +199,126 @@ class TerminalSession:
         except (ValueError, IndexError):
             return None
 
-    def execute(
-        self, command: str, is_input: bool = False, timeout: float = 30.0, no_enter: bool = False
+    def _handle_empty_command(
+        self,
+        cur_pane_output: str,
+        ps1_matches: list[re.Match[str]],
+        is_command_running: bool,
+        timeout: float,
     ) -> dict[str, Any]:
-        if not self._initialized:
-            raise RuntimeError("Bash session is not initialized")
-
-        if command == "" or command.strip() == "":
+        if not is_command_running:
+            raw_command_output = self._combine_outputs_between_matches(cur_pane_output, ps1_matches)
+            command_output = self._get_command_output("", raw_command_output)
             return {
-                "content": (
-                    "Command cannot be empty - must provide a valid command or control sequence"
-                ),
+                "content": command_output,
+                "status": "completed",
+                "exit_code": 0,
+                "working_dir": self._cwd,
+            }
+
+        start_time = time.time()
+        last_pane_output = cur_pane_output
+
+        while True:
+            cur_pane_output = self._get_pane_content()
+            ps1_matches = self._matches_ps1_metadata(cur_pane_output)
+
+            if cur_pane_output.rstrip().endswith(self.PS1_END.rstrip()) or len(ps1_matches) > 0:
+                exit_code = self._extract_exit_code_from_matches(ps1_matches)
+                raw_command_output = self._combine_outputs_between_matches(
+                    cur_pane_output, ps1_matches
+                )
+                command_output = self._get_command_output("", raw_command_output)
+                self.prev_status = BashCommandStatus.COMPLETED
+                self.prev_output = ""
+                self._ready_for_next_command()
+                return {
+                    "content": command_output,
+                    "status": "completed",
+                    "exit_code": exit_code or 0,
+                    "working_dir": self._cwd,
+                }
+
+            elapsed_time = time.time() - start_time
+            if elapsed_time >= timeout:
+                raw_command_output = self._combine_outputs_between_matches(
+                    cur_pane_output, ps1_matches
+                )
+                command_output = self._get_command_output("", raw_command_output)
+                return {
+                    "content": command_output
+                    + f"\n[Command still running after {timeout}s - showing output so far]",
+                    "status": "running",
+                    "exit_code": None,
+                    "working_dir": self._cwd,
+                }
+
+            if cur_pane_output != last_pane_output:
+                last_pane_output = cur_pane_output
+
+            time.sleep(self.POLL_INTERVAL)
+
+    def _handle_input_command(
+        self, command: str, no_enter: bool, is_command_running: bool
+    ) -> dict[str, Any]:
+        if not is_command_running:
+            return {
+                "content": "No command is currently running. Cannot send input.",
                 "status": "error",
                 "exit_code": None,
                 "working_dir": self._cwd,
             }
 
-        if (
-            self.prev_status
-            in {
-                BashCommandStatus.HARD_TIMEOUT,
-                BashCommandStatus.NO_CHANGE_TIMEOUT,
-            }
-            and not is_input
-            and command != ""
-        ):
+        if not self.pane:
+            raise RuntimeError("Terminal session not properly initialized")
+
+        is_special_key = self._is_special_key(command)
+        should_add_enter = not is_special_key and not no_enter
+        self.pane.send_keys(command, enter=should_add_enter)
+
+        time.sleep(2)
+        cur_pane_output = self._get_pane_content()
+        ps1_matches = self._matches_ps1_metadata(cur_pane_output)
+        raw_command_output = self._combine_outputs_between_matches(cur_pane_output, ps1_matches)
+        command_output = self._get_command_output(command, raw_command_output)
+
+        is_still_running = not (
+            cur_pane_output.rstrip().endswith(self.PS1_END.rstrip()) or len(ps1_matches) > 0
+        )
+
+        if is_still_running:
             return {
-                "content": (
-                    f'Previous command still running. Cannot execute "{command}". '
-                    "Use is_input=True to interact with running process."
-                ),
-                "status": "error",
+                "content": command_output,
+                "status": "running",
                 "exit_code": None,
                 "working_dir": self._cwd,
             }
+
+        exit_code = self._extract_exit_code_from_matches(ps1_matches)
+        self.prev_status = BashCommandStatus.COMPLETED
+        self.prev_output = ""
+        self._ready_for_next_command()
+        return {
+            "content": command_output,
+            "status": "completed",
+            "exit_code": exit_code or 0,
+            "working_dir": self._cwd,
+        }
+
+    def _execute_new_command(self, command: str, no_enter: bool, timeout: float) -> dict[str, Any]:
+        if not self.pane:
+            raise RuntimeError("Terminal session not properly initialized")
 
         initial_pane_output = self._get_pane_content()
         initial_ps1_matches = self._matches_ps1_metadata(initial_pane_output)
         initial_ps1_count = len(initial_ps1_matches)
 
         start_time = time.time()
-        last_change_time = start_time
         last_pane_output = initial_pane_output
 
-        if command != "":
-            if not self.pane:
-                raise RuntimeError("Terminal session not properly initialized")
-            is_special_key = self._is_special_key(command)
-            should_add_enter = not is_special_key and not no_enter
-            self.pane.send_keys(command, enter=should_add_enter)
+        is_special_key = self._is_special_key(command)
+        should_add_enter = not is_special_key and not no_enter
+        self.pane.send_keys(command, enter=should_add_enter)
 
         while True:
             cur_pane_output = self._get_pane_content()
@@ -257,7 +327,6 @@ class TerminalSession:
 
             if cur_pane_output != last_pane_output:
                 last_pane_output = cur_pane_output
-                last_change_time = time.time()
 
             if current_ps1_count > initial_ps1_count or cur_pane_output.rstrip().endswith(
                 self.PS1_END.rstrip()
@@ -283,26 +352,6 @@ class TerminalSession:
                     "working_dir": self._cwd,
                 }
 
-            time_since_last_change = time.time() - last_change_time
-            if time_since_last_change >= self.NO_CHANGE_TIMEOUT_SECONDS:
-                raw_command_output = self._combine_outputs_between_matches(
-                    cur_pane_output, ps1_matches
-                )
-                command_output = self._get_command_output(
-                    command,
-                    raw_command_output,
-                    continue_prefix="[Below is the output of the previous command.]\n",
-                )
-                self.prev_status = BashCommandStatus.NO_CHANGE_TIMEOUT
-
-                return {
-                    "content": command_output + f"\n[Command timed out - no output change for "
-                    f"{self.NO_CHANGE_TIMEOUT_SECONDS} seconds]",
-                    "status": "timeout",
-                    "exit_code": -1,
-                    "working_dir": self._cwd,
-                }
-
             elapsed_time = time.time() - start_time
             if elapsed_time >= timeout:
                 raw_command_output = self._combine_outputs_between_matches(
@@ -313,16 +362,58 @@ class TerminalSession:
                     raw_command_output,
                     continue_prefix="[Below is the output of the previous command.]\n",
                 )
-                self.prev_status = BashCommandStatus.HARD_TIMEOUT
+                self.prev_status = BashCommandStatus.CONTINUE
 
+                timeout_msg = (
+                    f"\n[Command still running after {timeout}s - showing output so far. "
+                    "Use C-c to interrupt if needed.]"
+                )
                 return {
-                    "content": command_output + f"\n[Command timed out after {timeout} seconds]",
-                    "status": "timeout",
-                    "exit_code": -1,
+                    "content": command_output + timeout_msg,
+                    "status": "running",
+                    "exit_code": None,
                     "working_dir": self._cwd,
                 }
 
             time.sleep(self.POLL_INTERVAL)
+
+    def execute(
+        self, command: str, is_input: bool = False, timeout: float = 10.0, no_enter: bool = False
+    ) -> dict[str, Any]:
+        if not self._initialized:
+            raise RuntimeError("Bash session is not initialized")
+
+        cur_pane_output = self._get_pane_content()
+        ps1_matches = self._matches_ps1_metadata(cur_pane_output)
+        is_command_running = not (
+            cur_pane_output.rstrip().endswith(self.PS1_END.rstrip()) or len(ps1_matches) > 0
+        )
+
+        if command.strip() == "":
+            return self._handle_empty_command(
+                cur_pane_output, ps1_matches, is_command_running, timeout
+            )
+
+        is_special_key = self._is_special_key(command)
+
+        if is_input:
+            return self._handle_input_command(command, no_enter, is_command_running)
+
+        if is_special_key and is_command_running:
+            return self._handle_input_command(command, no_enter, is_command_running)
+
+        if is_command_running:
+            return {
+                "content": (
+                    "A command is already running. Use is_input=true to send input to it, "
+                    "or interrupt it first (e.g., with C-c)."
+                ),
+                "status": "error",
+                "exit_code": None,
+                "working_dir": self._cwd,
+            }
+
+        return self._execute_new_command(command, no_enter, timeout)
 
     def _ready_for_next_command(self) -> None:
         self._clear_screen()

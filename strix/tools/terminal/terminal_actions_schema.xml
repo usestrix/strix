@@ -3,7 +3,7 @@
     <description>Execute a bash command in a persistent terminal session. The terminal maintains state (environment variables, current directory, running processes) between commands.</description>
     <parameters>
       <parameter name="command" type="string" required="true">
-        <description>The bash command to execute. Cannot be empty - must provide a valid command or special key sequence.
+        <description>The bash command to execute. Can be empty to check output of running commands (will wait for timeout period to collect output).
 
         Supported special keys and sequences (based on official tmux key names):
         - Control sequences: C-c, C-d, C-z, C-a, C-e, C-k, C-l, C-u, C-w, etc. (also ^c, ^d, etc.)
@@ -16,13 +16,16 @@
         - Shift sequences: S-key (e.g., S-F6, S-Tab, S-Left)
         - Combined modifiers: C-S-key, C-M-key, S-M-key, etc.
 
+        Special keys work automatically - no need to set is_input=true for keys like C-c, C-d, etc.
         These are useful for interacting with vim, emacs, REPLs, and other interactive applications.</description>
       </parameter>
       <parameter name="is_input" type="boolean" required="false">
-        <description>If true, the command is sent as input to a currently running process. If false (default), the command is executed as a new bash command. Use this to interact with running processes.</description>
+        <description>If true, the command is sent as input to a currently running process. If false (default), the command is executed as a new bash command.
+        Note: Special keys (C-c, C-d, etc.) automatically work when a process is running - you don't need to set is_input=true for them.
+        Use is_input=true for regular text input to running processes.</description>
       </parameter>
       <parameter name="timeout" type="number" required="false">
-        <description>Optional timeout in seconds for command execution. If not provided, uses default timeout behavior. Set to higher values for long-running commands like installations or tests.</description>
+        <description>Optional timeout in seconds for command execution. If not provided, uses default timeout behavior. Set to higher values for long-running commands like installations or tests. Default is 10 seconds.</description>
       </parameter>
       <parameter name="terminal_id" type="string" required="false">
         <description>Identifier for the terminal session. Defaults to "default". Use different IDs to manage multiple concurrent terminal sessions.</description>
@@ -44,7 +47,7 @@
       - exit_code: Exit code of the command (only for completed commands)
       - command: The executed command
       - terminal_id: The terminal session ID
-      - status: Command status ('completed', 'timeout', 'running')
+      - status: Command status ('completed' or 'running')
       - working_dir: Current working directory after command execution</description>
     </returns>
     <notes>
@@ -56,22 +59,25 @@
      && or ; operators, or make separate tool calls.
 
   3. LONG-RUNNING COMMANDS:
-     - For commands that run indefinitely, run them in background: 'python app.py > server.log 2>&1 &'
-     - For commands that take time, set appropriate timeout parameter
-     - Use is_input=true to interact with running processes
+     - Commands never get killed automatically - they keep running in background
+     - Set timeout to control how long to wait for output before returning
+     - Use empty command "" to check progress (waits for timeout period to collect output)
+     - Use C-c, C-d, C-z to interrupt processes (works automatically, no is_input needed)
 
   4. TIMEOUT HANDLING:
-     - Commands have a default soft timeout (30 seconds of no output changes)
-     - Set custom timeout for longer operations
-     - When timeout occurs, you can send empty command to get more output
-     - Use control sequences (C-c, C-d, C-z) to interrupt processes
+     - Timeout controls how long to wait before returning current output
+     - Commands are NEVER killed on timeout - they keep running
+     - After timeout, you can run new commands or check progress with empty command
+     - All commands return status "completed" - you have full control
 
   5. MULTIPLE TERMINALS: Use different terminal_id values to run multiple concurrent sessions.
 
-  6. INTERACTIVE PROCESSES: Use is_input=true to send input to running processes like:
-     - Interactive shells, REPLs, or prompts
-     - Long-running applications waiting for input
-     - Background processes that need interaction
+  6. INTERACTIVE PROCESSES:
+     - Special keys (C-c, C-d, etc.) work automatically when a process is running
+     - Use is_input=true for regular text input to running processes like:
+       * Interactive shells, REPLs, or prompts
+       * Long-running applications waiting for input
+       * Background processes that need interaction
      - Use no_enter=true for stuff like Vim navigation, password typing, or multi-step commands
 
   7. WORKING DIRECTORY: The terminal tracks and returns the current working directory.
@@ -92,6 +98,12 @@
   <parameter=timeout>120</parameter>
   </function>
 
+  # Check progress of running command (waits for timeout to collect output)
+  <function=terminal_execute>
+  <parameter=command></parameter>
+  <parameter=timeout>5</parameter>
+  </function>
+
   # Start a background service
   <function=terminal_execute>
   <parameter=command>python app.py > server.log 2>&1 &</parameter>
@@ -103,7 +115,7 @@
   <parameter=is_input>true</parameter>
   </function>
 
-  # Interrupt a running process
+  # Interrupt a running process (special keys work automatically)
   <function=terminal_execute>
   <parameter=command>C-c</parameter>
   </function>

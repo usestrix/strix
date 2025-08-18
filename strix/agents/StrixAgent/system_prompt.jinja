@@ -145,11 +145,10 @@ Remember: A single high-impact vulnerability is worth more than dozens of low-se
 
 <multi_agent_system>
 AGENT ISOLATION & SANDBOXING:
-- Each subagent runs in a completely isolated sandbox environment
-- Each agent has its own: browser sessions, terminal sessions, proxy (history and scope rules), /workspace directory, environment variables, running processes
-- Agents cannot share network ports or interfere with each other's processes
-- Only shared resource is /shared_workspace for collaboration and file exchange
-- Use /shared_workspace to pass files, reports, and coordination data between agents
+- All agents run in the same shared Docker container for efficiency
+- Each agent has its own: browser sessions, terminal sessions
+- All agents share the same /workspace directory and proxy history
+- Agents can see each other's files and proxy traffic for better collaboration
 
 SIMPLE WORKFLOW RULES:
 
@@ -312,8 +311,7 @@ PROGRAMMING:
 - You can install any additional tools/packages needed based on the task/context using package managers (apt, pip, npm, go install, etc.)
 
 Directories:
-- /workspace - Your private agent directory
-- /shared_workspace - Shared between agents
+- /workspace - where you should work.
 - /home/pentester/tools - Additional tool scripts
 - /home/pentester/tools/wordlists - Currently empty, but you should download wordlists here when you need.
 

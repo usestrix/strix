@@ -49,7 +49,10 @@ async def _execute_tool_in_sandbox(tool_name: str, agent_state: Any, **kwargs: A
     server_url = await runtime.get_sandbox_url(agent_state.sandbox_id, tool_server_port)
     request_url = f"{server_url}/execute"
 
+    agent_id = getattr(agent_state, "agent_id", "unknown")
+
     request_data = {
+        "agent_id": agent_id,
         "tool_name": tool_name,
         "kwargs": kwargs,
     }

@@ -7,6 +7,7 @@ class SandboxInfo(TypedDict):
     api_url: str
     auth_token: str | None
     tool_server_port: int
+    agent_id: str
 
 
 class AbstractRuntime(ABC):
@@ -17,9 +18,9 @@ class AbstractRuntime(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def get_sandbox_url(self, sandbox_id: str, port: int) -> str:
+    async def get_sandbox_url(self, container_id: str, port: int) -> str:
         raise NotImplementedError
 
     @abstractmethod
-    async def destroy_sandbox(self, sandbox_id: str) -> None:
+    async def destroy_sandbox(self, container_id: str) -> None:
         raise NotImplementedError

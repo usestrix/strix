@@ -30,12 +30,12 @@ class StrixAgent(BaseAgent):
             cloned_path = target.get("cloned_repo_path")
 
             if cloned_path:
-                shared_workspace_path = "/shared_workspace"
+                workspace_path = "/workspace"
                 task_parts.append(
                     f"Perform a security assessment of the Git repository: {repo_url}. "
                     f"The repository has been cloned from '{repo_url}' to '{cloned_path}' "
-                    f"(host path) and then copied to '{shared_workspace_path}' in your environment."
-                    f"Analyze the codebase at: {shared_workspace_path}"
+                    f"(host path) and then copied to '{workspace_path}' in your environment."
+                    f"Analyze the codebase at: {workspace_path}"
                 )
             else:
                 task_parts.append(
@@ -49,12 +49,12 @@ class StrixAgent(BaseAgent):
 
         elif scan_type == "local_code":
             original_path = target.get("target_path", "unknown")
-            shared_workspace_path = "/shared_workspace"
+            workspace_path = "/workspace"
             task_parts.append(
                 f"Perform a security assessment of the local codebase. "
                 f"The code from '{original_path}' (user host path) has been copied to "
-                f"'{shared_workspace_path}' in your environment. "
-                f"Analyze the codebase at: {shared_workspace_path}"
+                f"'{workspace_path}' in your environment. "
+                f"Analyze the codebase at: {workspace_path}"
             )
 
         else:

@@ -153,7 +153,7 @@ ENV PYTHONPATH=/app
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 
-RUN mkdir -p /shared_workspace /workspace && chown -R pentester:pentester /shared_workspace /workspace /app
+RUN mkdir -p /workspace && chown -R pentester:pentester /workspace /app
 
 COPY pyproject.toml poetry.lock ./
 
