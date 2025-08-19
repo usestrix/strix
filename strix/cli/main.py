@@ -26,6 +26,7 @@ from rich.text import Text
 from strix.cli.app import run_strix_cli
 from strix.cli.tracer import get_global_tracer
 from strix.runtime.docker_runtime import STRIX_IMAGE
+from strix.tools.browser.auth_capture import handle_auth_capture
 
 
 logging.getLogger().setLevel(logging.ERROR)
@@ -372,6 +373,12 @@ Examples:
         help="Custom name for this scan run",
     )
 
+    parser.add_argument(
+        "--wait-for-auth",
+        action="store_true",
+        help="Wait for manual authentication in browser before starting the scan."
+    )
+
     args = parser.parse_args()
 
     try:
@@ -640,6 +647,10 @@ def main() -> None:
         cloned_path = clone_repository(repo_url, args.run_name)
 
         args.target_dict["cloned_repo_path"] = cloned_path
+
+    if args.wait_for_auth and args.target_type == "web_application":
+        target_url = args.target_dict["target_url"]
+        asyncio.run(handle_auth_capture(target_url, args.run_name))
 
     asyncio.run(run_strix_cli(args))
 

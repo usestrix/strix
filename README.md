@@ -98,7 +98,6 @@ export LLM_API_KEY="your-api-key"
 
 # Recommended
 export PERPLEXITY_API_KEY="your-api-key"
-```
 
 [📚 View supported AI models](https://docs.litellm.ai/docs/providers)
 
