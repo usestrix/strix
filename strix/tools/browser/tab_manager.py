@@ -9,9 +9,10 @@ from .browser_instance import BrowserInstance
 
 
 class BrowserTabManager:
-    def __init__(self) -> None:
+    def __init__(self, auth_data: dict[str, Any] | None = None) -> None:
         self.browser_instance: BrowserInstance | None = None
         self._lock = threading.Lock()
+        self.auth_data = auth_data
 
         self._register_cleanup_handlers()
 
@@ -21,9 +22,11 @@ class BrowserTabManager:
                 raise ValueError("Browser is already launched")
 
             try:
-                self.browser_instance = BrowserInstance()
+                self.browser_instance = BrowserInstance(auth_data=self.auth_data)
                 result = self.browser_instance.launch(url)
                 result["message"] = "Browser launched successfully"
+                if self.auth_data:
+                    result["message"] += " (with authentication)"
             except (OSError, ValueError, RuntimeError) as e:
                 if self.browser_instance:
                     self.browser_instance = None
@@ -335,8 +338,17 @@ class BrowserTabManager:
         sys.exit(0)
 
 
-_browser_tab_manager = BrowserTabManager()
+_browser_tab_manager: BrowserTabManager | None = None
 
 
-def get_browser_tab_manager() -> BrowserTabManager:
+def get_browser_tab_manager(auth_data: dict[str, Any] | None = None) -> BrowserTabManager:
+    global _browser_tab_manager  # noqa: PLW0603
+    
+    if _browser_tab_manager is None:
+        _browser_tab_manager = BrowserTabManager(auth_data=auth_data)
+    elif auth_data and not _browser_tab_manager.auth_data:
+        # If auth data is provided and manager doesn't have it, recreate with auth
+        if _browser_tab_manager.browser_instance:
+            _browser_tab_manager.browser_instance.close()
+        _browser_tab_manager = BrowserTabManager(auth_data=auth_data)
     return _browser_tab_manager
