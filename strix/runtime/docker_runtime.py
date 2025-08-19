@@ -229,6 +229,22 @@ class DockerRuntime(AbstractRuntime):
         except (OSError, DockerException):
             logger.exception("Failed to copy local directory to container")
 
+    def _copy_auth_data_to_container(self, container: Container, scan_id: str) -> None:
+        storage_state_file = Path("agent_runs") / scan_id / "storage_state.json"
+        if not storage_state_file.exists():
+            return
+
+        import tarfile
+        from io import BytesIO            
+        container.exec_run("mkdir -p /tmp/strix_auth")
+        
+        tar_buffer = BytesIO()
+        with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
+            tar.add(storage_state_file, arcname="storage_state.json")
+        tar_buffer.seek(0)
+        
+        container.put_archive("/tmp/strix_auth", tar_buffer.getvalue())
+
     async def create_sandbox(
         self, agent_id: str, existing_token: str | None = None, local_source_path: str | None = None
     ) -> SandboxInfo:
@@ -239,6 +255,9 @@ class DockerRuntime(AbstractRuntime):
         if local_source_path and not hasattr(self, source_copied_key):
             self._copy_local_directory_to_container(container, local_source_path)
             setattr(self, source_copied_key, True)
+
+        # Copy auth data if it exists
+        self._copy_auth_data_to_container(container, scan_id)
 
         container_id = container.id
         if container_id is None:

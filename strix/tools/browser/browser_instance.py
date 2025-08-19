@@ -1,6 +1,8 @@
 import asyncio
 import base64
+import json
 import logging
+import os
 import threading
 from pathlib import Path
 from typing import Any, cast
@@ -18,7 +20,7 @@ MAX_JS_RESULT_LENGTH = 5_000
 
 
 class BrowserInstance:
-    def __init__(self) -> None:
+    def __init__(self, auth_data: dict[str, Any] | None = None) -> None:
         self.is_running = True
         self._execution_lock = threading.Lock()
 
@@ -29,12 +31,23 @@ class BrowserInstance:
         self.current_page_id: str | None = None
         self._next_tab_id = 1
 
+        self.auth_data = auth_data
+        if not self.auth_data:
+            self.auth_data = self._load_auth_from_docker_volume()
+
         self.console_logs: dict[str, list[dict[str, Any]]] = {}
 
         self._loop: asyncio.AbstractEventLoop | None = None
         self._loop_thread: threading.Thread | None = None
 
         self._start_event_loop()
+
+    def _load_auth_from_docker_volume(self) -> dict[str, Any] | None:
+        """Load auth data from Docker container if available."""
+        path = Path("/tmp/strix_auth/storage_state.json")
+        if path.exists():
+            return {"storage_state_file": str(path)}
+        return None
 
     def _start_event_loop(self) -> None:
         def run_loop() -> None:
@@ -91,14 +104,24 @@ class BrowserInstance:
             ],
         )
 
-        self.context = await self.browser.new_context(
-            viewport={"width": 1280, "height": 720},
-            user_agent=(
+        # Create context with storage state if available
+        context_options = {
+            "viewport": {"width": 1280, "height": 720},
+            "user_agent": (
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-                "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
             ),
-        )
+            "accept_downloads": True,
+            "ignore_https_errors": True,
+        }
 
+        # Use storage state if available
+        if self.auth_data and "storage_state_file" in self.auth_data:
+            storage_state_file = self.auth_data["storage_state_file"]
+            if os.path.exists(storage_state_file):
+                context_options["storage_state"] = storage_state_file
+
+        self.context = await self.browser.new_context(**context_options)
         page = await self.context.new_page()
         tab_id = f"tab_{self._next_tab_id}"
         self._next_tab_id += 1
