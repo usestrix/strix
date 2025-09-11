@@ -99,6 +99,43 @@ export PERPLEXITY_API_KEY="your-api-key"
 
 [📚 View supported AI models](https://docs.litellm.ai/docs/providers)
 
+### Using Ollama or LM Studio (Remote)
+
+You can point Strix at a remote, self‑hosted OpenAI‑compatible server (e.g., Ollama or LM Studio) via environment variables. Strix uses LiteLLM under the hood and respects a configurable API base.
+
+Option A: Ollama provider (preferred for Ollama)
+
+```bash
+# Pick any model pulled on the remote Ollama host
+export STRIX_LLM="ollama/llama3.1"
+
+# Point to your remote Ollama instance (no /v1 for the Ollama provider)
+export LLM_API_BASE="http://<remote-host>:11434"
+
+# Strix requires this env to be set even if your server doesn’t need it
+export LLM_API_KEY="not-needed"
+```
+
+Option B: OpenAI‑compatible route (works for Ollama/LM Studio)
+
+```bash
+# Use the OpenAI provider name with the model you want
+export STRIX_LLM="openai/llama3.1"
+
+# Point to the server’s OpenAI‑compatible API (include /v1)
+export LLM_API_BASE="http://<remote-host>:11434/v1"  # Ollama
+# or
+export LLM_API_BASE="http://127.0.0.1:1234/v1"       # LM Studio default
+
+export LLM_API_KEY="not-needed"
+```
+
+Notes
+
+- `LLM_API_BASE` is also honored via `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
+- Keep `STRIX_LLM` aligned with the server type you’re using (e.g., `ollama/<model>` for Ollama, `openai/<model>` for OpenAI‑compatible base URLs).
+- You can also use a LiteLLM Proxy by pointing `LLM_API_BASE` (or `LITELLM_BASE_URL`) at the proxy URL and selecting any model your proxy exposes.
+
 ## 🏆 Enterprise Platform
 
 Our managed platform provides:

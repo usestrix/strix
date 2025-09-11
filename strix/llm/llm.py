@@ -28,6 +28,18 @@ api_key = os.getenv("LLM_API_KEY")
 if api_key:
     litellm.api_key = api_key
 
+# Allow overriding the default API base to target remote/self-hosted OpenAI-compatible
+# endpoints (e.g., Ollama, LM Studio, LiteLLM Proxy). We check several common env vars
+# to make configuration simple without changing code elsewhere.
+api_base = (
+    os.getenv("LLM_API_BASE")
+    or os.getenv("OPENAI_API_BASE")
+    or os.getenv("LITELLM_BASE_URL")
+    or os.getenv("OLLAMA_API_BASE")
+)
+if api_base:
+    litellm.api_base = api_base
+
 
 class LLMRequestFailedError(Exception):
     """Raised when LLM request fails after all retry attempts."""
