@@ -181,10 +181,21 @@ class BaseAgent(metaclass=AgentMeta):
                 continue
 
             except LLMRequestFailedError as e:
-                self.state.add_error(f"LLM request failed: {e}")
+                error_msg = str(e)
+                error_details = getattr(e, "details", None)
+                self.state.add_error(error_msg)
                 self.state.enter_waiting_state(llm_failed=True)
                 if tracer:
-                    tracer.update_agent_status(self.state.agent_id, "llm_failed")
+                    tracer.update_agent_status(self.state.agent_id, "llm_failed", error_msg)
+                    if error_details:
+                        tracer.log_tool_execution_start(
+                            self.state.agent_id,
+                            "llm_error_details",
+                            {"error": error_msg, "details": error_details},
+                        )
+                        tracer.update_tool_execution(
+                            tracer._next_execution_id - 1, "failed", error_details
+                        )
                 continue
 
             except (RuntimeError, ValueError, TypeError) as e:

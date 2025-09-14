@@ -30,7 +30,10 @@ if api_key:
 
 
 class LLMRequestFailedError(Exception):
-    """Raised when LLM request fails after all retry attempts."""
+    def __init__(self, message: str, details: str | None = None):
+        super().__init__(message)
+        self.message = message
+        self.details = details
 
 
 MODELS_WITHOUT_STOP_WORDS = [
@@ -211,7 +214,7 @@ class LLM:
 
         return cached_messages
 
-    async def generate(
+    async def generate(  # noqa: PLR0912, PLR0915
         self,
         conversation_history: list[dict[str, Any]],
         scan_id: str | None = None,
@@ -255,8 +258,50 @@ class LLM:
                 tool_invocations=tool_invocations if tool_invocations else None,
             )
 
+        except litellm.RateLimitError as e:
+            raise LLMRequestFailedError("LLM request failed: Rate limit exceeded", str(e)) from e
+        except litellm.AuthenticationError as e:
+            raise LLMRequestFailedError("LLM request failed: Invalid API key", str(e)) from e
+        except litellm.NotFoundError as e:
+            raise LLMRequestFailedError("LLM request failed: Model not found", str(e)) from e
+        except litellm.ContextWindowExceededError as e:
+            raise LLMRequestFailedError("LLM request failed: Context too long", str(e)) from e
+        except litellm.ContentPolicyViolationError as e:
+            raise LLMRequestFailedError(
+                "LLM request failed: Content policy violation", str(e)
+            ) from e
+        except litellm.ServiceUnavailableError as e:
+            raise LLMRequestFailedError("LLM request failed: Service unavailable", str(e)) from e
+        except litellm.Timeout as e:
+            raise LLMRequestFailedError("LLM request failed: Request timed out", str(e)) from e
+        except litellm.UnprocessableEntityError as e:
+            raise LLMRequestFailedError("LLM request failed: Unprocessable entity", str(e)) from e
+        except litellm.InternalServerError as e:
+            raise LLMRequestFailedError("LLM request failed: Internal server error", str(e)) from e
+        except litellm.APIConnectionError as e:
+            raise LLMRequestFailedError("LLM request failed: Connection error", str(e)) from e
+        except litellm.UnsupportedParamsError as e:
+            raise LLMRequestFailedError("LLM request failed: Unsupported parameters", str(e)) from e
+        except litellm.BudgetExceededError as e:
+            raise LLMRequestFailedError("LLM request failed: Budget exceeded", str(e)) from e
+        except litellm.APIResponseValidationError as e:
+            raise LLMRequestFailedError(
+                "LLM request failed: Response validation error", str(e)
+            ) from e
+        except litellm.JSONSchemaValidationError as e:
+            raise LLMRequestFailedError(
+                "LLM request failed: JSON schema validation error", str(e)
+            ) from e
+        except litellm.InvalidRequestError as e:
+            raise LLMRequestFailedError("LLM request failed: Invalid request", str(e)) from e
+        except litellm.BadRequestError as e:
+            raise LLMRequestFailedError("LLM request failed: Bad request", str(e)) from e
+        except litellm.APIError as e:
+            raise LLMRequestFailedError("LLM request failed: API error", str(e)) from e
+        except litellm.OpenAIError as e:
+            raise LLMRequestFailedError("LLM request failed: OpenAI error", str(e)) from e
         except Exception as e:
-            raise LLMRequestFailedError("LLM request failed after all retry attempts") from e
+            raise LLMRequestFailedError(f"LLM request failed: {type(e).__name__}", str(e)) from e
 
     @property
     def usage_stats(self) -> dict[str, dict[str, int | float]]:
