@@ -48,8 +48,23 @@ def validate_environment() -> None:
     if not os.getenv("STRIX_LLM"):
         missing_required_vars.append("STRIX_LLM")
 
+    has_base_url = any(
+        [
+            os.getenv("LLM_API_BASE"),
+            os.getenv("OPENAI_API_BASE"),
+            os.getenv("LITELLM_BASE_URL"),
+            os.getenv("OLLAMA_API_BASE"),
+        ]
+    )
+
     if not os.getenv("LLM_API_KEY"):
-        missing_required_vars.append("LLM_API_KEY")
+        if not has_base_url:
+            missing_required_vars.append("LLM_API_KEY")
+        else:
+            missing_optional_vars.append("LLM_API_KEY")
+
+    if not has_base_url:
+        missing_optional_vars.append("LLM_API_BASE")
 
     if not os.getenv("PERPLEXITY_API_KEY"):
         missing_optional_vars.append("PERPLEXITY_API_KEY")
@@ -65,40 +80,72 @@ def validate_environment() -> None:
             error_text.append(" is not set\n", style="white")
 
         if missing_optional_vars:
-            error_text.append(
-                "\nOptional (but recommended) environment variables:\n", style="dim white"
-            )
+            error_text.append("\nOptional environment variables:\n", style="dim white")
             for var in missing_optional_vars:
                 error_text.append(f"• {var}", style="dim yellow")
                 error_text.append(" is not set\n", style="dim white")
 
         error_text.append("\nRequired environment variables:\n", style="white")
-        error_text.append("• ", style="white")
-        error_text.append("STRIX_LLM", style="bold cyan")
-        error_text.append(
-            " - Model name to use with litellm (e.g., 'openai/gpt-5')\n",
-            style="white",
-        )
-        error_text.append("• ", style="white")
-        error_text.append("LLM_API_KEY", style="bold cyan")
-        error_text.append(" - API key for the LLM provider\n", style="white")
+        for var in missing_required_vars:
+            if var == "STRIX_LLM":
+                error_text.append("• ", style="white")
+                error_text.append("STRIX_LLM", style="bold cyan")
+                error_text.append(
+                    " - Model name to use with litellm (e.g., 'openai/gpt-5')\n",
+                    style="white",
+                )
+            elif var == "LLM_API_KEY":
+                error_text.append("• ", style="white")
+                error_text.append("LLM_API_KEY", style="bold cyan")
+                error_text.append(
+                    " - API key for the LLM provider (required for cloud providers)\n",
+                    style="white",
+                )
 
         if missing_optional_vars:
             error_text.append("\nOptional environment variables:\n", style="white")
-            error_text.append("• ", style="white")
-            error_text.append("PERPLEXITY_API_KEY", style="bold cyan")
-            error_text.append(
-                " - API key for Perplexity AI web search (enables real-time research)\n",
-                style="white",
-            )
+            for var in missing_optional_vars:
+                if var == "LLM_API_KEY":
+                    error_text.append("• ", style="white")
+                    error_text.append("LLM_API_KEY", style="bold cyan")
+                    error_text.append(" - API key for the LLM provider\n", style="white")
+                elif var == "LLM_API_BASE":
+                    error_text.append("• ", style="white")
+                    error_text.append("LLM_API_BASE", style="bold cyan")
+                    error_text.append(
+                        " - Custom API base URL if using local models (e.g., Ollama, LMStudio)\n",
+                        style="white",
+                    )
+                elif var == "PERPLEXITY_API_KEY":
+                    error_text.append("• ", style="white")
+                    error_text.append("PERPLEXITY_API_KEY", style="bold cyan")
+                    error_text.append(
+                        " - API key for Perplexity AI web search (enables real-time research)\n",
+                        style="white",
+                    )
 
         error_text.append("\nExample setup:\n", style="white")
         error_text.append("export STRIX_LLM='openai/gpt-5'\n", style="dim white")
-        error_text.append("export LLM_API_KEY='your-api-key-here'\n", style="dim white")
+
+        if "LLM_API_KEY" in missing_required_vars:
+            error_text.append("export LLM_API_KEY='your-api-key-here'\n", style="dim white")
+
         if missing_optional_vars:
-            error_text.append(
-                "export PERPLEXITY_API_KEY='your-perplexity-key-here'", style="dim white"
-            )
+            for var in missing_optional_vars:
+                if var == "LLM_API_KEY":
+                    error_text.append(
+                        "export LLM_API_KEY='your-api-key-here'  # optional with local models\n",
+                        style="dim white",
+                    )
+                elif var == "LLM_API_BASE":
+                    error_text.append(
+                        "export LLM_API_BASE='http://localhost:11434'  # needed for local models only\n",
+                        style="dim white",
+                    )
+                elif var == "PERPLEXITY_API_KEY":
+                    error_text.append(
+                        "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
+                    )
 
         panel = Panel(
             error_text,
@@ -151,6 +198,15 @@ async def warm_up_llm() -> None:
 
         if api_key:
             litellm.api_key = api_key
+
+        api_base = (
+            os.getenv("LLM_API_BASE")
+            or os.getenv("OPENAI_API_BASE")
+            or os.getenv("LITELLM_BASE_URL")
+            or os.getenv("OLLAMA_API_BASE")
+        )
+        if api_base:
+            litellm.api_base = api_base
 
         test_messages = [
             {"role": "system", "content": "You are a helpful assistant."},
