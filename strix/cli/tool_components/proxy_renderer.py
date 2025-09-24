@@ -64,7 +64,7 @@ class ViewRequestRenderer(BaseToolRenderer):
 
         part = args.get("part", "request")
 
-        header = f"👀 [bold #06b6d4]Viewing {part}[/]"
+        header = f"👀 [bold #06b6d4]Viewing {cls.escape_markup(part)}[/]"
 
         if result and isinstance(result, dict):
             if "content" in result:
@@ -107,7 +107,7 @@ class SendRequestRenderer(BaseToolRenderer):
         method = args.get("method", "GET")
         url = args.get("url", "")
 
-        header = f"📤 [bold #06b6d4]Sending {method}[/]"
+        header = f"📤 [bold #06b6d4]Sending {cls.escape_markup(method)}[/]"
 
         if result and isinstance(result, dict):
             status_code = result.get("status_code")

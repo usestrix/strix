@@ -27,7 +27,7 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
             if severity:
                 severity_color = cls._get_severity_color(severity.lower())
                 content_parts.append(
-                    f"  [dim]Severity: [{severity_color}]{severity.upper()}[/{severity_color}][/]"
+                    f"  [dim]Severity: [{severity_color}]{cls.escape_markup(severity.upper())}[/{severity_color}][/]"
                 )
 
             if content:

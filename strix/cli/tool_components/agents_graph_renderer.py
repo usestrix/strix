@@ -31,7 +31,7 @@ class CreateAgentRenderer(BaseToolRenderer):
         task = args.get("task", "")
         name = args.get("name", "Agent")
 
-        header = f"🤖 [bold #fbbf24]Creating {name}[/]"
+        header = f"🤖 [bold #fbbf24]Creating {cls.escape_markup(name)}[/]"
 
         if task:
             task_display = task[:400] + "..." if len(task) > 400 else task

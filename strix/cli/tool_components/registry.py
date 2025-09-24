@@ -54,7 +54,7 @@ def _render_default_tool_widget(tool_data: dict[str, Any]) -> Static:
 
     status_text = BaseToolRenderer.get_status_icon(status)
 
-    header = f"→ Using tool [bold blue]{tool_name}[/]"
+    header = f"→ Using tool [bold blue]{BaseToolRenderer.escape_markup(tool_name)}[/]"
     content_parts = [header]
 
     args_str = BaseToolRenderer.format_args(args)

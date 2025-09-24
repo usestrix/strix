@@ -9,6 +9,8 @@ import threading
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from rich.markup import escape as rich_escape
+from rich.text import Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -24,7 +26,7 @@ from strix.llm.config import LLMConfig
 
 
 def escape_markup(text: str) -> str:
-    return text.replace("[", "\\[").replace("]", "\\]")
+    return rich_escape(text)
 
 
 class ChatTextArea(TextArea):  # type: ignore[misc]
@@ -483,7 +485,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
                 self._displayed_events = current_event_ids
 
         chat_display = self.query_one("#chat_display", Static)
-        chat_display.update(content)
+        self._update_static_content_safe(chat_display, content)
 
         chat_display.set_classes(css_class)
 
@@ -546,11 +548,18 @@ class StrixCLIApp(App):  # type: ignore[misc]
                 self._safe_widget_operation(keymap_indicator.update, "")
                 self._safe_widget_operation(status_display.remove_class, "hidden")
             elif status == "llm_failed":
-                self._safe_widget_operation(status_text.update, "[red]LLM request failed[/red]")
+                error_msg = agent_data.get("error_message", "")
+                display_msg = (
+                    f"[red]{escape_markup(error_msg)}[/red]"
+                    if error_msg
+                    else "[red]LLM request failed[/red]"
+                )
+                self._safe_widget_operation(status_text.update, display_msg)
                 self._safe_widget_operation(
                     keymap_indicator.update, "[dim]Send message to retry[/dim]"
                 )
                 self._safe_widget_operation(status_display.remove_class, "hidden")
+                self._stop_dot_animation()
             elif status == "waiting":
                 animated_text = self._get_animated_waiting_text(self.selected_agent_id)
                 self._safe_widget_operation(status_text.update, animated_text)
@@ -633,7 +642,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
 
         for agent_id, agent_data in self.tracer.agents.items():
             status = agent_data.get("status", "running")
-            if status in ["running", "waiting", "llm_failed"]:
+            if status in ["running", "waiting"]:
                 has_active_agents = True
                 current_dots = self._agent_dot_states.get(agent_id, 0)
                 self._agent_dot_states[agent_id] = (current_dots + 1) % 4
@@ -644,7 +653,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
             and self.selected_agent_id in self.tracer.agents
         ):
             selected_status = self.tracer.agents[self.selected_agent_id].get("status", "running")
-            if selected_status in ["running", "waiting", "llm_failed"]:
+            if selected_status in ["running", "waiting"]:
                 self._update_agent_status_display()
 
         if not has_active_agents:
@@ -652,7 +661,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
             for agent_id in list(self._agent_dot_states.keys()):
                 if agent_id not in self.tracer.agents or self.tracer.agents[agent_id].get(
                     "status"
-                ) not in ["running", "waiting", "llm_failed"]:
+                ) not in ["running", "waiting"]:
                     del self._agent_dot_states[agent_id]
 
     def _gather_agent_events(self, agent_id: str) -> list[dict[str, Any]]:
@@ -900,6 +909,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
             "reporting_action": "#ea580c",
             "scan_start_info": "#22c55e",
             "subagent_start_info": "#22c55e",
+            "llm_error_details": "#dc2626",
         }
 
         color = tool_colors.get(tool_name, "#737373")
@@ -911,6 +921,14 @@ class StrixCLIApp(App):  # type: ignore[misc]
         if renderer:
             widget = renderer.render(tool_data)
             content = str(widget.renderable)
+        elif tool_name == "llm_error_details":
+            lines = ["[red]✗ LLM Request Failed[/red]"]
+            if args.get("details"):
+                details = args["details"]
+                if len(details) > 300:
+                    details = details[:297] + "..."
+                lines.append(f"[dim]Details:[/dim] {escape_markup(details)}")
+            content = "\n".join(lines)
         else:
             status_icons = {
                 "running": "[yellow]●[/yellow]",
@@ -1126,6 +1144,19 @@ class StrixCLIApp(App):  # type: ignore[misc]
             return False
         else:
             return True
+
+    def _update_static_content_safe(self, widget: Static, content: str) -> None:
+        try:
+            widget.update(content)
+        except Exception:  # noqa: BLE001
+            try:
+                safe_text = Text.from_markup(content)
+                widget.update(safe_text)
+            except Exception:  # noqa: BLE001
+                import re
+
+                plain_text = re.sub(r"\[.*?\]", "", content)
+                widget.update(plain_text)
 
 
 async def run_strix_cli(args: argparse.Namespace) -> None:

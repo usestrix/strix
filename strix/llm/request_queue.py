@@ -4,11 +4,25 @@ import threading
 import time
 from typing import Any
 
+import litellm
 from litellm import ModelResponse, completion
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 
 logger = logging.getLogger(__name__)
+
+
+def should_retry_exception(exception: Exception) -> bool:
+    status_code = None
+
+    if hasattr(exception, "status_code"):
+        status_code = exception.status_code
+    elif hasattr(exception, "response") and hasattr(exception.response, "status_code"):
+        status_code = exception.response.status_code
+
+    if status_code is not None:
+        return bool(litellm._should_retry(status_code))
+    return True
 
 
 class LLMRequestQueue:
@@ -40,6 +54,7 @@ class LLMRequestQueue:
     @retry(  # type: ignore[misc]
         stop=stop_after_attempt(5),
         wait=wait_exponential(multiplier=2, min=1, max=30),
+        retry=retry_if_exception(should_retry_exception),
         reraise=True,
     )
     async def _reliable_request(self, completion_args: dict[str, Any]) -> ModelResponse:

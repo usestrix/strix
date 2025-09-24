@@ -111,7 +111,7 @@ class TerminalRenderer(BaseToolRenderer):
         )
 
         if is_special:
-            return f"{terminal_icon} [#ef4444]{command}[/]"
+            return f"{terminal_icon} [#ef4444]{cls.escape_markup(command)}[/]"
 
         if is_input:
             formatted_command = cls._format_command_display(command)

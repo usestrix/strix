@@ -76,7 +76,7 @@ class BrowserRenderer(BaseToolRenderer):
                     "double_click": "double clicking",
                     "hover": "hovering",
                 }
-                message = action_words[action]
+                message = cls.escape_markup(action_words[action])
 
             return f"{browser_icon} [#06b6d4]{message}[/]"
 
@@ -97,9 +97,9 @@ class BrowserRenderer(BaseToolRenderer):
         }
 
         if action in simple_actions:
-            return f"{browser_icon} [#06b6d4]{simple_actions[action]}[/]"
+            return f"{browser_icon} [#06b6d4]{cls.escape_markup(simple_actions[action])}[/]"
 
-        return f"{browser_icon} [#06b6d4]{action}[/]"
+        return f"{browser_icon} [#06b6d4]{cls.escape_markup(action)}[/]"
 
     @classmethod
     def _format_url(cls, url: str) -> str:

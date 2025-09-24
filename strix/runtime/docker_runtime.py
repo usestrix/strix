@@ -320,7 +320,7 @@ class DockerRuntime(AbstractRuntime):
         import httpx
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx.AsyncClient(trust_env=False) as client:
                 response = await client.post(
                     f"{api_url}/register_agent",
                     params={"agent_id": agent_id},
@@ -337,7 +337,7 @@ class DockerRuntime(AbstractRuntime):
             container = self.client.containers.get(container_id)
             container.reload()
 
-            host = "localhost"
+            host = "127.0.0.1"
             if "DOCKER_HOST" in os.environ:
                 docker_host = os.environ["DOCKER_HOST"]
                 if "://" in docker_host:

