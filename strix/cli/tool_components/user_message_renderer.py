@@ -22,9 +22,9 @@ class UserMessageRenderer(BaseToolRenderer):
             content = content[:297] + "..."
 
         lines = content.split("\n")
-        bordered_lines = [f"[#3b82f6]▍[/#3b82f6] {line}" for line in lines]
+        bordered_lines = [f"[#3b82f6]▍[/] {line}" for line in lines]
         bordered_content = "\n".join(bordered_lines)
-        formatted_content = f"[#3b82f6]▍[/#3b82f6] [bold]You:[/]\n{bordered_content}"
+        formatted_content = f"[#3b82f6]▍[/] [bold]You:[/]\n{bordered_content}"
 
         css_classes = " ".join(cls.css_classes)
         return Static(formatted_content, classes=css_classes)
@@ -38,6 +38,6 @@ class UserMessageRenderer(BaseToolRenderer):
             content = content[:297] + "..."
 
         lines = content.split("\n")
-        bordered_lines = [f"[#3b82f6]▍[/#3b82f6] {line}" for line in lines]
+        bordered_lines = [f"[#3b82f6]▍[/] {line}" for line in lines]
         bordered_content = "\n".join(bordered_lines)
-        return f"[#3b82f6]▍[/#3b82f6] [bold]You:[/]\n{bordered_content}"
+        return f"[#3b82f6]▍[/] [bold]You:[/]\n{bordered_content}"

@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any, ClassVar
 
+from rich.markup import escape as rich_escape
 from textual.widgets import Static
 
 
@@ -16,7 +17,7 @@ class BaseToolRenderer(ABC):
 
     @classmethod
     def escape_markup(cls, text: str) -> str:
-        return text.replace("[", "\\[").replace("]", "\\]")
+        return rich_escape(text)
 
     @classmethod
     def format_args(cls, args: dict[str, Any], max_length: int = 500) -> str:
@@ -47,10 +48,10 @@ class BaseToolRenderer(ABC):
     @classmethod
     def get_status_icon(cls, status: str) -> str:
         status_icons = {
-            "running": "[#f59e0b]●[/#f59e0b] In progress...",
-            "completed": "[#22c55e]✓[/#22c55e] Done",
-            "failed": "[#dc2626]✗[/#dc2626] Failed",
-            "error": "[#dc2626]✗[/#dc2626] Error",
+            "running": "[#f59e0b]●[/] In progress...",
+            "completed": "[#22c55e]✓[/] Done",
+            "failed": "[#dc2626]✗[/] Failed",
+            "error": "[#dc2626]✗[/] Error",
         }
         return status_icons.get(status, "[dim]○[/dim] Unknown")
 

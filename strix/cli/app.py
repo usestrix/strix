@@ -9,6 +9,8 @@ import threading
 from collections.abc import Callable
 from typing import Any, ClassVar
 
+from rich.markup import MarkupError
+from rich.markup import escape as rich_escape
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -24,7 +26,7 @@ from strix.llm.config import LLMConfig
 
 
 def escape_markup(text: str) -> str:
-    return text.replace("[", "\\[").replace("]", "\\]")
+    return rich_escape(text)
 
 
 class ChatTextArea(TextArea):  # type: ignore[misc]
@@ -483,7 +485,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
                 self._displayed_events = current_event_ids
 
         chat_display = self.query_one("#chat_display", Static)
-        chat_display.update(content)
+        self._update_static_content_safe(chat_display, content)
 
         chat_display.set_classes(css_class)
 
@@ -938,7 +940,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
             content = "\n".join(lines)
 
         lines = content.split("\n")
-        bordered_lines = [f"[{color}]▍[/{color}] {line}" for line in lines]
+        bordered_lines = [f"[{color}]▍[/] {line}" for line in lines]
         return "\n".join(bordered_lines)
 
     @on(Tree.NodeHighlighted)  # type: ignore[misc]
@@ -1126,6 +1128,15 @@ class StrixCLIApp(App):  # type: ignore[misc]
             return False
         else:
             return True
+
+    def _update_static_content_safe(self, widget: Static, content: str) -> None:
+        try:
+            widget.update(content)
+        except MarkupError:
+            try:
+                widget.update(rich_escape(content))
+            except Exception:
+                widget.update(rich_escape(str(content)))
 
 
 async def run_strix_cli(args: argparse.Namespace) -> None:

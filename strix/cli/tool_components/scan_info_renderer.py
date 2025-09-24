@@ -28,11 +28,11 @@ class ScanStartInfoRenderer(BaseToolRenderer):
     @classmethod
     def _build_target_display(cls, target: dict[str, Any]) -> str:
         if target_url := target.get("target_url"):
-            return f"[bold #22c55e]{target_url}[/]"
+            return f"[bold #22c55e]{cls.escape_markup(target_url)}[/]"
         if target_repo := target.get("target_repo"):
-            return f"[bold #22c55e]{target_repo}[/]"
+            return f"[bold #22c55e]{cls.escape_markup(target_repo)}[/]"
         if target_path := target.get("target_path"):
-            return f"[bold #22c55e]{target_path}[/]"
+            return f"[bold #22c55e]{cls.escape_markup(target_path)}[/]"
         return "[dim]unknown target[/dim]"
 
 
@@ -49,9 +49,9 @@ class SubagentStartInfoRenderer(BaseToolRenderer):
         name = args.get("name", "Unknown Agent")
         task = args.get("task", "")
 
-        content = f"🤖 Spawned subagent [bold #22c55e]{name}[/]"
+        content = f"🤖 Spawned subagent [bold #22c55e]{cls.escape_markup(name)}[/]"
         if task:
-            content += f"\n    Task: [dim]{task}[/dim]"
+            content += f"\n    Task: [dim]{cls.escape_markup(task)}[/dim]"
 
         css_classes = cls.get_css_classes(status)
         return Static(content, classes=css_classes)
