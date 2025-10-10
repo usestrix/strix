@@ -139,7 +139,8 @@ def validate_environment() -> None:
                     )
                 elif var == "LLM_API_BASE":
                     error_text.append(
-                        "export LLM_API_BASE='http://localhost:11434'  # needed for local models only\n",
+                        "export LLM_API_BASE='http://localhost:11434'  "
+                        "# needed for local models only\n",
                         style="dim white",
                     )
                 elif var == "PERPLEXITY_API_KEY":

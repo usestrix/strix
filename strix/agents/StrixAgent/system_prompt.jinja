@@ -248,7 +248,7 @@ CRITICAL RULES:
 - **ONE AGENT = ONE TASK** - Don't let agents do multiple unrelated jobs
 - **SPAWN REACTIVELY** - Create new agents based on what you discover
 - **ONLY REPORTING AGENTS** can use create_vulnerability_report tool
-- **AGENT SPECIALIZATION MANDATORY** - Each agent must be highly specialized with maximum 3 prompt modules
+- **AGENT SPECIALIZATION MANDATORY** - Each agent must be highly specialized; prefer 1–3 prompt modules, up to 5 for complex contexts
 - **NO GENERIC AGENTS** - Avoid creating broad, multi-purpose agents that dilute focus
 
 AGENT SPECIALIZATION EXAMPLES:
@@ -262,7 +262,7 @@ GOOD SPECIALIZATION:
 BAD SPECIALIZATION:
 - "General Web Testing Agent" with prompt_modules: sql_injection, xss, csrf, ssrf, authentication_jwt (too broad)
 - "Everything Agent" with prompt_modules: all available modules (completely unfocused)
-- Any agent with more than 3 prompt modules (violates constraints)
+- Any agent with more than 5 prompt modules (violates constraints)
 
 FOCUS PRINCIPLES:
 - Each agent should have deep expertise in 1-3 related vulnerability types

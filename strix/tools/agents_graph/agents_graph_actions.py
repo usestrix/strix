@@ -199,11 +199,11 @@ def create_agent(
         if prompt_modules:
             module_list = [m.strip() for m in prompt_modules.split(",") if m.strip()]
 
-        if len(module_list) > 3:
+        if len(module_list) > 5:
             return {
                 "success": False,
                 "error": (
-                    "Cannot specify more than 3 prompt modules for an agent "
+                    "Cannot specify more than 5 prompt modules for an agent "
                     "(use comma-separated format)"
                 ),
                 "agent_id": None,

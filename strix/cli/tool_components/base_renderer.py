@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from rich.markup import escape as rich_escape
 from textual.widgets import Static
@@ -17,7 +17,7 @@ class BaseToolRenderer(ABC):
 
     @classmethod
     def escape_markup(cls, text: str) -> str:
-        return rich_escape(text)
+        return cast("str", rich_escape(text))
 
     @classmethod
     def format_args(cls, args: dict[str, Any], max_length: int = 500) -> str:

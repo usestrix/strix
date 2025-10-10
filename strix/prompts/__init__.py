@@ -58,7 +58,7 @@ def generate_modules_description() -> str:
     modules_str = ", ".join(sorted_modules)
 
     description = (
-        f"List of prompt modules to load for this agent (max 3). Available modules: {modules_str}. "
+        f"List of prompt modules to load for this agent (max 5). Available modules: {modules_str}. "
     )
 
     example_modules = sorted_modules[:2]

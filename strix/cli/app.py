@@ -7,7 +7,7 @@ import signal
 import sys
 import threading
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import Any, ClassVar, cast
 
 from rich.markup import escape as rich_escape
 from rich.text import Text
@@ -26,7 +26,7 @@ from strix.llm.config import LLMConfig
 
 
 def escape_markup(text: str) -> str:
-    return rich_escape(text)
+    return cast("str", rich_escape(text))
 
 
 class ChatTextArea(TextArea):  # type: ignore[misc]

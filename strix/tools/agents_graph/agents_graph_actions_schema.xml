@@ -80,7 +80,7 @@ Only create a new agent if no existing agent is handling the specific task.</des
         <description>Whether the new agent should inherit parent's conversation history and context</description>
       </parameter>
       <parameter name="prompt_modules" type="string" required="false">
-        <description>Comma-separated list of prompt modules to use for the agent (MAXIMUM 3 modules allowed). Most agents should have at least one module in order to be useful. Agents should be highly specialized - use 1-3 related vulnerability modules only. {{DYNAMIC_MODULES_DESCRIPTION}}</description>
+        <description>Comma-separated list of prompt modules to use for the agent (MAXIMUM 5 modules allowed). Most agents should have at least one module in order to be useful. Agents should be highly specialized - use 1-3 related modules; up to 5 for complex contexts. {{DYNAMIC_MODULES_DESCRIPTION}}</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
@@ -114,7 +114,7 @@ Only create a new agent if no existing agent is handling the specific task.</des
   <parameter=prompt_modules>xss</parameter>
   </function>
 
-  # Example of maximum 3 related modules (borderline acceptable)
+  # Example of up to 5 related modules (borderline acceptable)
   <function=create_agent>
   <parameter=task>Test for server-side vulnerabilities including SSRF, XXE, and potential
               RCE vectors in file upload and XML processing endpoints.</parameter>

@@ -33,7 +33,7 @@ def _process_dynamic_content(content: str) -> str:
             logger.warning("Could not import prompts utilities for dynamic schema generation")
             content = content.replace(
                 "{{DYNAMIC_MODULES_DESCRIPTION}}",
-                "List of prompt modules to load for this agent (max 3). Module discovery failed.",
+                "List of prompt modules to load for this agent (max 5). Module discovery failed.",
             )
 
     return content
