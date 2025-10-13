@@ -1,168 +1,174 @@
 <csrf_vulnerability_guide>
-<title>CROSS-SITE REQUEST FORGERY (CSRF) - ADVANCED EXPLOITATION</title>
+<title>CROSS-SITE REQUEST FORGERY (CSRF)</title>
 
-<critical>CSRF forces authenticated users to execute unwanted actions, exploiting the trust a site has in the user's browser.</critical>
+<critical>CSRF abuses ambient authority (cookies, HTTP auth) across origins. Do not rely on CORS alone; enforce non-replayable tokens and strict origin checks for every state change.</critical>
+
+<scope>
+- Web apps with cookie-based sessions and HTTP auth
+- JSON/REST, GraphQL (GET/persisted queries), file upload endpoints
+- Authentication flows: login/logout, password/email change, MFA toggles
+- OAuth/OIDC: authorize, token, logout, disconnect/connect
+</scope>
+
+<methodology>
+1. Inventory all state-changing endpoints (including admin/staff) and note method, content-type, and whether they are reachable via top-level navigation or simple requests (no preflight).
+2. For each, determine session model (cookies with SameSite attrs, custom headers, tokens) and whether server enforces anti-CSRF tokens and Origin/Referer.
+3. Attempt preflightless delivery (form POST, text/plain, multipart/form-data) and top-level GET navigation.
+4. Validate across browsers; behavior differs by SameSite and navigation context.
+</methodology>
 
 <high_value_targets>
-- Password/email change forms
-- Money transfer/payment functions
-- Account deletion/deactivation
-- Permission/role changes
-- API key generation/regeneration
-- OAuth connection/disconnection
-- 2FA enable/disable
-- Privacy settings modification
-- Admin functions
-- File uploads/deletions
+- Credentials and profile changes (email/password/phone)
+- Payment and money movement, subscription/plan changes
+- API key/secret generation, PAT rotation, SSH keys
+- 2FA/TOTP enable/disable; backup codes; device trust
+- OAuth connect/disconnect; logout; account deletion
+- Admin/staff actions and impersonation flows
+- File uploads/deletes; access control changes
 </high_value_targets>
 
 <discovery_techniques>
-<token_analysis>
-Common token names: csrf_token, csrftoken, _csrf, authenticity_token, __RequestVerificationToken, X-CSRF-TOKEN
+<session_and_cookies>
+- Inspect cookies: HttpOnly, Secure, SameSite (Strict/Lax/None). Note that Lax allows cookies on top-level cross-site GET; None requires Secure.
+- Determine if Authorization headers or bearer tokens are used (generally not CSRF-prone) versus cookies (CSRF-prone).
+</session_and_cookies>
 
-Check if tokens are:
-- Actually validated (remove and test)
-- Tied to user session
-- Reusable across requests
-- Present in GET requests
-- Predictable or static
-</token_analysis>
+<token_and_header_checks>
+- Locate anti-CSRF tokens (hidden inputs, meta tags, custom headers). Test removal, reuse across requests, reuse across sessions, and binding to method/path.
+- Verify server checks Origin and/or Referer on state changes; test null/missing and cross-origin values.
+</token_and_header_checks>
 
-<http_methods>
-- Test if POST endpoints accept GET
-- Try method override headers: _method, X-HTTP-Method-Override
-- Check if PUT/DELETE lack protection
-</http_methods>
+<method_and_content_types>
+- Confirm whether GET, HEAD, or OPTIONS perform state changes.
+- Try simple content-types to avoid preflight: application/x-www-form-urlencoded, multipart/form-data, text/plain.
+- Probe parsers that auto-coerce text/plain or form-encoded bodies into JSON.
+</method_and_content_types>
+
+<cors_profile>
+- Identify Access-Control-Allow-Origin and -Credentials. Overly permissive CORS is not a CSRF fix and can turn CSRF into data exfiltration.
+- Test per-endpoint CORS differences; preflight vs simple request behavior can diverge.
+</cors_profile>
 </discovery_techniques>
 
 <exploitation_techniques>
-<basic_forms>
-HTML form auto-submit:
-<form action="https://target.com/transfer" method="POST">
-  <input name="amount" value="1000">
-  <input name="to" value="attacker">
-</form>
-<script>document.forms[0].submit()</script>
-</basic_forms>
+<navigation_csrf>
+- Auto-submitting form to target origin; works when cookies are sent and no token/origin checks are enforced.
+- Top-level GET navigation can trigger state if server misuses GET or links actions to GET callbacks.
+</navigation_csrf>
+
+<simple_ct_csrf>
+- application/x-www-form-urlencoded and multipart/form-data POSTs do not require preflight; prefer these encodings.
+- text/plain form bodies can slip through validators and be parsed server-side.
+</simple_ct_csrf>
 
 <json_csrf>
-For JSON endpoints:
-<form enctype="text/plain" action="https://target.com/api">
-  <input name='{% raw %}{"amount":1000,"to":"attacker","ignore":"{% endraw %}' value='"}'>
-</form>
+- If server parses JSON from text/plain or form-encoded bodies, craft parameters to reconstruct JSON server-side.
+- Some frameworks accept JSON keys via form fields (e.g., {% raw %}data[foo]=bar{% endraw %}) or treat duplicate keys leniently.
 </json_csrf>
 
-<multipart_csrf>
-For file uploads:
-Use XMLHttpRequest with credentials
-Generate multipart/form-data boundaries
-</multipart_csrf>
+<login_logout_csrf>
+- Force logout to clear CSRF tokens, then chain login CSRF to bind victim to attacker’s account.
+- Login CSRF: submit attacker credentials to victim’s browser; later actions occur under attacker’s account.
+</login_logout_csrf>
+
+<oauth_oidc_flows>
+- Abuse authorize/logout endpoints reachable via GET or form POST without origin checks; exploit relaxed SameSite on top-level navigations.
+- Open redirects or loose redirect_uri validation can chain with CSRF to force unintended authorizations.
+</oauth_oidc_flows>
+
+<file_and_action_endpoints>
+- File upload/delete often lack token checks; forge multipart requests to modify storage.
+- Admin actions exposed as simple POST links are frequently CSRFable.
+</file_and_action_endpoints>
 </exploitation_techniques>
 
-<bypass_techniques>
-<token_bypasses>
-- Null token: remove parameter entirely
-- Empty token: csrf_token=
-- Token from own account: use your valid token
-- Token fixation: force known token value
-- Method interchange: GET token used for POST
-</token_bypasses>
-
-<header_bypasses>
-- Referer bypass: use data: URI, about:blank
-- Origin bypass: null origin via sandboxed iframe
-- CORS misconfigurations
-</header_bypasses>
-
-<content_type_tricks>
-- Change multipart to application/x-www-form-urlencoded
-- Use text/plain for JSON endpoints
-- Exploit parsers that accept multiple formats
-</content_type_tricks>
-</bypass_techniques>
-
 <advanced_techniques>
-<subdomain_csrf>
-- XSS on subdomain = CSRF on main domain
-- Cookie scope abuse (domain=.example.com)
-- Subdomain takeover for CSRF
-</subdomain_csrf>
+<samesite_nuance>
+- Lax-by-default cookies are sent on top-level cross-site GET but not POST; exploit GET state changes and GET-based confirmation steps.
+- Legacy or nonstandard clients may ignore SameSite; validate across browsers/devices.
+</samesite_nuance>
 
-<csrf_login>
-- Force victim to login as attacker
-- Plant backdoors in victim's account
-- Access victim's future data
-</csrf_login>
+<origin_referer_obfuscation>
+- Sandbox/iframes can produce null Origin; some frameworks incorrectly accept null.
+- about:blank/data: URLs alter Referer; ensure server requires explicit Origin/Referer match.
+</origin_referer_obfuscation>
 
-<csrf_logout>
-- Force logout → login CSRF → account takeover
-</csrf_logout>
-
-<double_submit_csrf>
-If using double-submit cookies:
-- Set cookie via XSS/subdomain
-- Cookie injection via header injection
-- Cookie tossing attacks
-</double_submit_csrf>
-</advanced_techniques>
-
-<special_contexts>
-<websocket_csrf>
-- Cross-origin WebSocket hijacking
-- Steal tokens from WebSocket messages
-</websocket_csrf>
+<method_override>
+- Backends honoring _method or X-HTTP-Method-Override may allow destructive actions through a simple POST.
+</method_override>
 
 <graphql_csrf>
-- GET requests with query parameter
-- Batched mutations
-- Subscription abuse
+- If queries/mutations are allowed via GET or persisted queries, exploit top-level navigation with encoded payloads.
+- Batched operations may hide mutations within a nominally safe request.
 </graphql_csrf>
 
-<api_csrf>
-- Bearer tokens in URL parameters
-- API keys in GET requests
-- Insecure CORS policies
-</api_csrf>
+<websocket_csrf>
+- Browsers send cookies on WebSocket handshake; enforce Origin checks server-side. Without them, cross-site pages can open authenticated sockets and issue actions.
+</websocket_csrf>
+</advanced_techniques>
+
+<bypass_techniques>
+<token_weaknesses>
+- Accepting missing/empty tokens; tokens not tied to session, user, or path; tokens reused indefinitely; tokens in GET.
+- Double-submit cookie without Secure/HttpOnly, or with predictable token sources.
+</token_weaknesses>
+
+<content_type_switching>
+- Switch between form, multipart, and text/plain to reach different code paths and validators.
+- Use duplicate keys and array shapes to confuse parsers.
+</content_type_switching>
+
+<header_manipulation>
+- Strip Referer via meta refresh or navigate from about:blank; test null Origin acceptance.
+- Leverage misconfigured CORS to add custom headers that servers mistakenly treat as CSRF tokens.
+</header_manipulation>
+</bypass_techniques>
+
+<special_contexts>
+<mobile_spa>
+- Deep links and embedded WebViews may auto-send cookies; trigger actions via crafted intents/links.
+- SPAs that rely solely on bearer tokens are less CSRF-prone, but hybrid apps mixing cookies and APIs can still be vulnerable.
+</mobile_spa>
+
+<integrations>
+- Webhooks and back-office tools sometimes expose state-changing GETs intended for staff; confirm CSRF defenses there too.
+</integrations>
 </special_contexts>
 
+<chaining_attacks>
+- CSRF + IDOR: force actions on other users' resources once references are known.
+- CSRF + Clickjacking: guide user interactions to bypass UI confirmations.
+- CSRF + OAuth mix-up: bind victim sessions to unintended clients.
+</chaining_attacks>
+
 <validation>
-To confirm CSRF:
-1. Create working proof-of-concept
-2. Test across browsers
-3. Verify action completes successfully
-4. No user interaction required (beyond visiting page)
-5. Works with active session
+1. Demonstrate a cross-origin page that triggers a state change without user interaction beyond visiting.
+2. Show that removing the anti-CSRF control (token/header) is accepted, or that Origin/Referer are not verified.
+3. Prove behavior across at least two browsers or contexts (top-level nav vs XHR/fetch).
+4. Provide before/after state evidence for the same account.
+5. If defenses exist, show the exact condition under which they are bypassed (content-type, method override, null Origin).
 </validation>
 
 <false_positives>
-NOT CSRF if:
-- Requires valid CSRF token
-- SameSite cookies properly configured
-- Proper origin/referer validation
-- User interaction required
-- Only affects non-sensitive actions
+- Token verification present and required; Origin/Referer enforced consistently.
+- No cookies sent on cross-site requests (SameSite=Strict, no HTTP auth) and no state change via simple requests.
+- Only idempotent, non-sensitive operations affected.
 </false_positives>
 
 <impact>
-- Account takeover
-- Financial loss
-- Data modification/deletion
-- Privilege escalation
-- Privacy violations
+- Account state changes (email/password/MFA), session hijacking via login CSRF, financial operations, administrative actions.
+- Durable authorization changes (role/permission flips, key rotations) and data loss.
 </impact>
 
 <pro_tips>
-1. Check all state-changing operations
-2. Test file upload endpoints
-3. Look for token disclosure in URLs
-4. Chain with XSS for token theft
-5. Check mobile API endpoints
-6. Test CORS configurations
-7. Verify SameSite cookie settings
-8. Look for method override possibilities
-9. Test WebSocket endpoints
-10. Document clear attack scenario
+1. Prefer preflightless vectors (form-encoded, multipart, text/plain) and top-level GET if available.
+2. Test login/logout, OAuth connect/disconnect, and account linking first.
+3. Validate Origin/Referer behavior explicitly; do not assume frameworks enforce them.
+4. Toggle SameSite and observe differences across navigation vs XHR.
+5. For GraphQL, attempt GET queries or persisted queries that carry mutations.
+6. Always try method overrides and parser differentials.
+7. Combine with clickjacking when visual confirmations block CSRF.
 </pro_tips>
 
-<remember>Modern CSRF requires creativity - look for token leaks, chain with other vulnerabilities, and focus on high-impact actions. SameSite cookies are not always properly configured.</remember>
+<remember>CSRF is eliminated only when state changes require a secret the attacker cannot supply and the server verifies the caller’s origin. Tokens and Origin checks must hold across methods, content-types, and transports.</remember>
 </csrf_vulnerability_guide>

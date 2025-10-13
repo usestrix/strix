@@ -1,194 +1,164 @@
 <race_conditions_guide>
-<title>RACE CONDITIONS - TIME-OF-CHECK TIME-OF-USE (TOCTOU) MASTERY</title>
+<title>RACE CONDITIONS</title>
 
-<critical>Race conditions lead to financial fraud, privilege escalation, and business logic bypass. Often overlooked but devastating.</critical>
+<critical>Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, and privilege errors. Treat every read–modify–write and multi-step workflow as adversarially concurrent.</critical>
 
-<high_value_targets>
-- Payment/checkout processes
-- Coupon/discount redemption
-- Account balance operations
-- Voting/rating systems
-- Limited resource allocation
-- User registration (username claims)
-- Password reset flows
-- File upload/processing
-- API rate limits
-- Loyalty points/rewards
-- Stock/inventory management
-- Withdrawal functions
-</high_value_targets>
+<scope>
+- Read–modify–write sequences without atomicity or proper locking
+- Multi-step operations (check → reserve → commit) with gaps between phases
+- Cross-service workflows (sagas, async jobs) with eventual consistency
+- Rate limits, quotas, and idempotency controls implemented at the edge only
+</scope>
+
+<methodology>
+1. Model invariants for each workflow (e.g., conservation of value, uniqueness, maximums). Identify reads and writes and where they occur (service, DB, cache).
+2. Establish a baseline with single requests. Then issue concurrent requests with identical inputs. Observe deltas in state and responses.
+3. Scale and synchronize: ramp up parallelism, switch transports (HTTP/1.1, HTTP/2), and align request timing (last-byte sync, warmed connections).
+4. Repeat across channels (web, API, GraphQL, WebSocket) and roles. Confirm durability and reproducibility.
+</methodology>
 
 <discovery_techniques>
 <identify_race_windows>
-Multi-step processes with gaps between:
-1. Check phase (validation/verification)
-2. Use phase (action execution)
-3. Write phase (state update)
-
-Look for:
-- "Check balance then deduct"
-- "Verify coupon then apply"
-- "Check inventory then purchase"
-- "Validate token then consume"
+- Look for explicit sequences in code or docs: "check balance then deduct", "verify coupon then apply", "check inventory then purchase", "validate token then consume"
+- Watch for optimistic concurrency markers: ETag/If-Match, version fields, updatedAt checks; test if they are enforced
+- Examine idempotency-key support: scope (path vs principal), TTL, and persistence (cache vs DB)
+- Map cross-service steps: when is state written vs published, and what retries/compensations exist
 </identify_race_windows>
 
-<detection_methods>
-- Parallel requests with same data
-- Rapid sequential requests
-- Monitor for inconsistent states
-- Database transaction analysis
-- Response timing variations
-</detection_methods>
+<signals>
+- Sequential request fails but parallel succeeds
+- Duplicate rows, negative counters, over-issuance, or inconsistent aggregates
+- Distinct response shapes/timings for simultaneous vs sequential requests
+- Audit logs out of order; multiple 2xx for the same intent; missing or duplicate correlation IDs
+</signals>
+
+<surface_map>
+- Payments: auth/capture/refund/void; credits/loyalty points; gift cards
+- Coupons/discounts: single-use codes, stacking checks, per-user limits
+- Quotas/limits: API usage, inventory reservations, seat counts, vote limits
+- Auth flows: password reset/OTP consumption, session minting, device trust
+- File/object storage: multi-part finalize, version writes, share-link generation
+- Background jobs: export/import create/finalize endpoints; job cancellation/approve
+- GraphQL mutations and batch operations; WebSocket actions
+</surface_map>
 </discovery_techniques>
 
-<exploitation_tools>
-<turbo_intruder>
-Python script for Burp Suite Turbo Intruder:
-```python
-def queueRequests(target, wordlists):
-    engine = RequestEngine(endpoint=target.endpoint,
-                          concurrentConnections=30,
-                          requestsPerConnection=100,
-                          pipeline=False)
+<exploitation_techniques>
+<request_synchronization>
+- HTTP/2 multiplexing for tight concurrency; send many requests on warmed connections
+- Last-byte synchronization: hold requests open and release final byte simultaneously
+- Connection warming: pre-establish sessions, cookies, and TLS to remove jitter
+</request_synchronization>
 
-    for i in range(30):
-        engine.queue(target.req, gate='race1')
+<idempotency_and_dedup_bypass>
+- Reuse the same idempotency key across different principals/paths if scope is inadequate
+- Hit the endpoint before the idempotency store is written (cache-before-commit windows)
+- App-level dedup drops only the response while side effects (emails/credits) still occur
+</idempotency_and_dedup_bypass>
 
-    engine.openGate('race1')
-```
-</turbo_intruder>
+<atomicity_gaps>
+- Lost update: read-modify-write increments without atomic DB statements
+- Partial two-phase workflows: success committed before validation completes
+- Unique checks done outside a unique index/upsert: create duplicates under load
+</atomicity_gaps>
 
-<manual_methods>
-- Browser developer tools (multiple tabs)
-- curl with & for background: curl url & curl url &
-- Python asyncio/aiohttp
-- Go routines
-- Node.js Promise.all()
-</manual_methods>
-</exploitation_tools>
+<cross_service_races>
+- Saga/compensation timing gaps: execute compensation without preventing the original success path
+- Eventual consistency windows: act in Service B before Service A's write is visible
+- Retry storms: duplicate side effects due to at-least-once delivery without idempotent consumers
+</cross_service_races>
 
-<common_vulnerabilities>
-<financial_races>
-- Double withdrawal
-- Multiple discount applications
-- Balance transfer duplication
-- Payment bypass
-- Cashback multiplication
-</financial_races>
-
-<authentication_races>
-- Multiple password resets
-- Account creation with same email
-- 2FA bypass
-- Session generation collision
-</authentication_races>
-
-<resource_races>
-- Inventory depletion bypass
-- Rate limit circumvention
-- File overwrite
-- Token reuse
-</resource_races>
-</common_vulnerabilities>
+<rate_limits_and_quotas>
+- Per-IP or per-connection enforcement: bypass with multiple IPs/sessions
+- Counter updates not atomic or sharded inconsistently; send bursts before counters propagate
+</rate_limits_and_quotas>
+</exploitation_techniques>
 
 <advanced_techniques>
-<single_packet_attack>
-HTTP/2 multiplexing for true simultaneous delivery:
-- All requests in single TCP packet
-- Microsecond precision
-- Bypass even mutex locks
-</single_packet_attack>
+<optimistic_concurrency_evasion>
+- Omit If-Match/ETag where optional; supply stale versions if server ignores them
+- Version fields accepted but not validated across all code paths (e.g., GraphQL vs REST)
+</optimistic_concurrency_evasion>
 
-<last_byte_sync>
-Send all but last byte, then:
-1. Hold connections open
-2. Send final byte simultaneously
-3. Achieve nanosecond precision
-</last_byte_sync>
+<database_isolation>
+- Exploit READ COMMITTED/REPEATABLE READ anomalies: phantoms, non-serializable sequences
+- Upsert races: use unique indexes with proper ON CONFLICT/UPSERT or exploit naive existence checks
+- Lock granularity issues: row vs table; application locks held only in-process
+</database_isolation>
 
-<connection_warming>
-Pre-establish connections:
-1. Create connection pool
-2. Prime with dummy requests
-3. Send race requests on warm connections
-</connection_warming>
+<distributed_locks>
+- Redis locks without NX/EX or fencing tokens allow multiple winners
+- Locks stored in memory on a single node; bypass by hitting other nodes/regions
+</distributed_locks>
 </advanced_techniques>
 
 <bypass_techniques>
-<distributed_attacks>
-- Multiple source IPs
-- Different user sessions
-- Varied request headers
-- Geographic distribution
-</distributed_attacks>
-
-<timing_optimization>
-- Measure server processing time
-- Align requests with server load
-- Exploit maintenance windows
-- Target async operations
-</timing_optimization>
+- Distribute across IPs, sessions, and user accounts to evade per-entity throttles
+- Switch methods/content-types/endpoints that trigger the same state change via different code paths
+- Intentionally trigger timeouts to provoke retries that cause duplicate side effects
+- Degrade the target (large payloads, slow endpoints) to widen race windows
 </bypass_techniques>
 
-<specific_scenarios>
-<limit_bypass>
-"Limited to 1 per user" → Send N parallel requests
-Results: N successful purchases
-</limit_bypass>
+<special_contexts>
+<graphql>
+- Parallel mutations and batched operations may bypass per-mutation guards; ensure resolver-level idempotency and atomicity
+- Persisted queries and aliases can hide multiple state changes in one request
+</graphql>
 
-<balance_manipulation>
-Transfer $100 from account with $100 balance:
-- 10 parallel transfers
-- Each checks balance: $100 available
-- All proceed: -$900 balance
-</balance_manipulation>
+<websocket>
+- Per-message authorization and idempotency must hold; concurrent emits can create duplicates if only the handshake is checked
+</websocket>
 
-<vote_manipulation>
-Single vote limit:
-- Send multiple vote requests simultaneously
-- All pass validation
-- Multiple votes counted
-</vote_manipulation>
-</specific_scenarios>
+<files_and_storage>
+- Parallel finalize/complete on multi-part uploads can create duplicate or corrupted objects; re-use pre-signed URLs concurrently
+</files_and_storage>
+
+<auth_flows>
+- Concurrent consumption of one-time tokens (reset codes, magic links) to mint multiple sessions; verify consume is atomic
+</auth_flows>
+</special_contexts>
+
+<chaining_attacks>
+- Race + Business logic: violate invariants (double-refund, limit slicing)
+- Race + IDOR: modify or read others' resources before ownership checks complete
+- Race + CSRF: trigger parallel actions from a victim to amplify effects
+- Race + Caching: stale caches re-serve privileged states after concurrent changes
+</chaining_attacks>
 
 <validation>
-To confirm race condition:
-1. Demonstrate parallel execution success
-2. Show single request fails
-3. Prove timing dependency
-4. Document financial/security impact
-5. Achieve consistent reproduction
+1. Single request denied; N concurrent requests succeed where only 1 should.
+2. Durable state change proven (ledger entries, inventory counts, role/flag changes).
+3. Reproducible under controlled synchronization (HTTP/2, last-byte sync) across multiple runs.
+4. Evidence across channels (e.g., REST and GraphQL) if applicable.
+5. Include before/after state and exact request set used.
 </validation>
 
 <false_positives>
-NOT a race condition if:
-- Idempotent operations
-- Proper locking mechanisms
-- Atomic database operations
-- Queue-based processing
-- No security impact
+- Truly idempotent operations with enforced ETag/version checks or unique constraints
+- Serializable transactions or correct advisory locks/queues
+- Visual-only glitches without durable state change
+- Rate limits that reject excess with atomic counters
 </false_positives>
 
 <impact>
-- Financial loss (double spending)
-- Resource exhaustion
-- Data corruption
-- Business logic bypass
-- Privilege escalation
+- Financial loss (double spend, over-issuance of credits/refunds)
+- Policy/limit bypass (quotas, single-use tokens, seat counts)
+- Data integrity corruption and audit trail inconsistencies
+- Privilege or role errors due to concurrent updates
 </impact>
 
 <pro_tips>
-1. Use HTTP/2 for better synchronization
-2. Automate with Turbo Intruder
-3. Test payment flows extensively
-4. Monitor database locks
-5. Try different concurrency levels
-6. Test async operations
-7. Look for compensating transactions
-8. Check mobile app endpoints
-9. Test during high load
-10. Document exact timing windows
+1. Favor HTTP/2 with warmed connections; add last-byte sync for precision.
+2. Start small (N=5–20), then scale; too much noise can mask the window.
+3. Target read–modify–write code paths and endpoints with idempotency keys.
+4. Compare REST vs GraphQL vs WebSocket; protections often differ.
+5. Look for cross-service gaps (queues, jobs, webhooks) and retry semantics.
+6. Check unique constraints and upsert usage; avoid relying on pre-insert checks.
+7. Use correlation IDs and logs to prove concurrent interleaving.
+8. Widen windows by adding server load or slow backend dependencies.
+9. Validate on production-like latency; some races only appear under real load.
+10. Document minimal, repeatable request sets that demonstrate durable impact.
 </pro_tips>
 
-<remember>Modern race conditions require microsecond precision. Focus on financial operations and limited resource allocation. Single-packet attacks are most reliable.</remember>
+<remember>Concurrency safety is a property of every path that mutates state. If any path lacks atomicity, proper isolation, or idempotency, parallel requests will eventually break invariants.</remember>
 </race_conditions_guide>

