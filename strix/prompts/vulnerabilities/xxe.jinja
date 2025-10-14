@@ -145,46 +145,6 @@ evil.dtd:
 </office_docs>
 </special_contexts>
 
-<parser_hardening>
-<java>
-```java
-DocumentBuilderFactory f = DocumentBuilderFactory.newInstance();
-f.setFeature("http://apache.org/xml/features/disallow-doctype-decl", true);
-f.setFeature("http://xml.org/sax/features/external-general-entities", false);
-f.setFeature("http://xml.org/sax/features/external-parameter-entities", false);
-f.setFeature("http://javax.xml.XMLConstants/feature/secure-processing", true);
-f.setAttribute("http://javax.xml.XMLConstants/property/accessExternalDTD", "");
-f.setAttribute("http://javax.xml.XMLConstants/property/accessExternalSchema", "");
-```
-</java>
-
-<dotnet>
-```csharp
-var settings = new XmlReaderSettings {
-  DtdProcessing = DtdProcessing.Prohibit,
-  XmlResolver = null
-};
-```
-</dotnet>
-
-<python>
-```python
-from lxml import etree
-parser = etree.XMLParser(resolve_entities=False, no_network=True)
-etree.fromstring(xml_bytes, parser)
-# Prefer defusedxml for stdlib parsers
-```
-</python>
-
-<php>
-```php
-$dom = new DOMDocument();
-// Do NOT use LIBXML_NOENT; forbid network
-$dom->loadXML($xml, LIBXML_NONET | LIBXML_NOERROR | LIBXML_NOWARNING);
-```
-</php>
-</parser_hardening>
-
 <validation>
 1. Provide a minimal payload proving parser capability (DOCTYPE/XInclude/XSLT).
 2. Demonstrate controlled access (file path or internal URL) with reproducible evidence.
