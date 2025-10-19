@@ -1,0 +1,126 @@
+<nextjs_security_testing_guide>
+<title>NEXT.JS — ADVERSARIAL TESTING PLAYBOOK</title>
+
+<critical>Modern Next.js combines multiple execution contexts (Edge, Node, RSC, client) with smart caching (ISR/RSC fetch cache), middleware, and server actions. Authorization and cache boundaries must be enforced consistently across all paths or attackers will cross tenants, leak data, or invoke privileged actions.</critical>
+
+<surface_map>
+- Routers: App Router (`app/`) and Pages Router (`pages/`) coexist; test both
+- Runtimes: Node.js vs Edge (V8 isolates with restricted APIs)
+- Data paths: RSC (server components), Client components, Route Handlers (`app/api/**`), API routes (`pages/api/**`)
+- Middleware: `middleware.ts`/`_middleware.ts`
+- Rendering modes: SSR, SSG, ISR, on-demand revalidation, draft/preview mode
+- Images: `next/image` optimization and remote loader
+- Auth: NextAuth.js (callbacks, CSRF/state, callbackUrl), custom JWT/session bridges
+- Server Actions: streamed POST with `Next-Action` header and action IDs
+</surface_map>
+
+<methodology>
+1. Inventory routes (pages + app), static vs dynamic segments, and params. Map middleware coverage and runtime per path.
+2. Capture baseline for each role (unauth, user, admin) across SSR, API routes, Route Handlers, Server Actions, and streaming data.
+3. Diff responses while toggling runtime (Edge/Node), content-type, fetch cache directives, and preview/draft mode.
+4. Probe caching and revalidation boundaries (ISR, RSC fetch, CDN) for cross-user/tenant leaks.
+</methodology>
+
+<high_value_targets>
+- Middleware-protected routes (auth, geo, A/B)
+- Admin/staff paths, draft/preview content, on-demand revalidate endpoints
+- RSC payloads and flight data, streamed responses (server actions)
+- Image optimizer and custom loaders, remotePatterns/domains
+- NextAuth callbacks (`/api/auth/callback/*`), sign-in providers, CSRF/state handling
+- Edge-only features (bot protection, IP gates) and their Node equivalents
+</high_value_targets>
+
+<advanced_techniques>
+<middleware_bypass>
+- Test for CVE-class middleware bypass via `x-middleware-subrequest` crafting and `x-nextjs-data` probing. Look for 307 + `x-middleware-rewrite`/`x-nextjs-redirect` headers and attempt bypass on protected routes.
+- Attempt direct route access on Node vs Edge runtimes; confirm protection parity.
+</middleware_bypass>
+
+<server_actions>
+- Capture streamed POSTs containing `Next-Action` headers. Map hashed action IDs via source maps or specialized tooling to discover hidden actions.
+- Invoke actions out of UI flow and with alternate content-types; verify server-side authorization is enforced per action and not assumed from client state.
+- Try cross-tenant/object references within action payloads to expose BOLA/IDOR via server actions.
+</server_actions>
+
+<rsc_and_cache>
+- RSC fetch cache: probe `fetch` cache modes (force-cache, default, no-store) and revalidate tags/paths. Look for user-bound data cached without identity keys (ETag/Set-Cookie unaware).
+- Confirm that personalized data is rendered via `no-store` or properly keyed; attempt cross-user content via shared caches/CDN.
+- Inspect Flight data streams for serialized sensitive fields leaking through props.
+</rsc_and_cache>
+
+<isr_and_revalidation>
+- Identify ISR pages (stale-while-revalidate). Check if responses may include user-bound fragments or tenant-dependent content.
+- On-demand revalidation endpoints: look for weak secrets in URLs, referer-disclosed tokens, or unvalidated hosts triggering `revalidatePath`/`revalidateTag`.
+- Attempt header-smuggling or method variations to trigger revalidation flows.
+</isr_and_revalidation>
+
+<draft_preview_mode>
+- Draft/preview mode toggles via secret URLs/cookies; search for preview enable endpoints and secrets in client bundles/env leaks.
+- Try setting preview cookies from subdomains, alternate paths, or through open redirects; observe content differences and persistence.
+</draft_preview_mode>
+
+<next_image_ssrf>
+- Review `images.domains`/`remotePatterns` in `next.config.js`; test SSRF to internal hosts (IPv4/IPv6 variants, DNS rebinding) if patterns are broad.
+- Custom loader functions may fetch with arbitrary URLs; test protocol smuggling and redirection chains.
+- Attempt cache poisoning: craft same URL with different normalization to affect other users.
+</next_image_ssrf>
+
+<nextauth_pitfalls>
+- State/nonce/PKCE: validate per-provider correctness; attempt missing/relaxed checks leading to login CSRF or token mix-up.
+- Callback URL restrictions: open redirect in `callbackUrl` or mis-scoped allowed hosts; hijack sessions by forcing callbacks.
+- JWT/session bridges: audience/issuer not enforced across API routes/Route Handlers; attempt cross-service token reuse.
+</nextauth_pitfalls>
+
+<edge_runtime_diffs>
+- Edge runtime lacks certain Node APIs; defenses relying on Node-only modules may be skipped. Compare behavior of the same route in Edge vs Node.
+- Header trust and IP determination can differ at the edge; test auth decisions tied to `x-forwarded-*` variance.
+</edge_runtime_diffs>
+
+<client_and_dom>
+- Identify `dangerouslySetInnerHTML`, Markdown renderers, and user-controlled href/src attributes. Validate CSP/Trusted Types coverage for SSR/CSR/hydration.
+- Attack hydration boundaries: server vs client render mismatches can enable gadget-based XSS.
+</client_and_dom>
+</advanced_techniques>
+
+<bypass_techniques>
+- Content-type switching: `application/json` ↔ `multipart/form-data` ↔ `application/x-www-form-urlencoded` to traverse alternate code paths.
+- Method override/tunneling: `_method`, `X-HTTP-Method-Override`, GET on endpoints unexpectedly accepting writes.
+- Case/param aliasing and query duplication affecting middleware vs handler parsing.
+- Cache key confusion at CDN/proxy (lack of Vary on auth cookies/headers) to leak personalized SSR/ISR content.
+</bypass_techniques>
+
+<special_contexts>
+<uploads_and_files>
+- API routes and Route Handlers handling file uploads: check MIME sniffing, Content-Disposition, stored path traversal, and public serving of user files.
+- Validate signing/scoping of any generated file URLs (short TTL, audience-bound).
+</uploads_and_files>
+
+<integrations_and_webhooks>
+- Webhooks that trigger revalidation/imports: require HMAC verification; test with replay and cross-tenant object IDs.
+- Analytics/AB testing flags controlled via cookies/headers; ensure they do not unlock privileged server paths.
+</integrations_and_webhooks>
+</special_contexts>
+
+<validation>
+1. Provide side-by-side requests for different principals showing cross-user/tenant content or actions.
+2. Prove cache boundary failure (RSC/ISR/CDN) with response diffs or ETag collisions.
+3. Demonstrate server action invocation outside UI with insufficient authorization checks.
+4. Show middleware bypass (where applicable) with explicit headers and resulting protected content.
+5. Include runtime parity checks (Edge vs Node) proving inconsistent enforcement.
+</validation>
+
+<pro_tips>
+1. Enumerate with both App and Pages routers: many apps ship a hybrid surface.
+2. Treat caching as an identity boundary—test with cookies stripped, altered, and with Vary/ETag diffs.
+3. Decode client bundles for preview/revalidate secrets, action IDs, and hidden routes.
+4. Use streaming-aware tooling to capture server actions and RSC payloads; diff flight data.
+5. For NextAuth, fuzz provider params (state, nonce, scope, callbackUrl) and verify strictness.
+6. Always retest under Edge and Node; misconfigurations often exist in only one runtime.
+7. Probe `next/image` aggressively but safely—test IPv6/obscure encodings and redirect behavior.
+8. Validate negative paths: other-user IDs, other-tenant headers/subdomains, lower roles.
+9. Focus on export/report/download endpoints; they often bypass resolver-level checks.
+10. Document minimal, reproducible PoCs; avoid noisy payloads—prefer precise diffs.
+</pro_tips>
+
+<remember>Next.js security breaks where identity, authorization, and caching diverge across routers, runtimes, and data paths. Bind subject, action, and object on every path, and key caches to identity and tenant explicitly.</remember>
+</nextjs_security_testing_guide>
