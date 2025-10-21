@@ -24,6 +24,7 @@ class AgentState(BaseModel):
     stop_requested: bool = False
     waiting_for_input: bool = False
     llm_failed: bool = False
+    waiting_start_time: datetime | None = None
     final_result: dict[str, Any] | None = None
 
     messages: list[dict[str, Any]] = Field(default_factory=list)
@@ -88,12 +89,13 @@ class AgentState(BaseModel):
 
     def enter_waiting_state(self, llm_failed: bool = False) -> None:
         self.waiting_for_input = True
-        self.stop_requested = False
+        self.waiting_start_time = datetime.now(UTC)
         self.llm_failed = llm_failed
         self.last_updated = datetime.now(UTC).isoformat()
 
     def resume_from_waiting(self, new_task: str | None = None) -> None:
         self.waiting_for_input = False
+        self.waiting_start_time = None
         self.stop_requested = False
         self.completed = False
         self.llm_failed = False
@@ -103,6 +105,21 @@ class AgentState(BaseModel):
 
     def has_reached_max_iterations(self) -> bool:
         return self.iteration >= self.max_iterations
+
+    def has_waiting_timeout(self) -> bool:
+        if not self.waiting_for_input or not self.waiting_start_time:
+            return False
+
+        if (
+            self.stop_requested
+            or self.llm_failed
+            or self.completed
+            or self.has_reached_max_iterations()
+        ):
+            return False
+
+        elapsed = (datetime.now(UTC) - self.waiting_start_time).total_seconds()
+        return elapsed > 120
 
     def has_empty_last_messages(self, count: int = 3) -> bool:
         if len(self.messages) < count:

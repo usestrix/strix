@@ -206,6 +206,26 @@ class BaseAgent(metaclass=AgentMeta):
     async def _wait_for_input(self) -> None:
         import asyncio
 
+        if self.state.has_waiting_timeout():
+            self.state.resume_from_waiting()
+            self.state.add_message("assistant", "Waiting timeout reached. Resuming execution.")
+
+            from strix.cli.tracer import get_global_tracer
+
+            tracer = get_global_tracer()
+            if tracer:
+                tracer.update_agent_status(self.state.agent_id, "running")
+
+            try:
+                from strix.tools.agents_graph.agents_graph_actions import _agent_graph
+
+                if self.state.agent_id in _agent_graph["nodes"]:
+                    _agent_graph["nodes"][self.state.agent_id]["status"] = "running"
+            except (ImportError, KeyError):
+                pass
+
+            return
+
         await asyncio.sleep(0.5)
 
     async def _enter_waiting_state(

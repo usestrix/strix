@@ -603,5 +603,6 @@ def wait_for_message(
                 "Message from another agent",
                 "Message from user",
                 "Direct communication",
+                "Waiting timeout reached",
             ],
         }

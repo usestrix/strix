@@ -198,9 +198,12 @@ NOTE: If you are waiting for an agent that is NOT your subagent, you first tell 
   - Another agent sends it a message via send_message_to_agent
   - A user sends it a direct message through the CLI
   - Any other form of inter-agent or user communication occurs
+  - Waiting timeout is reached
 
   The agent will automatically resume from where it left off once a message is received.
-  This is particularly useful for parent agents waiting for subagent results or for coordination points in multi-agent workflows.</details>
+  This is particularly useful for parent agents waiting for subagent results or for coordination points in multi-agent workflows.
+  NOTE: If you finished your task, and you do NOT have any child agents running, you should NEVER use this tool, and just call finish tool instead.
+  </details>
     <parameters>
       <parameter name="reason" type="string" required="false">
         <description>Explanation for why the agent is waiting (for logging and monitoring purposes)</description>
@@ -213,11 +216,6 @@ NOTE: If you are waiting for an agent that is NOT your subagent, you first tell 
   # Wait for subagents to complete their tasks
   <function=wait_for_message>
   <parameter=reason>Waiting for subdomain enumeration and port scanning subagents to complete their tasks and report findings</parameter>
-  </function>
-
-  # Wait for user input on next steps
-  <function=wait_for_message>
-  <parameter=reason>Waiting for user decision on whether to proceed with exploitation of discovered SQL injection vulnerability</parameter>
   </function>
 
   # Coordinate with other agents
