@@ -66,7 +66,8 @@ class StrixAgent(BaseAgent):
 
         if user_instructions:
             task_description += (
-                f"\n\nSpecial instructions from the user that must be followed: {user_instructions}"
+                f"\n\nSpecial instructions from the system that must be followed: "
+                f"{user_instructions}"
             )
 
         return await self.agent_loop(task=task_description)

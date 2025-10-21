@@ -182,22 +182,20 @@ Only create a new agent if no existing agent is handling the specific task.</des
     </returns>
   </tool>
   <tool name="wait_for_message">
-    <description>Pause the agent loop indefinitely until receiving a message from another agent or user.
+    <description>Pause the agent loop indefinitely until receiving a message from another agent.
 
 This tool puts the agent into a waiting state where it remains idle until it receives any form of communication. The agent will automatically resume execution when a message arrives.
 
 IMPORTANT: This tool causes the agent to stop all activity until a message is received. Use it when you need to:
 - Wait for subagent completion reports
 - Coordinate with other agents before proceeding
-- Pause for user input or decisions
 - Synchronize multi-agent workflows
 
 NOTE: If you are waiting for an agent that is NOT your subagent, you first tell it to message you with updates before waiting for it. Otherwise, you will wait forever!
 </description>
-    <details>When this tool is called, the agent enters a waiting state and will not continue execution until:
-  - Another agent sends it a message via send_message_to_agent
-  - A user sends it a direct message through the CLI
-  - Any other form of inter-agent or user communication occurs
+    <details>When this tool is called, the agent (you) enters a waiting state and will not continue execution until:
+  - Another agent sends a message via send_message_to_agent
+  - Any other form of inter-agent communication occurs
   - Waiting timeout is reached
 
   The agent will automatically resume from where it left off once a message is received.

@@ -565,7 +565,7 @@ def send_user_message_to_agent(agent_id: str, message: str) -> dict[str, Any]:
 @register_tool(sandbox_execution=False)
 def wait_for_message(
     agent_state: Any,
-    reason: str = "Waiting for messages from other agents or user input",
+    reason: str = "Waiting for messages from other agents",
 ) -> dict[str, Any]:
     try:
         agent_id = agent_state.agent_id
