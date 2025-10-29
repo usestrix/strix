@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Strix Agent Command Line Interface
+Strix Agent Interface
 """
 
 import argparse
@@ -23,8 +23,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.cli.app import run_strix_cli
-from strix.cli.tracer import get_global_tracer
+from strix.interface.cli import run_cli
+from strix.interface.tracer import get_global_tracer
+from strix.interface.tui import run_tui
 from strix.runtime.docker_runtime import STRIX_IMAGE
 
 
@@ -381,11 +382,11 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:
 
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Strix Multi-Agent Cybersecurity Scanner",
+        description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Web application scan
+  # Web application penetration test
   strix --target https://example.com
 
   # GitHub repository analysis
@@ -395,7 +396,7 @@ Examples:
   # Local code analysis
   strix --target ./my-project
 
-  # Domain scan
+  # Domain penetration test
   strix --target example.com
 
   # Custom instructions
@@ -407,12 +408,12 @@ Examples:
         "--target",
         type=str,
         required=True,
-        help="Target to scan (URL, repository, local directory path, or domain name)",
+        help="Target to test (URL, repository, local directory path, or domain name)",
     )
     parser.add_argument(
         "--instruction",
         type=str,
-        help="Custom instructions for the scan. This can be "
+        help="Custom instructions for the penetration test. This can be "
         "specific vulnerability types to focus on (e.g., 'Focus on IDOR and XSS'), "
         "testing approaches (e.g., 'Perform thorough authentication testing'), "
         "test credentials (e.g., 'Use the following credentials to access the app: "
@@ -423,7 +424,17 @@ Examples:
     parser.add_argument(
         "--run-name",
         type=str,
-        help="Custom name for this scan run",
+        help="Custom name for this penetration test run",
+    )
+
+    parser.add_argument(
+        "-n",
+        "--non-interactive",
+        action="store_true",
+        help=(
+            "Run in non-interactive mode (no TUI, exits on completion). "
+            "Default is interactive mode with TUI."
+        ),
     )
 
     args = parser.parse_args()
@@ -540,7 +551,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     completion_text.append("🦉 ", style="bold white")
     completion_text.append("AGENT FINISHED", style="bold green")
     completion_text.append(" • ", style="dim white")
-    completion_text.append("Security assessment completed", style="white")
+    completion_text.append("Penetration test completed", style="white")
 
     stats_text = _build_stats_text(tracer)
 
@@ -733,7 +744,10 @@ def main() -> None:
 
         args.target_dict["cloned_repo_path"] = cloned_path
 
-    asyncio.run(run_strix_cli(args))
+    if args.non_interactive:
+        asyncio.run(run_cli(args))
+    else:
+        asyncio.run(run_tui(args))
 
     results_path = Path("agent_runs") / args.run_name
     display_completion_message(args, results_path)

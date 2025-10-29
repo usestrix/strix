@@ -1,8 +1,12 @@
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import TYPE_CHECKING, Any, Optional
 from uuid import uuid4
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +52,8 @@ class Tracer:
         self._next_execution_id = 1
         self._next_message_id = 1
 
+        self.vulnerability_found_callback: Callable[[str, str, str, str], None] | None = None
+
     def set_run_name(self, run_name: str) -> None:
         self.run_name = run_name
         self.run_id = run_name
@@ -81,6 +87,12 @@ class Tracer:
 
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")
+
+        if self.vulnerability_found_callback:
+            self.vulnerability_found_callback(
+                report_id, title.strip(), content.strip(), severity.lower().strip()
+            )
+
         return report_id
 
     def set_final_scan_result(
@@ -194,14 +206,16 @@ class Tracer:
             self.end_time = datetime.now(UTC).isoformat()
 
             if self.final_scan_result:
-                scan_report_file = run_dir / "scan_report.md"
-                with scan_report_file.open("w", encoding="utf-8") as f:
-                    f.write("# Security Scan Report\n\n")
+                penetration_test_report_file = run_dir / "penetration_test_report.md"
+                with penetration_test_report_file.open("w", encoding="utf-8") as f:
+                    f.write("# Security Penetration Test Report\n\n")
                     f.write(
                         f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
                     )
                     f.write(f"{self.final_scan_result}\n")
-                logger.info(f"Saved final scan report to: {scan_report_file}")
+                logger.info(
+                    f"Saved final penetration test report to: {penetration_test_report_file}"
+                )
 
             if self.vulnerability_reports:
                 vuln_dir = run_dir / "vulnerabilities"

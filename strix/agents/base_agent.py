@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 
 if TYPE_CHECKING:
-    from strix.cli.tracer import Tracer
+    from strix.interface.tracer import Tracer
 
 from jinja2 import (
     Environment,
@@ -55,6 +55,7 @@ class BaseAgent(metaclass=AgentMeta):
         self.config = config
 
         self.local_source_path = config.get("local_source_path")
+        self.non_interactive = config.get("non_interactive", False)
 
         if "max_iterations" in config:
             self.max_iterations = config["max_iterations"]
@@ -76,7 +77,7 @@ class BaseAgent(metaclass=AgentMeta):
 
         self._current_task: asyncio.Task[Any] | None = None
 
-        from strix.cli.tracer import get_global_tracer
+        from strix.interface.tracer import get_global_tracer
 
         tracer = get_global_tracer()
         if tracer:
@@ -146,10 +147,10 @@ class BaseAgent(metaclass=AgentMeta):
             self._current_task.cancel()
             self._current_task = None
 
-    async def agent_loop(self, task: str) -> dict[str, Any]:
+    async def agent_loop(self, task: str) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
         await self._initialize_sandbox_and_state(task)
 
-        from strix.cli.tracer import get_global_tracer
+        from strix.interface.tracer import get_global_tracer
 
         tracer = get_global_tracer()
 
@@ -161,6 +162,8 @@ class BaseAgent(metaclass=AgentMeta):
                 continue
 
             if self.state.should_stop():
+                if self.non_interactive:
+                    return self.state.final_result or {}
                 await self._enter_waiting_state(tracer)
                 continue
 
@@ -173,10 +176,17 @@ class BaseAgent(metaclass=AgentMeta):
             try:
                 should_finish = await self._process_iteration(tracer)
                 if should_finish:
+                    if self.non_interactive:
+                        self.state.set_completed({"success": True})
+                        if tracer:
+                            tracer.update_agent_status(self.state.agent_id, "completed")
+                        return self.state.final_result or {}
                     await self._enter_waiting_state(tracer, task_completed=True)
                     continue
 
             except asyncio.CancelledError:
+                if self.non_interactive:
+                    raise
                 await self._enter_waiting_state(tracer, error_occurred=False, was_cancelled=True)
                 continue
 
@@ -200,6 +210,11 @@ class BaseAgent(metaclass=AgentMeta):
 
             except (RuntimeError, ValueError, TypeError) as e:
                 if not await self._handle_iteration_error(e, tracer):
+                    if self.non_interactive:
+                        self.state.set_completed({"success": False, "error": str(e)})
+                        if tracer:
+                            tracer.update_agent_status(self.state.agent_id, "failed")
+                        raise
                     await self._enter_waiting_state(tracer, error_occurred=True)
                     continue
 
@@ -210,7 +225,7 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.resume_from_waiting()
             self.state.add_message("assistant", "Waiting timeout reached. Resuming execution.")
 
-            from strix.cli.tracer import get_global_tracer
+            from strix.interface.tracer import get_global_tracer
 
             tracer = get_global_tracer()
             if tracer:
@@ -353,6 +368,8 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.set_completed({"success": True})
             if tracer:
                 tracer.update_agent_status(self.state.agent_id, "completed")
+            if self.non_interactive and self.state.parent_id is None:
+                return True
             return True
 
         return False
@@ -390,7 +407,7 @@ class BaseAgent(metaclass=AgentMeta):
                                     state.resume_from_waiting()
                                     has_new_messages = True
 
-                                    from strix.cli.tracer import get_global_tracer
+                                    from strix.interface.tracer import get_global_tracer
 
                                     tracer = get_global_tracer()
                                     if tracer:
@@ -399,7 +416,7 @@ class BaseAgent(metaclass=AgentMeta):
                                 state.resume_from_waiting()
                                 has_new_messages = True
 
-                                from strix.cli.tracer import get_global_tracer
+                                from strix.interface.tracer import get_global_tracer
 
                                 tracer = get_global_tracer()
                                 if tracer:
@@ -441,7 +458,7 @@ class BaseAgent(metaclass=AgentMeta):
                         message["read"] = True
 
                 if has_new_messages and not state.is_waiting_for_input():
-                    from strix.cli.tracer import get_global_tracer
+                    from strix.interface.tracer import get_global_tracer
 
                     tracer = get_global_tracer()
                     if tracer:

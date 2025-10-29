@@ -27,7 +27,7 @@ def create_vulnerability_report(
         return {"success": False, "message": validation_error}
 
     try:
-        from strix.cli.tracer import get_global_tracer
+        from strix.interface.tracer import get_global_tracer
 
         tracer = get_global_tracer()
         if tracer:

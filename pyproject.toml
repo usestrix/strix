@@ -39,7 +39,7 @@ include = [
 ]
 
 [tool.poetry.scripts]
-strix = "strix.cli.main:main"
+strix = "strix.interface.main:main"
 
 [tool.poetry.dependencies]
 python = "^3.12"

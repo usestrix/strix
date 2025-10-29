@@ -107,7 +107,7 @@ def _check_active_agents(agent_state: Any = None) -> dict[str, Any] | None:
 
 def _finalize_with_tracer(content: str, success: bool) -> dict[str, Any]:
     try:
-        from strix.cli.tracer import get_global_tracer
+        from strix.interface.tracer import get_global_tracer
 
         tracer = get_global_tracer()
         if tracer:

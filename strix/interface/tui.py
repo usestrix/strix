@@ -31,7 +31,7 @@ from textual.widgets import Button, Label, Static, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from strix.agents.StrixAgent import StrixAgent
-from strix.cli.tracer import Tracer, set_global_tracer
+from strix.interface.tracer import Tracer, set_global_tracer
 from strix.llm.config import LLMConfig
 
 
@@ -49,9 +49,9 @@ def get_package_version() -> str:
 class ChatTextArea(TextArea):  # type: ignore[misc]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
-        self._app_reference: StrixCLIApp | None = None
+        self._app_reference: StrixTUIApp | None = None
 
-    def set_app_reference(self, app: "StrixCLIApp") -> None:
+    def set_app_reference(self, app: "StrixTUIApp") -> None:
         self._app_reference = app
 
     def _on_key(self, event: events.Key) -> None:
@@ -260,8 +260,8 @@ class QuitScreen(ModalScreen):  # type: ignore[misc]
             self.app.pop_screen()
 
 
-class StrixCLIApp(App):  # type: ignore[misc]
-    CSS_PATH = "assets/cli.tcss"
+class StrixTUIApp(App):  # type: ignore[misc]
+    CSS_PATH = "assets/tui_styles.tcss"
 
     selected_agent_id: reactive[str | None] = reactive(default=None)
     show_splash: reactive[bool] = reactive(default=True)
@@ -962,7 +962,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
             return ""
 
         if role == "user":
-            from strix.cli.tool_components.user_message_renderer import UserMessageRenderer
+            from strix.interface.tool_components.user_message_renderer import UserMessageRenderer
 
             return UserMessageRenderer.render_simple(content)
         return content
@@ -992,7 +992,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
 
         color = tool_colors.get(tool_name, "#737373")
 
-        from strix.cli.tool_components.registry import get_tool_renderer
+        from strix.interface.tool_components.registry import get_tool_renderer
 
         renderer = get_tool_renderer(tool_name)
 
@@ -1237,6 +1237,7 @@ class StrixCLIApp(App):  # type: ignore[misc]
                 widget.update(plain_text)
 
 
-async def run_strix_cli(args: argparse.Namespace) -> None:
-    app = StrixCLIApp(args)
+async def run_tui(args: argparse.Namespace) -> None:
+    """Run strix in interactive TUI mode with textual."""
+    app = StrixTUIApp(args)
     await app.run_async()

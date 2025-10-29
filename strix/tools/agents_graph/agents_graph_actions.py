@@ -231,12 +231,16 @@ def create_agent(
         state = AgentState(task=task, agent_name=name, parent_id=parent_id, max_iterations=200)
 
         llm_config = LLMConfig(prompt_modules=module_list)
-        agent = StrixAgent(
-            {
-                "llm_config": llm_config,
-                "state": state,
-            }
-        )
+
+        parent_agent = _agent_instances.get(parent_id)
+        agent_config = {
+            "llm_config": llm_config,
+            "state": state,
+        }
+        if parent_agent and hasattr(parent_agent, "non_interactive"):
+            agent_config["non_interactive"] = parent_agent.non_interactive
+
+        agent = StrixAgent(agent_config)
 
         inherited_messages = []
         if inherit_context:
@@ -487,7 +491,7 @@ def stop_agent(agent_id: str) -> dict[str, Any]:
         agent_node["status"] = "stopping"
 
         try:
-            from strix.cli.tracer import get_global_tracer
+            from strix.interface.tracer import get_global_tracer
 
             tracer = get_global_tracer()
             if tracer:
@@ -578,7 +582,7 @@ def wait_for_message(
             _agent_graph["nodes"][agent_id]["waiting_reason"] = reason
 
         try:
-            from strix.cli.tracer import get_global_tracer
+            from strix.interface.tracer import get_global_tracer
 
             tracer = get_global_tracer()
             if tracer:
