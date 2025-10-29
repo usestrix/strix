@@ -40,7 +40,7 @@ class DockerRuntime(AbstractRuntime):
 
     def _get_scan_id(self, agent_id: str) -> str:
         try:
-            from strix.interface.tracer import get_global_tracer
+            from strix.telemetry.tracer import get_global_tracer
 
             tracer = get_global_tracer()
             if tracer and tracer.scan_config:

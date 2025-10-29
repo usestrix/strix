@@ -491,7 +491,7 @@ def stop_agent(agent_id: str) -> dict[str, Any]:
         agent_node["status"] = "stopping"
 
         try:
-            from strix.interface.tracer import get_global_tracer
+            from strix.telemetry.tracer import get_global_tracer
 
             tracer = get_global_tracer()
             if tracer:
@@ -582,7 +582,7 @@ def wait_for_message(
             _agent_graph["nodes"][agent_id]["waiting_reason"] = reason
 
         try:
-            from strix.interface.tracer import get_global_tracer
+            from strix.telemetry.tracer import get_global_tracer
 
             tracer = get_global_tracer()
             if tracer:

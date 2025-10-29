@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 
 if TYPE_CHECKING:
-    from strix.interface.tracer import Tracer
+    from strix.telemetry.tracer import Tracer
 
 from jinja2 import (
     Environment,
@@ -77,7 +77,7 @@ class BaseAgent(metaclass=AgentMeta):
 
         self._current_task: asyncio.Task[Any] | None = None
 
-        from strix.interface.tracer import get_global_tracer
+        from strix.telemetry.tracer import get_global_tracer
 
         tracer = get_global_tracer()
         if tracer:
@@ -150,7 +150,7 @@ class BaseAgent(metaclass=AgentMeta):
     async def agent_loop(self, task: str) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
         await self._initialize_sandbox_and_state(task)
 
-        from strix.interface.tracer import get_global_tracer
+        from strix.telemetry.tracer import get_global_tracer
 
         tracer = get_global_tracer()
 
@@ -225,7 +225,7 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.resume_from_waiting()
             self.state.add_message("assistant", "Waiting timeout reached. Resuming execution.")
 
-            from strix.interface.tracer import get_global_tracer
+            from strix.telemetry.tracer import get_global_tracer
 
             tracer = get_global_tracer()
             if tracer:
@@ -407,7 +407,7 @@ class BaseAgent(metaclass=AgentMeta):
                                     state.resume_from_waiting()
                                     has_new_messages = True
 
-                                    from strix.interface.tracer import get_global_tracer
+                                    from strix.telemetry.tracer import get_global_tracer
 
                                     tracer = get_global_tracer()
                                     if tracer:
@@ -416,7 +416,7 @@ class BaseAgent(metaclass=AgentMeta):
                                 state.resume_from_waiting()
                                 has_new_messages = True
 
-                                from strix.interface.tracer import get_global_tracer
+                                from strix.telemetry.tracer import get_global_tracer
 
                                 tracer = get_global_tracer()
                                 if tracer:
@@ -458,7 +458,7 @@ class BaseAgent(metaclass=AgentMeta):
                         message["read"] = True
 
                 if has_new_messages and not state.is_waiting_for_input():
-                    from strix.interface.tracer import get_global_tracer
+                    from strix.telemetry.tracer import get_global_tracer
 
                     tracer = get_global_tracer()
                     if tracer:

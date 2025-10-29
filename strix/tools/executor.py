@@ -240,7 +240,7 @@ async def _execute_single_tool(
 
 def _get_tracer_and_agent_id(agent_state: Any | None) -> tuple[Any | None, str]:
     try:
-        from strix.interface.tracer import get_global_tracer
+        from strix.telemetry.tracer import get_global_tracer
 
         tracer = get_global_tracer()
         agent_id = agent_state.agent_id if agent_state else "unknown_agent"

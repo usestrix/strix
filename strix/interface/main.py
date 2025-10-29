@@ -24,9 +24,9 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.interface.cli import run_cli
-from strix.interface.tracer import get_global_tracer
 from strix.interface.tui import run_tui
 from strix.runtime.docker_runtime import STRIX_IMAGE
+from strix.telemetry.tracer import get_global_tracer
 
 
 logging.getLogger().setLevel(logging.ERROR)

@@ -31,8 +31,8 @@ from textual.widgets import Button, Label, Static, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from strix.agents.StrixAgent import StrixAgent
-from strix.interface.tracer import Tracer, set_global_tracer
 from strix.llm.config import LLMConfig
+from strix.telemetry.tracer import Tracer, set_global_tracer
 
 
 def escape_markup(text: str) -> str:

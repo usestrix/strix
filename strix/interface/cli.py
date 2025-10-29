@@ -8,8 +8,8 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.agents.StrixAgent import StrixAgent
-from strix.interface.tracer import Tracer, set_global_tracer
 from strix.llm.config import LLMConfig
+from strix.telemetry.tracer import Tracer, set_global_tracer
 
 
 async def run_cli(args: Any) -> None:  # noqa: PLR0915
