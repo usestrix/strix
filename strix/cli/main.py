@@ -436,6 +436,17 @@ Examples:
     return args
 
 
+def _get_severity_color(severity: str) -> str:
+    severity_colors = {
+        "critical": "#dc2626",
+        "high": "#ea580c",
+        "medium": "#d97706",
+        "low": "#65a30d",
+        "info": "#0284c7",
+    }
+    return severity_colors.get(severity, "#6b7280")
+
+
 def _build_stats_text(tracer: Any) -> Text:
     stats_text = Text()
     if not tracer:
@@ -446,9 +457,38 @@ def _build_stats_text(tracer: Any) -> Text:
     agent_count = len(tracer.agents)
 
     if vuln_count > 0:
+        severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+        for report in tracer.vulnerability_reports:
+            severity = report.get("severity", "").lower()
+            if severity in severity_counts:
+                severity_counts[severity] += 1
+
         stats_text.append("🔍 Vulnerabilities Found: ", style="bold red")
+
+        severity_parts = []
+        for severity in ["critical", "high", "medium", "low", "info"]:
+            count = severity_counts[severity]
+            if count > 0:
+                severity_color = _get_severity_color(severity)
+                severity_text = Text()
+                severity_text.append(f"{severity.upper()}: ", style=severity_color)
+                severity_text.append(str(count), style=f"bold {severity_color}")
+                severity_parts.append(severity_text)
+
+        for i, part in enumerate(severity_parts):
+            stats_text.append(part)
+            if i < len(severity_parts) - 1:
+                stats_text.append(" | ", style="dim white")
+
+        stats_text.append(" (Total: ", style="dim white")
         stats_text.append(str(vuln_count), style="bold yellow")
-        stats_text.append(" • ", style="dim white")
+        stats_text.append(")", style="dim white")
+        stats_text.append("\n")
+    else:
+        stats_text.append("🔍 Vulnerabilities Found: ", style="bold green")
+        stats_text.append("0", style="bold white")
+        stats_text.append(" (No exploitable vulnerabilities detected)", style="dim green")
+        stats_text.append("\n")
 
     stats_text.append("🤖 Agents Used: ", style="bold cyan")
     stats_text.append(str(agent_count), style="bold white")
