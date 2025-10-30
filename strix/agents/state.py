@@ -26,6 +26,7 @@ class AgentState(BaseModel):
     llm_failed: bool = False
     waiting_start_time: datetime | None = None
     final_result: dict[str, Any] | None = None
+    max_iterations_warning_sent: bool = False
 
     messages: list[dict[str, Any]] = Field(default_factory=list)
     context: dict[str, Any] = Field(default_factory=dict)
@@ -105,6 +106,9 @@ class AgentState(BaseModel):
 
     def has_reached_max_iterations(self) -> bool:
         return self.iteration >= self.max_iterations
+
+    def is_approaching_max_iterations(self, threshold: float = 0.85) -> bool:
+        return self.iteration >= int(self.max_iterations * threshold)
 
     def has_waiting_timeout(self) -> bool:
         if not self.waiting_for_input or not self.waiting_start_time:

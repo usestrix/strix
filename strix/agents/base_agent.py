@@ -173,6 +173,33 @@ class BaseAgent(metaclass=AgentMeta):
 
             self.state.increment_iteration()
 
+            if (
+                self.state.is_approaching_max_iterations()
+                and not self.state.max_iterations_warning_sent
+            ):
+                self.state.max_iterations_warning_sent = True
+                remaining = self.state.max_iterations - self.state.iteration
+                warning_msg = (
+                    f"URGENT: You are approaching the maximum iteration limit. "
+                    f"Current: {self.state.iteration}/{self.state.max_iterations} "
+                    f"({remaining} iterations remaining). "
+                    f"Please prioritize completing your required task(s) and calling "
+                    f"the appropriate finish tool (finish_scan for root agent, "
+                    f"agent_finish for sub-agents) as soon as possible."
+                )
+                self.state.add_message("user", warning_msg)
+
+            if self.state.iteration == self.state.max_iterations - 3:
+                final_warning_msg = (
+                    "CRITICAL: You have only 3 iterations left! "
+                    "Your next message MUST be the tool call to the appropriate "
+                    "finish tool: finish_scan if you are the root agent, or "
+                    "agent_finish if you are a sub-agent. "
+                    "No other actions should be taken except finishing your work "
+                    "immediately."
+                )
+                self.state.add_message("user", final_warning_msg)
+
             try:
                 should_finish = await self._process_iteration(tracer)
                 if should_finish:
