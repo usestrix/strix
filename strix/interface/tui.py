@@ -323,7 +323,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         config = {
             "llm_config": llm_config,
-            "max_iterations": 200,
+            "max_iterations": 300,
         }
 
         if args.target_type == "local_code" and "target_path" in args.target_dict:

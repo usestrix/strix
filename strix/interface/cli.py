@@ -58,7 +58,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     llm_config = LLMConfig()
     agent_config = {
         "llm_config": llm_config,
-        "max_iterations": 200,
+        "max_iterations": 300,
         "non_interactive": True,
     }
 

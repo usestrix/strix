@@ -5,7 +5,7 @@ from strix.llm.config import LLMConfig
 
 
 class StrixAgent(BaseAgent):
-    max_iterations = 200
+    max_iterations = 300
 
     def __init__(self, config: dict[str, Any]):
         default_modules = []

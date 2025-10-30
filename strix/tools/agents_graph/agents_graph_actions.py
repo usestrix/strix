@@ -228,7 +228,7 @@ def create_agent(
         from strix.agents.state import AgentState
         from strix.llm.config import LLMConfig
 
-        state = AgentState(task=task, agent_name=name, parent_id=parent_id, max_iterations=200)
+        state = AgentState(task=task, agent_name=name, parent_id=parent_id, max_iterations=300)
 
         llm_config = LLMConfig(prompt_modules=module_list)
 

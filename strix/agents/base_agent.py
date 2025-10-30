@@ -46,7 +46,7 @@ class AgentMeta(type):
 
 
 class BaseAgent(metaclass=AgentMeta):
-    max_iterations = 200
+    max_iterations = 300
     agent_name: str = ""
     jinja_env: Environment
     default_llm_config: LLMConfig | None = None
