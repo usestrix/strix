@@ -29,6 +29,16 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         instructions_text.append("📋 Instructions: ", style="bold cyan")
         instructions_text.append(args.instruction, style="white")
 
+    results_text = Text()
+    results_text.append("📊 Results will be saved to: ", style="bold cyan")
+    results_text.append(f"agent_runs/{args.run_name}", style="bold white")
+
+    note_text = Text()
+    note_text.append("\n\n", style="dim")
+    note_text.append("⏱️  ", style="dim")
+    note_text.append("This may take a while depending on target complexity. ", style="dim")
+    note_text.append("Vulnerabilities will be displayed in real-time.", style="dim")
+
     startup_panel = Panel(
         Text.assemble(
             start_text,
@@ -36,6 +46,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             target_text,
             "\n" if args.instruction else "",
             instructions_text if args.instruction else "",
+            "\n",
+            results_text,
+            note_text,
         ),
         title="[bold green]🛡️  STRIX PENETRATION TEST INITIATED",
         title_align="center",
@@ -113,9 +126,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         tracer.cleanup()
 
     def signal_handler(_signum: int, _frame: Any) -> None:
-        console.print("\n[bold yellow]Interrupted! Saving reports...[/bold yellow]")
         tracer.cleanup()
-        sys.exit(0)
+        sys.exit(1)
 
     atexit.register(cleanup_on_exit)
     signal.signal(signal.SIGINT, signal_handler)

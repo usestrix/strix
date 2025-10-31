@@ -111,6 +111,40 @@ strix --target api.your-app.com --instruction "Prioritize authentication and aut
 strix --target https://your-app.com --instruction "Test with credentials: testuser/testpass. Focus on privilege escalation and access control bypasses."
 ```
 
+### 🤖 Headless Mode
+
+Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag—perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final penetration test report before exiting. Exits with non-zero code when vulnerabilities are found.
+
+```bash
+strix --target https://your-app.com -n --instruction "Focus on authentication bypass and session management"
+```
+
+### 🔄 CI/CD (GitHub Actions)
+
+Strix can be added to your pipeline to run a security test on pull requests with a lightweight GitHub Actions workflow:
+
+```yaml
+name: strix-penetration-test
+
+on:
+  pull_request:
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Strix
+        run: pipx install strix-agent
+
+      - name: Run Strix
+        env:
+          STRIX_LLM: ${{ secrets.STRIX_LLM }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: strix -n --target ./
+```
+
 ### ⚙️ Configuration
 
 ```bash

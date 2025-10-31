@@ -752,6 +752,11 @@ def main() -> None:
     results_path = Path("agent_runs") / args.run_name
     display_completion_message(args, results_path)
 
+    if args.non_interactive:
+        tracer = get_global_tracer()
+        if tracer and tracer.vulnerability_reports:
+            sys.exit(2)
+
 
 if __name__ == "__main__":
     main()
