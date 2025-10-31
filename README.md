@@ -104,7 +104,13 @@ strix --target https://github.com/org/repo
 # Web application assessment
 strix --target https://your-app.com
 
-# Focused testing
+# Multi-target white-box testing (source code + deployed app)
+strix -t https://github.com/org/app -t https://your-app.com
+
+# Test multiple environments simultaneously
+strix -t https://dev.your-app.com -t https://staging.your-app.com -t https://prod.your-app.com
+
+# Focused testing with instructions
 strix --target api.your-app.com --instruction "Prioritize authentication and authorization testing"
 
 # Testing with credentials
@@ -156,7 +162,7 @@ jobs:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 
-        run: strix -n --target ./
+        run: strix -n -t ./
 ```
 
 ## 🏆 Enterprise Platform
