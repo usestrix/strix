@@ -19,55 +19,64 @@ class StrixAgent(BaseAgent):
         super().__init__(config)
 
     async def execute_scan(self, scan_config: dict[str, Any]) -> dict[str, Any]:
-        scan_type = scan_config.get("scan_type", "general")
-        target = scan_config.get("target", {})
         user_instructions = scan_config.get("user_instructions", "")
+        targets = scan_config.get("targets", [])
+
+        repositories = []
+        local_code = []
+        urls = []
+
+        for target in targets:
+            target_type = target["type"]
+            details = target["details"]
+            workspace_subdir = details.get("workspace_subdir")
+            workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else "/workspace"
+
+            if target_type == "repository":
+                repo_url = details["target_repo"]
+                cloned_path = details.get("cloned_repo_path")
+                repositories.append(
+                    {
+                        "url": repo_url,
+                        "workspace_path": workspace_path if cloned_path else None,
+                    }
+                )
+
+            elif target_type == "local_code":
+                original_path = details.get("target_path", "unknown")
+                local_code.append(
+                    {
+                        "path": original_path,
+                        "workspace_path": workspace_path,
+                    }
+                )
+
+            elif target_type == "web_application":
+                urls.append(details["target_url"])
 
         task_parts = []
 
-        if scan_type == "repository":
-            repo_url = target["target_repo"]
-            cloned_path = target.get("cloned_repo_path")
+        if repositories:
+            task_parts.append("\n\nRepositories:")
+            for repo in repositories:
+                if repo["workspace_path"]:
+                    task_parts.append(f"- {repo['url']} (available at: {repo['workspace_path']})")
+                else:
+                    task_parts.append(f"- {repo['url']}")
 
-            if cloned_path:
-                workspace_path = "/workspace"
-                task_parts.append(
-                    f"Perform a security assessment of the Git repository: {repo_url}. "
-                    f"The repository has been cloned from '{repo_url}' to '{cloned_path}' "
-                    f"(host path) and then copied to '{workspace_path}' in your environment."
-                    f"Analyze the codebase at: {workspace_path}"
-                )
-            else:
-                task_parts.append(
-                    f"Perform a security assessment of the Git repository: {repo_url}"
-                )
-
-        elif scan_type == "web_application":
-            task_parts.append(
-                f"Perform a security assessment of the web application: {target['target_url']}"
+        if local_code:
+            task_parts.append("\n\nLocal Codebases:")
+            task_parts.extend(
+                f"- {code['path']} (available at: {code['workspace_path']})" for code in local_code
             )
 
-        elif scan_type == "local_code":
-            original_path = target.get("target_path", "unknown")
-            workspace_path = "/workspace"
-            task_parts.append(
-                f"Perform a security assessment of the local codebase. "
-                f"The code from '{original_path}' (user host path) has been copied to "
-                f"'{workspace_path}' in your environment. "
-                f"Analyze the codebase at: {workspace_path}"
-            )
-
-        else:
-            task_parts.append(
-                f"Perform a general security assessment of: {next(iter(target.values()))}"
-            )
+        if urls:
+            task_parts.append("\n\nURLs:")
+            task_parts.extend(f"- {url}" for url in urls)
 
         task_description = " ".join(task_parts)
 
         if user_instructions:
-            task_description += (
-                f"\n\nSpecial instructions from the system that must be followed: "
-                f"{user_instructions}"
-            )
+            task_description += f"\n\nSpecial instructions: {user_instructions}"
 
         return await self.agent_loop(task=task_description)

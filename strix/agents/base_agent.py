@@ -54,7 +54,7 @@ class BaseAgent(metaclass=AgentMeta):
     def __init__(self, config: dict[str, Any]):
         self.config = config
 
-        self.local_source_path = config.get("local_source_path")
+        self.local_sources = config.get("local_sources", [])
         self.non_interactive = config.get("non_interactive", False)
 
         if "max_iterations" in config:
@@ -317,7 +317,7 @@ class BaseAgent(metaclass=AgentMeta):
 
             runtime = get_runtime()
             sandbox_info = await runtime.create_sandbox(
-                self.state.agent_id, self.state.sandbox_token, self.local_source_path
+                self.state.agent_id, self.state.sandbox_token, self.local_sources
             )
             self.state.sandbox_id = sandbox_info["workspace_id"]
             self.state.sandbox_token = sandbox_info["auth_token"]

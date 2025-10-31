@@ -11,6 +11,8 @@ from strix.agents.StrixAgent import StrixAgent
 from strix.llm.config import LLMConfig
 from strix.telemetry.tracer import Tracer, set_global_tracer
 
+from .utils import get_severity_color
+
 
 async def run_cli(args: Any) -> None:  # noqa: PLR0915
     console = Console()
@@ -19,15 +21,18 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     start_text.append("🦉 ", style="bold white")
     start_text.append("STRIX CYBERSECURITY AGENT", style="bold green")
 
-    target_value = next(iter(args.target_dict.values())) if args.target_dict else args.target
     target_text = Text()
-    target_text.append("🎯 Target: ", style="bold cyan")
-    target_text.append(str(target_value), style="bold white")
-
-    instructions_text = Text()
-    if args.instruction:
-        instructions_text.append("📋 Instructions: ", style="bold cyan")
-        instructions_text.append(args.instruction, style="white")
+    if len(args.targets_info) == 1:
+        target_text.append("🎯 Target: ", style="bold cyan")
+        target_text.append(args.targets_info[0]["original"], style="bold white")
+    else:
+        target_text.append("🎯 Targets: ", style="bold cyan")
+        target_text.append(f"{len(args.targets_info)} targets\n", style="bold white")
+        for i, target_info in enumerate(args.targets_info):
+            target_text.append("   • ", style="dim white")
+            target_text.append(target_info["original"], style="white")
+            if i < len(args.targets_info) - 1:
+                target_text.append("\n")
 
     results_text = Text()
     results_text.append("📊 Results will be saved to: ", style="bold cyan")
@@ -44,8 +49,6 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             start_text,
             "\n\n",
             target_text,
-            "\n" if args.instruction else "",
-            instructions_text if args.instruction else "",
             "\n",
             results_text,
             note_text,
@@ -62,8 +65,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     scan_config = {
         "scan_id": args.run_name,
-        "scan_type": args.target_type,
-        "target": args.target_dict,
+        "targets": args.targets_info,
         "user_instructions": args.instruction or "",
         "run_name": args.run_name,
     }
@@ -75,23 +77,14 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "non_interactive": True,
     }
 
-    if args.target_type == "local_code" and "target_path" in args.target_dict:
-        agent_config["local_source_path"] = args.target_dict["target_path"]
-    elif args.target_type == "repository" and "cloned_repo_path" in args.target_dict:
-        agent_config["local_source_path"] = args.target_dict["cloned_repo_path"]
+    if getattr(args, "local_sources", None):
+        agent_config["local_sources"] = args.local_sources
 
     tracer = Tracer(args.run_name)
     tracer.set_scan_config(scan_config)
 
     def display_vulnerability(report_id: str, title: str, content: str, severity: str) -> None:
-        severity_colors = {
-            "critical": "#dc2626",
-            "high": "#ea580c",
-            "medium": "#d97706",
-            "low": "#65a30d",
-            "info": "#0284c7",
-        }
-        severity_color = severity_colors.get(severity.lower(), "#6b7280")
+        severity_color = get_severity_color(severity.lower())
 
         vuln_text = Text()
         vuln_text.append("🐞 ", style="bold red")

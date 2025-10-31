@@ -312,8 +312,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
     def _build_scan_config(self, args: argparse.Namespace) -> dict[str, Any]:
         return {
             "scan_id": args.run_name,
-            "scan_type": args.target_type,
-            "target": args.target_dict,
+            "targets": args.targets_info,
             "user_instructions": args.instruction or "",
             "run_name": args.run_name,
         }
@@ -326,10 +325,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "max_iterations": 300,
         }
 
-        if args.target_type == "local_code" and "target_path" in args.target_dict:
-            config["local_source_path"] = args.target_dict["target_path"]
-        elif args.target_type == "repository" and "cloned_repo_path" in args.target_dict:
-            config["local_source_path"] = args.target_dict["cloned_repo_path"]
+        if getattr(args, "local_sources", None):
+            config["local_sources"] = args.local_sources
 
         return config
 

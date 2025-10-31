@@ -16,23 +16,28 @@ class ScanStartInfoRenderer(BaseToolRenderer):
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
 
-        target = args.get("target", {})
+        targets = args.get("targets", [])
 
-        target_display = cls._build_target_display(target)
-
-        content = f"🚀 Starting scan on {target_display}"
+        if len(targets) == 1:
+            target_display = cls._build_single_target_display(targets[0])
+            content = f"🚀 Starting penetration test on {target_display}"
+        elif len(targets) > 1:
+            content = f"🚀 Starting penetration test on {len(targets)} targets"
+            for target_info in targets:
+                target_display = cls._build_single_target_display(target_info)
+                content += f"\n   • {target_display}"
+        else:
+            content = "🚀 Starting penetration test"
 
         css_classes = cls.get_css_classes(status)
         return Static(content, classes=css_classes)
 
     @classmethod
-    def _build_target_display(cls, target: dict[str, Any]) -> str:
-        if target_url := target.get("target_url"):
-            return cls.escape_markup(str(target_url))
-        if target_repo := target.get("target_repo"):
-            return cls.escape_markup(str(target_repo))
-        if target_path := target.get("target_path"):
-            return cls.escape_markup(str(target_path))
+    def _build_single_target_display(cls, target_info: dict[str, Any]) -> str:
+        original = target_info.get("original")
+        if original:
+            return cls.escape_markup(str(original))
+
         return "unknown target"
 
 

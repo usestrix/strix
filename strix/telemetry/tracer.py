@@ -44,8 +44,7 @@ class Tracer:
             "run_name": self.run_name,
             "start_time": self.start_time,
             "end_time": None,
-            "target": None,
-            "scan_type": None,
+            "targets": [],
             "status": "running",
         }
         self._run_dir: Path | None = None
@@ -193,8 +192,7 @@ class Tracer:
         self.scan_config = config
         self.run_metadata.update(
             {
-                "target": config.get("target", {}),
-                "scan_type": config.get("scan_type", "general"),
+                "targets": config.get("targets", []),
                 "user_instructions": config.get("user_instructions", ""),
                 "max_iterations": config.get("max_iterations", 200),
             }

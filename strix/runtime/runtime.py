@@ -13,7 +13,10 @@ class SandboxInfo(TypedDict):
 class AbstractRuntime(ABC):
     @abstractmethod
     async def create_sandbox(
-        self, agent_id: str, existing_token: str | None = None, local_source_path: str | None = None
+        self,
+        agent_id: str,
+        existing_token: str | None = None,
+        local_sources: list[dict[str, str]] | None = None,
     ) -> SandboxInfo:
         raise NotImplementedError
 

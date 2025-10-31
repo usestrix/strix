@@ -250,7 +250,9 @@ class DockerRuntime(AbstractRuntime):
 
         time.sleep(5)
 
-    def _copy_local_directory_to_container(self, container: Container, local_path: str) -> None:
+    def _copy_local_directory_to_container(
+        self, container: Container, local_path: str, target_name: str | None = None
+    ) -> None:
         import tarfile
         from io import BytesIO
 
@@ -260,13 +262,20 @@ class DockerRuntime(AbstractRuntime):
                 logger.warning(f"Local path does not exist or is not directory: {local_path_obj}")
                 return
 
-            logger.info(f"Copying local directory {local_path_obj} to container")
+            if target_name:
+                logger.info(
+                    f"Copying local directory {local_path_obj} to container at "
+                    f"/workspace/{target_name}"
+                )
+            else:
+                logger.info(f"Copying local directory {local_path_obj} to container")
 
             tar_buffer = BytesIO()
             with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
                 for item in local_path_obj.rglob("*"):
                     if item.is_file():
-                        arcname = item.relative_to(local_path_obj)
+                        rel_path = item.relative_to(local_path_obj)
+                        arcname = Path(target_name) / rel_path if target_name else rel_path
                         tar.add(item, arcname=arcname)
 
             tar_buffer.seek(0)
@@ -283,14 +292,26 @@ class DockerRuntime(AbstractRuntime):
             logger.exception("Failed to copy local directory to container")
 
     async def create_sandbox(
-        self, agent_id: str, existing_token: str | None = None, local_source_path: str | None = None
+        self,
+        agent_id: str,
+        existing_token: str | None = None,
+        local_sources: list[dict[str, str]] | None = None,
     ) -> SandboxInfo:
         scan_id = self._get_scan_id(agent_id)
         container = self._get_or_create_scan_container(scan_id)
 
         source_copied_key = f"_source_copied_{scan_id}"
-        if local_source_path and not hasattr(self, source_copied_key):
-            self._copy_local_directory_to_container(container, local_source_path)
+        if local_sources and not hasattr(self, source_copied_key):
+            for index, source in enumerate(local_sources, start=1):
+                source_path = source.get("source_path")
+                if not source_path:
+                    continue
+
+                target_name = source.get("workspace_subdir")
+                if not target_name:
+                    target_name = Path(source_path).name or f"target_{index}"
+
+                self._copy_local_directory_to_container(container, source_path, target_name)
             setattr(self, source_copied_key, True)
 
         container_id = container.id
