@@ -111,12 +111,25 @@ strix --target api.your-app.com --instruction "Prioritize authentication and aut
 strix --target https://your-app.com --instruction "Test with credentials: testuser/testpass. Focus on privilege escalation and access control bypasses."
 ```
 
-### 🤖 Headless Mode
-
-Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag—perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final penetration test report before exiting. Exits with non-zero code when vulnerabilities are found.
+### ⚙️ Configuration
 
 ```bash
-strix --target https://your-app.com -n --instruction "Focus on authentication bypass and session management"
+export STRIX_LLM="openai/gpt-5"
+export LLM_API_KEY="your-api-key"
+
+# Optional
+export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
+export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
+```
+
+[📚 View supported AI models](https://docs.litellm.ai/docs/providers)
+
+### 🤖 Headless Mode
+
+Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag—perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
+
+```bash
+strix -n --target https://your-app.com --instruction "Focus on authentication and authorization vulnerabilities"
 ```
 
 ### 🔄 CI/CD (GitHub Actions)
@@ -142,21 +155,9 @@ jobs:
         env:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+
         run: strix -n --target ./
 ```
-
-### ⚙️ Configuration
-
-```bash
-export STRIX_LLM="openai/gpt-5"
-export LLM_API_KEY="your-api-key"
-
-# Optional
-export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
-export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
-```
-
-[📚 View supported AI models](https://docs.litellm.ai/docs/providers)
 
 ## 🏆 Enterprise Platform
 
