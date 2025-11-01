@@ -2,6 +2,7 @@ import re
 import secrets
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -330,7 +331,7 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         console.print("\n")
         console.print(panel)
         console.print()
-        raise
+        sys.exit(1)
     except FileNotFoundError:
         error_text = Text()
         error_text.append("❌ ", style="bold red")
@@ -349,7 +350,7 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         console.print("\n")
         console.print(panel)
         console.print()
-        raise
+        sys.exit(1)
 
 
 # Docker utilities
