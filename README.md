@@ -1,29 +1,48 @@
+<p align="center">
+  <a href="https://usestrix.com/">
+    <img src=".github/logo.png" width="150" alt="Strix Logo">
+  </a>
+</p>
+
+<h1 align="center">
+Strix
+</h1>
+
+<h2 align="center">Open-source AI Hackers to secure your Apps</h2>
+
 <div align="center">
 
-# Strix
+[![Python](https://img.shields.io/pypi/pyversions/strix-agent?color=3776AB)](https://pypi.org/project/strix-agent/)
+[![PyPI](https://img.shields.io/pypi/v/strix-agent?color=10b981)](https://pypi.org/project/strix-agent/)
+[![PyPI Downloads](https://static.pepy.tech/personalized-badge/strix-agent?period=total&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=RED&left_text=Downloads)](https://pepy.tech/projects/strix-agent)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-### Open-source AI hackers for your apps
+[![GitHub Stars](https://img.shields.io/github/stars/usestrix/strix)](https://github.com/usestrix/strix)
+[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.gg/J48Fzuh7)
+[![Website](https://img.shields.io/badge/Website-usestrix.com-2d3748.svg)](https://usestrix.com)
 
-[![Strix](https://img.shields.io/badge/Strix-usestrix.com-1a1a1a.svg)](https://usestrix.com)
-[![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Discord](https://img.shields.io/badge/Discord-join-5865F2?logo=discord&logoColor=white)](https://discord.gg/J48Fzuh7)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/strix-agent?period=total&units=INTERNATIONAL_SYSTEM&left_color=GRAY&right_color=BLACK&left_text=Downloads)](https://pepy.tech/projects/strix-agent)
-[![GitHub stars](https://img.shields.io/github/stars/usestrix/strix.svg?style=social&label=Star)](https://github.com/usestrix/strix)
 </div>
+
+:star: _Love Strix? Give us a star to help other developers discover it!_
+
+<br />
 
 <div align="center">
 <img src=".github/screenshot.png" alt="Strix Demo" width="800" style="border-radius: 16px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2); transform: perspective(1000px) rotateX(2deg); transition: transform 0.3s ease;">
 </div>
 
+> [!TIP]
+> **New!** Strix now integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production!
+
 ---
 
 ## 🦉 Strix Overview
 
-Strix are autonomous AI agents that act just like real hackers - they run your code dynamically, find vulnerabilities, and validate them through actual exploitation. Built for developers and security teams who need fast, accurate security testing without the overhead of manual pentesting or the false positives of static analysis tools.
+Strix are autonomous AI agents that act just like real hackers - they run your code dynamically, find vulnerabilities, and validate them through actual proof-of-concepts. Built for developers and security teams who need fast, accurate security testing without the overhead of manual pentesting or the false positives of static analysis tools.
 
 - **Full hacker toolkit** out of the box
 - **Teams of agents** that collaborate and scale
-- **Real validation** via exploitation and PoC, not false positives
+- **Real validation** with PoCs, not false positives
 - **Developer‑first** CLI with actionable reports
 - **Auto‑fix & reporting** to accelerate remediation
 
