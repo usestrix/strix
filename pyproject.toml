@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "strix-agent"
-version = "0.3.1"
+version = "0.3.2"
 description = "Open-source AI Hackers for your apps"
 authors = ["Strix <hi@usestrix.com>"]
 readme = "README.md"
@@ -45,7 +45,7 @@ strix = "strix.interface.main:main"
 python = "^3.12"
 fastapi = "*"
 uvicorn = "*"
-litellm = { version = "~1.75.8", extras = ["proxy"] }
+litellm = { version = "~1.79.1", extras = ["proxy"] }
 openai = ">=1.99.5,<1.100.0"
 tenacity = "^9.0.0"
 numpydoc = "^1.8.0"
