@@ -24,6 +24,34 @@ from strix.tools import get_tools_prompt
 
 logger = logging.getLogger(__name__)
 
+
+def _resolve_request_timeout(default: int = 180) -> int:
+    env_value = os.getenv("STRIX_LLM_REQUEST_TIMEOUT")
+    if not env_value:
+        return default
+    try:
+        timeout = int(float(env_value))
+    except (ValueError, TypeError):
+        logger.warning(
+            "Invalid STRIX_LLM_REQUEST_TIMEOUT value '%s'; using default %s seconds",
+            env_value,
+            default,
+        )
+        return default
+
+    if timeout <= 0:
+        logger.warning(
+            "STRIX_LLM_REQUEST_TIMEOUT must be positive (got %s); using default %s seconds",
+            timeout,
+            default,
+        )
+        return default
+
+    return timeout
+
+
+REQUEST_TIMEOUT_SECONDS = _resolve_request_timeout()
+
 api_key = os.getenv("LLM_API_KEY")
 if api_key:
     litellm.api_key = api_key
@@ -122,6 +150,7 @@ class LLM:
         self.agent_name = agent_name
         self._total_stats = RequestStats()
         self._last_request_stats = RequestStats()
+        self.request_timeout = REQUEST_TIMEOUT_SECONDS
 
         self.memory_compressor = MemoryCompressor()
 
@@ -359,7 +388,7 @@ class LLM:
             "model": self.config.model_name,
             "messages": messages,
             "temperature": self.config.temperature,
-            "timeout": 180,
+            "timeout": self.request_timeout,
         }
 
         if self._should_include_stop_param():
