@@ -15,7 +15,7 @@ files = [
 [[package]]
 name = "aiohttp"
 version = "3.12.15"
-description = "Async http client/server framework (asyncio)"
+description = "Async http client/server frameark (asyncio)"
 optional = false
 python-versions = ">=3.9"
 groups = ["main"]
