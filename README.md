@@ -94,6 +94,11 @@ Want to skip the setup? Try our cloud-hosted version: **[usestrix.com](https://u
 - **🔍 Reconnaissance** - Automated OSINT and attack surface mapping
 - **📁 Code Analysis** - Static and dynamic analysis capabilities
 - **📝 Knowledge Management** - Structured findings and attack documentation
+- **🔄 Resume Scans** - Continue previous scans from where they left off
+- **🌐 IP/CIDR Scanning** - Network-wide vulnerability assessment
+- **🧠 Adaptive Complexity Analysis** - TCI-based scan optimization
+- **🔐 SOCKS Proxy Support** - Route traffic through Tor or custom proxies
+- **⏰ Configurable Timeout** - Set custom timeouts for scans
 
 ### 🎯 Comprehensive Vulnerability Detection
 
@@ -130,6 +135,13 @@ strix -t https://github.com/org/app -t https://your-app.com
 # Test multiple environments simultaneously
 strix -t https://dev.your-app.com -t https://staging.your-app.com -t https://prod.your-app.com
 
+# IP address or network range scanning
+strix --target 192.168.1.1
+strix --target 192.168.1.0/24
+
+# Resume a previous scan
+strix --resume my-scan-2024-01-15
+
 # Focused testing with instructions
 strix --target api.your-app.com --instruction "Prioritize authentication and authorization testing"
 
@@ -146,9 +158,37 @@ export LLM_API_KEY="your-api-key"
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
+export STRIX_LLM_TIMEOUT="300"  # LLM request timeout in seconds (default: 180)
+export STRIX_SOCKS_PROXY="socks5://localhost:1080"  # upstream SOCKS proxy (optional)
 ```
 
 [📚 View supported AI models](https://docs.litellm.ai/docs/providers)
+
+### 🎯 Advanced Features
+
+#### Target Complexity Index (TCI)
+Strix automatically analyzes target complexity and adapts scan parameters:
+- **Minimal** (TCI 0-25): Quick scans for simple targets
+- **Low** (TCI 26-50): Standard scans for typical applications
+- **Medium** (TCI 51-75): Thorough scans for complex applications
+- **High** (TCI 76-90): Comprehensive scans for enterprise applications
+- **Critical** (TCI 91-100): Exhaustive scans for highly complex systems
+
+The TCI considers:
+- Number of endpoints, pages, and APIs
+- Technology stack complexity
+- Authentication mechanisms
+- Infrastructure components
+
+#### Resume Scans
+Continue a previous scan that was interrupted:
+```bash
+# List resumable scans
+ls agent_runs/
+
+# Resume a specific scan
+strix --resume scan-name-2024-01-15
+```
 
 ### 🤖 Headless Mode
 

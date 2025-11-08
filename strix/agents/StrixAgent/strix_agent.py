@@ -1,6 +1,7 @@
 from typing import Any
 
 from strix.agents.base_agent import BaseAgent
+from strix.agents.complexity_analyzer import ComplexityAnalyzer
 from strix.llm.config import LLMConfig
 
 
@@ -15,6 +16,7 @@ class StrixAgent(BaseAgent):
             default_modules = ["root_agent"]
 
         self.default_llm_config = LLMConfig(prompt_modules=default_modules)
+        self.complexity_analyzer = ComplexityAnalyzer()
 
         super().__init__(config)
 
@@ -97,5 +99,23 @@ class StrixAgent(BaseAgent):
 
         if user_instructions:
             task_description += f"\n\nSpecial instructions: {user_instructions}"
+
+        # Perform complexity analysis for adaptive scan planning
+        if targets:
+            first_target = targets[0]
+            target_type = first_target.get("type", "web_application")
+            target_details = first_target.get("details", {})
+            
+            metrics = self.complexity_analyzer.estimate_from_target_type(target_type, target_details)
+            analysis = self.complexity_analyzer.analyze(metrics)
+            
+            # Log complexity analysis results
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(
+                f"Target Complexity Analysis: TCI={analysis.tci_score}, "
+                f"Level={analysis.level.value}, "
+                f"Recommended iterations={analysis.recommendations['max_iterations']}"
+            )
 
         return await self.agent_loop(task=task_description)
