@@ -111,6 +111,14 @@ Want to skip the setup? Try our cloud-hosted version: **[usestrix.com](https://u
 - **Scalable Testing** - Parallel execution for fast comprehensive coverage
 - **Dynamic Coordination** - Agents collaborate and share discoveries
 
+### 🔒 Security Architecture
+
+- **Container Isolation** - All testing in sandboxed Docker environments
+- **Local Processing** - Testing runs locally, no data sent to external services
+
+> [!WARNING]
+> Only test systems you own or have permission to test. You are responsible for using Strix ethically and legally.
+
 
 ## 💻 Usage Examples
 
@@ -135,27 +143,6 @@ strix --target api.your-app.com --instruction "Prioritize authentication and aut
 
 # Testing with credentials
 strix --target https://your-app.com --instruction "Test with credentials: testuser/testpass. Focus on privilege escalation and access control bypasses."
-```
-
-### ⚙️ Configuration
-
-```bash
-export STRIX_LLM="openai/gpt-5"
-export LLM_API_KEY="your-api-key"
-
-# Optional
-export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
-export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
-```
-
-[📚 View supported AI models](https://docs.litellm.ai/docs/providers)
-
-### 🤖 Headless Mode
-
-Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag—perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
-
-```bash
-strix -n --target https://your-app.com --instruction "Focus on authentication and authorization vulnerabilities"
 ```
 
 ### 🔄 CI/CD (GitHub Actions)
@@ -185,6 +172,29 @@ jobs:
         run: strix -n -t ./
 ```
 
+### 🤖 Headless Mode
+
+Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag—perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
+
+```bash
+strix -n --target https://your-app.com --instruction "Focus on authentication and authorization vulnerabilities"
+```
+
+### 📚 Supported LLMs
+
+[📚 View supported AI models](https://docs.litellm.ai/docs/providers)
+
+### ⚙️ Configuration
+
+```bash
+export STRIX_LLM="openai/gpt-5"
+export LLM_API_KEY="your-api-key"
+
+# Optional
+export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
+export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
+```
+
 ## 🏆 Enterprise Platform
 
 Our managed platform provides:
@@ -197,14 +207,6 @@ Our managed platform provides:
 - **🎯 Enterprise Support**
 
 [**Get Enterprise Demo →**](https://usestrix.com)
-
-## 🔒 Security Architecture
-
-- **Container Isolation** - All testing in sandboxed Docker environments
-- **Local Processing** - Testing runs locally, no data sent to external services
-
-> [!WARNING]
-> Only test systems you own or have permission to test. You are responsible for using Strix ethically and legally.
 
 ## 🤝 Contributing
 
