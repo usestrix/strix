@@ -133,6 +133,8 @@ Our managed platform provides:
 
 ## 💻 Usage Examples
 
+### Default Usage
+
 ```bash
 # Local codebase analysis
 strix --target ./app-directory
