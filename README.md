@@ -99,6 +99,7 @@ Want to skip the setup? Try our cloud-hosted version: **[usestrix.com](https://u
 - **🧠 Adaptive Complexity Analysis** - TCI-based scan optimization
 - **🔐 SOCKS Proxy Support** - Route traffic through Tor or custom proxies
 - **⏰ Configurable Timeout** - Set custom timeouts for scans
+- **🤖 OpenAI Codex Integration** - Enhanced code analysis and vulnerability detection
 
 ### 🎯 Comprehensive Vulnerability Detection
 

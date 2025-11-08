@@ -29,6 +29,12 @@ Strix supports the following environment variables for configuration:
 **Default:** `180` for cloud models, `300` for local models  
 **Min value:** `30`
 
+#### `STRIX_CODEX_MODEL`
+**Description:** Specific model to use for code analysis with Codex integration  
+**Example:** `openai/code-davinci-002`, `openai/gpt-4`  
+**Default:** Uses `STRIX_LLM` if not specified  
+**Note:** Enables enhanced static code analysis and vulnerability detection
+
 ### Network Configuration
 
 #### `STRIX_SOCKS_PROXY`

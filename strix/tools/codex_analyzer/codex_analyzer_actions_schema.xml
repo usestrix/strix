@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tool_schemas>
+    <tool name="analyze_code_security">
+        <description>
+            Perform comprehensive security analysis on source code using OpenAI Codex.
+            Identifies vulnerabilities, security flaws, and provides detailed analysis with severity ratings.
+            Best for: analyzing code files, functions, or modules for security issues.
+        </description>
+        <parameters>
+            <parameter name="code" type="string" required="true">
+                <description>Source code to analyze for security vulnerabilities</description>
+            </parameter>
+            <parameter name="language" type="string" required="false">
+                <description>Programming language (python, javascript, java, go, etc.). Default: python</description>
+            </parameter>
+            <parameter name="focus_areas" type="array" required="false">
+                <description>Specific vulnerability types to focus on (e.g., ["SQL injection", "XSS", "authentication"])</description>
+            </parameter>
+        </parameters>
+        <returns>
+            <description>Security analysis with identified vulnerabilities, severity ratings, and recommendations</description>
+        </returns>
+        <example>
+            analyze_code_security(code="def login(username, password):\n    query = f'SELECT * FROM users WHERE username={username}'", language="python", focus_areas=["SQL injection"])
+        </example>
+    </tool>
+
+    <tool name="find_vulnerabilities">
+        <description>
+            Search code for specific types of vulnerabilities using Codex.
+            Provides detailed findings with exact locations, exploitation scenarios, and proof of concepts.
+            Best for: targeted vulnerability hunting in code.
+        </description>
+        <parameters>
+            <parameter name="code" type="string" required="true">
+                <description>Source code to search for vulnerabilities</description>
+            </parameter>
+            <parameter name="language" type="string" required="false">
+                <description>Programming language. Default: python</description>
+            </parameter>
+            <parameter name="vulnerability_type" type="string" required="false">
+                <description>Specific vulnerability type to search for (e.g., "SQL injection", "XSS", "SSRF")</description>
+            </parameter>
+        </parameters>
+        <returns>
+            <description>Detailed vulnerability findings with locations, exploitation methods, and remediation</description>
+        </returns>
+        <example>
+            find_vulnerabilities(code="app.get('/user/:id', (req, res) => { db.query('SELECT * FROM users WHERE id=' + req.params.id) })", language="javascript", vulnerability_type="SQL injection")
+        </example>
+    </tool>
+
+    <tool name="explain_code">
+        <description>
+            Get detailed explanation of code with security context using Codex.
+            Provides logic breakdown, data flow analysis, and attack surface assessment.
+            Best for: understanding complex code and identifying security implications.
+        </description>
+        <parameters>
+            <parameter name="code" type="string" required="true">
+                <description>Source code to explain</description>
+            </parameter>
+            <parameter name="language" type="string" required="false">
+                <description>Programming language. Default: python</description>
+            </parameter>
+            <parameter name="focus" type="string" required="false">
+                <description>What to focus on. Default: "security implications"</description>
+            </parameter>
+        </parameters>
+        <returns>
+            <description>Detailed code explanation with security analysis</description>
+        </returns>
+        <example>
+            explain_code(code="@app.route('/upload', methods=['POST'])\ndef upload():\n    file = request.files['file']\n    file.save(f'uploads/{file.filename}')", language="python")
+        </example>
+    </tool>
+
+    <tool name="suggest_fixes">
+        <description>
+            Generate secure code fixes for identified vulnerabilities using Codex.
+            Provides production-ready secure replacement code with explanations.
+            Best for: remediating known vulnerabilities with secure alternatives.
+        </description>
+        <parameters>
+            <parameter name="code" type="string" required="true">
+                <description>Vulnerable code that needs fixing</description>
+            </parameter>
+            <parameter name="vulnerability_description" type="string" required="true">
+                <description>Description of the vulnerability to fix</description>
+            </parameter>
+            <parameter name="language" type="string" required="false">
+                <description>Programming language. Default: python</description>
+            </parameter>
+        </parameters>
+        <returns>
+            <description>Secure replacement code with detailed explanation and test cases</description>
+        </returns>
+        <example>
+            suggest_fixes(code="cursor.execute(f'SELECT * FROM users WHERE id={user_id}')", vulnerability_description="SQL injection via string formatting", language="python")
+        </example>
+    </tool>
+</tool_schemas>
