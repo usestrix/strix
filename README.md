@@ -142,20 +142,17 @@ strix --target ./app-directory
 # Repository security review
 strix --target https://github.com/org/repo
 
-# Web application assessment
+# Black-Box Web application assessment
 strix --target https://your-app.com
+
+# Grey-Box Security Assesment
+strix --target https://your-app.com --instructions "Focus on authenticated testing using the following credentials user:pass"
 
 # Multi-target white-box testing (source code + deployed app)
 strix -t https://github.com/org/app -t https://your-app.com
 
-# Test multiple environments simultaneously
-strix -t https://dev.your-app.com -t https://staging.your-app.com -t https://prod.your-app.com
-
 # Focused testing with instructions
 strix --target api.your-app.com --instruction "Prioritize authentication and authorization testing"
-
-# Testing with credentials
-strix --target https://your-app.com --instruction "Test with credentials: testuser/testpass. Focus on privilege escalation and access control bypasses."
 ```
 
 ### 🔄 CI/CD (GitHub Actions)
@@ -190,7 +187,7 @@ jobs:
 Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag—perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
 
 ```bash
-strix -n --target https://your-app.com --instruction "Focus on authentication and authorization vulnerabilities"
+strix -n --target https://your-app.com
 ```
 
 ### ⚙️ Configuration
