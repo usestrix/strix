@@ -1,3 +1,4 @@
+import ipaddress
 import re
 import secrets
 import shutil
@@ -147,6 +148,25 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:
 
     target = target.strip()
 
+    # Check for IP address or IP range (CIDR notation)
+    try:
+        # Try parsing as IP network (supports both single IPs and CIDR ranges)
+        ip_network = ipaddress.ip_network(target, strict=False)
+        if ip_network.num_addresses == 1:
+            # Single IP address
+            return "ip_address", {"target_ip": str(ip_network.network_address)}
+        else:
+            # IP range (CIDR notation)
+            return "ip_range", {
+                "target_range": target,
+                "network": str(ip_network.network_address),
+                "netmask": str(ip_network.netmask),
+                "num_hosts": str(ip_network.num_addresses),
+            }
+    except ValueError:
+        # Not an IP address or range, continue with other checks
+        pass
+
     lower_target = target.lower()
     bare_repo_prefixes = (
         "github.com/",
@@ -191,7 +211,9 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:
         "- A valid URL (http:// or https://)\n"
         "- A Git repository URL (https://github.com/... or git@github.com:...)\n"
         "- A local directory path\n"
-        "- A domain name (e.g., example.com)"
+        "- A domain name (e.g., example.com)\n"
+        "- An IP address (e.g., 192.168.1.1)\n"
+        "- An IP range in CIDR notation (e.g., 192.168.1.0/24)"
     )
 
 
@@ -365,8 +387,15 @@ def check_docker_connection() -> Any:
         error_text.append("\n\n", style="white")
         error_text.append("Cannot connect to Docker daemon.\n", style="white")
         error_text.append("Please ensure Docker is installed and running.\n\n", style="white")
-        error_text.append("Try running: ", style="dim white")
-        error_text.append("sudo systemctl start docker", style="dim cyan")
+        if sys.platform == "win32":
+            error_text.append("Windows guidance:\n", style="bold cyan")
+            error_text.append("• Start Docker Desktop and wait for it to be ready\n", style="white")
+            error_text.append("• Verify docker works: ", style="white")
+            error_text.append("docker version\n", style="dim cyan")
+            error_text.append("• If WSL2 is used, ensure the WSL distro has Docker integration enabled\n", style="white")
+        else:
+            error_text.append("Try running: ", style="dim white")
+            error_text.append("sudo systemctl start docker", style="dim cyan")
 
         panel = Panel(
             error_text,

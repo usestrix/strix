@@ -25,6 +25,8 @@ class StrixAgent(BaseAgent):
         repositories = []
         local_code = []
         urls = []
+        ip_addresses = []
+        ip_ranges = []
 
         for target in targets:
             target_type = target["type"]
@@ -54,6 +56,15 @@ class StrixAgent(BaseAgent):
             elif target_type == "web_application":
                 urls.append(details["target_url"])
 
+            elif target_type == "ip_address":
+                ip_addresses.append(details.get("target_ip", ""))
+
+            elif target_type == "ip_range":
+                # Prefer the provided CIDR when available
+                cidr = details.get("target_range") or details.get("network")
+                if cidr:
+                    ip_ranges.append(cidr)
+
         task_parts = []
 
         if repositories:
@@ -73,6 +84,14 @@ class StrixAgent(BaseAgent):
         if urls:
             task_parts.append("\n\nURLs:")
             task_parts.extend(f"- {url}" for url in urls)
+
+        if ip_addresses:
+            task_parts.append("\n\nIP Addresses:")
+            task_parts.extend(f"- {ip}" for ip in ip_addresses if ip)
+
+        if ip_ranges:
+            task_parts.append("\n\nIP Ranges:")
+            task_parts.extend(f"- {rng}" for rng in ip_ranges if rng)
 
         task_description = " ".join(task_parts)
 

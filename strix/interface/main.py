@@ -208,13 +208,58 @@ async def warm_up_llm() -> None:
             {"role": "user", "content": "Reply with just 'OK'."},
         ]
 
+        # Respect configurable timeout; use higher default for local models (Ollama, LMStudio, etc.)
+        default_timeout = 300 if api_base else 60
+        env_timeout = os.getenv("STRIX_LLM_TIMEOUT")
+        try:
+            configured_timeout = max(30, int(env_timeout)) if env_timeout else default_timeout
+        except ValueError:
+            configured_timeout = default_timeout
+
         response = litellm.completion(
             model=model_name,
             messages=test_messages,
+            timeout=configured_timeout,
         )
 
         validate_llm_response(response)
 
+    except litellm.Timeout as e:
+        error_text = Text()
+        error_text.append("❌ ", style="bold red")
+        error_text.append("LLM CONNECTION TIMEOUT", style="bold red")
+        error_text.append("\n\n", style="white")
+        
+        if api_base and "ollama" in api_base.lower():
+            error_text.append("Connection to Ollama timed out.\n", style="white")
+            error_text.append("\nTroubleshooting steps:\n", style="bold cyan")
+            error_text.append("1. Ensure Ollama is running: ", style="white")
+            error_text.append("ollama serve\n", style="dim white")
+            error_text.append("2. Check if the model is pulled: ", style="white")
+            error_text.append(f"ollama pull {model_name.split('/')[-1]}\n", style="dim white")
+            error_text.append("3. Verify Ollama is accessible: ", style="white")
+            error_text.append(f"curl {api_base}/api/tags\n", style="dim white")
+            if sys.platform == "win32":
+                error_text.append("\n⚠️  Windows Note: ", style="bold yellow")
+                error_text.append("Ensure Windows Firewall allows Ollama connections\n", style="white")
+        else:
+            error_text.append("Connection to the language model timed out.\n", style="white")
+            error_text.append("Please check your network connection and API endpoint.\n", style="white")
+        
+        error_text.append(f"\nError: {e}", style="dim white")
+
+        panel = Panel(
+            error_text,
+            title="[bold red]🛡️  STRIX STARTUP ERROR",
+            title_align="center",
+            border_style="red",
+            padding=(1, 2),
+        )
+
+        console.print("\n")
+        console.print(panel)
+        console.print()
+        sys.exit(1)
     except Exception as e:  # noqa: BLE001
         error_text = Text()
         error_text.append("❌ ", style="bold red")
@@ -222,6 +267,18 @@ async def warm_up_llm() -> None:
         error_text.append("\n\n", style="white")
         error_text.append("Could not establish connection to the language model.\n", style="white")
         error_text.append("Please check your configuration and try again.\n", style="white")
+        
+        # Provide specific guidance for common errors
+        error_str = str(e).lower()
+        if "ollama" in error_str or (api_base and "ollama" in api_base.lower()):
+            error_text.append("\n💡 Ollama Troubleshooting:\n", style="bold cyan")
+            error_text.append("• Start Ollama: ", style="white")
+            error_text.append("ollama serve\n", style="dim white")
+            error_text.append("• Pull model: ", style="white")
+            error_text.append(f"ollama pull {model_name.split('/')[-1]}\n", style="dim white")
+            if sys.platform == "win32":
+                error_text.append("• Windows: Run as Administrator if needed\n", style="white")
+        
         error_text.append(f"\nError: {e}", style="dim white")
 
         panel = Panel(
@@ -257,6 +314,10 @@ Examples:
   # Domain penetration test
   strix --target example.com
 
+  # IP address or range scanning
+  strix --target 192.168.1.1
+  strix --target 192.168.1.0/24
+
   # Multiple targets (e.g., white-box testing with source and deployed app)
   strix --target https://github.com/user/repo --target https://example.com
   strix --target ./my-project --target https://staging.example.com --target https://prod.example.com
@@ -270,9 +331,10 @@ Examples:
         "-t",
         "--target",
         type=str,
-        required=True,
+        required=False,
         action="append",
-        help="Target to test (URL, repository, local directory path, or domain name). "
+        help="Target to test (URL, repository, local directory path, domain name, IP address, or IP range). "
+        "Supports CIDR notation for IP ranges (e.g., 192.168.1.0/24). "
         "Can be specified multiple times for multi-target scans.",
     )
     parser.add_argument(
@@ -293,6 +355,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--resume",
+        type=str,
+        metavar="RUN_NAME",
+        help="Resume a previous scan by specifying the run name (found in agent_runs/ directory)",
+    )
+
+    parser.add_argument(
         "-n",
         "--non-interactive",
         action="store_true",
@@ -304,23 +373,29 @@ Examples:
 
     args = parser.parse_args()
 
+    # Validate presence of targets unless resuming
+    if not args.resume and not args.target:
+        parser.error("At least one --target is required when not using --resume")
+
     args.targets_info = []
-    for target in args.target:
-        try:
-            target_type, target_dict = infer_target_type(target)
+    if args.target:
+        for target in args.target:
+            try:
+                target_type, target_dict = infer_target_type(target)
 
-            if target_type == "local_code":
-                display_target = target_dict.get("target_path", target)
-            else:
-                display_target = target
+                if target_type == "local_code":
+                    display_target = target_dict.get("target_path", target)
+                else:
+                    display_target = target
 
-            args.targets_info.append(
-                {"type": target_type, "details": target_dict, "original": display_target}
-            )
-        except ValueError:
-            parser.error(f"Invalid target '{target}'")
+                args.targets_info.append(
+                    {"type": target_type, "details": target_dict, "original": display_target}
+                )
+            except ValueError:
+                parser.error(f"Invalid target '{target}'")
 
-    assign_workspace_subdirs(args.targets_info)
+    if args.targets_info:
+        assign_workspace_subdirs(args.targets_info)
 
     return args
 
@@ -446,6 +521,29 @@ def main() -> None:
 
     args = parse_arguments()
 
+    # Handle resume mode: load prior targets and run name from saved metadata
+    if args.resume:
+        results_path = Path("agent_runs") / args.resume
+        metadata_file = results_path / "run_metadata.json"
+        if not metadata_file.exists():
+            console = Console()
+            console.print(
+                f"[bold red]❌ Cannot resume:[/] Missing metadata file at {metadata_file}")
+            sys.exit(1)
+        try:
+            import json
+            with metadata_file.open("r", encoding="utf-8") as f:
+                metadata = json.load(f)
+            loaded_targets = metadata.get("targets", [])
+            if not isinstance(loaded_targets, list) or not loaded_targets:
+                raise ValueError("No targets found in run metadata")
+            args.targets_info = loaded_targets
+            args.run_name = args.resume
+        except Exception as e:  # noqa: BLE001
+            console = Console()
+            console.print(f"[bold red]❌ Failed to load resume metadata:[/] {e}")
+            sys.exit(1)
+
     check_docker_installed()
     pull_docker_image()
 
@@ -455,12 +553,14 @@ def main() -> None:
     if not args.run_name:
         args.run_name = generate_run_name()
 
-    for target_info in args.targets_info:
-        if target_info["type"] == "repository":
-            repo_url = target_info["details"]["target_repo"]
-            dest_name = target_info["details"].get("workspace_subdir")
-            cloned_path = clone_repository(repo_url, args.run_name, dest_name)
-            target_info["details"]["cloned_repo_path"] = cloned_path
+    # Skip cloning when resuming previous run
+    if not args.resume:
+        for target_info in args.targets_info:
+            if target_info["type"] == "repository":
+                repo_url = target_info["details"]["target_repo"]
+                dest_name = target_info["details"].get("workspace_subdir")
+                cloned_path = clone_repository(repo_url, args.run_name, dest_name)
+                target_info["details"]["cloned_repo_path"] = cloned_path
 
     args.local_sources = collect_local_sources(args.targets_info)
 

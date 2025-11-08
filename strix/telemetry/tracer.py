@@ -202,6 +202,11 @@ class Tracer:
         try:
             run_dir = self.get_run_dir()
             self.end_time = datetime.now(UTC).isoformat()
+            # Update and persist run metadata
+            self.run_metadata.update({
+                "end_time": self.end_time,
+                "status": "completed" if bool(self.final_scan_result) else "ended",
+            })
 
             if self.final_scan_result:
                 penetration_test_report_file = run_dir / "penetration_test_report.md"
@@ -214,6 +219,16 @@ class Tracer:
                 logger.info(
                     f"Saved final penetration test report to: {penetration_test_report_file}"
                 )
+
+            # Always save metadata so we can resume later
+            try:
+                import json
+                metadata_file = run_dir / "run_metadata.json"
+                with metadata_file.open("w", encoding="utf-8") as f:
+                    json.dump(self.run_metadata, f, indent=2)
+                logger.info(f"Saved run metadata to: {metadata_file}")
+            except Exception:
+                logger.exception("Failed to save run metadata")
 
             if self.vulnerability_reports:
                 vuln_dir = run_dir / "vulnerabilities"
