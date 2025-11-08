@@ -35,6 +35,9 @@ Strix
 > [!TIP]
 > **New!** Strix now integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production!
 
+> [!WARNING]
+> Only test systems you own or have permission to test. You are responsible for using Strix ethically and legally.
+
 ---
 
 ## 🦉 Strix Overview
@@ -79,11 +82,9 @@ strix --target ./app-directory
 
 First run pulls the sandbox Docker image. Results are saved under `agent_runs/<run-name>`.
 
-### ☁️ Cloud Hosted
+### 🏆 Enterprise Platform
 
 Want to skip the setup? Try our cloud-hosted version: **[usestrix.com](https://usestrix.com)**
-
-## 🏆 Enterprise Platform
 
 Our managed platform provides:
 
@@ -128,9 +129,6 @@ Our managed platform provides:
 
 - **Container Isolation** - All testing in sandboxed Docker environments
 - **Local Processing** - Testing runs locally, no data sent to external services
-
-> [!WARNING]
-> Only test systems you own or have permission to test. You are responsible for using Strix ethically and legally.
 
 
 ## 💻 Usage Examples
@@ -193,10 +191,6 @@ Run Strix programmatically without interactive UI using the `-n/--non-interactiv
 strix -n --target https://your-app.com --instruction "Focus on authentication and authorization vulnerabilities"
 ```
 
-### 📚 Supported LLMs
-
-[📚 View supported AI models](https://docs.litellm.ai/docs/providers)
-
 ### ⚙️ Configuration
 
 ```bash
@@ -207,6 +201,8 @@ export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 ```
+
+[📚 View supported AI models](https://docs.litellm.ai/docs/providers)
 
 ## 🤝 Contributing
 
