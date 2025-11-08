@@ -83,6 +83,19 @@ First run pulls the sandbox Docker image. Results are saved under `agent_runs/<r
 
 Want to skip the setup? Try our cloud-hosted version: **[usestrix.com](https://usestrix.com)**
 
+## 🏆 Enterprise Platform
+
+Our managed platform provides:
+
+- **📈 Executive Dashboards**
+- **🧠 Custom Fine-Tuned Models**
+- **⚙️ CI/CD Integration**
+- **🔍 Large-Scale Scanning**
+- **🔌 Third-Party Integrations**
+- **🎯 Enterprise Support**
+
+[**Get Enterprise Demo →**](https://usestrix.com)
+
 ## ✨ Features
 
 ### 🛠️ Agentic Security Tools
@@ -194,19 +207,6 @@ export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 ```
-
-## 🏆 Enterprise Platform
-
-Our managed platform provides:
-
-- **📈 Executive Dashboards**
-- **🧠 Custom Fine-Tuned Models**
-- **⚙️ CI/CD Integration**
-- **🔍 Large-Scale Scanning**
-- **🔌 Third-Party Integrations**
-- **🎯 Enterprise Support**
-
-[**Get Enterprise Demo →**](https://usestrix.com)
 
 ## 🤝 Contributing
 
