@@ -32,6 +32,7 @@ from strix.interface.utils import (
     process_pull_line,
     validate_llm_response,
 )
+from strix.proxy_config import configure_global_proxies
 from strix.runtime.docker_runtime import STRIX_IMAGE
 from strix.telemetry.tracer import get_global_tracer
 
@@ -67,6 +68,34 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
 
     if not os.getenv("PERPLEXITY_API_KEY"):
         missing_optional_vars.append("PERPLEXITY_API_KEY")
+
+    # Validate proxy configuration
+    try:
+        configure_global_proxies()
+    except ValueError as e:
+        error_text = Text()
+        error_text.append("❌ ", style="bold red")
+        error_text.append("INVALID PROXY CONFIGURATION", style="bold red")
+        error_text.append("\n\n", style="white")
+        error_text.append(str(e), style="white")
+        error_text.append("\n\nSupported proxy formats:\n", style="white")
+        error_text.append("• http://proxy.example.com:8080\n", style="dim white")
+        error_text.append("• https://proxy.example.com:8080\n", style="dim white")
+        error_text.append("• socks5://proxy.example.com:1080\n", style="dim white")
+        error_text.append("• socks5h://proxy.example.com:1080\n", style="dim white")
+
+        panel = Panel(
+            error_text,
+            title="[bold red]🛡️  STRIX CONFIGURATION ERROR",
+            title_align="center",
+            border_style="red",
+            padding=(1, 2),
+        )
+
+        console.print("\n")
+        console.print(panel)
+        console.print()
+        sys.exit(1)
 
     if missing_required_vars:
         error_text = Text()
@@ -123,6 +152,25 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                         style="white",
                     )
 
+        # Add proxy configuration documentation
+        proxy_configured = any([
+            os.getenv("STRIX_PROXY_ALL"),
+            os.getenv("STRIX_PROXY_TOOLS"), 
+            os.getenv("STRIX_PROXY_LLM")
+        ])
+        
+        if proxy_configured or missing_optional_vars:
+            error_text.append("\nProxy configuration (optional):\n", style="white")
+            error_text.append("• ", style="white")
+            error_text.append("STRIX_PROXY_ALL", style="bold cyan")
+            error_text.append(" - Proxy for all traffic (tools and LLM)\n", style="white")
+            error_text.append("• ", style="white")
+            error_text.append("STRIX_PROXY_TOOLS", style="bold cyan")
+            error_text.append(" - Proxy for tool traffic only\n", style="white")
+            error_text.append("• ", style="white")
+            error_text.append("STRIX_PROXY_LLM", style="bold cyan")
+            error_text.append(" - Proxy for LLM traffic only\n", style="white")
+
         error_text.append("\nExample setup:\n", style="white")
         error_text.append("export STRIX_LLM='openai/gpt-5'\n", style="dim white")
 
@@ -146,6 +194,19 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                     error_text.append(
                         "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
                     )
+
+        # Add proxy examples if any proxy is configured
+        proxy_configured = any([
+            os.getenv("STRIX_PROXY_ALL"),
+            os.getenv("STRIX_PROXY_TOOLS"), 
+            os.getenv("STRIX_PROXY_LLM")
+        ])
+        
+        if proxy_configured:
+            error_text.append("\nProxy examples:\n", style="white")
+            error_text.append("export STRIX_PROXY_ALL='socks5://proxy.example.com:1080'\n", style="dim white")
+            error_text.append("export STRIX_PROXY_TOOLS='http://proxy.example.com:8080'\n", style="dim white")
+            error_text.append("export STRIX_PROXY_LLM='https://llm-proxy.example.com:8080'\n", style="dim white")
 
         panel = Panel(
             error_text,

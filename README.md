@@ -146,7 +146,14 @@ export LLM_API_KEY="your-api-key"
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
+
+# Proxy Configuration (optional)
+export STRIX_PROXY_ALL="socks5://proxy.example.com:1080"    # Proxy for all traffic
+export STRIX_PROXY_TOOLS="http://proxy.example.com:8080"    # Proxy for tool traffic only
+export STRIX_PROXY_LLM="https://proxy.example.com:8080"     # Proxy for LLM traffic only
 ```
+
+**Proxy Support**: Strix supports both HTTP and SOCKS5 proxies for routing traffic through corporate networks, WAF allow-lists, or SSH tunnels. Configure separate proxies for tool traffic and LLM requests, or use `STRIX_PROXY_ALL` for unified routing.
 
 [📚 View supported AI models](https://docs.litellm.ai/docs/providers)
 

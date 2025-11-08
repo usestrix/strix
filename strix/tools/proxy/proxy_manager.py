@@ -11,6 +11,8 @@ from gql.transport.exceptions import TransportQueryError
 from gql.transport.requests import RequestsHTTPTransport
 from requests.exceptions import ProxyError, RequestException, Timeout
 
+from strix.proxy_config import get_proxy_config
+
 
 if TYPE_CHECKING:
     from collections.abc import Callable

@@ -3,6 +3,7 @@ from typing import Any
 
 import requests
 
+from strix.proxy_config import get_proxy_config
 from strix.tools.registry import register_tool
 
 
@@ -53,7 +54,13 @@ def web_search(query: str) -> dict[str, Any]:
             ],
         }
 
-        response = requests.post(url, headers=headers, json=payload, timeout=300)
+        response = requests.post(
+            url, 
+            headers=headers, 
+            json=payload, 
+            timeout=300,
+            proxies=get_proxy_config().get_requests_proxies("tools")
+        )
         response.raise_for_status()
 
         response_data = response.json()

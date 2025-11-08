@@ -11,6 +11,8 @@ import docker
 from docker.errors import DockerException, ImageNotFound, NotFound
 from docker.models.containers import Container
 
+from strix.proxy_config import get_proxy_config
+
 from .runtime import AbstractRuntime, SandboxInfo
 
 
@@ -340,18 +342,40 @@ class DockerRuntime(AbstractRuntime):
     ) -> None:
         import httpx
 
-        try:
-            async with httpx.AsyncClient(trust_env=False) as client:
-                response = await client.post(
-                    f"{api_url}/register_agent",
-                    params={"agent_id": agent_id},
-                    headers={"Authorization": f"Bearer {token}"},
-                    timeout=30,
-                )
-                response.raise_for_status()
-                logger.info(f"Registered agent {agent_id} with tool server")
-        except (httpx.RequestError, httpx.HTTPStatusError) as e:
-            logger.warning(f"Failed to register agent {agent_id}: {e}")
+        proxy_config = get_proxy_config()
+        proxies = proxy_config.get_httpx_proxies("tools")
+
+        # Handle SOCKS proxies with httpx-socks
+        if proxies and "_socks_proxy" in proxies:
+            from httpx_socks import AsyncProxyTransport
+            
+            socks_url = proxies["_socks_proxy"]
+            transport = AsyncProxyTransport.from_url(socks_url)
+            try:
+                async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
+                    response = await client.post(
+                        f"{api_url}/register_agent",
+                        params={"agent_id": agent_id},
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=30,
+                    )
+                    response.raise_for_status()
+                    logger.info(f"Registered agent {agent_id} with tool server")
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
+                logger.warning(f"Failed to register agent {agent_id}: {e}")
+        else:
+            try:
+                async with httpx.AsyncClient(trust_env=False, proxies=proxies) as client:
+                    response = await client.post(
+                        f"{api_url}/register_agent",
+                        params={"agent_id": agent_id},
+                        headers={"Authorization": f"Bearer {token}"},
+                        timeout=30,
+                    )
+                    response.raise_for_status()
+                    logger.info(f"Registered agent {agent_id} with tool server")
+            except (httpx.RequestError, httpx.HTTPStatusError) as e:
+                logger.warning(f"Failed to register agent {agent_id}: {e}")
 
     async def get_sandbox_url(self, container_id: str, port: int) -> str:
         try:

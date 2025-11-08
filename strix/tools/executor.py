@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from strix.proxy_config import get_proxy_config
+
 
 if os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "false":
     from strix.runtime import get_runtime
@@ -62,22 +64,50 @@ async def _execute_tool_in_sandbox(tool_name: str, agent_state: Any, **kwargs: A
         "Content-Type": "application/json",
     }
 
-    async with httpx.AsyncClient(trust_env=False) as client:
-        try:
-            response = await client.post(
-                request_url, json=request_data, headers=headers, timeout=None
-            )
-            response.raise_for_status()
-            response_data = response.json()
-            if response_data.get("error"):
-                raise RuntimeError(f"Sandbox execution error: {response_data['error']}")
-            return response_data.get("result")
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 401:
-                raise RuntimeError("Authentication failed: Invalid or missing sandbox token") from e
-            raise RuntimeError(f"HTTP error calling tool server: {e.response.status_code}") from e
-        except httpx.RequestError as e:
-            raise RuntimeError(f"Request error calling tool server: {e}") from e
+    proxy_config = get_proxy_config()
+    proxies = proxy_config.get_httpx_proxies("tools")
+    
+    # Handle SOCKS proxies with httpx-socks
+    if proxies and "_socks_proxy" in proxies:
+        from httpx_socks import AsyncProxyTransport
+        from urllib.parse import urlparse
+        
+        socks_url = proxies["_socks_proxy"]
+        parsed = urlparse(socks_url)
+        transport = AsyncProxyTransport.from_url(socks_url)
+        async with httpx.AsyncClient(transport=transport, trust_env=False) as client:
+            try:
+                response = await client.post(
+                    request_url, json=request_data, headers=headers, timeout=None
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                if response_data.get("error"):
+                    raise RuntimeError(f"Sandbox execution error: {response_data['error']}")
+                return response_data.get("result")
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401:
+                    raise RuntimeError("Authentication failed: Invalid or missing sandbox token") from e
+                raise RuntimeError(f"HTTP error calling tool server: {e.response.status_code}") from e
+            except httpx.RequestError as e:
+                raise RuntimeError(f"Request error calling tool server: {e}") from e
+    else:
+        async with httpx.AsyncClient(trust_env=False, proxies=proxies) as client:
+            try:
+                response = await client.post(
+                    request_url, json=request_data, headers=headers, timeout=None
+                )
+                response.raise_for_status()
+                response_data = response.json()
+                if response_data.get("error"):
+                    raise RuntimeError(f"Sandbox execution error: {response_data['error']}")
+                return response_data.get("result")
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 401:
+                    raise RuntimeError("Authentication failed: Invalid or missing sandbox token") from e
+                raise RuntimeError(f"HTTP error calling tool server: {e.response.status_code}") from e
+            except httpx.RequestError as e:
+                raise RuntimeError(f"Request error calling tool server: {e}") from e
 
 
 async def _execute_tool_locally(tool_name: str, agent_state: Any | None, **kwargs: Any) -> Any:
