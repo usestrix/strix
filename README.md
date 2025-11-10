@@ -29,7 +29,7 @@ Strix
 <br />
 
 <div align="center">
-<img src=".github/screenshot.png" alt="Strix Demo" width="800" style="border-radius: 32px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2); transform: perspective(1000px) rotateX(2deg); transition: transform 0.3s ease;">
+<img src=".github/screenshot.png" alt="Strix Demo" width="800" style="border-radius: 16px;">
 </div>
 
 > [!TIP]
@@ -125,12 +125,6 @@ Our managed platform provides:
 - **Scalable Testing** - Parallel execution for fast comprehensive coverage
 - **Dynamic Coordination** - Agents collaborate and share discoveries
 
-### 🔒 Security Architecture
-
-- **Container Isolation** - All testing in sandboxed Docker environments
-- **Local Processing** - Testing runs locally, no data sent to external services
-
-
 ## 💻 Usage Examples
 
 ### Default Usage
@@ -146,13 +140,13 @@ strix --target https://github.com/org/repo
 strix --target https://your-app.com
 
 # Grey-Box Security Assesment
-strix --target https://your-app.com --instructions "Focus on authenticated testing using the following credentials user:pass"
+strix --target https://your-app.com --instructions "Perform authenticated testing using the following credentials user:pass"
 
 # Multi-target white-box testing (source code + deployed app)
 strix -t https://github.com/org/app -t https://your-app.com
 
 # Focused testing with instructions
-strix --target api.your-app.com --instruction "Prioritize authentication and authorization testing"
+strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
 ```
 
 ### 🤖 Headless Mode
@@ -229,9 +223,7 @@ Have questions? Found a bug? Want to contribute? **[Join our Discord!](https://d
 **Love Strix?** Give us a ⭐ on GitHub!
 
 <div align="center">
-
-[![Star History Chart](https://api.star-history.com/svg?repos=usestrix/strix&type=date&legend=top-left)](https://www.star-history.com/#usestrix/strix&type=date&legend=top-left)
-
+<img src="https://api.star-history.com/svg?repos=usestrix/strix&type=date&legend=top-left" alt="Star History Chart" width="800" style="border-radius: 16px;">
 </div>
 
 </div>
