@@ -1,0 +1,11 @@
+# ---
+# title: Quickstart docker-compose
+# purpose: Define the minimal Flask app service for local Strix testing.
+# ---
+version: "3.8"
+services:
+  app:
+    build: .
+    ports:
+      - "5000:5000"
+    restart: unless-stopped
