@@ -2,18 +2,25 @@
 # title: Quickstart demo Flask app
 # purpose: Minimal Flask application for Strix quickstart and Docker Compose example.
 # ---
-from flask import Flask, jsonify
+from __future__ import annotations
+from typing import Any, Callable, cast
+import flask
+from flask import Flask, Response
 
 app = Flask(__name__)
 
+get = cast(Callable[[str], Callable[[Callable[..., Response]], Callable[..., Response]]], app.get)
 
-@app.get("/")
-def index():
+jsonify: Callable[..., Response] = cast(Any, flask.jsonify)
+
+
+@get("/")
+def index() -> Response:
     return jsonify({"message": "Hello from Strix quickstart!"})
 
 
-@app.get("/health")
-def health():
+@get("/health")
+def health() -> Response:
     return jsonify({"status": "ok"})
 
 

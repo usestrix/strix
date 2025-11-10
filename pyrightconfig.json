@@ -1,0 +1,5 @@
+{
+  "typeCheckingMode": "strict",
+  "reportMissingTypeStubs": false,
+  "reportMissingImports": true
+}
