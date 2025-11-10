@@ -29,7 +29,7 @@ Strix
 <br />
 
 <div align="center">
-<img src=".github/screenshot.png" alt="Strix Demo" width="800" style="border-radius: 16px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2); transform: perspective(1000px) rotateX(2deg); transition: transform 0.3s ease;">
+<img src=".github/screenshot.png" alt="Strix Demo" width="800" style="border-radius: 32px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.2); transform: perspective(1000px) rotateX(2deg); transition: transform 0.3s ease;">
 </div>
 
 > [!TIP]
@@ -220,12 +220,18 @@ Help expand our collection of specialized prompt modules for AI agents:
 - See [Prompt Modules Documentation](strix/prompts/README.md) for guidelines
 - Submit via [pull requests](https://github.com/usestrix/strix/pulls) or [issues](https://github.com/usestrix/strix/issues)
 
+## 👥 Join Our Community
+
+Have questions? Found a bug? Want to contribute? **[Join our Discord!](https://discord.gg/YjKFvEZSdZ)**
+
 ## 🌟 Support the Project
 
 **Love Strix?** Give us a ⭐ on GitHub!
 
-## 👥 Join Our Community
+<div align="center">
 
-Have questions? Found a bug? Want to contribute? **[Join our Discord!](https://discord.gg/YjKFvEZSdZ)**
+[![Star History Chart](https://api.star-history.com/svg?repos=usestrix/strix&type=date&legend=top-left)](https://www.star-history.com/#usestrix/strix&type=date&legend=top-left)
+
+</div>
 
 </div>
