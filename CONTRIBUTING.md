@@ -32,6 +32,8 @@ Thank you for your interest in contributing to Strix! This guide will help you g
    ```bash
    export STRIX_LLM="openai/gpt-5"
    export LLM_API_KEY="your-api-key"
+   # Optional: override default 180s timeout
+   export STRIX_LLM_TIMEOUT="240"
    ```
 
 4. **Run Strix in development mode**

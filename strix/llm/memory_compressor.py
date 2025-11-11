@@ -3,6 +3,7 @@ import os
 from typing import Any
 
 import litellm
+from strix.llm.config import resolve_timeout
 
 
 logger = logging.getLogger(__name__)
@@ -85,6 +86,7 @@ def _extract_message_text(msg: dict[str, Any]) -> str:
 def _summarize_messages(
     messages: list[dict[str, Any]],
     model: str,
+    timeout: int,
 ) -> dict[str, Any]:
     if not messages:
         empty_summary = "<context_summary message_count='0'>{text}</context_summary>"
@@ -106,7 +108,7 @@ def _summarize_messages(
         completion_args = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
-            "timeout": 180,
+            "timeout": timeout,
         }
 
         response = litellm.completion(**completion_args)
@@ -146,9 +148,11 @@ class MemoryCompressor:
         self,
         max_images: int = 3,
         model_name: str | None = None,
+        timeout: int | None = None,
     ):
         self.max_images = max_images
         self.model_name = model_name or os.getenv("STRIX_LLM", "openai/gpt-5")
+        self.timeout = resolve_timeout(timeout)
 
         if not self.model_name:
             raise ValueError("STRIX_LLM environment variable must be set and not empty")
@@ -202,7 +206,7 @@ class MemoryCompressor:
         chunk_size = 10
         for i in range(0, len(old_msgs), chunk_size):
             chunk = old_msgs[i : i + chunk_size]
-            summary = _summarize_messages(chunk, model_name)
+            summary = _summarize_messages(chunk, model_name, self.timeout)
             if summary:
                 compressed.append(summary)
 
