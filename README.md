@@ -140,7 +140,7 @@ strix --target https://github.com/org/repo
 strix --target https://your-app.com
 
 # Grey-Box Security Assesment
-strix --target https://your-app.com --instructions "Perform authenticated testing using the following credentials user:pass"
+strix --target https://your-app.com --instruction "Perform authenticated testing using the following credentials user:pass"
 
 # Multi-target white-box testing (source code + deployed app)
 strix -t https://github.com/org/app -t https://your-app.com
