@@ -293,6 +293,13 @@ Examples:
     )
 
     parser.add_argument(
+        "-r",
+        "--reuse-container",
+        action="store_true",
+        help="Reuse an existing Docker container named 'strix-scan-<run-name>'.",
+    )
+
+    parser.add_argument(
         "-n",
         "--non-interactive",
         action="store_true",
@@ -447,6 +454,23 @@ def main() -> None:
     args = parse_arguments()
 
     check_docker_installed()
+
+    if args.run_name:
+        container_name = f"strix-scan-{args.run_name}"
+        try:
+            import docker
+            client = docker.from_env()
+            duplicates = client.containers.list(all=True, filters={"name": f"^{container_name}$"})
+            if duplicates and not args.reuse_container:
+            print(
+                    f"\n[!] A container named '{container_name}' already exists.\n"
+                    f"    Use --reuse-container (-r) to run on the existing container,\n"
+                    f"    or choose a different --run-name.\n"
+                )
+                sys.exit(1)
+        except Exception:
+            pass
+
     pull_docker_image()
 
     validate_environment()
