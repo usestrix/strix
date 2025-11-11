@@ -136,8 +136,8 @@ def generate_run_name() -> str:
     # fmt: on
     adj = secrets.choice(adjectives)
     noun = secrets.choice(nouns)
-    number = secrets.randbelow(900) + 100
-    return f"{adj}-{noun}-{number}"
+    timestamp = int(time.time() * 1_000)
+    return f"{adj}-{noun}-{timestamp}"
 
 
 # Target processing utilities
