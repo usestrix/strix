@@ -147,7 +147,7 @@ class BaseAgent(metaclass=AgentMeta):
             self._current_task.cancel()
             self._current_task = None
 
-    async def agent_loop(self, task: str) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
+    async def agent_loop(self, task: str) -> dict[str, Any]:
         await self._initialize_sandbox_and_state(task)
 
         from strix.telemetry.tracer import get_global_tracer

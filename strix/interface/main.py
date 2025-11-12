@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 import litellm
 from docker.errors import DockerException
@@ -39,7 +40,7 @@ from strix.telemetry.tracer import get_global_tracer
 logging.getLogger().setLevel(logging.ERROR)
 
 
-def validate_environment() -> None:  # noqa: PLR0912, PLR0915
+def validate_environment() -> None:
     console = Console()
     missing_required_vars = []
     missing_optional_vars = []
@@ -185,14 +186,24 @@ def check_docker_installed() -> None:
 
 
 async def warm_up_llm() -> None:
+    """
+    Try to warm up the LLM connection.
+    If multiple API keys are provided in LLM_API_KEYS (comma-separated),
+    try them in order until one succeeds.
+    """
     console = Console()
 
     try:
         model_name = os.getenv("STRIX_LLM", "openai/gpt-5")
-        api_key = os.getenv("LLM_API_KEY")
 
-        if api_key:
-            litellm.api_key = api_key
+        env_keys = os.getenv("LLM_API_KEYS")
+        keys_to_try: List[str] = []
+        if env_keys:
+            keys_to_try = [k.strip() for k in env_keys.split(",") if k.strip()]
+        else:
+            single_key = os.getenv("LLM_API_KEY")
+            if single_key:
+                keys_to_try = [single_key]
 
         api_base = (
             os.getenv("LLM_API_BASE")
@@ -203,19 +214,40 @@ async def warm_up_llm() -> None:
         if api_base:
             litellm.api_base = api_base
 
-        test_messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Reply with just 'OK'."},
-        ]
+        if not keys_to_try:
+            keys_to_try = []
 
-        response = litellm.completion(
-            model=model_name,
-            messages=test_messages,
-        )
+        success = False
+        last_exception: Optional[Exception] = None
 
-        validate_llm_response(response)
+        for api_key in keys_to_try:
+            try:
+                litellm.api_key = api_key
 
-    except Exception as e:  # noqa: BLE001
+                test_messages = [
+                    {"role": "system", "content": "You are a helpful assistant."},
+                    {"role": "user", "content": "Reply with just 'OK'."},
+                ]
+
+                response = litellm.completion(
+                    model=model_name,
+                    messages=test_messages,
+                )
+
+                validate_llm_response(response)
+
+                success = True
+                os.environ["LLM_API_KEY"] = api_key
+                break
+
+            except Exception as e:
+                last_exception = e
+                continue
+
+        if not success:
+            raise last_exception or RuntimeError("No API key provided or all keys failed.")
+
+    except Exception as e:
         error_text = Text()
         error_text.append("❌ ", style="bold red")
         error_text.append("LLM CONNECTION FAILED", style="bold red")
@@ -440,11 +472,65 @@ def pull_docker_image() -> None:
     console.print()
 
 
+def collect_multiple_api_keys_interactive() -> None:
+    """
+    If running interactively and there is no LLM_API_KEY set, prompt the user
+    to enter N API keys. Store them in LLM_API_KEYS (comma-separated) and set
+    LLM_API_KEY to the first one for backward compatibility.
+    """
+    console = Console()
+
+    if os.getenv("LLM_API_KEY"):
+        return
+
+    if not sys.stdin.isatty():
+        return
+
+    try:
+        console.print()
+        console.print("[bold cyan]No LLM API key found in environment.[/]")
+        console.print(
+            "[dim]You can provide multiple API keys to try them in sequence if one fails.[/]"
+        )
+        console.print()
+
+        while True:
+            count_str = console.input("How many API keys would you like to provide? (0 to skip) ")
+            try:
+                count = int(count_str.strip())
+                if count < 0:
+                    console.print("[red]Please enter 0 or a positive integer.[/]")
+                    continue
+                break
+            except ValueError:
+                console.print("[red]Please enter a valid integer.[/]")
+
+        if count == 0:
+            console.print("[dim]Skipping interactive API key input.[/]")
+            console.print()
+            return
+
+        keys: List[str] = []
+        for i in range(1, count + 1):
+            key = console.input(f"Enter API key #{i}: ").strip()
+            if key:
+                keys.append(key)
+
+        if keys:
+            os.environ["LLM_API_KEYS"] = ",".join(keys)
+            os.environ["LLM_API_KEY"] = keys[0]
+            console.print(f"[green]Stored {len(keys)} API key(s) for use.[/]")
+            console.print()
+    except Exception:
+        return
+
+
 def main() -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     args = parse_arguments()
+    collect_multiple_api_keys_interactive()
 
     check_docker_installed()
     pull_docker_image()
