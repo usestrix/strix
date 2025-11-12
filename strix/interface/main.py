@@ -208,9 +208,12 @@ async def warm_up_llm() -> None:
             {"role": "user", "content": "Reply with just 'OK'."},
         ]
 
+        llm_timeout = int(os.getenv("LLM_TIMEOUT", "600"))
+
         response = litellm.completion(
             model=model_name,
             messages=test_messages,
+            timeout=llm_timeout,
         )
 
         validate_llm_response(response)

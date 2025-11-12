@@ -230,9 +230,18 @@ def create_agent(
 
         state = AgentState(task=task, agent_name=name, parent_id=parent_id, max_iterations=300)
 
-        llm_config = LLMConfig(prompt_modules=module_list)
-
         parent_agent = _agent_instances.get(parent_id)
+
+        timeout = None
+        if (
+            parent_agent
+            and hasattr(parent_agent, "llm_config")
+            and hasattr(parent_agent.llm_config, "timeout")
+        ):
+            timeout = parent_agent.llm_config.timeout
+
+        llm_config = LLMConfig(prompt_modules=module_list, timeout=timeout)
+
         agent_config = {
             "llm_config": llm_config,
             "state": state,

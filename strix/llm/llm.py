@@ -123,7 +123,10 @@ class LLM:
         self._total_stats = RequestStats()
         self._last_request_stats = RequestStats()
 
-        self.memory_compressor = MemoryCompressor()
+        self.memory_compressor = MemoryCompressor(
+            model_name=self.config.model_name,
+            timeout=self.config.timeout,
+        )
 
         if agent_name:
             prompt_dir = Path(__file__).parent.parent / "agents" / agent_name
@@ -359,7 +362,7 @@ class LLM:
             "model": self.config.model_name,
             "messages": messages,
             "temperature": self.config.temperature,
-            "timeout": 180,
+            "timeout": self.config.timeout,
         }
 
         if self._should_include_stop_param():
