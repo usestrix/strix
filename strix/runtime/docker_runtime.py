@@ -358,11 +358,7 @@ class DockerRuntime(AbstractRuntime):
             container = self.client.containers.get(container_id)
             container.reload()
 
-            host = "127.0.0.1"
-            if "DOCKER_HOST" in os.environ:
-                docker_host = os.environ["DOCKER_HOST"]
-                if "://" in docker_host:
-                    host = docker_host.split("://")[1].split(":")[0]
+            host = self._resolve_docker_host()
 
         except NotFound:
             raise ValueError(f"Container {container_id} not found.") from None
@@ -370,6 +366,20 @@ class DockerRuntime(AbstractRuntime):
             raise RuntimeError(f"Failed to get container URL for {container_id}: {e}") from e
         else:
             return f"http://{host}:{port}"
+
+    def _resolve_docker_host(self) -> str:
+        docker_host = os.getenv("DOCKER_HOST", "")
+        if not docker_host:
+            return "127.0.0.1"
+
+        from urllib.parse import urlparse
+
+        parsed = urlparse(docker_host)
+
+        if parsed.scheme in ("tcp", "http", "https") and parsed.hostname:
+            return parsed.hostname
+
+        return "127.0.0.1"
 
     async def destroy_sandbox(self, container_id: str) -> None:
         logger.info("Destroying scan container %s", container_id)
