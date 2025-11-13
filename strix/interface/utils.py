@@ -1,3 +1,4 @@
+import ipaddress
 import re
 import secrets
 import shutil
@@ -141,7 +142,7 @@ def generate_run_name() -> str:
 
 
 # Target processing utilities
-def infer_target_type(target: str) -> tuple[str, dict[str, str]]:
+def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
     if not target or not isinstance(target, str):
         raise ValueError("Target must be a non-empty string")
 
@@ -167,6 +168,13 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:
             return "repository", {"target_repo": target}
         return "web_application", {"target_url": target}
 
+    try:
+        ip_obj = ipaddress.ip_address(target)
+    except ValueError:
+        pass
+    else:
+        return "ip_address", {"target_ip": str(ip_obj)}
+
     path = Path(target).expanduser()
     try:
         if path.exists():
@@ -191,7 +199,8 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:
         "- A valid URL (http:// or https://)\n"
         "- A Git repository URL (https://github.com/... or git@github.com:...)\n"
         "- A local directory path\n"
-        "- A domain name (e.g., example.com)"
+        "- A domain name (e.g., example.com)\n"
+        "- An IP address (e.g., 192.168.1.10)"
     )
 
 

@@ -18,13 +18,14 @@ class StrixAgent(BaseAgent):
 
         super().__init__(config)
 
-    async def execute_scan(self, scan_config: dict[str, Any]) -> dict[str, Any]:
+    async def execute_scan(self, scan_config: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0912
         user_instructions = scan_config.get("user_instructions", "")
         targets = scan_config.get("targets", [])
 
         repositories = []
         local_code = []
         urls = []
+        ip_addresses = []
 
         for target in targets:
             target_type = target["type"]
@@ -53,6 +54,8 @@ class StrixAgent(BaseAgent):
 
             elif target_type == "web_application":
                 urls.append(details["target_url"])
+            elif target_type == "ip_address":
+                ip_addresses.append(details["target_ip"])
 
         task_parts = []
 
@@ -73,6 +76,10 @@ class StrixAgent(BaseAgent):
         if urls:
             task_parts.append("\n\nURLs:")
             task_parts.extend(f"- {url}" for url in urls)
+
+        if ip_addresses:
+            task_parts.append("\n\nIP Addresses:")
+            task_parts.extend(f"- {ip}" for ip in ip_addresses)
 
         task_description = " ".join(task_parts)
 

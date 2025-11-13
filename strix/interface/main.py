@@ -260,6 +260,9 @@ Examples:
   # Domain penetration test
   strix --target example.com
 
+  # IP address penetration test
+  strix --target 192.168.1.42
+
   # Multiple targets (e.g., white-box testing with source and deployed app)
   strix --target https://github.com/user/repo --target https://example.com
   strix --target ./my-project --target https://staging.example.com --target https://prod.example.com
@@ -275,7 +278,7 @@ Examples:
         type=str,
         required=True,
         action="append",
-        help="Target to test (URL, repository, local directory path, or domain name). "
+        help="Target to test (URL, repository, local directory path, domain name, or IP address). "
         "Can be specified multiple times for multi-target scans.",
     )
     parser.add_argument(
