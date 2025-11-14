@@ -36,7 +36,7 @@
 
 ---
 
-## 🦉 What are Strix?
+## 🦉 Strix Overview
 
 Strix are autonomous AI agents that act just like real hackers - they run your code dynamically, find vulnerabilities, and validate them through actual proof-of-concepts. Built for developers and security teams who need fast, accurate security testing without the overhead of manual pentesting or the false positives of static analysis tools.
 
@@ -48,14 +48,13 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 - 💻 **Developer‑first** CLI with actionable reports
 - 🔄 **Auto‑fix & reporting** to accelerate remediation
 
-<br>
 
 ## 🎯 Use Cases
 
 - **Application Security Testing** - Detect and validate critical vulnerabilities in your applications
 - **Rapid Penetration Testing** - Get penetration tests done in hours, not weeks, with compliance reports
 - **Bug Bounty Automation** - Automate bug bounty research and generate PoCs for faster reporting
-- **CI/CD Security Gates** - Run tests in CI/CD to block vulnerabilities before reaching production
+- **CI/CD Integration** - Run tests in CI/CD to block vulnerabilities before reaching production
 
 ---
 
@@ -64,7 +63,7 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 **Prerequisites:**
 - Docker (running)
 - Python 3.12+
-- An LLM provider key ([get OpenAI API key](https://platform.openai.com/api-keys) or use a local LLM)
+- An LLM provider key (e.g. [get OpenAI API key](https://platform.openai.com/api-keys) or use a local LLM)
 
 ### Installation & First Scan
 
@@ -82,7 +81,6 @@ strix --target ./app-directory
 
 > **Note:** First run automatically pulls the sandbox Docker image. Results are saved to `agent_runs/<run-name>/`
 
-<br>
 
 ## 🏆 Enterprise Platform
 
@@ -90,14 +88,12 @@ Want to skip the setup? Try our cloud-hosted version at **[usestrix.com](https:/
 
 Our managed platform provides:
 
-| Feature | Description |
-|---------|-------------|
-| 📈 **Executive Dashboards** | Track security metrics and trends across your organization |
-| 🧠 **Custom Fine-Tuned Models** | AI agents trained on your specific codebase and vulnerabilities |
-| ⚙️ **CI/CD Integration** | Seamless integration with your existing workflows |
-| 🔍 **Large-Scale Scanning** | Test multiple applications and repositories in parallel |
-| 🔌 **Third-Party Integrations** | Connect with Jira, Slack, PagerDuty, and more |
-| 🎯 **Enterprise Support** | Dedicated support team and SLA guarantees |
+- **📈 Executive Dashboards**
+- **🧠 Custom Fine-Tuned Models**
+- **⚙️ CI/CD Integration**
+- **🔍 Large-Scale Scanning**
+- **🔌 Third-Party Integrations**
+- **🎯 Enterprise Support**
 
 [**Get Enterprise Demo →**](https://usestrix.com)
 
@@ -109,37 +105,33 @@ Our managed platform provides:
 
 Strix agents come equipped with a comprehensive security testing toolkit:
 
-| Tool | Capability |
-|------|------------|
-| 🌐 **HTTP Proxy** | Full request/response manipulation and analysis |
-| 🖥️ **Browser Automation** | Multi-tab browser for XSS, CSRF, and auth flow testing |
-| ⌨️ **Terminal Environment** | Interactive shells for command execution and testing |
-| 🐍 **Python Runtime** | Custom exploit development and validation |
-| 🔍 **Reconnaissance** | Automated OSINT and attack surface mapping |
-| 📊 **Code Analysis** | Static and dynamic analysis capabilities |
-| 📝 **Knowledge Management** | Structured findings and attack documentation |
+- **Full HTTP Proxy** - Full request/response manipulation and analysis
+- **Browser Automation** - Multi-tab browser for testing of XSS, CSRF, auth flows
+- **Terminal Environments** - Interactive shells for command execution and testing
+- **Python Runtime** - Custom exploit development and validation
+- **Reconnaissance** - Automated OSINT and attack surface mapping
+- **Code Analysis** - Static and dynamic analysis capabilities
+- **Knowledge Management** - Structured findings and attack documentation
 
 ### 🎯 Comprehensive Vulnerability Detection
 
 Strix can identify and validate a wide range of security vulnerabilities:
 
-| Category | Coverage |
-|----------|----------|
-| 🔐 **Access Control** | IDOR, privilege escalation, authorization bypass |
-| 💉 **Injection Attacks** | SQL, NoSQL, command injection, template injection |
-| 🖥️ **Server-Side** | SSRF, XXE, deserialization flaws |
-| 🌐 **Client-Side** | XSS, prototype pollution, DOM vulnerabilities |
-| ⚙️ **Business Logic** | Race conditions, workflow manipulation |
-| 🔑 **Authentication** | JWT vulnerabilities, session management flaws |
-| 🏗️ **Infrastructure** | Misconfigurations, exposed services, secrets |
+- **Access Control** - IDOR, privilege escalation, auth bypass
+- **Injection Attacks** - SQL, NoSQL, command injection
+- **Server-Side** - SSRF, XXE, deserialization flaws
+- **Client-Side** - XSS, prototype pollution, DOM vulnerabilities
+- **Business Logic** - Race conditions, workflow manipulation
+- **Authentication** - JWT vulnerabilities, session management
+- **Infrastructure** - Misconfigurations, exposed services
 
 ### 🕸️ Graph of Agents
 
 Advanced multi-agent orchestration for comprehensive security testing:
 
-- **🔄 Distributed Workflows** - Specialized agents tackle different attacks and assets simultaneously
-- **⚡ Scalable Testing** - Parallel execution for fast, comprehensive coverage
-- **🤝 Dynamic Coordination** - Agents collaborate and share discoveries in real-time
+- **Distributed Workflows** - Specialized agents for different attacks and assets
+- **Scalable Testing** - Parallel execution for fast comprehensive coverage
+- **Dynamic Coordination** - Agents collaborate and share discoveries
 
 ---
 
@@ -162,16 +154,13 @@ strix --target https://your-app.com
 
 ```bash
 # Grey-box authenticated testing
-strix --target https://your-app.com \
-  --instruction "Perform authenticated testing using credentials: user:pass"
+strix --target https://your-app.com --instruction "Perform authenticated testing using credentials: user:pass"
 
 # Multi-target testing (source code + deployed app)
-strix -t https://github.com/org/app \
-      -t https://your-app.com
+strix -t https://github.com/org/app -t https://your-app.com
 
 # Focused testing with custom instructions
-strix --target api.your-app.com \
-  --instruction "Focus on business logic flaws and IDOR vulnerabilities"
+strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
 ```
 
 ### 🤖 Headless Mode
@@ -247,5 +236,8 @@ Have questions? Found a bug? Want to contribute? **[Join our Discord!](https://d
 ## 🌟 Support the Project
 
 **Love Strix?** Give us a ⭐ on GitHub!
+
+> [!WARNING]
+> Only test apps you own or have permission to test. You are responsible for using Strix ethically and legally.
 
 </div>
