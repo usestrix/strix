@@ -31,6 +31,7 @@ from textual.widgets import Button, Label, Static, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from strix.agents.StrixAgent import StrixAgent
+from strix.llm.budget import get_budget_manager
 from strix.llm.config import LLMConfig
 from strix.telemetry.tracer import Tracer, set_global_tracer
 
@@ -283,6 +284,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.tracer.set_scan_config(self.scan_config)
         set_global_tracer(self.tracer)
 
+        self.budget_manager = get_budget_manager()
+        self.budget_manager.configure(self.args.budget_config)
+
         self.agent_nodes: dict[str, TreeNode] = {}
 
         self._displayed_agents: set[str] = set()
@@ -371,6 +375,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
             status_text = Static("", id="status_text")
             keymap_indicator = Static("", id="keymap_indicator")
+            budget_status = Static("", id="budget_status")
 
             agent_status_display = Horizontal(
                 status_text, keymap_indicator, id="agent_status_display", classes="hidden"
@@ -397,6 +402,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             content_container.mount(agents_tree)
 
             chat_area_container.mount(chat_history)
+            chat_area_container.mount(budget_status)
             chat_area_container.mount(agent_status_display)
             chat_area_container.mount(chat_input_container)
 
@@ -480,6 +486,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._update_chat_view()
 
         self._update_agent_status_display()
+        self._update_budget_status()
 
     def _update_agent_node(self, agent_id: str, agent_data: dict[str, Any]) -> bool:
         if agent_id not in self.agent_nodes:
@@ -657,6 +664,42 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         except (KeyError, Exception):
             self._safe_widget_operation(status_display.add_class, "hidden")
+
+    def _update_budget_status(self) -> None:
+        try:
+            budget_widget = self.query_one("#budget_status", Static)
+        except (ValueError, Exception):
+            return
+
+        if not self._is_widget_safe(budget_widget):
+            return
+
+        if self.args.max_tokens is None and self.args.max_cost is None:
+            self._safe_widget_operation(
+                budget_widget.update,
+                "[dim]Budget limits not configured[/dim]",
+            )
+            return
+
+        summary = self.budget_manager.format_summary()
+        events = self.tracer.budget_events
+
+        # Track last event to avoid repeating the same warning prefix unnecessarily
+        last_event = events[-1] if events else None
+        prefix = "[cyan]💰 Budget:[/] "
+
+        if last_event:
+            level = last_event.get("level")
+            if level == "warning":
+                prefix = "[yellow]⚠️ Budget warning:[/] "
+            elif level == "error":
+                prefix = "[red]⛔ Budget exceeded:[/] "
+
+        text = (
+            f"{prefix}{escape_markup(summary)}"
+            f" [dim](warn at {self.args.warn_threshold:g}%)[/dim]"
+        )
+        self._safe_widget_operation(budget_widget.update, text)
 
     def _get_agent_verb(self, agent_id: str) -> str:
         if agent_id not in self._agent_verbs:

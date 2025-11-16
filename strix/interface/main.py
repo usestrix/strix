@@ -18,6 +18,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.interface.cli import run_cli
+from strix.interface.config_store import get_budget_defaults
 from strix.interface.tui import run_tui
 from strix.interface.utils import (
     assign_workspace_subdirs,
@@ -32,11 +33,140 @@ from strix.interface.utils import (
     process_pull_line,
     validate_llm_response,
 )
+from strix.llm.budget import BudgetConfig, get_budget_manager
 from strix.runtime.docker_runtime import STRIX_IMAGE
 from strix.telemetry.tracer import get_global_tracer
 
 
 logging.getLogger().setLevel(logging.ERROR)
+
+
+DEFAULT_WARN_THRESHOLD = 80.0
+DEFAULT_FALLBACK_COST_PER_1K = 0.08
+
+
+def _parse_positive_int(value: object, source: str) -> int:
+    try:
+        result = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid integer for {source}") from None
+
+    if result <= 0:
+        raise ValueError(f"{source} must be greater than 0")
+    return result
+
+
+def _parse_positive_float(value: object, source: str, allow_zero: bool = False) -> float:
+    try:
+        result = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        raise ValueError(f"Invalid number for {source}") from None
+
+    if allow_zero and result == 0:
+        return 0.0
+
+    if result <= 0:
+        raise ValueError(f"{source} must be greater than 0")
+    return result
+
+
+def _parse_percentage(value: object, source: str) -> float:
+    percent = _parse_positive_float(value, source, allow_zero=True)
+    if percent < 0 or percent > 100:
+        raise ValueError(f"{source} must be between 0 and 100")
+    return percent
+
+
+def resolve_budget_config(  # noqa: PLR0912, PLR0915
+    args: argparse.Namespace,
+) -> tuple[BudgetConfig, dict[str, str]]:
+    saved_defaults = get_budget_defaults()
+    sources: dict[str, str] = {}
+
+    # Token limit precedence: CLI > env > saved config
+    max_tokens: int | None
+    if args.max_tokens is not None:
+        max_tokens = _parse_positive_int(args.max_tokens, "--max-tokens")
+        sources["max_tokens"] = "cli"
+    else:
+        env_value = os.getenv("STRIX_MAX_TOKENS")
+        if env_value:
+            max_tokens = _parse_positive_int(env_value, "STRIX_MAX_TOKENS")
+            sources["max_tokens"] = "env"
+        else:
+            saved_value = saved_defaults.get("max_tokens")
+            if saved_value is not None:
+                max_tokens = _parse_positive_int(saved_value, "saved budgets.max_tokens")
+                sources["max_tokens"] = "saved"
+            else:
+                max_tokens = None
+                sources["max_tokens"] = "default"
+
+    # Cost limit precedence: CLI > env > saved config
+    max_cost: float | None
+    if args.max_cost is not None:
+        max_cost = _parse_positive_float(args.max_cost, "--max-cost")
+        sources["max_cost"] = "cli"
+    else:
+        env_value = os.getenv("STRIX_MAX_COST")
+        if env_value:
+            max_cost = _parse_positive_float(env_value, "STRIX_MAX_COST")
+            sources["max_cost"] = "env"
+        else:
+            saved_value = saved_defaults.get("max_cost")
+            if saved_value is not None:
+                max_cost = _parse_positive_float(saved_value, "saved budgets.max_cost")
+                sources["max_cost"] = "saved"
+            else:
+                max_cost = None
+                sources["max_cost"] = "default"
+
+    # Warning threshold precedence: CLI > env > saved config > default
+    if args.warn_threshold is not None:
+        warn_threshold = _parse_percentage(args.warn_threshold, "--warn-threshold")
+        sources["warn_threshold"] = "cli"
+    else:
+        env_value = os.getenv("STRIX_WARN_THRESHOLD")
+        if env_value:
+            warn_threshold = _parse_percentage(env_value, "STRIX_WARN_THRESHOLD")
+            sources["warn_threshold"] = "env"
+        else:
+            saved_value = saved_defaults.get("warn_threshold")
+            if saved_value is not None:
+                warn_threshold = _parse_percentage(saved_value, "saved budgets.warn_threshold")
+                sources["warn_threshold"] = "saved"
+            else:
+                warn_threshold = DEFAULT_WARN_THRESHOLD
+                sources["warn_threshold"] = "default"
+
+    # Fallback cost precedence: env > saved config > default
+    fallback_env = os.getenv("STRIX_FALLBACK_COST_PER_1K")
+    if fallback_env:
+        fallback_cost = _parse_positive_float(
+            fallback_env,
+            "STRIX_FALLBACK_COST_PER_1K",
+            allow_zero=True,
+        )
+        sources["fallback_cost_per_1k_tokens"] = "env"
+    else:
+        saved_value = saved_defaults.get("fallback_cost_per_1k_tokens")
+        if saved_value is not None:
+            fallback_cost = _parse_positive_float(
+                saved_value,
+                "saved budgets.fallback_cost_per_1k_tokens",
+                allow_zero=True,
+            )
+            sources["fallback_cost_per_1k_tokens"] = "saved"
+        else:
+            fallback_cost = DEFAULT_FALLBACK_COST_PER_1K
+            sources["fallback_cost_per_1k_tokens"] = "default"
+
+    return BudgetConfig(
+        max_tokens=max_tokens,
+        max_cost=max_cost,
+        warn_threshold=warn_threshold,
+        fallback_cost_per_1k_tokens=fallback_cost,
+    ), sources
 
 
 def validate_environment() -> None:  # noqa: PLR0912, PLR0915
@@ -308,6 +438,22 @@ Examples:
         ),
     )
 
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        help="Maximum total tokens (prompt + completion) allowed per run.",
+    )
+    parser.add_argument(
+        "--max-cost",
+        type=float,
+        help="Maximum estimated USD cost allowed per run.",
+    )
+    parser.add_argument(
+        "--warn-threshold",
+        type=float,
+        help="Budget usage warning threshold percentage (0-100, default 80).",
+    )
+
     args = parser.parse_args()
 
     args.targets_info = []
@@ -331,7 +477,10 @@ Examples:
     return args
 
 
-def display_completion_message(args: argparse.Namespace, results_path: Path) -> None:
+def display_completion_message(  # noqa: PLR0915
+    args: argparse.Namespace,
+    results_path: Path,
+) -> None:
     console = Console()
     tracer = get_global_tracer()
 
@@ -376,6 +525,20 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     if llm_stats_text.plain:
         panel_parts.extend(["\n", llm_stats_text])
+
+    budget_manager = get_budget_manager()
+    if args.max_tokens is None and args.max_cost is None:
+        budget_text = Text("Budget limits not configured", style="dim white")
+    else:
+        budget_text = Text()
+        budget_text.append("💰 Budget Usage: ", style="bold cyan")
+        budget_text.append(budget_manager.format_summary(), style="white")
+        budget_text.append(
+            f" (warn at {args.warn_threshold:g}%)",
+            style="dim white",
+        )
+
+    panel_parts.extend(["\n", budget_text])
 
     if scan_completed or has_vulnerabilities:
         results_text = Text()
@@ -451,6 +614,21 @@ def main() -> None:
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
     args = parse_arguments()
+
+    console = Console()
+
+    try:
+        budget_config, budget_sources = resolve_budget_config(args)
+    except ValueError as budget_error:
+        console.print(f"[bold red]Budget configuration error:[/] {budget_error}")
+        sys.exit(1)
+
+    args.budget_config = budget_config
+    args.budget_sources = budget_sources
+    args.max_tokens = budget_config.max_tokens
+    args.max_cost = budget_config.max_cost
+    args.warn_threshold = budget_config.warn_threshold
+    args.fallback_cost_per_1k = budget_config.fallback_cost_per_1k_tokens
 
     check_docker_installed()
     pull_docker_image()

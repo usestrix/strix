@@ -1,6 +1,8 @@
+import asyncio
 import atexit
 import signal
 import sys
+from contextlib import suppress
 from typing import Any
 
 from rich.console import Console
@@ -8,13 +10,39 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.agents.StrixAgent import StrixAgent
+from strix.llm.budget import get_budget_manager
 from strix.llm.config import LLMConfig
 from strix.telemetry.tracer import Tracer, set_global_tracer
 
 from .utils import get_severity_color
 
 
-async def run_cli(args: Any) -> None:  # noqa: PLR0915
+async def _monitor_budget_events(tracer: Tracer, console: Console) -> None:
+    last_count = 0
+
+    try:
+        while True:
+            await asyncio.sleep(0.5)
+
+            events = tracer.budget_events
+            if len(events) > last_count:
+                for event in events[last_count:]:
+                    summary = event.get("summary") or event.get("message", "")
+                    level = event.get("level", "info")
+                    if level == "warning":
+                        console.print(f"[bold yellow]⚠️  Budget warning:[/] {summary}")
+                    else:
+                        console.print(f"[bold red]⛔ Budget limit reached:[/] {summary}")
+                last_count = len(events)
+
+            status = tracer.run_metadata.get("status")
+            if status in {"completed", "failed", "budget_exceeded"} and len(events) == last_count:
+                break
+    except asyncio.CancelledError:
+        pass
+
+
+async def run_cli(args: Any) -> None:  # noqa: PLR0915, PLR0912
     console = Console()
 
     start_text = Text()
@@ -130,6 +158,13 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     set_global_tracer(tracer)
 
+    budget_manager = get_budget_manager()
+    budget_manager.configure(args.budget_config)
+
+    budget_task: asyncio.Task[None] | None = asyncio.create_task(
+        _monitor_budget_events(tracer, console)
+    )
+
     try:
         console.print()
         with console.status("[bold cyan]Running penetration test...", spinner="dots") as status:
@@ -141,12 +176,23 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                 error_msg = result.get("error", "Unknown error")
                 console.print()
                 console.print(f"[bold red]❌ Penetration test failed:[/] {error_msg}")
+
+                if tracer.run_metadata.get("status") == "budget_exceeded":
+                    summary = tracer.run_metadata.get("budget_summary")
+                    if summary:
+                        console.print(f"[bold red]Budget summary:[/] {summary}")
+
                 console.print()
                 sys.exit(1)
 
     except Exception as e:
         console.print(f"[bold red]Error during penetration test:[/] {e}")
         raise
+    finally:
+        if budget_task:
+            budget_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await budget_task
 
     if tracer.final_scan_result:
         console.print()
@@ -169,3 +215,5 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
         console.print(final_report_panel)
         console.print()
+
+    console.print(f"[bold cyan]💰 Budget usage:[/] {budget_manager.format_summary()}")

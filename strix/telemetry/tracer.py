@@ -51,6 +51,10 @@ class Tracer:
         self._next_execution_id = 1
         self._next_message_id = 1
 
+        self.budget_config: dict[str, Any] | None = None
+        self.budget_usage: dict[str, Any] | None = None
+        self.budget_events: list[dict[str, Any]] = []
+
         self.vulnerability_found_callback: Callable[[str, str, str, str], None] | None = None
 
     def set_run_name(self, run_name: str) -> None:
@@ -197,6 +201,36 @@ class Tracer:
                 "max_iterations": config.get("max_iterations", 200),
             }
         )
+
+    def set_budget_config(self, config: dict[str, Any] | None) -> None:
+        self.budget_config = config
+        if config is None:
+            self.run_metadata.pop("budget", None)
+        else:
+            self.run_metadata["budget"] = config
+
+    def update_budget_usage(self, usage: dict[str, Any]) -> None:
+        self.budget_usage = usage
+
+    def add_budget_event(
+        self,
+        level: str,
+        message: str,
+        snapshot: dict[str, Any],
+        summary: str,
+    ) -> None:
+        event = {
+            "level": level,
+            "message": message,
+            "snapshot": snapshot,
+            "summary": summary,
+            "timestamp": datetime.now(UTC).isoformat(),
+        }
+        self.budget_events.append(event)
+
+        if level == "error":
+            self.run_metadata["status"] = "budget_exceeded"
+            self.run_metadata["budget_summary"] = summary
 
     def save_run_data(self) -> None:
         try:

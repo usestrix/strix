@@ -171,6 +171,38 @@ Run Strix programmatically without interactive UI using the `-n/--non-interactiv
 strix -n --target https://your-app.com
 ```
 
+### 💸 Budget Controls
+
+Keep runaway LLM usage in check with built-in token and cost budgets. Strix will stream warnings as you approach the configured threshold and halt execution before exceeding your limits.
+
+- `--max-tokens` – total prompt + completion tokens allowed for the run
+- `--max-cost` – estimated USD ceiling for the run
+- `--warn-threshold` – warning percentage (default `80`)
+
+Environment overrides are also available:
+
+```bash
+export STRIX_MAX_TOKENS=250000
+export STRIX_MAX_COST=25.0
+export STRIX_WARN_THRESHOLD=75
+export STRIX_FALLBACK_COST_PER_1K=0.08  # used when the provider does not return cost data
+```
+
+Precedence is **CLI > environment > saved config**. Persistent defaults can be stored in `~/.config/strix/config.json`:
+
+```json
+{
+  "budgets": {
+    "max_tokens": 200000,
+    "max_cost": 15.0,
+    "warn_threshold": 70,
+    "fallback_cost_per_1k_tokens": 0.08
+  }
+}
+```
+
+When a budget is reached Strix stops issuing LLM calls, surfaces a budget-exceeded error, and exits with a non-zero status so your CI/CD pipelines remain safe.
+
 ### 🔄 CI/CD (GitHub Actions)
 
 Strix can be added to your pipeline to run a security test on pull requests with a lightweight GitHub Actions workflow:

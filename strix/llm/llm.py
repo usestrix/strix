@@ -15,6 +15,7 @@ from jinja2 import (
 from litellm import ModelResponse, completion_cost
 from litellm.utils import supports_prompt_caching
 
+from strix.llm.budget import BudgetExceededError, get_budget_manager
 from strix.llm.config import LLMConfig
 from strix.llm.memory_compressor import MemoryCompressor
 from strix.llm.request_queue import get_global_queue
@@ -346,6 +347,8 @@ class LLM:
             raise LLMRequestFailedError("LLM request failed: Unsupported parameters", str(e)) from e
         except litellm.BudgetExceededError as e:
             raise LLMRequestFailedError("LLM request failed: Budget exceeded", str(e)) from e
+        except BudgetExceededError as e:
+            raise LLMRequestFailedError("LLM request failed: Budget exceeded", e.summary) from e
         except litellm.APIResponseValidationError as e:
             raise LLMRequestFailedError(
                 "LLM request failed: Response validation error", str(e)
@@ -394,6 +397,15 @@ class LLM:
         self,
         messages: list[dict[str, Any]],
     ) -> ModelResponse:
+        budget_manager = get_budget_manager()
+        try:
+            budget_manager.ensure_within_budget()
+        except BudgetExceededError as exc:
+            raise LLMRequestFailedError(
+                "LLM request failed: Budget exceeded",
+                exc.summary,
+            ) from exc
+
         completion_args: dict[str, Any] = {
             "model": self.config.model_name,
             "messages": messages,
@@ -461,5 +473,11 @@ class LLM:
                 logger.info(f"Cache creation: {cache_creation_tokens} tokens written to cache")
 
             logger.info(f"Usage stats: {self.usage_stats}")
+
+            try:
+                budget_manager = get_budget_manager()
+                budget_manager.record_usage(input_tokens, output_tokens, cost)
+            except Exception as budget_error:  # noqa: BLE001
+                logger.warning(f"Failed to record budget usage: {budget_error}")
         except Exception as e:  # noqa: BLE001
             logger.warning(f"Failed to update usage stats: {e}")
