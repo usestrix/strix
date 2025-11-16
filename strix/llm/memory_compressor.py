@@ -3,6 +3,9 @@ import os
 from typing import Any
 
 import litellm
+from litellm import completion_cost
+
+from strix.llm.budget import BudgetExceededError, get_budget_manager
 
 
 logger = logging.getLogger(__name__)
@@ -82,6 +85,34 @@ def _extract_message_text(msg: dict[str, Any]) -> str:
     return str(content)
 
 
+def _extract_usage_stats(
+    response: Any,
+    prompt: str,
+    summary: str,
+    model: str,
+) -> tuple[int, int, float]:
+    input_tokens = 0
+    output_tokens = 0
+
+    usage = getattr(response, "usage", None)
+    if usage:
+        input_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        output_tokens = getattr(usage, "completion_tokens", 0) or 0
+
+    if input_tokens == 0:
+        input_tokens = _count_tokens(prompt, model)
+
+    if output_tokens == 0 and summary:
+        output_tokens = _count_tokens(summary, model)
+
+    try:
+        cost = completion_cost(response) or 0.0
+    except Exception:  # noqa: BLE001
+        cost = 0.0
+
+    return input_tokens, output_tokens, cost
+
+
 def _summarize_messages(
     messages: list[dict[str, Any]],
     model: str,
@@ -110,18 +141,44 @@ def _summarize_messages(
             "timeout": timeout,
         }
 
+        budget_manager = None
+        try:
+            budget_manager = get_budget_manager()
+            budget_manager.ensure_within_budget()
+        except BudgetExceededError:
+            raise
+        except Exception:  # noqa: BLE001
+            logger.debug("Budget pre-check failed", exc_info=True)
+
         response = litellm.completion(**completion_args)
         summary = response.choices[0].message.content or ""
         if not summary.strip():
             return messages[0]
         summary_msg = "<context_summary message_count='{count}'>{text}</context_summary>"
-        return {
+        summary_message = {
             "role": "assistant",
             "content": summary_msg.format(count=len(messages), text=summary),
         }
+        if budget_manager is not None:
+            try:
+                input_tokens, output_tokens, cost = _extract_usage_stats(
+                    response,
+                    prompt,
+                    summary,
+                    model,
+                )
+                budget_manager.record_usage(input_tokens, output_tokens, cost)
+            except BudgetExceededError:
+                raise
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to record compressor budget usage", exc_info=True)
+    except BudgetExceededError:
+        raise
     except Exception:
         logger.exception("Failed to summarize messages")
         return messages[0]
+    else:
+        return summary_message
 
 
 def _handle_images(messages: list[dict[str, Any]], max_images: int) -> None:
