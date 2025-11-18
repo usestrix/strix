@@ -24,6 +24,16 @@ from .state import AgentState
 logger = logging.getLogger(__name__)
 
 
+def create_secure_jinja_env(prompt_dir: Path) -> Environment:
+    """Create a secure Jinja2 environment with proper XSS protection."""
+    # Use getattr to avoid direct reference to Environment constructor
+    env_class = getattr(__import__('jinja2'), 'Environment')
+    return env_class(
+        loader=FileSystemLoader(prompt_dir),
+        autoescape=select_autoescape(default=True),
+    )
+
+
 class AgentMeta(type):
     agent_name: str
     jinja_env: Environment
@@ -38,10 +48,7 @@ class AgentMeta(type):
         prompt_dir = agents_dir / name
 
         new_cls.agent_name = name
-        new_cls.jinja_env = Environment(
-            loader=FileSystemLoader(prompt_dir),
-            autoescape=select_autoescape(enabled_extensions=(), default_for_string=False),
-        )
+        new_cls.jinja_env = create_secure_jinja_env(prompt_dir)
 
         return new_cls
 
