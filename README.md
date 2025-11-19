@@ -38,12 +38,26 @@ AISEC is an advanced autonomous AI cybersecurity agent that acts like a real pen
 
 ## 🚀 Quick Start
 
-**Prerequisites:**
-- Docker (running)
-- Python 3.12+
-- An LLM provider key (e.g. [get OpenAI API key](https://platform.openai.com/api-keys) or use a local LLM)
+### Option 1: Run Locally from Source (Recommended for Development)
 
-### Installation & First Scan
+**Prerequisites:** Docker (running), Python 3.12+, Git
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/iniaslihas/strix.git
+cd strix
+
+# 2. Run the automated setup script
+./setup-local.sh
+
+# 3. Configure and run
+export $(cat .env | xargs)
+poetry run aisec --target https://example.com
+```
+
+**That's it!** See [LOCAL_SETUP.md](LOCAL_SETUP.md) for detailed instructions.
+
+### Option 2: Install from PyPI (When Published)
 
 ```bash
 # Install AISEC
@@ -58,7 +72,9 @@ aisec --target ./app-directory
 ```
 
 > [!NOTE]
-> First run automatically pulls the sandbox Docker image. Results are saved to `agent_runs/<run-name>`
+> - **Local setup** builds Docker image locally (~15 min first time)
+> - Results are saved to `agent_runs/<run-name>`
+> - For detailed local setup guide, see [LOCAL_SETUP.md](LOCAL_SETUP.md)
 
 ---
 
