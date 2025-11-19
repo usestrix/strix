@@ -1,44 +1,23 @@
-<p align="center">
-  <a href="https://usestrix.com/">
-    <img src=".github/logo.png" width="150" alt="Strix Logo">
-  </a>
-</p>
+<h1 align="center">AISEC</h1>
 
-<h1 align="center">Strix</h1>
-
-<h2 align="center">Open-source AI Hackers to secure your Apps</h2>
+<h2 align="center">AI-Powered Cybersecurity Agent for Penetration Testing</h2>
 
 <div align="center">
 
-[![Python](https://img.shields.io/pypi/pyversions/strix-agent?color=3776AB)](https://pypi.org/project/strix-agent/)
-[![PyPI](https://img.shields.io/pypi/v/strix-agent?color=10b981)](https://pypi.org/project/strix-agent/)
-[![PyPI Downloads](https://static.pepy.tech/personalized-badge/strix-agent?period=total&units=INTERNATIONAL_SYSTEM&left_color=GREY&right_color=RED&left_text=Downloads)](https://pepy.tech/projects/strix-agent)
+[![Python](https://img.shields.io/badge/python-3.12+-3776AB)](https://www.python.org/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 
-[![GitHub Stars](https://img.shields.io/github/stars/usestrix/strix)](https://github.com/usestrix/strix)
-[![Discord](https://img.shields.io/badge/Discord-%235865F2.svg?&logo=discord&logoColor=white)](https://discord.gg/YjKFvEZSdZ)
-[![Website](https://img.shields.io/badge/Website-usestrix.com-2d3748.svg)](https://usestrix.com)
-
-<a href="https://trendshift.io/repositories/15362" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15362" alt="usestrix%2Fstrix | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
+**Developed by CYBERSEC**
 
 </div>
 
 <br>
-
-<div align="center">
-  <img src=".github/screenshot.png" alt="Strix Demo" width="800" style="border-radius: 16px;">
-</div>
-
-<br>
-
-> [!TIP]
-> **New!** Strix now integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production!
 
 ---
 
-## 🦉 Strix Overview
+## 🛡️ AISEC Overview
 
-Strix are autonomous AI agents that act just like real hackers - they run your code dynamically, find vulnerabilities, and validate them through actual proof-of-concepts. Built for developers and security teams who need fast, accurate security testing without the overhead of manual pentesting or the false positives of static analysis tools.
+AISEC is an advanced autonomous AI cybersecurity agent that acts like a real penetration tester - it runs your code dynamically, finds vulnerabilities, and validates them through actual proof-of-concepts. Built for developers and security teams who need fast, accurate security testing without the overhead of manual pentesting or the false positives of static analysis tools.
 
 **Key Capabilities:**
 
@@ -48,12 +27,11 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 - 💻 **Developer‑first** CLI with actionable reports
 - 🔄 **Auto‑fix & reporting** to accelerate remediation
 
-
 ## 🎯 Use Cases
 
 - **Application Security Testing** - Detect and validate critical vulnerabilities in your applications
 - **Rapid Penetration Testing** - Get penetration tests done in hours, not weeks, with compliance reports
-- **Bug Bounty Automation** - Automate bug bounty research and generate PoCs for faster reporting
+- **Bug Bounty Research** - Automate bug bounty research and generate PoCs for faster reporting
 - **CI/CD Integration** - Run tests in CI/CD to block vulnerabilities before reaching production
 
 ---
@@ -68,176 +46,168 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 ### Installation & First Scan
 
 ```bash
-# Install Strix
-pipx install strix-agent
+# Install AISEC
+pipx install aisec-agent
 
 # Configure your AI provider
-export STRIX_LLM="openai/gpt-5"
+export AISEC_LLM="openai/gpt-5"
 export LLM_API_KEY="your-api-key"
 
 # Run your first security assessment
-strix --target ./app-directory
+aisec --target ./app-directory
 ```
 
 > [!NOTE]
 > First run automatically pulls the sandbox Docker image. Results are saved to `agent_runs/<run-name>`
 
-## 🏆 Enterprise Platform
+---
 
-Want to skip the setup? Try our cloud-hosted version at **[usestrix.com](https://usestrix.com)**
+## 📋 Features
 
-Our managed platform provides:
+### Multi-Agent Architecture
+- Specialized agents for different vulnerability types
+- Agent trees for comprehensive testing
+- Parallel execution for faster results
 
-- **📈 Executive Dashboards**
-- **🧠 Custom Fine-Tuned Models**
-- **⚙️ CI/CD Integration**
-- **🔍 Large-Scale Scanning**
-- **🔌 Third-Party Integrations**
-- **🎯 Enterprise Support**
+### Comprehensive Vulnerability Coverage
+- SQL Injection
+- Cross-Site Scripting (XSS)
+- Remote Code Execution (RCE)
+- SSRF and XXE
+- IDOR and Authorization Issues
+- Business Logic Flaws
+- JWT and Authentication Vulnerabilities
+- Race Conditions
+- And many more...
 
-[**Get Enterprise Demo →**](https://usestrix.com)
+### Testing Modes
+
+**Black-Box Testing:**
+```bash
+aisec --target https://example.com
+```
+
+**White-Box Testing:**
+```bash
+aisec --target ./my-project
+```
+
+**Hybrid Testing:**
+```bash
+aisec --target https://github.com/user/repo --target https://example.com
+```
 
 ---
 
-## ✨ Features
+## 🔧 Advanced Configuration
 
-### 🛠️ Agentic Security Tools
+### Environment Variables
 
-Strix agents come equipped with a comprehensive security testing toolkit:
+| Variable | Description | Required |
+|----------|-------------|----------|
+| `AISEC_LLM` | Model name (e.g., `openai/gpt-5`) | Yes |
+| `LLM_API_KEY` | API key for LLM provider | Yes* |
+| `LLM_API_BASE` | Custom API base URL for local models | No |
+| `PERPLEXITY_API_KEY` | Perplexity AI key for web research | No |
+| `AISEC_IMAGE` | Custom Docker sandbox image | No |
 
-- **Full HTTP Proxy** - Full request/response manipulation and analysis
-- **Browser Automation** - Multi-tab browser for testing of XSS, CSRF, auth flows
-- **Terminal Environments** - Interactive shells for command execution and testing
-- **Python Runtime** - Custom exploit development and validation
-- **Reconnaissance** - Automated OSINT and attack surface mapping
-- **Code Analysis** - Static and dynamic analysis capabilities
-- **Knowledge Management** - Structured findings and attack documentation
+*Required for cloud providers, optional for local models
 
-### 🎯 Comprehensive Vulnerability Detection
+### LLM Provider Configuration
 
-Strix can identify and validate a wide range of security vulnerabilities:
+**OpenAI:**
+```bash
+export AISEC_LLM="openai/gpt-5"
+export LLM_API_KEY="sk-..."
+```
 
-- **Access Control** - IDOR, privilege escalation, auth bypass
-- **Injection Attacks** - SQL, NoSQL, command injection
-- **Server-Side** - SSRF, XXE, deserialization flaws
-- **Client-Side** - XSS, prototype pollution, DOM vulnerabilities
-- **Business Logic** - Race conditions, workflow manipulation
-- **Authentication** - JWT vulnerabilities, session management
-- **Infrastructure** - Misconfigurations, exposed services
+**Anthropic Claude:**
+```bash
+export AISEC_LLM="anthropic/claude-sonnet-3-5"
+export LLM_API_KEY="sk-ant-..."
+```
 
-### 🕸️ Graph of Agents
-
-Advanced multi-agent orchestration for comprehensive security testing:
-
-- **Distributed Workflows** - Specialized agents for different attacks and assets
-- **Scalable Testing** - Parallel execution for fast comprehensive coverage
-- **Dynamic Coordination** - Agents collaborate and share discoveries
+**Local Models (Ollama):**
+```bash
+export AISEC_LLM="ollama/llama3.1"
+export LLM_API_BASE="http://localhost:11434"
+```
 
 ---
 
-## 💻 Usage Examples
+## 📚 Usage Examples
 
-### Basic Usage
-
+### Test a Web Application
 ```bash
-# Scan a local codebase
-strix --target ./app-directory
-
-# Security review of a GitHub repository
-strix --target https://github.com/org/repo
-
-# Black-box web application assessment
-strix --target https://your-app.com
+aisec --target https://example.com
 ```
 
-### Advanced Testing Scenarios
-
+### Test with Custom Instructions
 ```bash
-# Grey-box authenticated testing
-strix --target https://your-app.com --instruction "Perform authenticated testing using credentials: user:pass"
-
-# Multi-target testing (source code + deployed app)
-strix -t https://github.com/org/app -t https://your-app.com
-
-# Focused testing with custom instructions
-strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
+aisec --target https://api.example.com \
+  --instruction "Focus on authentication and authorization vulnerabilities"
 ```
 
-### 🤖 Headless Mode
-
-Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag—perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
-
+### Multiple Targets
 ```bash
-strix -n --target https://your-app.com
+aisec --target https://github.com/user/repo \
+  --target https://staging.example.com \
+  --target https://prod.example.com
 ```
 
-### 🔄 CI/CD (GitHub Actions)
-
-Strix can be added to your pipeline to run a security test on pull requests with a lightweight GitHub Actions workflow:
-
-```yaml
-name: strix-penetration-test
-
-on:
-  pull_request:
-
-jobs:
-  security-scan:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Strix
-        run: pipx install strix-agent
-
-      - name: Run Strix
-        env:
-          STRIX_LLM: ${{ secrets.STRIX_LLM }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
-
-        run: strix -n -t ./
-```
-
-### ⚙️ Configuration
-
+### Non-Interactive Mode (CI/CD)
 ```bash
-export STRIX_LLM="openai/gpt-5"
-export LLM_API_KEY="your-api-key"
-
-# Optional
-export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
-export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
+aisec --target ./app --non-interactive
 ```
 
-[OpenAI's GPT-5](https://openai.com/api/) (`openai/gpt-5`) and [Anthropic's Claude Sonnet 4.5](https://claude.com/platform/api) (`anthropic/claude-sonnet-4-5`) work best with Strix, but we support many [other options](https://docs.litellm.ai/docs/providers).
+---
+
+## 🏗️ Architecture
+
+AISEC uses a multi-agent architecture where specialized AI agents work together:
+
+1. **Root Agent** - Coordinates the overall security assessment
+2. **Discovery Agents** - Map the attack surface and identify potential vulnerabilities
+3. **Validation Agents** - Prove exploitability with concrete proof-of-concepts
+4. **Reporting Agents** - Document findings with remediation guidance
+5. **Fixing Agents** (White-box only) - Implement and test security patches
+
+Each agent runs in an isolated Docker sandbox with:
+- Complete security toolkit (nmap, sqlmap, nuclei, etc.)
+- Browser automation (Playwright)
+- Python/Node.js/Go development environments
+- Caido HTTP proxy for traffic analysis
+
+---
 
 ## 🤝 Contributing
 
-We welcome contributions from the community! There are several ways to contribute:
+Contributions are welcome! Please feel free to submit a Pull Request.
 
-### Code Contributions
-See our [Contributing Guide](CONTRIBUTING.md) for details on:
-- Setting up your development environment
-- Running tests and quality checks
-- Submitting pull requests
-- Code style guidelines
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add some amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
+---
 
-### Prompt Modules Collection
-Help expand our collection of specialized prompt modules for AI agents:
-- Advanced testing techniques for vulnerabilities, frameworks, and technologies
-- See [Prompt Modules Documentation](strix/prompts/README.md) for guidelines
-- Submit via [pull requests](https://github.com/usestrix/strix/pulls) or [issues](https://github.com/usestrix/strix/issues)
+## 📄 License
 
-## 👥 Join Our Community
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
-Have questions? Found a bug? Want to contribute? **[Join our Discord!](https://discord.gg/YjKFvEZSdZ)**
+---
 
-## 🌟 Support the Project
+## ⚠️ Disclaimer
 
-**Love Strix?** Give us a ⭐ on GitHub!
+AISEC is designed for authorized security testing only. Users must obtain proper authorization before testing any systems they do not own. Unauthorized access to computer systems is illegal. The developers assume no liability for misuse of this software.
 
-> [!WARNING]
-> Only test apps you own or have permission to test. You are responsible for using Strix ethically and legally.
+---
+
+<div align="center">
+
+**AISEC** - AI-Powered Cybersecurity Agent
+
+Developed by **CYBERSEC**
 
 </div>
