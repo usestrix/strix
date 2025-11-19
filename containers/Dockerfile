@@ -1,6 +1,10 @@
 FROM kalilinux/kali-rolling:latest
 
-LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
+LABEL org.opencontainers.image.title="AISEC Sandbox"
+LABEL org.opencontainers.image.description="Docker sandbox environment for AISEC AI-powered cybersecurity agent"
+LABEL org.opencontainers.image.vendor="CYBERSEC"
+LABEL org.opencontainers.image.version="0.1.10"
+LABEL description="AI-Powered Cybersecurity Agent Penetration Testing Environment with Comprehensive Tools"
 
 RUN apt-get update && \
     apt-get install -y kali-archive-keyring sudo && \
@@ -148,7 +152,7 @@ RUN ARCH=$(uname -m) && \
     rm caido-cli.tar.gz && \
     mv caido-cli /usr/local/bin/
 
-ENV STRIX_SANDBOX_MODE=true
+ENV AISEC_SANDBOX_MODE=true
 ENV PYTHONPATH=/app
 ENV REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
@@ -164,19 +168,19 @@ RUN poetry run playwright install chromium
 RUN /app/venv/bin/pip install -r /home/pentester/tools/jwt_tool/requirements.txt && \
     ln -s /home/pentester/tools/jwt_tool/jwt_tool.py /home/pentester/.local/bin/jwt_tool
 
-RUN echo "# Sandbox Environment" > README.md
+RUN echo "# AISEC Sandbox Environment" > README.md
 
-COPY strix/__init__.py strix/
-COPY strix/runtime/tool_server.py strix/runtime/__init__.py strix/runtime/runtime.py /app/strix/runtime/
+COPY aisec/__init__.py aisec/
+COPY aisec/runtime/tool_server.py aisec/runtime/__init__.py aisec/runtime/runtime.py /app/aisec/runtime/
 
-COPY strix/tools/__init__.py strix/tools/registry.py strix/tools/executor.py strix/tools/argument_parser.py /app/strix/tools/
+COPY aisec/tools/__init__.py aisec/tools/registry.py aisec/tools/executor.py aisec/tools/argument_parser.py /app/aisec/tools/
 
-COPY strix/tools/browser/ /app/strix/tools/browser/
-COPY strix/tools/file_edit/ /app/strix/tools/file_edit/
-COPY strix/tools/notes/ /app/strix/tools/notes/
-COPY strix/tools/python/ /app/strix/tools/python/
-COPY strix/tools/terminal/ /app/strix/tools/terminal/
-COPY strix/tools/proxy/ /app/strix/tools/proxy/
+COPY aisec/tools/browser/ /app/aisec/tools/browser/
+COPY aisec/tools/file_edit/ /app/aisec/tools/file_edit/
+COPY aisec/tools/notes/ /app/aisec/tools/notes/
+COPY aisec/tools/python/ /app/aisec/tools/python/
+COPY aisec/tools/terminal/ /app/aisec/tools/terminal/
+COPY aisec/tools/proxy/ /app/aisec/tools/proxy/
 
 RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.bashrc && \
     echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.profile
