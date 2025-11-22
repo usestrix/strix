@@ -122,23 +122,63 @@ def build_llm_stats_text(tracer: Any) -> Text:
 
 
 # Name generation utilities
-def generate_run_name() -> str:
-    # fmt: off
-    adjectives = [
-        "stealthy", "sneaky", "crafty", "elite", "phantom", "shadow", "silent",
-        "rogue", "covert", "ninja", "ghost", "cyber", "digital", "binary",
-        "encrypted", "obfuscated", "masked", "cloaked", "invisible", "anonymous"
-    ]
-    nouns = [
-        "exploit", "payload", "backdoor", "rootkit", "keylogger", "botnet", "trojan",
-        "worm", "virus", "packet", "buffer", "shell", "daemon", "spider", "crawler",
-        "scanner", "sniffer", "honeypot", "firewall", "breach"
-    ]
-    # fmt: on
-    adj = secrets.choice(adjectives)
-    noun = secrets.choice(nouns)
-    number = secrets.randbelow(900) + 100
-    return f"{adj}-{noun}-{number}"
+
+
+def _slugify_for_run_name(text: str, max_length: int = 32) -> str:
+    text = text.lower().strip()
+    text = re.sub(r"[^a-z0-9]+", "-", text)
+    text = text.strip("-")
+    if len(text) > max_length:
+        text = text[:max_length].rstrip("-")
+    return text or "pentest"
+
+
+def _derive_target_label_for_run_name(targets_info: list[dict[str, Any]] | None) -> str:  # noqa: PLR0911
+    if not targets_info:
+        return "pentest"
+
+    first = targets_info[0]
+    target_type = first.get("type")
+    details = first.get("details", {}) or {}
+    original = first.get("original", "") or ""
+
+    if target_type == "web_application":
+        url = details.get("target_url", original)
+        try:
+            parsed = urlparse(url)
+            return str(parsed.netloc or parsed.path or url)
+        except Exception:  # noqa: BLE001
+            return str(url)
+
+    if target_type == "repository":
+        repo = details.get("target_repo", original)
+        parsed = urlparse(repo)
+        path = parsed.path or repo
+        name = path.rstrip("/").split("/")[-1] or path
+        if name.endswith(".git"):
+            name = name[:-4]
+        return str(name)
+
+    if target_type == "local_code":
+        path_str = details.get("target_path", original)
+        try:
+            return str(Path(path_str).name or path_str)
+        except Exception:  # noqa: BLE001
+            return str(path_str)
+
+    if target_type == "ip_address":
+        return str(details.get("target_ip", original) or original)
+
+    return str(original or "pentest")
+
+
+def generate_run_name(targets_info: list[dict[str, Any]] | None = None) -> str:
+    base_label = _derive_target_label_for_run_name(targets_info)
+    slug = _slugify_for_run_name(base_label)
+
+    random_suffix = secrets.token_hex(2)
+
+    return f"{slug}_{random_suffix}"
 
 
 # Target processing utilities

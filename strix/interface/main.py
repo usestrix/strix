@@ -459,7 +459,7 @@ def main() -> None:
     asyncio.run(warm_up_llm())
 
     if not args.run_name:
-        args.run_name = generate_run_name()
+        args.run_name = generate_run_name(args.targets_info)
 
     for target_info in args.targets_info:
         if target_info["type"] == "repository":
