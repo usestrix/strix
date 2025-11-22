@@ -267,8 +267,12 @@ Examples:
   strix --target https://github.com/user/repo --target https://example.com
   strix --target ./my-project --target https://staging.example.com --target https://prod.example.com
 
-  # Custom instructions
+  # Custom instructions (inline)
   strix --target example.com --instruction "Focus on authentication vulnerabilities"
+
+  # Custom instructions (from file)
+  strix --target example.com --instruction ./instructions.txt
+  strix --target https://app.com --instruction /path/to/detailed_instructions.md
         """,
     )
 
@@ -289,7 +293,9 @@ Examples:
         "testing approaches (e.g., 'Perform thorough authentication testing'), "
         "test credentials (e.g., 'Use the following credentials to access the app: "
         "admin:password123'), "
-        "or areas of interest (e.g., 'Check login API endpoint for security issues')",
+        "or areas of interest (e.g., 'Check login API endpoint for security issues'). "
+        "You can also provide a path to a file containing detailed instructions "
+        "(e.g., '--instruction ./instructions.txt').",
     )
 
     parser.add_argument(
@@ -309,6 +315,17 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    if args.instruction:
+        instruction_path = Path(args.instruction)
+        if instruction_path.exists() and instruction_path.is_file():
+            try:
+                with instruction_path.open(encoding="utf-8") as f:
+                    args.instruction = f.read().strip()
+                    if not args.instruction:
+                        parser.error(f"Instruction file '{instruction_path}' is empty")
+            except Exception as e:  # noqa: BLE001
+                parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
 
     args.targets_info = []
     for target in args.target:
