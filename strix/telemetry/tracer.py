@@ -50,6 +50,7 @@ class Tracer:
         self._run_dir: Path | None = None
         self._next_execution_id = 1
         self._next_message_id = 1
+        self._saved_vuln_ids: set[str] = set()
 
         self.vulnerability_found_callback: Callable[[str, str, str, str], None] | None = None
 
@@ -59,7 +60,7 @@ class Tracer:
 
     def get_run_dir(self) -> Path:
         if self._run_dir is None:
-            runs_dir = Path.cwd() / "agent_runs"
+            runs_dir = Path.cwd() / "strix_runs"
             runs_dir.mkdir(exist_ok=True)
 
             run_dir_name = self.run_name if self.run_name else self.run_id
@@ -92,6 +93,7 @@ class Tracer:
                 report_id, title.strip(), content.strip(), severity.lower().strip()
             )
 
+        self.save_run_data()
         return report_id
 
     def set_final_scan_result(
@@ -108,6 +110,7 @@ class Tracer:
         }
 
         logger.info(f"Set final scan result: success={success}")
+        self.save_run_data(mark_complete=True)
 
     def log_agent_creation(
         self, agent_id: str, name: str, task: str, parent_id: str | None = None
@@ -197,11 +200,13 @@ class Tracer:
                 "max_iterations": config.get("max_iterations", 200),
             }
         )
+        self.get_run_dir()
 
-    def save_run_data(self) -> None:
+    def save_run_data(self, mark_complete: bool = False) -> None:
         try:
             run_dir = self.get_run_dir()
-            self.end_time = datetime.now(UTC).isoformat()
+            if mark_complete:
+                self.end_time = datetime.now(UTC).isoformat()
 
             if self.final_scan_result:
                 penetration_test_report_file = run_dir / "penetration_test_report.md"
@@ -219,13 +224,13 @@ class Tracer:
                 vuln_dir = run_dir / "vulnerabilities"
                 vuln_dir.mkdir(exist_ok=True)
 
-                severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-                sorted_reports = sorted(
-                    self.vulnerability_reports,
-                    key=lambda x: (severity_order.get(x["severity"], 5), x["timestamp"]),
-                )
+                new_reports = [
+                    report
+                    for report in self.vulnerability_reports
+                    if report["id"] not in self._saved_vuln_ids
+                ]
 
-                for report in sorted_reports:
+                for report in new_reports:
                     vuln_file = vuln_dir / f"{report['id']}.md"
                     with vuln_file.open("w", encoding="utf-8") as f:
                         f.write(f"# {report['title']}\n\n")
@@ -234,30 +239,39 @@ class Tracer:
                         f.write(f"**Found:** {report['timestamp']}\n\n")
                         f.write("## Description\n\n")
                         f.write(f"{report['content']}\n")
+                    self._saved_vuln_ids.add(report["id"])
 
-                vuln_csv_file = run_dir / "vulnerabilities.csv"
-                with vuln_csv_file.open("w", encoding="utf-8", newline="") as f:
-                    import csv
+                if self.vulnerability_reports:
+                    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+                    sorted_reports = sorted(
+                        self.vulnerability_reports,
+                        key=lambda x: (severity_order.get(x["severity"], 5), x["timestamp"]),
+                    )
 
-                    fieldnames = ["id", "title", "severity", "timestamp", "file"]
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
+                    vuln_csv_file = run_dir / "vulnerabilities.csv"
+                    with vuln_csv_file.open("w", encoding="utf-8", newline="") as f:
+                        import csv
 
-                    for report in sorted_reports:
-                        writer.writerow(
-                            {
-                                "id": report["id"],
-                                "title": report["title"],
-                                "severity": report["severity"].upper(),
-                                "timestamp": report["timestamp"],
-                                "file": f"vulnerabilities/{report['id']}.md",
-                            }
-                        )
+                        fieldnames = ["id", "title", "severity", "timestamp", "file"]
+                        writer = csv.DictWriter(f, fieldnames=fieldnames)
+                        writer.writeheader()
 
-                logger.info(
-                    f"Saved {len(self.vulnerability_reports)} vulnerability reports to: {vuln_dir}"
-                )
-                logger.info(f"Saved vulnerability index to: {vuln_csv_file}")
+                        for report in sorted_reports:
+                            writer.writerow(
+                                {
+                                    "id": report["id"],
+                                    "title": report["title"],
+                                    "severity": report["severity"].upper(),
+                                    "timestamp": report["timestamp"],
+                                    "file": f"vulnerabilities/{report['id']}.md",
+                                }
+                            )
+
+                if new_reports:
+                    logger.info(
+                        f"Saved {len(new_reports)} new vulnerability report(s) to: {vuln_dir}"
+                    )
+                logger.info(f"Updated vulnerability index: {vuln_csv_file}")
 
             logger.info(f"📊 Essential scan data saved to: {run_dir}")
 
@@ -320,4 +334,4 @@ class Tracer:
         }
 
     def cleanup(self) -> None:
-        self.save_run_data()
+        self.save_run_data(mark_complete=True)

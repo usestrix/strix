@@ -36,7 +36,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     results_text = Text()
     results_text.append("📊 Results will be saved to: ", style="bold cyan")
-    results_text.append(f"agent_runs/{args.run_name}", style="bold white")
+    results_text.append(f"strix_runs/{args.run_name}", style="bold white")
 
     note_text = Text()
     note_text.append("\n\n", style="dim")

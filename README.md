@@ -80,7 +80,7 @@ strix --target ./app-directory
 ```
 
 > [!NOTE]
-> First run automatically pulls the sandbox Docker image. Results are saved to `agent_runs/<run-name>`
+> First run automatically pulls the sandbox Docker image. Results are saved to `strix_runs/<run-name>`
 
 ## ☁️ Run Strix in Cloud
 

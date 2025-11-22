@@ -79,6 +79,7 @@ logs/
 tensorboard/
 
 # Agent execution traces
+strix_runs/
 agent_runs/
 
 # Misc

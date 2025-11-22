@@ -475,7 +475,7 @@ def main() -> None:
     else:
         asyncio.run(run_tui(args))
 
-    results_path = Path("agent_runs") / args.run_name
+    results_path = Path("strix_runs") / args.run_name
     display_completion_message(args, results_path)
 
     if args.non_interactive:
