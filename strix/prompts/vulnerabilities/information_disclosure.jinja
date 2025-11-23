@@ -1,0 +1,229 @@
+<information_disclosure_vulnerability_guide>
+<title>INFORMATION DISCLOSURE</title>
+
+<critical>Information leakage reveals architecture, credentials, and attack surface. Every error, comment, header, and file is intelligence. Defense requires minimizing all unnecessary disclosure.</critical>
+
+<scope>
+- Verbose errors and stack traces (framework, paths, queries)
+- Debug modes and dev environments
+- Source control exposure (.git, .svn, .hg)
+- Backup/temp files (.bak, ~, .old, .swp)
+- Configuration files (.env, web.config, database.yml)
+- API documentation (Swagger, GraphQL introspection)
+- Comments in source (credentials, TODOs, internal URLs)
+- Server headers (versions, technologies)
+- Source maps (unminified JS with comments)
+- Directory listings
+- Metadata in files (EXIF, PDF properties)
+</scope>
+
+<methodology>
+1. Provoke errors: invalid inputs, missing params, SQLi chars, type mismatches, boundary values.
+2. Enumerate artifacts: .git, backups, configs, source maps.
+3. Inspect responses: headers, HTML comments, JSON metadata, error details.
+4. Test API docs: Swagger UI, GraphQL introspection, WADL/WSDL.
+5. Analyze JS: extract endpoints, secrets, internal URLs.
+6. Correlate findings: versions → CVEs, paths → traversal, creds → access.
+</methodology>
+
+<critical_targets>
+<error_messages>
+- Trigger: SQLi chars (' OR 1=1--), XSS payloads, type confusion, null/empty params
+- SQL errors: table/column names, DBMS type/version
+  Example: "SQLSTATE[42S02]: Table 'users' doesn't exist" → MySQL, table structure
+- Stack traces: file paths, function names, library versions, developer emails
+  Python: /home/app/controllers/UserController.py line 42
+  Java: org.springframework.security.access.AccessDeniedException
+  Node: Error: Cannot read property 'id' of undefined at /app/routes/user.js:15
+- Template injection: ${7*7}, {{7*7}} → reveals engine (Jinja2, Handlebars, etc.)
+</error_messages>
+
+<debug_modes>
+- Django: DEBUG=True → full error pages, SQL queries, settings, installed apps
+- Laravel: APP_DEBUG=true → Whoops error handler with env vars, stack trace
+- Rails: development environment → detailed errors, routes, params
+- Flask: app.debug=True → Werkzeug interactive debugger (RCE if accessible)
+- Express: NODE_ENV=development → verbose errors, stack traces
+- ASP.NET: customErrors mode="Off", debug="true" → full stack, view state
+- Endpoints: /debug, /_debug, /telescope, /__debug__/, /debug/pprof/
+</debug_modes>
+
+<git_exposure>
+- Paths: /.git/HEAD, /.git/config, /.git/index, /.git/logs/HEAD
+- Tools: git-dumper, GitTools, dvcs-ripper
+- Extract: full commit history, credentials in commits, code, developer info
+- Check: wget -q /.git/HEAD && echo "Git exposed"
+- Also: .svn/entries, .hg/store, .bzr/
+</git_exposure>
+
+<backup_temp_files>
+- Patterns: .bak, .old, ~, .swp, .swo, .tmp, .save, .orig
+- Examples: config.php.bak, .env.old, web.config~, database.sql, backup.zip
+- Editor files: .index.php.swp, #config.php#
+- Paths: /backup/, /old/, /bak/, /tmp/, /archive/
+- Database dumps: db.sql, dump.sql, mysql.sql, backup.sql
+- Tool: ffuf -w backups.txt -u https://target.com/FUZZ
+</backup_temp_files>
+
+<config_files>
+- .env: DB creds, API keys, JWT secrets, AWS keys
+- web.config: connection strings, debug mode, auth settings
+- appsettings.json: .NET config, secrets
+- database.yml: Rails DB config
+- settings.py: Django SECRET_KEY, DATABASES, DEBUG
+- config.php: DB creds, encryption keys
+- phpinfo.php: full PHP config, versions, paths, env vars
+- Dockerfile, docker-compose.yml: build secrets, internal hosts
+- .aws/credentials, .ssh/id_rsa: cloud/SSH keys
+- package.json, composer.json: dependencies revealing versions
+</config_files>
+
+<api_documentation>
+- Swagger/OpenAPI: /swagger, /swagger-ui.html, /api/swagger.json, /api-docs, /v2/api-docs, /openapi.json
+- GraphQL introspection:
+{% raw %}
+query { __schema { types { name fields { name args { name type { name } } } } } }
+{% endraw %}
+- Reveals: all endpoints, parameters, types, internal routes, authentication requirements
+- WADL: /application.wadl (REST)
+- WSDL: /?wsdl, /service?wsdl (SOAP)
+- Postman: leaked collections with API keys
+</api_documentation>
+
+<source_maps>
+- Files: app.js.map, main.js.map, bundle.js.map
+- Reveals: original source code, comments, internal logic, API endpoints, hardcoded secrets
+- Access: check for .map files or SourceMap header
+- Extract: original file names, directory structure, developer comments
+</source_maps>
+
+<comments_in_code>
+- HTML: <!-- TODO: remove admin link -->, <!-- API key: abc123 -->, <!-- password: temp -->
+- JavaScript: // FIXME: hardcoded endpoint, /* DB: mysql://user:pass@host */
+- Search: TODO, FIXME, HACK, DEBUG, TEST, admin, password, secret, key, token, api_key
+</comments_in_code>
+</critical_targets>
+
+<advanced_techniques>
+<stack_trace_extraction>
+Languages/Frameworks:
+- Python: Werkzeug, Flask, Django → file paths, module structure
+- Ruby: Rails → gem versions, app structure
+- Java: Spring, Tomcat → package names, dependency versions
+- PHP: Laravel, Symfony → vendor paths, config files
+- Node: Express, Nest → package.json dependencies
+Extract: paths (/var/www/app/), versions (Django 3.2.5), internal packages (mycompany.auth)
+</stack_trace_extraction>
+
+<graphql_introspection>
+Query reveals entire schema:
+- All types, queries, mutations, subscriptions
+- Field names, arguments, descriptions
+- Disabled? Look for schema in JS bundles or leaked Postman collections
+- Field suggestions: typo field name → error suggests valid fields
+</graphql_introspection>
+
+<javascript_secrets>
+- Enumerate: find all .js via crawling, view-source, webpack manifests
+- Extract: API endpoints, keys, tokens, internal URLs
+- Search: apiKey, api_key, API_KEY, secret, token, password, Authorization, Bearer, REACT_APP_, VUE_APP_, NEXT_PUBLIC_
+- Tools: LinkFinder, JSParser, grep with regex
+- Webpack bundles: large files contain multiple modules with comments
+</javascript_secrets>
+
+<server_fingerprinting>
+- Headers: Server (Apache/2.4.41, nginx/1.18.0, IIS/10.0), X-Powered-By (PHP/7.4.3, Express)
+- Cookies: PHPSESSID, JSESSIONID, connect.sid, .ASPXAUTH → reveals framework
+- Error pages: default 404/500 leak framework/version
+- ETags: predictable patterns reveal server software
+- Timing: response time patterns reveal caching/backend
+</server_fingerprinting>
+
+<timing_side_channels>
+- Username enumeration: valid vs invalid user response time differs
+- State inference: valid vs invalid token processing time
+- Blind SQLi: sleep-based confirmation
+- Cache HIT vs MISS: timing reveals cached content
+</timing_side_channels>
+
+<directory_listings>
+- Misconfigured: Apache Options +Indexes, nginx autoindex on
+- Targets: /uploads/, /images/, /files/, /backup/, /logs/, /tmp/, /assets/
+- Reveals: file structure, names, sizes, timestamps
+- Test: browse to directory without filename
+</directory_listings>
+
+<metadata_extraction>
+- EXIF in images: GPS coords, camera model, software, author, timestamps
+- PDF: author, creator, software versions, internal paths
+- Office docs: author, company, revision history, hidden content
+- Tools: exiftool, pdfinfo, strings
+</metadata_extraction>
+</advanced_techniques>
+
+<exploitation_chains>
+<credential_extraction>
+- .env: DATABASE_URL=postgres://user:pass@host:5432/db, AWS_SECRET_ACCESS_KEY=...
+- Git history: git log -p | grep -i password
+- Config files: connection strings, SMTP creds, admin passwords
+- Source code: hardcoded keys, test accounts
+- Tools: gitleaks, truffleHog, detect-secrets
+</credential_extraction>
+
+<version_to_cve>
+1. Extract version: Server: Apache/2.4.49
+2. Search CVE: CVE-2021-41773 (path traversal)
+3. Exploit: curl https://target.com/cgi-bin/.%2e/.%2e/.%2e/etc/passwd
+Chain: disclosure → exploitation
+</version_to_cve>
+
+<path_disclosure_to_lfi>
+1. Error reveals path: /var/www/html/includes/config.php
+2. LFI: https://target.com/page.php?file=../../../../var/www/html/includes/config.php
+3. Extract credentials from config
+</path_disclosure_to_lfi>
+
+<schema_to_api_abuse>
+1. GraphQL introspection reveals hidden mutations: deleteUser(id: ID!)
+2. Test: mutation { deleteUser(id: "123") { success } }
+3. IDOR if no authz check
+</schema_to_api_abuse>
+</exploitation_chains>
+
+<validation>
+1. Screenshot/raw response showing disclosure.
+2. Explain impact: how it accelerates attacks (version→CVE, creds→access, paths→traversal).
+3. Provide examples: extracted secrets, internal structure, API schema.
+4. Classify severity: low (versions) to critical (credentials, source code).
+</validation>
+
+<false_positives>
+- Intentional public docs (public API Swagger)
+- Generic errors without details (404, 500 no stack)
+- Version info for transparency (debatable)
+</false_positives>
+
+<tools>
+- git-dumper: python3 git-dumper.py https://target.com/.git/ output/
+- GitTools: ./gitdumper.sh https://target.com/.git/ output/
+- gitleaks: gitleaks detect --source . --verbose
+- ffuf: ffuf -w wordlist.txt -u https://target.com/FUZZ -mc 200
+- LinkFinder: python3 linkfinder.py -i https://target.com -o results.html
+- exiftool: exiftool image.jpg
+</tools>
+
+<pro_tips>
+1. Check .git first; full source code = jackpot.
+2. Provoke errors systematically: SQLi, type confusion, missing params.
+3. Inspect all headers; versions everywhere.
+4. Enumerate API docs: Swagger, GraphQL introspection.
+5. Analyze JS thoroughly: webpack bundles = treasure trove.
+6. Search for backups: .bak, ~, .old, .swp.
+7. Read comments: developers leave clues.
+8. Test directory listings on /uploads/, /files/.
+9. Chain findings: version→CVE, path→traversal, creds→access.
+10. Automate: continuous monitoring for new disclosures.
+</pro_tips>
+
+<remember>Information disclosure is rarely standalone critical but enables all other attacks. Every leaked byte narrows attacker search space. Minimize disclosure at every layer. Defense-in-depth requires operational discipline and continuous monitoring.</remember>
+</information_disclosure_vulnerability_guide>
