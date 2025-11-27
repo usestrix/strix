@@ -6,6 +6,7 @@ import logging
 import os
 import signal
 import sys
+import time
 from multiprocessing import Process, Queue
 from typing import Any
 
@@ -27,6 +28,11 @@ parser.add_argument("--port", type=int, required=True, help="Port to bind to")
 args = parser.parse_args()
 EXPECTED_TOKEN = args.token
 
+# Security: Configuration for rate limiting and agent limits
+MAX_AGENTS = 100  # Maximum number of agents allowed
+AGENT_REGISTRATION_RATE_LIMIT = 10  # Max registrations per time window
+RATE_LIMIT_WINDOW = 60  # Time window in seconds for rate limiting
+
 app = FastAPI()
 security = HTTPBearer()
 
@@ -34,6 +40,9 @@ security_dependency = Depends(security)
 
 agent_processes: dict[str, dict[str, Any]] = {}
 agent_queues: dict[str, dict[str, Queue[Any]]] = {}
+
+# Rate limiting tracking for registration attempts
+_registration_attempts: dict[str, list[float]] = {}
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials) -> str:
@@ -52,6 +61,51 @@ def verify_token(credentials: HTTPAuthorizationCredentials) -> str:
         )
 
     return credentials.credentials
+
+
+def check_rate_limit(token: str) -> None:
+    """Check if the token has exceeded registration rate limit.
+    
+    Args:
+        token: The authentication token to check
+        
+    Raises:
+        HTTPException: If rate limit is exceeded
+    """
+    current_time = time.time()
+    
+    # Initialize tracking for this token if not present
+    if token not in _registration_attempts:
+        _registration_attempts[token] = []
+    
+    # Remove old attempts outside the rate limit window
+    _registration_attempts[token] = [
+        attempt_time for attempt_time in _registration_attempts[token]
+        if current_time - attempt_time < RATE_LIMIT_WINDOW
+    ]
+    
+    # Check if limit is exceeded
+    if len(_registration_attempts[token]) >= AGENT_REGISTRATION_RATE_LIMIT:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Registration rate limit exceeded.",
+        )
+    
+    # Record this attempt
+    _registration_attempts[token].append(current_time)
+
+
+def check_agent_limit() -> None:
+    """Check if the maximum number of agents has been reached.
+    
+    Raises:
+        HTTPException: If maximum agent count is exceeded
+    """
+    if len(agent_processes) >= MAX_AGENTS:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Maximum agent limit ({MAX_AGENTS}) reached. Cannot register new agents.",
+        )
 
 
 class ToolExecutionRequest(BaseModel):
@@ -147,7 +201,24 @@ async def execute_tool(
 async def register_agent(
     agent_id: str, credentials: HTTPAuthorizationCredentials = security_dependency
 ) -> dict[str, str]:
-    verify_token(credentials)
+    token = verify_token(credentials)
+    
+    # Security: Check rate limit to prevent registration flooding
+    check_rate_limit(token)
+    
+    # Security: Check if maximum agent count has been reached
+    check_agent_limit()
+    
+    # Security: Validate agent_id is not empty and not too long
+    if not agent_id or len(agent_id) == 0:
+        raise HTTPException(status_code=400, detail="agent_id is required")
+    
+    if len(agent_id) > 256:
+        raise HTTPException(status_code=400, detail="agent_id must be less than 256 characters")
+    
+    # Only register if this agent is not already registered
+    if agent_id in agent_processes:
+        return {"status": "already_registered", "agent_id": agent_id}
 
     ensure_agent_process(agent_id)
     return {"status": "registered", "agent_id": agent_id}
