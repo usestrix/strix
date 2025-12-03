@@ -139,7 +139,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         status_text.append("Running penetration test...", style="bold #22c55e")
         status_text.append("\n\n")
 
-        stats_text = build_live_stats_text(tracer)
+        stats_text = build_live_stats_text(tracer, agent_config)
         if stats_text:
             status_text.append(stats_text)
 

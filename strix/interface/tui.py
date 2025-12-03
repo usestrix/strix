@@ -676,7 +676,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         stats_content = Text()
 
-        stats_text = build_live_stats_text(self.tracer)
+        stats_text = build_live_stats_text(self.tracer, self.agent_config)
         if stats_text:
             stats_content.append(stats_text)
 
