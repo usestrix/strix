@@ -129,8 +129,14 @@ module = [
     "textual.*",
     "pyte.*",
     "libtmux.*",
+    "pytest.*",
 ]
 ignore_missing_imports = true
+
+# Relax strict rules for test files (pytest decorators are not fully typed)
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_decorators = false
 
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)

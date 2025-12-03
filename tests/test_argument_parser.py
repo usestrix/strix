@@ -5,8 +5,7 @@ string arguments to their appropriate Python types based on function
 type annotations.
 """
 
-import json
-from typing import Optional, Union
+from collections.abc import Callable
 
 import pytest
 
@@ -177,17 +176,17 @@ class TestConvertStringToType:
 
     def test_optional_type(self) -> None:
         """Test conversion with Optional type."""
-        result = convert_string_to_type("42", Optional[int])
+        result = convert_string_to_type("42", int | None)
         assert result == 42
 
     def test_union_type(self) -> None:
         """Test conversion with Union type."""
-        result = convert_string_to_type("42", Union[int, str])
+        result = convert_string_to_type("42", int | str)
         assert result == 42
 
     def test_union_type_with_none(self) -> None:
         """Test conversion with Union including None."""
-        result = convert_string_to_type("hello", Union[str, None])
+        result = convert_string_to_type("hello", str | None)
         assert result == "hello"
 
     def test_modern_union_syntax(self) -> None:
@@ -199,7 +198,9 @@ class TestConvertStringToType:
 class TestConvertArguments:
     """Tests for the convert_arguments function."""
 
-    def test_converts_typed_arguments(self, sample_function_with_types) -> None:
+    def test_converts_typed_arguments(
+        self, sample_function_with_types: Callable[..., None]
+    ) -> None:
         """Test that arguments are converted based on type annotations."""
         kwargs = {
             "name": "test",
@@ -218,32 +219,42 @@ class TestConvertArguments:
         assert result["items"] == [1, 2, 3]
         assert result["config"] == {"key": "value"}
 
-    def test_passes_through_none_values(self, sample_function_with_types) -> None:
+    def test_passes_through_none_values(
+        self, sample_function_with_types: Callable[..., None]
+    ) -> None:
         """Test that None values are passed through unchanged."""
         kwargs = {"name": "test", "count": None}
         result = convert_arguments(sample_function_with_types, kwargs)
         assert result["count"] is None
 
-    def test_passes_through_non_string_values(self, sample_function_with_types) -> None:
+    def test_passes_through_non_string_values(
+        self, sample_function_with_types: Callable[..., None]
+    ) -> None:
         """Test that non-string values are passed through unchanged."""
         kwargs = {"name": "test", "count": 42}
         result = convert_arguments(sample_function_with_types, kwargs)
         assert result["count"] == 42
 
-    def test_unknown_parameter_passed_through(self, sample_function_with_types) -> None:
+    def test_unknown_parameter_passed_through(
+        self, sample_function_with_types: Callable[..., None]
+    ) -> None:
         """Test that parameters not in signature are passed through."""
         kwargs = {"name": "test", "unknown_param": "value"}
         result = convert_arguments(sample_function_with_types, kwargs)
         assert result["unknown_param"] == "value"
 
-    def test_function_without_annotations(self, sample_function_no_annotations) -> None:
+    def test_function_without_annotations(
+        self, sample_function_no_annotations: Callable[..., None]
+    ) -> None:
         """Test handling of functions without type annotations."""
         kwargs = {"arg1": "value1", "arg2": "42"}
         result = convert_arguments(sample_function_no_annotations, kwargs)
         assert result["arg1"] == "value1"
         assert result["arg2"] == "42"
 
-    def test_raises_error_on_conversion_failure(self, sample_function_with_types) -> None:
+    def test_raises_error_on_conversion_failure(
+        self, sample_function_with_types: Callable[..., None]
+    ) -> None:
         """Test that ArgumentConversionError is raised on conversion failure."""
         kwargs = {"count": "not_a_number"}
         with pytest.raises(ArgumentConversionError) as exc_info:
