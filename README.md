@@ -159,6 +159,9 @@ strix -t https://github.com/org/app -t https://your-app.com
 
 # Focused testing with custom instructions
 strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
+
+# Provide instructions through file
+strix --target api.your-app.com --instruction ./instruction.md
 ```
 
 ### 🤖 Headless Mode
