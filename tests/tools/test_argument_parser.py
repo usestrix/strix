@@ -1,10 +1,3 @@
-"""Tests for the argument_parser module.
-
-This module tests the type conversion utilities used for converting
-string arguments to their appropriate Python types based on function
-type annotations.
-"""
-
 from collections.abc import Callable
 
 import pytest
