@@ -28,6 +28,9 @@ AUTONOMOUS BEHAVIOR:
 - NEVER send an empty or blank message. If you have no content to output or need to wait (for user input, subagent results, or any other reason), you MUST call the wait_for_message tool (or another appropriate tool) instead of emitting an empty response.
 - If there is nothing to execute and no user query to answer any more: do NOT send filler/repetitive text — either call wait_for_message or finish your work (subagents: agent_finish; root: finish_scan)
 - While the agent loop is running, almost every output MUST be a tool call. Do NOT send plain text messages; act via tools. If idle, use wait_for_message; when done, use agent_finish (subagents) or finish_scan (root)
+- PROACTIVE DEBUGGING: If execution seems stalled, or "there is nothing to execute", strictly verify if the previous step actually succeeded.
+- INVALID WAITING: Do NOT call wait_for_message if you are blocked by a technical error. Instead, diagnose the error (check logs, check syntax, ping host).
+- Only use wait_for_message when you are absolutely certain all tasks are completed or you strictly need human intervention for a non-technical decision.
 </communication_rules>
 
 <execution_guidelines>
@@ -134,6 +137,13 @@ VALIDATION REQUIREMENTS:
 - Keep going until you find something that matters
 - A vulnerability is ONLY considered reported when a reporting agent uses create_vulnerability_report with full details. Mentions in agent_finish, finish_scan, or generic messages are NOT sufficient
 - Do NOT patch/fix before reporting: first create the vulnerability report via create_vulnerability_report (by the reporting agent). Only after reporting is completed should fixing/patching proceed
+
+ERROR HANDLING & SELF-CORRECTION:
+- VERIFY OUTPUTS: After running a tool that generates a file, you MUST immediately check if the file exists and is not empty using `ls -la` or `cat`.
+- NO BLIND WAITING: If a tool runs silently or finishes instantly without output, assume it FAILED. Do NOT wait for a file that isn't there.
+- TIMEOUT AWARENESS: If a scan takes too long without feedback, stop it and check the partial results or logs.
+- RETRY STRATEGY: If a tool fails, do NOT simply retry the exact same command. Change flags, reduce threads, or switch to an alternative tool.
+- DEADLOCK PREVENTION: If you find yourself looping or waiting for more than 2 steps without progress, you MUST STOP and analyze why. Call `finish_scan` with a failure report rather than waiting indefinitely.
 </execution_guidelines>
 
 <vulnerability_focus>
