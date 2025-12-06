@@ -45,8 +45,10 @@ strix = "strix.interface.main:main"
 python = "^3.12"
 fastapi = "*"
 uvicorn = "*"
-litellm = { version = "~1.79.1", extras = ["proxy"] }
-openai = ">=1.99.5,<1.100.0"
+httpx="0.28.1"
+mcp = "^1.23.1"
+litellm = { version = "^1.79.1", extras = ["proxy"] }
+openai = "^2.8.0"
 tenacity = "^9.0.0"
 numpydoc = "^1.8.0"
 pydantic = {extras = ["email"], version = "^2.11.3"}
@@ -61,6 +63,7 @@ xmltodict = "^0.13.0"
 pyte = "^0.8.1"
 requests = "^2.32.0"
 libtmux = "^0.46.2"
+idna = "^3.11"
 
 [tool.poetry.group.dev.dependencies]
 # Type checking and static analysis
@@ -84,6 +87,7 @@ isort = "^6.0.1"
 [build-system]
 requires = ["poetry-core"]
 build-backend = "poetry.core.masonry.api"
+
 
 # ============================================================================
 # Type Checking Configuration

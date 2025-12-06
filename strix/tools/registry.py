@@ -95,6 +95,26 @@ def _get_module_name(func: Callable[..., Any]) -> str:
     return "unknown"
 
 
+def register_mcp_tool(
+    name: str,
+    func: Callable[..., Any],
+    module: str = "unknown",
+    xml_schema: str | None = None,
+) -> None:
+    func_dict = {
+        "name": name,
+        "function": func,
+        "module": module,
+        "sandbox_execution": False,
+    }
+
+    if xml_schema:
+        func_dict["xml_schema"] = xml_schema
+
+    tools.append(func_dict)
+    _tools_by_name[str(func_dict["name"])] = func
+
+
 def register_tool(
     func: Callable[..., Any] | None = None, *, sandbox_execution: bool = True
 ) -> Callable[..., Any]:
