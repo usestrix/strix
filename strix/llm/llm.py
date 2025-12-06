@@ -25,19 +25,16 @@ from strix.tools import get_tools_prompt
 
 logger = logging.getLogger(__name__)
 
-api_key = os.getenv("LLM_API_KEY")
-if api_key:
-    os.environ.setdefault("LITELLM_API_KEY", api_key)
-    litellm.api_key = api_key
+litellm.drop_params = True
+litellm.modify_params = True
 
-api_base = (
+_LLM_API_KEY = os.getenv("LLM_API_KEY")
+_LLM_API_BASE = (
     os.getenv("LLM_API_BASE")
     or os.getenv("OPENAI_API_BASE")
     or os.getenv("LITELLM_BASE_URL")
     or os.getenv("OLLAMA_API_BASE")
 )
-if api_base:
-    litellm.api_base = api_base
 
 
 class LLMRequestFailedError(Exception):
@@ -400,6 +397,11 @@ class LLM:
             "messages": messages,
             "timeout": self.config.timeout,
         }
+
+        if _LLM_API_KEY:
+            completion_args["api_key"] = _LLM_API_KEY
+        if _LLM_API_BASE:
+            completion_args["api_base"] = _LLM_API_BASE
 
         if self._should_include_stop_param():
             completion_args["stop"] = ["</function>"]

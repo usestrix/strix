@@ -11,5 +11,3 @@ __all__ = [
 ]
 
 litellm._logging._disable_debugging()
-
-litellm.drop_params = True

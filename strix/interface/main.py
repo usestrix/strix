@@ -10,6 +10,7 @@ import os
 import shutil
 import sys
 from pathlib import Path
+from typing import Any
 
 import litellm
 from docker.errors import DockerException
@@ -189,19 +190,12 @@ async def warm_up_llm() -> None:
     try:
         model_name = os.getenv("STRIX_LLM", "openai/gpt-5")
         api_key = os.getenv("LLM_API_KEY")
-
-        if api_key:
-            os.environ.setdefault("LITELLM_API_KEY", api_key)
-            litellm.api_key = api_key
-
         api_base = (
             os.getenv("LLM_API_BASE")
             or os.getenv("OPENAI_API_BASE")
             or os.getenv("LITELLM_BASE_URL")
             or os.getenv("OLLAMA_API_BASE")
         )
-        if api_base:
-            litellm.api_base = api_base
 
         test_messages = [
             {"role": "system", "content": "You are a helpful assistant."},
@@ -210,11 +204,17 @@ async def warm_up_llm() -> None:
 
         llm_timeout = int(os.getenv("LLM_TIMEOUT", "600"))
 
-        response = litellm.completion(
-            model=model_name,
-            messages=test_messages,
-            timeout=llm_timeout,
-        )
+        completion_kwargs: dict[str, Any] = {
+            "model": model_name,
+            "messages": test_messages,
+            "timeout": llm_timeout,
+        }
+        if api_key:
+            completion_kwargs["api_key"] = api_key
+        if api_base:
+            completion_kwargs["api_base"] = api_base
+
+        response = litellm.completion(**completion_kwargs)
 
         validate_llm_response(response)
 
