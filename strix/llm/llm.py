@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 api_key = os.getenv("LLM_API_KEY")
 if api_key:
+    os.environ.setdefault("LITELLM_API_KEY", api_key)
     litellm.api_key = api_key
 
 api_base = (
