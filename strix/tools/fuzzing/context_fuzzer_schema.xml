@@ -1,0 +1,13 @@
+<tool name="fuzz_with_context">
+    <description>
+    Executes ffuf using the provided wordlist content against the target URL.
+    </description>
+    <parameters>
+        <parameter name="target_url" type="string" required="true">
+            The URL to fuzz (must contain FUZZ keyword).
+        </parameter>
+        <parameter name="wordlist_content" type="string" required="true">
+            The content of the wordlist to use (newline separated).
+        </parameter>
+    </parameters>
+</tool>

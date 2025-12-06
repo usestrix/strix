@@ -2,14 +2,17 @@ import base64
 import os
 import re
 import time
+import random
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 import requests
+import curl_cffi.requests
 from gql import Client, gql
 from gql.transport.exceptions import TransportQueryError
 from gql.transport.requests import RequestsHTTPTransport
 from requests.exceptions import ProxyError, RequestException, Timeout
+from curl_cffi.requests.errors import RequestsError
 
 
 if TYPE_CHECKING:
@@ -234,37 +237,65 @@ class ProxyManager:
         headers: dict[str, str] | None = None,
         body: str = "",
         timeout: int = 30,
+        max_retries: int = 2,
     ) -> dict[str, Any]:
         if headers is None:
             headers = {}
+
+        # Use curl_cffi for TLS impersonation
         try:
-            start_time = time.time()
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                data=body or None,
-                proxies=self.proxies,
-                timeout=timeout,
-                verify=False,
-            )
-            response_time = int((time.time() - start_time) * 1000)
+            attempt = 0
+            while attempt <= max_retries:
+                start_time = time.time()
 
-            body_content = response.text
-            if len(body_content) > 10000:
-                body_content = body_content[:10000] + "\n... [truncated]"
+                # Mock Rotation Logic
+                if attempt > 0:
+                    time.sleep(1 + random.random()) # Add jitter
+                    # In a real scenario, we would rotate self.proxies here
+                    # logger.info(f"Rotating proxy (Attempt {attempt})")
 
-            return {
-                "status_code": response.status_code,
-                "headers": dict(response.headers),
-                "body": body_content,
-                "response_time_ms": response_time,
-                "url": response.url,
-                "message": (
-                    "Request sent through proxy - check list_requests() for captured traffic"
-                ),
-            }
-        except (RequestException, ProxyError, Timeout) as e:
+                try:
+                    response = curl_cffi.requests.request(
+                        method=method,
+                        url=url,
+                        headers=headers,
+                        data=body or None,
+                        proxies=self.proxies,
+                        timeout=timeout,
+                        verify=False,
+                        impersonate="chrome110"
+                    )
+
+                    # Smart Rotation Check
+                    if response.status_code == 429:
+                        attempt += 1
+                        if attempt <= max_retries:
+                            continue
+
+                    response_time = int((time.time() - start_time) * 1000)
+
+                    body_content = response.text
+                    if len(body_content) > 10000:
+                        body_content = body_content[:10000] + "\n... [truncated]"
+
+                    return {
+                        "status_code": response.status_code,
+                        "headers": dict(response.headers),
+                        "body": body_content,
+                        "response_time_ms": response_time,
+                        "url": response.url,
+                        "message": (
+                            "Request sent through proxy (chrome110 impersonation) - check list_requests() for captured traffic"
+                        ),
+                    }
+
+                except RequestsError as e:
+                    # Retry on connection errors if we haven't exhausted retries
+                    attempt += 1
+                    if attempt > max_retries:
+                        raise e
+
+        except (RequestException, ProxyError, Timeout, RequestsError) as e:
             return {"error": f"Request failed: {type(e).__name__}", "details": str(e), "url": url}
 
     def repeat_request(
@@ -376,7 +407,7 @@ class ProxyManager:
     ) -> dict[str, Any]:
         try:
             start_time = time.time()
-            response = requests.request(
+            response = curl_cffi.requests.request(
                 method=request_data["method"],
                 url=request_data["url"],
                 headers=request_data["headers"],
@@ -384,6 +415,7 @@ class ProxyManager:
                 proxies=self.proxies,
                 timeout=30,
                 verify=False,
+                impersonate="chrome110"
             )
             response_time = int((time.time() - start_time) * 1000)
 
@@ -422,7 +454,7 @@ class ProxyManager:
                 "details": str(e),
                 "original_request_id": request_id,
             }
-        except (RequestException, Timeout) as e:
+        except (RequestException, Timeout, RequestsError) as e:
             return {
                 "error": f"Failed to repeat request: {type(e).__name__}",
                 "details": str(e),

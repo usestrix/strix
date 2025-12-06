@@ -1,0 +1,14 @@
+<tool name="validate_secrets">
+    <description>
+    Validates a list of potential secrets by testing them against the target URL.
+    Attempts common authentication headers.
+    </description>
+    <parameters>
+        <parameter name="secrets" type="array" required="true">
+            List of potential secret strings.
+        </parameter>
+        <parameter name="target_url" type="string" required="true">
+            The URL to test against (e.g., /api/user).
+        </parameter>
+    </parameters>
+</tool>

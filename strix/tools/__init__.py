@@ -35,6 +35,8 @@ if not SANDBOX_MODE:
     from .reporting import *  # noqa: F403
     from .terminal import *  # noqa: F403
     from .thinking import *  # noqa: F403
+    from .fuzzing import *  # noqa: F403
+    from .js_analysis import *  # noqa: F403
 
     if HAS_PERPLEXITY_API:
         from .web_search import *  # noqa: F403

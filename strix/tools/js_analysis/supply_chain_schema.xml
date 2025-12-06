@@ -1,0 +1,10 @@
+<tool name="scan_package_json">
+    <description>
+    Scans a package.json file content for known vulnerable dependencies (basic check).
+    </description>
+    <parameters>
+        <parameter name="package_json_content" type="string" required="true">
+            The content of the package.json file.
+        </parameter>
+    </parameters>
+</tool>

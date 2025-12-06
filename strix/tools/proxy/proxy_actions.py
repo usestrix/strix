@@ -1,8 +1,9 @@
-from typing import Any, Literal
+from typing import Any, Literal, Dict
 
 from strix.tools.registry import register_tool
 
 from .proxy_manager import get_proxy_manager
+from .waf_evasion import waf_middleware
 
 
 RequestPart = Literal["request", "response"]
@@ -56,7 +57,36 @@ def send_request(
     if headers is None:
         headers = {}
     manager = get_proxy_manager()
-    return manager.send_simple_request(method, url, headers, body, timeout)
+
+    # Send initial request
+    response = manager.send_simple_request(method, url, headers, body, timeout)
+
+    # Check for WAF block and attempt evasion if needed
+    request_data = {
+        "method": method,
+        "url": url,
+        "headers": headers,
+        "body": body,
+        "timeout": timeout
+    }
+
+    mutation = waf_middleware.process_response(request_data, response)
+
+    if mutation:
+        # Log or notify about evasion attempt?
+        # For now, just retry with mutation
+        response = manager.send_simple_request(
+            mutation["method"],
+            mutation["url"],
+            mutation["headers"],
+            mutation["body"],
+            mutation["timeout"]
+        )
+        # Update profile based on retry result
+        was_blocked_again = response.get("status_code") in [403, 406]
+        waf_middleware.update_profile(str(mutation), was_blocked_again)
+
+    return response
 
 
 @register_tool

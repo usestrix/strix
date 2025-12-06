@@ -1,4 +1,6 @@
 from typing import Any, Literal, NoReturn
+import random
+import time
 
 from strix.tools.registry import register_tool
 
@@ -29,6 +31,13 @@ BrowserAction = Literal[
     "list_tabs",
 ]
 
+
+def _human_jitter(action_name: str) -> None:
+    """Injects random delays and mock cursor movements (sleeps) to mimic human behavior."""
+    if action_name in ["click", "double_click", "type", "goto"]:
+        # Random sleep between 0.1s and 0.5s
+        delay = random.uniform(0.1, 0.5)
+        time.sleep(delay)
 
 def _validate_url(action_name: str, url: str | None) -> None:
     if not url:
@@ -76,6 +85,7 @@ def _handle_navigation_actions(
     url: str | None = None,
     tab_id: str | None = None,
 ) -> dict[str, Any]:
+    _human_jitter(action)
     if action == "launch":
         return manager.launch_browser(url)
     if action == "goto":
@@ -97,6 +107,7 @@ def _handle_interaction_actions(
     key: str | None = None,
     tab_id: str | None = None,
 ) -> dict[str, Any]:
+    _human_jitter(action)
     if action in {"click", "double_click", "hover"}:
         _validate_coordinate(action, coordinate)
         assert coordinate is not None
