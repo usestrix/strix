@@ -9,12 +9,13 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
 sys.path.append(project_root)
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any
+
 from mcp import ClientSession, StdioServerParameters, stdio_client
+from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 
 from strix.tools.registry import register_mcp_tool
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.client.sse import sse_client
 
 
 class TransportType:
@@ -27,11 +28,11 @@ class TransportType:
 class Configuration:
     transport_type: str = TransportType.STDIO
     command: str = "npx"  # Example default
-    args: List | None = None
-    env: Dict[str, str] | None = None
+    args: list | None = None
+    env: dict[str, str] | None = None
     cwd: str | None = None
     url: str | None = None
-    headers: Dict[str, Any] | None= None
+    headers: dict[str, Any] | None = None
     encoding: str = "utf-8"
 
 
@@ -51,7 +52,6 @@ class MCPClient:
         transport_type = self.config.transport_type
 
         if transport_type == TransportType.STDIO:
-
             server_params = StdioServerParameters(
                 command=self.config.command,
                 args=self.config.args or [],
@@ -66,7 +66,7 @@ class MCPClient:
             read, write = stdio_transport
 
             self.session = await self.exit_stack.enter_async_context(ClientSession(read, write))
-        elif transport_type == TransportType.STREAMABLE_HTTP :
+        elif transport_type == TransportType.STREAMABLE_HTTP:
             if not self.config.url:
                 raise ValueError("URL must be provided for STREAMABLE_HTTP transport.")
 
@@ -81,22 +81,21 @@ class MCPClient:
             self.session = await self.exit_stack.enter_async_context(ClientSession(read, write))
 
         elif transport_type == TransportType.SSE:
-
             if not self.config.url:
                 raise ValueError("URL must be provided for SSE transport.")
             sse_transport = await self.exit_stack.enter_async_context(
                 sse_client(
                     url=self.config.url,
-                    headers=self.config.headers ,
-                )  )
-            read, write= sse_transport
+                    headers=self.config.headers,
+                )
+            )
+            read, write = sse_transport
             self.session = await self.exit_stack.enter_async_context(ClientSession(read, write))
-       
 
         else:
             raise ValueError(f"Unsupported transport type: {transport_type}")
-        
-        await self.session.initialize()   
+
+        await self.session.initialize()
 
     def _generate_xml_schema(self, name, inputSchema, description) -> str:
         name_str = f'<tool name="{name}">'
@@ -127,7 +126,6 @@ class MCPClient:
             register_mcp_tool(
                 name=tool.name, func=dummy_func, module="unknown", xml_schema=tool_xml
             )
-
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         await self.cleanup()
