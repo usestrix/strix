@@ -3,33 +3,35 @@ import json
 import os
 import sys
 from contextlib import AsyncExitStack
+
+
+current_dir = os.path.dirname(os.path.abspath(__file__))
+project_root = os.path.abspath(os.path.join(current_dir, "../../../"))
+sys.path.append(project_root)
 from dataclasses import dataclass
-from pathlib import Path  # Use Path for modern path manipulation
-from typing import Any
+from typing import Any, Dict, List
+from mcp import ClientSession, StdioServerParameters, stdio_client
 
-# INP001: Ensure 'strix\tools\mcp_tools' directory contains an __init__.py file
-# to resolve this error.
-
-# Using pathlib for cleaner path handling (PTH120, PTH100, PTH118)
-current_dir = Path(__file__).resolve().parent
-project_root = current_dir.parent.parent.parent.resolve()
-sys.path.append(str(project_root))
-
-# E402: Imports moved to the top of the file
 from strix.tools.registry import register_mcp_tool
+from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.sse import sse_client
 
 
 class TransportType:
     STDIO = "stdio"
+    STREAMABLE_HTTP = "streamable-http"
+    SSE = "sse"
 
 
 @dataclass
 class Configuration:
     transport_type: str = TransportType.STDIO
     command: str = "npx"  # Example default
-    args: list | None = None
-    env: dict | None = None
+    args: List | None = None
+    env: Dict[str, str] | None = None
     cwd: str | None = None
+    url: str | None = None
+    headers: Dict[str, Any] | None= None
     encoding: str = "utf-8"
 
 
@@ -43,13 +45,12 @@ class MCPClient:
         self.exit_stack = AsyncExitStack()
         self.session = None
         self.timeout = timeout
-        # Removed T201: print(f"MCPClient initialized with transport type: {self.config.transport_type}")
+        print(f"MCPClient initialized with transport type: {self.config.transport_type}")
 
     async def connect(self):
         transport_type = self.config.transport_type
 
         if transport_type == TransportType.STDIO:
-            from mcp import ClientSession, StdioServerParameters, stdio_client
 
             server_params = StdioServerParameters(
                 command=self.config.command,
@@ -64,35 +65,48 @@ class MCPClient:
             )
             read, write = stdio_transport
 
-            self.session = await self.exit_stack.enter_async_context(
-                ClientSession(read, write)
-            )
+            self.session = await self.exit_stack.enter_async_context(ClientSession(read, write))
+        elif transport_type == TransportType.STREAMABLE_HTTP :
+            if not self.config.url:
+                raise ValueError("URL must be provided for STREAMABLE_HTTP transport.")
 
-            await self.session.initialize()
+            http_transport = await self.exit_stack.enter_async_context(
+                streamablehttp_client(
+                    url=self.config.url,
+                    headers=self.config.headers or {},
+                )
+            )
+            read, write, _ = http_transport
+
+            self.session = await self.exit_stack.enter_async_context(ClientSession(read, write))
+
+        elif transport_type == TransportType.SSE:
+
+            if not self.config.url:
+                raise ValueError("URL must be provided for SSE transport.")
+            sse_transport = await self.exit_stack.enter_async_context(
+                sse_client(
+                    url=self.config.url,
+                    headers=self.config.headers ,
+                )  )
+            read, write= sse_transport
+            self.session = await self.exit_stack.enter_async_context(ClientSession(read, write))
+       
 
         else:
             raise ValueError(f"Unsupported transport type: {transport_type}")
+        
+        await self.session.initialize()   
 
-    # Renamed inputSchema to input_schema (N803)
-    def _generate_xml_schema(self, name, input_schema, description) -> str:
+    def _generate_xml_schema(self, name, inputSchema, description) -> str:
         name_str = f'<tool name="{name}">'
         desc_str = f"<description>{description}</description>"
         properties = ""
-        # Used tuple for multi-line string concatenation to avoid E501
-        if input_schema["properties"]:
-            for key, value in input_schema["properties"].items():
-                is_required = "true" if key in input_schema["required"] else "false"
-                properties += (
-                    f'<property name="{key}" type="{value["type"]}" '
-                    f'require="{is_required}"/>'
-                )
+        if inputSchema["properties"]:
+            for key, value in inputSchema["properties"].items():
+                properties += f'<property name="{key}" type="{value["type"]}" require="{"true" if key in inputSchema["required"] else "false"}"/>'
 
-        # Used tuple for multi-line string concatenation to avoid E501
-        input_content = properties if input_schema["properties"] else ""
-        return (
-            f"""{name_str}\n   {desc_str}\n    <input>\n"""
-            f"""{input_content}\n    </input>\n</tool>"""
-        )
+        return f"""{name_str}\n   {desc_str}\n    <input>\n{properties if inputSchema["properties"] else ""}\n    </input>\n</tool>"""
 
     async def register_tools(self):
         if not self.session:
@@ -108,13 +122,12 @@ class MCPClient:
                 return await self.session.call_tool(tool_name, arguments=kwargs)
 
             tool_xml = self._generate_xml_schema(
-                name=tool.name,
-                input_schema=tool.inputSchema,  # Note: The tool object still uses inputSchema
-                description=tool.description,
+                name=tool.name, inputSchema=tool.inputSchema, description=tool.description
             )
             register_mcp_tool(
                 name=tool.name, func=dummy_func, module="unknown", xml_schema=tool_xml
             )
+
 
     async def __aexit__(self, exc_type, exc_value, traceback):
         await self.cleanup()
@@ -129,14 +142,14 @@ class MCPClient:
 
 async def main():
     # Example Usage
-    # Removed ERA001: Commented-out code
+    # Replace with your actual JSON loading logic
+    # with open(r"strix\tools\mcp_tools\mcp.json") as f:
+    #    config_data = json.load(f)
 
     # Mocking data for demonstration
-    # Used Path.open() (PTH123)
-    with (Path(r"strix/tools/mcp_tools/mcp.json")).open() as f:
+    with open(r"strix\tools\mcp_tools\mcp.json") as f:
         config_data = json.load(f)
-    # Removed T201: print("--- Connecting via explicit connect() ---")
-
+    print("--- Connecting via explicit connect() ---")
     client = MCPClient(config_data["mcpServers"]["weather"])
     try:
         await client.connect()
