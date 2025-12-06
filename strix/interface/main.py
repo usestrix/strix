@@ -312,6 +312,7 @@ Examples:
             "Default is interactive mode with TUI."
         ),
     )
+    parser.add_argument("--mcp-config", type=str, help="Path to MCP configuration JSON file")
 
     args = parser.parse_args()
 
@@ -326,6 +327,12 @@ Examples:
             except Exception as e:  # noqa: BLE001
                 parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
 
+    if args.mcp_config:
+        mcp_config_path = Path(args.mcp_config)
+        if not mcp_config_path.exists() or not mcp_config_path.is_file():
+            parser.error(
+                f"MCP configuration file '{mcp_config_path}' does not exist or is not a file"
+            )
     args.targets_info = []
     for target in args.target:
         try:

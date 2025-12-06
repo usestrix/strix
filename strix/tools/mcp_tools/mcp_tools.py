@@ -1,5 +1,3 @@
-import asyncio
-import json
 import os
 import sys
 from contextlib import AsyncExitStack
@@ -138,23 +136,19 @@ class MCPClient:
         await self.exit_stack.aclose()
 
 
-async def main():
-    # Example Usage
-    # Replace with your actual JSON loading logic
-    # with open(r"strix\tools\mcp_tools\mcp.json") as f:
-    #    config_data = json.load(f)
+class MCP:
+    def __init__(self, config: dict[str, Any], timeout: int = 300):
+        self.config = config
+        self.timeout = timeout
+        self.client: list[MCPClient] = []
 
-    # Mocking data for demonstration
-    with open(r"strix\tools\mcp_tools\mcp.json") as f:
-        config_data = json.load(f)
-    print("--- Connecting via explicit connect() ---")
-    client = MCPClient(config_data["mcpServers"]["weather"])
-    try:
-        await client.connect()
-        await client.register_tools()
-    finally:
-        await client.cleanup()
+    async def connect(self) -> MCPClient:
+        mcp_server_config = self.config.get("mcpServers", {})
+        for server_name, server_config in mcp_server_config.items():
+            client = MCPClient(config=server_config, timeout=self.timeout)
+            await client.connect()
+            self.client.append(client)
 
-
-if __name__ == "__main__":
-    asyncio.run(main())
+    async def cleanup(self):
+        for client in self.client:
+            await client.cleanup()

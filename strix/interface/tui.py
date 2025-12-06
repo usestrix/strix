@@ -329,6 +329,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if getattr(args, "local_sources", None):
             config["local_sources"] = args.local_sources
 
+        if getattr(args, "mcp_config", None):
+            config["mcp_config_path"] = args.mcp_config
+
         return config
 
     def _setup_cleanup_handlers(self) -> None:

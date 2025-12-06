@@ -17,6 +17,7 @@ from jinja2 import (
 from strix.llm import LLM, LLMConfig, LLMRequestFailedError
 from strix.llm.utils import clean_content
 from strix.tools import process_tool_invocations
+from strix.tools.mcp_tools.mcp_tools import MCP
 
 from .state import AgentState
 
@@ -60,6 +61,9 @@ class BaseAgent(metaclass=AgentMeta):
 
         if "max_iterations" in config:
             self.max_iterations = config["max_iterations"]
+        self.mcp_server: MCP | None = None
+        if hasattr(config, "mcp_config_path"):
+            self.connect_mcp(config["mcp_config_path"])
 
         self.llm_config_name = config.get("llm_config_name", "default")
         self.llm_config = config.get("llm_config", self.default_llm_config)
@@ -144,6 +148,17 @@ class BaseAgent(metaclass=AgentMeta):
 
         if self.state.parent_id is None and agents_graph_actions._root_agent_id is None:
             agents_graph_actions._root_agent_id = self.state.agent_id
+
+    def connect_mcp(self, config) -> None:
+        import json
+
+        if isinstance(config, str):
+            config_path = Path(config)
+            with open(config_path, encoding="utf-8") as f:
+                config_data = json.load(f)
+        else:
+            raise ValueError("MCP configuration must be a file path or a dictionary")
+        self.mcp_server = MCP(config_data)
 
     def cancel_current_execution(self) -> None:
         if self._current_task and not self._current_task.done():
