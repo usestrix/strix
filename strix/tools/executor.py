@@ -17,6 +17,10 @@ from .registry import (
 )
 
 
+SANDBOX_EXECUTION_TIMEOUT = float(os.getenv("STRIX_SANDBOX_EXECUTION_TIMEOUT", "120"))
+SANDBOX_CONNECT_TIMEOUT = float(os.getenv("STRIX_SANDBOX_CONNECT_TIMEOUT", "10"))
+
+
 async def execute_tool(tool_name: str, agent_state: Any | None = None, **kwargs: Any) -> Any:
     execute_in_sandbox = should_execute_in_sandbox(tool_name)
     sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
@@ -62,10 +66,15 @@ async def _execute_tool_in_sandbox(tool_name: str, agent_state: Any, **kwargs: A
         "Content-Type": "application/json",
     }
 
+    timeout = httpx.Timeout(
+        timeout=SANDBOX_EXECUTION_TIMEOUT,
+        connect=SANDBOX_CONNECT_TIMEOUT,
+    )
+
     async with httpx.AsyncClient(trust_env=False) as client:
         try:
             response = await client.post(
-                request_url, json=request_data, headers=headers, timeout=None
+                request_url, json=request_data, headers=headers, timeout=timeout
             )
             response.raise_for_status()
             response_data = response.json()
