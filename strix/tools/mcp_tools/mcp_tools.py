@@ -147,6 +147,7 @@ class MCP:
         for server_name, server_config in mcp_server_config.items():
             client = MCPClient(config=server_config, timeout=self.timeout)
             await client.connect()
+            await client.register_tools()
             self.client.append(client)
 
     async def cleanup(self):
