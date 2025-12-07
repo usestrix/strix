@@ -60,6 +60,7 @@ xmltodict = "^0.13.0"
 pyte = "^0.8.1"
 requests = "^2.32.0"
 libtmux = "^0.46.2"
+google-cloud-aiplatform = ">=1.38"
 
 [tool.poetry.group.dev.dependencies]
 # Type checking and static analysis
