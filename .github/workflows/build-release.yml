@@ -1,0 +1,78 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            target: macos-arm64
+          - os: macos-15-intel
+            target: macos-x86_64
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: windows-latest
+            target: windows-x86_64
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: snok/install-poetry@v1
+
+      - name: Build
+        shell: bash
+        run: |
+          poetry install --with dev
+          poetry run pyinstaller strix.spec --noconfirm
+
+          VERSION=$(poetry version -s)
+          mkdir -p dist/release
+
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            cp dist/strix.exe "dist/release/strix-${VERSION}-${{ matrix.target }}.exe"
+            (cd dist/release && 7z a "strix-${VERSION}-${{ matrix.target }}.zip" "strix-${VERSION}-${{ matrix.target }}.exe")
+          else
+            cp dist/strix "dist/release/strix-${VERSION}-${{ matrix.target }}"
+            chmod +x "dist/release/strix-${VERSION}-${{ matrix.target }}"
+            tar -C dist/release -czvf "dist/release/strix-${VERSION}-${{ matrix.target }}.tar.gz" "strix-${VERSION}-${{ matrix.target }}"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: strix-${{ matrix.target }}
+          path: |
+            dist/release/*.tar.gz
+            dist/release/*.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
+          generate_release_notes: true
+          files: release/*

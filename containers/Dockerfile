@@ -158,7 +158,7 @@ RUN mkdir -p /workspace && chown -R pentester:pentester /workspace /app
 COPY pyproject.toml poetry.lock ./
 
 USER pentester
-RUN poetry install --no-root --without dev
+RUN poetry install --no-root --without dev --extras sandbox
 RUN poetry run playwright install chromium
 
 RUN /app/venv/bin/pip install -r /home/pentester/tools/jwt_tool/requirements.txt && \

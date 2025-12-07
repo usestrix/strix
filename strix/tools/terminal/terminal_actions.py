@@ -2,8 +2,6 @@ from typing import Any
 
 from strix.tools.registry import register_tool
 
-from .terminal_manager import get_terminal_manager
-
 
 @register_tool
 def terminal_execute(
@@ -13,6 +11,8 @@ def terminal_execute(
     terminal_id: str | None = None,
     no_enter: bool = False,
 ) -> dict[str, Any]:
+    from .terminal_manager import get_terminal_manager
+
     manager = get_terminal_manager()
 
     try:

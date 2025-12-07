@@ -2,8 +2,6 @@ from typing import Any, Literal
 
 from strix.tools.registry import register_tool
 
-from .proxy_manager import get_proxy_manager
-
 
 RequestPart = Literal["request", "response"]
 
@@ -27,6 +25,8 @@ def list_requests(
     sort_order: Literal["asc", "desc"] = "desc",
     scope_id: str | None = None,
 ) -> dict[str, Any]:
+    from .proxy_manager import get_proxy_manager
+
     manager = get_proxy_manager()
     return manager.list_requests(
         httpql_filter, start_page, end_page, page_size, sort_by, sort_order, scope_id
@@ -41,6 +41,8 @@ def view_request(
     page: int = 1,
     page_size: int = 50,
 ) -> dict[str, Any]:
+    from .proxy_manager import get_proxy_manager
+
     manager = get_proxy_manager()
     return manager.view_request(request_id, part, search_pattern, page, page_size)
 
@@ -53,6 +55,8 @@ def send_request(
     body: str = "",
     timeout: int = 30,
 ) -> dict[str, Any]:
+    from .proxy_manager import get_proxy_manager
+
     if headers is None:
         headers = {}
     manager = get_proxy_manager()
@@ -64,6 +68,8 @@ def repeat_request(
     request_id: str,
     modifications: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    from .proxy_manager import get_proxy_manager
+
     if modifications is None:
         modifications = {}
     manager = get_proxy_manager()
@@ -78,6 +84,8 @@ def scope_rules(
     scope_id: str | None = None,
     scope_name: str | None = None,
 ) -> dict[str, Any]:
+    from .proxy_manager import get_proxy_manager
+
     manager = get_proxy_manager()
     return manager.scope_rules(action, allowlist, denylist, scope_id, scope_name)
 
@@ -89,6 +97,8 @@ def list_sitemap(
     depth: Literal["DIRECT", "ALL"] = "DIRECT",
     page: int = 1,
 ) -> dict[str, Any]:
+    from .proxy_manager import get_proxy_manager
+
     manager = get_proxy_manager()
     return manager.list_sitemap(scope_id, parent_id, depth, page)
 
@@ -97,5 +107,7 @@ def list_sitemap(
 def view_sitemap_entry(
     entry_id: str,
 ) -> dict[str, Any]:
+    from .proxy_manager import get_proxy_manager
+
     manager = get_proxy_manager()
     return manager.view_sitemap_entry(entry_id)

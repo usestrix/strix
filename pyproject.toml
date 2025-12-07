@@ -45,24 +45,33 @@ strix = "strix.interface.main:main"
 
 [tool.poetry.dependencies]
 python = "^3.12"
-fastapi = "*"
-uvicorn = "*"
+# Core CLI dependencies
 litellm = { version = "~1.80.7", extras = ["proxy"] }
 tenacity = "^9.0.0"
-numpydoc = "^1.8.0"
 pydantic = {extras = ["email"], version = "^2.11.3"}
-ipython = "^9.3.0"
-openhands-aci = "^0.3.0"
-playwright = "^1.48.0"
 rich = "*"
 docker = "^7.1.0"
-gql = {extras = ["requests"], version = "^3.5.3"}
 textual = "^4.0.0"
 xmltodict = "^0.13.0"
-pyte = "^0.8.1"
 requests = "^2.32.0"
-libtmux = "^0.46.2"
-google-cloud-aiplatform = ">=1.38"
+
+# Optional LLM provider dependencies
+google-cloud-aiplatform = { version = ">=1.38", optional = true }
+
+# Sandbox-only dependencies (only needed inside Docker container)
+fastapi = { version = "*", optional = true }
+uvicorn = { version = "*", optional = true }
+ipython = { version = "^9.3.0", optional = true }
+openhands-aci = { version = "^0.3.0", optional = true }
+playwright = { version = "^1.48.0", optional = true }
+gql = { version = "^3.5.3", extras = ["requests"], optional = true }
+pyte = { version = "^0.8.1", optional = true }
+libtmux = { version = "^0.46.2", optional = true }
+numpydoc = { version = "^1.8.0", optional = true }
+
+[tool.poetry.extras]
+vertex = ["google-cloud-aiplatform"]
+sandbox = ["fastapi", "uvicorn", "ipython", "openhands-aci", "playwright", "gql", "pyte", "libtmux", "numpydoc"]
 
 [tool.poetry.group.dev.dependencies]
 # Type checking and static analysis
@@ -82,6 +91,9 @@ pytest-mock = "^3.14.1"
 pre-commit = "^4.2.0"
 black = "^25.1.0"
 isort = "^6.0.1"
+
+# Build tools
+pyinstaller = { version = "^6.17.0", python = ">=3.12,<3.15" }
 
 [build-system]
 requires = ["poetry-core"]

@@ -1,8 +1,10 @@
-from typing import Any, Literal, NoReturn
+from typing import TYPE_CHECKING, Any, Literal, NoReturn
 
 from strix.tools.registry import register_tool
 
-from .tab_manager import BrowserTabManager, get_browser_tab_manager
+
+if TYPE_CHECKING:
+    from .tab_manager import BrowserTabManager
 
 
 BrowserAction = Literal[
@@ -71,7 +73,7 @@ def _validate_file_path(action_name: str, file_path: str | None) -> None:
 
 
 def _handle_navigation_actions(
-    manager: BrowserTabManager,
+    manager: "BrowserTabManager",
     action: str,
     url: str | None = None,
     tab_id: str | None = None,
@@ -90,7 +92,7 @@ def _handle_navigation_actions(
 
 
 def _handle_interaction_actions(
-    manager: BrowserTabManager,
+    manager: "BrowserTabManager",
     action: str,
     coordinate: str | None = None,
     text: str | None = None,
@@ -128,7 +130,7 @@ def _raise_unknown_action(action: str) -> NoReturn:
 
 
 def _handle_tab_actions(
-    manager: BrowserTabManager,
+    manager: "BrowserTabManager",
     action: str,
     url: str | None = None,
     tab_id: str | None = None,
@@ -149,7 +151,7 @@ def _handle_tab_actions(
 
 
 def _handle_utility_actions(
-    manager: BrowserTabManager,
+    manager: "BrowserTabManager",
     action: str,
     duration: float | None = None,
     js_code: str | None = None,
@@ -191,6 +193,8 @@ def browser_action(
     file_path: str | None = None,
     clear: bool = False,
 ) -> dict[str, Any]:
+    from .tab_manager import get_browser_tab_manager
+
     manager = get_browser_tab_manager()
 
     try:

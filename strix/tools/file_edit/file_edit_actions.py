@@ -3,9 +3,6 @@ import re
 from pathlib import Path
 from typing import Any, cast
 
-from openhands_aci import file_editor
-from openhands_aci.utils.shell import run_shell_cmd
-
 from strix.tools.registry import register_tool
 
 
@@ -33,6 +30,8 @@ def str_replace_editor(
     new_str: str | None = None,
     insert_line: int | None = None,
 ) -> dict[str, Any]:
+    from openhands_aci import file_editor
+
     try:
         path_obj = Path(path)
         if not path_obj.is_absolute():
@@ -64,6 +63,8 @@ def list_files(
     path: str,
     recursive: bool = False,
 ) -> dict[str, Any]:
+    from openhands_aci.utils.shell import run_shell_cmd
+
     try:
         path_obj = Path(path)
         if not path_obj.is_absolute():
@@ -116,6 +117,8 @@ def search_files(
     regex: str,
     file_pattern: str = "*",
 ) -> dict[str, Any]:
+    from openhands_aci.utils.shell import run_shell_cmd
+
     try:
         path_obj = Path(path)
         if not path_obj.is_absolute():

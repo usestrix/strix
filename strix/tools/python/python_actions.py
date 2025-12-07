@@ -2,8 +2,6 @@ from typing import Any, Literal
 
 from strix.tools.registry import register_tool
 
-from .python_manager import get_python_session_manager
-
 
 PythonAction = Literal["new_session", "execute", "close", "list_sessions"]
 
@@ -15,6 +13,8 @@ def python_action(
     timeout: int = 30,
     session_id: str | None = None,
 ) -> dict[str, Any]:
+    from .python_manager import get_python_session_manager
+
     def _validate_code(action_name: str, code: str | None) -> None:
         if not code:
             raise ValueError(f"code parameter is required for {action_name} action")
