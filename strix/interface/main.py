@@ -324,7 +324,7 @@ Examples:
                 args.instruction = f.read().strip()
                 if not args.instruction:
                     parser.error(f"Instruction file '{instruction_path}' is empty")
-        except Exception as e:  # noqa: BLE001
+        except Exception as e:
             parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
 
     args.targets_info = []
