@@ -161,7 +161,7 @@ strix -t https://github.com/org/app -t https://your-app.com
 strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
 
 # Provide detailed instructions through file (e.g., rules of engagement, scope, exclusions)
-strix --target api.your-app.com --instruction ./instruction.md
+strix --target api.your-app.com --instruction-file ./instruction.md
 ```
 
 ### 🤖 Headless Mode
