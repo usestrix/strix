@@ -309,15 +309,19 @@ Examples:
     args = parser.parse_args()
 
     if args.instruction:
-        instruction_path = Path(args.instruction)
-        if instruction_path.exists() and instruction_path.is_file():
-            try:
-                with instruction_path.open(encoding="utf-8") as f:
-                    args.instruction = f.read().strip()
-                    if not args.instruction:
-                        parser.error(f"Instruction file '{instruction_path}' is empty")
-            except Exception as e:  # noqa: BLE001
-                parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
+        try:
+            instruction_path = Path(args.instruction)
+            if instruction_path.exists() and instruction_path.is_file():
+                try:
+                    with instruction_path.open(encoding="utf-8") as f:
+                        args.instruction = f.read().strip()
+                        if not args.instruction:
+                            parser.error(f"Instruction file '{instruction_path}' is empty")
+                except Exception as e:  # noqa: BLE001
+                    parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
+        except OSError:
+            # If the instruction is too long to be a valid filename, treat it as direct instruction text
+            pass
 
     args.targets_info = []
     for target in args.target:
