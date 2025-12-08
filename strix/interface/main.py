@@ -314,11 +314,9 @@ Examples:
 
     args = parser.parse_args()
 
-    # Handle mutually exclusive instruction options
     if args.instruction and args.instruction_file:
         parser.error("Cannot specify both --instruction and --instruction-file. Use one or the other.")
 
-    # Load instruction from file if specified
     if args.instruction_file:
         instruction_path = Path(args.instruction_file)
         try:
