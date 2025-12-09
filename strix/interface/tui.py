@@ -792,7 +792,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 "id": f"tool_{exec_id}",
                 "data": tool_data,
             }
-            for exec_id, tool_data in self.tracer.tool_executions.items()
+            for exec_id, tool_data in list(self.tracer.tool_executions.items())
             if tool_data.get("agent_id") == agent_id
         ]
 
