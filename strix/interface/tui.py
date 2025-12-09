@@ -471,7 +471,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return
 
         agent_updates = False
-        for agent_id, agent_data in self.tracer.agents.items():
+        for agent_id, agent_data in list(self.tracer.agents.items()):
             if agent_id not in self._displayed_agents:
                 self._add_agent_node(agent_data)
                 self._displayed_agents.add(agent_id)
@@ -749,7 +749,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
     def _animate_dots(self) -> None:
         has_active_agents = False
 
-        for agent_id, agent_data in self.tracer.agents.items():
+        for agent_id, agent_data in list(self.tracer.agents.items()):
             status = agent_data.get("status", "running")
             if status in ["running", "waiting"]:
                 has_active_agents = True
@@ -958,7 +958,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
     def _reorganize_orphaned_agents(self, new_parent_id: str) -> None:
         agents_to_move = []
 
-        for agent_id, agent_data in self.tracer.agents.items():
+        for agent_id, agent_data in list(self.tracer.agents.items()):
             if (
                 agent_data.get("parent_id") == new_parent_id
                 and agent_id in self.agent_nodes

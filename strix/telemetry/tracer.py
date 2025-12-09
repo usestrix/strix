@@ -291,14 +291,14 @@ class Tracer:
     def get_agent_tools(self, agent_id: str) -> list[dict[str, Any]]:
         return [
             exec_data
-            for exec_data in self.tool_executions.values()
+            for exec_data in list(self.tool_executions.values())
             if exec_data.get("agent_id") == agent_id
         ]
 
     def get_real_tool_count(self) -> int:
         return sum(
             1
-            for exec_data in self.tool_executions.values()
+            for exec_data in list(self.tool_executions.values())
             if exec_data.get("tool_name") not in ["scan_start_info", "subagent_start_info"]
         )
 
