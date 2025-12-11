@@ -186,7 +186,7 @@ jobs:
   security-scan:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Strix
         run: pipx install strix-agent
