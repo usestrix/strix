@@ -1,15 +1,52 @@
+from functools import cache
 from typing import Any, ClassVar
 
+from pygments.lexers import get_lexer_by_name
+from pygments.styles import get_style_by_name
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
 from .registry import register_tool_renderer
 
 
+@cache
+def _get_style_colors() -> dict[Any, str]:
+    style = get_style_by_name("native")
+    return {token: f"#{style_def['color']}" for token, style_def in style if style_def["color"]}
+
+
 @register_tool_renderer
 class TerminalRenderer(BaseToolRenderer):
     tool_name: ClassVar[str] = "terminal_execute"
     css_classes: ClassVar[list[str]] = ["tool-call", "terminal-tool"]
+
+    @classmethod
+    def _get_token_color(cls, token_type: Any) -> str | None:
+        colors = _get_style_colors()
+        while token_type:
+            if token_type in colors:
+                return colors[token_type]
+            token_type = token_type.parent
+        return None
+
+    @classmethod
+    def _highlight_bash(cls, code: str) -> str:
+        lexer = get_lexer_by_name("bash")
+        result_parts: list[str] = []
+
+        for token_type, token_value in lexer.get_tokens(code):
+            if not token_value:
+                continue
+
+            escaped_value = cls.escape_markup(token_value)
+            color = cls._get_token_color(token_type)
+
+            if color:
+                result_parts.append(f"[{color}]{escaped_value}[/]")
+            else:
+                result_parts.append(escaped_value)
+
+        return "".join(result_parts)
 
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
@@ -115,17 +152,15 @@ class TerminalRenderer(BaseToolRenderer):
 
         if is_input:
             formatted_command = cls._format_command_display(command)
-            return f"{terminal_icon} [#3b82f6]>>>[/] [#22c55e]{formatted_command}[/]"
+            return f"{terminal_icon} [#3b82f6]>>>[/] {formatted_command}"
 
         formatted_command = cls._format_command_display(command)
-        return f"{terminal_icon} [#22c55e]$ {formatted_command}[/]"
+        return f"{terminal_icon} [#22c55e]$[/] {formatted_command}"
 
     @classmethod
     def _format_command_display(cls, command: str) -> str:
         if not command:
             return ""
 
-        if len(command) > 400:
-            command = command[:397] + "..."
-
-        return cls.escape_markup(command)
+        cmd_display = command[:2000] + "..." if len(command) > 2000 else command
+        return cls._highlight_bash(cmd_display)
