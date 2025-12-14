@@ -1,0 +1,201 @@
+<tools>
+  <important>
+  YOU MUST USE THE TODO TOOL EXTENSIVELY. This is critical for staying organized and focused.
+
+  IMPORTANT: Each subagent has their own separate todo list. Your todos are private to you and
+  do not interfere with other agents' todos. Use this to your advantage.
+
+  WORKFLOW - Follow this for EVERY task:
+  1. Create todos at the START to break down your work
+  2. BEFORE starting a task: Mark it as "in_progress" using update_todo
+  3. AFTER completing a task: Mark it as "done" using mark_todo_done
+  4. When you discover new tasks: Add them as todos right away
+
+  ALWAYS mark the current task as in_progress before working on it. This shows what you're
+  actively doing. Then mark it done when finished. Never skip these status updates.
+
+  A well-maintained todo list prevents you from going in circles, forgetting important tasks,
+  or losing track of your progress. USE IT CONSTANTLY.
+  </important>
+
+  <tool name="create_todo">
+    <description>Create a new todo item to track tasks, goals, and progress. USE THIS FREQUENTLY.</description>
+    <details>Use this tool liberally to create actionable items. Break down complex tasks into smaller,
+  manageable todos. Each subagent maintains their own independent todo list - your todos are yours alone.
+
+  Create todos at the start of work to plan your approach, add new ones as you discover tasks,
+  and mark them done as you progress. This keeps you focused, prevents you from forgetting tasks,
+  and provides a clear record of what you've accomplished.</details>
+    <parameters>
+      <parameter name="title" type="string" required="false">
+        <description>Short, actionable title for the todo (e.g., "Test login endpoint for SQL injection")</description>
+      </parameter>
+      <parameter name="todos" type="string" required="false">
+        <description>Create multiple todos at once. Provide a JSON array of {"title": "...", "description": "...", "priority": "..."} objects or a newline-separated bullet list.</description>
+      </parameter>
+      <parameter name="description" type="string" required="false">
+        <description>Detailed description or notes about the task</description>
+      </parameter>
+      <parameter name="priority" type="string" required="false">
+        <description>Priority level: "low", "normal", "high", "critical" (default: "normal")</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - created: List of created todos with their IDs - todos: Full sorted todo list - success: Whether the operation succeeded</description>
+    </returns>
+    <examples>
+  # Create a high priority todo
+  <function=create_todo>
+  <parameter=title>Test authentication bypass on /api/admin</parameter>
+  <parameter=description>The admin endpoint seems to have weak authentication. Try JWT manipulation, session fixation, and privilege escalation.</parameter>
+  <parameter=priority>high</parameter>
+  </function>
+
+  # Create a simple todo
+  <function=create_todo>
+  <parameter=title>Enumerate all API endpoints</parameter>
+  </function>
+
+  # Bulk create todos (JSON array)
+  <function=create_todo>
+  <parameter=todos>[{"title": "Map all admin routes", "priority": "high"}, {"title": "Check forgotten password flow"}]</parameter>
+  </function>
+
+  # Bulk create todos (bullet list)
+  <function=create_todo>
+  <parameter=todos>
+  - Capture baseline traffic in proxy
+  - Enumerate S3 buckets for leaked assets
+  - Compare responses for timing differences
+  </parameter>
+  </function>
+    </examples>
+  </tool>
+
+  <tool name="list_todos">
+    <description>List all todos with optional filtering by status or priority. CHECK THIS OFTEN.</description>
+    <details>Use this frequently to review your task list, check progress, and decide what to work on next.
+  Check your todos regularly to stay focused and avoid missing important tasks.
+  The list is sorted: done first, then in_progress, then pending. Within each status, sorted by priority (critical > high > normal > low).
+  Each subagent has their own independent todo list.</details>
+    <parameters>
+      <parameter name="status" type="string" required="false">
+        <description>Filter by status: "pending", "in_progress", "done"</description>
+      </parameter>
+      <parameter name="priority" type="string" required="false">
+        <description>Filter by priority: "low", "normal", "high", "critical"</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - todos: List of todo items - total_count: Total number of todos - summary: Count by status (pending, in_progress, done)</description>
+    </returns>
+    <examples>
+  # List all todos
+  <function=list_todos>
+  </function>
+
+  # List only pending todos
+  <function=list_todos>
+  <parameter=status>pending</parameter>
+  </function>
+
+  # List high priority items
+  <function=list_todos>
+  <parameter=priority>high</parameter>
+  </function>
+    </examples>
+  </tool>
+
+  <tool name="update_todo">
+    <description>Update an existing todo item's title, description, priority, or status.</description>
+    <parameters>
+      <parameter name="todo_id" type="string" required="true">
+        <description>ID of the todo to update</description>
+      </parameter>
+      <parameter name="title" type="string" required="false">
+        <description>New title for the todo</description>
+      </parameter>
+      <parameter name="description" type="string" required="false">
+        <description>New description for the todo</description>
+      </parameter>
+      <parameter name="priority" type="string" required="false">
+        <description>New priority: "low", "normal", "high", "critical"</description>
+      </parameter>
+      <parameter name="status" type="string" required="false">
+        <description>New status: "pending", "in_progress", "done"</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - success: Whether the update was successful</description>
+    </returns>
+    <examples>
+  # Update priority and add description
+  <function=update_todo>
+  <parameter=todo_id>abc123</parameter>
+  <parameter=priority>critical</parameter>
+  <parameter=description>Found potential RCE vector, needs immediate attention</parameter>
+  </function>
+
+  # Mark as in progress
+  <function=update_todo>
+  <parameter=todo_id>abc123</parameter>
+  <parameter=status>in_progress</parameter>
+  </function>
+    </examples>
+  </tool>
+
+  <tool name="mark_todo_done">
+    <description>Mark a todo item as completed. DO THIS IMMEDIATELY after finishing a task.</description>
+    <details>Mark todos as done right after completing them - don't wait! This keeps your list accurate,
+  helps track progress, and gives you a clear picture of what's been accomplished vs what remains.</details>
+    <parameters>
+      <parameter name="todo_id" type="string" required="true">
+        <description>ID of the todo to mark as done</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - success: Whether the operation was successful</description>
+    </returns>
+    <examples>
+  <function=mark_todo_done>
+  <parameter=todo_id>abc123</parameter>
+  </function>
+    </examples>
+  </tool>
+
+  <tool name="mark_todo_pending">
+    <description>Mark a todo item as pending (reopen a completed task).</description>
+    <details>Use this to reopen a task that was marked done but needs more work.</details>
+    <parameters>
+      <parameter name="todo_id" type="string" required="true">
+        <description>ID of the todo to mark as pending</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - success: Whether the operation was successful</description>
+    </returns>
+    <examples>
+  <function=mark_todo_pending>
+  <parameter=todo_id>abc123</parameter>
+  </function>
+    </examples>
+  </tool>
+
+  <tool name="delete_todo">
+    <description>Delete a todo item.</description>
+    <details>Use this to remove todos that are no longer relevant or were created by mistake.</details>
+    <parameters>
+      <parameter name="todo_id" type="string" required="true">
+        <description>ID of the todo to delete</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - success: Whether the deletion was successful</description>
+    </returns>
+    <examples>
+  <function=delete_todo>
+  <parameter=todo_id>abc123</parameter>
+  </function>
+    </examples>
+  </tool>
+</tools>

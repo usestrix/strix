@@ -10,6 +10,7 @@ from . import (
     scan_info_renderer,
     terminal_renderer,
     thinking_renderer,
+    todo_renderer,
     user_message_renderer,
     web_search_renderer,
 )
@@ -34,6 +35,7 @@ __all__ = [
     "scan_info_renderer",
     "terminal_renderer",
     "thinking_renderer",
+    "todo_renderer",
     "user_message_renderer",
     "web_search_renderer",
 ]

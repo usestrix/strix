@@ -11,16 +11,12 @@ _notes_storage: dict[str, dict[str, Any]] = {}
 def _filter_notes(
     category: str | None = None,
     tags: list[str] | None = None,
-    priority: str | None = None,
     search_query: str | None = None,
 ) -> list[dict[str, Any]]:
     filtered_notes = []
 
     for note_id, note in _notes_storage.items():
         if category and note.get("category") != category:
-            continue
-
-        if priority and note.get("priority") != priority:
             continue
 
         if tags:
@@ -43,13 +39,12 @@ def _filter_notes(
     return filtered_notes
 
 
-@register_tool
+@register_tool(sandbox_execution=False)
 def create_note(
     title: str,
     content: str,
     category: str = "general",
     tags: list[str] | None = None,
-    priority: str = "normal",
 ) -> dict[str, Any]:
     try:
         if not title or not title.strip():
@@ -58,19 +53,11 @@ def create_note(
         if not content or not content.strip():
             return {"success": False, "error": "Content cannot be empty", "note_id": None}
 
-        valid_categories = ["general", "findings", "methodology", "todo", "questions", "plan"]
+        valid_categories = ["general", "findings", "methodology", "questions", "plan"]
         if category not in valid_categories:
             return {
                 "success": False,
                 "error": f"Invalid category. Must be one of: {', '.join(valid_categories)}",
-                "note_id": None,
-            }
-
-        valid_priorities = ["low", "normal", "high", "urgent"]
-        if priority not in valid_priorities:
-            return {
-                "success": False,
-                "error": f"Invalid priority. Must be one of: {', '.join(valid_priorities)}",
                 "note_id": None,
             }
 
@@ -82,7 +69,6 @@ def create_note(
             "content": content.strip(),
             "category": category,
             "tags": tags or [],
-            "priority": priority,
             "created_at": timestamp,
             "updated_at": timestamp,
         }
@@ -99,17 +85,14 @@ def create_note(
         }
 
 
-@register_tool
+@register_tool(sandbox_execution=False)
 def list_notes(
     category: str | None = None,
     tags: list[str] | None = None,
-    priority: str | None = None,
     search: str | None = None,
 ) -> dict[str, Any]:
     try:
-        filtered_notes = _filter_notes(
-            category=category, tags=tags, priority=priority, search_query=search
-        )
+        filtered_notes = _filter_notes(category=category, tags=tags, search_query=search)
 
         return {
             "success": True,
@@ -126,13 +109,12 @@ def list_notes(
         }
 
 
-@register_tool
+@register_tool(sandbox_execution=False)
 def update_note(
     note_id: str,
     title: str | None = None,
     content: str | None = None,
     tags: list[str] | None = None,
-    priority: str | None = None,
 ) -> dict[str, Any]:
     try:
         if note_id not in _notes_storage:
@@ -153,15 +135,6 @@ def update_note(
         if tags is not None:
             note["tags"] = tags
 
-        if priority is not None:
-            valid_priorities = ["low", "normal", "high", "urgent"]
-            if priority not in valid_priorities:
-                return {
-                    "success": False,
-                    "error": f"Invalid priority. Must be one of: {', '.join(valid_priorities)}",
-                }
-            note["priority"] = priority
-
         note["updated_at"] = datetime.now(UTC).isoformat()
 
         return {
@@ -173,7 +146,7 @@ def update_note(
         return {"success": False, "error": f"Failed to update note: {e}"}
 
 
-@register_tool
+@register_tool(sandbox_execution=False)
 def delete_note(note_id: str) -> dict[str, Any]:
     try:
         if note_id not in _notes_storage:

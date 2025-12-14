@@ -315,7 +315,9 @@ Examples:
     args = parser.parse_args()
 
     if args.instruction and args.instruction_file:
-        parser.error("Cannot specify both --instruction and --instruction-file. Use one or the other.")
+        parser.error(
+            "Cannot specify both --instruction and --instruction-file. Use one or the other."
+        )
 
     if args.instruction_file:
         instruction_path = Path(args.instruction_file)
@@ -324,7 +326,7 @@ Examples:
                 args.instruction = f.read().strip()
                 if not args.instruction:
                     parser.error(f"Instruction file '{instruction_path}' is empty")
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
 
     args.targets_info = []
