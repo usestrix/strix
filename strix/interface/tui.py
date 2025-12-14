@@ -987,7 +987,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _render_chat_content(self, msg_data: dict[str, Any]) -> str:
         role = msg_data.get("role")
-        content = escape_markup(msg_data.get("content", ""))
+        content = msg_data.get("content", "")
 
         if not content:
             return ""
@@ -995,8 +995,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if role == "user":
             from strix.interface.tool_components.user_message_renderer import UserMessageRenderer
 
-            return UserMessageRenderer.render_simple(content)
-        return content
+            return UserMessageRenderer.render_simple(escape_markup(content))
+
+        from strix.interface.tool_components.agent_message_renderer import AgentMessageRenderer
+
+        return AgentMessageRenderer.render_simple(content)
 
     def _render_tool_content_simple(self, tool_data: dict[str, Any]) -> str:
         tool_name = tool_data.get("tool_name", "Unknown Tool")
