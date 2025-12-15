@@ -233,14 +233,14 @@ def create_agent(
         parent_agent = _agent_instances.get(parent_id)
 
         timeout = None
-        if (
-            parent_agent
-            and hasattr(parent_agent, "llm_config")
-            and hasattr(parent_agent.llm_config, "timeout")
-        ):
-            timeout = parent_agent.llm_config.timeout
+        scan_mode = "deep"
+        if parent_agent and hasattr(parent_agent, "llm_config"):
+            if hasattr(parent_agent.llm_config, "timeout"):
+                timeout = parent_agent.llm_config.timeout
+            if hasattr(parent_agent.llm_config, "scan_mode"):
+                scan_mode = parent_agent.llm_config.scan_mode
 
-        llm_config = LLMConfig(prompt_modules=module_list, timeout=timeout)
+        llm_config = LLMConfig(prompt_modules=module_list, timeout=timeout, scan_mode=scan_mode)
 
         agent_config = {
             "llm_config": llm_config,

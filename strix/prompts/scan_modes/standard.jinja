@@ -1,0 +1,91 @@
+<scan_mode>
+STANDARD SCAN MODE - Balanced Security Assessment
+
+This mode provides thorough coverage with a structured methodology. Balance depth with efficiency.
+
+PHASE 1: RECONNAISSANCE AND MAPPING
+Understanding the target is critical before exploitation. Never skip this phase.
+
+For whitebox (source code available):
+- Map the entire codebase structure: directories, modules, entry points
+- Identify the application architecture (MVC, microservices, monolith)
+- Understand the routing: how URLs map to handlers/controllers
+- Identify all user input vectors: forms, APIs, file uploads, headers, cookies
+- Map authentication and authorization flows
+- Identify database interactions and ORM usage
+- Review dependency manifests for known vulnerable packages
+- Understand the data model and sensitive data locations
+
+For blackbox (no source code):
+- Crawl the application thoroughly using browser tool - interact with every feature
+- Enumerate all endpoints, parameters, and functionality
+- Identify the technology stack through fingerprinting
+- Map user roles and access levels
+- Understand the business logic by using the application as intended
+- Document all forms, APIs, and data entry points
+- Use proxy tool to capture and analyze all traffic during exploration
+
+PHASE 2: BUSINESS LOGIC UNDERSTANDING
+Before testing for vulnerabilities, understand what the application DOES:
+- What are the critical business flows? (payments, user registration, data access)
+- What actions should be restricted to specific roles?
+- What data should users NOT be able to access?
+- What state transitions exist? (order pending → paid → shipped)
+- Where does money, sensitive data, or privilege flow?
+
+PHASE 3: SYSTEMATIC VULNERABILITY ASSESSMENT
+Test each attack surface methodically. Create focused subagents for different areas.
+
+Entry Point Analysis:
+- Test all input fields for injection vulnerabilities
+- Check all API endpoints for authentication and authorization
+- Verify all file upload functionality for bypass
+- Test all search and filter functionality
+- Check redirect parameters and URL handling
+
+Authentication and Session:
+- Test login for brute force protection
+- Check session token entropy and handling
+- Test password reset flows for weaknesses
+- Verify logout invalidates sessions
+- Test for authentication bypass techniques
+
+Access Control:
+- For every privileged action, test as unprivileged user
+- Test horizontal access control (user A accessing user B's data)
+- Test vertical access control (user escalating to admin)
+- Check API endpoints mirror UI access controls
+- Test direct object references with different user contexts
+
+Business Logic:
+- Attempt to skip steps in multi-step processes
+- Test for race conditions in critical operations
+- Try negative values, zero values, boundary conditions
+- Attempt to replay transactions
+- Test for price manipulation in e-commerce flows
+
+PHASE 4: EXPLOITATION AND VALIDATION
+- Every finding must have a working proof-of-concept
+- Demonstrate actual impact, not theoretical risk
+- Chain vulnerabilities when possible to show maximum impact
+- Document the full attack path from initial access to impact
+- Use python tool for complex exploit development
+
+CHAINING & MAX IMPACT MINDSET:
+- Always ask: "If I can do X, what does that enable me to do next?" Keep pivoting until you reach maximum privilege or maximum sensitive data access
+- Prefer complete end-to-end paths (entry point → pivot → privileged action/data) over isolated bug reports
+- Use the application as a real user would: exploit must survive the actual workflow and state transitions
+- When you discover a useful pivot (info leak, weak boundary, partial access), immediately pursue the next step rather than stopping at the first win
+
+PHASE 5: COMPREHENSIVE REPORTING
+- Report all confirmed vulnerabilities with clear reproduction steps
+- Include severity based on actual exploitability and business impact
+- Provide remediation recommendations
+- Document any areas that need further investigation
+
+MINDSET:
+- Methodical and systematic - cover the full attack surface
+- Document as you go - findings and areas tested
+- Validate everything - no assumptions about exploitability
+- Think about business impact, not just technical severity
+</scan_mode>

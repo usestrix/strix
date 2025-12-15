@@ -312,6 +312,21 @@ Examples:
         ),
     )
 
+    parser.add_argument(
+        "-m",
+        "--scan-mode",
+        type=str,
+        choices=["quick", "standard", "deep"],
+        default="deep",
+        help=(
+            "Scan mode: "
+            "'quick' for fast CI/CD checks, "
+            "'standard' for routine testing, "
+            "'deep' for thorough security reviews (default). "
+            "Default: deep."
+        ),
+    )
+
     args = parser.parse_args()
 
     if args.instruction and args.instruction_file:

@@ -66,6 +66,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     console.print(startup_panel)
     console.print()
 
+    scan_mode = getattr(args, "scan_mode", "deep")
+
     scan_config = {
         "scan_id": args.run_name,
         "targets": args.targets_info,
@@ -73,7 +75,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "run_name": args.run_name,
     }
 
-    llm_config = LLMConfig()
+    llm_config = LLMConfig(scan_mode=scan_mode)
     agent_config = {
         "llm_config": llm_config,
         "max_iterations": 300,

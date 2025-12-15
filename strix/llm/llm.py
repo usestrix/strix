@@ -158,9 +158,10 @@ class LLM:
             )
 
             try:
-                prompt_module_content = load_prompt_modules(
-                    self.config.prompt_modules or [], self.jinja_env
-                )
+                modules_to_load = list(self.config.prompt_modules or [])
+                modules_to_load.append(f"scan_modes/{self.config.scan_mode}")
+
+                prompt_module_content = load_prompt_modules(modules_to_load, self.jinja_env)
 
                 def get_module(name: str) -> str:
                     return prompt_module_content.get(name, "")
