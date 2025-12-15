@@ -20,7 +20,7 @@ def _truncate(text: str, length: int = 80) -> str:
 
 
 def _format_todo_lines(
-    cls: type[BaseToolRenderer], result: dict[str, Any], limit: int = 10
+    cls: type[BaseToolRenderer], result: dict[str, Any], limit: int = 25
 ) -> list[str]:
     todos = result.get("todos")
     if not isinstance(todos, list) or not todos:
@@ -67,7 +67,7 @@ class CreateTodoRenderer(BaseToolRenderer):
         if result and isinstance(result, dict):
             if result.get("success"):
                 lines = [header]
-                lines.extend(_format_todo_lines(cls, result, limit=10))
+                lines.extend(_format_todo_lines(cls, result))
                 content_text = "\n".join(lines)
             else:
                 error = result.get("error", "Failed to create todo")
@@ -92,7 +92,7 @@ class ListTodosRenderer(BaseToolRenderer):
         if result and isinstance(result, dict):
             if result.get("success"):
                 lines = [header]
-                lines.extend(_format_todo_lines(cls, result, limit=10))
+                lines.extend(_format_todo_lines(cls, result))
                 content_text = "\n".join(lines)
             else:
                 error = result.get("error", "Unable to list todos")
@@ -117,7 +117,7 @@ class UpdateTodoRenderer(BaseToolRenderer):
         if result and isinstance(result, dict):
             if result.get("success"):
                 lines = [header]
-                lines.extend(_format_todo_lines(cls, result, limit=10))
+                lines.extend(_format_todo_lines(cls, result))
                 content_text = "\n".join(lines)
             else:
                 error = result.get("error", "Failed to update todo")
@@ -142,7 +142,7 @@ class MarkTodoDoneRenderer(BaseToolRenderer):
         if result and isinstance(result, dict):
             if result.get("success"):
                 lines = [header]
-                lines.extend(_format_todo_lines(cls, result, limit=10))
+                lines.extend(_format_todo_lines(cls, result))
                 content_text = "\n".join(lines)
             else:
                 error = result.get("error", "Failed to mark todo done")
@@ -167,7 +167,7 @@ class MarkTodoPendingRenderer(BaseToolRenderer):
         if result and isinstance(result, dict):
             if result.get("success"):
                 lines = [header]
-                lines.extend(_format_todo_lines(cls, result, limit=10))
+                lines.extend(_format_todo_lines(cls, result))
                 content_text = "\n".join(lines)
             else:
                 error = result.get("error", "Failed to reopen todo")
@@ -192,7 +192,7 @@ class DeleteTodoRenderer(BaseToolRenderer):
         if result and isinstance(result, dict):
             if result.get("success"):
                 lines = [header]
-                lines.extend(_format_todo_lines(cls, result, limit=10))
+                lines.extend(_format_todo_lines(cls, result))
                 content_text = "\n".join(lines)
             else:
                 error = result.get("error", "Failed to remove todo")

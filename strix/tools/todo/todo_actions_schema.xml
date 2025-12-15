@@ -6,10 +6,11 @@
   do not interfere with other agents' todos. Use this to your advantage.
 
   WORKFLOW - Follow this for EVERY task:
-  1. Create todos at the START to break down your work
-  2. BEFORE starting a task: Mark it as "in_progress" using update_todo
-  3. AFTER completing a task: Mark it as "done" using mark_todo_done
-  4. When you discover new tasks: Add them as todos right away
+  1. Keep the list short-horizon: track only the next few concrete steps (3-6 max), not long-term goals.
+  2. Create/update todos as you learn new info; drop or rewrite items when plans change.
+  3. BEFORE starting a task: Mark it as "in_progress" using update_todo.
+  4. AFTER completing a task: Mark it as "done" using mark_todo_done.
+  5. When you discover new tasks: Add them right away and re-prioritize; avoid giant upfront lists.
 
   ALWAYS mark the current task as in_progress before working on it. This shows what you're
   actively doing. Then mark it done when finished. Never skip these status updates.
@@ -107,94 +108,122 @@
   </tool>
 
   <tool name="update_todo">
-    <description>Update an existing todo item's title, description, priority, or status.</description>
+    <description>Update one or multiple todo items. Supports bulk updates in a single call.</description>
     <parameters>
-      <parameter name="todo_id" type="string" required="true">
-        <description>ID of the todo to update</description>
+      <parameter name="todo_id" type="string" required="false">
+        <description>ID of a single todo to update (for simple updates)</description>
+      </parameter>
+      <parameter name="updates" type="string" required="false">
+        <description>Bulk update multiple todos at once. JSON array of objects with todo_id and fields to update: [{"todo_id": "abc", "status": "done"}, {"todo_id": "def", "priority": "high"}]</description>
       </parameter>
       <parameter name="title" type="string" required="false">
-        <description>New title for the todo</description>
+        <description>New title (used with todo_id)</description>
       </parameter>
       <parameter name="description" type="string" required="false">
-        <description>New description for the todo</description>
+        <description>New description (used with todo_id)</description>
       </parameter>
       <parameter name="priority" type="string" required="false">
-        <description>New priority: "low", "normal", "high", "critical"</description>
+        <description>New priority: "low", "normal", "high", "critical" (used with todo_id)</description>
       </parameter>
       <parameter name="status" type="string" required="false">
-        <description>New status: "pending", "in_progress", "done"</description>
+        <description>New status: "pending", "in_progress", "done" (used with todo_id)</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing: - success: Whether the update was successful</description>
+      <description>Response containing: - updated: List of updated todo IDs - updated_count: Number updated - todos: Full sorted todo list - errors: Any failed updates</description>
     </returns>
     <examples>
-  # Update priority and add description
-  <function=update_todo>
-  <parameter=todo_id>abc123</parameter>
-  <parameter=priority>critical</parameter>
-  <parameter=description>Found potential RCE vector, needs immediate attention</parameter>
-  </function>
-
-  # Mark as in progress
+  # Single update
   <function=update_todo>
   <parameter=todo_id>abc123</parameter>
   <parameter=status>in_progress</parameter>
+  </function>
+
+  # Bulk update - mark multiple todos with different statuses in ONE call
+  <function=update_todo>
+  <parameter=updates>[{"todo_id": "abc123", "status": "done"}, {"todo_id": "def456", "status": "in_progress"}, {"todo_id": "ghi789", "priority": "critical"}]</parameter>
   </function>
     </examples>
   </tool>
 
   <tool name="mark_todo_done">
-    <description>Mark a todo item as completed. DO THIS IMMEDIATELY after finishing a task.</description>
-    <details>Mark todos as done right after completing them - don't wait! This keeps your list accurate,
-  helps track progress, and gives you a clear picture of what's been accomplished vs what remains.</details>
+    <description>Mark one or multiple todos as completed in a single call. DO THIS IMMEDIATELY after finishing tasks.</description>
+    <details>Mark todos as done right after completing them - don't wait! Supports marking multiple todos at once
+  to save tool calls. This keeps your list accurate and gives you a clear picture of progress.</details>
     <parameters>
-      <parameter name="todo_id" type="string" required="true">
-        <description>ID of the todo to mark as done</description>
+      <parameter name="todo_id" type="string" required="false">
+        <description>ID of a single todo to mark as done</description>
+      </parameter>
+      <parameter name="todo_ids" type="string" required="false">
+        <description>Mark multiple todos done at once. JSON array of IDs: ["abc123", "def456"] or comma-separated: "abc123, def456"</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing: - success: Whether the operation was successful</description>
+      <description>Response containing: - marked_done: List of IDs marked done - marked_count: Number marked - todos: Full sorted list - errors: Any failures</description>
     </returns>
     <examples>
+  # Mark single todo done
   <function=mark_todo_done>
   <parameter=todo_id>abc123</parameter>
+  </function>
+
+  # Mark multiple todos done in ONE call
+  <function=mark_todo_done>
+  <parameter=todo_ids>["abc123", "def456", "ghi789"]</parameter>
   </function>
     </examples>
   </tool>
 
   <tool name="mark_todo_pending">
-    <description>Mark a todo item as pending (reopen a completed task).</description>
-    <details>Use this to reopen a task that was marked done but needs more work.</details>
+    <description>Mark one or multiple todos as pending (reopen completed tasks).</description>
+    <details>Use this to reopen tasks that were marked done but need more work. Supports bulk operations.</details>
     <parameters>
-      <parameter name="todo_id" type="string" required="true">
-        <description>ID of the todo to mark as pending</description>
+      <parameter name="todo_id" type="string" required="false">
+        <description>ID of a single todo to mark as pending</description>
+      </parameter>
+      <parameter name="todo_ids" type="string" required="false">
+        <description>Mark multiple todos pending at once. JSON array of IDs: ["abc123", "def456"] or comma-separated: "abc123, def456"</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing: - success: Whether the operation was successful</description>
+      <description>Response containing: - marked_pending: List of IDs marked pending - marked_count: Number marked - todos: Full sorted list - errors: Any failures</description>
     </returns>
     <examples>
+  # Mark single todo pending
   <function=mark_todo_pending>
   <parameter=todo_id>abc123</parameter>
+  </function>
+
+  # Mark multiple todos pending in ONE call
+  <function=mark_todo_pending>
+  <parameter=todo_ids>["abc123", "def456"]</parameter>
   </function>
     </examples>
   </tool>
 
   <tool name="delete_todo">
-    <description>Delete a todo item.</description>
-    <details>Use this to remove todos that are no longer relevant or were created by mistake.</details>
+    <description>Delete one or multiple todos in a single call.</description>
+    <details>Use this to remove todos that are no longer relevant. Supports bulk deletion to save tool calls.</details>
     <parameters>
-      <parameter name="todo_id" type="string" required="true">
-        <description>ID of the todo to delete</description>
+      <parameter name="todo_id" type="string" required="false">
+        <description>ID of a single todo to delete</description>
+      </parameter>
+      <parameter name="todo_ids" type="string" required="false">
+        <description>Delete multiple todos at once. JSON array of IDs: ["abc123", "def456"] or comma-separated: "abc123, def456"</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing: - success: Whether the deletion was successful</description>
+      <description>Response containing: - deleted: List of deleted IDs - deleted_count: Number deleted - todos: Remaining todos - errors: Any failures</description>
     </returns>
     <examples>
+  # Delete single todo
   <function=delete_todo>
   <parameter=todo_id>abc123</parameter>
+  </function>
+
+  # Delete multiple todos in ONE call
+  <function=delete_todo>
+  <parameter=todo_ids>["abc123", "def456", "ghi789"]</parameter>
   </function>
     </examples>
   </tool>

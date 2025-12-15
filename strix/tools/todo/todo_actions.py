@@ -47,6 +47,70 @@ def _sorted_todos(agent_id: str) -> list[dict[str, Any]]:
     return todos_list
 
 
+def _normalize_todo_ids(raw_ids: Any) -> list[str]:
+    if raw_ids is None:
+        return []
+
+    if isinstance(raw_ids, str):
+        stripped = raw_ids.strip()
+        if not stripped:
+            return []
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError:
+            data = stripped.split(",") if "," in stripped else [stripped]
+        if isinstance(data, list):
+            return [str(item).strip() for item in data if str(item).strip()]
+        return [str(data).strip()]
+
+    if isinstance(raw_ids, list):
+        return [str(item).strip() for item in raw_ids if str(item).strip()]
+
+    return [str(raw_ids).strip()]
+
+
+def _normalize_bulk_updates(raw_updates: Any) -> list[dict[str, Any]]:
+    if raw_updates is None:
+        return []
+
+    data = raw_updates
+    if isinstance(raw_updates, str):
+        stripped = raw_updates.strip()
+        if not stripped:
+            return []
+        try:
+            data = json.loads(stripped)
+        except json.JSONDecodeError as e:
+            raise ValueError("Updates must be valid JSON") from e
+
+    if isinstance(data, dict):
+        data = [data]
+
+    if not isinstance(data, list):
+        raise TypeError("Updates must be a list of update objects")
+
+    normalized: list[dict[str, Any]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise TypeError("Each update must be an object with todo_id")
+
+        todo_id = item.get("todo_id") or item.get("id")
+        if not todo_id:
+            raise ValueError("Each update must include 'todo_id'")
+
+        normalized.append(
+            {
+                "todo_id": str(todo_id).strip(),
+                "title": item.get("title"),
+                "description": item.get("description"),
+                "priority": item.get("priority"),
+                "status": item.get("status"),
+            }
+        )
+
+    return normalized
+
+
 def _normalize_bulk_todos(raw_todos: Any) -> list[dict[str, Any]]:
     if raw_todos is None:
         return []
@@ -233,146 +297,272 @@ def list_todos(
         }
 
 
-@register_tool(sandbox_execution=False)
-def update_todo(
-    agent_state: Any,
+def _apply_single_update(
+    agent_todos: dict[str, dict[str, Any]],
     todo_id: str,
     title: str | None = None,
     description: str | None = None,
     priority: str | None = None,
     status: str | None = None,
+) -> dict[str, Any] | None:
+    if todo_id not in agent_todos:
+        return {"todo_id": todo_id, "error": f"Todo with ID '{todo_id}' not found"}
+
+    todo = agent_todos[todo_id]
+
+    if title is not None:
+        if not title.strip():
+            return {"todo_id": todo_id, "error": "Title cannot be empty"}
+        todo["title"] = title.strip()
+
+    if description is not None:
+        todo["description"] = description.strip() if description else None
+
+    if priority is not None:
+        try:
+            todo["priority"] = _normalize_priority(priority, str(todo.get("priority", "normal")))
+        except ValueError as exc:
+            return {"todo_id": todo_id, "error": str(exc)}
+
+    if status is not None:
+        status_candidate = status.lower()
+        if status_candidate not in VALID_STATUSES:
+            return {
+                "todo_id": todo_id,
+                "error": f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}",
+            }
+        todo["status"] = status_candidate
+        if status_candidate == "done":
+            todo["completed_at"] = datetime.now(UTC).isoformat()
+        else:
+            todo["completed_at"] = None
+
+    todo["updated_at"] = datetime.now(UTC).isoformat()
+    return None
+
+
+@register_tool(sandbox_execution=False)
+def update_todo(
+    agent_state: Any,
+    todo_id: str | None = None,
+    title: str | None = None,
+    description: str | None = None,
+    priority: str | None = None,
+    status: str | None = None,
+    updates: Any | None = None,
 ) -> dict[str, Any]:
     try:
         agent_id = agent_state.agent_id
         agent_todos = _get_agent_todos(agent_id)
 
-        if todo_id not in agent_todos:
-            return {"success": False, "error": f"Todo with ID '{todo_id}' not found"}
+        updates_to_apply: list[dict[str, Any]] = []
 
-        todo = agent_todos[todo_id]
+        if updates is not None:
+            updates_to_apply.extend(_normalize_bulk_updates(updates))
 
-        if title is not None:
-            if not title.strip():
-                return {"success": False, "error": "Title cannot be empty"}
-            todo["title"] = title.strip()
-
-        if description is not None:
-            todo["description"] = description.strip() if description else None
-
-        if priority is not None:
-            try:
-                todo["priority"] = _normalize_priority(
-                    priority, str(todo.get("priority", "normal"))
-                )
-            except ValueError as exc:
-                return {"success": False, "error": str(exc)}
-
-        if status is not None:
-            status_candidate = status.lower()
-            if status_candidate not in VALID_STATUSES:
-                return {
-                    "success": False,
-                    "error": f"Invalid status. Must be one of: {', '.join(VALID_STATUSES)}",
+        if todo_id is not None:
+            updates_to_apply.append(
+                {
+                    "todo_id": todo_id,
+                    "title": title,
+                    "description": description,
+                    "priority": priority,
+                    "status": status,
                 }
-            todo["status"] = status_candidate
-            if status_candidate == "done":
-                todo["completed_at"] = datetime.now(UTC).isoformat()
-            else:
-                todo["completed_at"] = None
+            )
 
-        todo["updated_at"] = datetime.now(UTC).isoformat()
+        if not updates_to_apply:
+            return {
+                "success": False,
+                "error": "Provide todo_id or 'updates' list to update.",
+            }
+
+        updated: list[str] = []
+        errors: list[dict[str, Any]] = []
+
+        for update in updates_to_apply:
+            error = _apply_single_update(
+                agent_todos,
+                update["todo_id"],
+                update.get("title"),
+                update.get("description"),
+                update.get("priority"),
+                update.get("status"),
+            )
+            if error:
+                errors.append(error)
+            else:
+                updated.append(update["todo_id"])
 
         todos_list = _sorted_todos(agent_id)
 
-        return {
-            "success": True,
+        response: dict[str, Any] = {
+            "success": len(errors) == 0,
+            "updated": updated,
+            "updated_count": len(updated),
             "todos": todos_list,
             "total_count": len(todos_list),
         }
 
+        if errors:
+            response["errors"] = errors
+
     except (ValueError, TypeError) as e:
         return {"success": False, "error": str(e)}
+    else:
+        return response
 
 
 @register_tool(sandbox_execution=False)
 def mark_todo_done(
     agent_state: Any,
-    todo_id: str,
+    todo_id: str | None = None,
+    todo_ids: Any | None = None,
 ) -> dict[str, Any]:
     try:
         agent_id = agent_state.agent_id
         agent_todos = _get_agent_todos(agent_id)
 
-        if todo_id not in agent_todos:
-            return {"success": False, "error": f"Todo with ID '{todo_id}' not found"}
+        ids_to_mark: list[str] = []
+        if todo_ids is not None:
+            ids_to_mark.extend(_normalize_todo_ids(todo_ids))
+        if todo_id is not None:
+            ids_to_mark.append(todo_id)
 
-        todo = agent_todos[todo_id]
-        todo["status"] = "done"
-        todo["completed_at"] = datetime.now(UTC).isoformat()
-        todo["updated_at"] = datetime.now(UTC).isoformat()
+        if not ids_to_mark:
+            return {"success": False, "error": "Provide todo_id or todo_ids to mark as done."}
+
+        marked: list[str] = []
+        errors: list[dict[str, Any]] = []
+        timestamp = datetime.now(UTC).isoformat()
+
+        for tid in ids_to_mark:
+            if tid not in agent_todos:
+                errors.append({"todo_id": tid, "error": f"Todo with ID '{tid}' not found"})
+                continue
+
+            todo = agent_todos[tid]
+            todo["status"] = "done"
+            todo["completed_at"] = timestamp
+            todo["updated_at"] = timestamp
+            marked.append(tid)
 
         todos_list = _sorted_todos(agent_id)
 
-        return {
-            "success": True,
+        response: dict[str, Any] = {
+            "success": len(errors) == 0,
+            "marked_done": marked,
+            "marked_count": len(marked),
             "todos": todos_list,
             "total_count": len(todos_list),
         }
 
+        if errors:
+            response["errors"] = errors
+
     except (ValueError, TypeError) as e:
         return {"success": False, "error": str(e)}
+    else:
+        return response
 
 
 @register_tool(sandbox_execution=False)
 def mark_todo_pending(
     agent_state: Any,
-    todo_id: str,
+    todo_id: str | None = None,
+    todo_ids: Any | None = None,
 ) -> dict[str, Any]:
     try:
         agent_id = agent_state.agent_id
         agent_todos = _get_agent_todos(agent_id)
 
-        if todo_id not in agent_todos:
-            return {"success": False, "error": f"Todo with ID '{todo_id}' not found"}
+        ids_to_mark: list[str] = []
+        if todo_ids is not None:
+            ids_to_mark.extend(_normalize_todo_ids(todo_ids))
+        if todo_id is not None:
+            ids_to_mark.append(todo_id)
 
-        todo = agent_todos[todo_id]
-        todo["status"] = "pending"
-        todo["completed_at"] = None
-        todo["updated_at"] = datetime.now(UTC).isoformat()
+        if not ids_to_mark:
+            return {"success": False, "error": "Provide todo_id or todo_ids to mark as pending."}
+
+        marked: list[str] = []
+        errors: list[dict[str, Any]] = []
+        timestamp = datetime.now(UTC).isoformat()
+
+        for tid in ids_to_mark:
+            if tid not in agent_todos:
+                errors.append({"todo_id": tid, "error": f"Todo with ID '{tid}' not found"})
+                continue
+
+            todo = agent_todos[tid]
+            todo["status"] = "pending"
+            todo["completed_at"] = None
+            todo["updated_at"] = timestamp
+            marked.append(tid)
 
         todos_list = _sorted_todos(agent_id)
 
-        return {
-            "success": True,
+        response: dict[str, Any] = {
+            "success": len(errors) == 0,
+            "marked_pending": marked,
+            "marked_count": len(marked),
             "todos": todos_list,
             "total_count": len(todos_list),
         }
 
+        if errors:
+            response["errors"] = errors
+
     except (ValueError, TypeError) as e:
         return {"success": False, "error": str(e)}
+    else:
+        return response
 
 
 @register_tool(sandbox_execution=False)
 def delete_todo(
     agent_state: Any,
-    todo_id: str,
+    todo_id: str | None = None,
+    todo_ids: Any | None = None,
 ) -> dict[str, Any]:
     try:
         agent_id = agent_state.agent_id
         agent_todos = _get_agent_todos(agent_id)
 
-        if todo_id not in agent_todos:
-            return {"success": False, "error": f"Todo with ID '{todo_id}' not found"}
+        ids_to_delete: list[str] = []
+        if todo_ids is not None:
+            ids_to_delete.extend(_normalize_todo_ids(todo_ids))
+        if todo_id is not None:
+            ids_to_delete.append(todo_id)
 
-        del agent_todos[todo_id]
+        if not ids_to_delete:
+            return {"success": False, "error": "Provide todo_id or todo_ids to delete."}
+
+        deleted: list[str] = []
+        errors: list[dict[str, Any]] = []
+
+        for tid in ids_to_delete:
+            if tid not in agent_todos:
+                errors.append({"todo_id": tid, "error": f"Todo with ID '{tid}' not found"})
+                continue
+
+            del agent_todos[tid]
+            deleted.append(tid)
 
         todos_list = _sorted_todos(agent_id)
 
-        return {
-            "success": True,
+        response: dict[str, Any] = {
+            "success": len(errors) == 0,
+            "deleted": deleted,
+            "deleted_count": len(deleted),
             "todos": todos_list,
             "total_count": len(todos_list),
         }
 
+        if errors:
+            response["errors"] = errors
+
     except (ValueError, TypeError) as e:
         return {"success": False, "error": str(e)}
+    else:
+        return response
