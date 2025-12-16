@@ -251,7 +251,7 @@ class BaseAgent(metaclass=AgentMeta):
 
         if self.state.has_waiting_timeout():
             self.state.resume_from_waiting()
-            self.state.add_message("assistant", "Waiting timeout reached. Resuming execution.")
+            self.state.add_message("user", "Waiting timeout reached. Resuming execution.")
 
             from strix.telemetry.tracer import get_global_tracer
 
@@ -364,7 +364,8 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.add_message("user", corrective_message)
             return False
 
-        self.state.add_message("assistant", final_response.content)
+        thinking_blocks = getattr(final_response, "thinking_blocks", None)
+        self.state.add_message("assistant", final_response.content, thinking_blocks=thinking_blocks)
         if tracer:
             tracer.clear_streaming_content(self.state.agent_id)
             tracer.log_chat_message(

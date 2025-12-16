@@ -75,6 +75,7 @@ class LLMResponse:
     scan_id: str | None = None
     step_number: int = 1
     role: StepRole = StepRole.AGENT
+    thinking_blocks: list[dict[str, Any]] | None = None  # For reasoning models.
 
 
 @dataclass
@@ -291,12 +292,26 @@ class LLM:
 
         tool_invocations = parse_tool_invocations(accumulated_content)
 
+        # Extract thinking blocks from the complete response if available
+        thinking_blocks = None
+        if chunks and self._should_include_reasoning_effort():
+            complete_response = stream_chunk_builder(chunks)
+            if (
+                hasattr(complete_response, "choices")
+                and complete_response.choices
+                and hasattr(complete_response.choices[0], "message")
+            ):
+                message = complete_response.choices[0].message
+                if hasattr(message, "thinking_blocks") and message.thinking_blocks:
+                    thinking_blocks = message.thinking_blocks
+
         yield LLMResponse(
             scan_id=scan_id,
             step_number=step_number,
             role=StepRole.AGENT,
             content=accumulated_content,
             tool_invocations=tool_invocations if tool_invocations else None,
+            thinking_blocks=thinking_blocks,
         )
 
     def _raise_llm_error(self, e: Exception) -> None:
