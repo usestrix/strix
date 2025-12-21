@@ -33,10 +33,30 @@ class DockerRuntime(AbstractRuntime):
     def _generate_sandbox_token(self) -> str:
         return secrets.token_urlsafe(32)
 
-    def _find_available_port(self) -> int:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.bind(("", 0))
-            return cast("int", s.getsockname()[1])
+    def _find_available_port(self, max_attempts: int = 5) -> int:
+        """Find an available port with retry logic to handle TOCTOU race conditions.
+
+        The port is verified to be available at the time of check, but may be taken
+        by the time it's used. The caller should handle port-in-use errors and retry
+        container creation if needed.
+        """
+        last_port = 0
+        for attempt in range(max_attempts):
+            with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+                s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                s.bind(("", 0))
+                port = cast("int", s.getsockname()[1])
+
+                # Avoid returning the same port if we're retrying
+                if port != last_port:
+                    return port
+                last_port = port
+
+                if attempt < max_attempts - 1:
+                    time.sleep(0.1)
+
+        # If we somehow keep getting the same port, just return it
+        return last_port
 
     def _get_scan_id(self, agent_id: str) -> str:
         try:
@@ -239,16 +259,57 @@ class DockerRuntime(AbstractRuntime):
         )
         caido_token = result.output.decode().strip() if result.exit_code == 0 else ""
 
+        # Security: Pass token via environment variable instead of CLI argument
+        # to prevent exposure in process listings (ps aux)
         container.exec_run(
             f"bash -c 'source /etc/profile.d/proxy.sh && cd /app && "
             f"STRIX_SANDBOX_MODE=true CAIDO_API_TOKEN={caido_token} CAIDO_PORT={caido_port} "
-            f"poetry run python strix/runtime/tool_server.py --token {tool_server_token} "
+            f"TOOL_SERVER_TOKEN={tool_server_token} "
+            f"poetry run python strix/runtime/tool_server.py "
             f"--host 0.0.0.0 --port {tool_server_port} &'",
             detach=True,
             user="pentester",
         )
 
         time.sleep(5)
+
+    def _validate_path_safety(self, local_path: Path, resolved_path: Path) -> bool:
+        """Validate that a path is safe to copy (no symlink escapes or sensitive directories)."""
+        # Check if resolved path escapes the original path's parent (symlink attack)
+        try:
+            resolved_path.relative_to(local_path.parent)
+        except ValueError:
+            logger.warning(
+                f"Security: Path {local_path} resolves outside its parent directory "
+                f"(symlink escape attempt?): {resolved_path}"
+            )
+            return False
+
+        # Block sensitive system directories
+        sensitive_prefixes = (
+            "/etc",
+            "/var",
+            "/root",
+            "/home",
+            "/proc",
+            "/sys",
+            "/dev",
+            "/boot",
+            "/usr",
+            "/lib",
+            "/bin",
+            "/sbin",
+        )
+        resolved_str = str(resolved_path)
+        if any(resolved_str.startswith(prefix) for prefix in sensitive_prefixes):
+            # Allow if the original path explicitly targets these (user intent)
+            if not str(local_path).startswith(tuple(sensitive_prefixes)):
+                logger.warning(
+                    f"Security: Path {local_path} resolves to sensitive location: {resolved_path}"
+                )
+                return False
+
+        return True
 
     def _copy_local_directory_to_container(
         self, container: Container, local_path: str, target_name: str | None = None
@@ -257,26 +318,37 @@ class DockerRuntime(AbstractRuntime):
         from io import BytesIO
 
         try:
-            local_path_obj = Path(local_path).resolve()
-            if not local_path_obj.exists() or not local_path_obj.is_dir():
-                logger.warning(f"Local path does not exist or is not directory: {local_path_obj}")
+            local_path_obj = Path(local_path)
+            resolved_path = local_path_obj.resolve()
+
+            if not resolved_path.exists() or not resolved_path.is_dir():
+                logger.warning(f"Local path does not exist or is not directory: {resolved_path}")
+                return
+
+            # Security: Validate the resolved path is safe
+            if not self._validate_path_safety(local_path_obj, resolved_path):
+                logger.error(f"Security: Refusing to copy potentially unsafe path: {local_path}")
                 return
 
             if target_name:
                 logger.info(
-                    f"Copying local directory {local_path_obj} to container at "
+                    f"Copying local directory {resolved_path} to container at "
                     f"/workspace/{target_name}"
                 )
             else:
-                logger.info(f"Copying local directory {local_path_obj} to container")
+                logger.info(f"Copying local directory {resolved_path} to container")
 
             tar_buffer = BytesIO()
             with tarfile.open(fileobj=tar_buffer, mode="w") as tar:
-                for item in local_path_obj.rglob("*"):
+                for item in resolved_path.rglob("*"):
+                    # Security: Skip symlinks to prevent symlink attacks within the directory
+                    if item.is_symlink():
+                        logger.debug(f"Skipping symlink: {item}")
+                        continue
                     if item.is_file():
-                        rel_path = item.relative_to(local_path_obj)
+                        rel_path = item.relative_to(resolved_path)
                         arcname = Path(target_name) / rel_path if target_name else rel_path
-                        tar.add(item, arcname=arcname)
+                        tar.add(item, arcname=str(arcname))
 
             tar_buffer.seek(0)
             container.put_archive("/workspace", tar_buffer.getvalue())

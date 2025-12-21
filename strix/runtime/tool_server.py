@@ -20,12 +20,23 @@ if not SANDBOX_MODE:
     raise RuntimeError("Tool server should only run in sandbox mode (STRIX_SANDBOX_MODE=true)")
 
 parser = argparse.ArgumentParser(description="Start Strix tool server")
-parser.add_argument("--token", required=True, help="Authentication token")
+parser.add_argument(
+    "--token",
+    required=False,
+    help="Authentication token (prefer TOOL_SERVER_TOKEN env var for security)",
+)
 parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")  # nosec
 parser.add_argument("--port", type=int, required=True, help="Port to bind to")
 
 args = parser.parse_args()
-EXPECTED_TOKEN = args.token
+
+# Security: Prefer environment variable over CLI argument to avoid token exposure in process list
+EXPECTED_TOKEN = os.getenv("TOOL_SERVER_TOKEN") or args.token
+if not EXPECTED_TOKEN:
+    raise RuntimeError(
+        "Authentication token required. Set TOOL_SERVER_TOKEN environment variable "
+        "or use --token argument (env var preferred for security)."
+    )
 
 app = FastAPI()
 security = HTTPBearer()
@@ -154,12 +165,21 @@ async def register_agent(
 
 
 @app.get("/health")
-async def health_check() -> dict[str, Any]:
+async def health_check() -> dict[str, str]:
+    """Public health check - returns minimal information for liveness probes."""
+    return {"status": "healthy"}
+
+
+@app.get("/health/detailed")
+async def health_check_detailed(
+    credentials: HTTPAuthorizationCredentials = security_dependency,
+) -> dict[str, Any]:
+    """Authenticated detailed health check - returns internal state for debugging."""
+    verify_token(credentials)
     return {
         "status": "healthy",
         "sandbox_mode": str(SANDBOX_MODE),
         "environment": "sandbox" if SANDBOX_MODE else "main",
-        "auth_configured": "true" if EXPECTED_TOKEN else "false",
         "active_agents": len(agent_processes),
         "agents": list(agent_processes.keys()),
     }

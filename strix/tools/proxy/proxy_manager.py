@@ -1,4 +1,5 @@
 import base64
+import logging
 import os
 import re
 import time
@@ -14,6 +15,23 @@ from requests.exceptions import ProxyError, RequestException, Timeout
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+
+logger = logging.getLogger(__name__)
+
+# Security: TLS verification is disabled by default for penetration testing
+# to allow intercepting HTTPS traffic. Set STRIX_VERIFY_TLS=true to enable.
+VERIFY_TLS = os.getenv("STRIX_VERIFY_TLS", "false").lower() == "true"
+
+if not VERIFY_TLS:
+    # Suppress urllib3 InsecureRequestWarning when TLS verification is disabled
+    import urllib3
+
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    logger.debug(
+        "TLS verification disabled for proxy requests (expected for penetration testing). "
+        "Set STRIX_VERIFY_TLS=true to enable."
+    )
 
 
 class ProxyManager:
@@ -246,7 +264,7 @@ class ProxyManager:
                 data=body or None,
                 proxies=self.proxies,
                 timeout=timeout,
-                verify=False,
+                verify=VERIFY_TLS,
             )
             response_time = int((time.time() - start_time) * 1000)
 
@@ -383,7 +401,7 @@ class ProxyManager:
                 data=request_data["body"] or None,
                 proxies=self.proxies,
                 timeout=30,
-                verify=False,
+                verify=VERIFY_TLS,
             )
             response_time = int((time.time() - start_time) * 1000)
 
