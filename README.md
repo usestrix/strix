@@ -80,6 +80,9 @@ pipx install strix-agent
 export STRIX_LLM="openai/gpt-5"
 export LLM_API_KEY="your-api-key"
 
+# If you want to use OpenRouter
+export LLM_API_BASE=<open router api url>
+
 # Run your first security assessment
 strix --target ./app-directory
 ```
