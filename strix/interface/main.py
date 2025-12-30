@@ -62,6 +62,9 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
     if not has_base_url:
         missing_optional_vars.append("LLM_API_BASE")
 
+    if not os.getenv("FIRECRAWL_API_KEY"):
+        missing_optional_vars.append("FIRECRAWL_API_KEY")
+
     if not os.getenv("PERPLEXITY_API_KEY"):
         missing_optional_vars.append("PERPLEXITY_API_KEY")
 
@@ -109,6 +112,13 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                         " - Custom API base URL if using local models (e.g., Ollama, LMStudio)\n",
                         style="white",
                     )
+                elif var == "FIRECRAWL_API_KEY":
+                    error_text.append("• ", style="white")
+                    error_text.append("FIRECRAWL_API_KEY", style="bold cyan")
+                    error_text.append(
+                        " - API key for Firecrawl web search (enables real-time research)\n",
+                        style="white",
+                    )
                 elif var == "PERPLEXITY_API_KEY":
                     error_text.append("• ", style="white")
                     error_text.append("PERPLEXITY_API_KEY", style="bold cyan")
@@ -133,6 +143,10 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                         "export LLM_API_BASE='http://localhost:11434'  "
                         "# needed for local models only\n",
                         style="dim white",
+                    )
+                elif var == "FIRECRAWL_API_KEY":
+                    error_text.append(
+                        "export FIRECRAWL_API_KEY='your-firecrawl-key-here'\n", style="dim white"
                     )
                 elif var == "PERPLEXITY_API_KEY":
                     error_text.append(
@@ -526,6 +540,14 @@ def main() -> None:
 
     results_path = Path("strix_runs") / args.run_name
     display_completion_message(args, results_path)
+
+    # Cleanup runtime resources (e.g. Docker container)
+    from strix.runtime import get_runtime
+    try:
+        runtime = get_runtime()
+        asyncio.run(runtime.cleanup())
+    except Exception:
+        pass
 
     if args.non_interactive:
         tracer = get_global_tracer()
