@@ -55,7 +55,15 @@ class ChatTextArea(TextArea):  # type: ignore[misc]
     def set_app_reference(self, app: "StrixTUIApp") -> None:
         self._app_reference = app
 
+    def on_mount(self) -> None:
+        self._update_height()
+
     def _on_key(self, event: events.Key) -> None:
+        if event.key == "shift+enter":
+            self.insert("\n")
+            event.prevent_default()
+            return
+
         if event.key == "enter" and self._app_reference:
             text_content = str(self.text)  # type: ignore[has-type]
             message = text_content.strip()
@@ -68,6 +76,20 @@ class ChatTextArea(TextArea):  # type: ignore[misc]
                 return
 
         super()._on_key(event)
+
+    @on(TextArea.Changed)  # type: ignore[misc]
+    def _update_height(self, _event: TextArea.Changed | None = None) -> None:
+        if not self.parent:
+            return
+
+        line_count = self.document.line_count
+        target_lines = min(max(1, line_count), 8)
+
+        new_height = target_lines + 2
+
+        if self.parent.styles.height != new_height:
+            self.parent.styles.height = new_height
+            self.scroll_cursor_visible()
 
 
 class SplashScreen(Static):  # type: ignore[misc]

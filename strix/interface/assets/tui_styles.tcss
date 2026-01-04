@@ -117,7 +117,7 @@ Screen {
     margin-right: 0;
     padding: 0;
     layout: horizontal;
-    align-vertical: middle;
+    align-vertical: top;
 }
 
 #chat_input_container:focus-within {
@@ -134,7 +134,7 @@ Screen {
     height: 100%;
     padding: 0 0 0 1;
     color: #737373;
-    content-align-vertical: middle;
+    content-align-vertical: top;
 }
 
 #chat_history:focus {
@@ -144,7 +144,7 @@ Screen {
 #chat_input {
     width: 1fr;
     height: 100%;
-    background: #121212;
+    background: transparent;
     border: none;
     color: #d4d4d4;
     padding: 0;
@@ -153,6 +153,14 @@ Screen {
 
 #chat_input:focus {
     border: none;
+}
+
+#chat_input .text-area--cursor-line {
+    background: transparent;
+}
+
+#chat_input:focus .text-area--cursor-line {
+    background: transparent;
 }
 
 #chat_input > .text-area--placeholder {
