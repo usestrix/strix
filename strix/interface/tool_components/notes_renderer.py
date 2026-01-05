@@ -28,11 +28,11 @@ class CreateNoteRenderer(BaseToolRenderer):
 
         if title:
             text.append("\n  ")
-            text.append(cls.truncate(title.strip(), 300))
+            text.append(title.strip())
 
         if content:
             text.append("\n  ")
-            text.append(cls.truncate(content.strip(), 800), style="dim")
+            text.append(content.strip(), style="dim")
 
         if not title and not content:
             text.append("\n  ")
@@ -75,11 +75,11 @@ class UpdateNoteRenderer(BaseToolRenderer):
 
         if title:
             text.append("\n  ")
-            text.append(cls.truncate(title, 300))
+            text.append(title)
 
         if content:
             text.append("\n  ")
-            text.append(cls.truncate(content.strip(), 800), style="dim")
+            text.append(content.strip(), style="dim")
 
         if not title and not content:
             text.append("\n  ")
@@ -110,23 +110,18 @@ class ListNotesRenderer(BaseToolRenderer):
                 text.append("\n  ")
                 text.append("No notes", style="dim")
             else:
-                for note in notes[:5]:
+                for note in notes:
                     title = note.get("title", "").strip() or "(untitled)"
                     category = note.get("category", "general")
                     note_content = note.get("content", "").strip()
 
                     text.append("\n  - ")
-                    text.append(cls.truncate(title, 300))
+                    text.append(title)
                     text.append(f" ({category})", style="dim")
 
                     if note_content:
                         text.append("\n    ")
-                        text.append(cls.truncate(note_content, 400), style="dim")
-
-                remaining = max(count - 5, 0)
-                if remaining:
-                    text.append("\n  ")
-                    text.append(f"... +{remaining} more", style="dim")
+                        text.append(note_content, style="dim")
         else:
             text.append("\n  ")
             text.append("Loading...", style="dim")

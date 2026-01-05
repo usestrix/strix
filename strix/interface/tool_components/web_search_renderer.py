@@ -23,7 +23,7 @@ class WebSearchRenderer(BaseToolRenderer):
 
         if query:
             text.append("\n  ")
-            text.append(cls.truncate(query, 100), style="dim")
+            text.append(query, style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)

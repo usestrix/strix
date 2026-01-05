@@ -34,9 +34,6 @@ class UserMessageRenderer(BaseToolRenderer):
     def _format_user_message(cls, content: str) -> Text:
         text = Text()
 
-        if len(content) > 300:
-            content = content[:297] + "..."
-
         text.append("▍", style="#3b82f6")
         text.append(" ")
         text.append("You:", style="bold")

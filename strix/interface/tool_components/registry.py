@@ -59,10 +59,8 @@ def _render_default_tool_widget(tool_data: dict[str, Any]) -> Static:
     text.append(tool_name, style="bold blue")
     text.append("\n")
 
-    for k, v in list(args.items())[:2]:
+    for k, v in list(args.items()):
         str_v = str(v)
-        if len(str_v) > 80:
-            str_v = str_v[:77] + "..."
         text.append("  ")
         text.append(k, style="dim")
         text.append(": ")
@@ -71,8 +69,6 @@ def _render_default_tool_widget(tool_data: dict[str, Any]) -> Static:
 
     if status in ["completed", "failed", "error"] and result is not None:
         result_str = str(result)
-        if len(result_str) > 150:
-            result_str = result_str[:147] + "..."
         text.append("Result: ", style="bold")
         text.append(result_str)
     else:

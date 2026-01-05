@@ -26,7 +26,7 @@ class ListRequestsRenderer(BaseToolRenderer):
         if result and isinstance(result, dict) and "requests" in result:
             requests = result["requests"]
             if isinstance(requests, list) and requests:
-                for req in requests[:3]:
+                for req in requests:
                     if isinstance(req, dict):
                         method = req.get("method", "?")
                         path = req.get("path", "?")
@@ -34,16 +34,12 @@ class ListRequestsRenderer(BaseToolRenderer):
                         status = response.get("statusCode", "?")
                         text.append("\n  ")
                         text.append(f"{method} {path} → {status}", style="dim")
-
-                if len(requests) > 3:
-                    text.append("\n  ")
-                    text.append(f"... +{len(requests) - 3} more", style="dim")
             else:
                 text.append("\n  ")
                 text.append("No requests found", style="dim")
         elif httpql_filter:
             text.append("\n  ")
-            text.append(cls.truncate(httpql_filter, 300), style="dim")
+            text.append(httpql_filter, style="dim")
         else:
             text.append("\n  ")
             text.append("All requests", style="dim")
@@ -72,17 +68,15 @@ class ViewRequestRenderer(BaseToolRenderer):
             if "content" in result:
                 content = result["content"]
                 text.append("\n  ")
-                text.append(cls.truncate(content, 500), style="dim")
+                text.append(content, style="dim")
             elif "matches" in result:
                 matches = result["matches"]
                 if isinstance(matches, list) and matches:
-                    for match in matches[:3]:
+                    for match in matches:
                         if isinstance(match, dict) and "match" in match:
                             text.append("\n  ")
                             text.append(match["match"], style="dim")
-                    if len(matches) > 3:
-                        text.append("\n  ")
-                        text.append(f"... +{len(matches) - 3} more matches", style="dim")
+
                 else:
                     text.append("\n  ")
                     text.append("No matches found", style="dim")
@@ -123,13 +117,13 @@ class SendRequestRenderer(BaseToolRenderer):
                 text.append(f"Status: {status_code}", style="dim")
                 if response_body:
                     text.append("\n  ")
-                    text.append(cls.truncate(response_body, 300), style="dim")
+                    text.append(response_body, style="dim")
             else:
                 text.append("\n  ")
                 text.append("Response received", style="dim")
         elif url:
             text.append("\n  ")
-            text.append(cls.truncate(url, 400), style="dim")
+            text.append(url, style="dim")
         else:
             text.append("\n  ")
             text.append("Sending...", style="dim")
@@ -163,13 +157,13 @@ class RepeatRequestRenderer(BaseToolRenderer):
                 text.append(f"Status: {status_code}", style="dim")
                 if response_body:
                     text.append("\n  ")
-                    text.append(cls.truncate(response_body, 300), style="dim")
+                    text.append(response_body, style="dim")
             else:
                 text.append("\n  ")
                 text.append("Response received", style="dim")
         elif modifications:
             text.append("\n  ")
-            text.append(cls.truncate(str(modifications), 400), style="dim")
+            text.append(str(modifications), style="dim")
         else:
             text.append("\n  ")
             text.append("No modifications", style="dim")
@@ -211,16 +205,13 @@ class ListSitemapRenderer(BaseToolRenderer):
         if result and isinstance(result, dict) and "entries" in result:
             entries = result["entries"]
             if isinstance(entries, list) and entries:
-                for entry in entries[:4]:
+                for entry in entries:
                     if isinstance(entry, dict):
                         label = entry.get("label", "?")
                         kind = entry.get("kind", "?")
                         text.append("\n  ")
                         text.append(f"{kind}: {label}", style="dim")
 
-                if len(entries) > 4:
-                    text.append("\n  ")
-                    text.append(f"... +{len(entries) - 4} more", style="dim")
             else:
                 text.append("\n  ")
                 text.append("No entries found", style="dim")

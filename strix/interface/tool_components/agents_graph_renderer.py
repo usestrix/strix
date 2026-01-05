@@ -40,7 +40,7 @@ class CreateAgentRenderer(BaseToolRenderer):
 
         if task:
             text.append("\n  ")
-            text.append(cls.truncate(task, 400), style="dim")
+            text.append(task, style="dim")
         else:
             text.append("\n  ")
             text.append("Spawning agent...", style="dim")
@@ -66,7 +66,7 @@ class SendMessageToAgentRenderer(BaseToolRenderer):
 
         if message:
             text.append("\n  ")
-            text.append(cls.truncate(message, 400), style="dim")
+            text.append(message, style="dim")
         else:
             text.append("\n  ")
             text.append("Sending...", style="dim")
@@ -129,7 +129,7 @@ class WaitForMessageRenderer(BaseToolRenderer):
 
         if reason:
             text.append("\n  ")
-            text.append(cls.truncate(reason, 400), style="dim")
+            text.append(reason, style="dim")
         else:
             text.append("\n  ")
             text.append("Agent paused until message received...", style="dim")

@@ -74,7 +74,7 @@ class BrowserRenderer(BaseToolRenderer):
     def _build_url_action(cls, text: Text, label: str, url: str | None, suffix: str = "") -> None:
         text.append(label, style="#06b6d4")
         if url:
-            text.append(cls.truncate(url, 300), style="#06b6d4")
+            text.append(url, style="#06b6d4")
             if suffix:
                 text.append(suffix, style="#06b6d4")
 
@@ -120,7 +120,7 @@ class BrowserRenderer(BaseToolRenderer):
             label, value = handlers[action]
             text.append(label, style="#06b6d4")
             if value:
-                text.append(cls.truncate(str(value), 200), style="#06b6d4")
+                text.append(str(value), style="#06b6d4")
             return text
 
         if action == "execute_js":
@@ -128,7 +128,7 @@ class BrowserRenderer(BaseToolRenderer):
             js_code = args.get("js_code")
             if js_code:
                 text.append("\n")
-                text.append_text(cls._highlight_js(cls.truncate(js_code, 2000)))
+                text.append_text(cls._highlight_js(js_code))
             return text
 
         text.append(action, style="#06b6d4")

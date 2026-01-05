@@ -14,29 +14,18 @@ STATUS_MARKERS: dict[str, str] = {
 }
 
 
-def _format_todo_lines(text: Text, result: dict[str, Any], limit: int = 25) -> None:
+def _format_todo_lines(text: Text, result: dict[str, Any]) -> None:
     todos = result.get("todos")
     if not isinstance(todos, list) or not todos:
         text.append("\n  ")
         text.append("No todos", style="dim")
         return
 
-    total = len(todos)
-
-    for index, todo in enumerate(todos):
-        if index >= limit:
-            remaining = total - limit
-            if remaining > 0:
-                text.append("\n  ")
-                text.append(f"... +{remaining} more", style="dim")
-            break
-
+    for todo in todos:
         status = todo.get("status", "pending")
         marker = STATUS_MARKERS.get(status, STATUS_MARKERS["pending"])
 
         title = todo.get("title", "").strip() or "(untitled)"
-        if len(title) > 90:
-            title = title[:87] + "..."
 
         text.append("\n  ")
         text.append(marker)

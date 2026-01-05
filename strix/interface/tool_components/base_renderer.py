@@ -24,12 +24,6 @@ class BaseToolRenderer(ABC):
         return Static(content, classes=css_classes)
 
     @classmethod
-    def truncate(cls, text: str, max_length: int = 500) -> str:
-        if len(text) <= max_length:
-            return text
-        return text[: max_length - 3] + "..."
-
-    @classmethod
     def status_icon(cls, status: str) -> tuple[str, str]:
         icons = {
             "running": ("● In progress...", "#f59e0b"),

@@ -351,9 +351,16 @@ class BaseAgent(metaclass=AgentMeta):
         self.state.add_message("user", task)
 
     async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool:
-        response = await self.llm.generate(self.state.get_conversation_history())
+        final_response = None
+        async for response in self.llm.generate(self.state.get_conversation_history()):
+            final_response = response
+            if tracer and response.content:
+                tracer.update_streaming_content(self.state.agent_id, response.content)
 
-        content_stripped = (response.content or "").strip()
+        if final_response is None:
+            return False
+
+        content_stripped = (final_response.content or "").strip()
 
         if not content_stripped:
             corrective_message = (
@@ -369,17 +376,18 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.add_message("user", corrective_message)
             return False
 
-        self.state.add_message("assistant", response.content)
+        self.state.add_message("assistant", final_response.content)
         if tracer:
+            tracer.clear_streaming_content(self.state.agent_id)
             tracer.log_chat_message(
-                content=clean_content(response.content),
+                content=clean_content(final_response.content),
                 role="assistant",
                 agent_id=self.state.agent_id,
             )
 
         actions = (
-            response.tool_invocations
-            if hasattr(response, "tool_invocations") and response.tool_invocations
+            final_response.tool_invocations
+            if hasattr(final_response, "tool_invocations") and final_response.tool_invocations
             else []
         )
 

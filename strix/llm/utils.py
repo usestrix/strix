@@ -47,10 +47,14 @@ def parse_tool_invocations(content: str) -> list[dict[str, Any]] | None:
 
 
 def _fix_stopword(content: str) -> str:
-    if "<function=" in content and content.count("<function=") == 1:
+    if (
+        "<function=" in content
+        and content.count("<function=") == 1
+        and "</function>" not in content
+    ):
         if content.endswith("</"):
             content = content.rstrip() + "function>"
-        elif not content.rstrip().endswith("</function>"):
+        else:
             content = content + "\n</function>"
     return content
 
@@ -74,6 +78,12 @@ def clean_content(content: str) -> str:
 
     tool_pattern = r"<function=[^>]+>.*?</function>"
     cleaned = re.sub(tool_pattern, "", content, flags=re.DOTALL)
+
+    incomplete_tool_pattern = r"<function=[^>]+>.*$"
+    cleaned = re.sub(incomplete_tool_pattern, "", cleaned, flags=re.DOTALL)
+
+    partial_tag_pattern = r"<f(?:u(?:n(?:c(?:t(?:i(?:o(?:n(?:=(?:[^>]*)?)?)?)?)?)?)?)?)?$"
+    cleaned = re.sub(partial_tag_pattern, "", cleaned)
 
     hidden_xml_patterns = [
         r"<inter_agent_message>.*?</inter_agent_message>",

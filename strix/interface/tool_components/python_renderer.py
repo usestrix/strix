@@ -56,8 +56,7 @@ class PythonRenderer(BaseToolRenderer):
         text.append("\n")
 
         if code and action in ["new_session", "execute"]:
-            code_display = cls.truncate(code, 2000)
-            text.append_text(cls._highlight_python(code_display))
+            text.append_text(cls._highlight_python(code))
         elif action == "close":
             text.append("  ")
             text.append("Closing session...", style="dim")

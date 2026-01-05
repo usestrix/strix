@@ -181,4 +181,10 @@ class AgentMessageRenderer(BaseToolRenderer):
         if not content:
             return Text()
 
-        return _apply_markdown_styles(content)
+        from strix.llm.utils import clean_content
+
+        cleaned = clean_content(content)
+        if not cleaned:
+            return Text()
+
+        return _apply_markdown_styles(cleaned)

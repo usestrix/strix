@@ -154,6 +154,4 @@ class TerminalRenderer(BaseToolRenderer):
 
     @classmethod
     def _format_command(cls, command: str) -> Text:
-        if len(command) > 2000:
-            command = command[:2000] + "..."
         return cls._highlight_bash(command)

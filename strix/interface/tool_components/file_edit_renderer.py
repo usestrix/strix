@@ -83,8 +83,7 @@ class StrReplaceEditorRenderer(BaseToolRenderer):
 
         if command == "str_replace" and (old_str or new_str):
             if old_str:
-                old_display = cls.truncate(old_str, 1000)
-                highlighted_old = cls._highlight_code(old_display, path)
+                highlighted_old = cls._highlight_code(old_str, path)
                 for line in highlighted_old.plain.split("\n"):
                     text.append("\n")
                     text.append("-", style="#ef4444")
@@ -92,8 +91,7 @@ class StrReplaceEditorRenderer(BaseToolRenderer):
                     text.append(line)
 
             if new_str:
-                new_display = cls.truncate(new_str, 1000)
-                highlighted_new = cls._highlight_code(new_display, path)
+                highlighted_new = cls._highlight_code(new_str, path)
                 for line in highlighted_new.plain.split("\n"):
                     text.append("\n")
                     text.append("+", style="#22c55e")
@@ -101,13 +99,11 @@ class StrReplaceEditorRenderer(BaseToolRenderer):
                     text.append(line)
 
         elif command == "create" and file_text:
-            text_display = cls.truncate(file_text, 1500)
             text.append("\n")
-            text.append_text(cls._highlight_code(text_display, path))
+            text.append_text(cls._highlight_code(file_text, path))
 
         elif command == "insert" and new_str:
-            new_display = cls.truncate(new_str, 1000)
-            highlighted_new = cls._highlight_code(new_display, path)
+            highlighted_new = cls._highlight_code(new_str, path)
             for line in highlighted_new.plain.split("\n"):
                 text.append("\n")
                 text.append("+", style="#22c55e")
@@ -164,19 +160,15 @@ class SearchFilesRenderer(BaseToolRenderer):
         text.append(" ")
 
         if path and regex:
-            path_display = path[-30:] if len(path) > 30 else path
-            regex_display = regex[:30] if len(regex) > 30 else regex
-            text.append(path_display, style="dim")
+            text.append(path, style="dim")
             text.append(" for '", style="dim")
-            text.append(regex_display, style="dim")
+            text.append(regex, style="dim")
             text.append("'", style="dim")
         elif path:
-            path_display = path[-60:] if len(path) > 60 else path
-            text.append(path_display, style="dim")
+            text.append(path, style="dim")
         elif regex:
-            regex_display = regex[:60] if len(regex) > 60 else regex
             text.append("'", style="dim")
-            text.append(regex_display, style="dim")
+            text.append(regex, style="dim")
             text.append("'", style="dim")
         else:
             text.append("Searching...", style="dim")

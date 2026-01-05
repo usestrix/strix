@@ -23,8 +23,7 @@ class ThinkRenderer(BaseToolRenderer):
         text.append("\n  ")
 
         if thought:
-            thought_display = cls.truncate(thought, 600)
-            text.append(thought_display, style="italic dim")
+            text.append(thought, style="italic dim")
         else:
             text.append("Thinking...", style="italic dim")
 

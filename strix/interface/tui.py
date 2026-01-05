@@ -491,7 +491,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._start_scan_thread()
 
-        self.set_interval(0.5, self._update_ui_from_tracer)
+        self.set_interval(0.1, self._update_ui_from_tracer)
 
     def _update_ui_from_tracer(self) -> None:
         if self.show_splash:
@@ -596,13 +596,14 @@ class StrixTUIApp(App):  # type: ignore[misc]
             )
         else:
             events = self._gather_agent_events(self.selected_agent_id)
-            if not events:
+            streaming = self.tracer.get_streaming_content(self.selected_agent_id)
+            if not events and not streaming:
                 content, css_class = self._get_chat_placeholder_content(
                     "Starting agent...", "placeholder-no-activity"
                 )
             else:
                 current_event_ids = [e["id"] for e in events]
-                if current_event_ids == self._displayed_events:
+                if current_event_ids == self._displayed_events and not streaming:
                     return
                 content = self._get_rendered_events_content(events)
                 css_class = "chat-content"
@@ -644,7 +645,91 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 result.append_text(content)
                 first = False
 
+        if self.selected_agent_id:
+            streaming = self.tracer.get_streaming_content(self.selected_agent_id)
+            if streaming:
+                streaming_text = self._render_streaming_content(streaming)
+                if streaming_text:
+                    if not first:
+                        result.append("\n\n")
+                    result.append_text(streaming_text)
+
         return result
+
+    def _render_streaming_content(self, content: str) -> Text:
+        from strix.interface.streaming_parser import parse_streaming_content
+
+        result = Text()
+        segments = parse_streaming_content(content)
+
+        for i, segment in enumerate(segments):
+            if i > 0:
+                result.append("\n\n")
+
+            if segment.type == "text":
+                from strix.interface.tool_components.agent_message_renderer import (
+                    AgentMessageRenderer,
+                )
+
+                text_content = AgentMessageRenderer.render_simple(segment.content)
+                result.append_text(text_content)
+
+            elif segment.type == "tool":
+                tool_text = self._render_streaming_tool(
+                    segment.tool_name or "unknown",
+                    segment.args or {},
+                    segment.is_complete,
+                )
+                result.append_text(tool_text)
+
+        return result
+
+    def _render_streaming_tool(
+        self, tool_name: str, args: dict[str, str], is_complete: bool
+    ) -> Text:
+        from strix.interface.tool_components.registry import get_tool_renderer
+
+        tool_data = {
+            "tool_name": tool_name,
+            "args": args,
+            "status": "completed" if is_complete else "running",
+            "result": None,
+        }
+
+        renderer = get_tool_renderer(tool_name)
+        if renderer:
+            widget = renderer.render(tool_data)
+            renderable = widget.renderable
+            if isinstance(renderable, Text):
+                return renderable
+            text = Text()
+            text.append(str(renderable))
+            return text
+
+        return self._render_default_streaming_tool(tool_name, args, is_complete)
+
+    def _render_default_streaming_tool(
+        self, tool_name: str, args: dict[str, str], is_complete: bool
+    ) -> Text:
+        text = Text()
+
+        if is_complete:
+            text.append("✓ ", style="green")
+        else:
+            text.append("● ", style="yellow")
+
+        text.append("Using tool ", style="dim")
+        text.append(tool_name, style="bold blue")
+
+        if args:
+            for key, value in list(args.items())[:3]:
+                text.append("\n  ")
+                text.append(key, style="dim")
+                text.append(": ")
+                display_value = value if len(value) <= 100 else value[:97] + "..."
+                text.append(display_value, style="italic" if not is_complete else None)
+
+        return text
 
     def _get_status_display_content(
         self, agent_id: str, agent_data: dict[str, Any]

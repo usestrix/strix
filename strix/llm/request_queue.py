@@ -3,10 +3,12 @@ import logging
 import os
 import threading
 import time
+from collections.abc import AsyncIterator
 from typing import Any
 
 import litellm
-from litellm import ModelResponse, completion
+from litellm import completion
+from litellm.types.utils import ModelResponseStream
 from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
 
 
@@ -42,7 +44,9 @@ class LLMRequestQueue:
         self._last_request_time = 0.0
         self._lock = threading.Lock()
 
-    async def make_request(self, completion_args: dict[str, Any]) -> ModelResponse:
+    async def stream_request(
+        self, completion_args: dict[str, Any]
+    ) -> AsyncIterator[ModelResponseStream]:
         try:
             while not self._semaphore.acquire(timeout=0.2):
                 await asyncio.sleep(0.1)
@@ -56,7 +60,8 @@ class LLMRequestQueue:
             if sleep_needed > 0:
                 await asyncio.sleep(sleep_needed)
 
-            return await self._reliable_request(completion_args)
+            async for chunk in self._reliable_stream_request(completion_args):
+                yield chunk
         finally:
             self._semaphore.release()
 
@@ -66,15 +71,12 @@ class LLMRequestQueue:
         retry=retry_if_exception(should_retry_exception),
         reraise=True,
     )
-    async def _reliable_request(self, completion_args: dict[str, Any]) -> ModelResponse:
-        response = completion(**completion_args, stream=False)
-        if isinstance(response, ModelResponse):
-            return response
-        self._raise_unexpected_response()
-        raise RuntimeError("Unreachable code")
-
-    def _raise_unexpected_response(self) -> None:
-        raise RuntimeError("Unexpected response type")
+    async def _reliable_stream_request(
+        self, completion_args: dict[str, Any]
+    ) -> AsyncIterator[ModelResponseStream]:
+        response = await asyncio.to_thread(completion, **completion_args, stream=True)
+        for chunk in response:
+            yield chunk
 
 
 _global_queue: LLMRequestQueue | None = None

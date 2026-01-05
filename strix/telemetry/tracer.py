@@ -33,6 +33,7 @@ class Tracer:
         self.agents: dict[str, dict[str, Any]] = {}
         self.tool_executions: dict[int, dict[str, Any]] = {}
         self.chat_messages: list[dict[str, Any]] = []
+        self.streaming_content: dict[str, str] = {}
 
         self.vulnerability_reports: list[dict[str, Any]] = []
         self.final_scan_result: str | None = None
@@ -332,6 +333,15 @@ class Tracer:
             "total": total_stats,
             "total_tokens": total_stats["input_tokens"] + total_stats["output_tokens"],
         }
+
+    def update_streaming_content(self, agent_id: str, content: str) -> None:
+        self.streaming_content[agent_id] = content
+
+    def clear_streaming_content(self, agent_id: str) -> None:
+        self.streaming_content.pop(agent_id, None)
+
+    def get_streaming_content(self, agent_id: str) -> str | None:
+        return self.streaming_content.get(agent_id)
 
     def cleanup(self) -> None:
         self.save_run_data(mark_complete=True)
