@@ -134,6 +134,12 @@ def build_live_stats_text(tracer: Any, agent_config: dict[str, Any] | None = Non
     if not tracer:
         return stats_text
 
+    if agent_config:
+        llm_config = agent_config["llm_config"]
+        model = getattr(llm_config, "model_name", "Unknown")
+        stats_text.append(f"🧠 Model: {model}")
+        stats_text.append("\n")
+
     vuln_count = len(tracer.vulnerability_reports)
     tool_count = tracer.get_real_tool_count()
     agent_count = len(tracer.agents)
@@ -163,12 +169,6 @@ def build_live_stats_text(tracer: Any, agent_config: dict[str, Any] | None = Non
             if i < len(severity_parts) - 1:
                 stats_text.append(" | ", style="dim white")
 
-        stats_text.append("\n")
-
-    if agent_config:
-        llm_config = agent_config["llm_config"]
-        model = getattr(llm_config, "model_name", "Unknown")
-        stats_text.append(f"🧠 Model: {model}")
         stats_text.append("\n")
 
     stats_text.append("🤖 Agents: ", style="bold white")

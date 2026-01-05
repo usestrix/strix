@@ -1,13 +1,14 @@
 Screen {
-    background: #1a1a1a;
+    background: #000000;
     color: #d4d4d4;
 }
 
 #splash_screen {
     height: 100%;
     width: 100%;
-    background: #1a1a1a;
+    background: #000000;
     color: #22c55e;
+    align: center middle;
     content-align: center middle;
     text-align: center;
 }
@@ -17,6 +18,7 @@ Screen {
     height: auto;
     background: transparent;
     text-align: center;
+    content-align: center middle;
     padding: 2;
 }
 
@@ -24,7 +26,7 @@ Screen {
     height: 100%;
     padding: 0;
     margin: 0;
-    background: #1a1a1a;
+    background: #000000;
 }
 
 #content_container {
@@ -39,10 +41,14 @@ Screen {
     margin-left: 1;
 }
 
+#sidebar.-hidden {
+    display: none;
+}
+
 #agents_tree {
     height: 1fr;
     background: transparent;
-    border: round #262626;
+    border: round #1a1a1a;
     border-title-color: #a8a29e;
     border-title-style: bold;
     padding: 1;
@@ -62,16 +68,20 @@ Screen {
     background: transparent;
 }
 
+#chat_area_container.-full-width {
+    width: 100%;
+}
+
 #chat_history {
     height: 1fr;
     background: transparent;
-    border: round #1a1a1a;
+    border: round #0a0a0a;
     padding: 0;
     margin-bottom: 0;
     margin-right: 0;
-    scrollbar-background: #0f0f0f;
-    scrollbar-color: #262626;
-    scrollbar-corner-color: #0f0f0f;
+    scrollbar-background: #000000;
+    scrollbar-color: #1a1a1a;
+    scrollbar-corner-color: #000000;
     scrollbar-size: 1 1;
 }
 
@@ -113,7 +123,7 @@ Screen {
 #chat_input_container {
     height: 3;
     background: transparent;
-    border: round #525252;
+    border: round #333333;
     margin-right: 0;
     padding: 0;
     layout: horizontal;
@@ -210,23 +220,20 @@ Screen {
     margin-top: 0 !important;
     margin-bottom: 0 !important;
     padding: 0 1;
-    background: #0a0a0a;
-    border: round #1a1a1a;
-    border-left: thick #f59e0b;
+    background: transparent;
+    border: none;
     width: 100%;
 }
 
 .tool-call.status-completed {
-    border-left: thick #22c55e;
-    background: #0d1f12;
+    background: transparent;
     margin: 0 !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
 }
 
 .tool-call.status-running {
-    border-left: thick #f59e0b;
-    background: #1f1611;
+    background: transparent;
     margin: 0 !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
@@ -234,8 +241,7 @@ Screen {
 
 .tool-call.status-failed,
 .tool-call.status-error {
-    border-left: thick #ef4444;
-    background: #1f0d0d;
+    background: transparent;
     margin: 0 !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
@@ -257,202 +263,39 @@ Screen {
     margin: 0 !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
-}
-
-.browser-tool {
-    border-left: thick #06b6d4;
-}
-
-.browser-tool.status-completed {
-    border-left: thick #06b6d4;
-    background: transparent;
-    margin: 0 !important;
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-}
-
-.browser-tool.status-running {
-    border-left: thick #0891b2;
-    background: transparent;
-    margin: 0 !important;
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-}
-
-.terminal-tool {
-    border-left: thick #22c55e;
-}
-
-.terminal-tool.status-completed {
-    border-left: thick #22c55e;
     background: transparent;
 }
 
-.terminal-tool.status-running {
-    border-left: thick #16a34a;
-    background: transparent;
-}
-
-.python-tool {
-    border-left: thick #3b82f6;
-}
-
-.python-tool.status-completed {
-    border-left: thick #3b82f6;
-    background: transparent;
-}
-
-.python-tool.status-running {
-    border-left: thick #2563eb;
-    background: transparent;
-}
-
-.agents-graph-tool {
-    border-left: thick #fbbf24;
-}
-
-.agents-graph-tool.status-completed {
-    border-left: thick #fbbf24;
-    background: transparent;
-}
-
-.agents-graph-tool.status-running {
-    border-left: thick #f59e0b;
-    background: transparent;
-}
-
-.file-edit-tool {
-    border-left: thick #10b981;
-}
-
-.file-edit-tool.status-completed {
-    border-left: thick #10b981;
-    background: transparent;
-}
-
-.file-edit-tool.status-running {
-    border-left: thick #059669;
-    background: transparent;
-}
-
-.proxy-tool {
-    border-left: thick #06b6d4;
-}
-
-.proxy-tool.status-completed {
-    border-left: thick #06b6d4;
-    background: transparent;
-}
-
-.proxy-tool.status-running {
-    border-left: thick #0891b2;
-    background: transparent;
-}
-
-.notes-tool {
-    border-left: thick #fbbf24;
-}
-
-.notes-tool.status-completed {
-    border-left: thick #fbbf24;
-    background: transparent;
-}
-
-.notes-tool.status-running {
-    border-left: thick #f59e0b;
-    background: transparent;
-}
-
-.thinking-tool {
-    border-left: thick #a855f7;
-}
-
-.thinking-tool.status-completed {
-    border-left: thick #a855f7;
-    background: transparent;
-}
-
-.thinking-tool.status-running {
-    border-left: thick #9333ea;
-    background: transparent;
-}
-
-.web-search-tool {
-    border-left: thick #22c55e;
-}
-
-.web-search-tool.status-completed {
-    border-left: thick #22c55e;
-    background: transparent;
-}
-
-.web-search-tool.status-running {
-    border-left: thick #16a34a;
-    background: transparent;
-}
-
-.finish-tool {
-    border-left: thick #dc2626;
-}
-
-.finish-tool.status-completed {
-    border-left: thick #dc2626;
-    background: transparent;
-}
-
-.finish-tool.status-running {
-    border-left: thick #b91c1c;
-    background: transparent;
-}
-
-.reporting-tool {
-    border-left: thick #ea580c;
-}
-
-.reporting-tool.status-completed {
-    border-left: thick #ea580c;
-    background: transparent;
-}
-
-.reporting-tool.status-running {
-    border-left: thick #c2410c;
-    background: transparent;
-}
-
-.scan-info-tool {
-    border-left: thick #22c55e;
-    background: transparent;
-    margin: 0 !important;
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-}
-
-.scan-info-tool.status-completed {
-    border-left: thick #22c55e;
-    background: transparent;
-}
-
-.scan-info-tool.status-running {
-    border-left: thick #16a34a;
-    background: transparent;
-}
-
-.subagent-info-tool {
-    border-left: thick #22c55e;
-    background: transparent;
-    margin: 0 !important;
-    margin-top: 0 !important;
-    margin-bottom: 0 !important;
-}
-
-.subagent-info-tool.status-completed {
-    border-left: thick #22c55e;
-    background: transparent;
-}
-
+.browser-tool.status-completed,
+.browser-tool.status-running,
+.terminal-tool.status-completed,
+.terminal-tool.status-running,
+.python-tool.status-completed,
+.python-tool.status-running,
+.agents-graph-tool.status-completed,
+.agents-graph-tool.status-running,
+.file-edit-tool.status-completed,
+.file-edit-tool.status-running,
+.proxy-tool.status-completed,
+.proxy-tool.status-running,
+.notes-tool.status-completed,
+.notes-tool.status-running,
+.thinking-tool.status-completed,
+.thinking-tool.status-running,
+.web-search-tool.status-completed,
+.web-search-tool.status-running,
+.finish-tool.status-completed,
+.finish-tool.status-running,
+.reporting-tool.status-completed,
+.reporting-tool.status-running,
+.scan-info-tool.status-completed,
+.scan-info-tool.status-running,
+.subagent-info-tool.status-completed,
 .subagent-info-tool.status-running {
-    border-left: thick #16a34a;
     background: transparent;
+    margin: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
 }
 
 Tree {
@@ -470,7 +313,7 @@ Tree > .tree--label {
     background: transparent;
     padding: 0 1;
     margin-bottom: 1;
-    border-bottom: solid #262626;
+    border-bottom: solid #1a1a1a;
     text-align: center;
 }
 
@@ -510,7 +353,7 @@ Tree > .tree--label {
 }
 
 Tree:focus {
-    border: round #262626;
+    border: round #1a1a1a;
 }
 
 Tree:focus > .tree--label {
@@ -554,7 +397,7 @@ StopAgentScreen {
     width: 30;
     height: auto;
     border: round #a3a3a3;
-    background: #1a1a1a 98%;
+    background: #000000 98%;
 }
 
 #stop_agent_title {
@@ -616,8 +459,8 @@ QuitScreen {
     padding: 1;
     width: 24;
     height: auto;
-    border: round #525252;
-    background: #1a1a1a 98%;
+    border: round #333333;
+    background: #000000 98%;
 }
 
 #quit_title {
@@ -680,7 +523,7 @@ HelpScreen {
     width: 40;
     height: auto;
     border: round #22c55e;
-    background: #1a1a1a 98%;
+    background: #000000 98%;
 }
 
 #help_title {
