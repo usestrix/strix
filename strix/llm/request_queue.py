@@ -1,31 +1,12 @@
 import asyncio
-import logging
 import os
 import threading
 import time
 from collections.abc import AsyncIterator
 from typing import Any
 
-import litellm
-from litellm import completion
+from litellm import acompletion
 from litellm.types.utils import ModelResponseStream
-from tenacity import retry, retry_if_exception, stop_after_attempt, wait_exponential
-
-
-logger = logging.getLogger(__name__)
-
-
-def should_retry_exception(exception: Exception) -> bool:
-    status_code = None
-
-    if hasattr(exception, "status_code"):
-        status_code = exception.status_code
-    elif hasattr(exception, "response") and hasattr(exception.response, "status_code"):
-        status_code = exception.response.status_code
-
-    if status_code is not None:
-        return bool(litellm._should_retry(status_code))
-    return True
 
 
 class LLMRequestQueue:
@@ -60,22 +41,17 @@ class LLMRequestQueue:
             if sleep_needed > 0:
                 await asyncio.sleep(sleep_needed)
 
-            async for chunk in self._reliable_stream_request(completion_args):
+            async for chunk in self._stream_request(completion_args):
                 yield chunk
         finally:
             self._semaphore.release()
 
-    @retry(  # type: ignore[misc]
-        stop=stop_after_attempt(3),
-        wait=wait_exponential(multiplier=8, min=8, max=64),
-        retry=retry_if_exception(should_retry_exception),
-        reraise=True,
-    )
-    async def _reliable_stream_request(
+    async def _stream_request(
         self, completion_args: dict[str, Any]
     ) -> AsyncIterator[ModelResponseStream]:
-        response = await asyncio.to_thread(completion, **completion_args, stream=True)
-        for chunk in response:
+        response = await acompletion(**completion_args, stream=True)
+
+        async for chunk in response:
             yield chunk
 
 
