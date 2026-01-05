@@ -1,15 +1,10 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
 from .registry import register_tool_renderer
-
-
-def _truncate(text: str, length: int = 800) -> str:
-    if len(text) <= length:
-        return text
-    return text[: length - 3] + "..."
 
 
 @register_tool_renderer
@@ -25,22 +20,26 @@ class CreateNoteRenderer(BaseToolRenderer):
         content = args.get("content", "")
         category = args.get("category", "general")
 
-        header = f"📝 [bold #fbbf24]Note[/] [dim]({category})[/]"
+        text = Text()
+        text.append("📝 ")
+        text.append("Note", style="bold #fbbf24")
+        text.append(" ")
+        text.append(f"({category})", style="dim")
 
-        lines = [header]
         if title:
-            title_display = _truncate(title.strip(), 300)
-            lines.append(f"  {cls.escape_markup(title_display)}")
+            text.append("\n  ")
+            text.append(cls.truncate(title.strip(), 300))
 
         if content:
-            content_display = _truncate(content.strip(), 800)
-            lines.append(f"  [dim]{cls.escape_markup(content_display)}[/]")
+            text.append("\n  ")
+            text.append(cls.truncate(content.strip(), 800), style="dim")
 
-        if len(lines) == 1:
-            lines.append("  [dim]Capturing...[/]")
+        if not title and not content:
+            text.append("\n  ")
+            text.append("Capturing...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static("\n".join(lines), classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -50,11 +49,12 @@ class DeleteNoteRenderer(BaseToolRenderer):
 
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: ARG003
-        header = "📝 [bold #94a3b8]Note Removed[/]"
-        content_text = header
+        text = Text()
+        text.append("📝 ")
+        text.append("Note Removed", style="bold #94a3b8")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -69,21 +69,24 @@ class UpdateNoteRenderer(BaseToolRenderer):
         title = args.get("title")
         content = args.get("content")
 
-        header = "📝 [bold #fbbf24]Note Updated[/]"
-        lines = [header]
+        text = Text()
+        text.append("📝 ")
+        text.append("Note Updated", style="bold #fbbf24")
 
         if title:
-            lines.append(f"  {cls.escape_markup(_truncate(title, 300))}")
+            text.append("\n  ")
+            text.append(cls.truncate(title, 300))
 
         if content:
-            content_display = _truncate(content.strip(), 800)
-            lines.append(f"  [dim]{cls.escape_markup(content_display)}[/]")
+            text.append("\n  ")
+            text.append(cls.truncate(content.strip(), 800), style="dim")
 
-        if len(lines) == 1:
-            lines.append("  [dim]Updating...[/]")
+        if not title and not content:
+            text.append("\n  ")
+            text.append("Updating...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static("\n".join(lines), classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -95,34 +98,38 @@ class ListNotesRenderer(BaseToolRenderer):
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
-        header = "📝 [bold #fbbf24]Notes[/]"
+        text = Text()
+        text.append("📝 ")
+        text.append("Notes", style="bold #fbbf24")
 
         if result and isinstance(result, dict) and result.get("success"):
             count = result.get("total_count", 0)
             notes = result.get("notes", []) or []
-            lines = [header]
 
             if count == 0:
-                lines.append("  [dim]No notes[/]")
+                text.append("\n  ")
+                text.append("No notes", style="dim")
             else:
                 for note in notes[:5]:
                     title = note.get("title", "").strip() or "(untitled)"
                     category = note.get("category", "general")
-                    content = note.get("content", "").strip()
+                    note_content = note.get("content", "").strip()
 
-                    lines.append(
-                        f"  - {cls.escape_markup(_truncate(title, 300))} [dim]({category})[/]"
-                    )
-                    if content:
-                        content_preview = _truncate(content, 400)
-                        lines.append(f"    [dim]{cls.escape_markup(content_preview)}[/]")
+                    text.append("\n  - ")
+                    text.append(cls.truncate(title, 300))
+                    text.append(f" ({category})", style="dim")
+
+                    if note_content:
+                        text.append("\n    ")
+                        text.append(cls.truncate(note_content, 400), style="dim")
 
                 remaining = max(count - 5, 0)
                 if remaining:
-                    lines.append(f"  [dim]... +{remaining} more[/]")
-            content_text = "\n".join(lines)
+                    text.append("\n  ")
+                    text.append(f"... +{remaining} more", style="dim")
         else:
-            content_text = f"{header}\n  [dim]Loading...[/]"
+            text.append("\n  ")
+            text.append("Loading...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)

@@ -1,5 +1,6 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -47,26 +48,36 @@ def render_tool_widget(tool_data: dict[str, Any]) -> Static:
 
 
 def _render_default_tool_widget(tool_data: dict[str, Any]) -> Static:
-    tool_name = BaseToolRenderer.escape_markup(tool_data.get("tool_name", "Unknown Tool"))
+    tool_name = tool_data.get("tool_name", "Unknown Tool")
     args = tool_data.get("args", {})
     status = tool_data.get("status", "unknown")
     result = tool_data.get("result")
 
-    status_text = BaseToolRenderer.get_status_icon(status)
+    text = Text()
 
-    header = f"→ Using tool [bold blue]{BaseToolRenderer.escape_markup(tool_name)}[/]"
-    content_parts = [header]
+    text.append("→ Using tool ", style="dim")
+    text.append(tool_name, style="bold blue")
+    text.append("\n")
 
-    args_str = BaseToolRenderer.format_args(args)
-    if args_str:
-        content_parts.append(args_str)
+    for k, v in list(args.items())[:2]:
+        str_v = str(v)
+        if len(str_v) > 80:
+            str_v = str_v[:77] + "..."
+        text.append("  ")
+        text.append(k, style="dim")
+        text.append(": ")
+        text.append(str_v)
+        text.append("\n")
 
     if status in ["completed", "failed", "error"] and result is not None:
-        result_str = BaseToolRenderer.format_result(result)
-        if result_str:
-            content_parts.append(f"[bold]Result:[/] {result_str}")
+        result_str = str(result)
+        if len(result_str) > 150:
+            result_str = result_str[:147] + "..."
+        text.append("Result: ", style="bold")
+        text.append(result_str)
     else:
-        content_parts.append(status_text)
+        icon, color = BaseToolRenderer.status_icon(status)
+        text.append(icon, style=color)
 
     css_classes = BaseToolRenderer.get_css_classes(status)
-    return Static("\n".join(content_parts), classes=css_classes)
+    return Static(text, classes=css_classes)

@@ -1,5 +1,6 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -18,38 +19,37 @@ class ListRequestsRenderer(BaseToolRenderer):
 
         httpql_filter = args.get("httpql_filter")
 
-        header = "📋 [bold #06b6d4]Listing requests[/]"
+        text = Text()
+        text.append("📋 ")
+        text.append("Listing requests", style="bold #06b6d4")
 
         if result and isinstance(result, dict) and "requests" in result:
             requests = result["requests"]
             if isinstance(requests, list) and requests:
-                request_lines = []
                 for req in requests[:3]:
                     if isinstance(req, dict):
                         method = req.get("method", "?")
                         path = req.get("path", "?")
                         response = req.get("response") or {}
                         status = response.get("statusCode", "?")
-                        line = f"{method} {path} → {status}"
-                        request_lines.append(line)
+                        text.append("\n  ")
+                        text.append(f"{method} {path} → {status}", style="dim")
 
                 if len(requests) > 3:
-                    request_lines.append(f"... +{len(requests) - 3} more")
-
-                escaped_lines = [cls.escape_markup(line) for line in request_lines]
-                content_text = f"{header}\n  [dim]{chr(10).join(escaped_lines)}[/]"
+                    text.append("\n  ")
+                    text.append(f"... +{len(requests) - 3} more", style="dim")
             else:
-                content_text = f"{header}\n  [dim]No requests found[/]"
+                text.append("\n  ")
+                text.append("No requests found", style="dim")
         elif httpql_filter:
-            filter_display = (
-                httpql_filter[:300] + "..." if len(httpql_filter) > 300 else httpql_filter
-            )
-            content_text = f"{header}\n  [dim]{cls.escape_markup(filter_display)}[/]"
+            text.append("\n  ")
+            text.append(cls.truncate(httpql_filter, 300), style="dim")
         else:
-            content_text = f"{header}\n  [dim]All requests[/]"
+            text.append("\n  ")
+            text.append("All requests", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -64,34 +64,37 @@ class ViewRequestRenderer(BaseToolRenderer):
 
         part = args.get("part", "request")
 
-        header = f"👀 [bold #06b6d4]Viewing {cls.escape_markup(part)}[/]"
+        text = Text()
+        text.append("👀 ")
+        text.append(f"Viewing {part}", style="bold #06b6d4")
 
         if result and isinstance(result, dict):
             if "content" in result:
                 content = result["content"]
-                content_preview = content[:500] + "..." if len(content) > 500 else content
-                content_text = f"{header}\n  [dim]{cls.escape_markup(content_preview)}[/]"
+                text.append("\n  ")
+                text.append(cls.truncate(content, 500), style="dim")
             elif "matches" in result:
                 matches = result["matches"]
                 if isinstance(matches, list) and matches:
-                    match_lines = [
-                        match["match"]
-                        for match in matches[:3]
-                        if isinstance(match, dict) and "match" in match
-                    ]
+                    for match in matches[:3]:
+                        if isinstance(match, dict) and "match" in match:
+                            text.append("\n  ")
+                            text.append(match["match"], style="dim")
                     if len(matches) > 3:
-                        match_lines.append(f"... +{len(matches) - 3} more matches")
-                    escaped_lines = [cls.escape_markup(line) for line in match_lines]
-                    content_text = f"{header}\n  [dim]{chr(10).join(escaped_lines)}[/]"
+                        text.append("\n  ")
+                        text.append(f"... +{len(matches) - 3} more matches", style="dim")
                 else:
-                    content_text = f"{header}\n  [dim]No matches found[/]"
+                    text.append("\n  ")
+                    text.append("No matches found", style="dim")
             else:
-                content_text = f"{header}\n  [dim]Viewing content...[/]"
+                text.append("\n  ")
+                text.append("Viewing content...", style="dim")
         else:
-            content_text = f"{header}\n  [dim]Loading...[/]"
+            text.append("\n  ")
+            text.append("Loading...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -107,30 +110,32 @@ class SendRequestRenderer(BaseToolRenderer):
         method = args.get("method", "GET")
         url = args.get("url", "")
 
-        header = f"📤 [bold #06b6d4]Sending {cls.escape_markup(method)}[/]"
+        text = Text()
+        text.append("📤 ")
+        text.append(f"Sending {method}", style="bold #06b6d4")
 
         if result and isinstance(result, dict):
             status_code = result.get("status_code")
             response_body = result.get("body", "")
 
             if status_code:
-                response_preview = f"Status: {status_code}"
+                text.append("\n  ")
+                text.append(f"Status: {status_code}", style="dim")
                 if response_body:
-                    body_preview = (
-                        response_body[:300] + "..." if len(response_body) > 300 else response_body
-                    )
-                    response_preview += f"\n{body_preview}"
-                content_text = f"{header}\n  [dim]{cls.escape_markup(response_preview)}[/]"
+                    text.append("\n  ")
+                    text.append(cls.truncate(response_body, 300), style="dim")
             else:
-                content_text = f"{header}\n  [dim]Response received[/]"
+                text.append("\n  ")
+                text.append("Response received", style="dim")
         elif url:
-            url_display = url[:400] + "..." if len(url) > 400 else url
-            content_text = f"{header}\n  [dim]{cls.escape_markup(url_display)}[/]"
+            text.append("\n  ")
+            text.append(cls.truncate(url, 400), style="dim")
         else:
-            content_text = f"{header}\n  [dim]Sending...[/]"
+            text.append("\n  ")
+            text.append("Sending...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -145,31 +150,32 @@ class RepeatRequestRenderer(BaseToolRenderer):
 
         modifications = args.get("modifications", {})
 
-        header = "🔄 [bold #06b6d4]Repeating request[/]"
+        text = Text()
+        text.append("🔄 ")
+        text.append("Repeating request", style="bold #06b6d4")
 
         if result and isinstance(result, dict):
             status_code = result.get("status_code")
             response_body = result.get("body", "")
 
             if status_code:
-                response_preview = f"Status: {status_code}"
+                text.append("\n  ")
+                text.append(f"Status: {status_code}", style="dim")
                 if response_body:
-                    body_preview = (
-                        response_body[:300] + "..." if len(response_body) > 300 else response_body
-                    )
-                    response_preview += f"\n{body_preview}"
-                content_text = f"{header}\n  [dim]{cls.escape_markup(response_preview)}[/]"
+                    text.append("\n  ")
+                    text.append(cls.truncate(response_body, 300), style="dim")
             else:
-                content_text = f"{header}\n  [dim]Response received[/]"
+                text.append("\n  ")
+                text.append("Response received", style="dim")
         elif modifications:
-            mod_text = str(modifications)
-            mod_display = mod_text[:400] + "..." if len(mod_text) > 400 else mod_text
-            content_text = f"{header}\n  [dim]{cls.escape_markup(mod_display)}[/]"
+            text.append("\n  ")
+            text.append(cls.truncate(str(modifications), 400), style="dim")
         else:
-            content_text = f"{header}\n  [dim]No modifications[/]"
+            text.append("\n  ")
+            text.append("No modifications", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -179,11 +185,14 @@ class ScopeRulesRenderer(BaseToolRenderer):
 
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: ARG003
-        header = "⚙️ [bold #06b6d4]Updating proxy scope[/]"
-        content_text = f"{header}\n  [dim]Configuring...[/]"
+        text = Text()
+        text.append("⚙️ ")
+        text.append("Updating proxy scope", style="bold #06b6d4")
+        text.append("\n  ")
+        text.append("Configuring...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -195,31 +204,32 @@ class ListSitemapRenderer(BaseToolRenderer):
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
-        header = "🗺️ [bold #06b6d4]Listing sitemap[/]"
+        text = Text()
+        text.append("🗺️ ")
+        text.append("Listing sitemap", style="bold #06b6d4")
 
         if result and isinstance(result, dict) and "entries" in result:
             entries = result["entries"]
             if isinstance(entries, list) and entries:
-                entry_lines = []
                 for entry in entries[:4]:
                     if isinstance(entry, dict):
                         label = entry.get("label", "?")
                         kind = entry.get("kind", "?")
-                        line = f"{kind}: {label}"
-                        entry_lines.append(line)
+                        text.append("\n  ")
+                        text.append(f"{kind}: {label}", style="dim")
 
                 if len(entries) > 4:
-                    entry_lines.append(f"... +{len(entries) - 4} more")
-
-                escaped_lines = [cls.escape_markup(line) for line in entry_lines]
-                content_text = f"{header}\n  [dim]{chr(10).join(escaped_lines)}[/]"
+                    text.append("\n  ")
+                    text.append(f"... +{len(entries) - 4} more", style="dim")
             else:
-                content_text = f"{header}\n  [dim]No entries found[/]"
+                text.append("\n  ")
+                text.append("No entries found", style="dim")
         else:
-            content_text = f"{header}\n  [dim]Loading...[/]"
+            text.append("\n  ")
+            text.append("Loading...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -231,25 +241,27 @@ class ViewSitemapEntryRenderer(BaseToolRenderer):
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
-        header = "📍 [bold #06b6d4]Viewing sitemap entry[/]"
+        text = Text()
+        text.append("📍 ")
+        text.append("Viewing sitemap entry", style="bold #06b6d4")
 
-        if result and isinstance(result, dict):
-            if "entry" in result:
-                entry = result["entry"]
-                if isinstance(entry, dict):
-                    label = entry.get("label", "")
-                    kind = entry.get("kind", "")
-                    if label and kind:
-                        entry_info = f"{kind}: {label}"
-                        content_text = f"{header}\n  [dim]{cls.escape_markup(entry_info)}[/]"
-                    else:
-                        content_text = f"{header}\n  [dim]Entry details loaded[/]"
+        if result and isinstance(result, dict) and "entry" in result:
+            entry = result["entry"]
+            if isinstance(entry, dict):
+                label = entry.get("label", "")
+                kind = entry.get("kind", "")
+                if label and kind:
+                    text.append("\n  ")
+                    text.append(f"{kind}: {label}", style="dim")
                 else:
-                    content_text = f"{header}\n  [dim]Entry details loaded[/]"
+                    text.append("\n  ")
+                    text.append("Entry details loaded", style="dim")
             else:
-                content_text = f"{header}\n  [dim]Loading entry...[/]"
+                text.append("\n  ")
+                text.append("Entry details loaded", style="dim")
         else:
-            content_text = f"{header}\n  [dim]Loading...[/]"
+            text.append("\n  ")
+            text.append("Loading...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)

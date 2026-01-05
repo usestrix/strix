@@ -1,57 +1,53 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
 from .registry import register_tool_renderer
 
 
-STATUS_MARKERS = {
+STATUS_MARKERS: dict[str, str] = {
     "pending": "[ ]",
     "in_progress": "[~]",
     "done": "[•]",
 }
 
 
-def _truncate(text: str, length: int = 80) -> str:
-    if len(text) <= length:
-        return text
-    return text[: length - 3] + "..."
-
-
-def _format_todo_lines(
-    cls: type[BaseToolRenderer], result: dict[str, Any], limit: int = 25
-) -> list[str]:
+def _format_todo_lines(text: Text, result: dict[str, Any], limit: int = 25) -> None:
     todos = result.get("todos")
     if not isinstance(todos, list) or not todos:
-        return ["  [dim]No todos[/]"]
+        text.append("\n  ")
+        text.append("No todos", style="dim")
+        return
 
-    lines: list[str] = []
     total = len(todos)
 
     for index, todo in enumerate(todos):
         if index >= limit:
             remaining = total - limit
             if remaining > 0:
-                lines.append(f"  [dim]... +{remaining} more[/]")
+                text.append("\n  ")
+                text.append(f"... +{remaining} more", style="dim")
             break
 
         status = todo.get("status", "pending")
         marker = STATUS_MARKERS.get(status, STATUS_MARKERS["pending"])
 
         title = todo.get("title", "").strip() or "(untitled)"
-        title = cls.escape_markup(_truncate(title, 90))
+        if len(title) > 90:
+            title = title[:87] + "..."
+
+        text.append("\n  ")
+        text.append(marker)
+        text.append(" ")
 
         if status == "done":
-            title_markup = f"[dim strike]{title}[/]"
+            text.append(title, style="dim strike")
         elif status == "in_progress":
-            title_markup = f"[italic]{title}[/]"
+            text.append(title, style="italic")
         else:
-            title_markup = title
-
-        lines.append(f"  {marker} {title_markup}")
-
-    return lines
+            text.append(title)
 
 
 @register_tool_renderer
@@ -62,21 +58,24 @@ class CreateTodoRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
-        header = "📋 [bold #a78bfa]Todo[/]"
+
+        text = Text()
+        text.append("📋 ")
+        text.append("Todo", style="bold #a78bfa")
 
         if result and isinstance(result, dict):
             if result.get("success"):
-                lines = [header]
-                lines.extend(_format_todo_lines(cls, result))
-                content_text = "\n".join(lines)
+                _format_todo_lines(text, result)
             else:
                 error = result.get("error", "Failed to create todo")
-                content_text = f"{header}\n  [#ef4444]{cls.escape_markup(error)}[/]"
+                text.append("\n  ")
+                text.append(error, style="#ef4444")
         else:
-            content_text = f"{header}\n  [dim]Creating...[/]"
+            text.append("\n  ")
+            text.append("Creating...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -87,21 +86,24 @@ class ListTodosRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
-        header = "📋 [bold #a78bfa]Todos[/]"
+
+        text = Text()
+        text.append("📋 ")
+        text.append("Todos", style="bold #a78bfa")
 
         if result and isinstance(result, dict):
             if result.get("success"):
-                lines = [header]
-                lines.extend(_format_todo_lines(cls, result))
-                content_text = "\n".join(lines)
+                _format_todo_lines(text, result)
             else:
                 error = result.get("error", "Unable to list todos")
-                content_text = f"{header}\n  [#ef4444]{cls.escape_markup(error)}[/]"
+                text.append("\n  ")
+                text.append(error, style="#ef4444")
         else:
-            content_text = f"{header}\n  [dim]Loading...[/]"
+            text.append("\n  ")
+            text.append("Loading...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -112,21 +114,24 @@ class UpdateTodoRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
-        header = "📋 [bold #a78bfa]Todo Updated[/]"
+
+        text = Text()
+        text.append("📋 ")
+        text.append("Todo Updated", style="bold #a78bfa")
 
         if result and isinstance(result, dict):
             if result.get("success"):
-                lines = [header]
-                lines.extend(_format_todo_lines(cls, result))
-                content_text = "\n".join(lines)
+                _format_todo_lines(text, result)
             else:
                 error = result.get("error", "Failed to update todo")
-                content_text = f"{header}\n  [#ef4444]{cls.escape_markup(error)}[/]"
+                text.append("\n  ")
+                text.append(error, style="#ef4444")
         else:
-            content_text = f"{header}\n  [dim]Updating...[/]"
+            text.append("\n  ")
+            text.append("Updating...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -137,21 +142,24 @@ class MarkTodoDoneRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
-        header = "📋 [bold #a78bfa]Todo Completed[/]"
+
+        text = Text()
+        text.append("📋 ")
+        text.append("Todo Completed", style="bold #a78bfa")
 
         if result and isinstance(result, dict):
             if result.get("success"):
-                lines = [header]
-                lines.extend(_format_todo_lines(cls, result))
-                content_text = "\n".join(lines)
+                _format_todo_lines(text, result)
             else:
                 error = result.get("error", "Failed to mark todo done")
-                content_text = f"{header}\n  [#ef4444]{cls.escape_markup(error)}[/]"
+                text.append("\n  ")
+                text.append(error, style="#ef4444")
         else:
-            content_text = f"{header}\n  [dim]Marking done...[/]"
+            text.append("\n  ")
+            text.append("Marking done...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -162,21 +170,24 @@ class MarkTodoPendingRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
-        header = "📋 [bold #f59e0b]Todo Reopened[/]"
+
+        text = Text()
+        text.append("📋 ")
+        text.append("Todo Reopened", style="bold #f59e0b")
 
         if result and isinstance(result, dict):
             if result.get("success"):
-                lines = [header]
-                lines.extend(_format_todo_lines(cls, result))
-                content_text = "\n".join(lines)
+                _format_todo_lines(text, result)
             else:
                 error = result.get("error", "Failed to reopen todo")
-                content_text = f"{header}\n  [#ef4444]{cls.escape_markup(error)}[/]"
+                text.append("\n  ")
+                text.append(error, style="#ef4444")
         else:
-            content_text = f"{header}\n  [dim]Reopening...[/]"
+            text.append("\n  ")
+            text.append("Reopening...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -187,18 +198,21 @@ class DeleteTodoRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
-        header = "📋 [bold #94a3b8]Todo Removed[/]"
+
+        text = Text()
+        text.append("📋 ")
+        text.append("Todo Removed", style="bold #94a3b8")
 
         if result and isinstance(result, dict):
             if result.get("success"):
-                lines = [header]
-                lines.extend(_format_todo_lines(cls, result))
-                content_text = "\n".join(lines)
+                _format_todo_lines(text, result)
             else:
                 error = result.get("error", "Failed to remove todo")
-                content_text = f"{header}\n  [#ef4444]{cls.escape_markup(error)}[/]"
+                text.append("\n  ")
+                text.append(error, style="#ef4444")
         else:
-            content_text = f"{header}\n  [dim]Removing...[/]"
+            text.append("\n  ")
+            text.append("Removing...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)

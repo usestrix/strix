@@ -1,5 +1,6 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -14,16 +15,18 @@ class ThinkRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
-
         thought = args.get("thought", "")
 
-        header = "🧠 [bold #a855f7]Thinking[/]"
+        text = Text()
+        text.append("🧠 ")
+        text.append("Thinking", style="bold #a855f7")
+        text.append("\n  ")
 
         if thought:
-            thought_display = thought[:600] + "..." if len(thought) > 600 else thought
-            content = f"{header}\n  [italic dim]{cls.escape_markup(thought_display)}[/]"
+            thought_display = cls.truncate(thought, 600)
+            text.append(thought_display, style="italic dim")
         else:
-            content = f"{header}\n  [italic dim]Thinking...[/]"
+            text.append("Thinking...", style="italic dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content, classes=css_classes)
+        return Static(text, classes=css_classes)

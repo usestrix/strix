@@ -1,5 +1,6 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -12,32 +13,41 @@ class UserMessageRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["chat-message", "user-message"]
 
     @classmethod
-    def render(cls, message_data: dict[str, Any]) -> Static:
-        content = message_data.get("content", "")
+    def render(cls, tool_data: dict[str, Any]) -> Static:
+        content = tool_data.get("content", "")
 
         if not content:
-            return Static("", classes=cls.css_classes)
+            return Static(Text(), classes=" ".join(cls.css_classes))
 
-        if len(content) > 300:
-            content = content[:297] + "..."
+        styled_text = cls._format_user_message(content)
 
-        lines = content.split("\n")
-        bordered_lines = [f"[#3b82f6]▍[/#3b82f6] {line}" for line in lines]
-        bordered_content = "\n".join(bordered_lines)
-        formatted_content = f"[#3b82f6]▍[/#3b82f6] [bold]You:[/]\n{bordered_content}"
-
-        css_classes = " ".join(cls.css_classes)
-        return Static(formatted_content, classes=css_classes)
+        return Static(styled_text, classes=" ".join(cls.css_classes))
 
     @classmethod
-    def render_simple(cls, content: str) -> str:
+    def render_simple(cls, content: str) -> Text:
         if not content:
-            return ""
+            return Text()
+
+        return cls._format_user_message(content)
+
+    @classmethod
+    def _format_user_message(cls, content: str) -> Text:
+        text = Text()
 
         if len(content) > 300:
             content = content[:297] + "..."
 
+        text.append("▍", style="#3b82f6")
+        text.append(" ")
+        text.append("You:", style="bold")
+        text.append("\n")
+
         lines = content.split("\n")
-        bordered_lines = [f"[#3b82f6]▍[/#3b82f6] {line}" for line in lines]
-        bordered_content = "\n".join(bordered_lines)
-        return f"[#3b82f6]▍[/#3b82f6] [bold]You:[/]\n{bordered_content}"
+        for i, line in enumerate(lines):
+            if i > 0:
+                text.append("\n")
+            text.append("▍", style="#3b82f6")
+            text.append(" ")
+            text.append(line)
+
+        return text

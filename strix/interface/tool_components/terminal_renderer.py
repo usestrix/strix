@@ -3,6 +3,7 @@ from typing import Any, ClassVar
 
 from pygments.lexers import get_lexer_by_name
 from pygments.styles import get_style_by_name
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -20,6 +21,69 @@ class TerminalRenderer(BaseToolRenderer):
     tool_name: ClassVar[str] = "terminal_execute"
     css_classes: ClassVar[list[str]] = ["tool-call", "terminal-tool"]
 
+    CONTROL_SEQUENCES: ClassVar[set[str]] = {
+        "C-c",
+        "C-d",
+        "C-z",
+        "C-a",
+        "C-e",
+        "C-k",
+        "C-l",
+        "C-u",
+        "C-w",
+        "C-r",
+        "C-s",
+        "C-t",
+        "C-y",
+        "^c",
+        "^d",
+        "^z",
+        "^a",
+        "^e",
+        "^k",
+        "^l",
+        "^u",
+        "^w",
+        "^r",
+        "^s",
+        "^t",
+        "^y",
+    }
+    SPECIAL_KEYS: ClassVar[set[str]] = {
+        "Enter",
+        "Escape",
+        "Space",
+        "Tab",
+        "BTab",
+        "BSpace",
+        "DC",
+        "IC",
+        "Up",
+        "Down",
+        "Left",
+        "Right",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        "PgUp",
+        "PgDn",
+        "PPage",
+        "NPage",
+        "F1",
+        "F2",
+        "F3",
+        "F4",
+        "F5",
+        "F6",
+        "F7",
+        "F8",
+        "F9",
+        "F10",
+        "F11",
+        "F12",
+    }
+
     @classmethod
     def _get_token_color(cls, token_type: Any) -> str | None:
         colors = _get_style_colors()
@@ -30,137 +94,66 @@ class TerminalRenderer(BaseToolRenderer):
         return None
 
     @classmethod
-    def _highlight_bash(cls, code: str) -> str:
+    def _highlight_bash(cls, code: str) -> Text:
         lexer = get_lexer_by_name("bash")
-        result_parts: list[str] = []
+        text = Text()
 
         for token_type, token_value in lexer.get_tokens(code):
             if not token_value:
                 continue
-
-            escaped_value = cls.escape_markup(token_value)
             color = cls._get_token_color(token_type)
+            text.append(token_value, style=color)
 
-            if color:
-                result_parts.append(f"[{color}]{escaped_value}[/]")
-            else:
-                result_parts.append(escaped_value)
-
-        return "".join(result_parts)
+        return text
 
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
-        result = tool_data.get("result", {})
 
         command = args.get("command", "")
         is_input = args.get("is_input", False)
-        terminal_id = args.get("terminal_id", "default")
-        timeout = args.get("timeout")
 
-        content = cls._build_sleek_content(command, is_input, terminal_id, timeout, result)
+        content = cls._build_content(command, is_input)
 
         css_classes = cls.get_css_classes(status)
         return Static(content, classes=css_classes)
 
     @classmethod
-    def _build_sleek_content(
-        cls,
-        command: str,
-        is_input: bool,
-        terminal_id: str,  # noqa: ARG003
-        timeout: float | None,  # noqa: ARG003
-        result: dict[str, Any],  # noqa: ARG003
-    ) -> str:
+    def _build_content(cls, command: str, is_input: bool) -> Text:
+        text = Text()
         terminal_icon = ">_"
 
         if not command.strip():
-            return f"{terminal_icon} [dim]getting logs...[/]"
-
-        control_sequences = {
-            "C-c",
-            "C-d",
-            "C-z",
-            "C-a",
-            "C-e",
-            "C-k",
-            "C-l",
-            "C-u",
-            "C-w",
-            "C-r",
-            "C-s",
-            "C-t",
-            "C-y",
-            "^c",
-            "^d",
-            "^z",
-            "^a",
-            "^e",
-            "^k",
-            "^l",
-            "^u",
-            "^w",
-            "^r",
-            "^s",
-            "^t",
-            "^y",
-        }
-        special_keys = {
-            "Enter",
-            "Escape",
-            "Space",
-            "Tab",
-            "BTab",
-            "BSpace",
-            "DC",
-            "IC",
-            "Up",
-            "Down",
-            "Left",
-            "Right",
-            "Home",
-            "End",
-            "PageUp",
-            "PageDown",
-            "PgUp",
-            "PgDn",
-            "PPage",
-            "NPage",
-            "F1",
-            "F2",
-            "F3",
-            "F4",
-            "F5",
-            "F6",
-            "F7",
-            "F8",
-            "F9",
-            "F10",
-            "F11",
-            "F12",
-        }
+            text.append(terminal_icon)
+            text.append(" ")
+            text.append("getting logs...", style="dim")
+            return text
 
         is_special = (
-            command in control_sequences
-            or command in special_keys
+            command in cls.CONTROL_SEQUENCES
+            or command in cls.SPECIAL_KEYS
             or command.startswith(("M-", "S-", "C-S-", "C-M-", "S-M-"))
         )
 
+        text.append(terminal_icon)
+        text.append(" ")
+
         if is_special:
-            return f"{terminal_icon} [#ef4444]{cls.escape_markup(command)}[/]"
+            text.append(command, style="#ef4444")
+        elif is_input:
+            text.append(">>>", style="#3b82f6")
+            text.append(" ")
+            text.append_text(cls._format_command(command))
+        else:
+            text.append("$", style="#22c55e")
+            text.append(" ")
+            text.append_text(cls._format_command(command))
 
-        if is_input:
-            formatted_command = cls._format_command_display(command)
-            return f"{terminal_icon} [#3b82f6]>>>[/] {formatted_command}"
-
-        formatted_command = cls._format_command_display(command)
-        return f"{terminal_icon} [#22c55e]$[/] {formatted_command}"
+        return text
 
     @classmethod
-    def _format_command_display(cls, command: str) -> str:
-        if not command:
-            return ""
-
-        cmd_display = command[:2000] + "..." if len(command) > 2000 else command
-        return cls._highlight_bash(cmd_display)
+    def _format_command(cls, command: str) -> Text:
+        if len(command) > 2000:
+            command = command[:2000] + "..."
+        return cls._highlight_bash(command)

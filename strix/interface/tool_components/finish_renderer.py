@@ -1,5 +1,6 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -18,14 +19,20 @@ class FinishScanRenderer(BaseToolRenderer):
         content = args.get("content", "")
         success = args.get("success", True)
 
-        header = (
-            "🏁 [bold #dc2626]Finishing Scan[/]" if success else "🏁 [bold #dc2626]Scan Failed[/]"
-        )
+        text = Text()
+        text.append("🏁 ")
+
+        if success:
+            text.append("Finishing Scan", style="bold #dc2626")
+        else:
+            text.append("Scan Failed", style="bold #dc2626")
+
+        text.append("\n  ")
 
         if content:
-            content_text = f"{header}\n  [bold]{cls.escape_markup(content)}[/]"
+            text.append(content, style="bold")
         else:
-            content_text = f"{header}\n  [dim]Generating final report...[/]"
+            text.append("Generating final report...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)

@@ -1,5 +1,6 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -15,29 +16,28 @@ class ScanStartInfoRenderer(BaseToolRenderer):
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
-
         targets = args.get("targets", [])
 
+        text = Text()
+        text.append("🚀 Starting penetration test")
+
         if len(targets) == 1:
-            target_display = cls._build_single_target_display(targets[0])
-            content = f"🚀 Starting penetration test on {target_display}"
+            text.append(" on ")
+            text.append(cls._get_target_display(targets[0]))
         elif len(targets) > 1:
-            content = f"🚀 Starting penetration test on {len(targets)} targets"
+            text.append(f" on {len(targets)} targets")
             for target_info in targets:
-                target_display = cls._build_single_target_display(target_info)
-                content += f"\n   • {target_display}"
-        else:
-            content = "🚀 Starting penetration test"
+                text.append("\n   • ")
+                text.append(cls._get_target_display(target_info))
 
         css_classes = cls.get_css_classes(status)
-        return Static(content, classes=css_classes)
+        return Static(text, classes=css_classes)
 
     @classmethod
-    def _build_single_target_display(cls, target_info: dict[str, Any]) -> str:
+    def _get_target_display(cls, target_info: dict[str, Any]) -> str:
         original = target_info.get("original")
         if original:
-            return cls.escape_markup(str(original))
-
+            return str(original)
         return "unknown target"
 
 
@@ -51,14 +51,16 @@ class SubagentStartInfoRenderer(BaseToolRenderer):
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
 
-        name = args.get("name", "Unknown Agent")
-        task = args.get("task", "")
+        name = str(args.get("name", "Unknown Agent"))
+        task = str(args.get("task", ""))
 
-        name = cls.escape_markup(str(name))
-        content = f"🤖 Spawned subagent {name}"
+        text = Text()
+        text.append("🤖 Spawned subagent ")
+        text.append(name)
+
         if task:
-            task = cls.escape_markup(str(task))
-            content += f"\n    Task: {task}"
+            text.append("\n    Task: ")
+            text.append(task)
 
         css_classes = cls.get_css_classes(status)
-        return Static(content, classes=css_classes)
+        return Static(text, classes=css_classes)

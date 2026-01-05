@@ -4,6 +4,7 @@ from typing import Any, ClassVar
 from pygments.lexers import get_lexer_by_name, get_lexer_for_filename
 from pygments.styles import get_style_by_name
 from pygments.util import ClassNotFound
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -38,23 +39,17 @@ class StrReplaceEditorRenderer(BaseToolRenderer):
         return None
 
     @classmethod
-    def _highlight_code(cls, code: str, path: str) -> str:
+    def _highlight_code(cls, code: str, path: str) -> Text:
         lexer = _get_lexer_for_file(path)
-        result_parts: list[str] = []
+        text = Text()
 
         for token_type, token_value in lexer.get_tokens(code):
             if not token_value:
                 continue
-
-            escaped_value = cls.escape_markup(token_value)
             color = cls._get_token_color(token_type)
+            text.append(token_value, style=color)
 
-            if color:
-                result_parts.append(f"[{color}]{escaped_value}[/]")
-            else:
-                result_parts.append(escaped_value)
-
-        return "".join(result_parts)
+        return text
 
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
@@ -67,48 +62,64 @@ class StrReplaceEditorRenderer(BaseToolRenderer):
         new_str = args.get("new_str", "")
         file_text = args.get("file_text", "")
 
-        if command == "view":
-            header = "📖 [bold #10b981]Reading file[/]"
-        elif command == "str_replace":
-            header = "✏️ [bold #10b981]Editing file[/]"
-        elif command == "create":
-            header = "📝 [bold #10b981]Creating file[/]"
-        elif command == "insert":
-            header = "✏️ [bold #10b981]Inserting text[/]"
-        elif command == "undo_edit":
-            header = "↩️ [bold #10b981]Undoing edit[/]"
-        else:
-            header = "📄 [bold #10b981]File operation[/]"
+        text = Text()
 
-        path_display = path[-60:] if len(path) > 60 else path
-        content_parts = [f"{header} [dim]{cls.escape_markup(path_display)}[/]"]
+        icons_and_labels = {
+            "view": ("📖 ", "Reading file", "#10b981"),
+            "str_replace": ("✏️ ", "Editing file", "#10b981"),
+            "create": ("📝 ", "Creating file", "#10b981"),
+            "insert": ("✏️ ", "Inserting text", "#10b981"),
+            "undo_edit": ("↩️ ", "Undoing edit", "#10b981"),
+        }
+
+        icon, label, color = icons_and_labels.get(command, ("📄 ", "File operation", "#10b981"))
+        text.append(icon)
+        text.append(label, style=f"bold {color}")
+
+        if path:
+            path_display = path[-60:] if len(path) > 60 else path
+            text.append(" ")
+            text.append(path_display, style="dim")
 
         if command == "str_replace" and (old_str or new_str):
             if old_str:
-                old_display = old_str[:1000] + "..." if len(old_str) > 1000 else old_str
+                old_display = cls.truncate(old_str, 1000)
                 highlighted_old = cls._highlight_code(old_display, path)
-                old_lines = highlighted_old.split("\n")
-                content_parts.extend(f"[#ef4444]-[/] {line}" for line in old_lines)
-            if new_str:
-                new_display = new_str[:1000] + "..." if len(new_str) > 1000 else new_str
-                highlighted_new = cls._highlight_code(new_display, path)
-                new_lines = highlighted_new.split("\n")
-                content_parts.extend(f"[#22c55e]+[/] {line}" for line in new_lines)
-        elif command == "create" and file_text:
-            text_display = file_text[:1500] + "..." if len(file_text) > 1500 else file_text
-            highlighted_text = cls._highlight_code(text_display, path)
-            content_parts.append(highlighted_text)
-        elif command == "insert" and new_str:
-            new_display = new_str[:1000] + "..." if len(new_str) > 1000 else new_str
-            highlighted_new = cls._highlight_code(new_display, path)
-            new_lines = highlighted_new.split("\n")
-            content_parts.extend(f"[#22c55e]+[/] {line}" for line in new_lines)
-        elif not (result and isinstance(result, dict) and "content" in result) and not path:
-            content_parts = [f"{header} [dim]Processing...[/]"]
+                for line in highlighted_old.plain.split("\n"):
+                    text.append("\n")
+                    text.append("-", style="#ef4444")
+                    text.append(" ")
+                    text.append(line)
 
-        content_text = "\n".join(content_parts)
+            if new_str:
+                new_display = cls.truncate(new_str, 1000)
+                highlighted_new = cls._highlight_code(new_display, path)
+                for line in highlighted_new.plain.split("\n"):
+                    text.append("\n")
+                    text.append("+", style="#22c55e")
+                    text.append(" ")
+                    text.append(line)
+
+        elif command == "create" and file_text:
+            text_display = cls.truncate(file_text, 1500)
+            text.append("\n")
+            text.append_text(cls._highlight_code(text_display, path))
+
+        elif command == "insert" and new_str:
+            new_display = cls.truncate(new_str, 1000)
+            highlighted_new = cls._highlight_code(new_display, path)
+            for line in highlighted_new.plain.split("\n"):
+                text.append("\n")
+                text.append("+", style="#22c55e")
+                text.append(" ")
+                text.append(line)
+
+        elif not (result and isinstance(result, dict) and "content" in result) and not path:
+            text.append(" ")
+            text.append("Processing...", style="dim")
+
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -119,19 +130,21 @@ class ListFilesRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
-
         path = args.get("path", "")
 
-        header = "📂 [bold #10b981]Listing files[/]"
+        text = Text()
+        text.append("📂 ")
+        text.append("Listing files", style="bold #10b981")
+        text.append(" ")
 
         if path:
             path_display = path[-60:] if len(path) > 60 else path
-            content_text = f"{header} [dim]{cls.escape_markup(path_display)}[/]"
+            text.append(path_display, style="dim")
         else:
-            content_text = f"{header} [dim]Current directory[/]"
+            text.append("Current directory", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
 
 
 @register_tool_renderer
@@ -142,27 +155,31 @@ class SearchFilesRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
-
         path = args.get("path", "")
         regex = args.get("regex", "")
 
-        header = "🔍 [bold purple]Searching files[/]"
+        text = Text()
+        text.append("🔍 ")
+        text.append("Searching files", style="bold purple")
+        text.append(" ")
 
         if path and regex:
             path_display = path[-30:] if len(path) > 30 else path
             regex_display = regex[:30] if len(regex) > 30 else regex
-            content_text = (
-                f"{header} [dim]{cls.escape_markup(path_display)} for "
-                f"'{cls.escape_markup(regex_display)}'[/]"
-            )
+            text.append(path_display, style="dim")
+            text.append(" for '", style="dim")
+            text.append(regex_display, style="dim")
+            text.append("'", style="dim")
         elif path:
             path_display = path[-60:] if len(path) > 60 else path
-            content_text = f"{header} [dim]{cls.escape_markup(path_display)}[/]"
+            text.append(path_display, style="dim")
         elif regex:
             regex_display = regex[:60] if len(regex) > 60 else regex
-            content_text = f"{header} [dim]'{cls.escape_markup(regex_display)}'[/]"
+            text.append("'", style="dim")
+            text.append(regex_display, style="dim")
+            text.append("'", style="dim")
         else:
-            content_text = f"{header} [dim]Searching...[/]"
+            text.append("Searching...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)

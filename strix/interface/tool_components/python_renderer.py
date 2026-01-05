@@ -3,6 +3,7 @@ from typing import Any, ClassVar
 
 from pygments.lexers import PythonLexer
 from pygments.styles import get_style_by_name
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -30,23 +31,17 @@ class PythonRenderer(BaseToolRenderer):
         return None
 
     @classmethod
-    def _highlight_python(cls, code: str) -> str:
+    def _highlight_python(cls, code: str) -> Text:
         lexer = PythonLexer()
-        result_parts: list[str] = []
+        text = Text()
 
         for token_type, token_value in lexer.get_tokens(code):
             if not token_value:
                 continue
-
-            escaped_value = cls.escape_markup(token_value)
             color = cls._get_token_color(token_type)
+            text.append(token_value, style=color)
 
-            if color:
-                result_parts.append(f"[{color}]{escaped_value}[/]")
-            else:
-                result_parts.append(escaped_value)
-
-        return "".join(result_parts)
+        return text
 
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
@@ -55,18 +50,23 @@ class PythonRenderer(BaseToolRenderer):
         action = args.get("action", "")
         code = args.get("code", "")
 
-        header = "</> [bold #3b82f6]Python[/]"
+        text = Text()
+        text.append("</> ")
+        text.append("Python", style="bold #3b82f6")
+        text.append("\n")
 
         if code and action in ["new_session", "execute"]:
-            code_display = code[:2000] + "..." if len(code) > 2000 else code
-            highlighted_code = cls._highlight_python(code_display)
-            content_text = f"{header}\n{highlighted_code}"
+            code_display = cls.truncate(code, 2000)
+            text.append_text(cls._highlight_python(code_display))
         elif action == "close":
-            content_text = f"{header}\n  [dim]Closing session...[/]"
+            text.append("  ")
+            text.append("Closing session...", style="dim")
         elif action == "list_sessions":
-            content_text = f"{header}\n  [dim]Listing sessions...[/]"
+            text.append("  ")
+            text.append("Listing sessions...", style="dim")
         else:
-            content_text = f"{header}\n  [dim]Running...[/]"
+            text.append("  ")
+            text.append("Running...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)

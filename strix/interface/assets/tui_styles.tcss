@@ -48,7 +48,7 @@ Screen {
 #agents_tree {
     height: 1fr;
     background: transparent;
-    border: round #1a1a1a;
+    border: round #333333;
     border-title-color: #a8a29e;
     border-title-style: bold;
     padding: 1;

@@ -1,5 +1,6 @@
 from typing import Any, ClassVar
 
+from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
@@ -16,13 +17,13 @@ class WebSearchRenderer(BaseToolRenderer):
         args = tool_data.get("args", {})
         query = args.get("query", "")
 
-        header = "🌐 [bold #60a5fa]Searching the web...[/]"
+        text = Text()
+        text.append("🌐 ")
+        text.append("Searching the web...", style="bold #60a5fa")
 
         if query:
-            query_display = query[:100] + "..." if len(query) > 100 else query
-            content_text = f"{header}\n  [dim]{cls.escape_markup(query_display)}[/]"
-        else:
-            content_text = f"{header}"
+            text.append("\n  ")
+            text.append(cls.truncate(query, 100), style="dim")
 
         css_classes = cls.get_css_classes("completed")
-        return Static(content_text, classes=css_classes)
+        return Static(text, classes=css_classes)
