@@ -349,6 +349,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._agent_dot_states: dict[str, float] = {}  # agent_id -> shine position
         self._dot_animation_timer: Any | None = None
 
+        self._last_streaming_content: dict[str, str] = {}
+        self._streaming_update_counter: int = 0
+
         self._setup_cleanup_handlers()
 
     def _build_scan_config(self, args: argparse.Namespace) -> dict[str, Any]:
@@ -491,7 +494,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._start_scan_thread()
 
-        self.set_interval(0.1, self._update_ui_from_tracer)
+        self.set_interval(0.25, self._update_ui_from_tracer)
 
     def _update_ui_from_tracer(self) -> None:
         if self.show_splash:
@@ -570,11 +573,51 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         return False
 
-    def _update_chat_view(self) -> None:
-        if len(self.screen_stack) > 1 or self.show_splash:
-            return
+    def _should_skip_streaming_update(self, streaming: str, current_event_ids: list[str]) -> bool:
+        streaming_hash = str(len(streaming))
+        last_hash = self._last_streaming_content.get(self.selected_agent_id or "", "")
+        self._streaming_update_counter += 1
 
-        if not self.is_mounted:
+        if (
+            streaming_hash == last_hash
+            and self._streaming_update_counter % 4 != 0
+            and current_event_ids == self._displayed_events
+        ):
+            return True
+
+        if self.selected_agent_id:
+            self._last_streaming_content[self.selected_agent_id] = streaming_hash
+        return False
+
+    def _get_chat_content(
+        self,
+    ) -> tuple[Text | None, str | None]:
+        if not self.selected_agent_id:
+            return self._get_chat_placeholder_content(
+                "Select an agent from the tree to see its activity.", "placeholder-no-agent"
+            )
+
+        events = self._gather_agent_events(self.selected_agent_id)
+        streaming = self.tracer.get_streaming_content(self.selected_agent_id)
+
+        if not events and not streaming:
+            return self._get_chat_placeholder_content(
+                "Starting agent...", "placeholder-no-activity"
+            )
+
+        current_event_ids = [e["id"] for e in events]
+
+        if streaming:
+            if self._should_skip_streaming_update(streaming, current_event_ids):
+                return None, None
+        elif current_event_ids == self._displayed_events:
+            return None, None
+
+        self._displayed_events = current_event_ids
+        return self._get_rendered_events_content(events), "chat-content"
+
+    def _update_chat_view(self) -> None:
+        if len(self.screen_stack) > 1 or self.show_splash or not self.is_mounted:
             return
 
         try:
@@ -590,24 +633,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         except (AttributeError, ValueError):
             is_at_bottom = True
 
-        if not self.selected_agent_id:
-            content, css_class = self._get_chat_placeholder_content(
-                "Select an agent from the tree to see its activity.", "placeholder-no-agent"
-            )
-        else:
-            events = self._gather_agent_events(self.selected_agent_id)
-            streaming = self.tracer.get_streaming_content(self.selected_agent_id)
-            if not events and not streaming:
-                content, css_class = self._get_chat_placeholder_content(
-                    "Starting agent...", "placeholder-no-activity"
-                )
-            else:
-                current_event_ids = [e["id"] for e in events]
-                if current_event_ids == self._displayed_events and not streaming:
-                    return
-                content = self._get_rendered_events_content(events)
-                css_class = "chat-content"
-                self._displayed_events = current_event_ids
+        content, css_class = self._get_chat_content()
+        if content is None:
+            return
 
         chat_display = self.query_one("#chat_display", Static)
         self._safe_widget_operation(chat_display.update, content)
@@ -895,7 +923,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _start_dot_animation(self) -> None:
         if self._dot_animation_timer is None:
-            self._dot_animation_timer = self.set_interval(0.008, self._animate_dots)
+            self._dot_animation_timer = self.set_interval(0.05, self._animate_dots)
 
     def _stop_dot_animation(self) -> None:
         if self._dot_animation_timer is not None:
@@ -905,28 +933,29 @@ class StrixTUIApp(App):  # type: ignore[misc]
     def _animate_dots(self) -> None:
         has_active_agents = False
 
-        for agent_id, agent_data in list(self.tracer.agents.items()):
+        if self.selected_agent_id and self.selected_agent_id in self.tracer.agents:
+            agent_data = self.tracer.agents[self.selected_agent_id]
             status = agent_data.get("status", "running")
             if status in ["running", "waiting"]:
                 has_active_agents = True
                 if status == "waiting":
                     verb = "Waiting"
-                elif self._agent_has_real_activity(agent_id):
-                    verb = self._get_agent_verb(agent_id)
+                elif self._agent_has_real_activity(self.selected_agent_id):
+                    verb = self._get_agent_verb(self.selected_agent_id)
                 else:
                     verb = "Initializing Agent"
                 text_len = len(verb)
-                current_shine = self._agent_dot_states.get(agent_id, 0.0)
-                self._agent_dot_states[agent_id] = (current_shine + 0.12) % (text_len + 3)
-
-        if (
-            has_active_agents
-            and self.selected_agent_id
-            and self.selected_agent_id in self.tracer.agents
-        ):
-            selected_status = self.tracer.agents[self.selected_agent_id].get("status", "running")
-            if selected_status in ["running", "waiting"]:
+                current_shine = self._agent_dot_states.get(self.selected_agent_id, 0.0)
+                self._agent_dot_states[self.selected_agent_id] = (current_shine + 0.5) % (
+                    text_len + 3
+                )
                 self._update_agent_status_display()
+
+        if not has_active_agents:
+            has_active_agents = any(
+                agent_data.get("status", "running") in ["running", "waiting"]
+                for agent_data in self.tracer.agents.values()
+            )
 
         if not has_active_agents:
             self._stop_dot_animation()
