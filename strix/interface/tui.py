@@ -1161,6 +1161,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
     def _render_chat_content(self, msg_data: dict[str, Any]) -> Text | None:
         role = msg_data.get("role")
         content = msg_data.get("content", "")
+        metadata = msg_data.get("metadata", {})
 
         if not content:
             return None
@@ -1169,6 +1170,13 @@ class StrixTUIApp(App):  # type: ignore[misc]
             from strix.interface.tool_components.user_message_renderer import UserMessageRenderer
 
             return UserMessageRenderer.render_simple(content)
+
+        if metadata.get("interrupted"):
+            result = self._render_streaming_content(content)
+            result.append("\n")
+            result.append("⚠ ", style="yellow")
+            result.append("Interrupted by user", style="yellow dim")
+            return result
 
         from strix.interface.tool_components.agent_message_renderer import AgentMessageRenderer
 
@@ -1261,6 +1269,28 @@ class StrixTUIApp(App):  # type: ignore[misc]
     def _send_user_message(self, message: str) -> None:
         if not self.selected_agent_id:
             return
+
+        if self.tracer:
+            streaming_content = self.tracer.get_streaming_content(self.selected_agent_id)
+            if streaming_content and streaming_content.strip():
+                self.tracer.clear_streaming_content(self.selected_agent_id)
+                self.tracer.interrupted_content[self.selected_agent_id] = streaming_content
+                self.tracer.log_chat_message(
+                    content=streaming_content,
+                    role="assistant",
+                    agent_id=self.selected_agent_id,
+                    metadata={"interrupted": True},
+                )
+
+        try:
+            from strix.tools.agents_graph.agents_graph_actions import _agent_instances
+
+            if self.selected_agent_id in _agent_instances:
+                agent_instance = _agent_instances[self.selected_agent_id]
+                if hasattr(agent_instance, "cancel_current_execution"):
+                    agent_instance.cancel_current_execution()
+        except (ImportError, AttributeError, KeyError):
+            pass
 
         if self.tracer:
             self.tracer.log_chat_message(

@@ -148,7 +148,7 @@ class BaseAgent(metaclass=AgentMeta):
     def cancel_current_execution(self) -> None:
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
-            self._current_task = None
+        self._current_task = None
 
     async def agent_loop(self, task: str) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
         await self._initialize_sandbox_and_state(task)
@@ -204,7 +204,11 @@ class BaseAgent(metaclass=AgentMeta):
                 self.state.add_message("user", final_warning_msg)
 
             try:
-                should_finish = await self._process_iteration(tracer)
+                iteration_task = asyncio.create_task(self._process_iteration(tracer))
+                self._current_task = iteration_task
+                should_finish = await iteration_task
+                self._current_task = None
+
                 if should_finish:
                     if self.non_interactive:
                         self.state.set_completed({"success": True})
@@ -215,6 +219,13 @@ class BaseAgent(metaclass=AgentMeta):
                     continue
 
             except asyncio.CancelledError:
+                self._current_task = None
+                if tracer:
+                    partial_content = tracer.finalize_streaming_as_interrupted(self.state.agent_id)
+                    if partial_content and partial_content.strip():
+                        self.state.add_message(
+                            "assistant", f"{partial_content}\n\n[ABORTED BY USER]"
+                        )
                 if self.non_interactive:
                     raise
                 await self._enter_waiting_state(tracer, error_occurred=False, was_cancelled=True)

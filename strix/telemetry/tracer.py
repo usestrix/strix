@@ -34,6 +34,7 @@ class Tracer:
         self.tool_executions: dict[int, dict[str, Any]] = {}
         self.chat_messages: list[dict[str, Any]] = []
         self.streaming_content: dict[str, str] = {}
+        self.interrupted_content: dict[str, str] = {}
 
         self.vulnerability_reports: list[dict[str, Any]] = []
         self.final_scan_result: str | None = None
@@ -342,6 +343,20 @@ class Tracer:
 
     def get_streaming_content(self, agent_id: str) -> str | None:
         return self.streaming_content.get(agent_id)
+
+    def finalize_streaming_as_interrupted(self, agent_id: str) -> str | None:
+        content = self.streaming_content.pop(agent_id, None)
+        if content and content.strip():
+            self.interrupted_content[agent_id] = content
+            self.log_chat_message(
+                content=content,
+                role="assistant",
+                agent_id=agent_id,
+                metadata={"interrupted": True},
+            )
+            return content
+
+        return self.interrupted_content.pop(agent_id, None)
 
     def cleanup(self) -> None:
         self.save_run_data(mark_complete=True)
