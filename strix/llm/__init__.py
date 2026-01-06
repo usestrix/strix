@@ -13,4 +13,5 @@ __all__ = [
 ]
 
 litellm._logging._disable_debugging()
-logging.getLogger("aiohttp").setLevel(logging.CRITICAL)
+logging.getLogger("asyncio").setLevel(logging.CRITICAL)
+logging.getLogger("asyncio").propagate = False
