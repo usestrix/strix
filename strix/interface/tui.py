@@ -555,7 +555,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
             }
 
             status_icon = status_indicators.get(status, "🔵")
-            agent_name = f"{status_icon} {agent_name_raw}"
+            vuln_count = self._agent_vulnerability_count(agent_id)
+            vuln_indicator = f" ({vuln_count})" if vuln_count > 0 else ""
+            agent_name = f"{status_icon} {agent_name_raw}{vuln_indicator}"
 
             if status == "running":
                 self._start_agent_verb_timer(agent_id)
@@ -955,6 +957,19 @@ class StrixTUIApp(App):  # type: ignore[misc]
                     return True
         return False
 
+    def _agent_vulnerability_count(self, agent_id: str) -> int:
+        count = 0
+        for _exec_id, tool_data in list(self.tracer.tool_executions.items()):
+            if tool_data.get("agent_id") == agent_id:
+                tool_name = tool_data.get("tool_name", "")
+                if tool_name == "create_vulnerability_report":
+                    status = tool_data.get("status", "")
+                    if status == "completed":
+                        result = tool_data.get("result", {})
+                        if isinstance(result, dict) and result.get("success"):
+                            count += 1
+        return count
+
     def _gather_agent_events(self, agent_id: str) -> list[dict[str, Any]]:
         chat_events = [
             {
@@ -1053,7 +1068,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         }
 
         status_icon = status_indicators.get(status, "🔵")
-        agent_name = f"{status_icon} {agent_name_raw}"
+        vuln_count = self._agent_vulnerability_count(agent_id)
+        vuln_indicator = f" ({vuln_count})" if vuln_count > 0 else ""
+        agent_name = f"{status_icon} {agent_name_raw}{vuln_indicator}"
 
         if status in ["running", "waiting"]:
             self._start_agent_verb_timer(agent_id)
@@ -1128,7 +1145,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         }
 
         status_icon = status_indicators.get(status, "🔵")
-        agent_name = f"{status_icon} {agent_name_raw}"
+        vuln_count = self._agent_vulnerability_count(agent_id)
+        vuln_indicator = f" ({vuln_count})" if vuln_count > 0 else ""
+        agent_name = f"{status_icon} {agent_name_raw}{vuln_indicator}"
 
         new_node = new_parent.add(
             agent_name,
