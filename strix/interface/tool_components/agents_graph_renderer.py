@@ -13,12 +13,14 @@ class ViewAgentGraphRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "agents-graph-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: ARG003
-        text = Text()
-        text.append("🕸️ ")
-        text.append("Viewing agents graph", style="bold #fbbf24")
+    def render(cls, tool_data: dict[str, Any]) -> Static:
+        status = tool_data.get("status", "unknown")
 
-        css_classes = cls.get_css_classes("completed")
+        text = Text()
+        text.append("◇ ", style="#a78bfa")
+        text.append("viewing agents graph", style="dim")
+
+        css_classes = cls.get_css_classes(status)
         return Static(text, classes=css_classes)
 
 
@@ -30,22 +32,21 @@ class CreateAgentRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
+        status = tool_data.get("status", "unknown")
 
         task = args.get("task", "")
         name = args.get("name", "Agent")
 
         text = Text()
-        text.append("🤖 ")
-        text.append(f"Creating {name}", style="bold #fbbf24")
+        text.append("◈ ", style="#a78bfa")
+        text.append("spawning ", style="dim")
+        text.append(name, style="bold #a78bfa")
 
         if task:
             text.append("\n  ")
             text.append(task, style="dim")
-        else:
-            text.append("\n  ")
-            text.append("Spawning agent...", style="dim")
 
-        css_classes = cls.get_css_classes("completed")
+        css_classes = cls.get_css_classes(status)
         return Static(text, classes=css_classes)
 
 
@@ -57,21 +58,23 @@ class SendMessageToAgentRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
+        status = tool_data.get("status", "unknown")
 
         message = args.get("message", "")
+        agent_id = args.get("agent_id", "")
 
         text = Text()
-        text.append("💬 ")
-        text.append("Sending message", style="bold #fbbf24")
+        text.append("→ ", style="#60a5fa")
+        if agent_id:
+            text.append(f"to {agent_id}", style="dim")
+        else:
+            text.append("sending message", style="dim")
 
         if message:
             text.append("\n  ")
             text.append(message, style="dim")
-        else:
-            text.append("\n  ")
-            text.append("Sending...", style="dim")
 
-        css_classes = cls.get_css_classes("completed")
+        css_classes = cls.get_css_classes(status)
         return Static(text, classes=css_classes)
 
 
@@ -120,19 +123,17 @@ class WaitForMessageRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
+        status = tool_data.get("status", "unknown")
 
-        reason = args.get("reason", "Waiting for messages from other agents or user input")
+        reason = args.get("reason", "")
 
         text = Text()
-        text.append("⏸️ ")
-        text.append("Waiting for messages", style="bold #fbbf24")
+        text.append("○ ", style="#6b7280")
+        text.append("waiting", style="dim")
 
         if reason:
             text.append("\n  ")
             text.append(reason, style="dim")
-        else:
-            text.append("\n  ")
-            text.append("Agent paused until message received...", style="dim")
 
-        css_classes = cls.get_css_classes("completed")
+        css_classes = cls.get_css_classes(status)
         return Static(text, classes=css_classes)

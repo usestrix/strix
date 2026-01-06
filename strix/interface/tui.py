@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 from rich.align import Align
 from rich.console import Group
 from rich.panel import Panel
+from rich.spinner import SPINNERS
 from rich.style import Style
 from rich.text import Text
 from textual import events, on
@@ -346,7 +347,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
         ]
         self._agent_verbs: dict[str, str] = {}  # agent_id -> current_verb
         self._agent_verb_timers: dict[str, Any] = {}  # agent_id -> timer
-        self._agent_dot_states: dict[str, float] = {}  # agent_id -> shine position
+        self._spinner_frame_index: int = 0  # Current spinner frame index
+        self._spinner_frames: list[str] = list(SPINNERS["dots"]["frames"])  # Braille spinner frames
         self._dot_animation_timer: Any | None = None
 
         self._last_streaming_content: dict[str, str] = {}
@@ -895,30 +897,20 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if self.selected_agent_id == agent_id:
             self._update_agent_status_display()
 
-    def _get_shine_style(self, dist: float) -> Style:
-        if dist <= 0.5:
-            return Style(color="bright_white", bold=True)
-        if dist <= 1.5:
-            return Style(color="white", bold=True)
-        if dist <= 2.5:
-            return Style(color="#a3a3a3")
-        return Style(color="#525252")
-
-    def _get_animated_verb_text(self, agent_id: str, verb: str) -> Text:
-        if agent_id not in self._agent_dot_states:
-            self._agent_dot_states[agent_id] = 0.0
-
-        shine_pos = self._agent_dot_states[agent_id]
+    def _get_animated_verb_text(self, agent_id: str, verb: str) -> Text:  # noqa: ARG002
         text = Text()
-        for i, char in enumerate(verb):
-            dist = abs(i - shine_pos)
-            text.append(char, style=self._get_shine_style(dist))
-
+        spinner_char = self._spinner_frames[self._spinner_frame_index % len(self._spinner_frames)]
+        text.append(spinner_char, style=Style(color="#22c55e"))
+        text.append(" ", style=Style(color="white"))
+        text.append(verb, style=Style(color="white"))
         return text
 
     def _get_animated_waiting_text(self, agent_id: str) -> Text:  # noqa: ARG002
         text = Text()
-        text.append("Waiting", style="#fbbf24")
+        spinner_char = self._spinner_frames[self._spinner_frame_index % len(self._spinner_frames)]
+        text.append(spinner_char, style=Style(color="#fbbf24"))
+        text.append(" ", style=Style(color="white"))
+        text.append("Waiting", style=Style(color="#fbbf24"))
         return text
 
     def _start_dot_animation(self) -> None:
@@ -938,16 +930,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
             status = agent_data.get("status", "running")
             if status in ["running", "waiting"]:
                 has_active_agents = True
-                if status == "waiting":
-                    verb = "Waiting"
-                elif self._agent_has_real_activity(self.selected_agent_id):
-                    verb = self._get_agent_verb(self.selected_agent_id)
-                else:
-                    verb = "Initializing Agent"
-                text_len = len(verb)
-                current_shine = self._agent_dot_states.get(self.selected_agent_id, 0.0)
-                self._agent_dot_states[self.selected_agent_id] = (current_shine + 0.5) % (
-                    text_len + 3
+                self._spinner_frame_index = (self._spinner_frame_index + 1) % len(
+                    self._spinner_frames
                 )
                 self._update_agent_status_display()
 
@@ -959,11 +943,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         if not has_active_agents:
             self._stop_dot_animation()
-            for agent_id in list(self._agent_dot_states.keys()):
-                if agent_id not in self.tracer.agents or self.tracer.agents[agent_id].get(
-                    "status"
-                ) not in ["running", "waiting"]:
-                    del self._agent_dot_states[agent_id]
+            self._spinner_frame_index = 0
 
     def _agent_has_real_activity(self, agent_id: str) -> bool:
         initial_tools = {"scan_start_info", "subagent_start_info"}

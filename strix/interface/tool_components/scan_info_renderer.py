@@ -55,12 +55,13 @@ class SubagentStartInfoRenderer(BaseToolRenderer):
         task = str(args.get("task", ""))
 
         text = Text()
-        text.append("🤖 Spawned subagent ")
-        text.append(name)
+        text.append("◈ ", style="#a78bfa")
+        text.append("subagent ", style="dim")
+        text.append(name, style="bold #a78bfa")
 
         if task:
-            text.append("\n    Task: ")
-            text.append(task)
+            text.append("\n  ")
+            text.append(task, style="dim")
 
         css_classes = cls.get_css_classes(status)
         return Static(text, classes=css_classes)
