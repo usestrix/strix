@@ -26,7 +26,7 @@ class ListRequestsRenderer(BaseToolRenderer):
         if result and isinstance(result, dict) and "requests" in result:
             requests = result["requests"]
             if isinstance(requests, list) and requests:
-                for req in requests:
+                for req in requests[:25]:
                     if isinstance(req, dict):
                         method = req.get("method", "?")
                         path = req.get("path", "?")
@@ -34,12 +34,18 @@ class ListRequestsRenderer(BaseToolRenderer):
                         status = response.get("statusCode", "?")
                         text.append("\n  ")
                         text.append(f"{method} {path} → {status}", style="dim")
+                if len(requests) > 25:
+                    text.append("\n  ")
+                    text.append(f"... +{len(requests) - 25} more", style="dim")
             else:
                 text.append("\n  ")
                 text.append("No requests found", style="dim")
         elif httpql_filter:
+            filter_display = (
+                httpql_filter[:500] + "..." if len(httpql_filter) > 500 else httpql_filter
+            )
             text.append("\n  ")
-            text.append(httpql_filter, style="dim")
+            text.append(filter_display, style="dim")
         else:
             text.append("\n  ")
             text.append("All requests", style="dim")
@@ -67,16 +73,19 @@ class ViewRequestRenderer(BaseToolRenderer):
         if result and isinstance(result, dict):
             if "content" in result:
                 content = result["content"]
+                content_preview = content[:2000] + "..." if len(content) > 2000 else content
                 text.append("\n  ")
-                text.append(content, style="dim")
+                text.append(content_preview, style="dim")
             elif "matches" in result:
                 matches = result["matches"]
                 if isinstance(matches, list) and matches:
-                    for match in matches:
+                    for match in matches[:25]:
                         if isinstance(match, dict) and "match" in match:
                             text.append("\n  ")
                             text.append(match["match"], style="dim")
-
+                    if len(matches) > 25:
+                        text.append("\n  ")
+                        text.append(f"... +{len(matches) - 25} more matches", style="dim")
                 else:
                     text.append("\n  ")
                     text.append("No matches found", style="dim")
@@ -116,14 +125,18 @@ class SendRequestRenderer(BaseToolRenderer):
                 text.append("\n  ")
                 text.append(f"Status: {status_code}", style="dim")
                 if response_body:
+                    body_preview = (
+                        response_body[:2000] + "..." if len(response_body) > 2000 else response_body
+                    )
                     text.append("\n  ")
-                    text.append(response_body, style="dim")
+                    text.append(body_preview, style="dim")
             else:
                 text.append("\n  ")
                 text.append("Response received", style="dim")
         elif url:
+            url_display = url[:500] + "..." if len(url) > 500 else url
             text.append("\n  ")
-            text.append(url, style="dim")
+            text.append(url_display, style="dim")
         else:
             text.append("\n  ")
             text.append("Sending...", style="dim")
@@ -156,14 +169,19 @@ class RepeatRequestRenderer(BaseToolRenderer):
                 text.append("\n  ")
                 text.append(f"Status: {status_code}", style="dim")
                 if response_body:
+                    body_preview = (
+                        response_body[:2000] + "..." if len(response_body) > 2000 else response_body
+                    )
                     text.append("\n  ")
-                    text.append(response_body, style="dim")
+                    text.append(body_preview, style="dim")
             else:
                 text.append("\n  ")
                 text.append("Response received", style="dim")
         elif modifications:
+            mod_str = str(modifications)
+            mod_display = mod_str[:500] + "..." if len(mod_str) > 500 else mod_str
             text.append("\n  ")
-            text.append(str(modifications), style="dim")
+            text.append(mod_display, style="dim")
         else:
             text.append("\n  ")
             text.append("No modifications", style="dim")
@@ -205,13 +223,15 @@ class ListSitemapRenderer(BaseToolRenderer):
         if result and isinstance(result, dict) and "entries" in result:
             entries = result["entries"]
             if isinstance(entries, list) and entries:
-                for entry in entries:
+                for entry in entries[:30]:
                     if isinstance(entry, dict):
                         label = entry.get("label", "?")
                         kind = entry.get("kind", "?")
                         text.append("\n  ")
                         text.append(f"{kind}: {label}", style="dim")
-
+                if len(entries) > 30:
+                    text.append("\n  ")
+                    text.append(f"... +{len(entries) - 30} more entries", style="dim")
             else:
                 text.append("\n  ")
                 text.append("No entries found", style="dim")
