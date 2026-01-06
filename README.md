@@ -167,6 +167,9 @@ strix --target api.your-app.com --instruction "Focus on business logic flaws and
 
 # Provide detailed instructions through file (e.g., rules of engagement, scope, exclusions)
 strix --target api.your-app.com --instruction-file ./instruction.md
+
+# Resume an interrupted scan
+strix --target https://your-app.com --run-name my-scan --resume
 ```
 
 ### 🤖 Headless Mode

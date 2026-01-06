@@ -81,12 +81,15 @@ class SplashScreen(Static):  # type: ignore[misc]
         " ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝"
     )
 
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
+    def __init__(
+        self, *args: Any, resume_info: dict[str, Any] | None = None, **kwargs: Any
+    ) -> None:
         super().__init__(*args, **kwargs)
         self._animation_step = 0
         self._animation_timer: Timer | None = None
         self._panel_static: Static | None = None
         self._version = "dev"
+        self._resume_info = resume_info
 
     def compose(self) -> ComposeResult:
         self._version = get_package_version()
@@ -116,15 +119,22 @@ class SplashScreen(Static):  # type: ignore[misc]
         self._panel_static.update(panel)
 
     def _build_panel(self, start_line: Text) -> Panel:
-        content = Group(
+        content_parts = [
             Align.center(Text(self.BANNER.strip("\n"), style=self.PRIMARY_GREEN, justify="center")),
             Align.center(Text(" ")),
             Align.center(self._build_welcome_text()),
             Align.center(self._build_version_text()),
             Align.center(self._build_tagline_text()),
-            Align.center(Text(" ")),
-            Align.center(start_line.copy()),
-        )
+        ]
+
+        if self._resume_info:
+            content_parts.append(Align.center(Text(" ")))
+            content_parts.append(Align.center(self._build_resume_text()))
+
+        content_parts.append(Align.center(Text(" ")))
+        content_parts.append(Align.center(start_line.copy()))
+
+        content = Group(*content_parts)
 
         return Panel.fit(content, border_style=self.PRIMARY_GREEN, padding=(1, 6))
 
@@ -139,6 +149,17 @@ class SplashScreen(Static):  # type: ignore[misc]
 
     def _build_tagline_text(self) -> Text:
         return Text("Open-source AI hackers for your apps", style=Style(color="white", dim=True))
+
+    def _build_resume_text(self) -> Text:
+        if not self._resume_info:
+            return Text("")
+
+        text = Text("✓ Resuming from iteration ", style=Style(color="#fbbf24", bold=True))
+        text.append(
+            f"{self._resume_info['iteration']}/{self._resume_info['max_iterations']}",
+            style=Style(color=self.PRIMARY_GREEN, bold=True),
+        )
+        return text
 
     def _build_start_line_text(self, phase: int) -> Text:
         emphasize = phase % 2 == 1
@@ -280,6 +301,51 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.scan_config = self._build_scan_config(args)
         self.agent_config = self._build_agent_config(args)
 
+        # Check for resume from checkpoint
+        from pathlib import Path
+
+        from pydantic import ValidationError
+
+        from strix.agents.state import AgentState
+        from strix.telemetry.checkpoint import can_resume, load_checkpoint
+
+        self.resume_info: dict[str, Any] | None = None
+
+        if getattr(args, "resume", False):
+            run_dir = Path.cwd() / "strix_runs" / args.run_name
+
+            if run_dir.exists() and can_resume(run_dir, self.scan_config):
+                checkpoint = load_checkpoint(run_dir)
+
+                if checkpoint:
+                    try:
+                        agent_state_data = checkpoint["agent_state"]
+                        restored_state = AgentState(**agent_state_data)
+                        self.agent_config["state"] = restored_state
+
+                        self.resume_info = {
+                            "iteration": restored_state.iteration,
+                            "max_iterations": restored_state.max_iterations,
+                        }
+
+                        import logging
+
+                        logging.info(
+                            f"Resuming from checkpoint at iteration "
+                            f"{restored_state.iteration}/{restored_state.max_iterations}"
+                        )
+
+                    except ValidationError as e:
+                        import logging
+
+                        logging.warning(f"Checkpoint validation failed: {e}. Starting fresh scan.")
+            elif getattr(args, "resume", False):
+                import logging
+
+                logging.warning(
+                    "--resume flag provided but no valid checkpoint found. Starting fresh scan."
+                )
+
         self.tracer = Tracer(self.scan_config["run_name"])
         self.tracer.set_scan_config(self.scan_config)
         set_global_tracer(self.tracer)
@@ -348,7 +414,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def compose(self) -> ComposeResult:
         if self.show_splash:
-            yield SplashScreen(id="splash_screen")
+            yield SplashScreen(id="splash_screen", resume_info=self.resume_info)
 
     def watch_show_splash(self, show_splash: bool) -> None:
         if not show_splash and self.is_mounted:

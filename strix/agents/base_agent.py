@@ -205,6 +205,24 @@ class BaseAgent(metaclass=AgentMeta):
 
             try:
                 should_finish = await self._process_iteration(tracer)
+
+                # Save checkpoint after successful iteration
+                try:
+                    from strix.telemetry.checkpoint import save_checkpoint
+                    from strix.telemetry.tracer import get_global_tracer
+
+                    tracer_instance = get_global_tracer()
+                    if tracer_instance and hasattr(self, "state"):
+                        run_dir = tracer_instance.get_run_dir()
+                        scan_config = tracer_instance.scan_config or {}
+                        save_checkpoint(run_dir, self.state, scan_config)
+                except Exception as exc:  # noqa: BLE001
+                    logger.debug(
+                        "Checkpoint save failed (non-fatal): %s",
+                        exc,
+                        exc_info=True,
+                    )
+
                 if should_finish:
                     if self.non_interactive:
                         self.state.set_completed({"success": True})

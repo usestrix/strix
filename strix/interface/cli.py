@@ -17,7 +17,7 @@ from strix.telemetry.tracer import Tracer, set_global_tracer
 from .utils import build_final_stats_text, build_live_stats_text, get_severity_color
 
 
-async def run_cli(args: Any) -> None:  # noqa: PLR0915
+async def run_cli(args: Any) -> None:  # noqa: PLR0915, PLR0912
     console = Console()
 
     start_text = Text()
@@ -84,6 +84,64 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     if getattr(args, "local_sources", None):
         agent_config["local_sources"] = args.local_sources
+
+    # Check for resume from checkpoint
+    from pathlib import Path
+
+    from pydantic import ValidationError
+
+    from strix.agents.state import AgentState
+    from strix.telemetry.checkpoint import can_resume, load_checkpoint
+
+    resume_from_checkpoint = False
+    restored_state = None
+
+    if getattr(args, "resume", False):
+        run_dir = Path.cwd() / "strix_runs" / args.run_name
+
+        if run_dir.exists() and can_resume(run_dir, scan_config):
+            checkpoint = load_checkpoint(run_dir)
+
+            if checkpoint:
+                try:
+                    agent_state_data = checkpoint["agent_state"]
+                    restored_state = AgentState(**agent_state_data)
+                    resume_from_checkpoint = True
+
+                    console.print()
+                    resume_text = Text()
+                    resume_text.append("✓ ", style="bold green")
+                    resume_text.append("Resuming from checkpoint at iteration ", style="green")
+                    resume_text.append(
+                        f"{restored_state.iteration}/{restored_state.max_iterations}",
+                        style="bold green",
+                    )
+                    console.print(resume_text)
+                    console.print()
+
+                except ValidationError as e:
+                    warn_text = Text()
+                    warn_text.append("⚠ ", style="bold yellow")
+                    warn_text.append(
+                        f"Checkpoint validation failed: {e}. Starting fresh scan.", style="yellow"
+                    )
+                    console.print()
+                    console.print(warn_text)
+                    console.print()
+        elif getattr(args, "resume", False):
+            warn_text = Text()
+            warn_text.append("⚠ ", style="bold yellow")
+            warn_text.append(
+                "--resume flag provided but no valid checkpoint found. Starting fresh scan.",
+                style="yellow",
+            )
+            console.print()
+            console.print(warn_text)
+            console.print()
+
+    # Add restored state to agent config if resuming
+    if resume_from_checkpoint and restored_state:
+        agent_config["state"] = restored_state
 
     tracer = Tracer(args.run_name)
     tracer.set_scan_config(scan_config)

@@ -343,6 +343,16 @@ Examples:
         ),
     )
 
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help=(
+            "Resume an interrupted scan from checkpoint. "
+            "Requires --run-name to match the interrupted scan. "
+            "If no valid checkpoint is found, starts a fresh scan."
+        ),
+    )
+
     args = parser.parse_args()
 
     if args.instruction and args.instruction_file:

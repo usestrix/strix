@@ -208,6 +208,19 @@ class Tracer:
             if mark_complete:
                 self.end_time = datetime.now(UTC).isoformat()
 
+                # Only delete checkpoint if scan actually completed successfully
+                # (not just cleanup on exit/interrupt)
+                if self.scan_results and self.scan_results.get("scan_completed"):
+                    try:
+                        from strix.telemetry.checkpoint import delete_checkpoint
+
+                        delete_checkpoint(run_dir)
+                        logger.info("Deleted checkpoint after successful scan completion")
+                    except Exception:  # noqa: BLE001
+                        logger.debug(
+                            "Checkpoint cleanup failed (non-fatal)"
+                        )  # Checkpoint cleanup failure is not critical
+
             if self.final_scan_result:
                 penetration_test_report_file = run_dir / "penetration_test_report.md"
                 with penetration_test_report_file.open("w", encoding="utf-8") as f:
