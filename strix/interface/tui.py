@@ -522,7 +522,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 agent_updates = True
 
         if agent_updates:
-            self._expand_all_agent_nodes()
+            self._expand_new_agent_nodes()
 
         self._update_chat_view()
 
@@ -1077,6 +1077,13 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
             logging.warning(f"Failed to add agent node {agent_id}: {e}")
 
+    def _expand_new_agent_nodes(self) -> None:
+        if len(self.screen_stack) > 1 or self.show_splash:
+            return
+
+        if not self.is_mounted:
+            return
+
     def _expand_all_agent_nodes(self) -> None:
         if len(self.screen_stack) > 1 or self.show_splash:
             return
@@ -1156,7 +1163,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 old_node.remove()
 
         parent_node.allow_expand = True
-        self._expand_all_agent_nodes()
+        parent_node.expand()
 
     def _render_chat_content(self, msg_data: dict[str, Any]) -> Text | None:
         role = msg_data.get("role")
@@ -1265,6 +1272,22 @@ class StrixTUIApp(App):  # type: ignore[misc]
             agent_id = node.data.get("agent_id")
             if agent_id:
                 self.selected_agent_id = agent_id
+
+    @on(Tree.NodeSelected)  # type: ignore[misc]
+    def handle_tree_node_selected(self, event: Tree.NodeSelected) -> None:
+        if len(self.screen_stack) > 1 or self.show_splash:
+            return
+
+        if not self.is_mounted:
+            return
+
+        node = event.node
+
+        if node.allow_expand:
+            if node.is_expanded:
+                node.collapse()
+            else:
+                node.expand()
 
     def _send_user_message(self, message: str) -> None:
         if not self.selected_agent_id:

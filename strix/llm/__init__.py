@@ -1,3 +1,5 @@
+import logging
+
 import litellm
 
 from .config import LLMConfig
@@ -11,3 +13,4 @@ __all__ = [
 ]
 
 litellm._logging._disable_debugging()
+logging.getLogger("aiohttp").setLevel(logging.CRITICAL)
