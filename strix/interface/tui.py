@@ -351,9 +351,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._spinner_frames: list[str] = list(SPINNERS["dots"]["frames"])  # Braille spinner frames
         self._dot_animation_timer: Any | None = None
 
-        self._last_streaming_content: dict[str, str] = {}
-        self._streaming_update_counter: int = 0
-
         self._setup_cleanup_handlers()
 
     def _build_scan_config(self, args: argparse.Namespace) -> dict[str, Any]:
@@ -577,22 +574,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         return False
 
-    def _should_skip_streaming_update(self, streaming: str, current_event_ids: list[str]) -> bool:
-        streaming_hash = str(len(streaming))
-        last_hash = self._last_streaming_content.get(self.selected_agent_id or "", "")
-        self._streaming_update_counter += 1
-
-        if (
-            streaming_hash == last_hash
-            and self._streaming_update_counter % 4 != 0
-            and current_event_ids == self._displayed_events
-        ):
-            return True
-
-        if self.selected_agent_id:
-            self._last_streaming_content[self.selected_agent_id] = streaming_hash
-        return False
-
     def _get_chat_content(
         self,
     ) -> tuple[Text | None, str | None]:
@@ -611,10 +592,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         current_event_ids = [e["id"] for e in events]
 
-        if streaming:
-            if self._should_skip_streaming_update(streaming, current_event_ids):
-                return None, None
-        elif current_event_ids == self._displayed_events:
+        if not streaming and current_event_ids == self._displayed_events:
             return None, None
 
         self._displayed_events = current_event_ids
