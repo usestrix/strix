@@ -404,6 +404,47 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
     return local_sources
 
 
+def _is_localhost_host(host: str) -> bool:
+    host_lower = host.lower().strip("[]")
+
+    if host_lower in ("localhost", "0.0.0.0", "::1"):  # nosec B104
+        return True
+
+    try:
+        ip = ipaddress.ip_address(host_lower)
+        if isinstance(ip, ipaddress.IPv4Address):
+            return ip.is_loopback  # 127.0.0.0/8
+        if isinstance(ip, ipaddress.IPv6Address):
+            return ip.is_loopback  # ::1
+    except ValueError:
+        pass
+
+    return False
+
+
+def rewrite_localhost_targets(targets_info: list[dict[str, Any]], host_gateway: str) -> None:
+    from yarl import URL  # type: ignore[import-not-found]
+
+    for target_info in targets_info:
+        target_type = target_info.get("type")
+        details = target_info.get("details", {})
+
+        if target_type == "web_application":
+            target_url = details.get("target_url", "")
+            try:
+                url = URL(target_url)
+            except (ValueError, TypeError):
+                continue
+
+            if url.host and _is_localhost_host(url.host):
+                details["target_url"] = str(url.with_host(host_gateway))
+
+        elif target_type == "ip_address":
+            target_ip = details.get("target_ip", "")
+            if target_ip and _is_localhost_host(target_ip):
+                details["target_ip"] = host_gateway
+
+
 # Repository utilities
 def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None) -> str:
     console = Console()

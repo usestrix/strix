@@ -30,9 +30,10 @@ from strix.interface.utils import (
     image_exists,
     infer_target_type,
     process_pull_line,
+    rewrite_localhost_targets,
     validate_llm_response,
 )
-from strix.runtime.docker_runtime import STRIX_IMAGE
+from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME, STRIX_IMAGE
 from strix.telemetry.tracer import get_global_tracer
 
 
@@ -377,6 +378,7 @@ Examples:
             parser.error(f"Invalid target '{target}'")
 
     assign_workspace_subdirs(args.targets_info)
+    rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
 
     return args
 

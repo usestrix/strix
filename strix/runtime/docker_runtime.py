@@ -15,6 +15,7 @@ from .runtime import AbstractRuntime, SandboxInfo
 
 
 STRIX_IMAGE = os.getenv("STRIX_IMAGE", "ghcr.io/usestrix/strix-sandbox:0.1.10")
+HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 logger = logging.getLogger(__name__)
 
 
@@ -121,7 +122,9 @@ class DockerRuntime(AbstractRuntime):
                         "CAIDO_PORT": str(caido_port),
                         "TOOL_SERVER_PORT": str(tool_server_port),
                         "TOOL_SERVER_TOKEN": tool_server_token,
+                        "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
                     },
+                    extra_hosts=self._get_extra_hosts(),
                     tty=True,
                 )
 
@@ -380,6 +383,9 @@ class DockerRuntime(AbstractRuntime):
             return parsed.hostname
 
         return "127.0.0.1"
+
+    def _get_extra_hosts(self) -> dict[str, str]:
+        return {HOST_GATEWAY_HOSTNAME: "host-gateway"}
 
     async def destroy_sandbox(self, container_id: str) -> None:
         logger.info("Destroying scan container %s", container_id)
