@@ -5,6 +5,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import platform
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -714,28 +715,54 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 # Docker utilities
 def check_docker_connection() -> Any:
     try:
-        return docker.from_env()
-    except DockerException:
-        console = Console()
-        error_text = Text()
-        error_text.append("❌ ", style="bold red")
-        error_text.append("DOCKER NOT AVAILABLE", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
-        error_text.append("Please ensure Docker is installed and running.\n\n", style="white")
-        error_text.append("Try running: ", style="dim white")
-        error_text.append("sudo systemctl start docker", style="dim cyan")
+        client = docker.from_env()
+        client.ping()
+    except (DockerException, Exception):  # noqa: S110
+        pass
+    else:
+        return client
 
-        panel = Panel(
-            error_text,
-            title="[bold red]🛡️  STRIX STARTUP ERROR",
-            title_align="center",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n", panel, "\n")
-        raise RuntimeError("Docker not available") from None
+    if platform.system() == "Darwin":
+        home = Path.home()
+        alternative_sockets = [
+            # Docker Desktop (Standard & Legacy paths)
+            f"unix://{home}/.docker/run/docker.sock",
+            f"unix://{home}/Library/Containers/com.docker.docker/Data/docker.raw.sock",
+            # OrbStack
+            f"unix://{home}/.orbstack/run/docker.sock",
+            # Colima
+            f"unix://{home}/.colima/default/docker.sock",
+        ]
 
+        for socket_path in alternative_sockets:
+            try:
+                client = docker.DockerClient(base_url=socket_path)
+                client.ping()
+
+            except (DockerException, Exception):  # noqa: S112
+                continue
+            else:
+                return client
+
+    console = Console()
+    error_text = Text()
+    error_text.append("❌ ", style="bold red")
+    error_text.append("DOCKER NOT AVAILABLE", style="bold red")
+    error_text.append("\n\n", style="white")
+    error_text.append("Cannot connect to Docker daemon.\n", style="white")
+    error_text.append("Please ensure Docker is installed and running.\n\n", style="white")
+    error_text.append("Try running:  ", style="dim white")
+    error_text.append("sudo systemctl start docker", style="dim cyan")
+
+    panel = Panel(
+        error_text,
+        title="[bold red]🛡️  STRIX STARTUP ERROR",
+        title_align="center",
+        border_style="red",
+        padding=(1, 2),
+    )
+    console.print("\n", panel, "\n")
+    raise RuntimeError("Docker not available") from None
 
 def image_exists(client: Any, image_name: str) -> bool:
     try:
