@@ -314,12 +314,6 @@ Examples:
     )
 
     parser.add_argument(
-        "--run-name",
-        type=str,
-        help="Custom name for this penetration test run",
-    )
-
-    parser.add_argument(
         "-n",
         "--non-interactive",
         action="store_true",
@@ -509,8 +503,7 @@ def main() -> None:
     validate_environment()
     asyncio.run(warm_up_llm())
 
-    if not args.run_name:
-        args.run_name = generate_run_name(args.targets_info)
+    args.run_name = generate_run_name(args.targets_info)
 
     for target_info in args.targets_info:
         if target_info["type"] == "repository":
