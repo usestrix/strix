@@ -256,11 +256,11 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
     """Modal screen to display vulnerability details."""
 
     SEVERITY_COLORS: ClassVar[dict[str, str]] = {
-        "critical": "#dc2626",
-        "high": "#ea580c",
-        "medium": "#d97706",
-        "low": "#65a30d",
-        "info": "#0284c7",
+        "critical": "#dc2626",  # Red
+        "high": "#ea580c",  # Orange
+        "medium": "#d97706",  # Amber
+        "low": "#22c55e",  # Green
+        "info": "#3b82f6",  # Blue
     }
 
     FIELD_STYLE: ClassVar[str] = "bold #4ade80"
@@ -578,7 +578,7 @@ class VulnerabilitiesPanel(VerticalScroll):  # type: ignore[misc]
     SEVERITY_COLORS: ClassVar[dict[str, str]] = {
         "critical": "#dc2626",  # Red
         "high": "#ea580c",  # Orange
-        "medium": "#eab308",  # Yellow
+        "medium": "#d97706",  # Amber
         "low": "#22c55e",  # Green
         "info": "#3b82f6",  # Blue
     }
