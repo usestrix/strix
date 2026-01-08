@@ -713,28 +713,78 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
 # Docker utilities
 def check_docker_connection() -> Any:
+    """
+    Attempt to connect to Docker using docker.from_env() first.
+    If that fails on macOS, try Docker Desktop socket locations.
+    If that also fails, fall back to /var/run/docker.sock on Linux.
+    """
+    # 1. Try normal detection (respects DOCKER_HOST)
     try:
-        return docker.from_env()
-    except DockerException:
-        console = Console()
-        error_text = Text()
-        error_text.append("❌ ", style="bold red")
-        error_text.append("DOCKER NOT AVAILABLE", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
-        error_text.append("Please ensure Docker is installed and running.\n\n", style="white")
-        error_text.append("Try running: ", style="dim white")
-        error_text.append("sudo systemctl start docker", style="dim cyan")
+        client = docker.from_env()
+        client.ping()
+        return client
+    except Exception:
+        pass  # continue to platform-specific detection
 
-        panel = Panel(
-            error_text,
-            title="[bold red]🛡️  STRIX STARTUP ERROR",
-            title_align="center",
-            border_style="red",
-            padding=(1, 2),
+    console = Console()
+
+    # 2. Platform-aware fallback
+    system = sys.platform
+
+    macos_candidates = [
+        Path.home() / "Library/Containers/com.docker.docker/Data/docker.raw.sock",
+        Path.home() / ".docker/run/docker.sock",
+        Path("/var/run/docker.sock"),
+    ]
+
+    linux_candidates = [
+        Path("/var/run/docker.sock"),
+        Path("/run/docker.sock"),
+    ]
+
+    candidates = macos_candidates if system == "darwin" else linux_candidates
+
+    last_error = None
+    for sock in candidates:
+        try:
+            if sock.exists():
+                client = docker.DockerClient(base_url=f"unix://{sock}")
+                client.ping()
+                return client
+        except Exception as e:
+            last_error = e
+
+    # 3. If still failing → show clean error panel
+    error_text = Text()
+    error_text.append("❌ ", style="bold red")
+    error_text.append("DOCKER NOT AVAILABLE", style="bold red")
+    error_text.append("\n\n", style="white")
+    error_text.append("Could not connect to Docker daemon.\n", style="white")
+    error_text.append("Sockets tried:\n", style="white")
+
+    for s in candidates:
+        error_text.append(f" - {s}\n", style="dim white")
+
+    if system == "darwin":
+        error_text.append(
+            "\nOn macOS, ensure Docker Desktop is running.\n", style="white"
         )
-        console.print("\n", panel, "\n")
-        raise RuntimeError("Docker not available") from None
+    else:
+        error_text.append(
+            "\nTry running: sudo systemctl start docker\n", style="dim cyan"
+        )
+
+    panel = Panel(
+        error_text,
+        title="[bold red]🛡️  STRIX STARTUP ERROR",
+        title_align="center",
+        border_style="red",
+        padding=(1, 2),
+    )
+    console.print("\n", panel, "\n")
+
+    raise RuntimeError(f"Docker not available: {last_error}") from None
+
 
 
 def image_exists(client: Any, image_name: str) -> bool:
