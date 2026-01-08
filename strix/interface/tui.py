@@ -592,7 +592,7 @@ class VulnerabilitiesPanel(VerticalScroll):  # type: ignore[misc]
 
     def update_vulnerabilities(self, vulnerabilities: list[dict[str, Any]]) -> None:
         """Update the list of vulnerabilities and re-render."""
-        if len(self._vulnerabilities) == len(vulnerabilities):
+        if self._vulnerabilities == vulnerabilities:
             return
         self._vulnerabilities = list(vulnerabilities)
         self._render_panel()
