@@ -947,7 +947,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _get_chat_content(
         self,
-    ) -> tuple[Text | None, str | None]:
+    ) -> tuple[Any, str | None]:
         if not self.selected_agent_id:
             return self._get_chat_placeholder_content(
                 "Select an agent from the tree to see its activity.", "placeholder-no-agent"
@@ -1005,15 +1005,14 @@ class StrixTUIApp(App):  # type: ignore[misc]
         text.append(message)
         return text, f"chat-placeholder {placeholder_class}"
 
-    def _get_rendered_events_content(self, events: list[dict[str, Any]]) -> Text:
-        result = Text()
+    def _get_rendered_events_content(self, events: list[dict[str, Any]]) -> Any:
+        renderables: list[Any] = []
 
         if not events:
-            return result
+            return Text()
 
-        first = True
         for event in events:
-            content: Text | None = None
+            content: Any = None
 
             if event["type"] == "chat":
                 content = self._render_chat_content(event["data"])
@@ -1021,53 +1020,65 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 content = self._render_tool_content_simple(event["data"])
 
             if content:
-                if not first:
-                    result.append("\n\n")
-                result.append_text(content)
-                first = False
+                if renderables:
+                    renderables.append(Text("\n"))
+                renderables.append(content)
 
         if self.selected_agent_id:
             streaming = self.tracer.get_streaming_content(self.selected_agent_id)
             if streaming:
                 streaming_text = self._render_streaming_content(streaming)
                 if streaming_text:
-                    if not first:
-                        result.append("\n\n")
-                    result.append_text(streaming_text)
+                    if renderables:
+                        renderables.append(Text("\n"))
+                    renderables.append(streaming_text)
 
-        return result
+        if not renderables:
+            return Text()
 
-    def _render_streaming_content(self, content: str) -> Text:
+        if len(renderables) == 1:
+            return renderables[0]
+
+        return Group(*renderables)
+
+    def _render_streaming_content(self, content: str) -> Any:
         from strix.interface.streaming_parser import parse_streaming_content
 
-        result = Text()
+        renderables: list[Any] = []
         segments = parse_streaming_content(content)
 
-        for i, segment in enumerate(segments):
-            if i > 0:
-                result.append("\n\n")
-
+        for segment in segments:
             if segment.type == "text":
                 from strix.interface.tool_components.agent_message_renderer import (
                     AgentMessageRenderer,
                 )
 
                 text_content = AgentMessageRenderer.render_simple(segment.content)
-                result.append_text(text_content)
+                if renderables:
+                    renderables.append(Text("\n"))
+                renderables.append(text_content)
 
             elif segment.type == "tool":
-                tool_text = self._render_streaming_tool(
+                tool_renderable = self._render_streaming_tool(
                     segment.tool_name or "unknown",
                     segment.args or {},
                     segment.is_complete,
                 )
-                result.append_text(tool_text)
+                if renderables:
+                    renderables.append(Text("\n"))
+                renderables.append(tool_renderable)
 
-        return result
+        if not renderables:
+            return Text()
+
+        if len(renderables) == 1:
+            return renderables[0]
+
+        return Group(*renderables)
 
     def _render_streaming_tool(
         self, tool_name: str, args: dict[str, str], is_complete: bool
-    ) -> Text:
+    ) -> Any:
         from strix.interface.tool_components.registry import get_tool_renderer
 
         tool_data = {
@@ -1080,12 +1091,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         renderer = get_tool_renderer(tool_name)
         if renderer:
             widget = renderer.render(tool_data)
-            renderable = widget.renderable
-            if isinstance(renderable, Text):
-                return renderable
-            text = Text()
-            text.append(str(renderable))
-            return text
+            return widget.renderable
 
         return self._render_default_streaming_tool(tool_name, args, is_complete)
 
@@ -1582,7 +1588,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         parent_node.allow_expand = True
         parent_node.expand()
 
-    def _render_chat_content(self, msg_data: dict[str, Any]) -> Text | None:
+    def _render_chat_content(self, msg_data: dict[str, Any]) -> Any:
         role = msg_data.get("role")
         content = msg_data.get("content", "")
         metadata = msg_data.get("metadata", {})
@@ -1596,17 +1602,18 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return UserMessageRenderer.render_simple(content)
 
         if metadata.get("interrupted"):
-            result = self._render_streaming_content(content)
-            result.append("\n")
-            result.append("⚠ ", style="yellow")
-            result.append("Interrupted by user", style="yellow dim")
-            return result
+            streaming_result = self._render_streaming_content(content)
+            interrupted_text = Text()
+            interrupted_text.append("\n")
+            interrupted_text.append("⚠ ", style="yellow")
+            interrupted_text.append("Interrupted by user", style="yellow dim")
+            return Group(streaming_result, interrupted_text)
 
         from strix.interface.tool_components.agent_message_renderer import AgentMessageRenderer
 
         return AgentMessageRenderer.render_simple(content)
 
-    def _render_tool_content_simple(self, tool_data: dict[str, Any]) -> Text | None:
+    def _render_tool_content_simple(self, tool_data: dict[str, Any]) -> Any:
         tool_name = tool_data.get("tool_name", "Unknown Tool")
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
@@ -1618,12 +1625,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         if renderer:
             widget = renderer.render(tool_data)
-            renderable = widget.renderable
-            if isinstance(renderable, Text):
-                return renderable
-            text = Text()
-            text.append(str(renderable))
-            return text
+            return widget.renderable
 
         text = Text()
 

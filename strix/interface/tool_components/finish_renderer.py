@@ -1,5 +1,6 @@
 from typing import Any, ClassVar
 
+from rich.padding import Padding
 from rich.text import Text
 from textual.widgets import Static
 
@@ -8,6 +9,7 @@ from .registry import register_tool_renderer
 
 
 FIELD_STYLE = "bold #4ade80"
+BG_COLOR = "#141414"
 
 
 @register_tool_renderer
@@ -56,5 +58,7 @@ class FinishScanRenderer(BaseToolRenderer):
             text.append("\n  ")
             text.append("Generating final report...", style="dim")
 
+        padded = Padding(text, 2, style=f"on {BG_COLOR}")
+
         css_classes = cls.get_css_classes("completed")
-        return Static(text, classes=css_classes)
+        return Static(padded, classes=css_classes)

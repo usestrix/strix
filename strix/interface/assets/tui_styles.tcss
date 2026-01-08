@@ -347,10 +347,16 @@ VulnerabilityDetailScreen {
 .notes-tool,
 .thinking-tool,
 .web-search-tool,
-.finish-tool,
-.reporting-tool,
 .scan-info-tool,
 .subagent-info-tool {
+    margin: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    background: transparent;
+}
+
+.finish-tool,
+.reporting-tool {
     margin: 0 !important;
     margin-top: 0 !important;
     margin-bottom: 0 !important;
@@ -375,14 +381,20 @@ VulnerabilityDetailScreen {
 .thinking-tool.status-running,
 .web-search-tool.status-completed,
 .web-search-tool.status-running,
-.finish-tool.status-completed,
-.finish-tool.status-running,
-.reporting-tool.status-completed,
-.reporting-tool.status-running,
 .scan-info-tool.status-completed,
 .scan-info-tool.status-running,
 .subagent-info-tool.status-completed,
 .subagent-info-tool.status-running {
+    background: transparent;
+    margin: 0 !important;
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+}
+
+.finish-tool.status-completed,
+.finish-tool.status-running,
+.reporting-tool.status-completed,
+.reporting-tool.status-running {
     background: transparent;
     margin: 0 !important;
     margin-top: 0 !important;
