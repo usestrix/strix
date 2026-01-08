@@ -1,6 +1,6 @@
 <tools>
   <tool name="finish_scan">
-    <description>Complete the main security scan and generate final report.
+    <description>Complete the security scan by providing the final assessment fields as full penetration test report.
 
 IMPORTANT: This tool can ONLY be used by the root/main agent.
 Subagents must use agent_finish from agents_graph tool instead.
@@ -8,11 +8,20 @@ Subagents must use agent_finish from agents_graph tool instead.
 IMPORTANT: This tool will NOT allow finishing if any agents are still running or stopping.
 You must wait for all agents to complete before using this tool.
 
-This tool MUST be called at the very end of the security assessment to:
-- Verify all agents have completed their tasks
-- Generate the final comprehensive scan report
-- Mark the entire scan as completed
-- Stop the agent from running
+This tool directly updates the scan report data:
+- executive_summary
+- methodology
+- technical_analysis
+- recommendations
+
+All fields are REQUIRED and map directly to the final report.
+
+This must be the last tool called in the scan. It will:
+1. Verify you are the root agent
+2. Check all subagents have completed
+3. Update the scan with your provided fields
+4. Mark the scan as completed
+5. Stop agent execution
 
 Use this tool when:
 - You are the main/root agent conducting the security assessment
@@ -23,23 +32,39 @@ Use this tool when:
 IMPORTANT: Calling this tool multiple times will OVERWRITE any previous scan report.
 Make sure you include ALL findings and details in a single comprehensive report.
 
-If agents are still running, this tool will:
+If agents are still running, the tool will:
 - Show you which agents are still active
 - Suggest using wait_for_message to wait for completion
 - Suggest messaging agents if immediate completion is needed
 
-Put ALL details in the content - methodology, tools used, vulnerability counts, key findings, recommendations,
-compliance notes, risk assessments, next steps, etc. Be comprehensive and include everything relevant.</description>
+NOTE: Make sure the vulnerabilities found were reported with create_vulnerability_report tool, otherwise they will not be tracked and you will not be rewarded.
+But make sure to not report the same vulnerability multiple times.
+
+Professional, customer-facing penetration test report rules (PDF-ready):
+- Do NOT include internal or system details: never mention local/absolute paths (e.g., "/workspace"), internal tools, agents, orchestrators, sandboxes, models, system prompts/instructions, connection/tooling issues, or tester environment details.
+- Tone and style: formal, objective, third-person, concise. No internal checklists or engineering runbooks. Content must read as a polished client deliverable.
+- Structure across fields should align to standard pentest reports:
+  - Executive summary: business impact, risk posture, notable criticals, remediation theme.
+  - Methodology: industry-standard methods (e.g., OWASP, OSSTMM, NIST), scope, constraints—no internal execution notes.
+  - Technical analysis: consolidated findings overview referencing created vulnerability reports; avoid raw logs.
+  - Recommendations: prioritized, actionable, aligned to risk and best practices.
+</description>
     <parameters>
-      <parameter name="content" type="string" required="true">
-        <description>Complete scan report including executive summary, methodology, findings, vulnerability details, recommendations, compliance notes, risk assessment, and conclusions. Include everything relevant to the assessment.</description>
+      <parameter name="executive_summary" type="string" required="true">
+        <description>High-level summary for executives: key findings, overall security posture, critical risks, business impact</description>
       </parameter>
-      <parameter name="success" type="boolean" required="false">
-        <description>Whether the scan completed successfully without critical errors</description>
+      <parameter name="methodology" type="string" required="true">
+        <description>Testing methodology: approach, tools used, scope, techniques employed</description>
+      </parameter>
+      <parameter name="technical_analysis" type="string" required="true">
+        <description>Detailed technical findings and security assessment results over the scan</description>
+      </parameter>
+      <parameter name="recommendations" type="string" required="true">
+        <description>Actionable security recommendations and remediation priorities</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing success status and completion message. If agents are still running, returns details about active agents and suggested actions.</description>
+      <description>Response containing success status, vulnerability count, and completion message. If agents are still running, returns details about active agents and suggested actions.</description>
     </returns>
   </tool>
 </tools>

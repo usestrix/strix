@@ -7,6 +7,9 @@ from .base_renderer import BaseToolRenderer
 from .registry import register_tool_renderer
 
 
+FIELD_STYLE = "bold #4ade80"
+
+
 @register_tool_renderer
 class FinishScanRenderer(BaseToolRenderer):
     tool_name: ClassVar[str] = "finish_scan"
@@ -16,22 +19,41 @@ class FinishScanRenderer(BaseToolRenderer):
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
 
-        content = args.get("content", "")
-        success = args.get("success", True)
+        executive_summary = args.get("executive_summary", "")
+        methodology = args.get("methodology", "")
+        technical_analysis = args.get("technical_analysis", "")
+        recommendations = args.get("recommendations", "")
 
         text = Text()
         text.append("🏁 ")
+        text.append("Finishing Scan", style="bold #dc2626")
 
-        if success:
-            text.append("Finishing Scan", style="bold #dc2626")
-        else:
-            text.append("Scan Failed", style="bold #dc2626")
+        if executive_summary:
+            text.append("\n\n")
+            text.append("Executive Summary", style=FIELD_STYLE)
+            text.append("\n")
+            text.append(executive_summary)
 
-        text.append("\n  ")
+        if methodology:
+            text.append("\n\n")
+            text.append("Methodology", style=FIELD_STYLE)
+            text.append("\n")
+            text.append(methodology)
 
-        if content:
-            text.append(content, style="bold")
-        else:
+        if technical_analysis:
+            text.append("\n\n")
+            text.append("Technical Analysis", style=FIELD_STYLE)
+            text.append("\n")
+            text.append(technical_analysis)
+
+        if recommendations:
+            text.append("\n\n")
+            text.append("Recommendations", style=FIELD_STYLE)
+            text.append("\n")
+            text.append(recommendations)
+
+        if not (executive_summary or methodology or technical_analysis or recommendations):
+            text.append("\n  ")
             text.append("Generating final report...", style="dim")
 
         css_classes = cls.get_css_classes("completed")

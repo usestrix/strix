@@ -1158,6 +1158,18 @@ test = ["certifi (>=2024)", "cryptography-vectors (==44.0.1)", "pretend (>=0.7)"
 test-randomorder = ["pytest-randomly"]
 
 [[package]]
+name = "cvss"
+version = "3.6"
+description = "CVSS2/3/4 library with interactive calculator for Python 2 and Python 3"
+optional = false
+python-versions = "*"
+groups = ["main"]
+files = [
+    {file = "cvss-3.6-py2.py3-none-any.whl", hash = "sha256:e342c6ad9c7eb69d2aebbbc2768a03cabd57eb947c806e145de5b936219833ea"},
+    {file = "cvss-3.6.tar.gz", hash = "sha256:f21d18224efcd3c01b44ff1b37dec2e3208d29a6d0ce6c87a599c73c21ee1a99"},
+]
+
+[[package]]
 name = "cycler"
 version = "0.12.1"
 description = "Composable style cycles"
@@ -7412,4 +7424,4 @@ vertex = ["google-cloud-aiplatform"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "c33d9ef61601de836c80517ccff66cc57837baaebf22f929c766416c0b0fd818"
+content-hash = "91f49e313e5690bbef87e17730441f26d366daeccb16b5020e03e581fbb9d4d5"

@@ -71,47 +71,114 @@ class Tracer:
 
         return self._run_dir
 
-    def add_vulnerability_report(
+    def add_vulnerability_report(  # noqa: PLR0912
         self,
         title: str,
-        content: str,
         severity: str,
+        description: str | None = None,
+        impact: str | None = None,
+        target: str | None = None,
+        technical_analysis: str | None = None,
+        poc_description: str | None = None,
+        poc_script_code: str | None = None,
+        remediation_steps: str | None = None,
+        cvss: float | None = None,
+        cvss_breakdown: dict[str, str] | None = None,
+        endpoint: str | None = None,
+        method: str | None = None,
+        cve: str | None = None,
+        code_file: str | None = None,
+        code_before: str | None = None,
+        code_after: str | None = None,
+        code_diff: str | None = None,
     ) -> str:
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
-        report = {
+        report: dict[str, Any] = {
             "id": report_id,
             "title": title.strip(),
-            "content": content.strip(),
             "severity": severity.lower().strip(),
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
+
+        if description:
+            report["description"] = description.strip()
+        if impact:
+            report["impact"] = impact.strip()
+        if target:
+            report["target"] = target.strip()
+        if technical_analysis:
+            report["technical_analysis"] = technical_analysis.strip()
+        if poc_description:
+            report["poc_description"] = poc_description.strip()
+        if poc_script_code:
+            report["poc_script_code"] = poc_script_code.strip()
+        if remediation_steps:
+            report["remediation_steps"] = remediation_steps.strip()
+        if cvss is not None:
+            report["cvss"] = cvss
+        if cvss_breakdown:
+            report["cvss_breakdown"] = cvss_breakdown
+        if endpoint:
+            report["endpoint"] = endpoint.strip()
+        if method:
+            report["method"] = method.strip()
+        if cve:
+            report["cve"] = cve.strip()
+        if code_file:
+            report["code_file"] = code_file.strip()
+        if code_before:
+            report["code_before"] = code_before.strip()
+        if code_after:
+            report["code_after"] = code_after.strip()
+        if code_diff:
+            report["code_diff"] = code_diff.strip()
 
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")
 
         if self.vulnerability_found_callback:
             self.vulnerability_found_callback(
-                report_id, title.strip(), content.strip(), severity.lower().strip()
+                report_id, title.strip(), description or "", severity.lower().strip()
             )
 
         self.save_run_data()
         return report_id
 
-    def set_final_scan_result(
+    def update_scan_final_fields(
         self,
-        content: str,
-        success: bool = True,
+        executive_summary: str,
+        methodology: str,
+        technical_analysis: str,
+        recommendations: str,
     ) -> None:
-        self.final_scan_result = content.strip()
-
         self.scan_results = {
             "scan_completed": True,
-            "content": content,
-            "success": success,
+            "executive_summary": executive_summary.strip(),
+            "methodology": methodology.strip(),
+            "technical_analysis": technical_analysis.strip(),
+            "recommendations": recommendations.strip(),
+            "success": True,
         }
 
-        logger.info(f"Set final scan result: success={success}")
+        self.final_scan_result = f"""# Executive Summary
+
+{executive_summary.strip()}
+
+# Methodology
+
+{methodology.strip()}
+
+# Technical Analysis
+
+{technical_analysis.strip()}
+
+# Recommendations
+
+{recommendations.strip()}
+"""
+
+        logger.info("Updated scan final fields")
         self.save_run_data(mark_complete=True)
 
     def log_agent_creation(
@@ -204,7 +271,7 @@ class Tracer:
         )
         self.get_run_dir()
 
-    def save_run_data(self, mark_complete: bool = False) -> None:
+    def save_run_data(self, mark_complete: bool = False) -> None:  # noqa: PLR0912, PLR0915
         try:
             run_dir = self.get_run_dir()
             if mark_complete:
@@ -232,42 +299,89 @@ class Tracer:
                     if report["id"] not in self._saved_vuln_ids
                 ]
 
+                severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+                sorted_reports = sorted(
+                    self.vulnerability_reports,
+                    key=lambda x: (severity_order.get(x["severity"], 5), x["timestamp"]),
+                )
+
                 for report in new_reports:
                     vuln_file = vuln_dir / f"{report['id']}.md"
                     with vuln_file.open("w", encoding="utf-8") as f:
-                        f.write(f"# {report['title']}\n\n")
-                        f.write(f"**ID:** {report['id']}\n")
-                        f.write(f"**Severity:** {report['severity'].upper()}\n")
-                        f.write(f"**Found:** {report['timestamp']}\n\n")
-                        f.write("## Description\n\n")
-                        f.write(f"{report['content']}\n")
+                        f.write(f"# {report.get('title', 'Untitled Vulnerability')}\n\n")
+                        f.write(f"**ID:** {report.get('id', 'unknown')}\n")
+                        f.write(f"**Severity:** {report.get('severity', 'unknown').upper()}\n")
+                        f.write(f"**Found:** {report.get('timestamp', 'unknown')}\n")
+
+                        metadata_fields: list[tuple[str, Any]] = [
+                            ("Target", report.get("target")),
+                            ("Endpoint", report.get("endpoint")),
+                            ("Method", report.get("method")),
+                            ("CVE", report.get("cve")),
+                        ]
+                        cvss_score = report.get("cvss")
+                        if cvss_score is not None:
+                            metadata_fields.append(("CVSS", cvss_score))
+
+                        for label, value in metadata_fields:
+                            if value:
+                                f.write(f"**{label}:** {value}\n")
+
+                        f.write("\n## Description\n\n")
+                        desc = report.get("description") or "No description provided."
+                        f.write(f"{desc}\n\n")
+
+                        if report.get("impact"):
+                            f.write("## Impact\n\n")
+                            f.write(f"{report['impact']}\n\n")
+
+                        if report.get("technical_analysis"):
+                            f.write("## Technical Analysis\n\n")
+                            f.write(f"{report['technical_analysis']}\n\n")
+
+                        if report.get("poc_description") or report.get("poc_script_code"):
+                            f.write("## Proof of Concept\n\n")
+                            if report.get("poc_description"):
+                                f.write(f"{report['poc_description']}\n\n")
+                            if report.get("poc_script_code"):
+                                f.write("```\n")
+                                f.write(f"{report['poc_script_code']}\n")
+                                f.write("```\n\n")
+
+                        if report.get("code_file") or report.get("code_diff"):
+                            f.write("## Code Analysis\n\n")
+                            if report.get("code_file"):
+                                f.write(f"**File:** {report['code_file']}\n\n")
+                            if report.get("code_diff"):
+                                f.write("**Changes:**\n")
+                                f.write("```diff\n")
+                                f.write(f"{report['code_diff']}\n")
+                                f.write("```\n\n")
+
+                        if report.get("remediation_steps"):
+                            f.write("## Remediation\n\n")
+                            f.write(f"{report['remediation_steps']}\n\n")
+
                     self._saved_vuln_ids.add(report["id"])
 
-                if self.vulnerability_reports:
-                    severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-                    sorted_reports = sorted(
-                        self.vulnerability_reports,
-                        key=lambda x: (severity_order.get(x["severity"], 5), x["timestamp"]),
-                    )
+                vuln_csv_file = run_dir / "vulnerabilities.csv"
+                with vuln_csv_file.open("w", encoding="utf-8", newline="") as f:
+                    import csv
 
-                    vuln_csv_file = run_dir / "vulnerabilities.csv"
-                    with vuln_csv_file.open("w", encoding="utf-8", newline="") as f:
-                        import csv
+                    fieldnames = ["id", "title", "severity", "timestamp", "file"]
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
 
-                        fieldnames = ["id", "title", "severity", "timestamp", "file"]
-                        writer = csv.DictWriter(f, fieldnames=fieldnames)
-                        writer.writeheader()
-
-                        for report in sorted_reports:
-                            writer.writerow(
-                                {
-                                    "id": report["id"],
-                                    "title": report["title"],
-                                    "severity": report["severity"].upper(),
-                                    "timestamp": report["timestamp"],
-                                    "file": f"vulnerabilities/{report['id']}.md",
-                                }
-                            )
+                    for report in sorted_reports:
+                        writer.writerow(
+                            {
+                                "id": report["id"],
+                                "title": report["title"],
+                                "severity": report["severity"].upper(),
+                                "timestamp": report["timestamp"],
+                                "file": f"vulnerabilities/{report['id']}.md",
+                            }
+                        )
 
                 if new_reports:
                     logger.info(

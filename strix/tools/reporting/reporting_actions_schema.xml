@@ -2,8 +2,7 @@
   <tool name="create_vulnerability_report">
     <description>Create a vulnerability report for a discovered security issue.
 
-Use this tool to document a specific verified security vulnerability.
-Put ALL details in the content field - affected URLs, parameters, proof of concept, remediation steps, CVE references, CVSS scores, technical details, impact assessment, etc.
+Use this tool to document a specific fully verified security vulnerability.
 
 DO NOT USE:
 - For general security observations without specific vulnerabilities
@@ -11,20 +10,119 @@ DO NOT USE:
 - When you don't have a proof of concept, or still not 100% sure if it's a vulnerability
 - For tracking multiple vulnerabilities (create separate reports)
 - For reporting multiple vulnerabilities at once. Use a separate create_vulnerability_report for each vulnerability.
+
+White-box requirement (when you have access to the code): You MUST include code_file, code_before, code_after, and code_diff. These must contain the actual code (before/after) and a complete, apply-able unified diff.
+
+Professional, customer-facing report rules (PDF-ready):
+- Do NOT include internal or system details: never mention local or absolute paths (e.g., "/workspace"), internal tools, agents, orchestrators, sandboxes, models, system prompts/instructions, connection issues, internal errors/logs/stack traces, or tester machine environment details.
+- Tone and style: formal, objective, third-person, vendor-neutral, concise. No runbooks, checklists, or engineering notes. Avoid headings like "QUICK", "Approach", or "Techniques" that read like internal guidance.
+- Use a standard penetration testing report structure per finding:
+  1) Overview
+  2) Severity and CVSS (vector only)
+  3) Affected asset(s)
+  4) Technical details
+  5) Proof of concept (repro steps plus code)
+  6) Impact
+  7) Remediation
+  8) Evidence (optional request/response excerpts, etc.) in the technical analysis field.
+- Numbered steps are allowed ONLY within the proof of concept. Elsewhere, use clear, concise paragraphs suitable for customer-facing reports.
+- Language must be precise and non-vague; avoid hedging.
 </description>
     <parameters>
       <parameter name="title" type="string" required="true">
-        <description>Clear, concise title of the vulnerability</description>
+        <description>Clear, specific title (e.g., "SQL Injection in /api/users Login Parameter"). But not too long. Don't mention CVE number in the title.</description>
       </parameter>
-      <parameter name="content" type="string" required="true">
-        <description>Complete vulnerability details including affected URLs, technical details, impact, proof of concept, remediation steps, and any relevant references. Be comprehensive and include everything relevant.</description>
+      <parameter name="description" type="string" required="true">
+        <description>Comprehensive description of the vulnerability and how it was discovered</description>
       </parameter>
-      <parameter name="severity" type="string" required="true">
-        <description>Severity level: critical, high, medium, low, or info</description>
+      <parameter name="impact" type="string" required="true">
+        <description>Impact assessment: what attacker can do, business risk, data at risk</description>
+      </parameter>
+      <parameter name="target" type="string" required="true">
+        <description>Affected target: URL, domain, or Git repository</description>
+      </parameter>
+      <parameter name="technical_analysis" type="string" required="true">
+        <description>Technical explanation of the vulnerability mechanism and root cause</description>
+      </parameter>
+      <parameter name="poc_description" type="string" required="true">
+        <description>Step-by-step instructions to reproduce the vulnerability</description>
+      </parameter>
+      <parameter name="poc_script_code" type="string" required="true">
+        <description>Actual proof of concept code, exploit, payload, or script that demonstrates the vulnerability. Python code.</description>
+      </parameter>
+      <parameter name="remediation_steps" type="string" required="true">
+        <description>Specific, actionable steps to fix the vulnerability</description>
+      </parameter>
+      <parameter name="attack_vector" type="string" required="true">
+        <description>CVSS Attack Vector - How the vulnerability is exploited:
+N = Network (remotely exploitable)
+A = Adjacent (same network segment)
+L = Local (local access required)
+P = Physical (physical access required)</description>
+      </parameter>
+      <parameter name="attack_complexity" type="string" required="true">
+        <description>CVSS Attack Complexity - Conditions beyond attacker's control:
+L = Low (no special conditions)
+H = High (special conditions must exist)</description>
+      </parameter>
+      <parameter name="privileges_required" type="string" required="true">
+        <description>CVSS Privileges Required - Level of privileges needed:
+N = None (no privileges needed)
+L = Low (basic user privileges)
+H = High (admin privileges)</description>
+      </parameter>
+      <parameter name="user_interaction" type="string" required="true">
+        <description>CVSS User Interaction - Does exploit require user action:
+N = None (no user interaction needed)
+R = Required (user must perform some action)</description>
+      </parameter>
+      <parameter name="scope" type="string" required="true">
+        <description>CVSS Scope - Can the vulnerability affect resources beyond its security scope:
+U = Unchanged (only affects the vulnerable component)
+C = Changed (affects resources beyond vulnerable component)</description>
+      </parameter>
+      <parameter name="confidentiality" type="string" required="true">
+        <description>CVSS Confidentiality Impact - Impact to confidentiality:
+N = None (no impact)
+L = Low (some information disclosure)
+H = High (all information disclosed)</description>
+      </parameter>
+      <parameter name="integrity" type="string" required="true">
+        <description>CVSS Integrity Impact - Impact to integrity:
+N = None (no impact)
+L = Low (data can be modified but scope is limited)
+H = High (total loss of integrity)</description>
+      </parameter>
+      <parameter name="availability" type="string" required="true">
+        <description>CVSS Availability Impact - Impact to availability:
+N = None (no impact)
+L = Low (reduced performance or interruptions)
+H = High (total loss of availability)</description>
+      </parameter>
+      <parameter name="endpoint" type="string" required="false">
+        <description>API endpoint(s) or URL path(s) (e.g., "/api/login") - for web vulnerabilities, or Git repository path(s) - for code vulnerabilities</description>
+      </parameter>
+      <parameter name="method" type="string" required="false">
+        <description>HTTP method(s) (GET, POST, etc.) - for web vulnerabilities.</description>
+      </parameter>
+      <parameter name="cve" type="string" required="false">
+        <description>CVE identifier (e.g., "CVE-2024-1234"). Make sure it's a valid CVE. Use web search or vulnerability databases to make sure it's a valid CVE number.</description>
+      </parameter>
+      <parameter name="code_file" type="string" required="false">
+        <description>MANDATORY for white-box testing: exact affected source file path(s).</description>
+      </parameter>
+      <parameter name="code_before" type="string" required="false">
+        <description>MANDATORY for white-box testing: actual vulnerable code snippet(s) copied verbatim from the repository.</description>
+      </parameter>
+      <parameter name="code_after" type="string" required="false">
+        <description>MANDATORY for white-box testing: corrected code snippet(s) exactly as they should appear after the fix.</description>
+      </parameter>
+      <parameter name="code_diff" type="string" required="false">
+        <description>MANDATORY for white-box testing: unified diff showing the code changes. Must be a complete, apply-able unified diff (git format) covering all affected files, with proper file headers, line numbers, and sufficient context.</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing success status and message</description>
+      <description>Response containing success=true, message, report_id, severity, cvss_score</description>
     </returns>
   </tool>
 </tools>
