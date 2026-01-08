@@ -91,8 +91,8 @@ def _prepare_report_for_comparison(report: dict[str, Any]) -> dict[str, Any]:
     for field in relevant_fields:
         if report.get(field):
             value = report[field]
-            if isinstance(value, str) and len(value) > 2000:
-                value = value[:2000] + "...[truncated]"
+            if isinstance(value, str) and len(value) > 8000:
+                value = value[:8000] + "...[truncated]"
             cleaned[field] = value
 
     return cleaned
