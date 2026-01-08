@@ -381,9 +381,10 @@ def build_tui_stats_text(tracer: Any, agent_config: dict[str, Any] | None = None
     stats_text.append("Total Tokens: ", style="bold white")
     stats_text.append(format_token_count(total_tokens), style="dim white")
 
-    stats_text.append(" • ", style="dim white")
-    stats_text.append("Cost: ", style="bold white")
-    stats_text.append(f"${total_stats['cost']:.4f}", style="dim white")
+    if total_stats["cost"] > 0:
+        stats_text.append(" • ", style="dim white")
+        stats_text.append("Cost: ", style="bold white")
+        stats_text.append(f"${total_stats['cost']:.4f}", style="dim white")
 
     return stats_text
 
