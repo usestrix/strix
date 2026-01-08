@@ -31,7 +31,7 @@ from textual.widgets import Button, Label, Static, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from strix.agents.StrixAgent import StrixAgent
-from strix.interface.utils import build_live_stats_text
+from strix.interface.utils import build_tui_stats_text
 from strix.llm.config import LLMConfig
 from strix.telemetry.tracer import Tracer, set_global_tracer
 
@@ -252,6 +252,373 @@ class StopAgentScreen(ModalScreen):  # type: ignore[misc]
             self.app.pop_screen()
 
 
+class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
+    """Modal screen to display vulnerability details."""
+
+    SEVERITY_COLORS: ClassVar[dict[str, str]] = {
+        "critical": "#dc2626",
+        "high": "#ea580c",
+        "medium": "#d97706",
+        "low": "#65a30d",
+        "info": "#0284c7",
+    }
+
+    FIELD_STYLE: ClassVar[str] = "bold #4ade80"
+
+    def __init__(self, vulnerability: dict[str, Any]) -> None:
+        super().__init__()
+        self.vulnerability = vulnerability
+
+    def compose(self) -> ComposeResult:
+        content = self._render_vulnerability()
+        yield Grid(
+            VerticalScroll(Static(content, id="vuln_detail_content"), id="vuln_detail_scroll"),
+            Horizontal(
+                Button("Copy", variant="default", id="copy_vuln_detail"),
+                Button("Close", variant="default", id="close_vuln_detail"),
+                id="vuln_detail_buttons",
+            ),
+            id="vuln_detail_dialog",
+        )
+
+    def on_mount(self) -> None:
+        close_button = self.query_one("#close_vuln_detail", Button)
+        close_button.focus()
+
+    def _get_cvss_color(self, cvss_score: float) -> str:
+        if cvss_score >= 9.0:
+            return "#dc2626"
+        if cvss_score >= 7.0:
+            return "#ea580c"
+        if cvss_score >= 4.0:
+            return "#d97706"
+        if cvss_score >= 0.1:
+            return "#65a30d"
+        return "#6b7280"
+
+    def _highlight_python(self, code: str) -> Text:
+        try:
+            from pygments.lexers import PythonLexer
+            from pygments.styles import get_style_by_name
+
+            lexer = PythonLexer()
+            style = get_style_by_name("native")
+            colors = {
+                token: f"#{style_def['color']}" for token, style_def in style if style_def["color"]
+            }
+
+            text = Text()
+            for token_type, token_value in lexer.get_tokens(code):
+                if not token_value:
+                    continue
+                color = None
+                tt = token_type
+                while tt:
+                    if tt in colors:
+                        color = colors[tt]
+                        break
+                    tt = tt.parent
+                text.append(token_value, style=color)
+        except (ImportError, KeyError, AttributeError):
+            return Text(code)
+        else:
+            return text
+
+    def _render_vulnerability(self) -> Text:  # noqa: PLR0912, PLR0915
+        vuln = self.vulnerability
+        text = Text()
+
+        text.append("🐞 ")
+        text.append("Vulnerability Report", style="bold #ea580c")
+
+        agent_name = vuln.get("agent_name", "")
+        if agent_name:
+            text.append("\n\n")
+            text.append("Agent: ", style=self.FIELD_STYLE)
+            text.append(agent_name)
+
+        title = vuln.get("title", "")
+        if title:
+            text.append("\n\n")
+            text.append("Title: ", style=self.FIELD_STYLE)
+            text.append(title)
+
+        severity = vuln.get("severity", "")
+        if severity:
+            text.append("\n\n")
+            text.append("Severity: ", style=self.FIELD_STYLE)
+            severity_color = self.SEVERITY_COLORS.get(severity.lower(), "#6b7280")
+            text.append(severity.upper(), style=f"bold {severity_color}")
+
+        cvss_score = vuln.get("cvss")
+        if cvss_score is not None:
+            text.append("\n\n")
+            text.append("CVSS Score: ", style=self.FIELD_STYLE)
+            cvss_color = self._get_cvss_color(float(cvss_score))
+            text.append(str(cvss_score), style=f"bold {cvss_color}")
+
+        target = vuln.get("target", "")
+        if target:
+            text.append("\n\n")
+            text.append("Target: ", style=self.FIELD_STYLE)
+            text.append(target)
+
+        endpoint = vuln.get("endpoint", "")
+        if endpoint:
+            text.append("\n\n")
+            text.append("Endpoint: ", style=self.FIELD_STYLE)
+            text.append(endpoint)
+
+        method = vuln.get("method", "")
+        if method:
+            text.append("\n\n")
+            text.append("Method: ", style=self.FIELD_STYLE)
+            text.append(method)
+
+        cve = vuln.get("cve", "")
+        if cve:
+            text.append("\n\n")
+            text.append("CVE: ", style=self.FIELD_STYLE)
+            text.append(cve)
+
+        # CVSS breakdown
+        cvss_breakdown = vuln.get("cvss_breakdown", {})
+        if cvss_breakdown:
+            cvss_parts = []
+            if cvss_breakdown.get("attack_vector"):
+                cvss_parts.append(f"AV:{cvss_breakdown['attack_vector']}")
+            if cvss_breakdown.get("attack_complexity"):
+                cvss_parts.append(f"AC:{cvss_breakdown['attack_complexity']}")
+            if cvss_breakdown.get("privileges_required"):
+                cvss_parts.append(f"PR:{cvss_breakdown['privileges_required']}")
+            if cvss_breakdown.get("user_interaction"):
+                cvss_parts.append(f"UI:{cvss_breakdown['user_interaction']}")
+            if cvss_breakdown.get("scope"):
+                cvss_parts.append(f"S:{cvss_breakdown['scope']}")
+            if cvss_breakdown.get("confidentiality"):
+                cvss_parts.append(f"C:{cvss_breakdown['confidentiality']}")
+            if cvss_breakdown.get("integrity"):
+                cvss_parts.append(f"I:{cvss_breakdown['integrity']}")
+            if cvss_breakdown.get("availability"):
+                cvss_parts.append(f"A:{cvss_breakdown['availability']}")
+            if cvss_parts:
+                text.append("\n\n")
+                text.append("CVSS Vector: ", style=self.FIELD_STYLE)
+                text.append("/".join(cvss_parts), style="dim")
+
+        description = vuln.get("description", "")
+        if description:
+            text.append("\n\n")
+            text.append("Description", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(description)
+
+        impact = vuln.get("impact", "")
+        if impact:
+            text.append("\n\n")
+            text.append("Impact", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(impact)
+
+        technical_analysis = vuln.get("technical_analysis", "")
+        if technical_analysis:
+            text.append("\n\n")
+            text.append("Technical Analysis", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(technical_analysis)
+
+        poc_description = vuln.get("poc_description", "")
+        if poc_description:
+            text.append("\n\n")
+            text.append("PoC Description", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(poc_description)
+
+        poc_script_code = vuln.get("poc_script_code", "")
+        if poc_script_code:
+            text.append("\n\n")
+            text.append("PoC Code", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append_text(self._highlight_python(poc_script_code))
+
+        remediation_steps = vuln.get("remediation_steps", "")
+        if remediation_steps:
+            text.append("\n\n")
+            text.append("Remediation", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(remediation_steps)
+
+        return text
+
+    def _get_markdown_report(self) -> str:  # noqa: PLR0912, PLR0915
+        """Get Markdown version of vulnerability report for clipboard."""
+        vuln = self.vulnerability
+        lines: list[str] = []
+
+        # Title
+        title = vuln.get("title", "Untitled Vulnerability")
+        lines.append(f"# {title}")
+        lines.append("")
+
+        # Metadata
+        if vuln.get("id"):
+            lines.append(f"**ID:** {vuln['id']}")
+        if vuln.get("severity"):
+            lines.append(f"**Severity:** {vuln['severity'].upper()}")
+        if vuln.get("timestamp"):
+            lines.append(f"**Found:** {vuln['timestamp']}")
+        if vuln.get("agent_name"):
+            lines.append(f"**Agent:** {vuln['agent_name']}")
+        if vuln.get("target"):
+            lines.append(f"**Target:** {vuln['target']}")
+        if vuln.get("endpoint"):
+            lines.append(f"**Endpoint:** {vuln['endpoint']}")
+        if vuln.get("method"):
+            lines.append(f"**Method:** {vuln['method']}")
+        if vuln.get("cve"):
+            lines.append(f"**CVE:** {vuln['cve']}")
+        if vuln.get("cvss") is not None:
+            lines.append(f"**CVSS:** {vuln['cvss']}")
+
+        # CVSS Vector
+        cvss_breakdown = vuln.get("cvss_breakdown", {})
+        if cvss_breakdown:
+            abbrevs = {
+                "attack_vector": "AV",
+                "attack_complexity": "AC",
+                "privileges_required": "PR",
+                "user_interaction": "UI",
+                "scope": "S",
+                "confidentiality": "C",
+                "integrity": "I",
+                "availability": "A",
+            }
+            parts = [
+                f"{abbrevs.get(k, k)}:{v}" for k, v in cvss_breakdown.items() if v and k in abbrevs
+            ]
+            if parts:
+                lines.append(f"**CVSS Vector:** {'/'.join(parts)}")
+
+        # Description
+        lines.append("")
+        lines.append("## Description")
+        lines.append("")
+        lines.append(vuln.get("description") or "No description provided.")
+
+        # Impact
+        if vuln.get("impact"):
+            lines.extend(["", "## Impact", "", vuln["impact"]])
+
+        # Technical Analysis
+        if vuln.get("technical_analysis"):
+            lines.extend(["", "## Technical Analysis", "", vuln["technical_analysis"]])
+
+        # Proof of Concept
+        if vuln.get("poc_description") or vuln.get("poc_script_code"):
+            lines.extend(["", "## Proof of Concept", ""])
+            if vuln.get("poc_description"):
+                lines.append(vuln["poc_description"])
+                lines.append("")
+            if vuln.get("poc_script_code"):
+                lines.append("```python")
+                lines.append(vuln["poc_script_code"])
+                lines.append("```")
+
+        # Code Analysis
+        if vuln.get("code_file") or vuln.get("code_diff"):
+            lines.extend(["", "## Code Analysis", ""])
+            if vuln.get("code_file"):
+                lines.append(f"**File:** {vuln['code_file']}")
+                lines.append("")
+            if vuln.get("code_diff"):
+                lines.append("**Changes:**")
+                lines.append("```diff")
+                lines.append(vuln["code_diff"])
+                lines.append("```")
+
+        # Remediation
+        if vuln.get("remediation_steps"):
+            lines.extend(["", "## Remediation", "", vuln["remediation_steps"]])
+
+        lines.append("")
+        return "\n".join(lines)
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key == "escape":
+            self.app.pop_screen()
+            event.prevent_default()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "copy_vuln_detail":
+            markdown_text = self._get_markdown_report()
+            self.app.copy_to_clipboard(markdown_text)
+
+            copy_button = self.query_one("#copy_vuln_detail", Button)
+            copy_button.label = "Copied!"
+            self.set_timer(1.5, lambda: setattr(copy_button, "label", "Copy"))
+        elif event.button.id == "close_vuln_detail":
+            self.app.pop_screen()
+
+
+class VulnerabilityItem(Static):  # type: ignore[misc]
+    """A clickable vulnerability item."""
+
+    def __init__(self, label: Text, vuln_data: dict[str, Any], **kwargs: Any) -> None:
+        super().__init__(label, **kwargs)
+        self.vuln_data = vuln_data
+
+    def on_click(self, _event: events.Click) -> None:
+        """Handle click to open vulnerability detail."""
+        self.app.push_screen(VulnerabilityDetailScreen(self.vuln_data))
+
+
+class VulnerabilitiesPanel(VerticalScroll):  # type: ignore[misc]
+    """A scrollable panel showing found vulnerabilities with severity-colored dots."""
+
+    SEVERITY_COLORS: ClassVar[dict[str, str]] = {
+        "critical": "#dc2626",  # Red
+        "high": "#ea580c",  # Orange
+        "medium": "#eab308",  # Yellow
+        "low": "#22c55e",  # Green
+        "info": "#3b82f6",  # Blue
+    }
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._vulnerabilities: list[dict[str, Any]] = []
+
+    def compose(self) -> ComposeResult:
+        return []
+
+    def update_vulnerabilities(self, vulnerabilities: list[dict[str, Any]]) -> None:
+        """Update the list of vulnerabilities and re-render."""
+        if len(self._vulnerabilities) == len(vulnerabilities):
+            return
+        self._vulnerabilities = list(vulnerabilities)
+        self._render_panel()
+
+    def _render_panel(self) -> None:
+        """Render the vulnerabilities panel content."""
+        for child in list(self.children):
+            if isinstance(child, VulnerabilityItem):
+                child.remove()
+
+        if not self._vulnerabilities:
+            return
+
+        for vuln in self._vulnerabilities:
+            severity = vuln.get("severity", "info").lower()
+            title = vuln.get("title", "Unknown Vulnerability")
+            color = self.SEVERITY_COLORS.get(severity, "#3b82f6")
+
+            label = Text()
+            label.append("● ", style=Style(color=color))
+            label.append(title, style=Style(color="#d4d4d4"))
+
+            item = VulnerabilityItem(label, vuln, classes="vuln-item")
+            self.mount(item)
+
+
 class QuitScreen(ModalScreen):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Grid(
@@ -440,7 +807,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
             stats_display = Static("", id="stats_display")
 
-            sidebar = Vertical(agents_tree, stats_display, id="sidebar")
+            vulnerabilities_panel = VulnerabilitiesPanel(id="vulnerabilities_panel")
+
+            sidebar = Vertical(agents_tree, vulnerabilities_panel, stats_display, id="sidebar")
 
             content_container.mount(chat_area_container)
             content_container.mount(sidebar)
@@ -531,6 +900,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._update_agent_status_display()
 
         self._update_stats_display()
+
+        self._update_vulnerabilities_panel()
 
     def _update_agent_node(self, agent_id: str, agent_data: dict[str, Any]) -> bool:
         if agent_id not in self.agent_nodes:
@@ -835,7 +1206,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         stats_content = Text()
 
-        stats_text = build_live_stats_text(self.tracer, self.agent_config)
+        stats_text = build_tui_stats_text(self.tracer, self.agent_config)
         if stats_text:
             stats_content.append(stats_text)
 
@@ -848,6 +1219,46 @@ class StrixTUIApp(App):  # type: ignore[misc]
         )
 
         self._safe_widget_operation(stats_display.update, stats_panel)
+
+    def _update_vulnerabilities_panel(self) -> None:
+        """Update the vulnerabilities panel with current vulnerability data."""
+        try:
+            vuln_panel = self.query_one("#vulnerabilities_panel", VulnerabilitiesPanel)
+        except (ValueError, Exception):
+            return
+
+        if not self._is_widget_safe(vuln_panel):
+            return
+
+        vulnerabilities = self.tracer.vulnerability_reports
+
+        if not vulnerabilities:
+            self._safe_widget_operation(vuln_panel.add_class, "hidden")
+            return
+
+        enriched_vulns = []
+        for vuln in vulnerabilities:
+            enriched = dict(vuln)
+            report_id = vuln.get("id", "")
+            agent_name = self._get_agent_name_for_vulnerability(report_id)
+            if agent_name:
+                enriched["agent_name"] = agent_name
+            enriched_vulns.append(enriched)
+
+        self._safe_widget_operation(vuln_panel.remove_class, "hidden")
+        vuln_panel.update_vulnerabilities(enriched_vulns)
+
+    def _get_agent_name_for_vulnerability(self, report_id: str) -> str | None:
+        """Find the agent name that created a vulnerability report."""
+        for _exec_id, tool_data in list(self.tracer.tool_executions.items()):
+            if tool_data.get("tool_name") == "create_vulnerability_report":
+                result = tool_data.get("result", {})
+                if isinstance(result, dict) and result.get("report_id") == report_id:
+                    agent_id = tool_data.get("agent_id")
+                    if agent_id and agent_id in self.tracer.agents:
+                        name: str = self.tracer.agents[agent_id].get("name", "Unknown Agent")
+                        return name
+        return None
 
     def _get_agent_verb(self, agent_id: str) -> str:
         if agent_id not in self._agent_verbs:
@@ -1388,12 +1799,14 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.push_screen(QuitScreen())
 
     def action_stop_selected_agent(self) -> None:
-        if (
-            self.show_splash
-            or not self.is_mounted
-            or len(self.screen_stack) > 1
-            or not self.selected_agent_id
-        ):
+        if self.show_splash or not self.is_mounted:
+            return
+
+        if len(self.screen_stack) > 1:
+            self.pop_screen()
+            return
+
+        if not self.selected_agent_id:
             return
 
         agent_name, should_stop = self._validate_agent_for_stopping()

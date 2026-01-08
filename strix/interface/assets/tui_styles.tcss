@@ -63,6 +63,97 @@ Screen {
     margin: 0;
 }
 
+#vulnerabilities_panel {
+    height: auto;
+    max-height: 12;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    border: round #333333;
+    overflow-y: auto;
+    scrollbar-background: #000000;
+    scrollbar-color: #333333;
+    scrollbar-corner-color: #000000;
+    scrollbar-size-vertical: 1;
+}
+
+#vulnerabilities_panel.hidden {
+    display: none;
+}
+
+.vuln-item {
+    height: auto;
+    width: 100%;
+    padding: 0 1;
+    background: transparent;
+    color: #d4d4d4;
+}
+
+.vuln-item:hover {
+    background: #1a1a1a;
+    color: #fafaf9;
+}
+
+VulnerabilityDetailScreen {
+    align: center middle;
+    background: $background 60%;
+}
+
+#vuln_detail_dialog {
+    grid-size: 1;
+    grid-gutter: 1;
+    grid-rows: 1fr auto;
+    padding: 1 2;
+    width: 80%;
+    max-width: 100;
+    height: 80%;
+    max-height: 40;
+    border: round #ea580c;
+    background: #0a0a0a 98%;
+}
+
+#vuln_detail_scroll {
+    height: 1fr;
+    background: transparent;
+    scrollbar-background: #0a0a0a;
+    scrollbar-color: #333333;
+    scrollbar-corner-color: #0a0a0a;
+    scrollbar-size: 1 1;
+}
+
+#vuln_detail_content {
+    width: 100%;
+    background: transparent;
+    padding: 0;
+}
+
+#vuln_detail_buttons {
+    width: 100%;
+    height: auto;
+    align: center middle;
+    padding: 0;
+    margin: 0;
+}
+
+#copy_vuln_detail, #close_vuln_detail {
+    width: auto;
+    min-width: 12;
+    height: 1;
+    min-height: 1;
+    background: transparent;
+    color: #737373;
+    border: none;
+    text-style: none;
+    margin: 0 1;
+}
+
+#copy_vuln_detail:hover, #copy_vuln_detail:focus,
+#close_vuln_detail:hover, #close_vuln_detail:focus {
+    background: #262626;
+    color: #ffffff;
+    border: none;
+}
+
 #chat_area_container {
     width: 75%;
     background: transparent;
