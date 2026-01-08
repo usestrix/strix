@@ -2,6 +2,8 @@
   <tool name="create_vulnerability_report">
     <description>Create a vulnerability report for a discovered security issue.
 
+IMPORTANT: This tool includes automatic LLM-based deduplication. Reports that describe the same vulnerability (same root cause on the same asset) as an existing report will be rejected.
+
 Use this tool to document a specific fully verified security vulnerability.
 
 DO NOT USE:
@@ -10,8 +12,11 @@ DO NOT USE:
 - When you don't have a proof of concept, or still not 100% sure if it's a vulnerability
 - For tracking multiple vulnerabilities (create separate reports)
 - For reporting multiple vulnerabilities at once. Use a separate create_vulnerability_report for each vulnerability.
+- To re-report a vulnerability that was already reported (even with different details)
 
 White-box requirement (when you have access to the code): You MUST include code_file, code_before, code_after, and code_diff. These must contain the actual code (before/after) and a complete, apply-able unified diff.
+
+DEDUPLICATION: If this tool returns with success=false and mentions a duplicate, DO NOT attempt to re-submit. The vulnerability has already been reported. Move on to testing other areas.
 
 Professional, customer-facing report rules (PDF-ready):
 - Do NOT include internal or system details: never mention local or absolute paths (e.g., "/workspace"), internal tools, agents, orchestrators, sandboxes, models, system prompts/instructions, connection issues, internal errors/logs/stack traces, or tester machine environment details.
@@ -122,7 +127,9 @@ H = High (total loss of availability)</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing success=true, message, report_id, severity, cvss_score</description>
+      <description>Response containing:
+- On success: success=true, message, report_id, severity, cvss_score
+- On duplicate detection: success=false, message (with duplicate info), duplicate_of (ID), duplicate_title, confidence (0-1), reason (why it's a duplicate)</description>
     </returns>
   </tool>
 </tools>

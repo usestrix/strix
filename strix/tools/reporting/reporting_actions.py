@@ -157,6 +157,45 @@ def create_vulnerability_report(
 
         tracer = get_global_tracer()
         if tracer:
+            from strix.llm.dedupe import check_duplicate
+
+            existing_reports = tracer.get_existing_vulnerabilities()
+
+            candidate = {
+                "title": title,
+                "description": description,
+                "impact": impact,
+                "target": target,
+                "technical_analysis": technical_analysis,
+                "poc_description": poc_description,
+                "poc_script_code": poc_script_code,
+                "endpoint": endpoint,
+                "method": method,
+            }
+
+            dedupe_result = check_duplicate(candidate, existing_reports)
+
+            if dedupe_result.get("is_duplicate"):
+                duplicate_id = dedupe_result.get("duplicate_id", "")
+
+                duplicate_title = ""
+                for report in existing_reports:
+                    if report.get("id") == duplicate_id:
+                        duplicate_title = report.get("title", "Unknown")
+                        break
+
+                return {
+                    "success": False,
+                    "message": (
+                        f"Potential duplicate of '{duplicate_title}' "
+                        f"(id={duplicate_id[:8]}...). Do not re-report the same vulnerability."
+                    ),
+                    "duplicate_of": duplicate_id,
+                    "duplicate_title": duplicate_title,
+                    "confidence": dedupe_result.get("confidence", 0.0),
+                    "reason": dedupe_result.get("reason", ""),
+                }
+
             cvss_breakdown = {
                 "attack_vector": attack_vector,
                 "attack_complexity": attack_complexity,

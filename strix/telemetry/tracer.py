@@ -145,6 +145,9 @@ class Tracer:
         self.save_run_data()
         return report_id
 
+    def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
+        return list(self.vulnerability_reports)
+
     def update_scan_final_fields(
         self,
         executive_summary: str,
