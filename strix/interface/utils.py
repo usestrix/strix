@@ -378,7 +378,7 @@ def build_tui_stats_text(tracer: Any, agent_config: dict[str, Any] | None = None
     total_tokens = total_stats["input_tokens"] + total_stats["output_tokens"]
 
     stats_text.append("\n")
-    stats_text.append("Tokens: ", style="bold white")
+    stats_text.append("Total Tokens: ", style="bold white")
     stats_text.append(format_token_count(total_tokens), style="dim white")
 
     stats_text.append(" • ", style="dim white")
