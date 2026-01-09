@@ -369,22 +369,19 @@ def build_tui_stats_text(tracer: Any, agent_config: dict[str, Any] | None = None
     if agent_config:
         llm_config = agent_config["llm_config"]
         model = getattr(llm_config, "model_name", "Unknown")
-        stats_text.append("Model: ", style="bold white")
-        stats_text.append(model, style="dim white")
+        stats_text.append(model, style="dim")
 
     llm_stats = tracer.get_total_llm_stats()
     total_stats = llm_stats["total"]
 
     total_tokens = total_stats["input_tokens"] + total_stats["output_tokens"]
-
-    stats_text.append("\n")
-    stats_text.append("Total Tokens: ", style="bold white")
-    stats_text.append(format_token_count(total_tokens), style="dim white")
+    if total_tokens > 0:
+        stats_text.append("\n")
+        stats_text.append(f"{format_token_count(total_tokens)} tokens", style="dim")
 
     if total_stats["cost"] > 0:
-        stats_text.append(" • ", style="dim white")
-        stats_text.append("Cost: ", style="bold white")
-        stats_text.append(f"${total_stats['cost']:.4f}", style="dim white")
+        stats_text.append("\n")
+        stats_text.append(f"${total_stats['cost']:.2f} spent", style="dim")
 
     return stats_text
 
