@@ -16,6 +16,7 @@ from jinja2 import (
 
 from strix.llm import LLM, LLMConfig, LLMRequestFailedError
 from strix.llm.utils import clean_content
+from strix.runtime import SandboxInitializationError
 from strix.tools import process_tool_invocations
 
 from .state import AgentState
@@ -145,17 +146,15 @@ class BaseAgent(metaclass=AgentMeta):
         if self.state.parent_id is None and agents_graph_actions._root_agent_id is None:
             agents_graph_actions._root_agent_id = self.state.agent_id
 
-    def cancel_current_execution(self) -> None:
-        if self._current_task and not self._current_task.done():
-            self._current_task.cancel()
-        self._current_task = None
-
     async def agent_loop(self, task: str) -> dict[str, Any]:  # noqa: PLR0912, PLR0915
-        await self._initialize_sandbox_and_state(task)
-
         from strix.telemetry.tracer import get_global_tracer
 
         tracer = get_global_tracer()
+
+        try:
+            await self._initialize_sandbox_and_state(task)
+        except SandboxInitializationError as e:
+            return self._handle_sandbox_error(e, tracer)
 
         while True:
             self._check_agent_messages(self.state)
@@ -232,37 +231,9 @@ class BaseAgent(metaclass=AgentMeta):
                 continue
 
             except LLMRequestFailedError as e:
-                error_msg = str(e)
-                error_details = getattr(e, "details", None)
-                self.state.add_error(error_msg)
-
-                if self.non_interactive:
-                    self.state.set_completed({"success": False, "error": error_msg})
-                    if tracer:
-                        tracer.update_agent_status(self.state.agent_id, "failed", error_msg)
-                        if error_details:
-                            tracer.log_tool_execution_start(
-                                self.state.agent_id,
-                                "llm_error_details",
-                                {"error": error_msg, "details": error_details},
-                            )
-                            tracer.update_tool_execution(
-                                tracer._next_execution_id - 1, "failed", error_details
-                            )
-                    return {"success": False, "error": error_msg}
-
-                self.state.enter_waiting_state(llm_failed=True)
-                if tracer:
-                    tracer.update_agent_status(self.state.agent_id, "llm_failed", error_msg)
-                    if error_details:
-                        tracer.log_tool_execution_start(
-                            self.state.agent_id,
-                            "llm_error_details",
-                            {"error": error_msg, "details": error_details},
-                        )
-                        tracer.update_tool_execution(
-                            tracer._next_execution_id - 1, "failed", error_details
-                        )
+                result = self._handle_llm_error(e, tracer)
+                if result is not None:
+                    return result
                 continue
 
             except (RuntimeError, ValueError, TypeError) as e:
@@ -439,18 +410,6 @@ class BaseAgent(metaclass=AgentMeta):
 
         return False
 
-    async def _handle_iteration_error(
-        self,
-        error: RuntimeError | ValueError | TypeError | asyncio.CancelledError,
-        tracer: Optional["Tracer"],
-    ) -> bool:
-        error_msg = f"Error in iteration {self.state.iteration}: {error!s}"
-        logger.exception(error_msg)
-        self.state.add_error(error_msg)
-        if tracer:
-            tracer.update_agent_status(self.state.agent_id, "error")
-        return True
-
     def _check_agent_messages(self, state: AgentState) -> None:  # noqa: PLR0912
         try:
             from strix.tools.agents_graph.agents_graph_actions import _agent_graph, _agent_messages
@@ -535,3 +494,90 @@ class BaseAgent(metaclass=AgentMeta):
             logger = logging.getLogger(__name__)
             logger.warning(f"Error checking agent messages: {e}")
             return
+
+    def _handle_sandbox_error(
+        self,
+        error: SandboxInitializationError,
+        tracer: Optional["Tracer"],
+    ) -> dict[str, Any]:
+        error_msg = str(error.message)
+        error_details = error.details
+        self.state.add_error(error_msg)
+
+        if self.non_interactive:
+            self.state.set_completed({"success": False, "error": error_msg})
+            if tracer:
+                tracer.update_agent_status(self.state.agent_id, "failed", error_msg)
+                if error_details:
+                    exec_id = tracer.log_tool_execution_start(
+                        self.state.agent_id,
+                        "sandbox_error_details",
+                        {"error": error_msg, "details": error_details},
+                    )
+                    tracer.update_tool_execution(exec_id, "failed", {"details": error_details})
+            return {"success": False, "error": error_msg, "details": error_details}
+
+        self.state.enter_waiting_state()
+        if tracer:
+            tracer.update_agent_status(self.state.agent_id, "sandbox_failed", error_msg)
+            if error_details:
+                exec_id = tracer.log_tool_execution_start(
+                    self.state.agent_id,
+                    "sandbox_error_details",
+                    {"error": error_msg, "details": error_details},
+                )
+                tracer.update_tool_execution(exec_id, "failed", {"details": error_details})
+
+        return {"success": False, "error": error_msg, "details": error_details}
+
+    def _handle_llm_error(
+        self,
+        error: LLMRequestFailedError,
+        tracer: Optional["Tracer"],
+    ) -> dict[str, Any] | None:
+        error_msg = str(error)
+        error_details = getattr(error, "details", None)
+        self.state.add_error(error_msg)
+
+        if self.non_interactive:
+            self.state.set_completed({"success": False, "error": error_msg})
+            if tracer:
+                tracer.update_agent_status(self.state.agent_id, "failed", error_msg)
+                if error_details:
+                    exec_id = tracer.log_tool_execution_start(
+                        self.state.agent_id,
+                        "llm_error_details",
+                        {"error": error_msg, "details": error_details},
+                    )
+                    tracer.update_tool_execution(exec_id, "failed", {"details": error_details})
+            return {"success": False, "error": error_msg}
+
+        self.state.enter_waiting_state(llm_failed=True)
+        if tracer:
+            tracer.update_agent_status(self.state.agent_id, "llm_failed", error_msg)
+            if error_details:
+                exec_id = tracer.log_tool_execution_start(
+                    self.state.agent_id,
+                    "llm_error_details",
+                    {"error": error_msg, "details": error_details},
+                )
+                tracer.update_tool_execution(exec_id, "failed", {"details": error_details})
+
+        return None
+
+    async def _handle_iteration_error(
+        self,
+        error: RuntimeError | ValueError | TypeError | asyncio.CancelledError,
+        tracer: Optional["Tracer"],
+    ) -> bool:
+        error_msg = f"Error in iteration {self.state.iteration}: {error!s}"
+        logger.exception(error_msg)
+        self.state.add_error(error_msg)
+        if tracer:
+            tracer.update_agent_status(self.state.agent_id, "error")
+        return True
+
+    def cancel_current_execution(self) -> None:
+        if self._current_task and not self._current_task.done():
+            self._current_task.cancel()
+        self._current_task = None

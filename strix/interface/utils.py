@@ -722,9 +722,10 @@ def check_docker_connection() -> Any:
         error_text.append("DOCKER NOT AVAILABLE", style="bold red")
         error_text.append("\n\n", style="white")
         error_text.append("Cannot connect to Docker daemon.\n", style="white")
-        error_text.append("Please ensure Docker is installed and running.\n\n", style="white")
-        error_text.append("Try running: ", style="dim white")
-        error_text.append("sudo systemctl start docker", style="dim cyan")
+        error_text.append(
+            "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
+            style="white",
+        )
 
         panel = Panel(
             error_text,

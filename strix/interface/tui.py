@@ -1629,15 +1629,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         text = Text()
 
-        if tool_name == "llm_error_details":
-            text.append("✗ LLM Request Failed", style="red")
-            if args.get("details"):
-                details = str(args["details"])
-                if len(details) > 300:
-                    details = details[:297] + "..."
-                text.append("\nDetails: ", style="dim")
-                text.append(details)
-            return text
+        if tool_name in ("llm_error_details", "sandbox_error_details"):
+            return self._render_error_details(text, tool_name, args)
 
         text.append("→ Using tool ")
         text.append(tool_name, style="bold blue")
@@ -1653,10 +1646,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
         text.append(icon, style=style)
 
         if args:
-            for k, v in list(args.items())[:2]:
+            for k, v in list(args.items())[:5]:
                 str_v = str(v)
-                if len(str_v) > 80:
-                    str_v = str_v[:77] + "..."
+                if len(str_v) > 500:
+                    str_v = str_v[:497] + "..."
                 text.append("\n  ")
                 text.append(k, style="dim")
                 text.append(": ")
@@ -1664,12 +1657,27 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         if status in ["completed", "failed", "error"] and result:
             result_str = str(result)
-            if len(result_str) > 150:
-                result_str = result_str[:147] + "..."
+            if len(result_str) > 1000:
+                result_str = result_str[:997] + "..."
             text.append("\n")
             text.append("Result: ", style="bold")
             text.append(result_str)
 
+        return text
+
+    def _render_error_details(self, text: Any, tool_name: str, args: dict[str, Any]) -> Any:
+        if tool_name == "llm_error_details":
+            text.append("✗ LLM Request Failed", style="red")
+        else:
+            text.append("✗ Sandbox Initialization Failed", style="red")
+            if args.get("error"):
+                text.append(f"\n{args['error']}", style="bold red")
+        if args.get("details"):
+            details = str(args["details"])
+            if len(details) > 1000:
+                details = details[:997] + "..."
+            text.append("\nDetails: ", style="dim")
+            text.append(details)
         return text
 
     @on(Tree.NodeHighlighted)  # type: ignore[misc]
