@@ -275,7 +275,7 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             VerticalScroll(Static(content, id="vuln_detail_content"), id="vuln_detail_scroll"),
             Horizontal(
                 Button("Copy", variant="default", id="copy_vuln_detail"),
-                Button("Close", variant="default", id="close_vuln_detail"),
+                Button("Done", variant="default", id="close_vuln_detail"),
                 id="vuln_detail_buttons",
             ),
             id="vuln_detail_dialog",
