@@ -167,8 +167,11 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
                 if isinstance(result, dict) and not result.get("success", True):
                     error_msg = result.get("error", "Unknown error")
+                    error_details = result.get("details")
                     console.print()
                     console.print(f"[bold red]❌ Penetration test failed:[/] {error_msg}")
+                    if error_details:
+                        console.print(f"[dim]{error_details}[/]")
                     console.print()
                     sys.exit(1)
             finally:
