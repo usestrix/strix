@@ -22,7 +22,7 @@ from .runtime import AbstractRuntime, SandboxInfo
 STRIX_IMAGE = os.getenv("STRIX_IMAGE", "ghcr.io/usestrix/strix-sandbox:0.1.10")
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60  # seconds
-TOOL_SERVER_HEALTH_TIMEOUT = 30  # seconds to wait for tool server to be healthy
+TOOL_SERVER_HEALTH_REQUEST_TIMEOUT = 5  # seconds per health check request
 TOOL_SERVER_HEALTH_RETRIES = 10  # number of retries for health check
 logger = logging.getLogger(__name__)
 
@@ -312,7 +312,7 @@ class DockerRuntime(AbstractRuntime):
         self,
         health_url: str,
         max_retries: int = TOOL_SERVER_HEALTH_RETRIES,
-        timeout: int = TOOL_SERVER_HEALTH_TIMEOUT,
+        request_timeout: int = TOOL_SERVER_HEALTH_REQUEST_TIMEOUT,
     ) -> None:
         import httpx
 
@@ -320,7 +320,7 @@ class DockerRuntime(AbstractRuntime):
 
         for attempt in range(max_retries):
             try:
-                with httpx.Client(trust_env=False, timeout=timeout / max_retries) as client:
+                with httpx.Client(trust_env=False, timeout=request_timeout) as client:
                     response = client.get(health_url)
                     response.raise_for_status()
                     health_data = response.json()
