@@ -149,7 +149,7 @@ class PythonRenderer(BaseToolRenderer):
         else:
             text.append("Running...", style="dim")
 
-        if result:
+        if result and isinstance(result, dict | str):
             cls._append_output(text, result)
 
         css_classes = cls.get_css_classes(status)
