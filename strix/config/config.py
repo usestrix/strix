@@ -8,7 +8,7 @@ class Config:
     """Configuration Manager for Strix."""
 
     # LLM Configuration
-    strix_llm = "openai/gpt-5"
+    strix_llm = None
     llm_api_key = None
     llm_api_base = None
     openai_api_base = None

@@ -539,7 +539,7 @@ def main() -> None:
     is_whitebox = bool(args.local_sources)
 
     posthog.start(
-        model=os.getenv("STRIX_LLM"),
+        model=Config.get("strix_llm"),
         scan_mode=args.scan_mode,
         is_whitebox=is_whitebox,
         interactive=not args.non_interactive,
