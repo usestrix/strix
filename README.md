@@ -216,6 +216,9 @@ export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
 
+> [!NOTE]
+> Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
+
 **Recommended models for best results:**
 
 - [OpenAI GPT-5](https://openai.com/api/) — `openai/gpt-5`
