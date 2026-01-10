@@ -6,7 +6,6 @@ Strix Agent Interface
 import argparse
 import asyncio
 import logging
-import os
 import shutil
 import sys
 from pathlib import Path
@@ -47,28 +46,28 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
     missing_required_vars = []
     missing_optional_vars = []
 
-    if not os.getenv("STRIX_LLM"):
+    if not Config.get("strix_llm"):
         missing_required_vars.append("STRIX_LLM")
 
     has_base_url = any(
         [
-            os.getenv("LLM_API_BASE"),
-            os.getenv("OPENAI_API_BASE"),
-            os.getenv("LITELLM_BASE_URL"),
-            os.getenv("OLLAMA_API_BASE"),
+            Config.get("llm_api_base"),
+            Config.get("openai_api_base"),
+            Config.get("litellm_base_url"),
+            Config.get("ollama_api_base"),
         ]
     )
 
-    if not os.getenv("LLM_API_KEY"):
+    if not Config.get("llm_api_key"):
         missing_optional_vars.append("LLM_API_KEY")
 
     if not has_base_url:
         missing_optional_vars.append("LLM_API_BASE")
 
-    if not os.getenv("PERPLEXITY_API_KEY"):
+    if not Config.get("perplexity_api_key"):
         missing_optional_vars.append("PERPLEXITY_API_KEY")
 
-    if not os.getenv("STRIX_REASONING_EFFORT"):
+    if not Config.get("strix_reasoning_effort"):
         missing_optional_vars.append("STRIX_REASONING_EFFORT")
 
     if missing_required_vars:
