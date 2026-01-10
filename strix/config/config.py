@@ -1,3 +1,4 @@
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -77,11 +78,11 @@ class Config:
             config_path = cls.config_file()
             with config_path.open("w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2)
-            config_path.chmod(0o600)
         except OSError:
             return False
-        else:
-            return True
+        with contextlib.suppress(OSError):
+            config_path.chmod(0o600)  # may fail on Windows
+        return True
 
     @classmethod
     def apply_saved(cls) -> dict[str, str]:
