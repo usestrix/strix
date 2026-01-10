@@ -21,7 +21,6 @@ from . import SandboxInitializationError
 from .runtime import AbstractRuntime, SandboxInfo
 
 
-STRIX_IMAGE: str = Config.get("strix_image")  # type: ignore[assignment]
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60  # seconds
 TOOL_SERVER_HEALTH_REQUEST_TIMEOUT = 5  # seconds per health check request
@@ -123,7 +122,7 @@ class DockerRuntime(AbstractRuntime):
 
         for attempt in range(max_retries):
             try:
-                self._verify_image_available(STRIX_IMAGE)
+                self._verify_image_available(Config.get("strix_image"))  # type: ignore[arg-type]
 
                 try:
                     existing_container = self.client.containers.get(container_name)
@@ -144,27 +143,30 @@ class DockerRuntime(AbstractRuntime):
                 self._tool_server_port = tool_server_port
                 self._tool_server_token = tool_server_token
 
-                container = self.client.containers.run(
-                    STRIX_IMAGE,
-                    command="sleep infinity",
-                    detach=True,
-                    name=container_name,
-                    hostname=f"strix-scan-{scan_id}",
-                    ports={
-                        f"{caido_port}/tcp": caido_port,
-                        f"{tool_server_port}/tcp": tool_server_port,
-                    },
-                    cap_add=["NET_ADMIN", "NET_RAW"],
-                    labels={"strix-scan-id": scan_id},
-                    environment={
-                        "PYTHONUNBUFFERED": "1",
-                        "CAIDO_PORT": str(caido_port),
-                        "TOOL_SERVER_PORT": str(tool_server_port),
-                        "TOOL_SERVER_TOKEN": tool_server_token,
-                        "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
-                    },
-                    extra_hosts=self._get_extra_hosts(),
-                    tty=True,
+                container = cast(
+                    "Container",
+                    self.client.containers.run(  # type: ignore[call-overload]
+                        Config.get("strix_image"),
+                        command="sleep infinity",
+                        detach=True,
+                        name=container_name,
+                        hostname=f"strix-scan-{scan_id}",
+                        ports={
+                            f"{caido_port}/tcp": caido_port,
+                            f"{tool_server_port}/tcp": tool_server_port,
+                        },
+                        cap_add=["NET_ADMIN", "NET_RAW"],
+                        labels={"strix-scan-id": scan_id},
+                        environment={
+                            "PYTHONUNBUFFERED": "1",
+                            "CAIDO_PORT": str(caido_port),
+                            "TOOL_SERVER_PORT": str(tool_server_port),
+                            "TOOL_SERVER_TOKEN": tool_server_token,
+                            "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
+                        },
+                        extra_hosts=self._get_extra_hosts(),
+                        tty=True,
+                    ),
                 )
 
                 self._scan_container = container

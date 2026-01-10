@@ -34,7 +34,7 @@ from strix.interface.utils import (
     rewrite_localhost_targets,
     validate_llm_response,
 )
-from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME, STRIX_IMAGE
+from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME
 from strix.telemetry import posthog
 from strix.telemetry.tracer import get_global_tracer
 
@@ -467,11 +467,11 @@ def pull_docker_image() -> None:
     console = Console()
     client = check_docker_connection()
 
-    if image_exists(client, STRIX_IMAGE):
+    if image_exists(client, Config.get("strix_image")):  # type: ignore[arg-type]
         return
 
     console.print()
-    console.print(f"[bold cyan]🐳 Pulling Docker image:[/] {STRIX_IMAGE}")
+    console.print(f"[bold cyan]🐳 Pulling Docker image:[/] {Config.get('strix_image')}")
     console.print("[dim yellow]This only happens on first run and may take a few minutes...[/]")
     console.print()
 
@@ -480,7 +480,7 @@ def pull_docker_image() -> None:
             layers_info: dict[str, str] = {}
             last_update = ""
 
-            for line in client.api.pull(STRIX_IMAGE, stream=True, decode=True):
+            for line in client.api.pull(Config.get("strix_image"), stream=True, decode=True):
                 last_update = process_pull_line(line, layers_info, status, last_update)
 
         except DockerException as e:
@@ -489,7 +489,7 @@ def pull_docker_image() -> None:
             error_text.append("❌ ", style="bold red")
             error_text.append("FAILED TO PULL IMAGE", style="bold red")
             error_text.append("\n\n", style="white")
-            error_text.append(f"Could not download: {STRIX_IMAGE}\n", style="white")
+            error_text.append(f"Could not download: {Config.get('strix_image')}\n", style="white")
             error_text.append(str(e), style="dim red")
 
             panel = Panel(
