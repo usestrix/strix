@@ -125,8 +125,9 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                     error_text.append("• ", style="white")
                     error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
                     error_text.append(
-                        " - Reasoning effort level (default: high)\n",
+                        " - Reasoning effort level: none, minimal, medium, high, xhigh (default: high)\n",
                         style="white",
+                    )
                     )
 
         error_text.append("\nExample setup:\n", style="white")
