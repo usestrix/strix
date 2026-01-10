@@ -212,7 +212,7 @@ async def warm_up_llm() -> None:
             {"role": "user", "content": "Reply with just 'OK'."},
         ]
 
-        llm_timeout = int(Config.get("llm_timeout"))  # type: ignore[arg-type]
+        llm_timeout = int(Config.get("llm_timeout") or "300")
 
         completion_kwargs: dict[str, Any] = {
             "model": model_name,

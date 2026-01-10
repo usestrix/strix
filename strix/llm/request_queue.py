@@ -12,8 +12,8 @@ from strix.config import Config
 
 class LLMRequestQueue:
     def __init__(self, max_concurrent: int = 1, delay_between_requests: float = 4.0):
-        delay_between_requests = float(Config.get("llm_rate_limit_delay"))  # type: ignore[arg-type]
-        max_concurrent = int(Config.get("llm_rate_limit_concurrent"))  # type: ignore[arg-type]
+        delay_between_requests = float(Config.get("llm_rate_limit_delay") or "4.0")
+        max_concurrent = int(Config.get("llm_rate_limit_concurrent") or "1")
 
         self.max_concurrent = max_concurrent
         self.delay_between_requests = delay_between_requests

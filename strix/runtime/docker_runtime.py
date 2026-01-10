@@ -122,7 +122,7 @@ class DockerRuntime(AbstractRuntime):
 
         for attempt in range(max_retries):
             try:
-                self._verify_image_available(Config.get("strix_image"))  # type: ignore[arg-type]
+                self._verify_image_available(Config.get("strix_image") or "")
 
                 try:
                     existing_container = self.client.containers.get(container_name)

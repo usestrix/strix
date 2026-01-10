@@ -19,8 +19,8 @@ from .registry import (
 )
 
 
-SANDBOX_EXECUTION_TIMEOUT = float(Config.get("strix_sandbox_execution_timeout"))  # type: ignore[arg-type]
-SANDBOX_CONNECT_TIMEOUT = float(Config.get("strix_sandbox_connect_timeout"))  # type: ignore[arg-type]
+SANDBOX_EXECUTION_TIMEOUT = float(Config.get("strix_sandbox_execution_timeout") or "500")
+SANDBOX_CONNECT_TIMEOUT = float(Config.get("strix_sandbox_connect_timeout") or "10")
 
 
 async def execute_tool(tool_name: str, agent_state: Any | None = None, **kwargs: Any) -> Any:

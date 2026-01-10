@@ -18,6 +18,6 @@ class LLMConfig:
         self.enable_prompt_caching = enable_prompt_caching
         self.skills = skills or []
 
-        self.timeout = timeout or int(Config.get("llm_timeout"))  # type: ignore[arg-type]
+        self.timeout = timeout or int(Config.get("llm_timeout") or "300")
 
         self.scan_mode = scan_mode if scan_mode in ["quick", "standard", "deep"] else "deep"
