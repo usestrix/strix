@@ -18,9 +18,13 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import Config, apply_saved_config, save_current_config
-from strix.interface.cli import run_cli
-from strix.interface.tui import run_tui
-from strix.interface.utils import (
+
+
+apply_saved_config()
+
+from strix.interface.cli import run_cli  # noqa: E402
+from strix.interface.tui import run_tui  # noqa: E402
+from strix.interface.utils import (  # noqa: E402
     assign_workspace_subdirs,
     build_final_stats_text,
     check_docker_connection,
@@ -33,9 +37,9 @@ from strix.interface.utils import (
     rewrite_localhost_targets,
     validate_llm_response,
 )
-from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME
-from strix.telemetry import posthog
-from strix.telemetry.tracer import get_global_tracer
+from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME  # noqa: E402
+from strix.telemetry import posthog  # noqa: E402
+from strix.telemetry.tracer import get_global_tracer  # noqa: E402
 
 
 logging.getLogger().setLevel(logging.ERROR)
@@ -511,8 +515,6 @@ def pull_docker_image() -> None:
 def main() -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-
-    apply_saved_config()
 
     args = parse_arguments()
 
