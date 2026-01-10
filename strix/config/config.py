@@ -109,8 +109,17 @@ class Config:
     @classmethod
     def save_current(cls) -> bool:
         existing = cls.load().get("env", {})
-        current = cls.capture_current().get("env", {})
-        merged = {**existing, **current}
+        merged = dict(existing)
+
+        for var_name in cls.tracked_vars():
+            value = os.getenv(var_name)
+            if value is None:
+                pass
+            elif value == "":
+                merged.pop(var_name, None)
+            else:
+                merged[var_name] = value
+
         return cls.save({"env": merged})
 
 
