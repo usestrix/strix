@@ -110,6 +110,9 @@ class StrReplaceEditorRenderer(BaseToolRenderer):
                 text.append(" ")
                 text.append(line)
 
+        elif isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
         elif not (result and isinstance(result, dict) and "content" in result) and not path:
             text.append(" ")
             text.append("Processing...", style="dim")

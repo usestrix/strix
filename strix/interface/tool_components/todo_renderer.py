@@ -52,7 +52,10 @@ class CreateTodoRenderer(BaseToolRenderer):
         text.append("📋 ")
         text.append("Todo", style="bold #a78bfa")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
@@ -80,7 +83,10 @@ class ListTodosRenderer(BaseToolRenderer):
         text.append("📋 ")
         text.append("Todos", style="bold #a78bfa")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
@@ -108,7 +114,10 @@ class UpdateTodoRenderer(BaseToolRenderer):
         text.append("📋 ")
         text.append("Todo Updated", style="bold #a78bfa")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
@@ -136,7 +145,10 @@ class MarkTodoDoneRenderer(BaseToolRenderer):
         text.append("📋 ")
         text.append("Todo Completed", style="bold #a78bfa")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
@@ -164,7 +176,10 @@ class MarkTodoPendingRenderer(BaseToolRenderer):
         text.append("📋 ")
         text.append("Todo Reopened", style="bold #f59e0b")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:
@@ -192,7 +207,10 @@ class DeleteTodoRenderer(BaseToolRenderer):
         text.append("📋 ")
         text.append("Todo Removed", style="bold #94a3b8")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             if result.get("success"):
                 _format_todo_lines(text, result)
             else:

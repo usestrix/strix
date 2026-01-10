@@ -102,7 +102,10 @@ class ListNotesRenderer(BaseToolRenderer):
         text.append("📝 ")
         text.append("Notes", style="bold #fbbf24")
 
-        if result and isinstance(result, dict) and result.get("success"):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict) and result.get("success"):
             count = result.get("total_count", 0)
             notes = result.get("notes", []) or []
 

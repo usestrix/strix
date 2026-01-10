@@ -23,7 +23,10 @@ class ListRequestsRenderer(BaseToolRenderer):
         text.append("📋 ")
         text.append("Listing requests", style="bold #06b6d4")
 
-        if result and isinstance(result, dict) and "requests" in result:
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict) and "requests" in result:
             requests = result["requests"]
             if isinstance(requests, list) and requests:
                 for req in requests[:25]:
@@ -70,7 +73,10 @@ class ViewRequestRenderer(BaseToolRenderer):
         text.append("👀 ")
         text.append(f"Viewing {part}", style="bold #06b6d4")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             if "content" in result:
                 content = result["content"]
                 content_preview = content[:2000] + "..." if len(content) > 2000 else content
@@ -117,7 +123,10 @@ class SendRequestRenderer(BaseToolRenderer):
         text.append("📤 ")
         text.append(f"Sending {method}", style="bold #06b6d4")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             status_code = result.get("status_code")
             response_body = result.get("body", "")
 
@@ -161,7 +170,10 @@ class RepeatRequestRenderer(BaseToolRenderer):
         text.append("🔄 ")
         text.append("Repeating request", style="bold #06b6d4")
 
-        if result and isinstance(result, dict):
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict):
             status_code = result.get("status_code")
             response_body = result.get("body", "")
 
@@ -220,7 +232,10 @@ class ListSitemapRenderer(BaseToolRenderer):
         text.append("🗺️ ")
         text.append("Listing sitemap", style="bold #06b6d4")
 
-        if result and isinstance(result, dict) and "entries" in result:
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict) and "entries" in result:
             entries = result["entries"]
             if isinstance(entries, list) and entries:
                 for entry in entries[:30]:
@@ -256,7 +271,10 @@ class ViewSitemapEntryRenderer(BaseToolRenderer):
         text.append("📍 ")
         text.append("Viewing sitemap entry", style="bold #06b6d4")
 
-        if result and isinstance(result, dict) and "entry" in result:
+        if isinstance(result, str) and result.strip():
+            text.append("\n  ")
+            text.append(result.strip(), style="dim")
+        elif result and isinstance(result, dict) and "entry" in result:
             entry = result["entry"]
             if isinstance(entry, dict):
                 label = entry.get("label", "")

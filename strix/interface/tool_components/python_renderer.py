@@ -104,7 +104,13 @@ class PythonRenderer(BaseToolRenderer):
         return text
 
     @classmethod
-    def _append_output(cls, text: Text, result: dict[str, Any]) -> None:
+    def _append_output(cls, text: Text, result: dict[str, Any] | str) -> None:
+        if isinstance(result, str):
+            if result.strip():
+                text.append("\n")
+                text.append_text(cls._format_output(result))
+            return
+
         stdout = result.get("stdout", "")
         stderr = result.get("stderr", "")
 
@@ -143,7 +149,7 @@ class PythonRenderer(BaseToolRenderer):
         else:
             text.append("Running...", style="dim")
 
-        if result and isinstance(result, dict):
+        if result:
             cls._append_output(text, result)
 
         css_classes = cls.get_css_classes(status)

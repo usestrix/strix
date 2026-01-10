@@ -140,7 +140,7 @@ class TerminalRenderer(BaseToolRenderer):
 
     @classmethod
     def _build_content(
-        cls, command: str, is_input: bool, status: str, result: dict[str, Any] | None
+        cls, command: str, is_input: bool, status: str, result: dict[str, Any] | str | None
     ) -> Text:
         text = Text()
         terminal_icon = ">_"
@@ -208,8 +208,14 @@ class TerminalRenderer(BaseToolRenderer):
 
     @classmethod
     def _append_output(
-        cls, text: Text, result: dict[str, Any], tool_status: str, command: str = ""
+        cls, text: Text, result: dict[str, Any] | str, tool_status: str, command: str = ""
     ) -> None:
+        if isinstance(result, str):
+            if result.strip():
+                text.append("\n")
+                text.append_text(cls._format_output(result))
+            return
+
         raw_output = result.get("content", "")
         output = cls._clean_output(raw_output, command)
         error = result.get("error")
