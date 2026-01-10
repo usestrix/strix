@@ -213,6 +213,7 @@ export LLM_API_KEY="your-api-key"
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
+export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
 
 **Recommended models for best results:**

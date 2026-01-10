@@ -67,6 +67,9 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
     if not os.getenv("PERPLEXITY_API_KEY"):
         missing_optional_vars.append("PERPLEXITY_API_KEY")
 
+    if not os.getenv("STRIX_REASONING_EFFORT"):
+        missing_optional_vars.append("STRIX_REASONING_EFFORT")
+
     if missing_required_vars:
         error_text = Text()
         error_text.append("❌ ", style="bold red")
@@ -118,6 +121,13 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                         " - API key for Perplexity AI web search (enables real-time research)\n",
                         style="white",
                     )
+                elif var == "STRIX_REASONING_EFFORT":
+                    error_text.append("• ", style="white")
+                    error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
+                    error_text.append(
+                        " - Reasoning effort level (default: high)\n",
+                        style="white",
+                    )
 
         error_text.append("\nExample setup:\n", style="white")
         error_text.append("export STRIX_LLM='openai/gpt-5'\n", style="dim white")
@@ -139,6 +149,11 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                 elif var == "PERPLEXITY_API_KEY":
                     error_text.append(
                         "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
+                    )
+                elif var == "STRIX_REASONING_EFFORT":
+                    error_text.append(
+                        "export STRIX_REASONING_EFFORT='high'\n",
+                        style="dim white",
                     )
 
         panel = Panel(

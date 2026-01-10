@@ -53,6 +53,9 @@ _LLM_API_BASE = (
     or os.getenv("LITELLM_BASE_URL")
     or os.getenv("OLLAMA_API_BASE")
 )
+_STRIX_REASONING_EFFORT = os.getenv(
+    "STRIX_REASONING_EFFORT"
+)  # "none", "minimal", "medium", "high", or "xhigh"
 
 
 class LLMRequestFailedError(Exception):
@@ -109,6 +112,13 @@ class LLM:
         self.agent_id = agent_id
         self._total_stats = RequestStats()
         self._last_request_stats = RequestStats()
+
+        if _STRIX_REASONING_EFFORT:
+            self._reasoning_effort = _STRIX_REASONING_EFFORT
+        elif self.config.scan_mode == "quick":
+            self._reasoning_effort = "medium"
+        else:
+            self._reasoning_effort = "high"
 
         self.memory_compressor = MemoryCompressor(
             model_name=self.config.model_name,
@@ -467,7 +477,7 @@ class LLM:
         completion_args["stop"] = ["</function>"]
 
         if self._should_include_reasoning_effort():
-            completion_args["reasoning_effort"] = "high"
+            completion_args["reasoning_effort"] = self._reasoning_effort
 
         queue = get_global_queue()
         self._total_stats.requests += 1
