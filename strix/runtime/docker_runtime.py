@@ -15,11 +15,13 @@ from docker.models.containers import Container
 from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout as RequestsTimeout
 
+from strix.config import Config
+
 from . import SandboxInitializationError
 from .runtime import AbstractRuntime, SandboxInfo
 
 
-STRIX_IMAGE = os.getenv("STRIX_IMAGE", "ghcr.io/usestrix/strix-sandbox:0.1.10")
+STRIX_IMAGE: str = Config.get("strix_image")  # type: ignore[assignment]
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60  # seconds
 TOOL_SERVER_HEALTH_REQUEST_TIMEOUT = 5  # seconds per health check request

@@ -1,8 +1,9 @@
 import logging
-import os
 from typing import Any
 
 import litellm
+
+from strix.config import Config
 
 
 logger = logging.getLogger(__name__)
@@ -150,7 +151,7 @@ class MemoryCompressor:
         timeout: int = 600,
     ):
         self.max_images = max_images
-        self.model_name = model_name or os.getenv("STRIX_LLM", "openai/gpt-5")
+        self.model_name = model_name or Config.get("strix_llm")
         self.timeout = timeout
 
         if not self.model_name:

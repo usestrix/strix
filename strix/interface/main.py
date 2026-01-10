@@ -18,6 +18,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
+from strix.config import Config, apply_saved_config, save_current_config
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
 from strix.interface.utils import (
@@ -198,13 +199,13 @@ async def warm_up_llm() -> None:
     console = Console()
 
     try:
-        model_name = os.getenv("STRIX_LLM", "openai/gpt-5")
-        api_key = os.getenv("LLM_API_KEY")
+        model_name = Config.get("strix_llm")
+        api_key = Config.get("llm_api_key")
         api_base = (
-            os.getenv("LLM_API_BASE")
-            or os.getenv("OPENAI_API_BASE")
-            or os.getenv("LITELLM_BASE_URL")
-            or os.getenv("OLLAMA_API_BASE")
+            Config.get("llm_api_base")
+            or Config.get("openai_api_base")
+            or Config.get("litellm_base_url")
+            or Config.get("ollama_api_base")
         )
 
         test_messages = [
@@ -212,7 +213,7 @@ async def warm_up_llm() -> None:
             {"role": "user", "content": "Reply with just 'OK'."},
         ]
 
-        llm_timeout = int(os.getenv("LLM_TIMEOUT", "600"))
+        llm_timeout = int(Config.get("llm_timeout"))  # type: ignore[arg-type]
 
         completion_kwargs: dict[str, Any] = {
             "model": model_name,
@@ -512,6 +513,8 @@ def main() -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    apply_saved_config()
+
     args = parse_arguments()
 
     check_docker_installed()
@@ -519,6 +522,8 @@ def main() -> None:
 
     validate_environment()
     asyncio.run(warm_up_llm())
+
+    save_current_config()
 
     args.run_name = generate_run_name(args.targets_info)
 

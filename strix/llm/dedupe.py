@@ -1,10 +1,11 @@
 import json
 import logging
-import os
 import re
 from typing import Any
 
 import litellm
+
+from strix.config import Config
 
 
 logger = logging.getLogger(__name__)
@@ -154,13 +155,13 @@ def check_duplicate(
 
         comparison_data = {"candidate": candidate_cleaned, "existing_reports": existing_cleaned}
 
-        model_name = os.getenv("STRIX_LLM", "openai/gpt-5")
-        api_key = os.getenv("LLM_API_KEY")
+        model_name = Config.get("strix_llm")
+        api_key = Config.get("llm_api_key")
         api_base = (
-            os.getenv("LLM_API_BASE")
-            or os.getenv("OPENAI_API_BASE")
-            or os.getenv("LITELLM_BASE_URL")
-            or os.getenv("OLLAMA_API_BASE")
+            Config.get("llm_api_base")
+            or Config.get("openai_api_base")
+            or Config.get("litellm_base_url")
+            or Config.get("ollama_api_base")
         )
 
         messages = [

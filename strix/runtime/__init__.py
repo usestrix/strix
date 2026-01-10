@@ -1,4 +1,4 @@
-import os
+from strix.config import Config
 
 from .runtime import AbstractRuntime
 
@@ -13,7 +13,7 @@ class SandboxInitializationError(Exception):
 
 
 def get_runtime() -> AbstractRuntime:
-    runtime_backend = os.getenv("STRIX_RUNTIME_BACKEND", "docker")
+    runtime_backend = Config.get("strix_runtime_backend")
 
     if runtime_backend == "docker":
         from .docker_runtime import DockerRuntime

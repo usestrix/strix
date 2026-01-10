@@ -4,6 +4,8 @@ from typing import Any
 
 import httpx
 
+from strix.config import Config
+
 
 if os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "false":
     from strix.runtime import get_runtime
@@ -17,8 +19,8 @@ from .registry import (
 )
 
 
-SANDBOX_EXECUTION_TIMEOUT = float(os.getenv("STRIX_SANDBOX_EXECUTION_TIMEOUT", "500"))
-SANDBOX_CONNECT_TIMEOUT = float(os.getenv("STRIX_SANDBOX_CONNECT_TIMEOUT", "10"))
+SANDBOX_EXECUTION_TIMEOUT = float(Config.get("strix_sandbox_execution_timeout"))  # type: ignore[arg-type]
+SANDBOX_CONNECT_TIMEOUT = float(Config.get("strix_sandbox_connect_timeout"))  # type: ignore[arg-type]
 
 
 async def execute_tool(tool_name: str, agent_state: Any | None = None, **kwargs: Any) -> Any:

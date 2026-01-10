@@ -1,5 +1,7 @@
 import os
 
+from strix.config import Config
+
 from .executor import (
     execute_tool,
     execute_tool_invocation,
@@ -22,9 +24,9 @@ from .registry import (
 
 SANDBOX_MODE = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
 
-HAS_PERPLEXITY_API = bool(os.getenv("PERPLEXITY_API_KEY"))
+HAS_PERPLEXITY_API = bool(Config.get("perplexity_api_key"))
 
-DISABLE_BROWSER = os.getenv("STRIX_DISABLE_BROWSER", "false").lower() == "true"
+DISABLE_BROWSER = (Config.get("strix_disable_browser") or "false").lower() == "true"
 
 if not SANDBOX_MODE:
     from .agents_graph import *  # noqa: F403

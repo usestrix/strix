@@ -1,6 +1,5 @@
 import asyncio
 import logging
-import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import Enum
@@ -16,6 +15,7 @@ from jinja2 import (
 from litellm import completion_cost, stream_chunk_builder, supports_reasoning
 from litellm.utils import supports_prompt_caching, supports_vision
 
+from strix.config import Config
 from strix.llm.config import LLMConfig
 from strix.llm.memory_compressor import MemoryCompressor
 from strix.llm.request_queue import get_global_queue
@@ -46,16 +46,14 @@ logger = logging.getLogger(__name__)
 litellm.drop_params = True
 litellm.modify_params = True
 
-_LLM_API_KEY = os.getenv("LLM_API_KEY")
+_LLM_API_KEY = Config.get("llm_api_key")
 _LLM_API_BASE = (
-    os.getenv("LLM_API_BASE")
-    or os.getenv("OPENAI_API_BASE")
-    or os.getenv("LITELLM_BASE_URL")
-    or os.getenv("OLLAMA_API_BASE")
+    Config.get("llm_api_base")
+    or Config.get("openai_api_base")
+    or Config.get("litellm_base_url")
+    or Config.get("ollama_api_base")
 )
-_STRIX_REASONING_EFFORT = os.getenv(
-    "STRIX_REASONING_EFFORT"
-)  # "none", "minimal", "low", "medium", "high", or "xhigh"
+_STRIX_REASONING_EFFORT = Config.get("strix_reasoning_effort")
 
 
 class LLMRequestFailedError(Exception):
