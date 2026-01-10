@@ -119,10 +119,13 @@ class DockerRuntime(AbstractRuntime):
     def _create_container_with_retry(self, scan_id: str, max_retries: int = 3) -> Container:
         last_exception = None
         container_name = f"strix-scan-{scan_id}"
+        image_name = Config.get("strix_image")
+        if not image_name:
+            raise ValueError("STRIX_IMAGE must be configured")
 
         for attempt in range(max_retries):
             try:
-                self._verify_image_available(Config.get("strix_image") or "")
+                self._verify_image_available(image_name)
 
                 try:
                     existing_container = self.client.containers.get(container_name)
@@ -143,30 +146,27 @@ class DockerRuntime(AbstractRuntime):
                 self._tool_server_port = tool_server_port
                 self._tool_server_token = tool_server_token
 
-                container = cast(
-                    "Container",
-                    self.client.containers.run(  # type: ignore[call-overload]
-                        Config.get("strix_image"),
-                        command="sleep infinity",
-                        detach=True,
-                        name=container_name,
-                        hostname=f"strix-scan-{scan_id}",
-                        ports={
-                            f"{caido_port}/tcp": caido_port,
-                            f"{tool_server_port}/tcp": tool_server_port,
-                        },
-                        cap_add=["NET_ADMIN", "NET_RAW"],
-                        labels={"strix-scan-id": scan_id},
-                        environment={
-                            "PYTHONUNBUFFERED": "1",
-                            "CAIDO_PORT": str(caido_port),
-                            "TOOL_SERVER_PORT": str(tool_server_port),
-                            "TOOL_SERVER_TOKEN": tool_server_token,
-                            "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
-                        },
-                        extra_hosts=self._get_extra_hosts(),
-                        tty=True,
-                    ),
+                container = self.client.containers.run(
+                    image_name,
+                    command="sleep infinity",
+                    detach=True,
+                    name=container_name,
+                    hostname=f"strix-scan-{scan_id}",
+                    ports={
+                        f"{caido_port}/tcp": caido_port,
+                        f"{tool_server_port}/tcp": tool_server_port,
+                    },
+                    cap_add=["NET_ADMIN", "NET_RAW"],
+                    labels={"strix-scan-id": scan_id},
+                    environment={
+                        "PYTHONUNBUFFERED": "1",
+                        "CAIDO_PORT": str(caido_port),
+                        "TOOL_SERVER_PORT": str(tool_server_port),
+                        "TOOL_SERVER_TOKEN": tool_server_token,
+                        "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
+                    },
+                    extra_hosts=self._get_extra_hosts(),
+                    tty=True,
                 )
 
                 self._scan_container = container
