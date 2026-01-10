@@ -74,8 +74,10 @@ class Config:
     def save(cls, config: dict[str, Any]) -> bool:
         try:
             cls.config_dir().mkdir(parents=True, exist_ok=True)
-            with cls.config_file().open("w", encoding="utf-8") as f:
+            config_path = cls.config_file()
+            with config_path.open("w", encoding="utf-8") as f:
                 json.dump(config, f, indent=2)
+            config_path.chmod(0o600)
         except OSError:
             return False
         else:
