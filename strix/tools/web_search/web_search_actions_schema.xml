@@ -1,6 +1,6 @@
 <tools>
   <tool name="web_search">
-    <description>Search the web using Perplexity AI for real-time information and current events.
+    <description>Search the web using Perplexity AI or Firecrawl for real-time information and current events.
 
 This is your PRIMARY research tool - use it extensively and liberally for:
 - Current vulnerabilities, CVEs, and security advisories
@@ -14,7 +14,7 @@ This is your PRIMARY research tool - use it extensively and liberally for:
 - Security conference talks and research papers
 
 The tool provides intelligent, contextual responses with current information that may not be in your training data. Use it early and often during security assessments to gather the most up-to-date factual information.</description>
-    <details>This tool leverages Perplexity AI's sonar-reasoning model to search the web and provide intelligent, contextual responses to queries. It's essential for effective cybersecurity work as it provides access to the latest vulnerabilities, attack vectors, security tools, and defensive techniques. The AI understands security context and can synthesize information from multiple sources.</details>
+    <details>This tool leverages either Perplexity AI's sonar-reasoning model or Firecrawl's deep search and scraping capabilities to search the web and provide intelligent, contextual responses to queries. It's essential for effective cybersecurity work as it provides access to the latest vulnerabilities, attack vectors, security tools, and defensive techniques. The AI understands security context and can synthesize information from multiple sources.</details>
     <parameters>
       <parameter name="query" type="string" required="true">
         <description>The search query or question you want to research. Be specific and include relevant technical terms, version numbers, or context for better results. Make it as detailed as possible, with the context of the current security assessment.</description>
