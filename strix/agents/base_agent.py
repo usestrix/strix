@@ -65,19 +65,19 @@ class BaseAgent(metaclass=AgentMeta):
         self.llm_config = config.get("llm_config", self.default_llm_config)
         if self.llm_config is None:
             raise ValueError("llm_config is required but not provided")
-        self.llm = LLM(self.llm_config, agent_name=self.agent_name)
-
         state_from_config = config.get("state")
         if state_from_config is not None:
             self.state = state_from_config
         else:
             self.state = AgentState(
-                agent_name=self.agent_name,
+                agent_name="Root Agent",
                 max_iterations=self.max_iterations,
             )
 
+        self.llm = LLM(self.llm_config, agent_name=self.agent_name)
+
         with contextlib.suppress(Exception):
-            self.llm.set_agent_identity(self.agent_name, self.state.agent_id)
+            self.llm.set_agent_identity(self.state.agent_name, self.state.agent_id)
         self._current_task: asyncio.Task[Any] | None = None
 
         from strix.telemetry.tracer import get_global_tracer
