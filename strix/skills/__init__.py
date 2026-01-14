@@ -1,11 +1,14 @@
-from pathlib import Path
-
 from jinja2 import Environment
+
+from strix.utils.resource_paths import get_strix_resource_path
 
 
 def get_available_skills() -> dict[str, list[str]]:
-    skills_dir = Path(__file__).parent
-    available_skills = {}
+    skills_dir = get_strix_resource_path("skills")
+    available_skills: dict[str, list[str]] = {}
+
+    if not skills_dir.exists():
+        return available_skills
 
     for category_dir in skills_dir.iterdir():
         if category_dir.is_dir() and not category_dir.name.startswith("__"):
@@ -72,7 +75,7 @@ def load_skills(skill_names: list[str], jinja_env: Environment) -> dict[str, str
 
     logger = logging.getLogger(__name__)
     skill_content = {}
-    skills_dir = Path(__file__).parent
+    skills_dir = get_strix_resource_path("skills")
 
     available_skills = get_available_skills()
 

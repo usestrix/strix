@@ -310,7 +310,7 @@ CRITICAL RULES:
 0. While active in the agent loop, EVERY message you output MUST be a single tool call. Do not send plain text-only responses.
 1. One tool call per message
 2. Tool call must be last in message
-3. End response after </function> tag. It's your stop word. Do not continue after it.
+3. EVERY tool call MUST end with </function>. This is MANDATORY. Never omit the closing tag. The </function> tag is your stop word - end your response immediately after it.
 4. Use ONLY the exact XML format shown above. NEVER use JSON/YAML/INI or any other syntax for tools or parameters.
 5. Tool names must match exactly the tool "name" defined (no module prefixes, dots, or variants).
    - Correct: <function=think> ... </function>
@@ -330,6 +330,8 @@ Example (agent creation tool):
 SPRAYING EXECUTION NOTE:
 - When performing large payload sprays or fuzzing, encapsulate the entire spraying loop inside a single python or terminal tool call (e.g., a Python script using asyncio/aiohttp). Do not issue one tool call per payload.
 - Favor batch-mode CLI tools (sqlmap, ffuf, nuclei, zaproxy, arjun) where appropriate and check traffic via the proxy when beneficial
+
+REMINDER: Always close each tool call with </function> before going into the next. Incomplete tool calls will fail.
 
 {{ get_tools_prompt() }}
 </tool_usage>

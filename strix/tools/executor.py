@@ -14,6 +14,7 @@ from .argument_parser import convert_arguments
 from .registry import (
     get_tool_by_name,
     get_tool_names,
+    get_tool_param_schema,
     needs_agent_state,
     should_execute_in_sandbox,
 )
@@ -110,12 +111,49 @@ async def _execute_tool_locally(tool_name: str, agent_state: Any | None, **kwarg
 
 def validate_tool_availability(tool_name: str | None) -> tuple[bool, str]:
     if tool_name is None:
-        return False, "Tool name is missing"
+        available = ", ".join(sorted(get_tool_names()))
+        return False, f"Tool name is missing. Available tools: {available}"
 
     if tool_name not in get_tool_names():
-        return False, f"Tool '{tool_name}' is not available"
+        available = ", ".join(sorted(get_tool_names()))
+        return False, f"Tool '{tool_name}' is not available. Available tools: {available}"
 
     return True, ""
+
+
+def _validate_tool_arguments(tool_name: str, kwargs: dict[str, Any]) -> str | None:
+    param_schema = get_tool_param_schema(tool_name)
+    if not param_schema or not param_schema.get("has_params"):
+        return None
+
+    allowed_params: set[str] = param_schema.get("params", set())
+    required_params: set[str] = param_schema.get("required", set())
+    optional_params = allowed_params - required_params
+
+    schema_hint = _format_schema_hint(tool_name, required_params, optional_params)
+
+    unknown_params = set(kwargs.keys()) - allowed_params
+    if unknown_params:
+        unknown_list = ", ".join(sorted(unknown_params))
+        return f"Tool '{tool_name}' received unknown parameter(s): {unknown_list}\n{schema_hint}"
+
+    missing_required = [
+        param for param in required_params if param not in kwargs or kwargs.get(param) in (None, "")
+    ]
+    if missing_required:
+        missing_list = ", ".join(sorted(missing_required))
+        return f"Tool '{tool_name}' missing required parameter(s): {missing_list}\n{schema_hint}"
+
+    return None
+
+
+def _format_schema_hint(tool_name: str, required: set[str], optional: set[str]) -> str:
+    parts = [f"Valid parameters for '{tool_name}':"]
+    if required:
+        parts.append(f"  Required: {', '.join(sorted(required))}")
+    if optional:
+        parts.append(f"  Optional: {', '.join(sorted(optional))}")
+    return "\n".join(parts)
 
 
 async def execute_tool_with_validation(
@@ -126,6 +164,10 @@ async def execute_tool_with_validation(
         return f"Error: {error_msg}"
 
     assert tool_name is not None
+
+    arg_error = _validate_tool_arguments(tool_name, kwargs)
+    if arg_error:
+        return f"Error: {arg_error}"
 
     try:
         result = await execute_tool(tool_name, agent_state, **kwargs)

@@ -7,9 +7,14 @@ from inspect import signature
 from pathlib import Path
 from typing import Any
 
+import defusedxml.ElementTree as DefusedET
+
+from strix.utils.resource_paths import get_strix_resource_path
+
 
 tools: list[dict[str, Any]] = []
 _tools_by_name: dict[str, Callable[..., Any]] = {}
+_tool_param_schemas: dict[str, dict[str, Any]] = {}
 logger = logging.getLogger(__name__)
 
 
@@ -82,6 +87,34 @@ def _load_xml_schema(path: Path) -> Any:
         return tools_dict
 
 
+def _parse_param_schema(tool_xml: str) -> dict[str, Any]:
+    params: set[str] = set()
+    required: set[str] = set()
+
+    params_start = tool_xml.find("<parameters>")
+    params_end = tool_xml.find("</parameters>")
+
+    if params_start == -1 or params_end == -1:
+        return {"params": set(), "required": set(), "has_params": False}
+
+    params_section = tool_xml[params_start : params_end + len("</parameters>")]
+
+    try:
+        root = DefusedET.fromstring(params_section)
+    except DefusedET.ParseError:
+        return {"params": set(), "required": set(), "has_params": False}
+
+    for param in root.findall(".//parameter"):
+        name = param.attrib.get("name")
+        if not name:
+            continue
+        params.add(name)
+        if param.attrib.get("required", "false").lower() == "true":
+            required.add(name)
+
+    return {"params": params, "required": required, "has_params": bool(params or required)}
+
+
 def _get_module_name(func: Callable[..., Any]) -> str:
     module = inspect.getmodule(func)
     if not module:
@@ -93,6 +126,27 @@ def _get_module_name(func: Callable[..., Any]) -> str:
         if len(parts) >= 1:
             return parts[0]
     return "unknown"
+
+
+def _get_schema_path(func: Callable[..., Any]) -> Path | None:
+    module = inspect.getmodule(func)
+    if not module or not module.__name__:
+        return None
+
+    module_name = module.__name__
+
+    if ".tools." not in module_name:
+        return None
+
+    parts = module_name.split(".tools.")[-1].split(".")
+    if len(parts) < 2:
+        return None
+
+    folder = parts[0]
+    file_stem = parts[1]
+    schema_file = f"{file_stem}_schema.xml"
+
+    return get_strix_resource_path("tools", folder, schema_file)
 
 
 def register_tool(
@@ -109,11 +163,8 @@ def register_tool(
         sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
         if not sandbox_mode:
             try:
-                module_path = Path(inspect.getfile(f))
-                schema_file_name = f"{module_path.stem}_schema.xml"
-                schema_path = module_path.parent / schema_file_name
-
-                xml_tools = _load_xml_schema(schema_path)
+                schema_path = _get_schema_path(f)
+                xml_tools = _load_xml_schema(schema_path) if schema_path else None
 
                 if xml_tools is not None and f.__name__ in xml_tools:
                     func_dict["xml_schema"] = xml_tools[f.__name__]
@@ -130,6 +181,11 @@ def register_tool(
                     "<description>Error loading schema.</description>"
                     "</tool>"
                 )
+
+        if not sandbox_mode:
+            xml_schema = func_dict.get("xml_schema")
+            param_schema = _parse_param_schema(xml_schema if isinstance(xml_schema, str) else "")
+            _tool_param_schemas[str(func_dict["name"])] = param_schema
 
         tools.append(func_dict)
         _tools_by_name[str(func_dict["name"])] = f
@@ -151,6 +207,10 @@ def get_tool_by_name(name: str) -> Callable[..., Any] | None:
 
 def get_tool_names() -> list[str]:
     return list(_tools_by_name.keys())
+
+
+def get_tool_param_schema(name: str) -> dict[str, Any] | None:
+    return _tool_param_schemas.get(name)
 
 
 def needs_agent_state(tool_name: str) -> bool:
@@ -194,3 +254,4 @@ def get_tools_prompt() -> str:
 def clear_registry() -> None:
     tools.clear()
     _tools_by_name.clear()
+    _tool_param_schemas.clear()

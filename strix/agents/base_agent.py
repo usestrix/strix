@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 
@@ -18,6 +17,7 @@ from strix.llm import LLM, LLMConfig, LLMRequestFailedError
 from strix.llm.utils import clean_content
 from strix.runtime import SandboxInitializationError
 from strix.tools import process_tool_invocations
+from strix.utils.resource_paths import get_strix_resource_path
 
 from .state import AgentState
 
@@ -35,8 +35,7 @@ class AgentMeta(type):
         if name == "BaseAgent":
             return new_cls
 
-        agents_dir = Path(__file__).parent
-        prompt_dir = agents_dir / name
+        prompt_dir = get_strix_resource_path("agents", name)
 
         new_cls.agent_name = name
         new_cls.jinja_env = Environment(

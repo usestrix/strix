@@ -18,7 +18,7 @@ def _truncate_to_first_function(content: str) -> str:
 
 
 def parse_tool_invocations(content: str) -> list[dict[str, Any]] | None:
-    content = _fix_stopword(content)
+    content = fix_incomplete_tool_call(content)
 
     tool_invocations: list[dict[str, Any]] = []
 
@@ -46,16 +46,15 @@ def parse_tool_invocations(content: str) -> list[dict[str, Any]] | None:
     return tool_invocations if tool_invocations else None
 
 
-def _fix_stopword(content: str) -> str:
+def fix_incomplete_tool_call(content: str) -> str:
+    """Fix incomplete tool calls by adding missing </function> tag."""
     if (
         "<function=" in content
         and content.count("<function=") == 1
         and "</function>" not in content
     ):
-        if content.endswith("</"):
-            content = content.rstrip() + "function>"
-        else:
-            content = content + "\n</function>"
+        content = content.rstrip()
+        content = content + "function>" if content.endswith("</") else content + "\n</function>"
     return content
 
 
@@ -74,7 +73,7 @@ def clean_content(content: str) -> str:
     if not content:
         return ""
 
-    content = _fix_stopword(content)
+    content = fix_incomplete_tool_call(content)
 
     tool_pattern = r"<function=[^>]+>.*?</function>"
     cleaned = re.sub(tool_pattern, "", content, flags=re.DOTALL)

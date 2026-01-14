@@ -3,7 +3,6 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import Enum
-from pathlib import Path
 from typing import Any
 
 import litellm
@@ -19,9 +18,14 @@ from strix.config import Config
 from strix.llm.config import LLMConfig
 from strix.llm.memory_compressor import MemoryCompressor
 from strix.llm.request_queue import get_global_queue
-from strix.llm.utils import _truncate_to_first_function, parse_tool_invocations
+from strix.llm.utils import (
+    _truncate_to_first_function,
+    fix_incomplete_tool_call,
+    parse_tool_invocations,
+)
 from strix.skills import load_skills
 from strix.tools import get_tools_prompt
+from strix.utils.resource_paths import get_strix_resource_path
 
 
 MAX_RETRIES = 5
@@ -124,8 +128,8 @@ class LLM:
         )
 
         if agent_name:
-            prompt_dir = Path(__file__).parent.parent / "agents" / agent_name
-            skills_dir = Path(__file__).parent.parent / "skills"
+            prompt_dir = get_strix_resource_path("agents", agent_name)
+            skills_dir = get_strix_resource_path("skills")
 
             loader = FileSystemLoader([prompt_dir, skills_dir])
             self.jinja_env = Environment(
@@ -297,6 +301,8 @@ class LLM:
         if "</function>" in accumulated_content:
             function_end = accumulated_content.find("</function>") + len("</function>")
             accumulated_content = accumulated_content[:function_end]
+
+        accumulated_content = fix_incomplete_tool_call(accumulated_content)
 
         tool_invocations = parse_tool_invocations(accumulated_content)
 
