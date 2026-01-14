@@ -69,6 +69,7 @@ gql = { version = "^3.5.3", extras = ["requests"], optional = true }
 pyte = { version = "^0.8.1", optional = true }
 libtmux = { version = "^0.46.2", optional = true }
 numpydoc = { version = "^1.8.0", optional = true }
+defusedxml = "^0.7.1"
 
 [tool.poetry.extras]
 vertex = ["google-cloud-aiplatform"]
