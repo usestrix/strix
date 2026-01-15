@@ -198,6 +198,7 @@ class LLM:
             Config.get("llm_api_base")
             or Config.get("openai_api_base")
             or Config.get("litellm_base_url")
+            or Config.get("ollama_api_base")
         ):
             args["api_base"] = api_base
         if self._supports_reasoning():
