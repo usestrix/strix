@@ -79,6 +79,7 @@ class BaseAgent(metaclass=AgentMeta):
         with contextlib.suppress(Exception):
             self.llm.set_agent_identity(self.state.agent_name, self.state.agent_id)
         self._current_task: asyncio.Task[Any] | None = None
+        self._force_stop = False
 
         from strix.telemetry.tracer import get_global_tracer
 
@@ -156,6 +157,11 @@ class BaseAgent(metaclass=AgentMeta):
             return self._handle_sandbox_error(e, tracer)
 
         while True:
+            if self._force_stop:
+                self._force_stop = False
+                await self._enter_waiting_state(tracer, was_cancelled=True)
+                continue
+
             self._check_agent_messages(self.state)
 
             if self.state.is_waiting_for_input():
@@ -246,7 +252,8 @@ class BaseAgent(metaclass=AgentMeta):
                     continue
 
     async def _wait_for_input(self) -> None:
-        import asyncio
+        if self._force_stop:
+            return
 
         if self.state.has_waiting_timeout():
             self.state.resume_from_waiting()
@@ -339,6 +346,7 @@ class BaseAgent(metaclass=AgentMeta):
 
     async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool:
         final_response = None
+
         async for response in self.llm.generate(self.state.get_conversation_history()):
             final_response = response
             if tracer and response.content:
@@ -584,6 +592,11 @@ class BaseAgent(metaclass=AgentMeta):
         return True
 
     def cancel_current_execution(self) -> None:
+        self._force_stop = True
         if self._current_task and not self._current_task.done():
-            self._current_task.cancel()
+            try:
+                loop = self._current_task.get_loop()
+                loop.call_soon_threadsafe(self._current_task.cancel)
+            except RuntimeError:
+                self._current_task.cancel()
         self._current_task = None

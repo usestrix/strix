@@ -16,9 +16,9 @@ class Config:
     litellm_base_url = None
     ollama_api_base = None
     strix_reasoning_effort = "high"
+    strix_llm_max_retries = "5"
+    strix_memory_compressor_timeout = "30"
     llm_timeout = "300"
-    llm_rate_limit_delay = "4.0"
-    llm_rate_limit_concurrent = "1"
 
     # Tool & Feature Configuration
     perplexity_api_key = None
@@ -27,7 +27,7 @@ class Config:
     # Runtime Configuration
     strix_image = "ghcr.io/usestrix/strix-sandbox:0.1.10"
     strix_runtime_backend = "docker"
-    strix_sandbox_execution_timeout = "500"
+    strix_sandbox_execution_timeout = "120"
     strix_sandbox_connect_timeout = "10"
 
     # Telemetry

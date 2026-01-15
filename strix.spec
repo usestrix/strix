@@ -111,7 +111,6 @@ hiddenimports = [
     'strix.llm.llm',
     'strix.llm.config',
     'strix.llm.utils',
-    'strix.llm.request_queue',
     'strix.llm.memory_compressor',
     'strix.runtime',
     'strix.runtime.runtime',

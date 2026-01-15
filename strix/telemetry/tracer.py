@@ -430,10 +430,8 @@ class Tracer:
             "input_tokens": 0,
             "output_tokens": 0,
             "cached_tokens": 0,
-            "cache_creation_tokens": 0,
             "cost": 0.0,
             "requests": 0,
-            "failed_requests": 0,
         }
 
         for agent_instance in _agent_instances.values():
@@ -442,10 +440,8 @@ class Tracer:
                 total_stats["input_tokens"] += agent_stats.input_tokens
                 total_stats["output_tokens"] += agent_stats.output_tokens
                 total_stats["cached_tokens"] += agent_stats.cached_tokens
-                total_stats["cache_creation_tokens"] += agent_stats.cache_creation_tokens
                 total_stats["cost"] += agent_stats.cost
                 total_stats["requests"] += agent_stats.requests
-                total_stats["failed_requests"] += agent_stats.failed_requests
 
         total_stats["cost"] = round(total_stats["cost"], 4)
 
