@@ -95,6 +95,12 @@
   <parameter=command>ls -la</parameter>
   </function>
 
+  <function=terminal_execute>
+  <parameter=command>cd /workspace
+pwd
+ls -la</parameter>
+  </function>
+
   # Run a command with custom timeout
   <function=terminal_execute>
   <parameter=command>npm install</parameter>

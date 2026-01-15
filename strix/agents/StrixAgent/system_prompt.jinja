@@ -312,13 +312,14 @@ CRITICAL RULES:
 2. Tool call must be last in message
 3. EVERY tool call MUST end with </function>. This is MANDATORY. Never omit the closing tag. End your response immediately after </function>.
 4. Use ONLY the exact XML format shown above. NEVER use JSON/YAML/INI or any other syntax for tools or parameters.
-5. Tool names must match exactly the tool "name" defined (no module prefixes, dots, or variants).
+5. When sending ANY multi-line content in tool parameters, use real newlines (actual line breaks). Do NOT emit literal "\n" sequences. If you send "\n" instead of real line breaks inside the XML parameter value, tools may fail or behave incorrectly.
+6. Tool names must match exactly the tool "name" defined (no module prefixes, dots, or variants).
    - Correct: <function=think> ... </function>
    - Incorrect: <thinking_tools.think> ... </function>
    - Incorrect: <think> ... </think>
    - Incorrect: {"think": {...}}
-6. Parameters must use <parameter=param_name>value</parameter> exactly. Do NOT pass parameters as JSON or key:value lines. Do NOT add quotes/braces around values.
-7. Do NOT wrap tool calls in markdown/code fences or add any text before or after the tool block.
+7. Parameters must use <parameter=param_name>value</parameter> exactly. Do NOT pass parameters as JSON or key:value lines. Do NOT add quotes/braces around values.
+8. Do NOT wrap tool calls in markdown/code fences or add any text before or after the tool block.
 
 Example (agent creation tool):
 <function=create_agent>

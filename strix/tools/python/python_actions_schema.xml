@@ -55,6 +55,7 @@
          - Print statements and stdout are captured
          - Variables persist between executions in the same session
          - Imports, function definitions, etc. persist in the session
+         - IMPORTANT (multiline): Put real line breaks in <parameter=code>. Do NOT emit literal "\n" sequences.
          - IPython magic commands are fully supported (%pip, %time, %whos, %%writefile, etc.)
          - Line magics (%) and cell magics (%%) work as expected
       6. CLOSE: Terminates the session completely and frees memory
@@ -71,6 +72,14 @@
       import base64
       import json
       print("Security analysis session started")</parameter>
+      </function>
+
+      <function=python_action>
+      <parameter=action>execute</parameter>
+      <parameter=code>import requests
+url = "https://example.com"
+resp = requests.get(url, timeout=10)
+print(resp.status_code)</parameter>
       </function>
 
       # Analyze security data in the default session
