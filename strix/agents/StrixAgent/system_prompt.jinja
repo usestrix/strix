@@ -308,9 +308,9 @@ Tool calls use XML format:
 
 CRITICAL RULES:
 0. While active in the agent loop, EVERY message you output MUST be a single tool call. Do not send plain text-only responses.
-1. One tool call per message
+1. Exactly one tool call per message — never include more than one <function>...</function> block in a single LLM message.
 2. Tool call must be last in message
-3. EVERY tool call MUST end with </function>. This is MANDATORY. Never omit the closing tag. The </function> tag is your stop word - end your response immediately after it.
+3. EVERY tool call MUST end with </function>. This is MANDATORY. Never omit the closing tag. End your response immediately after </function>.
 4. Use ONLY the exact XML format shown above. NEVER use JSON/YAML/INI or any other syntax for tools or parameters.
 5. Tool names must match exactly the tool "name" defined (no module prefixes, dots, or variants).
    - Correct: <function=think> ... </function>

@@ -141,6 +141,8 @@ class LLM:
                     accumulated = accumulated[
                         : accumulated.find("</function>") + len("</function>")
                     ]
+                    yield LLMResponse(content=accumulated)
+                    break
                 yield LLMResponse(content=accumulated)
 
         if chunks:
@@ -189,7 +191,6 @@ class LLM:
             "messages": messages,
             "timeout": self.config.timeout,
             "stream_options": {"include_usage": True},
-            "stop": ["</function>"],
         }
 
         if api_key := Config.get("llm_api_key"):
