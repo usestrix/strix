@@ -117,6 +117,7 @@ def agent_worker(_agent_id: str, request_queue: Queue[Any], response_queue: Queu
 
     with ThreadPoolExecutor() as executor:
         while True:
+            request = None
             try:
                 request = request_queue.get()
 
@@ -126,7 +127,8 @@ def agent_worker(_agent_id: str, request_queue: Queue[Any], response_queue: Queu
                 executor.submit(_execute_request, request)
 
             except (RuntimeError, ValueError, ImportError) as e:
-                response_queue.put({"error": f"Worker error: {e}"})
+                req_id = request.get("request_id", "") if request else ""
+                response_queue.put({"request_id": req_id, "error": f"Worker error: {e}"})
 
 
 def _ensure_response_listener(agent_id: str, response_queue: Queue[Any]) -> None:
@@ -187,7 +189,7 @@ async def execute_tool(
 
     request_queue, _response_queue = ensure_agent_process(request.agent_id)
 
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     req_id = uuid4().hex
     future: asyncio.Future[Any] = loop.create_future()
     pending_responses[request.agent_id][req_id] = future
