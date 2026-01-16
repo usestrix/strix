@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
+import queue as stdlib_queue
 import signal
 import sys
+import threading
 from multiprocessing import Process, Queue
 from typing import Any
+from uuid import uuid4
 
 import uvicorn
 from fastapi import Depends, FastAPI, HTTPException, status
@@ -23,9 +27,16 @@ parser = argparse.ArgumentParser(description="Start Strix tool server")
 parser.add_argument("--token", required=True, help="Authentication token")
 parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")  # nosec
 parser.add_argument("--port", type=int, required=True, help="Port to bind to")
+parser.add_argument(
+    "--timeout",
+    type=int,
+    default=120,
+    help="Hard timeout in seconds for each request execution (default: 120)",
+)
 
 args = parser.parse_args()
 EXPECTED_TOKEN = args.token
+REQUEST_TIMEOUT = args.timeout
 
 app = FastAPI()
 security = HTTPBearer()
@@ -34,6 +45,8 @@ security_dependency = Depends(security)
 
 agent_processes: dict[str, dict[str, Any]] = {}
 agent_queues: dict[str, dict[str, Queue[Any]]] = {}
+pending_responses: dict[str, dict[str, asyncio.Future[Any]]] = {}
+agent_listeners: dict[str, dict[str, Any]] = {}
 
 
 def verify_token(credentials: HTTPAuthorizationCredentials) -> str:
@@ -72,37 +85,79 @@ def agent_worker(_agent_id: str, request_queue: Queue[Any], response_queue: Queu
     root_logger.handlers = [null_handler]
     root_logger.setLevel(logging.CRITICAL)
 
+    from concurrent.futures import ThreadPoolExecutor
+
     from strix.tools.argument_parser import ArgumentConversionError, convert_arguments
     from strix.tools.registry import get_tool_by_name
 
-    while True:
-        try:
-            request = request_queue.get()
+    def _execute_request(request: dict[str, Any]) -> None:
+        request_id = request.get("request_id", "")
+        tool_name = request["tool_name"]
+        kwargs = request["kwargs"]
 
-            if request is None:
+        try:
+            tool_func = get_tool_by_name(tool_name)
+            if not tool_func:
+                response_queue.put(
+                    {"request_id": request_id, "error": f"Tool '{tool_name}' not found"}
+                )
+                return
+
+            converted_kwargs = convert_arguments(tool_func, kwargs)
+            result = tool_func(**converted_kwargs)
+
+            response_queue.put({"request_id": request_id, "result": result})
+
+        except (ArgumentConversionError, ValidationError) as e:
+            response_queue.put({"request_id": request_id, "error": f"Invalid arguments: {e}"})
+        except (RuntimeError, ValueError, ImportError) as e:
+            response_queue.put({"request_id": request_id, "error": f"Tool execution error: {e}"})
+        except Exception as e:  # noqa: BLE001
+            response_queue.put({"request_id": request_id, "error": f"Unexpected error: {e}"})
+
+    with ThreadPoolExecutor() as executor:
+        while True:
+            try:
+                request = request_queue.get()
+
+                if request is None:
+                    break
+
+                executor.submit(_execute_request, request)
+
+            except (RuntimeError, ValueError, ImportError) as e:
+                response_queue.put({"error": f"Worker error: {e}"})
+
+
+def _ensure_response_listener(agent_id: str, response_queue: Queue[Any]) -> None:
+    if agent_id in agent_listeners:
+        return
+
+    stop_event = threading.Event()
+    loop = asyncio.get_event_loop()
+
+    def _listener() -> None:
+        while not stop_event.is_set():
+            try:
+                item = response_queue.get(timeout=0.5)
+            except stdlib_queue.Empty:
+                continue
+            except (BrokenPipeError, EOFError):
                 break
 
-            tool_name = request["tool_name"]
-            kwargs = request["kwargs"]
+            request_id = item.get("request_id")
+            if not request_id or agent_id not in pending_responses:
+                continue
 
-            try:
-                tool_func = get_tool_by_name(tool_name)
-                if not tool_func:
-                    response_queue.put({"error": f"Tool '{tool_name}' not found"})
-                    continue
+            future = pending_responses[agent_id].pop(request_id, None)
+            if future and not future.done():
+                with contextlib.suppress(RuntimeError):
+                    loop.call_soon_threadsafe(future.set_result, item)
 
-                converted_kwargs = convert_arguments(tool_func, kwargs)
-                result = tool_func(**converted_kwargs)
+    listener_thread = threading.Thread(target=_listener, daemon=True)
+    listener_thread.start()
 
-                response_queue.put({"result": result})
-
-            except (ArgumentConversionError, ValidationError) as e:
-                response_queue.put({"error": f"Invalid arguments: {e}"})
-            except (RuntimeError, ValueError, ImportError) as e:
-                response_queue.put({"error": f"Tool execution error: {e}"})
-
-        except (RuntimeError, ValueError, ImportError) as e:
-            response_queue.put({"error": f"Worker error: {e}"})
+    agent_listeners[agent_id] = {"thread": listener_thread, "stop_event": stop_event}
 
 
 def ensure_agent_process(agent_id: str) -> tuple[Queue[Any], Queue[Any]]:
@@ -117,6 +172,9 @@ def ensure_agent_process(agent_id: str) -> tuple[Queue[Any], Queue[Any]]:
 
         agent_processes[agent_id] = {"process": process, "pid": process.pid}
         agent_queues[agent_id] = {"request": request_queue, "response": response_queue}
+        pending_responses[agent_id] = {}
+
+        _ensure_response_listener(agent_id, response_queue)
 
     return agent_queues[agent_id]["request"], agent_queues[agent_id]["response"]
 
@@ -127,18 +185,31 @@ async def execute_tool(
 ) -> ToolExecutionResponse:
     verify_token(credentials)
 
-    request_queue, response_queue = ensure_agent_process(request.agent_id)
+    request_queue, _response_queue = ensure_agent_process(request.agent_id)
 
-    request_queue.put({"tool_name": request.tool_name, "kwargs": request.kwargs})
+    loop = asyncio.get_event_loop()
+    req_id = uuid4().hex
+    future: asyncio.Future[Any] = loop.create_future()
+    pending_responses[request.agent_id][req_id] = future
+
+    request_queue.put(
+        {
+            "request_id": req_id,
+            "tool_name": request.tool_name,
+            "kwargs": request.kwargs,
+        }
+    )
 
     try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, response_queue.get)
+        response = await asyncio.wait_for(future, timeout=REQUEST_TIMEOUT)
 
         if "error" in response:
             return ToolExecutionResponse(error=response["error"])
         return ToolExecutionResponse(result=response.get("result"))
 
+    except TimeoutError:
+        pending_responses[request.agent_id].pop(req_id, None)
+        return ToolExecutionResponse(error=f"Request timed out after {REQUEST_TIMEOUT} seconds")
     except (RuntimeError, ValueError, OSError) as e:
         return ToolExecutionResponse(error=f"Worker error: {e}")
 
@@ -168,6 +239,9 @@ async def health_check() -> dict[str, Any]:
 def cleanup_all_agents() -> None:
     for agent_id in list(agent_processes.keys()):
         try:
+            if agent_id in agent_listeners:
+                agent_listeners[agent_id]["stop_event"].set()
+
             agent_queues[agent_id]["request"].put(None)
             process = agent_processes[agent_id]["process"]
 
@@ -179,6 +253,10 @@ def cleanup_all_agents() -> None:
 
             if process.is_alive():
                 process.kill()
+
+            if agent_id in agent_listeners:
+                listener_thread = agent_listeners[agent_id]["thread"]
+                listener_thread.join(timeout=0.5)
 
         except (BrokenPipeError, EOFError, OSError):
             pass

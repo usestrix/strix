@@ -1,7 +1,5 @@
 import atexit
 import contextlib
-import signal
-import sys
 import threading
 from typing import Any
 
@@ -132,16 +130,6 @@ class TerminalManager:
 
     def _register_cleanup_handlers(self) -> None:
         atexit.register(self.close_all_sessions)
-
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
-
-        if hasattr(signal, "SIGHUP"):
-            signal.signal(signal.SIGHUP, self._signal_handler)
-
-    def _signal_handler(self, _signum: int, _frame: Any) -> None:
-        self.close_all_sessions()
-        sys.exit(0)
 
 
 _terminal_manager = TerminalManager()

@@ -297,11 +297,12 @@ class DockerRuntime(AbstractRuntime):
         )
         caido_token = result.output.decode().strip() if result.exit_code == 0 else ""
 
+        execution_timeout = Config.get("strix_sandbox_execution_timeout") or "120"
         container.exec_run(
             f"bash -c 'source /etc/profile.d/proxy.sh && cd /app && "
             f"STRIX_SANDBOX_MODE=true CAIDO_API_TOKEN={caido_token} CAIDO_PORT={caido_port} "
             f"poetry run python strix/runtime/tool_server.py --token {tool_server_token} "
-            f"--host 0.0.0.0 --port {tool_server_port} &'",
+            f"--host 0.0.0.0 --port {tool_server_port} --timeout {execution_timeout} &'",
             detach=True,
             user="pentester",
         )

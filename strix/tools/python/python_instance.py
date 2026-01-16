@@ -1,5 +1,4 @@
 import io
-import signal
 import sys
 import threading
 from typing import Any
@@ -56,28 +55,6 @@ class PythonInstance:
                 "result": None,
             }
         return None
-
-    def _setup_execution_environment(self, timeout: int) -> tuple[Any, io.StringIO, io.StringIO]:
-        stdout_capture = io.StringIO()
-        stderr_capture = io.StringIO()
-
-        def timeout_handler(signum: int, frame: Any) -> None:
-            raise TimeoutError(f"Code execution timed out after {timeout} seconds")
-
-        old_handler = signal.signal(signal.SIGALRM, timeout_handler)
-        signal.alarm(timeout)
-
-        sys.stdout = stdout_capture
-        sys.stderr = stderr_capture
-
-        return old_handler, stdout_capture, stderr_capture
-
-    def _cleanup_execution_environment(
-        self, old_handler: Any, old_stdout: Any, old_stderr: Any
-    ) -> None:
-        signal.signal(signal.SIGALRM, old_handler)
-        sys.stdout = old_stdout
-        sys.stderr = old_stderr
 
     def _truncate_output(self, content: str, max_length: int, suffix: str) -> str:
         if len(content) > max_length:
@@ -142,27 +119,48 @@ class PythonInstance:
             return session_error
 
         with self._execution_lock:
+            result_container: dict[str, Any] = {}
+            stdout_capture = io.StringIO()
+            stderr_capture = io.StringIO()
+
             old_stdout, old_stderr = sys.stdout, sys.stderr
 
-            try:
-                old_handler, stdout_capture, stderr_capture = self._setup_execution_environment(
-                    timeout
+            def _run_code() -> None:
+                try:
+                    sys.stdout = stdout_capture
+                    sys.stderr = stderr_capture
+                    execution_result = self.shell.run_cell(code, silent=False, store_history=True)
+                    result_container["execution_result"] = execution_result
+                    result_container["stdout"] = stdout_capture.getvalue()
+                    result_container["stderr"] = stderr_capture.getvalue()
+                except (KeyboardInterrupt, SystemExit) as e:
+                    result_container["error"] = e
+                except Exception as e:  # noqa: BLE001
+                    result_container["error"] = e
+                finally:
+                    sys.stdout = old_stdout
+                    sys.stderr = old_stderr
+
+            exec_thread = threading.Thread(target=_run_code, daemon=True)
+            exec_thread.start()
+            exec_thread.join(timeout=timeout)
+
+            if exec_thread.is_alive():
+                return self._handle_execution_error(
+                    TimeoutError(f"Code execution timed out after {timeout} seconds")
                 )
 
-                try:
-                    execution_result = self.shell.run_cell(code, silent=False, store_history=True)
-                    signal.alarm(0)
+            if "error" in result_container:
+                return self._handle_execution_error(result_container["error"])
 
-                    return self._format_execution_result(
-                        execution_result, stdout_capture.getvalue(), stderr_capture.getvalue()
-                    )
+            if "execution_result" in result_container:
+                return self._format_execution_result(
+                    result_container["execution_result"],
+                    result_container.get("stdout", ""),
+                    result_container.get("stderr", ""),
+                )
 
-                except (TimeoutError, KeyboardInterrupt, SystemExit) as e:
-                    signal.alarm(0)
-                    return self._handle_execution_error(e)
-
-            finally:
-                self._cleanup_execution_environment(old_handler, old_stdout, old_stderr)
+            return self._handle_execution_error(RuntimeError("Unknown execution error"))
 
     def close(self) -> None:
         self.is_running = False
