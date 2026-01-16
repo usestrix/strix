@@ -122,6 +122,7 @@ class PythonInstance:
             result_container: dict[str, Any] = {}
             stdout_capture = io.StringIO()
             stderr_capture = io.StringIO()
+            cancelled = threading.Event()
 
             old_stdout, old_stderr = sys.stdout, sys.stderr
 
@@ -138,14 +139,17 @@ class PythonInstance:
                 except Exception as e:  # noqa: BLE001
                     result_container["error"] = e
                 finally:
-                    sys.stdout = old_stdout
-                    sys.stderr = old_stderr
+                    if not cancelled.is_set():
+                        sys.stdout = old_stdout
+                        sys.stderr = old_stderr
 
             exec_thread = threading.Thread(target=_run_code, daemon=True)
             exec_thread.start()
             exec_thread.join(timeout=timeout)
 
             if exec_thread.is_alive():
+                cancelled.set()
+                sys.stdout, sys.stderr = old_stdout, old_stderr
                 return self._handle_execution_error(
                     TimeoutError(f"Code execution timed out after {timeout} seconds")
                 )
