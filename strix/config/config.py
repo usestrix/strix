@@ -126,8 +126,9 @@ class Config:
                 env_vars.pop(var_name, None)
             cls.save({"env": env_vars})
         if cls._llm_env_changed(env_vars):
-            cls.save({"env": {}})
-            return {}
+            for var_name in cls._llm_env_vars():
+                env_vars.pop(var_name, None)
+            cls.save({"env": env_vars})
         applied = {}
 
         for var_name, var_value in env_vars.items():
