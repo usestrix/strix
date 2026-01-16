@@ -1,9 +1,12 @@
 #!/bin/bash
 set -e
 
-if [ -z "$CAIDO_PORT" ]; then
-    echo "Error: CAIDO_PORT must be set."
-    exit 1
+CAIDO_PORT=48080
+CAIDO_LOG="/tmp/caido_startup.log"
+
+if [ ! -f /app/certs/ca.p12 ]; then
+  echo "ERROR: CA certificate file /app/certs/ca.p12 not found."
+  exit 1
 fi
 
 caido-cli --listen 127.0.0.1:${CAIDO_PORT} \
@@ -11,28 +14,62 @@ caido-cli --listen 127.0.0.1:${CAIDO_PORT} \
           --no-logging \
           --no-open \
           --import-ca-cert /app/certs/ca.p12 \
-          --import-ca-cert-pass "" > /dev/null 2>&1 &
+          --import-ca-cert-pass "" > "$CAIDO_LOG" 2>&1 &
+
+CAIDO_PID=$!
+echo "Started Caido with PID $CAIDO_PID on port $CAIDO_PORT"
 
 echo "Waiting for Caido API to be ready..."
+CAIDO_READY=false
 for i in {1..30}; do
-  if curl -s -o /dev/null http://localhost:${CAIDO_PORT}/graphql; then
-    echo "Caido API is ready."
+  if ! kill -0 $CAIDO_PID 2>/dev/null; then
+    echo "ERROR: Caido process died while waiting for API (iteration $i)."
+    echo "=== Caido log ==="
+    cat "$CAIDO_LOG" 2>/dev/null || echo "(no log available)"
+    exit 1
+  fi
+
+  if curl -s -o /dev/null -w "%{http_code}" http://localhost:${CAIDO_PORT}/graphql/ | grep -qE "^(200|400)$"; then
+    echo "Caido API is ready (attempt $i)."
+    CAIDO_READY=true
     break
   fi
   sleep 1
 done
 
+if [ "$CAIDO_READY" = false ]; then
+  echo "ERROR: Caido API did not become ready within 30 seconds."
+  echo "Caido process status: $(kill -0 $CAIDO_PID 2>&1 && echo 'running' || echo 'dead')"
+  echo "=== Caido log ==="
+  cat "$CAIDO_LOG" 2>/dev/null || echo "(no log available)"
+  exit 1
+fi
+
 sleep 2
 
 echo "Fetching API token..."
-TOKEN=$(curl -s -X POST \
-  -H "Content-Type: application/json" \
-  -d '{"query":"mutation LoginAsGuest { loginAsGuest { token { accessToken } } }"}' \
-  http://localhost:${CAIDO_PORT}/graphql | jq -r '.data.loginAsGuest.token.accessToken')
+TOKEN=""
+for attempt in 1 2 3 4 5; do
+  RESPONSE=$(curl -sL -X POST \
+    -H "Content-Type: application/json" \
+    -d '{"query":"mutation LoginAsGuest { loginAsGuest { token { accessToken } } }"}' \
+    http://localhost:${CAIDO_PORT}/graphql)
+
+  TOKEN=$(echo "$RESPONSE" | jq -r '.data.loginAsGuest.token.accessToken // empty')
+
+  if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
+    echo "Successfully obtained API token (attempt $attempt)."
+    break
+  fi
+
+  echo "Token fetch attempt $attempt failed: $RESPONSE"
+  sleep $((attempt * 2))
+done
 
 if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
-  echo "Failed to get API token from Caido."
-  curl -s -X POST -H "Content-Type: application/json" -d '{"query":"mutation { loginAsGuest { token { accessToken } } }"}' http://localhost:${CAIDO_PORT}/graphql
+  echo "ERROR: Failed to get API token from Caido after 5 attempts."
+  echo "=== Caido log ==="
+  cat "$CAIDO_LOG" 2>/dev/null || echo "(no log available)"
   exit 1
 fi
 
@@ -40,7 +77,7 @@ export CAIDO_API_TOKEN=$TOKEN
 echo "Caido API token has been set."
 
 echo "Creating a new Caido project..."
-CREATE_PROJECT_RESPONSE=$(curl -s -X POST \
+CREATE_PROJECT_RESPONSE=$(curl -sL -X POST \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"query":"mutation CreateProject { createProject(input: {name: \"sandbox\", temporary: true}) { project { id } } }"}' \
@@ -57,7 +94,7 @@ fi
 echo "Caido project created with ID: $PROJECT_ID"
 
 echo "Selecting Caido project..."
-SELECT_RESPONSE=$(curl -s -X POST \
+SELECT_RESPONSE=$(curl -sL -X POST \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer $TOKEN" \
   -d '{"query":"mutation SelectProject { selectProject(id: \"'$PROJECT_ID'\") { currentProject { project { id } } } }"}' \
@@ -114,9 +151,33 @@ sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
 
-echo "Container initialization complete - agents will start their own tool servers as needed"
-echo "✅ Shared container ready for multi-agent use"
+echo "Starting tool server..."
+cd /app
+TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
+TOOL_SERVER_LOG="/tmp/tool_server.log"
+
+sudo -E -u pentester \
+  PYTHONPATH=/app \
+  STRIX_SANDBOX_MODE=true \
+  TOOL_SERVER_TOKEN="$TOOL_SERVER_TOKEN" \
+  TOOL_SERVER_PORT="$TOOL_SERVER_PORT" \
+  TOOL_SERVER_TIMEOUT="$TOOL_SERVER_TIMEOUT" \
+  /app/venv/bin/python strix/runtime/tool_server.py \
+  --token="$TOOL_SERVER_TOKEN" \
+  --host=0.0.0.0 \
+  --port="$TOOL_SERVER_PORT" \
+  --timeout="$TOOL_SERVER_TIMEOUT" > "$TOOL_SERVER_LOG" 2>&1 &
+
+sleep 3
+if ! pgrep -f "tool_server.py" > /dev/null; then
+  echo "ERROR: Tool server process failed to start"
+  echo "=== Tool server log ==="
+  cat "$TOOL_SERVER_LOG" 2>/dev/null || echo "(no log)"
+  exit 1
+fi
+echo "✅ Tool server started on port $TOOL_SERVER_PORT"
+
+echo "✅ Container ready"
 
 cd /workspace
-
 exec "$@"
