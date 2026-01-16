@@ -134,7 +134,7 @@ def _ensure_response_listener(agent_id: str, response_queue: Queue[Any]) -> None
         return
 
     stop_event = threading.Event()
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _listener() -> None:
         while not stop_event.is_set():
