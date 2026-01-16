@@ -112,21 +112,12 @@ class PythonRenderer(BaseToolRenderer):
             return
 
         stdout = result.get("stdout", "")
-        stderr = result.get("stderr", "")
-
         stdout = cls._clean_output(stdout) if stdout else ""
-        stderr = cls._clean_output(stderr) if stderr else ""
 
         if stdout:
             text.append("\n")
             formatted_output = cls._format_output(stdout)
             text.append_text(formatted_output)
-
-        if stderr:
-            text.append("\n")
-            text.append("  stderr: ", style="bold #ef4444")
-            formatted_stderr = cls._format_output(stderr)
-            text.append_text(formatted_stderr)
 
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
