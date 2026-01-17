@@ -168,14 +168,19 @@ sudo -E -u pentester \
   --port="$TOOL_SERVER_PORT" \
   --timeout="$TOOL_SERVER_TIMEOUT" > "$TOOL_SERVER_LOG" 2>&1 &
 
-sleep 3
-if ! pgrep -f "tool_server.py" > /dev/null; then
-  echo "ERROR: Tool server process failed to start"
-  echo "=== Tool server log ==="
-  cat "$TOOL_SERVER_LOG" 2>/dev/null || echo "(no log)"
-  exit 1
-fi
-echo "✅ Tool server started on port $TOOL_SERVER_PORT"
+for i in {1..10}; do
+  if curl -s "http://127.0.0.1:$TOOL_SERVER_PORT/health" | grep -q '"status":"healthy"'; then
+    echo "✅ Tool server healthy on port $TOOL_SERVER_PORT"
+    break
+  fi
+  if [ $i -eq 10 ]; then
+    echo "ERROR: Tool server failed to become healthy"
+    echo "=== Tool server log ==="
+    cat "$TOOL_SERVER_LOG" 2>/dev/null || echo "(no log)"
+    exit 1
+  fi
+  sleep 1
+done
 
 echo "✅ Container ready"
 
