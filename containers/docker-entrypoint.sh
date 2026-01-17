@@ -153,16 +153,14 @@ echo "✅ CA added to browser trust store"
 
 echo "Starting tool server..."
 cd /app
-TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
+export PYTHONPATH=/app
+export STRIX_SANDBOX_MODE=true
+export POETRY_VIRTUALENVS_CREATE=false
+export TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
 TOOL_SERVER_LOG="/tmp/tool_server.log"
 
-sudo -u pentester \
-  PYTHONPATH=/app \
-  STRIX_SANDBOX_MODE=true \
-  TOOL_SERVER_TOKEN="$TOOL_SERVER_TOKEN" \
-  TOOL_SERVER_PORT="$TOOL_SERVER_PORT" \
-  TOOL_SERVER_TIMEOUT="$TOOL_SERVER_TIMEOUT" \
-  /app/venv/bin/python strix/runtime/tool_server.py \
+sudo -E -u pentester \
+  poetry run python -m strix.runtime.tool_server \
   --token="$TOOL_SERVER_TOKEN" \
   --host=0.0.0.0 \
   --port="$TOOL_SERVER_PORT" \
