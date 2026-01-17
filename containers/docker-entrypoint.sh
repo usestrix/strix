@@ -156,7 +156,7 @@ cd /app
 TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
 TOOL_SERVER_LOG="/tmp/tool_server.log"
 
-sudo -E -u pentester \
+sudo -u pentester \
   PYTHONPATH=/app \
   STRIX_SANDBOX_MODE=true \
   TOOL_SERVER_TOKEN="$TOOL_SERVER_TOKEN" \
