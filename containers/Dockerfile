@@ -172,7 +172,7 @@ COPY strix/config/ /app/strix/config/
 COPY strix/utils/ /app/strix/utils/
 COPY strix/runtime/tool_server.py strix/runtime/__init__.py strix/runtime/runtime.py /app/strix/runtime/
 
-COPY strix/tools/__init__.py strix/tools/registry.py strix/tools/executor.py strix/tools/argument_parser.py /app/strix/tools/
+COPY strix/tools/__init__.py strix/tools/registry.py strix/tools/executor.py strix/tools/argument_parser.py strix/tools/context.py /app/strix/tools/
 
 COPY strix/tools/browser/ /app/strix/tools/browser/
 COPY strix/tools/file_edit/ /app/strix/tools/file_edit/

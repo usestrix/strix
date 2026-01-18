@@ -3,16 +3,25 @@ import contextlib
 import threading
 from typing import Any
 
+from strix.tools.context import get_current_agent_id
+
 from .python_instance import PythonInstance
 
 
 class PythonSessionManager:
     def __init__(self) -> None:
-        self.sessions: dict[str, PythonInstance] = {}
+        self._sessions_by_agent: dict[str, dict[str, PythonInstance]] = {}
         self._lock = threading.Lock()
         self.default_session_id = "default"
 
         self._register_cleanup_handlers()
+
+    def _get_agent_sessions(self) -> dict[str, PythonInstance]:
+        agent_id = get_current_agent_id()
+        with self._lock:
+            if agent_id not in self._sessions_by_agent:
+                self._sessions_by_agent[agent_id] = {}
+            return self._sessions_by_agent[agent_id]
 
     def create_session(
         self, session_id: str | None = None, initial_code: str | None = None, timeout: int = 30
@@ -20,12 +29,13 @@ class PythonSessionManager:
         if session_id is None:
             session_id = self.default_session_id
 
+        sessions = self._get_agent_sessions()
         with self._lock:
-            if session_id in self.sessions:
+            if session_id in sessions:
                 raise ValueError(f"Python session '{session_id}' already exists")
 
             session = PythonInstance(session_id)
-            self.sessions[session_id] = session
+            sessions[session_id] = session
 
             if initial_code:
                 result = session.execute_code(initial_code, timeout)
@@ -49,11 +59,12 @@ class PythonSessionManager:
         if not code:
             raise ValueError("No code provided for execution")
 
+        sessions = self._get_agent_sessions()
         with self._lock:
-            if session_id not in self.sessions:
+            if session_id not in sessions:
                 raise ValueError(f"Python session '{session_id}' not found")
 
-            session = self.sessions[session_id]
+            session = sessions[session_id]
 
         result = session.execute_code(code, timeout)
         result["message"] = f"Code executed in session '{session_id}'"
@@ -63,11 +74,12 @@ class PythonSessionManager:
         if session_id is None:
             session_id = self.default_session_id
 
+        sessions = self._get_agent_sessions()
         with self._lock:
-            if session_id not in self.sessions:
+            if session_id not in sessions:
                 raise ValueError(f"Python session '{session_id}' not found")
 
-            session = self.sessions.pop(session_id)
+            session = sessions.pop(session_id)
 
         session.close()
         return {
@@ -77,9 +89,10 @@ class PythonSessionManager:
         }
 
     def list_sessions(self) -> dict[str, Any]:
+        sessions = self._get_agent_sessions()
         with self._lock:
             session_info = {}
-            for sid, session in self.sessions.items():
+            for sid, session in sessions.items():
                 session_info[sid] = {
                     "is_running": session.is_running,
                     "is_alive": session.is_alive(),
@@ -87,24 +100,35 @@ class PythonSessionManager:
 
         return {"sessions": session_info, "total_count": len(session_info)}
 
+    def cleanup_agent(self, agent_id: str) -> None:
+        with self._lock:
+            sessions = self._sessions_by_agent.pop(agent_id, {})
+
+        for session in sessions.values():
+            with contextlib.suppress(Exception):
+                session.close()
+
     def cleanup_dead_sessions(self) -> None:
         with self._lock:
-            dead_sessions = []
-            for sid, session in self.sessions.items():
-                if not session.is_alive():
-                    dead_sessions.append(sid)
+            for sessions in self._sessions_by_agent.values():
+                dead_sessions = []
+                for sid, session in sessions.items():
+                    if not session.is_alive():
+                        dead_sessions.append(sid)
 
-            for sid in dead_sessions:
-                session = self.sessions.pop(sid)
-                with contextlib.suppress(Exception):
-                    session.close()
+                for sid in dead_sessions:
+                    session = sessions.pop(sid)
+                    with contextlib.suppress(Exception):
+                        session.close()
 
     def close_all_sessions(self) -> None:
         with self._lock:
-            sessions_to_close = list(self.sessions.values())
-            self.sessions.clear()
+            all_sessions: list[PythonInstance] = []
+            for sessions in self._sessions_by_agent.values():
+                all_sessions.extend(sessions.values())
+            self._sessions_by_agent.clear()
 
-        for session in sessions_to_close:
+        for session in all_sessions:
             with contextlib.suppress(Exception):
                 session.close()
 

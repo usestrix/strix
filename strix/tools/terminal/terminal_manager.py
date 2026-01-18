@@ -3,17 +3,26 @@ import contextlib
 import threading
 from typing import Any
 
+from strix.tools.context import get_current_agent_id
+
 from .terminal_session import TerminalSession
 
 
 class TerminalManager:
     def __init__(self) -> None:
-        self.sessions: dict[str, TerminalSession] = {}
+        self._sessions_by_agent: dict[str, dict[str, TerminalSession]] = {}
         self._lock = threading.Lock()
         self.default_terminal_id = "default"
         self.default_timeout = 30.0
 
         self._register_cleanup_handlers()
+
+    def _get_agent_sessions(self) -> dict[str, TerminalSession]:
+        agent_id = get_current_agent_id()
+        with self._lock:
+            if agent_id not in self._sessions_by_agent:
+                self._sessions_by_agent[agent_id] = {}
+            return self._sessions_by_agent[agent_id]
 
     def execute_command(
         self,
@@ -62,24 +71,26 @@ class TerminalManager:
             }
 
     def _get_or_create_session(self, terminal_id: str) -> TerminalSession:
+        sessions = self._get_agent_sessions()
         with self._lock:
-            if terminal_id not in self.sessions:
-                self.sessions[terminal_id] = TerminalSession(terminal_id)
-            return self.sessions[terminal_id]
+            if terminal_id not in sessions:
+                sessions[terminal_id] = TerminalSession(terminal_id)
+            return sessions[terminal_id]
 
     def close_session(self, terminal_id: str | None = None) -> dict[str, Any]:
         if terminal_id is None:
             terminal_id = self.default_terminal_id
 
+        sessions = self._get_agent_sessions()
         with self._lock:
-            if terminal_id not in self.sessions:
+            if terminal_id not in sessions:
                 return {
                     "terminal_id": terminal_id,
                     "message": f"Terminal '{terminal_id}' not found",
                     "status": "not_found",
                 }
 
-            session = self.sessions.pop(terminal_id)
+            session = sessions.pop(terminal_id)
 
         try:
             session.close()
@@ -97,9 +108,10 @@ class TerminalManager:
             }
 
     def list_sessions(self) -> dict[str, Any]:
+        sessions = self._get_agent_sessions()
         with self._lock:
             session_info: dict[str, dict[str, Any]] = {}
-            for tid, session in self.sessions.items():
+            for tid, session in sessions.items():
                 session_info[tid] = {
                     "is_running": session.is_running(),
                     "working_dir": session.get_working_dir(),
@@ -107,24 +119,35 @@ class TerminalManager:
 
         return {"sessions": session_info, "total_count": len(session_info)}
 
+    def cleanup_agent(self, agent_id: str) -> None:
+        with self._lock:
+            sessions = self._sessions_by_agent.pop(agent_id, {})
+
+        for session in sessions.values():
+            with contextlib.suppress(Exception):
+                session.close()
+
     def cleanup_dead_sessions(self) -> None:
         with self._lock:
-            dead_sessions: list[str] = []
-            for tid, session in self.sessions.items():
-                if not session.is_running():
-                    dead_sessions.append(tid)
+            for sessions in self._sessions_by_agent.values():
+                dead_sessions: list[str] = []
+                for tid, session in sessions.items():
+                    if not session.is_running():
+                        dead_sessions.append(tid)
 
-            for tid in dead_sessions:
-                session = self.sessions.pop(tid)
-                with contextlib.suppress(Exception):
-                    session.close()
+                for tid in dead_sessions:
+                    session = sessions.pop(tid)
+                    with contextlib.suppress(Exception):
+                        session.close()
 
     def close_all_sessions(self) -> None:
         with self._lock:
-            sessions_to_close = list(self.sessions.values())
-            self.sessions.clear()
+            all_sessions: list[TerminalSession] = []
+            for sessions in self._sessions_by_agent.values():
+                all_sessions.extend(sessions.values())
+            self._sessions_by_agent.clear()
 
-        for session in sessions_to_close:
+        for session in all_sessions:
             with contextlib.suppress(Exception):
                 session.close()
 
