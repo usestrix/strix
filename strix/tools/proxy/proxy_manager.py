@@ -28,10 +28,12 @@ class ProxyManager:
             "https": f"http://{host}:{CAIDO_PORT}",
         }
         self.auth_token = auth_token or os.getenv("CAIDO_API_TOKEN")
-        self.transport = RequestsHTTPTransport(
+
+    def _get_client(self) -> Client:
+        transport = RequestsHTTPTransport(
             url=self.base_url, headers={"Authorization": f"Bearer {self.auth_token}"}
         )
-        self.client = Client(transport=self.transport, fetch_schema_from_transport=False)
+        return Client(transport=transport, fetch_schema_from_transport=False)
 
     def list_requests(
         self,
@@ -90,7 +92,7 @@ class ProxyManager:
         }
 
         try:
-            result = self.client.execute(query, variable_values=variables)
+            result = self._get_client().execute(query, variable_values=variables)
             data = result.get("requestsByOffset", {})
             nodes = [edge["node"] for edge in data.get("edges", [])]
 
@@ -137,7 +139,9 @@ class ProxyManager:
             return {"error": f"Invalid part '{part}'. Use 'request' or 'response'"}
 
         try:
-            result = self.client.execute(gql(queries[part]), variable_values={"id": request_id})
+            result = self._get_client().execute(
+                gql(queries[part]), variable_values={"id": request_id}
+            )
             request_data = result.get("request", {})
 
             if not request_data:
@@ -435,7 +439,9 @@ class ProxyManager:
             }
 
     def _handle_scope_list(self) -> dict[str, Any]:
-        result = self.client.execute(gql("query { scopes { id name allowlist denylist indexed } }"))
+        result = self._get_client().execute(
+            gql("query { scopes { id name allowlist denylist indexed } }")
+        )
         scopes = result.get("scopes", [])
         return {"scopes": scopes, "count": len(scopes)}
 
@@ -443,7 +449,7 @@ class ProxyManager:
         if not scope_id:
             return self._handle_scope_list()
 
-        result = self.client.execute(
+        result = self._get_client().execute(
             gql(
                 "query GetScope($id: ID!) { scope(id: $id) { id name allowlist denylist indexed } }"
             ),
@@ -472,7 +478,7 @@ class ProxyManager:
             }
         """)
 
-        result = self.client.execute(
+        result = self._get_client().execute(
             mutation,
             variable_values={
                 "input": {
@@ -512,7 +518,7 @@ class ProxyManager:
             }
         """)
 
-        result = self.client.execute(
+        result = self._get_client().execute(
             mutation,
             variable_values={
                 "id": scope_id,
@@ -535,7 +541,7 @@ class ProxyManager:
         if not scope_id:
             return {"error": "scope_id required for delete"}
 
-        result = self.client.execute(
+        result = self._get_client().execute(
             gql("mutation DeleteScope($id: ID!) { deleteScope(id: $id) { deletedId } }"),
             variable_values={"id": scope_id},
         )
@@ -612,7 +618,7 @@ class ProxyManager:
                         }
                     }
                 """)
-                result = self.client.execute(
+                result = self._get_client().execute(
                     query, variable_values={"parentId": parent_id, "depth": depth}
                 )
                 data = result.get("sitemapDescendantEntries", {})
@@ -629,7 +635,7 @@ class ProxyManager:
                         }
                     }
                 """)
-                result = self.client.execute(query, variable_values={"scopeId": scope_id})
+                result = self._get_client().execute(query, variable_values={"scopeId": scope_id})
                 data = result.get("sitemapRootEntries", {})
 
             all_nodes = [edge["node"] for edge in data.get("edges", [])]
@@ -736,7 +742,7 @@ class ProxyManager:
                 }
             """)
 
-            result = self.client.execute(query, variable_values={"id": entry_id})
+            result = self._get_client().execute(query, variable_values={"id": entry_id})
             entry = result.get("sitemapEntry")
 
             if not entry:
