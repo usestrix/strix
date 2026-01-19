@@ -346,7 +346,5 @@ echo -e "${MUTED}For more information visit ${NC}https://strix.ai"
 echo -e "${MUTED}Join our community ${NC}https://discord.gg/YjKFvEZSdZ"
 echo ""
 
-if [[ ":$PATH:" != *":$INSTALL_DIR:"* ]]; then
-    echo -e "${YELLOW}→${NC} Run ${MUTED}source ~/.$(basename $SHELL)rc${NC} or open a new terminal"
-    echo ""
-fi
+echo -e "${YELLOW}→${NC} Run ${MUTED}source ~/.$(basename $SHELL)rc${NC} or open a new terminal"
+echo ""
