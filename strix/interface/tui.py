@@ -29,6 +29,10 @@ from textual.widgets import Button, Label, Static, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from strix.agents.StrixAgent import StrixAgent
+from strix.interface.streaming_parser import parse_streaming_content
+from strix.interface.tool_components.agent_message_renderer import AgentMessageRenderer
+from strix.interface.tool_components.registry import get_tool_renderer
+from strix.interface.tool_components.user_message_renderer import UserMessageRenderer
 from strix.interface.utils import build_tui_stats_text
 from strix.llm.config import LLMConfig
 from strix.telemetry.tracer import Tracer, set_global_tracer
@@ -691,6 +695,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._displayed_agents: set[str] = set()
         self._displayed_events: list[str] = []
 
+        self._streaming_render_cache: dict[str, tuple[int, Any]] = {}
+        self._last_streaming_len: dict[str, int] = {}
+
         self._scan_thread: threading.Thread | None = None
         self._scan_stop_event = threading.Event()
         self._scan_completed = threading.Event()
@@ -853,7 +860,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._start_scan_thread()
 
-        self.set_interval(0.25, self._update_ui_from_tracer)
+        self.set_interval(0.35, self._update_ui_from_tracer)
 
     def _update_ui_from_tracer(self) -> None:
         if self.show_splash:
@@ -946,11 +953,17 @@ class StrixTUIApp(App):  # type: ignore[misc]
             )
 
         current_event_ids = [e["id"] for e in events]
+        current_streaming_len = len(streaming) if streaming else 0
+        last_streaming_len = self._last_streaming_len.get(self.selected_agent_id, 0)
 
-        if not streaming and current_event_ids == self._displayed_events:
+        if (
+            current_event_ids == self._displayed_events
+            and current_streaming_len == last_streaming_len
+        ):
             return None, None
 
         self._displayed_events = current_event_ids
+        self._last_streaming_len[self.selected_agent_id] = current_streaming_len
         return self._get_rendered_events_content(events), "chat-content"
 
     def _update_chat_view(self) -> None:
@@ -1025,18 +1038,20 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         return Group(*renderables)
 
-    def _render_streaming_content(self, content: str) -> Any:
-        from strix.interface.streaming_parser import parse_streaming_content
+    def _render_streaming_content(self, content: str, agent_id: str | None = None) -> Any:
+        cache_key = agent_id or self.selected_agent_id or ""
+        content_len = len(content)
+
+        if cache_key in self._streaming_render_cache:
+            cached_len, cached_output = self._streaming_render_cache[cache_key]
+            if cached_len == content_len:
+                return cached_output
 
         renderables: list[Any] = []
         segments = parse_streaming_content(content)
 
         for segment in segments:
             if segment.type == "text":
-                from strix.interface.tool_components.agent_message_renderer import (
-                    AgentMessageRenderer,
-                )
-
                 text_content = AgentMessageRenderer.render_simple(segment.content)
                 if renderables:
                     renderables.append(Text(""))
@@ -1053,18 +1068,18 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 renderables.append(tool_renderable)
 
         if not renderables:
-            return Text()
+            result = Text()
+        elif len(renderables) == 1:
+            result = renderables[0]
+        else:
+            result = Group(*renderables)
 
-        if len(renderables) == 1:
-            return renderables[0]
-
-        return Group(*renderables)
+        self._streaming_render_cache[cache_key] = (content_len, result)
+        return result
 
     def _render_streaming_tool(
         self, tool_name: str, args: dict[str, str], is_complete: bool
     ) -> Any:
-        from strix.interface.tool_components.registry import get_tool_renderer
-
         tool_data = {
             "tool_name": tool_name,
             "args": args,
@@ -1395,6 +1410,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return
 
         self._displayed_events.clear()
+        self._streaming_render_cache.clear()
+        self._last_streaming_len.clear()
 
         self.call_later(self._update_chat_view)
         self._update_agent_status_display()
@@ -1589,8 +1606,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return None
 
         if role == "user":
-            from strix.interface.tool_components.user_message_renderer import UserMessageRenderer
-
             return UserMessageRenderer.render_simple(content)
 
         if metadata.get("interrupted"):
@@ -1601,8 +1616,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
             interrupted_text.append("Interrupted by user", style="yellow dim")
             return Group(streaming_result, interrupted_text)
 
-        from strix.interface.tool_components.agent_message_renderer import AgentMessageRenderer
-
         return AgentMessageRenderer.render_simple(content)
 
     def _render_tool_content_simple(self, tool_data: dict[str, Any]) -> Any:
@@ -1610,8 +1623,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
         result = tool_data.get("result")
-
-        from strix.interface.tool_components.registry import get_tool_renderer
 
         renderer = get_tool_renderer(tool_name)
 

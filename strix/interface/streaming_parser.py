@@ -6,6 +6,11 @@ from typing import Literal
 
 _FUNCTION_TAG_PREFIX = "<function="
 
+_FUNC_PATTERN = re.compile(r"<function=([^>]+)>")
+_FUNC_END_PATTERN = re.compile(r"</function>")
+_COMPLETE_PARAM_PATTERN = re.compile(r"<parameter=([^>]+)>(.*?)</parameter>", re.DOTALL)
+_INCOMPLETE_PARAM_PATTERN = re.compile(r"<parameter=([^>]+)>(.*)$", re.DOTALL)
+
 
 def _get_safe_content(content: str) -> tuple[str, str]:
     if not content:
@@ -39,8 +44,7 @@ def parse_streaming_content(content: str) -> list[StreamSegment]:
 
     segments: list[StreamSegment] = []
 
-    func_pattern = r"<function=([^>]+)>"
-    func_matches = list(re.finditer(func_pattern, content))
+    func_matches = list(_FUNC_PATTERN.finditer(content))
 
     if not func_matches:
         safe_content, _ = _get_safe_content(content)
@@ -59,12 +63,12 @@ def parse_streaming_content(content: str) -> list[StreamSegment]:
         tool_name = match.group(1)
         func_start = match.end()
 
-        func_end_match = re.search(r"</function>", content[func_start:])
+        func_end_match = _FUNC_END_PATTERN.search(content, func_start)
 
         if func_end_match:
-            func_body = content[func_start : func_start + func_end_match.start()]
+            func_body = content[func_start : func_end_match.start()]
             is_complete = True
-            end_pos = func_start + func_end_match.end()
+            end_pos = func_end_match.end()
         else:
             if i + 1 < len(func_matches):
                 next_func_start = func_matches[i + 1].start()
@@ -98,8 +102,7 @@ def parse_streaming_content(content: str) -> list[StreamSegment]:
 def _parse_streaming_params(func_body: str) -> dict[str, str]:
     args: dict[str, str] = {}
 
-    complete_pattern = r"<parameter=([^>]+)>(.*?)</parameter>"
-    complete_matches = list(re.finditer(complete_pattern, func_body, re.DOTALL))
+    complete_matches = list(_COMPLETE_PARAM_PATTERN.finditer(func_body))
     complete_end_pos = 0
 
     for match in complete_matches:
@@ -109,8 +112,7 @@ def _parse_streaming_params(func_body: str) -> dict[str, str]:
         complete_end_pos = max(complete_end_pos, match.end())
 
     remaining = func_body[complete_end_pos:]
-    incomplete_pattern = r"<parameter=([^>]+)>(.*)$"
-    incomplete_match = re.search(incomplete_pattern, remaining, re.DOTALL)
+    incomplete_match = _INCOMPLETE_PARAM_PATTERN.search(remaining)
     if incomplete_match:
         param_name = incomplete_match.group(1)
         param_value = html.unescape(incomplete_match.group(2).strip())
