@@ -91,6 +91,12 @@
       code normally. It can be single line or multi-line.
   13. For form filling, click on the field first, then use 'type' to enter text.
   14. The browser runs in headless mode using Chrome engine for security and performance.
+  15. RESOURCE MANAGEMENT:
+      - ALWAYS close tabs you no longer need using 'close_tab' action.
+      - ALWAYS close the browser with 'close' action when you have completely finished
+        all browser-related tasks. Do not leave the browser running if you're done with it.
+      - If you opened multiple tabs, close them as soon as you've extracted the needed
+        information from each one.
     </notes>
     <examples>
   # Launch browser at URL (creates tab_1)

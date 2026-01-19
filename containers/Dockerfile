@@ -9,7 +9,8 @@ RUN apt-get update && \
 
 RUN useradd -m -s /bin/bash pentester && \
     usermod -aG sudo pentester && \
-    echo "pentester ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+    echo "pentester ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
+    touch /home/pentester/.hushlogin
 
 RUN mkdir -p /home/pentester/configs \
              /home/pentester/wordlists \

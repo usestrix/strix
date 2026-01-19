@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import logging
 import threading
 from pathlib import Path
@@ -17,36 +18,88 @@ MAX_CONSOLE_LOGS_COUNT = 200
 MAX_JS_RESULT_LENGTH = 5_000
 
 
+class _BrowserState:
+    """Singleton state for the shared browser instance."""
+
+    lock = threading.Lock()
+    event_loop: asyncio.AbstractEventLoop | None = None
+    event_loop_thread: threading.Thread | None = None
+    playwright: Playwright | None = None
+    browser: Browser | None = None
+
+
+_state = _BrowserState()
+
+
+def _ensure_event_loop() -> None:
+    if _state.event_loop is not None:
+        return
+
+    def run_loop() -> None:
+        _state.event_loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(_state.event_loop)
+        _state.event_loop.run_forever()
+
+    _state.event_loop_thread = threading.Thread(target=run_loop, daemon=True)
+    _state.event_loop_thread.start()
+
+    while _state.event_loop is None:
+        threading.Event().wait(0.01)
+
+
+async def _create_browser() -> Browser:
+    if _state.browser is not None and _state.browser.is_connected():
+        return _state.browser
+
+    if _state.browser is not None:
+        with contextlib.suppress(Exception):
+            await _state.browser.close()
+        _state.browser = None
+    if _state.playwright is not None:
+        with contextlib.suppress(Exception):
+            await _state.playwright.stop()
+        _state.playwright = None
+
+    _state.playwright = await async_playwright().start()
+    _state.browser = await _state.playwright.chromium.launch(
+        headless=True,
+        args=[
+            "--no-sandbox",
+            "--disable-dev-shm-usage",
+            "--disable-gpu",
+            "--disable-web-security",
+        ],
+    )
+    return _state.browser
+
+
+def _get_browser() -> tuple[asyncio.AbstractEventLoop, Browser]:
+    with _state.lock:
+        _ensure_event_loop()
+        assert _state.event_loop is not None
+
+        if _state.browser is None or not _state.browser.is_connected():
+            future = asyncio.run_coroutine_threadsafe(_create_browser(), _state.event_loop)
+            future.result(timeout=30)
+
+        assert _state.browser is not None
+        return _state.event_loop, _state.browser
+
+
 class BrowserInstance:
     def __init__(self) -> None:
         self.is_running = True
         self._execution_lock = threading.Lock()
 
-        self.playwright: Playwright | None = None
-        self.browser: Browser | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._browser: Browser | None = None
+
         self.context: BrowserContext | None = None
         self.pages: dict[str, Page] = {}
         self.current_page_id: str | None = None
         self._next_tab_id = 1
 
         self.console_logs: dict[str, list[dict[str, Any]]] = {}
-
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._loop_thread: threading.Thread | None = None
-
-        self._start_event_loop()
-
-    def _start_event_loop(self) -> None:
-        def run_loop() -> None:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            self._loop.run_forever()
-
-        self._loop_thread = threading.Thread(target=run_loop, daemon=True)
-        self._loop_thread.start()
-
-        while self._loop is None:
-            threading.Event().wait(0.01)
 
     def _run_async(self, coro: Any) -> dict[str, Any]:
         if not self._loop or not self.is_running:
@@ -77,21 +130,10 @@ class BrowserInstance:
 
         page.on("console", handle_console)
 
-    async def _launch_browser(self, url: str | None = None) -> dict[str, Any]:
-        self.playwright = await async_playwright().start()
+    async def _create_context(self, url: str | None = None) -> dict[str, Any]:
+        assert self._browser is not None
 
-        self.browser = await self.playwright.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-web-security",
-                "--disable-features=VizDisplayCompositor",
-            ],
-        )
-
-        self.context = await self.browser.new_context(
+        self.context = await self._browser.new_context(
             viewport={"width": 1280, "height": 720},
             user_agent=(
                 "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
@@ -148,10 +190,11 @@ class BrowserInstance:
 
     def launch(self, url: str | None = None) -> dict[str, Any]:
         with self._execution_lock:
-            if self.browser is not None:
+            if self.context is not None:
                 raise ValueError("Browser is already launched")
 
-            return self._run_async(self._launch_browser(url))
+            self._loop, self._browser = _get_browser()
+            return self._run_async(self._create_context(url))
 
     def goto(self, url: str, tab_id: str | None = None) -> dict[str, Any]:
         with self._execution_lock:
@@ -512,22 +555,27 @@ class BrowserInstance:
     def close(self) -> None:
         with self._execution_lock:
             self.is_running = False
-            if self._loop:
-                asyncio.run_coroutine_threadsafe(self._close_browser(), self._loop)
+            if self._loop and self.context:
+                future = asyncio.run_coroutine_threadsafe(self._close_context(), self._loop)
+                with contextlib.suppress(Exception):
+                    future.result(timeout=5)
 
-                self._loop.call_soon_threadsafe(self._loop.stop)
+            self.pages.clear()
+            self.console_logs.clear()
+            self.current_page_id = None
+            self.context = None
 
-                if self._loop_thread:
-                    self._loop_thread.join(timeout=5)
-
-    async def _close_browser(self) -> None:
+    async def _close_context(self) -> None:
         try:
-            if self.browser:
-                await self.browser.close()
-            if self.playwright:
-                await self.playwright.stop()
+            if self.context:
+                await self.context.close()
         except (OSError, RuntimeError) as e:
-            logger.warning(f"Error closing browser: {e}")
+            logger.warning(f"Error closing context: {e}")
 
     def is_alive(self) -> bool:
-        return self.is_running and self.browser is not None and self.browser.is_connected()
+        return (
+            self.is_running
+            and self.context is not None
+            and self._browser is not None
+            and self._browser.is_connected()
+        )
