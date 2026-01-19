@@ -64,7 +64,7 @@ class BrowserRenderer(BaseToolRenderer):
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
 
-        action = args.get("action", "unknown")
+        action = args.get("action", "")
         content = cls._build_content(action, args)
 
         css_classes = cls.get_css_classes(status)
@@ -131,5 +131,6 @@ class BrowserRenderer(BaseToolRenderer):
                 text.append_text(cls._highlight_js(js_code))
             return text
 
-        text.append(action, style="#06b6d4")
+        if action:
+            text.append(action, style="#06b6d4")
         return text
