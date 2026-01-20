@@ -1,6 +1,9 @@
 from strix.utils.resource_paths import get_strix_resource_path
 
 
+_EXCLUDED_CATEGORIES = {"scan_modes", "coordination"}
+
+
 def get_available_skills() -> dict[str, list[str]]:
     skills_dir = get_strix_resource_path("skills")
     available_skills: dict[str, list[str]] = {}
@@ -11,6 +14,10 @@ def get_available_skills() -> dict[str, list[str]]:
     for category_dir in skills_dir.iterdir():
         if category_dir.is_dir() and not category_dir.name.startswith("__"):
             category_name = category_dir.name
+
+            if category_name in _EXCLUDED_CATEGORIES:
+                continue
+
             skills = []
 
             for file_path in category_dir.glob("*.md"):
@@ -68,6 +75,29 @@ def generate_skills_description() -> str:
     return description
 
 
+def _get_all_categories() -> dict[str, list[str]]:
+    """Get all skill categories including internal ones (scan_modes, coordination)."""
+    skills_dir = get_strix_resource_path("skills")
+    all_categories: dict[str, list[str]] = {}
+
+    if not skills_dir.exists():
+        return all_categories
+
+    for category_dir in skills_dir.iterdir():
+        if category_dir.is_dir() and not category_dir.name.startswith("__"):
+            category_name = category_dir.name
+            skills = []
+
+            for file_path in category_dir.glob("*.md"):
+                skill_name = file_path.stem
+                skills.append(skill_name)
+
+            if skills:
+                all_categories[category_name] = sorted(skills)
+
+    return all_categories
+
+
 def load_skills(skill_names: list[str]) -> dict[str, str]:
     import logging
 
@@ -75,7 +105,7 @@ def load_skills(skill_names: list[str]) -> dict[str, str]:
     skill_content = {}
     skills_dir = get_strix_resource_path("skills")
 
-    available_skills = get_available_skills()
+    all_categories = _get_all_categories()
 
     for skill_name in skill_names:
         try:
@@ -84,7 +114,7 @@ def load_skills(skill_names: list[str]) -> dict[str, str]:
             if "/" in skill_name:
                 skill_path = f"{skill_name}.md"
             else:
-                for category, skills in available_skills.items():
+                for category, skills in all_categories.items():
                     if skill_name in skills:
                         skill_path = f"{category}/{skill_name}.md"
                         break
