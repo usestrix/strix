@@ -208,7 +208,7 @@ def _build_vulnerability_stats(stats_text: Text, tracer: Any) -> None:
             if severity in severity_counts:
                 severity_counts[severity] += 1
 
-        stats_text.append("🔍 Vulnerabilities Found: ", style="bold red")
+        stats_text.append("Vulnerabilities  ", style="bold red")
 
         severity_parts = []
         for severity in ["critical", "high", "medium", "low", "info"]:
@@ -230,7 +230,7 @@ def _build_vulnerability_stats(stats_text: Text, tracer: Any) -> None:
         stats_text.append(")", style="dim white")
         stats_text.append("\n")
     else:
-        stats_text.append("🔍 Vulnerabilities Found: ", style="bold green")
+        stats_text.append("Vulnerabilities  ", style="bold #22c55e")
         stats_text.append("0", style="bold white")
         stats_text.append(" (No exploitable vulnerabilities detected)", style="dim green")
         stats_text.append("\n")
@@ -240,29 +240,29 @@ def _build_llm_stats(stats_text: Text, total_stats: dict[str, Any]) -> None:
     """Build LLM usage section of stats text."""
     if total_stats["requests"] > 0:
         stats_text.append("\n")
-        stats_text.append("📥 Input Tokens: ", style="bold cyan")
-        stats_text.append(format_token_count(total_stats["input_tokens"]), style="bold white")
+        stats_text.append("Input Tokens ", style="dim")
+        stats_text.append(format_token_count(total_stats["input_tokens"]), style="white")
 
         if total_stats["cached_tokens"] > 0:
-            stats_text.append(" • ", style="dim white")
-            stats_text.append("⚡ Cached Tokens: ", style="bold green")
-            stats_text.append(format_token_count(total_stats["cached_tokens"]), style="bold white")
+            stats_text.append("  ·  ", style="dim white")
+            stats_text.append("Cached Tokens ", style="dim")
+            stats_text.append(format_token_count(total_stats["cached_tokens"]), style="#22c55e")
 
-        stats_text.append(" • ", style="dim white")
-        stats_text.append("📤 Output Tokens: ", style="bold cyan")
-        stats_text.append(format_token_count(total_stats["output_tokens"]), style="bold white")
+        stats_text.append("  ·  ", style="dim white")
+        stats_text.append("Output Tokens ", style="dim")
+        stats_text.append(format_token_count(total_stats["output_tokens"]), style="white")
 
         if total_stats["cost"] > 0:
-            stats_text.append(" • ", style="dim white")
-            stats_text.append("💰 Total Cost: ", style="bold cyan")
-            stats_text.append(f"${total_stats['cost']:.4f}", style="bold yellow")
+            stats_text.append(" · ", style="dim white")
+            stats_text.append("Cost ", style="dim")
+            stats_text.append(f"${total_stats['cost']:.4f}", style="bold #fbbf24")
     else:
         stats_text.append("\n")
-        stats_text.append("💰 Total Cost: ", style="bold cyan")
-        stats_text.append("$0.0000 ", style="bold yellow")
-        stats_text.append("• ", style="bold white")
-        stats_text.append("📊 Tokens: ", style="bold cyan")
-        stats_text.append("0", style="bold white")
+        stats_text.append("Cost ", style="dim")
+        stats_text.append("$0.0000 ", style="#fbbf24")
+        stats_text.append("· ", style="dim white")
+        stats_text.append("Tokens ", style="dim")
+        stats_text.append("0", style="white")
 
 
 def build_final_stats_text(tracer: Any) -> Text:
@@ -276,10 +276,12 @@ def build_final_stats_text(tracer: Any) -> Text:
     tool_count = tracer.get_real_tool_count()
     agent_count = len(tracer.agents)
 
-    stats_text.append("🤖 Agents Used: ", style="bold cyan")
+    stats_text.append("Agents", style="dim")
+    stats_text.append("  ")
     stats_text.append(str(agent_count), style="bold white")
-    stats_text.append(" • ", style="dim white")
-    stats_text.append("🛠️ Tools Called: ", style="bold cyan")
+    stats_text.append("  ·  ", style="dim white")
+    stats_text.append("Tools", style="dim")
+    stats_text.append("  ")
     stats_text.append(str(tool_count), style="bold white")
 
     llm_stats = tracer.get_total_llm_stats()
@@ -296,15 +298,16 @@ def build_live_stats_text(tracer: Any, agent_config: dict[str, Any] | None = Non
     if agent_config:
         llm_config = agent_config["llm_config"]
         model = getattr(llm_config, "model_name", "Unknown")
-        stats_text.append(f"🧠 Model: {model}")
+        stats_text.append("Model ", style="dim")
+        stats_text.append(model, style="white")
         stats_text.append("\n")
 
     vuln_count = len(tracer.vulnerability_reports)
     tool_count = tracer.get_real_tool_count()
     agent_count = len(tracer.agents)
 
-    stats_text.append("🔍 Vulnerabilities: ", style="bold white")
-    stats_text.append(f"{vuln_count}", style="dim white")
+    stats_text.append("Vulnerabilities ", style="dim")
+    stats_text.append(f"{vuln_count}", style="white")
     stats_text.append("\n")
     if vuln_count > 0:
         severity_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
@@ -330,33 +333,32 @@ def build_live_stats_text(tracer: Any, agent_config: dict[str, Any] | None = Non
 
         stats_text.append("\n")
 
-    stats_text.append("🤖 Agents: ", style="bold white")
-    stats_text.append(str(agent_count), style="dim white")
-    stats_text.append(" • ", style="dim white")
-    stats_text.append("🛠️ Tools: ", style="bold white")
-    stats_text.append(str(tool_count), style="dim white")
+    stats_text.append("Agents ", style="dim")
+    stats_text.append(str(agent_count), style="white")
+    stats_text.append("  ·  ", style="dim white")
+    stats_text.append("Tools ", style="dim")
+    stats_text.append(str(tool_count), style="white")
 
     llm_stats = tracer.get_total_llm_stats()
     total_stats = llm_stats["total"]
 
     stats_text.append("\n")
 
-    stats_text.append("📥 Input: ", style="bold white")
-    stats_text.append(format_token_count(total_stats["input_tokens"]), style="dim white")
+    stats_text.append("Input Tokens ", style="dim")
+    stats_text.append(format_token_count(total_stats["input_tokens"]), style="white")
 
-    stats_text.append(" • ", style="dim white")
-    stats_text.append("⚡ ", style="bold white")
-    stats_text.append("Cached: ", style="bold white")
-    stats_text.append(format_token_count(total_stats["cached_tokens"]), style="dim white")
+    stats_text.append("  ·  ", style="dim white")
+    stats_text.append("Cached Tokens ", style="dim")
+    stats_text.append(format_token_count(total_stats["cached_tokens"]), style="#22c55e")
 
     stats_text.append("\n")
 
-    stats_text.append("📤 Output: ", style="bold white")
-    stats_text.append(format_token_count(total_stats["output_tokens"]), style="dim white")
+    stats_text.append("Output Tokens ", style="dim")
+    stats_text.append(format_token_count(total_stats["output_tokens"]), style="white")
 
-    stats_text.append(" • ", style="dim white")
-    stats_text.append("💰 Cost: ", style="bold white")
-    stats_text.append(f"${total_stats['cost']:.4f}", style="dim white")
+    stats_text.append("  ·  ", style="dim white")
+    stats_text.append("Cost ", style="dim")
+    stats_text.append(f"${total_stats['cost']:.4f}", style="#fbbf24")
 
     return stats_text
 
@@ -668,7 +670,6 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
     except subprocess.CalledProcessError as e:
         error_text = Text()
-        error_text.append("❌ ", style="bold red")
         error_text.append("REPOSITORY CLONE FAILED", style="bold red")
         error_text.append("\n\n", style="white")
         error_text.append(f"Could not clone repository: {repo_url}\n", style="white")
@@ -678,8 +679,8 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
         panel = Panel(
             error_text,
-            title="[bold red]🛡️  STRIX CLONE ERROR",
-            title_align="center",
+            title="[bold white]STRIX",
+            title_align="left",
             border_style="red",
             padding=(1, 2),
         )
@@ -689,7 +690,6 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         sys.exit(1)
     except FileNotFoundError:
         error_text = Text()
-        error_text.append("❌ ", style="bold red")
         error_text.append("GIT NOT FOUND", style="bold red")
         error_text.append("\n\n", style="white")
         error_text.append("Git is not installed or not available in PATH.\n", style="white")
@@ -697,8 +697,8 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
         panel = Panel(
             error_text,
-            title="[bold red]🛡️  STRIX CLONE ERROR",
-            title_align="center",
+            title="[bold white]STRIX",
+            title_align="left",
             border_style="red",
             padding=(1, 2),
         )
@@ -715,7 +715,6 @@ def check_docker_connection() -> Any:
     except DockerException:
         console = Console()
         error_text = Text()
-        error_text.append("❌ ", style="bold red")
         error_text.append("DOCKER NOT AVAILABLE", style="bold red")
         error_text.append("\n\n", style="white")
         error_text.append("Cannot connect to Docker daemon.\n", style="white")
@@ -726,8 +725,8 @@ def check_docker_connection() -> Any:
 
         panel = Panel(
             error_text,
-            title="[bold red]🛡️  STRIX STARTUP ERROR",
-            title_align="center",
+            title="[bold white]STRIX",
+            title_align="left",
             border_style="red",
             padding=(1, 2),
         )

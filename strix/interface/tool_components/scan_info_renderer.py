@@ -19,7 +19,8 @@ class ScanStartInfoRenderer(BaseToolRenderer):
         targets = args.get("targets", [])
 
         text = Text()
-        text.append("🚀 Starting penetration test")
+        text.append("◈ ", style="#22c55e")
+        text.append("Starting penetration test")
 
         if len(targets) == 1:
             text.append(" on ")

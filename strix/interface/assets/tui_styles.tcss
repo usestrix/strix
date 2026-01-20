@@ -36,7 +36,7 @@ Screen {
 }
 
 #sidebar {
-    width: 25%;
+    width: 20%;
     background: transparent;
     margin-left: 1;
 }
@@ -174,7 +174,7 @@ VulnerabilityDetailScreen {
 }
 
 #chat_area_container {
-    width: 75%;
+    width: 80%;
     background: transparent;
 }
 

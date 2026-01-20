@@ -76,7 +76,6 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
 
     if missing_required_vars:
         error_text = Text()
-        error_text.append("❌ ", style="bold red")
         error_text.append("MISSING REQUIRED ENVIRONMENT VARIABLES", style="bold red")
         error_text.append("\n\n", style="white")
 
@@ -163,8 +162,8 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
 
         panel = Panel(
             error_text,
-            title="[bold red]🛡️  STRIX CONFIGURATION ERROR",
-            title_align="center",
+            title="[bold white]STRIX",
+            title_align="left",
             border_style="red",
             padding=(1, 2),
         )
@@ -179,7 +178,6 @@ def check_docker_installed() -> None:
     if shutil.which("docker") is None:
         console = Console()
         error_text = Text()
-        error_text.append("❌ ", style="bold red")
         error_text.append("DOCKER NOT INSTALLED", style="bold red")
         error_text.append("\n\n", style="white")
         error_text.append("The 'docker' CLI was not found in your PATH.\n", style="white")
@@ -189,8 +187,8 @@ def check_docker_installed() -> None:
 
         panel = Panel(
             error_text,
-            title="[bold red]🛡️  STRIX STARTUP ERROR",
-            title_align="center",
+            title="[bold white]STRIX",
+            title_align="left",
             border_style="red",
             padding=(1, 2),
         )
@@ -234,7 +232,6 @@ async def warm_up_llm() -> None:
 
     except Exception as e:  # noqa: BLE001
         error_text = Text()
-        error_text.append("❌ ", style="bold red")
         error_text.append("LLM CONNECTION FAILED", style="bold red")
         error_text.append("\n\n", style="white")
         error_text.append("Could not establish connection to the language model.\n", style="white")
@@ -243,8 +240,8 @@ async def warm_up_llm() -> None:
 
         panel = Panel(
             error_text,
-            title="[bold red]🛡️  STRIX STARTUP ERROR",
-            title_align="center",
+            title="[bold white]STRIX",
+            title_align="left",
             border_style="red",
             padding=(1, 2),
         )
@@ -410,30 +407,22 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     completion_text = Text()
     if scan_completed:
-        completion_text.append("🦉 ", style="bold white")
-        completion_text.append("AGENT FINISHED", style="bold green")
-        completion_text.append(" • ", style="dim white")
-        completion_text.append("Penetration test completed", style="white")
+        completion_text.append("Penetration test completed", style="bold #22c55e")
     else:
-        completion_text.append("🦉 ", style="bold white")
-        completion_text.append("SESSION ENDED", style="bold yellow")
-        completion_text.append(" • ", style="dim white")
-        completion_text.append("Penetration test interrupted by user", style="white")
-
-    stats_text = build_final_stats_text(tracer)
+        completion_text.append("SESSION ENDED", style="bold #eab308")
 
     target_text = Text()
+    target_text.append("Target", style="dim")
+    target_text.append("  ")
     if len(args.targets_info) == 1:
-        target_text.append("🎯 Target: ", style="bold cyan")
         target_text.append(args.targets_info[0]["original"], style="bold white")
     else:
-        target_text.append("🎯 Targets: ", style="bold cyan")
-        target_text.append(f"{len(args.targets_info)} targets\n", style="bold white")
-        for i, target_info in enumerate(args.targets_info):
-            target_text.append("   • ", style="dim white")
+        target_text.append(f"{len(args.targets_info)} targets", style="bold white")
+        for target_info in args.targets_info:
+            target_text.append("\n        ")
             target_text.append(target_info["original"], style="white")
-            if i < len(args.targets_info) - 1:
-                target_text.append("\n")
+
+    stats_text = build_final_stats_text(tracer)
 
     panel_parts = [completion_text, "\n\n", target_text]
 
@@ -442,18 +431,20 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     if scan_completed or has_vulnerabilities:
         results_text = Text()
-        results_text.append("📊 Results Saved To: ", style="bold cyan")
-        results_text.append(str(results_path), style="bold yellow")
-        panel_parts.extend(["\n\n", results_text])
+        results_text.append("\n")
+        results_text.append("Output", style="dim")
+        results_text.append("  ")
+        results_text.append(str(results_path), style="#60a5fa")
+        panel_parts.extend(["\n", results_text])
 
     panel_content = Text.assemble(*panel_parts)
 
-    border_style = "green" if scan_completed else "yellow"
+    border_style = "#22c55e" if scan_completed else "#eab308"
 
     panel = Panel(
         panel_content,
-        title="[bold green]🛡️  STRIX CYBERSECURITY AGENT",
-        title_align="center",
+        title="[bold white]STRIX",
+        title_align="left",
         border_style=border_style,
         padding=(1, 2),
     )
@@ -461,8 +452,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     console.print("\n")
     console.print(panel)
     console.print()
-    console.print("[dim]🌐 Website:[/] [cyan]https://strix.ai[/]")
-    console.print("[dim]💬 Discord:[/] [cyan]https://discord.gg/YjKFvEZSdZ[/]")
+    console.print("[#60a5fa]strix.ai[/]  [dim]·[/]  [#60a5fa]discord.gg/YjKFvEZSdZ[/]")
     console.print()
 
 
@@ -474,7 +464,7 @@ def pull_docker_image() -> None:
         return
 
     console.print()
-    console.print(f"[bold cyan]🐳 Pulling Docker image:[/] {Config.get('strix_image')}")
+    console.print(f"[dim]Pulling image[/] {Config.get('strix_image')}")
     console.print("[dim yellow]This only happens on first run and may take a few minutes...[/]")
     console.print()
 
@@ -489,7 +479,6 @@ def pull_docker_image() -> None:
         except DockerException as e:
             console.print()
             error_text = Text()
-            error_text.append("❌ ", style="bold red")
             error_text.append("FAILED TO PULL IMAGE", style="bold red")
             error_text.append("\n\n", style="white")
             error_text.append(f"Could not download: {Config.get('strix_image')}\n", style="white")
@@ -497,8 +486,8 @@ def pull_docker_image() -> None:
 
             panel = Panel(
                 error_text,
-                title="[bold red]🛡️  DOCKER PULL ERROR",
-                title_align="center",
+                title="[bold white]STRIX",
+                title_align="left",
                 border_style="red",
                 padding=(1, 2),
             )
@@ -506,8 +495,7 @@ def pull_docker_image() -> None:
             sys.exit(1)
 
     success_text = Text()
-    success_text.append("✅ ", style="bold green")
-    success_text.append("Successfully pulled Docker image", style="green")
+    success_text.append("Docker image ready", style="#22c55e")
     console.print(success_text)
     console.print()
 

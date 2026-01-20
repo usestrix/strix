@@ -192,7 +192,7 @@ class SplashScreen(Static):  # type: ignore[misc]
 class HelpScreen(ModalScreen):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Grid(
-            Label("🦉 Strix Help", id="help_title"),
+            Label("Strix Help", id="help_title"),
             Label(
                 "F1        Help\nCtrl+Q/C  Quit\nESC       Stop Agent\n"
                 "Enter     Send message to agent\nTab       Switch panels\n↑/↓       Navigate tree",
@@ -668,7 +668,7 @@ class QuitScreen(ModalScreen):  # type: ignore[misc]
 class StrixTUIApp(App):  # type: ignore[misc]
     CSS_PATH = "assets/tui_styles.tcss"
 
-    SIDEBAR_MIN_WIDTH = 100
+    SIDEBAR_MIN_WIDTH = 140
 
     selected_agent_id: reactive[str | None] = reactive(default=None)
     show_splash: reactive[bool] = reactive(default=True)
@@ -795,7 +795,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             chat_input.set_app_reference(self)
             chat_input_container = Horizontal(chat_prompt, chat_input, id="chat_input_container")
 
-            agents_tree = Tree("🤖 Active Agents", id="agents_tree")
+            agents_tree = Tree("Agents", id="agents_tree")
             agents_tree.root.expand()
             agents_tree.show_root = False
 
@@ -911,16 +911,16 @@ class StrixTUIApp(App):  # type: ignore[misc]
             status = agent_data.get("status", "running")
 
             status_indicators = {
-                "running": "🟢",
-                "waiting": "⏸️",
-                "completed": "✅",
-                "failed": "❌",
-                "stopped": "⏹️",
-                "stopping": "⏸️",
-                "llm_failed": "🔴",
+                "running": "●",
+                "waiting": "○",
+                "completed": "◆",
+                "failed": "◇",
+                "stopped": "■",
+                "stopping": "○",
+                "llm_failed": "◇",
             }
 
-            status_icon = status_indicators.get(status, "🔵")
+            status_icon = status_indicators.get(status, "○")
             vuln_count = self._agent_vulnerability_count(agent_id)
             vuln_indicator = f" ({vuln_count})" if vuln_count > 0 else ""
             agent_name = f"{status_icon} {agent_name_raw}{vuln_indicator}"
@@ -1466,15 +1466,15 @@ class StrixTUIApp(App):  # type: ignore[misc]
         agent_name_raw = agent_data.get("name", "Agent")
 
         status_indicators = {
-            "running": "🟢",
-            "waiting": "🟡",
-            "completed": "✅",
-            "failed": "❌",
-            "stopped": "⏹️",
-            "stopping": "⏸️",
+            "running": "●",
+            "waiting": "○",
+            "completed": "◆",
+            "failed": "◇",
+            "stopped": "■",
+            "stopping": "○",
         }
 
-        status_icon = status_indicators.get(status, "🔵")
+        status_icon = status_indicators.get(status, "○")
         vuln_count = self._agent_vulnerability_count(agent_id)
         vuln_indicator = f" ({vuln_count})" if vuln_count > 0 else ""
         agent_name = f"{status_icon} {agent_name_raw}{vuln_indicator}"
@@ -1540,15 +1540,15 @@ class StrixTUIApp(App):  # type: ignore[misc]
         status = agent_data.get("status", "running")
 
         status_indicators = {
-            "running": "🟢",
-            "waiting": "🟡",
-            "completed": "✅",
-            "failed": "❌",
-            "stopped": "⏹️",
-            "stopping": "⏸️",
+            "running": "●",
+            "waiting": "○",
+            "completed": "◆",
+            "failed": "◇",
+            "stopped": "■",
+            "stopping": "○",
         }
 
-        status_icon = status_indicators.get(status, "🔵")
+        status_icon = status_indicators.get(status, "○")
         vuln_count = self._agent_vulnerability_count(agent_id)
         vuln_indicator = f" ({vuln_count})" if vuln_count > 0 else ""
         agent_name = f"{status_icon} {agent_name_raw}{vuln_indicator}"

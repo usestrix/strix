@@ -21,8 +21,8 @@ class CreateNoteRenderer(BaseToolRenderer):
         category = args.get("category", "general")
 
         text = Text()
-        text.append("📝 ")
-        text.append("Note", style="bold #fbbf24")
+        text.append("◇ ", style="#fbbf24")
+        text.append("note", style="dim")
         text.append(" ")
         text.append(f"({category})", style="dim")
 
@@ -50,8 +50,8 @@ class DeleteNoteRenderer(BaseToolRenderer):
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: ARG003
         text = Text()
-        text.append("📝 ")
-        text.append("Note Removed", style="bold #94a3b8")
+        text.append("◇ ", style="#fbbf24")
+        text.append("note removed", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)
@@ -70,8 +70,8 @@ class UpdateNoteRenderer(BaseToolRenderer):
         content = args.get("content")
 
         text = Text()
-        text.append("📝 ")
-        text.append("Note Updated", style="bold #fbbf24")
+        text.append("◇ ", style="#fbbf24")
+        text.append("note updated", style="dim")
 
         if title:
             text.append("\n  ")
@@ -99,8 +99,8 @@ class ListNotesRenderer(BaseToolRenderer):
         result = tool_data.get("result")
 
         text = Text()
-        text.append("📝 ")
-        text.append("Notes", style="bold #fbbf24")
+        text.append("◇ ", style="#fbbf24")
+        text.append("notes", style="dim")
 
         if isinstance(result, str) and result.strip():
             text.append("\n  ")

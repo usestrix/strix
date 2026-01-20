@@ -65,16 +65,16 @@ class StrReplaceEditorRenderer(BaseToolRenderer):
         text = Text()
 
         icons_and_labels = {
-            "view": ("📖 ", "Reading file", "#10b981"),
-            "str_replace": ("✏️ ", "Editing file", "#10b981"),
-            "create": ("📝 ", "Creating file", "#10b981"),
-            "insert": ("✏️ ", "Inserting text", "#10b981"),
-            "undo_edit": ("↩️ ", "Undoing edit", "#10b981"),
+            "view": ("◇ ", "read", "#10b981"),
+            "str_replace": ("◇ ", "edit", "#10b981"),
+            "create": ("◇ ", "create", "#10b981"),
+            "insert": ("◇ ", "insert", "#10b981"),
+            "undo_edit": ("◇ ", "undo", "#10b981"),
         }
 
-        icon, label, color = icons_and_labels.get(command, ("📄 ", "File operation", "#10b981"))
-        text.append(icon)
-        text.append(label, style=f"bold {color}")
+        icon, label, color = icons_and_labels.get(command, ("◇ ", "file", "#10b981"))
+        text.append(icon, style=color)
+        text.append(label, style="dim")
 
         if path:
             path_display = path[-60:] if len(path) > 60 else path
@@ -158,23 +158,20 @@ class SearchFilesRenderer(BaseToolRenderer):
         regex = args.get("regex", "")
 
         text = Text()
-        text.append("🔍 ")
-        text.append("Searching files", style="bold purple")
-        text.append(" ")
+        text.append("◇ ", style="#a855f7")
+        text.append("search", style="dim")
+        text.append("  ")
 
         if path and regex:
             text.append(path, style="dim")
-            text.append(" for '", style="dim")
-            text.append(regex, style="dim")
-            text.append("'", style="dim")
+            text.append(" ", style="dim")
+            text.append(regex, style="#a855f7")
         elif path:
             text.append(path, style="dim")
         elif regex:
-            text.append("'", style="dim")
-            text.append(regex, style="dim")
-            text.append("'", style="dim")
+            text.append(regex, style="#a855f7")
         else:
-            text.append("Searching...", style="dim")
+            text.append("...", style="dim")
 
         css_classes = cls.get_css_classes("completed")
         return Static(text, classes=css_classes)

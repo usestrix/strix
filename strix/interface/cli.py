@@ -24,30 +24,26 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     console = Console()
 
     start_text = Text()
-    start_text.append("🦉 ", style="bold white")
-    start_text.append("STRIX CYBERSECURITY AGENT", style="bold green")
+    start_text.append("Penetration test initiated", style="bold #22c55e")
 
     target_text = Text()
+    target_text.append("Target", style="dim")
+    target_text.append("  ")
     if len(args.targets_info) == 1:
-        target_text.append("🎯 Target: ", style="bold cyan")
         target_text.append(args.targets_info[0]["original"], style="bold white")
     else:
-        target_text.append("🎯 Targets: ", style="bold cyan")
-        target_text.append(f"{len(args.targets_info)} targets\n", style="bold white")
-        for i, target_info in enumerate(args.targets_info):
-            target_text.append("   • ", style="dim white")
+        target_text.append(f"{len(args.targets_info)} targets", style="bold white")
+        for target_info in args.targets_info:
+            target_text.append("\n        ")
             target_text.append(target_info["original"], style="white")
-            if i < len(args.targets_info) - 1:
-                target_text.append("\n")
 
     results_text = Text()
-    results_text.append("📊 Results will be saved to: ", style="bold cyan")
-    results_text.append(f"strix_runs/{args.run_name}", style="bold white")
+    results_text.append("Output", style="dim")
+    results_text.append("  ")
+    results_text.append(f"strix_runs/{args.run_name}", style="#60a5fa")
 
     note_text = Text()
     note_text.append("\n\n", style="dim")
-    note_text.append("⏱️  ", style="dim")
-    note_text.append("This may take a while depending on target complexity. ", style="dim")
     note_text.append("Vulnerabilities will be displayed in real-time.", style="dim")
 
     startup_panel = Panel(
@@ -59,9 +55,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             results_text,
             note_text,
         ),
-        title="[bold green]🛡️  STRIX PENETRATION TEST INITIATED",
-        title_align="center",
-        border_style="green",
+        title="[bold white]STRIX",
+        title_align="left",
+        border_style="#22c55e",
         padding=(1, 2),
     )
 
@@ -126,8 +122,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     def create_live_status() -> Panel:
         status_text = Text()
-        status_text.append("🦉 ", style="bold white")
-        status_text.append("Running penetration test...", style="bold #22c55e")
+        status_text.append("Penetration test in progress", style="bold #22c55e")
         status_text.append("\n\n")
 
         stats_text = build_live_stats_text(tracer, agent_config)
@@ -136,8 +131,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
         return Panel(
             status_text,
-            title="[bold #22c55e]🔍 Live Penetration Test Status",
-            title_align="center",
+            title="[bold white]STRIX",
+            title_align="left",
             border_style="#22c55e",
             padding=(1, 2),
         )
@@ -169,7 +164,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     error_msg = result.get("error", "Unknown error")
                     error_details = result.get("details")
                     console.print()
-                    console.print(f"[bold red]❌ Penetration test failed:[/] {error_msg}")
+                    console.print(f"[bold red]Penetration test failed:[/] {error_msg}")
                     if error_details:
                         console.print(f"[dim]{error_details}[/]")
                     console.print()
@@ -186,8 +181,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         console.print()
 
         final_report_text = Text()
-        final_report_text.append("📄 ", style="bold cyan")
-        final_report_text.append("FINAL PENETRATION TEST REPORT", style="bold cyan")
+        final_report_text.append("Penetration test summary", style="bold #60a5fa")
 
         final_report_panel = Panel(
             Text.assemble(
@@ -195,9 +189,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                 "\n\n",
                 tracer.final_scan_result,
             ),
-            title="[bold cyan]📊 PENETRATION TEST SUMMARY",
-            title_align="center",
-            border_style="cyan",
+            title="[bold white]STRIX",
+            title_align="left",
+            border_style="#60a5fa",
             padding=(1, 2),
         )
 

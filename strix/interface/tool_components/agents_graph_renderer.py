@@ -92,12 +92,13 @@ class AgentFinishRenderer(BaseToolRenderer):
         success = args.get("success", True)
 
         text = Text()
-        text.append("🏁 ")
 
         if success:
-            text.append("Agent completed", style="bold #fbbf24")
+            text.append("◆ ", style="#22c55e")
+            text.append("Agent completed", style="bold #22c55e")
         else:
-            text.append("Agent failed", style="bold #fbbf24")
+            text.append("◆ ", style="#ef4444")
+            text.append("Agent failed", style="bold #ef4444")
 
         if result_summary:
             text.append("\n  ")
