@@ -316,3 +316,22 @@ class DockerRuntime(AbstractRuntime):
             self._tool_server_token = None
         except (NotFound, DockerException):
             pass
+
+    def cleanup(self) -> None:
+        if self._scan_container is not None:
+            container_name = self._scan_container.name
+            self._scan_container = None
+            self._tool_server_port = None
+            self._tool_server_token = None
+
+            if container_name is None:
+                return
+
+            import subprocess
+
+            subprocess.Popen(  # noqa: S603
+                ["docker", "rm", "-f", container_name],  # noqa: S607
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )

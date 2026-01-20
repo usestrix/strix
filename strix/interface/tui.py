@@ -742,7 +742,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _setup_cleanup_handlers(self) -> None:
         def cleanup_on_exit() -> None:
+            from strix.runtime import cleanup_runtime
+
             self.tracer.cleanup()
+            cleanup_runtime()
 
         def signal_handler(_signum: int, _frame: Any) -> None:
             self.tracer.cleanup()

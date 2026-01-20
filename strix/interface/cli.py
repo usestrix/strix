@@ -106,7 +106,10 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     tracer.vulnerability_found_callback = display_vulnerability
 
     def cleanup_on_exit() -> None:
+        from strix.runtime import cleanup_runtime
+
         tracer.cleanup()
+        cleanup_runtime()
 
     def signal_handler(_signum: int, _frame: Any) -> None:
         tracer.cleanup()
