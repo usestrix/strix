@@ -90,7 +90,7 @@ class LLM:
                 *list(self.config.skills or []),
                 f"scan_modes/{self.config.scan_mode}",
             ]
-            skill_content = load_skills(skills_to_load, env)
+            skill_content = load_skills(skills_to_load)
             env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
             result = env.get_template("system_prompt.jinja").render(

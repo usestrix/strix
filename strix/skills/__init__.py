@@ -1,5 +1,3 @@
-from jinja2 import Environment
-
 from strix.utils.resource_paths import get_strix_resource_path
 
 
@@ -15,7 +13,7 @@ def get_available_skills() -> dict[str, list[str]]:
             category_name = category_dir.name
             skills = []
 
-            for file_path in category_dir.glob("*.jinja"):
+            for file_path in category_dir.glob("*.md"):
                 skill_name = file_path.stem
                 skills.append(skill_name)
 
@@ -70,7 +68,7 @@ def generate_skills_description() -> str:
     return description
 
 
-def load_skills(skill_names: list[str], jinja_env: Environment) -> dict[str, str]:
+def load_skills(skill_names: list[str]) -> dict[str, str]:
     import logging
 
     logger = logging.getLogger(__name__)
@@ -84,22 +82,22 @@ def load_skills(skill_names: list[str], jinja_env: Environment) -> dict[str, str
             skill_path = None
 
             if "/" in skill_name:
-                skill_path = f"{skill_name}.jinja"
+                skill_path = f"{skill_name}.md"
             else:
                 for category, skills in available_skills.items():
                     if skill_name in skills:
-                        skill_path = f"{category}/{skill_name}.jinja"
+                        skill_path = f"{category}/{skill_name}.md"
                         break
 
                 if not skill_path:
-                    root_candidate = f"{skill_name}.jinja"
+                    root_candidate = f"{skill_name}.md"
                     if (skills_dir / root_candidate).exists():
                         skill_path = root_candidate
 
             if skill_path and (skills_dir / skill_path).exists():
-                template = jinja_env.get_template(skill_path)
+                full_path = skills_dir / skill_path
                 var_name = skill_name.split("/")[-1]
-                skill_content[var_name] = template.render()
+                skill_content[var_name] = full_path.read_text()
                 logger.info(f"Loaded skill: {skill_name} -> {var_name}")
             else:
                 logger.warning(f"Skill not found: {skill_name}")

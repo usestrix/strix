@@ -1,5 +1,6 @@
-<scan_mode>
-DEEP SCAN MODE - Exhaustive Security Assessment
+# DEEP SCAN MODE
+
+Exhaustive Security Assessment
 
 This mode is for thorough security reviews where finding vulnerabilities is critical.
 
@@ -142,4 +143,3 @@ MINDSET:
 - Thorough - test every parameter, every endpoint, every edge case
 - Persistent - if one approach fails, try ten more
 - Holistic - understand how components interact to find systemic issues
-</scan_mode>

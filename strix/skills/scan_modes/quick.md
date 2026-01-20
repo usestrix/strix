@@ -1,5 +1,6 @@
-<scan_mode>
-QUICK SCAN MODE - Rapid Security Assessment
+# QUICK SCAN MODE
+
+Rapid Security Assessment
 
 This mode is optimized for fast feedback. Focus on HIGH-IMPACT vulnerabilities with minimal overhead.
 
@@ -60,4 +61,3 @@ MINDSET:
 - Prioritize breadth over depth on critical areas
 - If something looks exploitable, validate quickly and move on
 - Don't get stuck - if an attack vector isn't yielding results quickly, pivot
-</scan_mode>

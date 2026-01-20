@@ -35,7 +35,8 @@ packages = [
 include = [
   "LICENSE",
   "README.md",
-  "strix/**/*.jinja",
+  "strix/agents/**/*.jinja",
+  "strix/skills/**/*.md",
   "strix/**/*.xml",
   "strix/**/*.tcss"
 ]

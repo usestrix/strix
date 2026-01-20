@@ -1,5 +1,6 @@
-<scan_mode>
-STANDARD SCAN MODE - Balanced Security Assessment
+# STANDARD SCAN MODE
+
+Balanced Security Assessment
 
 This mode provides thorough coverage with a structured methodology. Balance depth with efficiency.
 
@@ -88,4 +89,3 @@ MINDSET:
 - Document as you go - findings and areas tested
 - Validate everything - no assumptions about exploitability
 - Think about business impact, not just technical severity
-</scan_mode>

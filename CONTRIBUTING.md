@@ -46,7 +46,7 @@ Skills are specialized knowledge packages that enhance agent capabilities. See [
 ### Quick Guide
 
 1. **Choose the right category** (`/vulnerabilities`, `/frameworks`, `/technologies`, etc.)
-2. **Create a** `.jinja` file with your skill content
+2. **Create a** `.md` file with your skill content
 3. **Include practical examples** - Working payloads, commands, or test cases
 4. **Provide validation methods** - How to confirm findings and avoid false positives
 5. **Submit via PR** with clear description
