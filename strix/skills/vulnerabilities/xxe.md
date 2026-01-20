@@ -1,38 +1,39 @@
-# XML EXTERNAL ENTITY (XXE)
+---
+name: xxe
+description: XXE testing for external entity injection, file disclosure, and SSRF via XML parsers
+---
 
-## Critical
+# XXE
 
-XXE is a parser-level failure that enables local file reads, SSRF to internal control planes, denial-of-service via entity expansion, and in some stacks, code execution through XInclude/XSLT or language-specific wrappers. Treat every XML input as untrusted until the parser is proven hardened.
+XML External Entity injection is a parser-level failure that enables local file reads, SSRF to internal control planes, denial-of-service via entity expansion, and in some stacks, code execution through XInclude/XSLT or language-specific wrappers. Treat every XML input as untrusted until the parser is proven hardened.
 
-## Scope
+## Attack Surface
 
+**Capabilities**
 - File disclosure: read server files and configuration
 - SSRF: reach metadata services, internal admin panels, service ports
 - DoS: entity expansion (billion laughs), external resource amplification
-- Injection surfaces: REST/SOAP/SAML/XML-RPC, file uploads (SVG, Office), PDF generators, build/report pipelines, config importers
-- Transclusion: XInclude and XSLT document() loading external resources
 
-## Methodology
+**Injection Surfaces**
+- REST/SOAP/SAML/XML-RPC, file uploads (SVG, Office)
+- PDF generators, build/report pipelines, config importers
 
-1. Inventory all XML consumers: endpoints, upload parsers, background jobs, CLI tools, converters, and third-party SDKs.
-2. Start with capability probes: does the parser accept DOCTYPE? resolve external entities? allow network access? support XInclude/XSLT?
-3. Establish a quiet oracle (error shape, length/ETag diffs, OAST callbacks), then escalate to targeted file/SSRF payloads.
-4. Validate per-channel parity: the same parser options must hold across REST, SOAP, SAML, file uploads, and background jobs.
+**Transclusion**
+- XInclude and XSLT `document()` loading external resources
 
-## Discovery Techniques
+## High-Value Targets
 
-### Surface Map
+**File Uploads**
+- SVG/MathML, Office (docx/xlsx/ods/odt), XML-based archives
+- Android/iOS plist, project config imports
 
-- File uploads: SVG/MathML, Office (docx/xlsx/ods/odt), XML-based archives, Android/iOS plist, project config imports
-- Protocols: SOAP/XML-RPC/WebDAV/SAML (ACS endpoints), RSS/Atom feeds, server-side renderers and converters
-- Hidden paths: "xml", "upload", "import", "transform", "xslt", "xsl", "xinclude" parameters; processing-instruction headers
+**Protocols**
+- SOAP/XML-RPC/WebDAV/SAML (ACS endpoints)
+- RSS/Atom feeds, server-side renderers and converters
 
-### Capability Probes
-
-- Minimal DOCTYPE: attempt a harmless internal entity to detect acceptance without causing side effects
-- External fetch test: point to an OAST URL to confirm egress; prefer DNS first, then HTTP
-- XInclude probe: add xi:include to see if transclusion is enabled
-- XSLT probe: xml-stylesheet PI or transform endpoints that accept stylesheets
+**Hidden Paths**
+- Parameters: "xml", "upload", "import", "transform", "xslt", "xsl", "xinclude"
+- Processing-instruction headers
 
 ## Detection Channels
 
@@ -40,11 +41,11 @@ XXE is a parser-level failure that enables local file reads, SSRF to internal co
 
 - Inline disclosure of entity content in the HTTP response, transformed output, or error pages
 
-### Error Based
+### Error-Based
 
 - Coerce parser errors that leak path fragments or file content via interpolated messages
 
-### Oast
+### OAST
 
 - Blind XXE via parameter entities and external DTDs; confirm with DNS/HTTP callbacks
 - Encode data into request paths/parameters to exfiltrate small secrets (hostnames, tokens)
@@ -92,11 +93,12 @@ evil.dtd:
 %e; %exfil;
 ```
 
-## Advanced Techniques
+## Key Vulnerabilities
 
 ### Parameter Entities
 
-- Use parameter entities in the DTD subset to define secondary entities that exfiltrate content; works even when general entities are sanitized in the XML tree
+- Use parameter entities in the DTD subset to define secondary entities that exfiltrate content
+- Works even when general entities are sanitized in the XML tree
 
 ### XInclude
 
@@ -106,11 +108,11 @@ evil.dtd:
 </root>
 ```
 
-- Effective where entity resolution is blocked but XInclude remains enabled in the pipeline
+Effective where entity resolution is blocked but XInclude remains enabled in the pipeline.
 
 ### XSLT Document
 
-- XSLT processors can fetch external resources via document():
+XSLT processors can fetch external resources via `document()`:
 
 ```xml
 <xsl:stylesheet version="1.0" xmlns:xsl="http://www.w3.org/1999/XSL/Transform">
@@ -120,27 +122,27 @@ evil.dtd:
 </xsl:stylesheet>
 ```
 
-- Targets: transform endpoints, reporting engines (XSLT/Jasper/FOP), xml-stylesheet PI consumers
+Targets: transform endpoints, reporting engines (XSLT/Jasper/FOP), xml-stylesheet PI consumers.
 
-## Protocol Wrappers
+### Protocol Wrappers
 
-- Java: jar:, netdoc:
-- PHP: php://filter, expect:// (when module enabled)
+- Java: `jar:`, `netdoc:`
+- PHP: `php://filter`, `expect://` (when module enabled)
 - Gopher: craft raw requests to Redis/FCGI when client allows non-HTTP schemes
 
-## Filter Bypasses
+## Bypass Techniques
 
-### Encoding Variants
+**Encoding Variants**
+- UTF-16/UTF-7 declarations, mixed newlines
+- CDATA and comments to evade naive filters
 
-- UTF-16/UTF-7 declarations, mixed newlines, CDATA and comments to evade naive filters
+**DOCTYPE Variants**
+- PUBLIC vs SYSTEM, mixed case `<!DoCtYpE>`
+- Internal vs external subsets, multi-DOCTYPE edge handling
 
-### Doctype Variants
-
-- PUBLIC vs SYSTEM, mixed case <!DoCtYpE>, internal vs external subsets, multi-DOCTYPE edge handling
-
-### Network Controls
-
-- If network blocked but filesystem readable, pivot to local file disclosure; if files blocked but network open, pivot to SSRF/OAST
+**Network Controls**
+- If network blocked but filesystem readable, pivot to local file disclosure
+- If files blocked but network open, pivot to SSRF/OAST
 
 ## Special Contexts
 
@@ -157,23 +159,34 @@ evil.dtd:
 
 ### SAML
 
-- Assertions are XML-signed, but upstream XML parsers prior to signature verification may still process entities/XInclude; test ACS endpoints with minimal probes
+- Assertions are XML-signed, but upstream XML parsers prior to signature verification may still process entities/XInclude
+- Test ACS endpoints with minimal probes
 
-### Svg And Renderers
+### SVG and Renderers
 
-- Inline SVG and server-side SVG→PNG/PDF renderers process XML; attempt local file reads via entities/XInclude
+- Inline SVG and server-side SVG→PNG/PDF renderers process XML
+- Attempt local file reads via entities/XInclude
 
 ### Office Docs
 
-- OOXML (docx/xlsx/pptx) are ZIPs containing XML; insert payloads into document.xml, rels, or drawing XML and repackage
+- OOXML (docx/xlsx/pptx) are ZIPs containing XML
+- Insert payloads into document.xml, rels, or drawing XML and repackage
+
+## Testing Methodology
+
+1. **Inventory consumers** - Endpoints, upload parsers, background jobs, CLI tools, converters, third-party SDKs
+2. **Capability probes** - Does parser accept DOCTYPE? Resolve external entities? Allow network access? Support XInclude/XSLT?
+3. **Establish oracle** - Error shape, length/ETag diffs, OAST callbacks
+4. **Escalate** - Targeted file/SSRF payloads
+5. **Validate parity** - Same parser options must hold across REST, SOAP, SAML, file uploads, and background jobs
 
 ## Validation
 
-1. Provide a minimal payload proving parser capability (DOCTYPE/XInclude/XSLT).
-2. Demonstrate controlled access (file path or internal URL) with reproducible evidence.
-3. Confirm blind channels with OAST and correlate to the triggering request.
-4. Show cross-channel consistency (e.g., same behavior in upload and SOAP paths).
-5. Bound impact: exact files/data reached or internal targets proven.
+1. Provide a minimal payload proving parser capability (DOCTYPE/XInclude/XSLT)
+2. Demonstrate controlled access (file path or internal URL) with reproducible evidence
+3. Confirm blind channels with OAST and correlate to the triggering request
+4. Show cross-channel consistency (e.g., same behavior in upload and SOAP paths)
+5. Bound impact: exact files/data reached or internal targets proven
 
 ## False Positives
 
@@ -191,17 +204,17 @@ evil.dtd:
 
 ## Pro Tips
 
-1. Prefer OAST first; it is the quietest confirmation in production-like paths.
-2. When content is sanitized, use error-based and length/ETag diffs.
-3. Probe XInclude/XSLT; they often remain enabled after entity resolution is disabled.
-4. Aim SSRF at internal well-known ports (kubelet, Docker, Redis, metadata) before public hosts.
-5. In uploads, repackage OOXML/SVG rather than standalone XML; many apps parse these implicitly.
-6. Keep payloads minimal; avoid noisy billion-laughs unless specifically testing DoS.
-7. Test background processors separately; they often use different parser settings.
-8. Validate parser options in code/config; do not rely on WAFs to block DOCTYPE.
-9. Combine with path traversal and deserialization where XML touches downstream systems.
-10. Document exact parser behavior per stack; defenses must match real libraries and flags.
+1. Prefer OAST first; it is the quietest confirmation in production-like paths
+2. When content is sanitized, use error-based and length/ETag diffs
+3. Probe XInclude/XSLT; they often remain enabled after entity resolution is disabled
+4. Aim SSRF at internal well-known ports (kubelet, Docker, Redis, metadata) before public hosts
+5. In uploads, repackage OOXML/SVG rather than standalone XML; many apps parse these implicitly
+6. Keep payloads minimal; avoid noisy billion-laughs unless specifically testing DoS
+7. Test background processors separately; they often use different parser settings
+8. Validate parser options in code/config; do not rely on WAFs to block DOCTYPE
+9. Combine with path traversal and deserialization where XML touches downstream systems
+10. Document exact parser behavior per stack; defenses must match real libraries and flags
 
-## Remember
+## Summary
 
 XXE is eliminated by hardening parsers: forbid DOCTYPE, disable external entity resolution, and disable network access for XML processors and transformers across every code path.

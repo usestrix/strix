@@ -1,179 +1,211 @@
-# FIREBASE / FIRESTORE — ADVERSARIAL TESTING AND EXPLOITATION
+---
+name: firebase-firestore
+description: Firebase/Firestore security testing covering security rules, Cloud Functions, and client-side trust issues
+---
 
-## Critical
+# Firebase / Firestore
 
-Most impactful findings in Firebase apps arise from weak Firestore/Realtime Database rules, Cloud Storage exposure, callable/onRequest Functions trusting client input, incorrect ID token validation, and over-trusted App Check. Treat every client-supplied field and token as untrusted. Bind subject/tenant on the server, not in the client.
+Security testing for Firebase applications. Focus on Firestore/Realtime Database rules, Cloud Storage exposure, callable/onRequest Functions trusting client input, and incorrect ID token validation.
 
-## Scope
+## Attack Surface
 
+**Data Stores**
 - Firestore (documents/collections, rules, REST/SDK)
 - Realtime Database (JSON tree, rules)
 - Cloud Storage (rules, signed URLs)
-- Auth (ID tokens, custom claims, anonymous/sign-in providers)
+
+**Authentication**
+- Auth ID tokens, custom claims, anonymous/sign-in providers
+- App Check attestation (and its limits)
+
+**Server-Side**
 - Cloud Functions (onCall/onRequest, triggers)
+- Admin SDK (bypasses rules)
+
+**Infrastructure**
 - Hosting rewrites, CDN/caching, CORS
-- App Check (attestation) and its limits
-
-## Methodology
-
-1. Extract project config from client (apiKey, authDomain, projectId, appId, storageBucket, messagingSenderId). Identify all used Firebase products.
-2. Obtain multiple principals: unauth, anonymous (if enabled), basic user A, user B, and any staff/admin if available. Capture their ID tokens.
-3. Build Resource × Action × Principal matrix across Firestore/Realtime/Storage/Functions. Exercise every action via SDK and raw REST (googleapis) to detect parity gaps.
-4. Start from list/query paths (where allowed) to seed IDs; then swap document paths, tenants, and user IDs across principals and transports.
 
 ## Architecture
 
-- Firestore REST: https://firestore.googleapis.com/v1/projects/<project>/databases/(default)/documents/<path>
-- Storage REST: https://storage.googleapis.com/storage/v1/b/<bucket>
-- Auth: Google-signed ID tokens (iss accounts.google.com/securetoken.google.com/<project>), aud <project/app-id>; identity is in sub/uid.
-- Rules engines: separate for Firestore, Realtime DB, and Storage; Functions bypass rules when using Admin SDK.
+**Endpoints**
+- Firestore REST: `https://firestore.googleapis.com/v1/projects/<project>/databases/(default)/documents/<path>`
+- Realtime DB: `https://<project>.firebaseio.com/.json`
+- Storage REST: `https://storage.googleapis.com/storage/v1/b/<bucket>`
 
-## Auth And Tokens
+**Auth**
+- Google-signed ID tokens (iss: `accounts.google.com` or `securetoken.google.com/<project>`)
+- Audience: `<project>` or `<app-id>`, identity in `sub`/`uid`
+- Rules engines: separate for Firestore, Realtime DB, and Storage
+- Functions bypass rules when using Admin SDK
 
-- ID token verification must enforce issuer, audience (project), signature (Google JWKS), expiration, and optionally App Check binding when used.
-- Custom claims are appended by Admin SDK; client-supplied claims are ignored by Auth but may be trusted by app code if copied into docs.
-- Pitfalls:
-  - Accepting any JWT with valid signature but wrong audience/project.
-  - Trusting uid/account IDs from request body instead of context.auth.uid in Functions.
-  - Mixing session cookies and ID tokens without verifying both paths equivalently.
-- Tests:
-  - Replay tokens across environments/projects; expect strict aud/iss rejection server-side.
-  - Call Functions with and without Authorization; verify identical checks on both onCall and onRequest variants.
+## High-Value Targets
 
-## Firestore Rules
+- Firestore collections with sensitive data (users, orders, payments)
+- Realtime Database root and high-level nodes
+- Cloud Storage buckets with private files
+- Cloud Functions (especially triggers that grant roles or issue signed URLs)
+- Admin/staff routes and privilege-granting endpoints
+- Export/report functions that generate signed outputs
 
-- Rules are not filters: a query must include constraints that make the rule true for all returned documents; otherwise reads fail. Do not rely on client to include where clauses correctly.
-- Prefer ownership derived from request.auth.uid and server data, not from client payload fields.
-- Common gaps:
-  - allow read: if request.auth != null (any user reads all data)
-  - allow write: if request.auth != null (mass write)
-  - Missing per-field validation (adds isAdmin/role/tenantId fields).
-  - Using client-supplied ownerId/orgId instead of enforcing doc.ownerId == request.auth.uid or membership in org.
-  - Over-broad list rules on root collections; per-doc checks exist but list still leaks via queries.
-- Validation patterns:
-  - Restrict writes: request.resource.data.keys().hasOnly([...]) and forbid privilege fields.
-  - Enforce ownership: resource.data.ownerId == request.auth.uid && request.resource.data.ownerId == request.auth.uid
-  - Org membership: exists(/databases/(default)/documents/orgs/$(org)/members/$(request.auth.uid))
-- Tests:
-  - Compare results for users A/B on identical queries; diff counts and IDs.
-  - Attempt cross-tenant reads: where orgId == otherOrg; try queries without org filter to confirm denial.
-  - Write-path: set/patch with foreign ownerId/orgId; attempt to flip privilege flags.
+## Reconnaissance
 
-## Firestore Queries
+**Extract Project Config**
 
-- Enumerate via REST to avoid SDK client-side constraints; try structured and REST filters.
-- Probe composite index requirements: UI-driven queries may hide missing rule coverage when indexes are enabled but rules are broad.
-- Explore collection group queries (collectionGroup) that may bypass per-collection rules if not mirrored.
-- Use startAt/endAt/in/array-contains to probe rule edges and pagination cursors for cross-tenant bleed.
+From client bundle:
+```javascript
+// apiKey, authDomain, projectId, appId, storageBucket, messagingSenderId
+firebase.apps[0].options
+```
 
-## Realtime Database
+**Obtain Principals**
+- Unauthenticated
+- Anonymous (if enabled)
+- Basic user A, user B
+- Staff/admin (if available)
 
-- Misconfigured rules frequently expose entire JSON trees. Probe https://<project>.firebaseio.com/.json with and without auth.
-- Confirm rules for read/write use auth.uid and granular path checks; avoid .read/.write: true or auth != null at high-level nodes.
-- Attempt to write privilege-bearing nodes (roles, org membership) and observe downstream effects (e.g., Cloud Functions triggers).
+Capture ID tokens for each.
 
-## Cloud Storage
+## Key Vulnerabilities
 
-- Rules parallel Firestore but apply to object paths. Common issues:
-  - Public reads on sensitive buckets/paths.
-  - Signed URLs with long TTL, no content-disposition controls; replayable across tenants.
-  - List operations exposed: /o?prefix= enumerates object keys.
-- Tests:
-  - GET gs:// paths via https endpoints without auth; verify content-type and Content-Disposition: attachment.
-  - Generate and reuse signed URLs across accounts and paths; try case/URL-encoding variants.
-  - Upload HTML/SVG and verify X-Content-Type-Options: nosniff; check for script execution.
+### Firestore Rules
 
-## Cloud Functions
+Rules are not filters—a query must include constraints that make the rule true for all returned documents.
 
-- onCall provides context.auth automatically; onRequest must verify ID tokens explicitly. Admin SDK bypasses rules; all ownership/tenant checks must be enforced in code.
-- Common gaps:
-  - Trusting client uid/orgId from request body instead of context.auth.
-  - Missing aud/iss verification when manually parsing tokens.
-  - Over-broad CORS allowing credentialed cross-origin requests; echoing Authorization in responses.
-  - Triggers (onCreate/onWrite) granting roles or issuing signed URLs solely based on document content controlled by the client.
-- Tests:
-  - Call both onCall and equivalent onRequest endpoints with varied tokens and bodies; expect identical decisions.
-  - Create crafted docs to trigger privilege-granting functions; verify that server re-derives subject/tenant before acting.
-  - Attempt internal fetches (SSRF) via Functions to project/metadata endpoints.
+**Common Gaps**
+- `allow read: if request.auth != null` — any authenticated user reads all data
+- `allow write: if request.auth != null` — mass write access
+- Missing per-field validation (allows adding `isAdmin`/`role`/`tenantId` fields)
+- Using client-supplied `ownerId`/`orgId` instead of `resource.data.ownerId == request.auth.uid`
+- Over-broad list rules on root collections (per-doc checks exist but list still leaks)
 
-## App Check
+**Secure Patterns**
+```javascript
+// Restrict write fields
+request.resource.data.keys().hasOnly(['field1', 'field2', 'field3'])
 
-- App Check is not a substitute for authorization. Many apps enable App Check enforcement on client SDKs but do not verify on custom backends.
-- Bypasses:
-  - Unenforced paths: REST calls directly to googleapis endpoints with ID token succeed regardless of App Check.
-  - Mobile reverse engineering: hook client and reuse ID token flows without attestation.
-- Tests:
-  - Compare SDK vs REST behavior with/without App Check headers; confirm no elevated authorization via App Check alone.
+// Enforce ownership
+resource.data.ownerId == request.auth.uid &&
+request.resource.data.ownerId == request.auth.uid
 
-## Tenant Isolation
+// Org membership check
+exists(/databases/(default)/documents/orgs/$(org)/members/$(request.auth.uid))
+```
 
-- Apps often implement multi-tenant data models (orgs/<orgId>/...). Bind tenant from server context (membership doc or custom claim), not from client payload.
-- Tests:
-  - Vary org header/subdomain/query while keeping token fixed; verify server denies cross-tenant access.
-  - Export/report Functions: ensure queries execute under caller scope; signed outputs must encode tenant and short TTL.
+**Tests**
+- Compare results for users A/B on identical queries; diff counts and IDs
+- Cross-tenant reads: `where orgId == otherOrg`; try queries without org filter
+- Write-path: set/patch with foreign `ownerId`/`orgId`; attempt to flip privilege flags
+
+### Firestore Queries
+
+- Use REST to avoid SDK client-side constraints
+- Probe composite index requirements (UI-driven queries may hide missing rule coverage)
+- Explore `collectionGroup` queries that may bypass per-collection rules
+- Use `startAt`/`endAt`/`in`/`array-contains` to probe rule edges and pagination cursors
+
+### Realtime Database
+
+- Misconfigured rules frequently expose entire JSON trees
+- Probe `https://<project>.firebaseio.com/.json` with and without auth
+- Confirm rules use `auth.uid` and granular path checks
+- Avoid `.read/.write: true` or `auth != null` at high-level nodes
+- Attempt to write privilege-bearing nodes (roles, org membership)
+
+### Cloud Storage
+
+**Common Issues**
+- Public reads on sensitive buckets/paths
+- Signed URLs with long TTL, no content-disposition controls, replayable across tenants
+- List operations exposed: `/o?prefix=` enumerates object keys
+
+**Tests**
+- GET gs:// paths via HTTPS without auth; verify Content-Type and `Content-Disposition: attachment`
+- Generate and reuse signed URLs across accounts and paths; try case/URL-encoding variants
+- Upload HTML/SVG and verify `X-Content-Type-Options: nosniff`; check for script execution
+
+### Cloud Functions
+
+`onCall` provides `context.auth` automatically; `onRequest` must verify ID tokens explicitly. Admin SDK bypasses rules—all ownership/tenant checks must be in code.
+
+**Common Gaps**
+- Trusting client `uid`/`orgId` from request body instead of `context.auth`
+- Missing `aud`/`iss` verification when manually parsing tokens
+- Over-broad CORS allowing credentialed cross-origin requests
+- Triggers (onCreate/onWrite) granting roles based on document content controlled by client
+
+**Tests**
+- Call both onCall and onRequest endpoints with varied tokens; expect identical decisions
+- Create crafted docs to trigger privilege-granting functions
+- Attempt SSRF via Functions to project/metadata endpoints
+
+### Auth & Token Issues
+
+**Verification Requirements**
+- Issuer, audience (project), signature (Google JWKS), expiration
+- Optionally App Check binding when used
+
+**Pitfalls**
+- Accepting any JWT with valid signature but wrong audience/project
+- Trusting `uid`/account IDs from request body instead of `context.auth.uid`
+- Mixing session cookies and ID tokens without verifying both paths equivalently
+- Custom claims copied into docs then trusted by app code
+
+**Tests**
+- Replay tokens across environments/projects; expect strict `aud`/`iss` rejection
+- Call Functions with and without Authorization; verify identical checks
+
+### App Check
+
+App Check is not a substitute for authorization.
+
+**Bypasses**
+- REST calls directly to googleapis endpoints with ID token succeed regardless of App Check
+- Mobile reverse engineering: hook client and reuse ID token flows without attestation
+
+**Tests**
+- Compare SDK vs REST behavior with/without App Check headers
+- Confirm no elevated authorization via App Check alone
+
+### Tenant Isolation
+
+Apps often implement multi-tenant data models (`orgs/<orgId>/...`). Bind tenant from server context (membership doc or custom claim), not client payload.
+
+**Tests**
+- Vary org header/subdomain/query while keeping token fixed; verify server denies cross-tenant access
+- Export/report Functions: ensure queries execute under caller scope
 
 ## Bypass Techniques
 
-- Content-type switching: JSON vs form vs multipart to hit alternate code paths in onRequest Functions.
-- Parameter/field pollution: duplicate JSON keys; last-one-wins in many parsers; attempt to sneak privilege fields.
-- Caching/CDN: Hosting rewrites or proxies that key responses without Authorization or tenant headers.
-- Race windows: write then read before background enforcements (e.g., post-write claim synchronizations) complete.
+- Content-type switching: JSON vs form vs multipart to hit alternate code paths in onRequest
+- Parameter/field pollution: duplicate JSON keys (last-one-wins in many parsers); sneak privilege fields
+- Caching/CDN: Hosting rewrites keying responses without Authorization or tenant headers
+- Race windows: write then read before background enforcements complete
 
-## Blind Channels
+## Blind Enumeration
 
-- Firestore: use error shape, document count, and ETag/length to infer existence under partial denial.
-- Storage: length/timing differences on signed URL attempts leak validity.
-- Functions: constant-time comparisons vs variable messages reveal authorization branches.
+- Firestore: use error shape, document count, ETag/length to infer existence
+- Storage: length/timing differences on signed URL attempts leak validity
+- Functions: constant-time comparisons vs variable messages reveal authorization branches
 
-## Tooling And Automation
+## Testing Methodology
 
-- SDK + REST: httpie/curl + jq for REST; Firebase emulator and Rules Playground for rapid iteration.
-- Mobile: apktool/objection/frida to extract config and hook SDK calls; inspect network logs for endpoints and tokens.
-- Rules analysis: script rule probes for common patterns (auth != null, missing field validation, list vs get parity).
-- Functions: fuzz onRequest endpoints with varied content-types and missing/forged Authorization; verify CORS and token handling.
-- Storage: enumerate prefixes; test signed URL generation and reuse patterns.
+1. **Extract config** - Get project config from client bundle
+2. **Obtain principals** - Collect tokens for unauth, anonymous, user A/B, admin
+3. **Build matrix** - Resource × Action × Principal across Firestore/Realtime/Storage/Functions
+4. **SDK vs REST** - Exercise every action via both to detect parity gaps
+5. **Seed IDs** - Start from list/query paths to gather document IDs
+6. **Cross-principal** - Swap document paths, tenants, and user IDs across principals
 
-## Reviewer Checklist
+## Tooling
 
-- Do Firestore/Realtime/Storage rules derive subject and tenant from auth, not client fields?
-- Are list/query rules aligned with per-doc checks (no broad list leaks)?
-- Are privilege-bearing fields immutable or server-only (forbidden in writes)?
-- Do Functions verify ID tokens (iss/aud/exp/signature) and re-derive identity before acting?
-- Are Admin SDK operations scoped by server-side checks (ownership/tenant)?
-- Is App Check treated as advisory, not authorization, across all paths?
-- Are Hosting/CDN cache keys bound to Authorization/tenant to prevent leaks?
+- SDK + REST: httpie/curl + jq for REST; Firebase emulator and Rules Playground for rapid iteration
+- Rules analysis: script probes for common patterns (`auth != null`, missing field validation)
+- Functions: fuzz onRequest with varied content-types and missing/forged Authorization
+- Storage: enumerate prefixes; test signed URL generation and reuse patterns
 
-## Validation
+## Validation Requirements
 
-1. Provide owner vs non-owner Firestore queries showing unauthorized access or metadata leak.
-2. Demonstrate Cloud Storage read/write beyond intended scope (public object, signed URL reuse, or list exposure).
-3. Show a Function accepting forged/foreign identity (wrong aud/iss) or trusting client uid/orgId.
-4. Document minimal reproducible requests with roles/tokens used and observed deltas.
-
-## False Positives
-
-- Public collections/objects documented and intended.
-- Rules that correctly enforce per-doc checks with matching query constraints.
-- Functions verifying tokens and ignoring client-supplied identifiers.
-- App Check enforced but not relied upon for authorization.
-
-## Impact
-
-- Cross-account and cross-tenant data exposure.
-- Unauthorized state changes via Functions or direct writes.
-- Exfiltration of PII/PHI and private files from Storage.
-- Durable privilege escalation via misused custom claims or triggers.
-
-## Pro Tips
-
-1. Treat apiKey as project identifier only; identity must come from verified ID tokens.
-2. Start from rules: read them, then prove gaps with diffed owner/non-owner requests.
-3. Prefer REST for parity checks; SDKs can mask errors via client-side filters.
-4. Hunt privilege fields in docs and forbid them via rules; verify immutability.
-5. Probe collectionGroup queries and list rules; many leaks live there.
-6. Functions are the authority boundary—enforce subject/tenant there even if rules exist.
-7. Keep concise PoCs: one owner vs non-owner request per surface that clearly demonstrates the unauthorized delta.
-
-## Remember
-
-Authorization must hold at every layer: rules, Functions, and Storage. Bind subject and tenant from verified tokens and server data, never from client payload or UI assumptions. Any gap becomes a cross-account or cross-tenant vulnerability.
+- Owner vs non-owner Firestore queries showing unauthorized access or metadata leak
+- Cloud Storage read/write beyond intended scope (public object, signed URL reuse, list exposure)
+- Function accepting forged/foreign identity (wrong `aud`/`iss`) or trusting client `uid`/`orgId`
+- Minimal reproducible requests with roles/tokens used and observed deltas

@@ -1,217 +1,276 @@
-# GRAPHQL — ADVANCED TESTING AND EXPLOITATION
+---
+name: graphql
+description: GraphQL security testing covering introspection, resolver injection, batching attacks, and authorization bypass
+---
 
-## Critical
+# GraphQL
 
-GraphQL’s flexibility enables powerful data access, but also unique failures: field- and edge-level authorization drift, schema exposure (even with introspection off), alias/batch abuse, resolver injection, federated trust gaps, and complexity/fragment bombs. Bind subject→action→object at resolver boundaries and validate across every transport and feature flag.
+Security testing for GraphQL APIs. Focus on resolver-level authorization, field/edge access control, batching abuse, and federation trust boundaries.
 
-## Scope
+## Attack Surface
 
-- Queries, mutations, subscriptions (graphql-ws, graphql-transport-ws)
-- Persisted queries/Automatic Persisted Queries (APQ)
-- Federation (Apollo/GraphQL Mesh): _service SDL and _entities
-- File uploads (GraphQL multipart request spec)
-- Relay conventions: global node IDs, connections/cursors
+**Operations**
+- Queries, mutations, subscriptions
+- Persisted queries / Automatic Persisted Queries (APQ)
 
-## Methodology
+**Transports**
+- HTTP POST/GET with `application/json` or `application/graphql`
+- WebSocket: graphql-ws, graphql-transport-ws protocols
+- Multipart for file uploads
 
-1. Fingerprint endpoint(s), transport(s), and stack (framework, plugins, gateway). Note GraphiQL/Playground exposure and CORS/credentials.
-2. Obtain multiple principals (unauth, basic, premium, admin/staff) and capture at least one valid object ID per subject.
-3. Acquire schema via introspection; if disabled, infer iteratively from errors, field suggestions, __typename probes, vocabulary brute-force.
-4. Build an Actor × Operation × Type/Field matrix. Exercise each resolver path with swapped IDs, roles, tenants, and channels (REST proxies, GraphQL HTTP, WS).
-5. Validate consistency: same authorization and validation across queries, mutations, subscriptions, batch/alias, persisted queries, and federation.
+**Schema Features**
+- Introspection (`__schema`, `__type`)
+- Directives: `@defer`, `@stream`, custom auth directives (@auth, @private)
+- Custom scalars: Upload, JSON, DateTime
+- Relay: global node IDs, connections/cursors, interfaces/unions
 
-## Discovery Techniques
+**Architecture**
+- Federation (Apollo, GraphQL Mesh): `_service`, `_entities`
+- Gateway vs subgraph authorization boundaries
 
-### Endpoint Finding
+## Reconnaissance
 
-- Common paths: /graphql, /api/graphql, /v1/graphql, /gql
-- Probe with minimal canary:
+**Endpoint Discovery**
 ```
-POST /graphql {"query":"{__typename}"}
+POST /graphql         {"query":"{__typename}"}
+POST /api/graphql     {"query":"{__typename}"}
+POST /v1/graphql      {"query":"{__typename}"}
+POST /gql             {"query":"{__typename}"}
 GET  /graphql?query={__typename}
 ```
-- Detect GraphiQL/Playground; note if accessible cross-origin and with credentials.
 
-### Introspection And Inference
+Check for GraphiQL/Playground exposure with credentials enabled (cross-origin with cookies can leak data via postMessage bridges).
 
-- If enabled, dump full schema; otherwise:
-  - Use __typename on candidate fields to confirm types
-  - Abuse field suggestions and error shapes to enumerate names/args
-  - Infer enums from “expected one of” errors; coerce types by providing wrong shapes
-  - Reconstruct edges from pagination and connection hints (pageInfo, edges/node)
+**Schema Acquisition**
 
-### Schema Construction
-
-- Map root operations, object types, interfaces/unions, directives (@auth, @defer, @stream), and custom scalars (Upload, JSON, DateTime)
-- Identify sensitive fields: email, tokens, roles, billing, file keys, admin flags
-- Note cascade paths where child resolvers may skip auth under parent assumptions
-
-## Exploitation Techniques
-
-### Authorization And Idor
-
-- Test field-level and edge-level checks, not just top-level gates. Pair owned vs foreign IDs within the same request via aliases to diff responses.
+If introspection enabled:
+```graphql
+{__schema{types{name fields{name args{name}}}}}
 ```
+
+If disabled, infer schema via:
+- `__typename` probes on candidate fields
+- Field suggestion errors (submit near-miss names to harvest suggestions)
+- "Expected one of" errors revealing enum values
+- Type coercion errors exposing field structure
+- Error taxonomy: different codes for "unknown field" vs "unauthorized field" reveal existence
+
+**Schema Mapping**
+
+Map: root operations, object types, interfaces/unions, directives, custom scalars. Identify sensitive fields: email, tokens, roles, billing, API keys, admin flags, file URLs. Note cascade paths where child resolvers may skip auth under parent assumptions.
+
+## Key Vulnerabilities
+
+### Authorization Bypass
+
+**Field-Level IDOR**
+
+Test with aliases comparing owned vs foreign objects in single request:
+```graphql
 query {
-  me { id }
-  a: order(id:"A_OWNER") { id total owner { id email } }
-  b: order(id:"B_FOREIGN") { id total owner { id email } }
+  own: order(id:"OWNED_ID") { id total owner { email } }
+  foreign: order(id:"FOREIGN_ID") { id total owner { email } }
 }
 ```
-- Probe mutations for partial updates that bypass validation (JSON Merge Patch semantics in inputs).
-- Validate node/global ID resolvers (Relay) bind to the caller; decode/replace base64 IDs and compare access.
 
-### Batching And Alias
+**Edge/Child Resolver Gaps**
 
-- Alias to perform many logically separate reads in one operation; watch for per-request vs per-field auth discrepancies
-- If array batching is supported (non-standard), submit multiple operations to bypass rate limits and achieve partial failures
+Parent resolver checks auth, child resolver assumes it's already validated:
+```graphql
+query {
+  user(id:"FOREIGN") {
+    id
+    privateData { secrets }  # Child may skip auth check
+  }
+}
 ```
+
+**Relay Node Resolution**
+
+Decode base64 global IDs, swap type/id pairs:
+```graphql
+query {
+  node(id:"VXNlcjoxMjM=") { ... on User { email } }
+}
+```
+Ensure per-type authorization is enforced inside resolvers. Verify connection filters (owner/tenant) apply before pagination; cursor tampering should not cross ownership boundaries.
+
+**Mutation Bypass**
+- Probe mutations for partial updates bypassing validation (JSON Merge Patch semantics)
+- Test mutations that accept extra fields passed to downstream logic
+
+### Batching & Alias Abuse
+
+**Enumeration via Aliases**
+```graphql
 query {
   u1:user(id:"1"){email}
   u2:user(id:"2"){email}
   u3:user(id:"3"){email}
 }
 ```
+Bypasses per-request rate limits; exposes per-field vs per-request auth inconsistencies.
 
-### Variable And Shape Abuse
+**Array Batching**
 
-- Scalars vs objects vs arrays: `{id:123}` vs `{id:"123"}` vs `{id:[123]}`; send null/empty/0/-1 and extra object keys retained by backend
-- Duplicate keys in JSON variables: `{"id":1,"id":2}` (parser precedence), default argument values, coercion errors leaking field names
+If supported (non-standard), submit multiple operations to achieve partial failures and bypass limits.
 
-### Cursor And Projection
+### Input Manipulation
 
-- Decode cursors (often base64) to manipulate offsets/IDs and skip filters
-- Abuse selection sets and fragments to force overfetching of sensitive subfields
-
-### File Uploads
-
-- GraphQL multipart: test multiple Upload scalars, filename/path tricks, unexpected content-types, oversize chunks; verify server-side ownership/scoping for returned URLs
-
-## Advanced Techniques
-
-### Introspection Bypass
-
-- Field suggestion leakage: submit near-miss names to harvest suggestions
-- Error taxonomy: different codes/messages for unknown field vs unauthorized field reveal existence
-- __typename sprinkling on edges to confirm types without schema
-
-### Defer And Stream
-
-- Use @defer and @stream to obtain partial results or subtrees hidden by parent checks; confirm server supports incremental delivery
+**Type Confusion**
 ```
-query @defer {
+{id: 123}      vs {id: "123"}
+{id: [123]}    vs {id: null}
+{id: 0}        vs {id: -1}
+```
+
+**Duplicate Keys**
+```json
+{"id": 1, "id": 2}
+```
+Parser precedence varies; may bypass validation. Also test default argument values.
+
+**Extra Fields**
+
+Send unexpected keys in input objects; backends may pass them to resolvers or downstream logic.
+
+### Cursor Manipulation
+
+Decode cursors (usually base64) to:
+- Manipulate offsets/IDs
+- Skip filters
+- Cross ownership boundaries
+
+### Directive Abuse
+
+**@defer/@stream**
+```graphql
+query {
   me { id }
   ... @defer { adminPanel { secrets } }
 }
 ```
+May return gated data in incremental delivery. Confirm server supports incremental delivery.
 
-### Fragment And Complexity Bombs
+**Custom Directives**
 
-- Recursive fragment spreads and wide selection sets cause CPU/memory spikes; craft minimal reproducible bombs to validate cost limits
-```
+@auth, @private and similar directives often annotate intent but do not enforce—verify actual checks in each resolver path.
+
+### Complexity Attacks
+
+**Fragment Bombs**
+```graphql
 fragment x on User { friends { ...x } }
 query { me { ...x } }
 ```
-- Validate depth/complexity limiting, query cost analyzers, and timeouts
+Test depth/complexity limits, query cost analyzers, timeouts.
 
-### Federation
+**Wide Selection Sets**
 
-- Apollo Federation: query _service { sdl } if exposed; target _entities to materialize foreign objects by key without proper auth in subgraphs
+Abuse selection sets and fragments to force overfetching of sensitive subfields.
+
+### Federation Exploitation
+
+**SDL Exposure**
+```graphql
+query { _service { sdl } }
 ```
+
+**Entity Materialization**
+```graphql
 query {
   _entities(representations:[
-    {__typename:"User", id:"TARGET"}
+    {__typename:"User", id:"TARGET_ID"}
   ]) { ... on User { email roles } }
 }
 ```
-- Look for auth done at gateway but skipped in subgraph resolvers; cross-subgraph IDOR via inconsistent ownership checks
+Gateway may enforce auth; subgraph resolvers may not. Look for cross-subgraph IDOR via inconsistent ownership checks.
 
-### Subscriptions
+### Subscription Security
 
-- Check message-level authorization, not only handshake; attempt to subscribe to channels for other users/tenants; test cross-tenant event leakage
+- Authorization at handshake only, not per-message
+- Subscribe to other users' channels via filter args
+- Cross-tenant event leakage
 - Abuse filter args in subscription resolvers to reference foreign IDs
 
-### Persisted Queries
+### Persisted Query Abuse
 
-- APQ hashes can be guessed/bruteforced or leaked from clients; replay privileged operations by supplying known hashes with attacker variables
-- Validate that hash→operation mapping enforces principal and operation allowlists
+- APQ hashes leaked from client bundles
+- Replay privileged operations with attacker variables
+- Hash bruteforce for common operations
+- Validate hash→operation mapping enforces principal and operation allowlists
 
-### Csrf And Cors
+### CORS & CSRF
 
-- If cookie-auth is used and GET is accepted, test CSRF on mutations via query parameters; verify SameSite and origin checks
-- Cross-origin GraphiQL/Playground exposure with credentials can leak data via postMessage bridges
+- Cookie-auth with GET queries enables CSRF on mutations via query parameters
+- GraphiQL/Playground cross-origin with credentials leaks data
+- Missing SameSite and origin validation
 
-### Waf Evasion
+### File Uploads
 
-- Reshape queries: comments, block strings, Unicode escapes, alias/fragment indirection, JSON variables vs inline args, GET vs POST vs application/graphql
-- Split fields across fragments and inline spreads to avoid naive signatures
+GraphQL multipart spec:
+- Multiple Upload scalars
+- Filename/path traversal tricks
+- Unexpected content-types, oversize chunks
+- Server-side ownership/scoping for returned URLs
+
+## WAF Evasion
+
+**Query Reshaping**
+- Comments and block strings (`"""..."""`)
+- Unicode escapes
+- Alias/fragment indirection
+- JSON variables vs inline args
+- GET vs POST vs `application/graphql`
+
+**Fragment Splitting**
+
+Split fields across fragments and inline spreads to avoid naive signatures:
+```graphql
+fragment a on User { email }
+fragment b on User { password }
+query { me { ...a ...b } }
+```
 
 ## Bypass Techniques
 
-### Transport And Parsers
+**Transport Switching**
+```
+Content-Type: application/json
+Content-Type: application/graphql
+Content-Type: multipart/form-data
+GET with query params
+```
 
-- Toggle content-types: application/json, application/graphql, multipart/form-data; try GET with query and variables params
-- HTTP/2 multiplexing and connection reuse to widen timing windows and rate limits
+**Timing & Rate Limits**
+- HTTP/2 multiplexing and connection reuse to widen timing windows
+- Batching to bypass rate limits
 
-### Naming And Aliasing
+**Naming Tricks**
+- Case/underscore variations
+- Unicode homoglyphs (server-dependent)
+- Aliases masking sensitive field names
 
-- Case/underscore variations, Unicode homoglyphs (server-dependent), aliases masking sensitive field names
+**Cache Confusion**
+- CDN caching without Vary on Authorization
+- Variable manipulation affecting cache keys
+- Redirects and 304/206 behaviors leaking partial responses
 
-### Gateway And Cache
+## Testing Methodology
 
-- CDN/key confusion: responses cached without considering Authorization or variables; manipulate Vary and Accept headers
-- Redirects and 304/206 behaviors leaking partially cached GraphQL responses
+1. **Fingerprint** - Identify endpoints, transports, stack (Apollo, Hasura, etc.), GraphiQL exposure
+2. **Schema mapping** - Introspection or inference to build complete type graph
+3. **Principal matrix** - Collect tokens for unauth, user, premium, admin roles with at least one valid object ID per subject
+4. **Field sweep** - Test each resolver with owned vs foreign IDs via aliases in same request
+5. **Transport parity** - Verify same auth on HTTP, WebSocket, persisted queries
+6. **Federation probe** - Test `_service` and `_entities` for subgraph auth gaps
+7. **Edge cases** - Cursors, @defer/@stream, subscriptions, file uploads
 
-## Special Contexts
+## Validation Requirements
 
-### Relay
-
-- node(id:…) global resolution: decode base64, swap type/id pairs, ensure per-type authorization is enforced inside resolvers
-- Connections: verify that filters (owner/tenant) apply before pagination; cursor tampering should not cross ownership boundaries
-
-### Server Plugins
-
-- Custom directives (@auth, @private) and plugins often annotate intent but do not enforce; verify actual checks in each resolver path
-
-## Chaining Attacks
-
-- GraphQL + IDOR: enumerate IDs via list fields, then fetch or mutate foreign objects
-- GraphQL + CSRF: trigger mutations cross-origin when cookies/auth are accepted without proper checks
-- GraphQL + SSRF: resolvers that fetch URLs (webhooks, metadata) abused to reach internal services
-
-## Validation
-
-1. Provide paired requests (owner vs non-owner) differing only in identifiers/roles that demonstrate unauthorized access or mutation.
-2. Prove resolver-level bypass: show top-level checks present but child field/edge exposes data.
-3. Demonstrate transport parity: reproduce via HTTP and WS (subscriptions) or via persisted queries.
-4. Minimize payloads; document exact selection sets and variable shapes used.
-
-## False Positives
-
-- Introspection available only on non-production/stub endpoints
-- Public fields by design with documented scopes
-- Aggregations or counts without sensitive attributes
-- Properly enforced depth/complexity and per-resolver authorization across transports
-
-## Impact
-
-- Cross-account/tenant data exposure and unauthorized state changes
-- Bypass of federation boundaries enabling lateral access across services
-- Credential/session leakage via lax CORS/CSRF around GraphiQL/Playground
-
-## Pro Tips
-
-1. Always diff the same operation under multiple principals with aliases in one request.
-2. Sprinkle __typename to map types quickly when schema is hidden.
-3. Attack edges: child resolvers often skip auth compared to parents.
-4. Try @defer/@stream and subscriptions to slip gated data in incremental events.
-5. Decode cursors and node IDs; assume base64 unless proven otherwise.
-6. Federation: exercise _entities with crafted representations; subgraphs frequently trust gateway auth.
-7. Persisted queries: extract hashes from clients; replay with attacker variables.
-8. Keep payloads small and structured; restructure rather than enlarge to evade WAFs.
-9. Validate defenses by code/config review where possible; don’t trust directives alone.
-10. Prove impact with role-separated, transport-separated, minimal PoCs.
-
-## Remember
-
-GraphQL security is resolver security. If any resolver on the path to a field fails to bind subject, object, and action, the graph leaks. Validate every path, every transport, every environment.
+- Paired requests (owner vs non-owner) showing unauthorized access
+- Resolver-level bypass: parent checks present, child field exposes data
+- Transport parity proof: HTTP and WebSocket for same operation
+- Federation bypass: `_entities` accessing data without subgraph auth
+- Minimal payloads with exact selection sets and variable shapes
+- Document exact resolver paths that missed enforcement

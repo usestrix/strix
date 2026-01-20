@@ -1,30 +1,48 @@
-# PATH TRAVERSAL, LFI, AND RFI
+---
+name: path-traversal-lfi-rfi
+description: Path traversal and file inclusion testing for local/remote file access and code execution
+---
 
-## Critical
+# Path Traversal / LFI / RFI
 
 Improper file path handling and dynamic inclusion enable sensitive file disclosure, config/source leakage, SSRF pivots, and code execution. Treat all user-influenced paths, names, and schemes as untrusted; normalize and bind them to an allowlist or eliminate user control entirely.
 
-## Scope
+## Attack Surface
 
-- Path traversal: read files outside intended roots via ../, encoding, normalization gaps
-- Local File Inclusion (LFI): include server-side files into interpreters/templates
-- Remote File Inclusion (RFI): include remote resources (HTTP/FTP/wrappers) for code execution
-- Archive extraction traversal (Zip Slip): write outside target directory upon unzip/untar
-- Server/proxy normalization mismatches (nginx alias/root, upstream decoders)
+**Path Traversal**
+- Read files outside intended roots via `../`, encoding, normalization gaps
+
+**Local File Inclusion (LFI)**
+- Include server-side files into interpreters/templates
+
+**Remote File Inclusion (RFI)**
+- Include remote resources (HTTP/FTP/wrappers) for code execution
+
+**Archive Extraction**
+- Zip Slip: write outside target directory upon unzip/untar
+
+**Normalization Mismatches**
+- Server/proxy differences (nginx alias/root, upstream decoders)
 - OS-specific paths: Windows separators, device names, UNC, NT paths, alternate data streams
 
-## Methodology
+## High-Value Targets
 
-1. Inventory all file operations: downloads, previews, templates, logs, exports/imports, report engines, uploads, archive extractors.
-2. Identify input joins: path joins (base + user), include/require/template loads, resource fetchers, archive extract destinations.
-3. Probe normalization and resolution: separators, encodings, double-decodes, case, trailing dots/slashes; compare web server vs application behavior.
-4. Escalate from disclosure (read) to influence (write/extract/include), then to execution (wrapper/engine chains).
+**Unix**
+- `/etc/passwd`, `/etc/hosts`, application `.env`/`config.yaml`
+- SSH keys, cloud creds, service configs/logs
 
-## Discovery Techniques
+**Windows**
+- `C:\Windows\win.ini`, IIS/web.config, programdata configs, application logs
+
+**Application**
+- Source code templates and server-side includes
+- Secrets in env dumps, framework caches
+
+## Reconnaissance
 
 ### Surface Map
 
-- HTTP params: file, path, template, include, page, view, download, export, report, log, dir, theme, lang
+- HTTP params: `file`, `path`, `template`, `include`, `page`, `view`, `download`, `export`, `report`, `log`, `dir`, `theme`, `lang`
 - Upload and conversion pipelines: image/PDF renderers, thumbnailers, office converters
 - Archive extract endpoints and background jobs; imports with ZIP/TAR/GZ/7z
 - Server-side template rendering (PHP/Smarty/Twig/Blade), email templates, CMS themes/plugins
@@ -32,56 +50,74 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 
 ### Capability Probes
 
-- Path traversal baseline: ../../etc/hosts and C:\\Windows\\win.ini
-- Encodings: %2e%2e%2f, %252e%252e%252f, ..%2f, ..%5c, mixed UTF-8 (%c0%2e), Unicode dots and slashes
-- Normalization tests: ....//, ..\\, ././, trailing dot/double dot segments; repeated decoding
-- Absolute path acceptance: /etc/passwd, C:\\Windows\\System32\\drivers\\etc\\hosts
-- Server mismatch: /static/..;/../etc/passwd ("..;"), encoded slashes (%2F), double-decoding via upstream
+- Path traversal baseline: `../../etc/hosts` and `C:\Windows\win.ini`
+- Encodings: `%2e%2e%2f`, `%252e%252e%252f`, `..%2f`, `..%5c`, mixed UTF-8 (`%c0%2e`), Unicode dots and slashes
+- Normalization tests: `..../`, `..\\`, `././`, trailing dot/double dot segments; repeated decoding
+- Absolute path acceptance: `/etc/passwd`, `C:\Windows\System32\drivers\etc\hosts`
+- Server mismatch: `/static/..;/../etc/passwd` ("..;"), encoded slashes (`%2F`), double-decoding via upstream
 
 ## Detection Channels
 
 ### Direct
 
-- Response body discloses file content (text, binary, base64); error pages echo real paths
+- Response body discloses file content (text, binary, base64)
+- Error pages echo real paths
 
-### Error Based
+### Error-Based
 
-- Exception messages expose canonicalized paths or include() warnings with real filesystem locations
+- Exception messages expose canonicalized paths or `include()` warnings with real filesystem locations
 
-### Oast
+### OAST
 
 - RFI/LFI with wrappers that trigger outbound fetches (HTTP/DNS) to confirm inclusion/execution
 
 ### Side Effects
 
-- Archive extraction writes files unexpectedly outside target; verify with directory listings or follow-up reads
+- Archive extraction writes files unexpectedly outside target
+- Verify with directory listings or follow-up reads
 
-## Path Traversal
+## Key Vulnerabilities
 
-### Bypasses And Variants
+### Path Traversal Bypasses
 
-- Encodings: single/double URL-encoding, mixed case, overlong UTF-8, UTF-16, path normalization oddities
-- Mixed separators: / and \\ on Windows; // and \\\\ collapse differences across frameworks
-- Dot tricks: ....// (double dot folding), trailing dots (Windows), trailing slashes, appended valid extension
-- Absolute path injection: bypass joins by supplying a rooted path
-- Alias/root mismatch (nginx): alias without trailing slash with nested location allows ../ to escape; try /static/../etc/passwd and ";" variants (..;)
-- Upstream vs backend decoding: proxies/CDNs decoding %2f differently; test double-decoding and encoded dots
+**Encodings**
+- Single/double URL-encoding, mixed case, overlong UTF-8, UTF-16, path normalization oddities
 
-### High Value Targets
+**Mixed Separators**
+- `/` and `\\` on Windows; `//` and `\\\\` collapse differences across frameworks
 
-- /etc/passwd, /etc/hosts, application .env/config.yaml, SSH/keys, cloud creds, service configs/logs
-- Windows: C:\\Windows\\win.ini, IIS/web.config, programdata configs, application logs
-- Source code templates and server-side includes; secrets in env dumps
+**Dot Tricks**
+- `....//` (double dot folding), trailing dots (Windows), trailing slashes, appended valid extension
 
-## Lfi
+**Absolute Path Injection**
+- Bypass joins by supplying a rooted path
 
-### Wrappers And Techniques
+**Alias/Root Mismatch**
+- nginx alias without trailing slash with nested location allows `../` to escape
+- Try `/static/../etc/passwd` and ";" variants (`..;`)
 
-- PHP wrappers: php://filter/convert.base64-encode/resource=index.php (read source), zip://archive.zip#file.txt, data://text/plain;base64, expect:// (if enabled)
-- Log/session poisoning: inject PHP/templating payloads into access/error logs or session files then include them (paths vary by stack)
-- Upload temp names: include temporary upload files before relocation; race with scanners
-- /proc/self/environ and framework-specific caches for readable secrets
-- Null-byte (legacy): %00 truncation in older stacks; path length truncation tricks
+**Upstream vs Backend Decoding**
+- Proxies/CDNs decoding `%2f` differently; test double-decoding and encoded dots
+
+### LFI Wrappers and Techniques
+
+**PHP Wrappers**
+- `php://filter/convert.base64-encode/resource=index.php` (read source)
+- `zip://archive.zip#file.txt`
+- `data://text/plain;base64`
+- `expect://` (if enabled)
+
+**Log/Session Poisoning**
+- Inject PHP/templating payloads into access/error logs or session files then include them
+
+**Upload Temp Names**
+- Include temporary upload files before relocation; race with scanners
+
+**Proc and Caches**
+- `/proc/self/environ` and framework-specific caches for readable secrets
+
+**Legacy Tricks**
+- Null-byte (`%00`) truncation in older stacks; path length truncation
 
 ### Template Engines
 
@@ -89,33 +125,43 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 - Java/JSP/FreeMarker/Velocity; Node.js ejs/handlebars/pug engines
 - Seek dynamic template resolution from user input (theme/lang/template)
 
-## Rfi
+### RFI Conditions
 
-### Conditions
+**Requirements**
+- Remote includes (`allow_url_include`/`allow_url_fopen` in PHP)
+- Custom fetchers that eval/execute retrieved content
+- SSRF-to-exec bridges
 
-- Remote includes (allow_url_include/allow_url_fopen in PHP), custom fetchers that eval/execute retrieved content, SSRF-to-exec bridges
-- Protocol handlers: http, https, ftp; language-specific stream handlers
+**Protocol Handlers**
+- http, https, ftp; language-specific stream handlers
 
-### Exploitation
+**Exploitation**
+- Host a minimal payload that proves code execution
+- Prefer OAST beacons or deterministic output over heavy shells
+- Chain with upload or log poisoning when remote includes are disabled
 
-- Host a minimal payload that proves code execution; prefer OAST beacons or deterministic output over heavy shells
-- Chain with upload or log poisoning when remote includes are disabled to reach local payloads
+### Archive Extraction (Zip Slip)
 
-## Archive Extraction
-
-### Zip Slip
-
-- Files within archives containing ../ or absolute paths escape target extract directory
-- Test multiple formats: zip/tar/tgz/7z; verify symlink handling and path canonicalization prior to write
+- Files within archives containing `../` or absolute paths escape target extract directory
+- Test multiple formats: zip/tar/tgz/7z
+- Verify symlink handling and path canonicalization prior to write
 - Impact: overwrite config/templates or drop webshells into served directories
+
+## Testing Methodology
+
+1. **Inventory file operations** - Downloads, previews, templates, logs, exports/imports, report engines, uploads, archive extractors
+2. **Identify input joins** - Path joins (base + user), include/require/template loads, resource fetchers, archive extract destinations
+3. **Probe normalization** - Separators, encodings, double-decodes, case, trailing dots/slashes
+4. **Compare behaviors** - Web server vs application behavior
+5. **Escalate** - From disclosure (read) to influence (write/extract/include), then to execution (wrapper/engine chains)
 
 ## Validation
 
-1. Show a minimal traversal read proving out-of-root access (e.g., /etc/hosts) with a same-endpoint in-root control.
-2. For LFI, demonstrate inclusion of a benign local file or harmless wrapper output (php://filter base64 of index.php); avoid active code when not permitted.
-3. For RFI, prove remote fetch by OAST or controlled output; avoid destructive payloads.
-4. For Zip Slip, create an archive with ../ entries and show write outside target (e.g., marker file read back).
-5. Provide before/after file paths, exact requests, and content hashes/lengths for reproducibility.
+1. Show a minimal traversal read proving out-of-root access (e.g., `/etc/hosts`) with a same-endpoint in-root control
+2. For LFI, demonstrate inclusion of a benign local file or harmless wrapper output (`php://filter` base64 of index.php)
+3. For RFI, prove remote fetch by OAST or controlled output; avoid destructive payloads
+4. For Zip Slip, create an archive with `../` entries and show write outside target (e.g., marker file read back)
+5. Provide before/after file paths, exact requests, and content hashes/lengths for reproducibility
 
 ## False Positives
 
@@ -133,12 +179,12 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 
 ## Pro Tips
 
-1. Compare content-length/ETag when content is masked; read small canonical files (hosts) to avoid noise.
-2. Test proxy/CDN and app separately; decoding/normalization order differs, especially for %2f and %2e encodings.
-3. For LFI, prefer php://filter base64 probes over destructive payloads; enumerate readable logs and sessions.
-4. Validate extraction code with synthetic archives; include symlinks and deep ../ chains.
-5. Use minimal PoCs and hard evidence (hashes, paths). Avoid noisy DoS against filesystems.
+1. Compare content-length/ETag when content is masked; read small canonical files (hosts) to avoid noise
+2. Test proxy/CDN and app separately; decoding/normalization order differs, especially for `%2f` and `%2e` encodings
+3. For LFI, prefer `php://filter` base64 probes over destructive payloads; enumerate readable logs and sessions
+4. Validate extraction code with synthetic archives; include symlinks and deep `../` chains
+5. Use minimal PoCs and hard evidence (hashes, paths). Avoid noisy DoS against filesystems
 
-## Remember
+## Summary
 
 Eliminate user-controlled paths where possible. Otherwise, resolve to canonical paths and enforce allowlists, forbid remote schemes, and lock down interpreters and extractors. Normalize consistently at the boundary closest to IO.

@@ -1,40 +1,27 @@
-# RACE CONDITIONS
+---
+name: race-conditions
+description: Race condition testing for TOCTOU bugs, double-spend, and concurrent state manipulation
+---
 
-## Critical
+# Race Conditions
 
 Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, and privilege errors. Treat every read–modify–write and multi-step workflow as adversarially concurrent.
 
-## Scope
+## Attack Surface
 
-- Read–modify–write sequences without atomicity or proper locking
-- Multi-step operations (check → reserve → commit) with gaps between phases
-- Cross-service workflows (sagas, async jobs) with eventual consistency
-- Rate limits, quotas, and idempotency controls implemented at the edge only
+**Read-Modify-Write**
+- Sequences without atomicity or proper locking
 
-## Methodology
+**Multi-Step Operations**
+- Check → reserve → commit with gaps between phases
 
-1. Model invariants for each workflow (e.g., conservation of value, uniqueness, maximums). Identify reads and writes and where they occur (service, DB, cache).
-2. Establish a baseline with single requests. Then issue concurrent requests with identical inputs. Observe deltas in state and responses.
-3. Scale and synchronize: ramp up parallelism, switch transports (HTTP/1.1, HTTP/2), and align request timing (last-byte sync, warmed connections).
-4. Repeat across channels (web, API, GraphQL, WebSocket) and roles. Confirm durability and reproducibility.
+**Cross-Service Workflows**
+- Sagas, async jobs with eventual consistency
 
-## Discovery Techniques
+**Rate Limits and Quotas**
+- Controls implemented at the edge only
 
-### Identify Race Windows
-
-- Look for explicit sequences in code or docs: "check balance then deduct", "verify coupon then apply", "check inventory then purchase", "validate token then consume"
-- Watch for optimistic concurrency markers: ETag/If-Match, version fields, updatedAt checks; test if they are enforced
-- Examine idempotency-key support: scope (path vs principal), TTL, and persistence (cache vs DB)
-- Map cross-service steps: when is state written vs published, and what retries/compensations exist
-
-### Signals
-
-- Sequential request fails but parallel succeeds
-- Duplicate rows, negative counters, over-issuance, or inconsistent aggregates
-- Distinct response shapes/timings for simultaneous vs sequential requests
-- Audit logs out of order; multiple 2xx for the same intent; missing or duplicate correlation IDs
-
-### Surface Map
+## High-Value Targets
 
 - Payments: auth/capture/refund/void; credits/loyalty points; gift cards
 - Coupons/discounts: single-use codes, stacking checks, per-user limits
@@ -44,7 +31,23 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 - Background jobs: export/import create/finalize endpoints; job cancellation/approve
 - GraphQL mutations and batch operations; WebSocket actions
 
-## Exploitation Techniques
+## Reconnaissance
+
+### Identify Race Windows
+
+- Look for explicit sequences: "check balance then deduct", "verify coupon then apply", "check inventory then purchase"
+- Watch for optimistic concurrency markers: ETag/If-Match, version fields, updatedAt checks
+- Examine idempotency-key support: scope (path vs principal), TTL, and persistence (cache vs DB)
+- Map cross-service steps: when is state written vs published, what retries/compensations exist
+
+### Signals
+
+- Sequential request fails but parallel succeeds
+- Duplicate rows, negative counters, over-issuance, or inconsistent aggregates
+- Distinct response shapes/timings for simultaneous vs sequential requests
+- Audit logs out of order; multiple 2xx for the same intent; missing or duplicate correlation IDs
+
+## Key Vulnerabilities
 
 ### Request Synchronization
 
@@ -52,7 +55,7 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 - Last-byte synchronization: hold requests open and release final byte simultaneously
 - Connection warming: pre-establish sessions, cookies, and TLS to remove jitter
 
-### Idempotency And Dedup Bypass
+### Idempotency and Dedup Bypass
 
 - Reuse the same idempotency key across different principals/paths if scope is inadequate
 - Hit the endpoint before the idempotency store is written (cache-before-commit windows)
@@ -64,18 +67,16 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 - Partial two-phase workflows: success committed before validation completes
 - Unique checks done outside a unique index/upsert: create duplicates under load
 
-### Cross Service Races
+### Cross-Service Races
 
 - Saga/compensation timing gaps: execute compensation without preventing the original success path
 - Eventual consistency windows: act in Service B before Service A's write is visible
 - Retry storms: duplicate side effects due to at-least-once delivery without idempotent consumers
 
-### Rate Limits And Quotas
+### Rate Limits and Quotas
 
 - Per-IP or per-connection enforcement: bypass with multiple IPs/sessions
 - Counter updates not atomic or sharded inconsistently; send bursts before counters propagate
-
-## Advanced Techniques
 
 ### Optimistic Concurrency Evasion
 
@@ -102,22 +103,26 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 
 ## Special Contexts
 
-### Graphql
+### GraphQL
 
-- Parallel mutations and batched operations may bypass per-mutation guards; ensure resolver-level idempotency and atomicity
+- Parallel mutations and batched operations may bypass per-mutation guards
+- Ensure resolver-level idempotency and atomicity
 - Persisted queries and aliases can hide multiple state changes in one request
 
-### Websocket
+### WebSocket
 
-- Per-message authorization and idempotency must hold; concurrent emits can create duplicates if only the handshake is checked
+- Per-message authorization and idempotency must hold
+- Concurrent emits can create duplicates if only the handshake is checked
 
-### Files And Storage
+### Files and Storage
 
-- Parallel finalize/complete on multi-part uploads can create duplicate or corrupted objects; re-use pre-signed URLs concurrently
+- Parallel finalize/complete on multi-part uploads can create duplicate or corrupted objects
+- Re-use pre-signed URLs concurrently
 
 ### Auth Flows
 
-- Concurrent consumption of one-time tokens (reset codes, magic links) to mint multiple sessions; verify consume is atomic
+- Concurrent consumption of one-time tokens (reset codes, magic links) to mint multiple sessions
+- Verify consume is atomic
 
 ## Chaining Attacks
 
@@ -126,13 +131,23 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 - Race + CSRF: trigger parallel actions from a victim to amplify effects
 - Race + Caching: stale caches re-serve privileged states after concurrent changes
 
+## Testing Methodology
+
+1. **Model invariants** - Conservation of value, uniqueness, maximums for each workflow
+2. **Identify reads/writes** - Where they occur (service, DB, cache)
+3. **Baseline** - Single requests to establish expected behavior
+4. **Concurrent requests** - Issue parallel requests with identical inputs; observe deltas
+5. **Scale and synchronize** - Ramp up parallelism, use HTTP/2, align timing (last-byte sync)
+6. **Cross-channel** - Test across web, API, GraphQL, WebSocket
+7. **Confirm durability** - Verify state changes persist and are reproducible
+
 ## Validation
 
-1. Single request denied; N concurrent requests succeed where only 1 should.
-2. Durable state change proven (ledger entries, inventory counts, role/flag changes).
-3. Reproducible under controlled synchronization (HTTP/2, last-byte sync) across multiple runs.
-4. Evidence across channels (e.g., REST and GraphQL) if applicable.
-5. Include before/after state and exact request set used.
+1. Single request denied; N concurrent requests succeed where only 1 should
+2. Durable state change proven (ledger entries, inventory counts, role/flag changes)
+3. Reproducible under controlled synchronization (HTTP/2, last-byte sync) across multiple runs
+4. Evidence across channels (e.g., REST and GraphQL) if applicable
+5. Include before/after state and exact request set used
 
 ## False Positives
 
@@ -150,17 +165,17 @@ Concurrency bugs enable duplicate state changes, quota bypass, financial abuse, 
 
 ## Pro Tips
 
-1. Favor HTTP/2 with warmed connections; add last-byte sync for precision.
-2. Start small (N=5–20), then scale; too much noise can mask the window.
-3. Target read–modify–write code paths and endpoints with idempotency keys.
-4. Compare REST vs GraphQL vs WebSocket; protections often differ.
-5. Look for cross-service gaps (queues, jobs, webhooks) and retry semantics.
-6. Check unique constraints and upsert usage; avoid relying on pre-insert checks.
-7. Use correlation IDs and logs to prove concurrent interleaving.
-8. Widen windows by adding server load or slow backend dependencies.
-9. Validate on production-like latency; some races only appear under real load.
-10. Document minimal, repeatable request sets that demonstrate durable impact.
+1. Favor HTTP/2 with warmed connections; add last-byte sync for precision
+2. Start small (N=5–20), then scale; too much noise can mask the window
+3. Target read–modify–write code paths and endpoints with idempotency keys
+4. Compare REST vs GraphQL vs WebSocket; protections often differ
+5. Look for cross-service gaps (queues, jobs, webhooks) and retry semantics
+6. Check unique constraints and upsert usage; avoid relying on pre-insert checks
+7. Use correlation IDs and logs to prove concurrent interleaving
+8. Widen windows by adding server load or slow backend dependencies
+9. Validate on production-like latency; some races only appear under real load
+10. Document minimal, repeatable request sets that demonstrate durable impact
 
-## Remember
+## Summary
 
 Concurrency safety is a property of every path that mutates state. If any path lacks atomicity, proper isolation, or idempotency, parallel requests will eventually break invariants.

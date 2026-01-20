@@ -398,11 +398,10 @@ Default user: pentester (sudo available)
 
 {% if loaded_skill_names %}
 <specialized_knowledge>
-{# Dynamic skills loaded based on agent specialization #}
-
 {% for skill_name in loaded_skill_names %}
+<{{ skill_name }}>
 {{ get_skill(skill_name) }}
-
+</{{ skill_name }}>
 {% endfor %}
 </specialized_knowledge>
 {% endif %}

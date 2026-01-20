@@ -1,24 +1,20 @@
-# INSECURE FILE UPLOADS
+---
+name: insecure-file-uploads
+description: File upload security testing covering extension bypass, content-type manipulation, and path traversal
+---
 
-## Critical
+# Insecure File Uploads
 
 Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware distribution, storage takeover, and DoS. Modern stacks mix direct-to-cloud uploads, background processors, and CDNs—authorization and validation must hold across every step.
 
-## Scope
+## Attack Surface
 
 - Web/mobile/API uploads, direct-to-cloud (S3/GCS/Azure) presigned flows, resumable/multipart protocols (tus, S3 MPU)
 - Image/document/media pipelines (ImageMagick/GraphicsMagick, Ghostscript, ExifTool, PDF engines, office converters)
 - Admin/bulk importers, archive uploads (zip/tar), report/template uploads, rich text with attachments
 - Serving paths: app directly, object storage, CDN, email attachments, previews/thumbnails
 
-## Methodology
-
-1. Map the pipeline: client → ingress (edge/app/gateway) → storage → processors (thumb, OCR, AV, CDR) → serving (app/storage/CDN). Note where validation and auth occur.
-2. Identify allowed types, size limits, filename rules, storage keys, and who serves the content. Collect baseline uploads per type and capture resulting URLs and headers.
-3. Exercise bypass families systematically: extension games, MIME/content-type, magic bytes, polyglots, metadata payloads, archive structure, chunk/finalize differentials.
-4. Validate execution and rendering: can uploaded content execute on server or client? Confirm with minimal PoCs and headers analysis.
-
-## Discovery Techniques
+## Reconnaissance
 
 ### Surface Map
 
@@ -45,7 +41,7 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 
 - Stored XSS via SVG/HTML/JS if served inline without correct headers; PDF JavaScript; office macros in previewers
 
-### Header And Render
+### Header and Render
 
 - Missing X-Content-Type-Options: nosniff enabling browser sniff to script
 - Content-Type reflection from upload vs server-set; Content-Disposition: inline vs attachment
@@ -56,26 +52,26 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 
 ## Core Payloads
 
-### Web Shells And Configs
+### Web Shells and Configs
 
-- PHP: GIF polyglot (starts with GIF89a) followed by <?php echo 1; ?>; place where PHP is executed
+- PHP: GIF polyglot (starts with GIF89a) followed by `<?php echo 1; ?>`; place where PHP is executed
 - .htaccess to map extensions to code (AddType/AddHandler); .user.ini (auto_prepend/append_file) for PHP-FPM
 - ASP/JSP equivalents where supported; IIS web.config to enable script execution
 
-### Stored Xss
+### Stored XSS
 
 - SVG with onload/onerror handlers served as image/svg+xml or text/html
 - HTML file with script when served as text/html or sniffed due to missing nosniff
 
-### Mime Magic Polyglots
+### MIME Magic Polyglots
 
 - Double extensions: avatar.jpg.php, report.pdf.html; mixed casing: .pHp, .PhAr
 - Magic-byte spoofing: valid JPEG header then embedded script; verify server uses content inspection, not extensions alone
 
 ### Archive Attacks
 
-- Zip Slip: entries with ../../ to escape extraction dir; symlink-in-zip pointing outside target; nested zips
-- Zip bomb: extreme compression ratios (e.g., 42.zip) to exhaust resources in processors
+- Zip Slip: entries with `../../` to escape extraction dir; symlink-in-zip pointing outside target; nested zips
+- Zip bomb: extreme compression ratios to exhaust resources in processors
 
 ### Toolchain Exploits
 
@@ -86,7 +82,8 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 ### Cloud Storage Vectors
 
 - S3/GCS presigned uploads: attacker controls Content-Type/Disposition; set text/html or image/svg+xml and inline rendering
-- Public-read ACL or permissive bucket policies expose uploads broadly; object key injection via user-controlled path prefixes
+- Public-read ACL or permissive bucket policies expose uploads broadly
+- Object key injection via user-controlled path prefixes
 - Signed URL reuse and stale URLs; serving directly from bucket without attachment + nosniff headers
 
 ## Advanced Techniques
@@ -94,33 +91,35 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 ### Resumable Multipart
 
 - Change metadata between init and complete (e.g., swap Content-Type/Disposition at finalize)
-- Upload benign chunks, then swap last chunk or complete with different source if server trusts client-side digests only
+- Upload benign chunks, then swap last chunk or complete with different source
 
-### Filename And Path
+### Filename and Path
 
-- Unicode homoglyphs, trailing dots/spaces, device names, reserved characters to bypass validators and filesystem rules
+- Unicode homoglyphs, trailing dots/spaces, device names, reserved characters to bypass validators
 - Null-byte truncation on legacy stacks; overlong paths; case-insensitive collisions overwriting existing files
 
 ### Processing Races
 
-- Request file immediately after upload but before AV/CDR completes; or during derivative creation to get unprocessed content
+- Request file immediately after upload but before AV/CDR completes
 - Trigger heavy conversions (large images, deep PDFs) to widen race windows
 
 ### Metadata Abuse
 
-- Oversized EXIF/XMP/IPTC blocks to trigger parser flaws; payloads in document properties of Office/PDF rendered by previewers
+- Oversized EXIF/XMP/IPTC blocks to trigger parser flaws
+- Payloads in document properties of Office/PDF rendered by previewers
 
 ### Header Manipulation
 
-- Force inline rendering with Content-Type + inline Content-Disposition; test browsers with and without nosniff
+- Force inline rendering with Content-Type + inline Content-Disposition
 - Cache poisoning via CDN with keys missing Vary on Content-Type/Disposition
 
-## Filter Bypasses
+## Bypass Techniques
 
 ### Validation Gaps
 
-- Client-side only checks; relying on JS/MIME provided by browser; trusting multipart boundary part headers blindly
-- Extension allowlists without server-side content inspection; magic-bytes only without full parsing
+- Client-side only checks; relying on JS/MIME provided by browser
+- Trusting multipart boundary part headers blindly
+- Extension allowlists without server-side content inspection
 
 ### Evasion Tricks
 
@@ -131,38 +130,37 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 
 ### Rich Text Editors
 
-- RTEs allow image/attachment uploads and embed links; verify sanitization and serving headers for embedded content
+- RTEs allow image/attachment uploads and embed links; verify sanitization and serving headers
 
 ### Mobile Clients
 
-- Mobile SDKs may send nonstandard MIME or metadata; servers sometimes trust client-side transformations or EXIF orientation
+- Mobile SDKs may send nonstandard MIME or metadata; servers sometimes trust client-side transformations
 
-### Serverless And Cdn
+### Serverless and CDN
 
-- Direct-to-bucket uploads with Lambda/Workers post-processing; verify that security decisions are not delegated to frontends
-- CDN caching of uploaded content; ensure correct cache keys and headers (attachment, nosniff)
+- Direct-to-bucket uploads with Lambda/Workers post-processing; verify security decisions are not delegated to frontends
+- CDN caching of uploaded content; ensure correct cache keys and headers
 
-## Parser Hardening
+## Testing Methodology
 
-- Validate on server: strict allowlist by true type (parse enough to confirm), size caps, and structural checks (dimensions, page count)
-- Strip active content: convert SVG→PNG; remove scripts/JS from PDF; disable macros; normalize EXIF; consider CDR for risky types
-- Store outside web root; serve via application or signed, time-limited URLs with Content-Disposition: attachment and X-Content-Type-Options: nosniff
-- For cloud: private buckets, per-request signed GET, enforce Content-Type/Disposition on GET responses from your app/gateway
-- Disable execution in upload paths; ignore .htaccess/.user.ini; sanitize keys to prevent path injections; randomize filenames
-- AV + CDR: scan synchronously when possible; quarantine until verdict; block password-protected archives or process in sandbox
+1. **Map the pipeline** - Client → ingress → storage → processors → serving. Note where validation and auth occur
+2. **Identify allowed types** - Size limits, filename rules, storage keys, and who serves the content
+3. **Collect baselines** - Capture resulting URLs and headers for legitimate uploads
+4. **Exercise bypass families** - Extension games, MIME/content-type, magic bytes, polyglots, metadata payloads, archive structure
+5. **Validate execution** - Can uploaded content execute on server or client?
 
 ## Validation
 
-1. Demonstrate execution or rendering of active content: web shell reachable, or SVG/HTML executing JS when viewed.
-2. Show filter bypass: upload accepted despite restrictions (extension/MIME/magic mismatch) with evidence on retrieval.
-3. Prove header weaknesses: inline rendering without nosniff or missing attachment; present exact response headers.
-4. Show race or pipeline gap: access before AV/CDR; extraction outside intended directory; derivative creation from malicious input.
-5. Provide reproducible steps: request/response for upload and subsequent access, with minimal PoCs.
+1. Demonstrate execution or rendering of active content: web shell reachable, or SVG/HTML executing JS when viewed
+2. Show filter bypass: upload accepted despite restrictions with evidence on retrieval
+3. Prove header weaknesses: inline rendering without nosniff or missing attachment
+4. Show race or pipeline gap: access before AV/CDR; extraction outside intended directory
+5. Provide reproducible steps: request/response for upload and subsequent access
 
 ## False Positives
 
 - Upload stored but never served back; or always served as attachment with strict nosniff
-- Converters run in locked-down sandboxes with no external IO and no script engines; no path traversal on archive extraction
+- Converters run in locked-down sandboxes with no external IO and no script engines
 - AV/CDR blocks the payload and quarantines; access before scan is impossible by design
 
 ## Impact
@@ -170,21 +168,21 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 - Remote code execution on application stack or media toolchain host
 - Persistent cross-site scripting and session/token exfiltration via served uploads
 - Malware distribution via public storage/CDN; brand/reputation damage
-- Data loss or corruption via overwrite/zip slip; service degradation via zip bombs or oversized assets
+- Data loss or corruption via overwrite/zip slip; service degradation via zip bombs
 
 ## Pro Tips
 
-1. Keep PoCs minimal: tiny SVG/HTML for XSS, a single-line PHP/ASP where relevant, and benign magic-byte polyglots.
-2. Always capture download response headers and final MIME from the server/CDN; that decides browser behavior.
-3. Prefer transforming risky formats to safe renderings (SVG→PNG) rather than attempting complex sanitization.
-4. In presigned flows, constrain all headers and object keys server-side; ignore client-supplied ACL and metadata.
-5. For archives, extract in a chroot/jail with explicit allowlist; drop symlinks and reject traversal.
-6. Test finalize/complete steps in resumable flows; many validations only run on init, not at completion.
-7. Verify background processors with EICAR and tiny polyglots; ensure quarantine gates access until safe.
-8. When you cannot get execution, aim for stored XSS or header-driven script execution; both are impactful.
-9. Validate that CDNs honor attachment/nosniff and do not override Content-Type/Disposition.
-10. Document full pipeline behavior per asset type; defenses must match actual processors and serving paths.
+1. Keep PoCs minimal: tiny SVG/HTML for XSS, a single-line PHP/ASP where relevant
+2. Always capture download response headers and final MIME; that decides browser behavior
+3. Prefer transforming risky formats to safe renderings (SVG→PNG) rather than complex sanitization
+4. In presigned flows, constrain all headers and object keys server-side
+5. For archives, extract in a chroot/jail with explicit allowlist; drop symlinks and reject traversal
+6. Test finalize/complete steps in resumable flows; many validations only run on init
+7. Verify background processors with EICAR and tiny polyglots
+8. When you cannot get execution, aim for stored XSS or header-driven script execution
+9. Validate that CDNs honor attachment/nosniff
+10. Document full pipeline behavior per asset type
 
-## Remember
+## Summary
 
 Secure uploads are a pipeline property. Enforce strict type, size, and header controls; transform or strip active content; never execute or inline-render untrusted uploads; and keep storage private with controlled, signed access.

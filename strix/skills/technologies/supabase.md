@@ -1,191 +1,268 @@
-# SUPABASE — ADVERSARIAL TESTING AND EXPLOITATION
+---
+name: supabase
+description: Supabase security testing covering Row Level Security, PostgREST, Edge Functions, and service key exposure
+---
 
-## Critical
+# Supabase
 
-Supabase exposes Postgres through PostgREST, Realtime, GraphQL, Storage, Auth (GoTrue), and Edge Functions. Most impactful findings come from mis-scoped Row Level Security (RLS), unsafe RPCs, leaked service_role keys, lax Storage policies, GraphQL overfetching, and Edge Functions trusting headers or tokens without binding to issuer/audience/tenant.
+Security testing for Supabase applications. Focus on mis-scoped Row Level Security (RLS), unsafe RPCs, leaked `service_role` keys, lax Storage policies, and Edge Functions trusting headers without binding to issuer/audience/tenant.
 
-## Scope
+## Attack Surface
 
+**Data Access**
 - PostgREST: table CRUD, filters, embeddings, RPC (remote functions)
-- RLS: row ownership/tenant isolation via policies and auth.uid()
-- Storage: buckets, objects, signed URLs, public/private policies
-- Realtime: replication subscriptions, broadcast/presence channels
 - GraphQL: pg_graphql over Postgres schema with RLS interaction
+- Realtime: replication subscriptions, broadcast/presence channels
+
+**Storage**
+- Buckets, objects, signed URLs, public/private policies
+
+**Authentication**
 - Auth (GoTrue): JWTs, cookie/session, magic links, OAuth flows
+
+**Server-Side**
 - Edge Functions (Deno): server-side code calling Supabase with secrets
-
-## Methodology
-
-1. Inventory surfaces: REST /rest/v1, Storage /storage/v1, GraphQL /graphql/v1, Realtime wss, Auth /auth/v1, Functions https://<project>.functions.supabase.co/.
-2. Obtain tokens for: unauth (anon), basic user, other user, and (if disclosed) admin/staff; enumerate anon key exposure and verify if service_role leaked anywhere.
-3. Build a Resource × Action × Principal matrix and test each via REST and GraphQL. Confirm parity across channels and content-types (json/form/multipart).
-4. Start with list/search/export endpoints to gather IDs, then attempt direct reads/writes across principals, tenants, and transports. Validate RLS and function guards.
 
 ## Architecture
 
-- Project endpoints: https://<ref>.supabase.co; REST at /rest/v1/<table>, RPC at /rest/v1/rpc/<fn>.
-- Headers: apikey: <anon-or-service>, Authorization: Bearer <JWT>. Anon key only identifies the project; JWT binds user context.
-- Roles: anon, authenticated; service_role bypasses RLS and must never be client-exposed.
-- auth.uid(): current user UUID claim; policies must never trust client-supplied IDs over server context.
+**Endpoints**
+- REST: `https://<ref>.supabase.co/rest/v1/<table>`
+- RPC: `https://<ref>.supabase.co/rest/v1/rpc/<fn>`
+- Storage: `https://<ref>.supabase.co/storage/v1`
+- GraphQL: `https://<ref>.supabase.co/graphql/v1`
+- Realtime: `wss://<ref>.supabase.co/realtime/v1`
+- Auth: `https://<ref>.supabase.co/auth/v1`
+- Functions: `https://<ref>.functions.supabase.co/`
 
-## Rls
+**Headers**
+- `apikey: <anon-or-service>` — identifies project
+- `Authorization: Bearer <JWT>` — binds user context
 
-- Enable RLS on every non-public table; absence or “permit-all” policies → bulk exposure.
-- Common gaps:
-  - Policies check auth.uid() for read but forget UPDATE/DELETE/INSERT.
-  - Missing tenant constraints (org_id/tenant_id) allow cross-tenant reads/writes.
-  - Policies rely on client-provided columns (user_id in payload) instead of deriving from JWT.
-  - Complex joins where the effective policy is applied after filters, enabling inference via counts or projections.
-- Tests:
-  - Compare results for two users: GET /rest/v1/<table>?select=*&Prefer=count=exact; diff row counts and IDs.
-  - Try cross-tenant: add &org_id=eq.<other_org> or use or=(org_id.eq.other,org_id.is.null).
-  - Write-path: PATCH/DELETE single row with foreign id; INSERT with foreign owner_id then read.
+**Roles**
+- `anon`, `authenticated` — standard roles
+- `service_role` — bypasses RLS, must never be client-exposed
 
-## Postgrest And Rest
+**Key Principle**
+`auth.uid()` returns current user UUID from JWT. Policies must never trust client-supplied IDs over server context.
 
-- Filters: eq, neq, lt, gt, ilike, or, is, in; embed relations with select=*,profile(*); exploit embeddings to overfetch linked rows if resolvers skip per-row checks.
-- Headers to know: Prefer: return=representation (echo writes), Prefer: count=exact (exposure via counts), Accept-Profile/Content-Profile to select schema.
-- IDOR patterns: /rest/v1/<table>?select=*&id=eq.<other_id>; query alternative keys (slug, email) and composite keys.
-- Search leaks: generous LIKE/ILIKE filters + lack of RLS → mass disclosure.
-- Mass assignment: if RPC not used, PATCH can update unintended columns; verify restricted columns via database permissions/policies.
+## High-Value Targets
 
-## Rpc Functions
+- Tables with sensitive data (users, orders, payments, PII)
+- RPC functions (especially `SECURITY DEFINER`)
+- Storage buckets with private files
+- Edge Functions with `service_role` access
+- Export/report endpoints generating signed outputs
+- Admin/staff routes and privilege-granting endpoints
 
-- RPC endpoints map to SQL functions. SECURITY DEFINER bypasses RLS unless carefully coded; SECURITY INVOKER respects caller.
-- Anti-patterns:
-  - SECURITY DEFINER + missing owner checks → vertical/horizontal bypass.
-  - set search_path left to public; function resolves unsafe objects.
-  - Trusting client-supplied user_id/tenant_id rather than auth.uid().
-- Tests:
-  - Call /rest/v1/rpc/<fn> as different users with foreign ids in body.
-  - Remove or alter JWT entirely (Authorization: Bearer <anon>) to see if function still executes.
-  - Validate that functions perform explicit ownership/tenant checks inside SQL, not only in docs.
+## Reconnaissance
 
-## Storage
+**Enumerate Surfaces**
+```
+/rest/v1/<table>
+/rest/v1/rpc/<fn>
+/storage/v1/object/public/<bucket>/
+/storage/v1/object/list/<bucket>?prefix=
+/graphql/v1
+/auth/v1
+```
 
-- Buckets: public vs private; objects live in storage.objects with RLS-like policies.
-- Find misconfigs:
-  - Public buckets holding sensitive data: GET https://<ref>.supabase.co/storage/v1/object/public/<bucket>/<path>
-  - Signed URLs with long TTL and no audience binding; reuse/guess tokens across tenants/paths.
-  - Listing prefixes without auth: /storage/v1/object/list/<bucket>?prefix=
-  - Path confusion: mixed case, URL-encoding, “..” segments rejected at UI but accepted by API.
-- Abuse vectors:
-  - Content-type/XSS: upload HTML/SVG served as text/html or image/svg+xml; confirm X-Content-Type-Options: nosniff and Content-Disposition: attachment.
-  - Signed URL replay across accounts/buckets if validation is lax.
+**Obtain Principals**
+- Unauthenticated (anon key only)
+- Basic user A, user B
+- Admin/staff (if available)
+- Check if `service_role` key leaked in client bundle or Edge Function responses
 
-## Realtime
+## Key Vulnerabilities
 
-- Endpoint: wss://<ref>.supabase.co/realtime/v1. Join channels with apikey + Authorization.
-- Risks:
-  - Channel names derived from table/schema/filters leaking other users’ updates when RLS or channel guards are weak.
-  - Broadcast/presence channels allowing cross-room join/publish without auth checks.
-- Tests:
-  - Subscribe to public:realtime changes on protected tables; confirm row data visibility aligns with RLS.
-  - Attempt joining other users’ presence/broadcast channels (e.g., room:<user_id>, org:<id>).
+### Row Level Security (RLS)
 
-## Graphql
+Enable RLS on every non-public table; absence or "permit-all" policies → bulk exposure.
 
-- Endpoint: /graphql/v1 using pg_graphql with RLS. Risks:
-  - Introspection reveals schema relations; ensure it’s intentional.
-  - Overfetch via nested relations where field resolvers fail to re-check ownership/tenant.
-  - Global node IDs (if implemented) leaked and reusable via different viewers.
-- Tests:
-  - Compare REST vs GraphQL responses for the same principal and query shape.
-  - Query deep nested fields and connections; verify RLS holds at each edge.
+**Common Gaps**
+- Policies check `auth.uid()` for SELECT but forget UPDATE/DELETE/INSERT
+- Missing tenant constraints (`org_id`/`tenant_id`) allow cross-tenant access
+- Policies rely on client-provided columns (`user_id` in payload) instead of JWT
+- Complex joins where policy is applied after filters, enabling inference via counts
 
-## Auth And Tokens
+**Tests**
+```bash
+# Compare row counts for two users
+GET /rest/v1/<table>?select=*&Prefer=count=exact
 
-- GoTrue issues JWTs with claims (sub=uid, role, aud=authenticated). Validate on server: issuer, audience, exp, signature, and tenant context.
-- Pitfalls:
-  - Storing tokens in localStorage → XSS exfiltration; refresh mismanagement leading to long-lived sessions.
-  - Treating apikey as identity; it is project-scoped, not user identity.
-  - Exposing service_role key in client bundle or Edge Function responses.
-- Tests:
-  - Replay tokens across services; check audience/issuer pinning.
-  - Try downgraded tokens (expired/other audience) against custom endpoints.
+# Cross-tenant probe
+GET /rest/v1/<table>?org_id=eq.<other_org>
+GET /rest/v1/<table>?or=(org_id.eq.other,org_id.is.null)
 
-## Edge Functions
+# Write-path
+PATCH /rest/v1/<table>?id=eq.<foreign_id>
+DELETE /rest/v1/<table>?id=eq.<foreign_id>
+POST /rest/v1/<table> with foreign owner_id
+```
 
-- Deno-based functions often initialize server-side Supabase client with service_role. Risks:
-  - Trusting Authorization/apikey headers without verifying JWT against issuer/audience.
-  - CORS: wildcard origins with credentials; reflected Authorization in responses.
-  - SSRF via fetch; secrets exposed via error traces or logs.
-- Tests:
-  - Call functions with and without Authorization; compare behavior.
-  - Try foreign resource IDs in function payloads; verify server re-derives user/tenant from JWT.
-  - Attempt to reach internal endpoints (metadata services, project endpoints) via function fetch.
+### PostgREST & REST
 
-## Tenant Isolation
+**Filters**
+- `eq`, `neq`, `lt`, `gt`, `ilike`, `or`, `is`, `in`
+- Embed relations: `select=*,profile(*)`—exploits overfetch if resolvers skip per-row checks
+- Search leaks: generous `LIKE`/`ILIKE` filters combined with missing RLS → mass disclosure via wildcard queries
 
-- Ensure every query joins or filters by tenant_id/org_id derived from JWT context, not client input.
-- Tests:
-  - Change subdomain/header/path tenant selectors while keeping JWT tenant constant; look for cross-tenant data.
-  - Export/report endpoints: confirm queries execute under caller scope; signed outputs must encode tenant and short TTL.
+**Headers**
+- `Prefer: return=representation` — echo writes
+- `Prefer: count=exact` — exposure via counts
+- `Accept-Profile`/`Content-Profile` — select schema
+
+**IDOR Patterns**
+```
+/rest/v1/<table>?select=*&id=eq.<other_id>
+/rest/v1/<table>?select=*&slug=eq.<other_slug>
+/rest/v1/<table>?select=*&email=eq.<other_email>
+```
+
+**Mass Assignment**
+- If RPC not used, PATCH can update unintended columns
+- Verify restricted columns via database permissions/policies
+
+### RPC Functions
+
+RPC endpoints map to SQL functions. `SECURITY DEFINER` bypasses RLS unless carefully coded; `SECURITY INVOKER` respects caller.
+
+**Anti-Patterns**
+- `SECURITY DEFINER` + missing owner checks → vertical/horizontal bypass
+- `set search_path` left to public; function resolves unsafe objects
+- Trusting client-supplied `user_id`/`tenant_id` rather than `auth.uid()`
+
+**Tests**
+```bash
+# Call as different users with foreign IDs
+POST /rest/v1/rpc/<fn> {"user_id": "<foreign_id>"}
+
+# Remove JWT entirely
+Authorization: Bearer <anon_token>
+```
+Verify functions perform explicit ownership/tenant checks inside SQL.
+
+### Storage
+
+**Buckets**
+- Public vs private; objects in `storage.objects` with RLS-like policies
+
+**Misconfigurations**
+```bash
+# Public bucket with sensitive data
+GET /storage/v1/object/public/<bucket>/<path>
+
+# List prefixes without auth
+GET /storage/v1/object/list/<bucket>?prefix=
+
+# Signed URL reuse across tenants/paths
+```
+
+**Content-Type Abuse**
+- Upload HTML/SVG served as `text/html` or `image/svg+xml`
+- Verify `X-Content-Type-Options: nosniff` and `Content-Disposition: attachment`
+
+**Path Confusion**
+- Mixed case, URL-encoding, `..` segments may be rejected at UI but accepted by API
+- Test path normalization differences between client validation and server handling
+
+### Realtime
+
+**Endpoint**: `wss://<ref>.supabase.co/realtime/v1`
+
+**Risks**
+- Channel names derived from table/schema/filters leaking other users' updates when RLS or channel guards are weak
+- Broadcast/presence channels allowing cross-room join/publish without auth
+
+**Tests**
+- Subscribe to `public:realtime` changes on protected tables; confirm visibility aligns with RLS
+- Attempt joining other users' channels: `room:<user_id>`, `org:<org_id>`
+
+### GraphQL
+
+**Endpoint**: `/graphql/v1` using pg_graphql with RLS
+
+**Risks**
+- Introspection reveals schema relations
+- Overfetch via nested relations where resolvers skip per-row ownership checks
+- Global node IDs leaked and reusable via different viewers
+
+**Tests**
+- Compare REST vs GraphQL responses for same principal and query shape
+- Query deep nested fields; verify RLS holds at each edge
+
+### Auth & Tokens
+
+GoTrue issues JWTs with claims (`sub=uid`, `role`, `aud=authenticated`).
+
+**Verification Requirements**
+- Issuer, audience, expiration, signature, tenant context
+
+**Pitfalls**
+- Storing tokens in localStorage → XSS exfiltration
+- Treating `apikey` as identity (it's project-scoped, not user identity)
+- Exposing `service_role` key in client bundle or Edge Function responses
+- Refresh token mismanagement leading to long-lived sessions beyond intended TTL
+
+**Tests**
+- Replay tokens across services; check audience/issuer pinning
+- Try downgraded tokens (expired/other audience) against custom endpoints
+
+### Edge Functions
+
+Deno-based functions often initialize Supabase client with `service_role`.
+
+**Risks**
+- Trusting Authorization/apikey headers without verifying JWT against issuer/audience
+- CORS: wildcard origins with credentials; reflected Authorization in responses
+- SSRF via fetch; secrets exposed via error traces or logs
+
+**Tests**
+- Call functions with and without Authorization; compare behavior
+- Try foreign resource IDs in payloads; verify server re-derives user/tenant from JWT
+- Attempt to reach internal endpoints (metadata services) via function fetch
+
+### Tenant Isolation
+
+Ensure every query joins or filters by `tenant_id`/`org_id` derived from JWT context, not client input.
+
+**Tests**
+- Change subdomain/header/path tenant selectors while keeping JWT tenant constant
+- Export/report endpoints: confirm queries execute under caller scope
 
 ## Bypass Techniques
 
-- Content-type switching: application/json ↔ application/x-www-form-urlencoded ↔ multipart/form-data to hit different code paths.
-- Parameter pollution: duplicate keys in JSON/query; PostgREST chooses last/first depending on parser.
-- GraphQL+REST parity probing: protections often drift; fetch via the weaker path.
-- Race windows: parallel writes to bypass post-insert ownership updates.
+- Content-type switching: `application/json` ↔ `application/x-www-form-urlencoded` ↔ `multipart/form-data`
+- Parameter pollution: duplicate keys in JSON/query (PostgREST chooses last/first depending on parser)
+- GraphQL+REST parity probing: protections often drift; fetch via the weaker path
+- Race windows: parallel writes to bypass post-insert ownership updates
 
-## Blind Channels
+## Blind Enumeration
 
-- Use Prefer: count=exact and ETag/length diffs to infer unauthorized rows.
-- Conditional requests (If-None-Match) to detect object existence without content exposure.
-- Storage signed URLs: timing/length deltas to map valid vs invalid tokens.
+- Use `Prefer: count=exact` and ETag/length diffs to infer unauthorized rows
+- Conditional requests (`If-None-Match`) to detect object existence
+- Storage signed URLs: timing/length deltas to map valid vs invalid tokens
 
-## Tooling And Automation
+## Testing Methodology
 
-- PostgREST: httpie/curl + jq; enumerate tables with known names; fuzz filters (or=, ilike, neq, is.null).
-- GraphQL: graphql-inspector, voyager; build deep queries to test field-level enforcement; complexity/batching tests.
-- Realtime: custom ws client; subscribe to suspicious channels/tables; diff payloads per principal.
-- Storage: enumerate bucket listing APIs; script signed URL generation/use patterns.
-- Auth/JWT: jwt-cli/jose to validate audience/issuer; replay against Edge Functions.
-- Policy diffing: maintain request sets per role and compare results across releases.
+1. **Inventory surfaces** - Map REST, Storage, GraphQL, Realtime, Auth, Functions endpoints
+2. **Obtain principals** - Collect tokens for anon, user A/B, admin; check for `service_role` leaks
+3. **Build matrix** - Resource × Action × Principal
+4. **REST vs GraphQL** - Test both to find parity gaps
+5. **Seed IDs** - Start with list/search endpoints to gather IDs
+6. **Cross-principal** - Swap IDs, tenants, and transports across principals
 
-## Reviewer Checklist
+## Tooling
 
-- Are all non-public tables RLS-enabled with explicit SELECT/INSERT/UPDATE/DELETE policies?
-- Do policies derive subject/tenant from JWT (auth.uid(), tenant claim) rather than client payload?
-- Do RPC functions run as SECURITY INVOKER, or if DEFINER, do they enforce ownership/tenant inside?
-- Are Storage buckets private by default, with short-lived signed URLs bound to tenant/context?
-- Does Realtime enforce RLS-equivalent filtering for subscriptions and block cross-room joins?
-- Is GraphQL parity verified with REST; are nested resolvers guarded per field?
-- Are Edge Functions verifying JWT (issuer/audience) and never exposing service_role to clients?
-- Are CDN/cache keys bound to Authorization/tenant to prevent cache leaks?
+- PostgREST: httpie/curl + jq; enumerate tables; fuzz filters (`or=`, `ilike`, `neq`, `is.null`)
+- GraphQL: graphql-inspector, voyager; deep queries for field-level enforcement
+- Realtime: custom ws client; subscribe to suspicious channels; diff payloads per principal
+- Storage: enumerate bucket listing APIs; script signed URL patterns
+- Auth/JWT: jwt-cli/jose to validate audience/issuer; replay against Edge Functions
+- Policy diffing: maintain request sets per role; compare results across releases
 
-## Validation
+## Validation Requirements
 
-1. Provide owner vs non-owner requests for REST/GraphQL showing unauthorized access (content or metadata).
-2. Demonstrate a mis-scoped RPC or Storage signed URL usable by another user/tenant.
-3. Confirm Realtime or GraphQL exposure matches missing policy checks.
-4. Document minimal reproducible requests and role contexts used.
-
-## False Positives
-
-- Tables intentionally public (documented) with non-sensitive content.
-- RLS-enabled tables returning only caller-owned rows; mismatched UI not backed by API responses.
-- Signed URLs with very short TTL and audience binding.
-- Edge Functions verifying tokens and re-deriving context before acting.
-
-## Impact
-
-- Cross-account/tenant data exposure and unauthorized state changes.
-- Exfiltration of PII/PHI/PCI, financial and billing artifacts, private files.
-- Privilege escalation via RPC and Edge Functions; durable access via long-lived tokens.
-- Regulatory and contractual violations stemming from tenant isolation failures.
-
-## Pro Tips
-
-1. Start with /rest/v1 list/search; counts and embeddings reveal policy drift fast.
-2. Treat UUIDs and signed URLs as untrusted; validate binding to subject/tenant and TTL.
-3. Focus on RPC and Edge Functions—they often centralize business logic and skip RLS.
-4. Test GraphQL and Realtime parity with REST; differences are where vulnerabilities hide.
-5. Keep role-separated request corpora and diff responses across deployments.
-6. Never assume apikey == identity; only JWT binds subject. Prove it.
-7. Prefer concise PoCs: one request per role that clearly shows the unauthorized delta.
-
-## Remember
-
-RLS must bind subject and tenant on every path, and server-side code (RPC/Edge) must re-derive identity from a verified token. Any gap in binding, audience/issuer verification, or per-field enforcement becomes a cross-account or cross-tenant vulnerability.
+- Owner vs non-owner requests for REST/GraphQL showing unauthorized access (content or metadata)
+- Mis-scoped RPC or Storage signed URL usable by another user/tenant
+- Realtime or GraphQL exposure matching missing policy checks
+- Minimal reproducible requests with role contexts documented

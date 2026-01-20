@@ -1,146 +1,191 @@
-# FASTAPI — ADVERSARIAL TESTING PLAYBOOK
+---
+name: fastapi
+description: Security testing playbook for FastAPI applications covering ASGI, dependency injection, and API vulnerabilities
+---
 
-## Critical
+# FastAPI
 
-FastAPI (on Starlette) spans HTTP, WebSocket, and background tasks with powerful dependency injection and automatic OpenAPI. Security breaks where identity, authorization, and validation drift across routers, middlewares, proxies, and channels. Treat every dependency, header, and object reference as untrusted until bound to the caller and tenant.
+Security testing for FastAPI/Starlette applications. Focus on dependency injection flaws, middleware gaps, and authorization drift across routers and channels.
 
-## Surface Map
+## Attack Surface
 
-- ASGI stack: Starlette middlewares (CORS, TrustedHost, ProxyHeaders, Session), exception handlers, lifespan events
-- Routers/sub-apps: APIRouter with prefixes/tags, mounted apps (StaticFiles, admin subapps), `include_router`, versioned paths
-- Security and DI: `Depends`, `Security`, `OAuth2PasswordBearer`, `HTTPBearer`, scopes, per-router vs per-route dependencies
-- Models and validation: Pydantic v1/v2 models, unions/Annotated, custom validators, extra fields policy, coercion
-- Docs and schema: `/openapi.json`, `/docs`, `/redoc`, alternative docs_url/redoc_url, schema extensions
-- Files and static: `UploadFile`, `File`, `FileResponse`, `StaticFiles` mounts, template engines (`Jinja2Templates`)
-- Channels: HTTP (sync/async), WebSocket, StreamingResponse/SSE, BackgroundTasks/Task queues
-- Deployment: Uvicorn/Gunicorn, reverse proxies/CDN, TLS termination, header trust
+**Core Components**
+- ASGI middlewares: CORS, TrustedHost, ProxyHeaders, Session, exception handlers, lifespan events
+- Routers and sub-apps: APIRouter prefixes/tags, mounted apps (StaticFiles, admin), `include_router`, versioned paths
+- Dependency injection: `Depends`, `Security`, `OAuth2PasswordBearer`, `HTTPBearer`, scopes
 
-## Methodology
+**Data Handling**
+- Pydantic models: v1/v2, unions/Annotated, custom validators, extra fields policy, coercion
+- File operations: UploadFile, File, FileResponse, StaticFiles mounts
+- Templates: Jinja2Templates rendering
 
-1. Enumerate routes from OpenAPI and via crawling; diff with 404-fuzzing for hidden endpoints (`include_in_schema=False`).
-2. Build a Principal × Channel × Content-Type matrix (unauth, user, staff/admin; HTTP vs WebSocket; JSON/form/multipart) and capture baselines.
-3. For each route, identify dependencies (router-level and route-level). Attempt to satisfy security dependencies minimally, then mutate context (tokens, scopes, tenant headers) and object IDs.
-4. Compare behavior across deployments: dev/stage/prod often differ in middlewares (CORS, TrustedHost, ProxyHeaders) and docs exposure.
+**Channels**
+- HTTP (sync/async), WebSocket, SSE/StreamingResponse
+- BackgroundTasks and task queues
 
-## High Value Targets
+**Deployment**
+- Uvicorn/Gunicorn, reverse proxies/CDN, TLS termination, header trust
 
-- `/openapi.json`, `/docs`, `/redoc` in production (full attack surface map; securitySchemes and server URLs)
-- Auth flows: token endpoints, session/cookie bridges, OAuth device/PKCE, scope checks
+## High-Value Targets
+
+- `/openapi.json`, `/docs`, `/redoc` in production (full attack surface map, securitySchemes, server URLs)
+- Auth flows: token endpoints, session/cookie bridges, OAuth device/PKCE
 - Admin/staff routers, feature-flagged routes, `include_in_schema=False` endpoints
 - File upload/download, import/export/report endpoints, signed URL generators
-- WebSocket endpoints carrying notifications, admin channels, or commands
-- Background job creation/fetch (`/jobs/{id}`, `/tasks/{id}/result`)
-- Mounted subapps (admin UI, storage browsers, metrics/health endpoints)
+- WebSocket endpoints (notifications, admin channels, commands)
+- Background job endpoints (`/jobs/{id}`, `/tasks/{id}/result`)
+- Mounted subapps (admin UI, storage browsers, metrics/health)
 
-## Advanced Techniques
+## Reconnaissance
 
-### Openapi And Docs
-
-- Try default and alternate locations: `/openapi.json`, `/docs`, `/redoc`, `/api/openapi.json`, `/internal/openapi.json`.
-- If OpenAPI is exposed, mine: paths, parameter names, securitySchemes, scopes, servers; find endpoints hidden in UI but present in schema.
-- Schema drift: endpoints with `include_in_schema=False` won’t appear—use wordlists based on tags/prefixes and common admin/debug names.
-
-### Dependency Injection And Security
-
-- Router vs route dependencies: routes may miss security dependencies present elsewhere; check for unprotected variants of protected actions.
-- Minimal satisfaction: `OAuth2PasswordBearer` only yields a token string—verify if any route treats token presence as auth without verification.
-- Scope checks: ensure scopes are enforced by the dependency (e.g., `Security(...)`); routes using `Depends` instead may ignore requested scopes.
-- Header/param aliasing: DI sources headers/cookies/query by name; try case variations and duplicates to influence which value binds.
-
-### Auth And Jwt
-
-- Token misuse: developers may decode JWTs without verifying signature/issuer/audience; attempt unsigned/attacker-signed tokens and cross-service audiences.
-- Algorithm/key confusion: try HS/RS cross-use if verification is not pinned; inject `kid` header targeting local files/paths where custom key lookup exists.
-- Session bridges: check cookies set via SessionMiddleware or custom cookies. Attempt session fixation and forging if weak `secret_key` or predictable signing is used.
-- Device/PKCE flows: verify strict PKCE S256 and state/nonce enforcement if OAuth/OIDC is integrated.
-
-### Cors And Csrf
-
-- CORS reflection: broad `allow_origin_regex` or mis-specified origins can permit cross-site reads; test arbitrary Origins and credentialed requests.
-- CSRF: FastAPI/Starlette lack built-in CSRF. If cookies carry auth, attempt state-changing requests via cross-site forms/XHR; validate origin header checks and same-site settings.
-
-### Proxy And Host Trust
-
-- ProxyHeadersMiddleware: if enabled without network boundary, spoof `X-Forwarded-For/Proto` to influence auth/IP gating and secure redirects.
-- TrustedHostMiddleware absent or lax: perform Host header poisoning; attempt password reset links / absolute URL generation under attacker host.
-- Upstream/CDN cache keys: ensure Vary on Authorization/Cookie/Tenant; try cache key confusion to leak personalized responses.
-
-### Static And Uploads
-
-- UploadFile.filename: attempt path traversal and control characters; verify server joins/sanitizes and enforces storage roots.
-- FileResponse/StaticFiles: confirm directory boundaries and index/auto-listing; probe symlinks and case/encoding variants.
-- Parser differentials: send JSON vs multipart for the same route to hit divergent code paths/validators.
-
-### Template Injection
-
-- Jinja2 templates via `TemplateResponse`: search for unescaped injection in variables and filters. Probe with minimal expressions:
+**OpenAPI Mining**
 ```
-- `{{7*7}}` → arithmetic confirmation
-- `{{cycler.__init__.__globals__['os'].popen('id').read()}}` for RCE in unsafe contexts
+GET /openapi.json
+GET /docs
+GET /redoc
+GET /api/openapi.json
+GET /internal/openapi.json
 ```
-- Confirm autoescape and strict sandboxing; inspect custom filters/globals.
 
-### Ssrf And Outbound
+Extract: paths, parameters, securitySchemes, scopes, servers. Endpoints with `include_in_schema=False` won't appear—fuzz based on discovered prefixes and common admin/debug names.
 
-- Endpoints fetching user-supplied URLs (imports, previews, webhooks validation): test loopback/RFC1918/IPv6, redirects, DNS rebinding, and header control.
-- Library behavior (httpx/requests): examine redirect policy, header forwarding, and protocol support; try `file://`, `ftp://`, or gopher-like shims if custom clients are used.
+**Dependency Mapping**
 
-### Websockets
+For each route, identify:
+- Router-level dependencies (applied to all routes)
+- Route-level dependencies (per endpoint)
+- Which dependencies enforce auth vs just parse input
 
-- Authenticate each connection (query/header/cookie). Attempt cross-origin handshakes and cookie-bearing WS from untrusted origins.
-- Topic naming and authorization: if using user/tenant IDs in channels, subscribe/publish to foreign IDs.
-- Message-level checks: ensure per-message authorization, not only at handshake.
+## Key Vulnerabilities
 
-### Background Tasks And Jobs
+### Authentication & Authorization
 
-- BackgroundTasks that act on IDs must re-enforce ownership/tenant at execution time. Attempt to fetch/cancel others’ jobs by referencing their IDs.
-- Export/import pipelines: test job/result endpoints for IDOR and cross-tenant leaks.
+**Dependency Injection Gaps**
+- Routes missing security dependencies present on other routes
+- `Depends` used instead of `Security` (ignores scope enforcement)
+- Token presence treated as authentication without signature verification
+- `OAuth2PasswordBearer` only yields a token string—verify routes don't treat presence as auth
 
-### Multi App Mounting
+**JWT Misuse**
+- Decode without verify: test unsigned tokens, attacker-signed tokens
+- Algorithm confusion: HS256/RS256 cross-use if not pinned
+- `kid` header injection for custom key lookup paths
+- Missing issuer/audience validation, cross-service token reuse
 
-- Mounted subapps (e.g., `/admin`, `/static`, `/metrics`) may bypass global middlewares. Confirm middleware parity and auth on mounts.
+**Session Weaknesses**
+- SessionMiddleware with weak `secret_key`
+- Session fixation via predictable signing
+- Cookie-based auth without CSRF protection
+
+**OAuth/OIDC**
+- Device/PKCE flows: verify strict PKCE S256 and state/nonce enforcement
+
+### Access Control
+
+**IDOR via Dependencies**
+- Object IDs in path/query not validated against caller
+- Tenant headers trusted without binding to authenticated user
+- BackgroundTasks acting on IDs without re-validating ownership at execution time
+- Export/import pipelines with IDOR and cross-tenant leaks
+
+**Scope Bypass**
+- Minimal scope satisfaction (any valid token accepted)
+- Router vs route scope enforcement inconsistency
+
+### Input Handling
+
+**Pydantic Exploitation**
+- Type coercion: strings to ints/bools, empty strings to None, truthiness edge cases
+- Extra fields: `extra = "allow"` permits injecting control fields (role, ownerId, scope)
+- Union types and `Annotated`: craft shapes hitting unintended validation branches
+
+**Content-Type Switching**
+```
+application/json ↔ application/x-www-form-urlencoded ↔ multipart/form-data
+```
+Different content types hit different validators or code paths (parser differentials).
+
+**Parameter Manipulation**
+- Case variations in header/cookie names
+- Duplicate parameters exploiting DI precedence
+- Method override via `X-HTTP-Method-Override` (upstream respects, app doesn't)
+
+### CORS & CSRF
+
+**CORS Misconfiguration**
+- Overly broad `allow_origin_regex`
+- Origin reflection without validation
+- Credentialed requests with permissive origins
+- Verify preflight vs actual request deltas
+
+**CSRF Exposure**
+- No built-in CSRF in FastAPI/Starlette
+- Cookie-based auth without origin validation
+- Missing SameSite attribute
+
+### Proxy & Host Trust
+
+**Header Spoofing**
+- ProxyHeadersMiddleware without network boundary: spoof `X-Forwarded-For/Proto` to influence auth/IP gating
+- Absent TrustedHostMiddleware: Host header poisoning in password reset links, absolute URL generation
+- Cache key confusion: missing Vary on Authorization/Cookie/Tenant
+
+### Server-Side Vulnerabilities
+
+**Template Injection (Jinja2)**
+```python
+{{7*7}}  # Arithmetic confirmation
+{{cycler.__init__.__globals__['os'].popen('id').read()}}  # RCE
+```
+Check autoescape settings and custom filters/globals.
+
+**SSRF**
+- User-supplied URLs in imports, previews, webhooks validation
+- Test: loopback, RFC1918, IPv6, redirects, DNS rebinding, header control
+- Library behavior (httpx/requests): redirect policy, header forwarding, protocol support
+- Protocol smuggling: `file://`, `ftp://`, gopher-like shims if custom clients
+
+**File Upload**
+- Path traversal in `UploadFile.filename` with control characters
+- Missing storage root enforcement, symlink following
+- Vary filename encodings, dot segments, NUL-like bytes
+- Verify storage paths and served URLs
+
+### WebSocket Security
+
+- Missing per-connection authentication
+- Cross-origin WebSocket without origin validation
+- Topic/channel IDOR (subscribing to other users' channels)
+- Authorization only at handshake, not per-message
+
+### Mounted Apps
+
+Sub-apps at `/admin`, `/static`, `/metrics` may bypass global middlewares. Verify auth enforcement parity across all mounts.
+
+### Alternative Stacks
+
+- If GraphQL (Strawberry/Graphene) is mounted: validate resolver-level authorization, IDOR on node/global IDs
+- If SQLModel/SQLAlchemy present: probe for raw query usage and row-level authorization gaps
 
 ## Bypass Techniques
 
-- Content-type switching: `application/json` ↔ `application/x-www-form-urlencoded` ↔ `multipart/form-data` to traverse alternate validators/handlers.
-- Parameter duplication and case variants to exploit DI precedence.
-- Method confusion via proxies (e.g., `X-HTTP-Method-Override`) if upstream respects it while app does not.
-- Race windows around dependency-validated state transitions (issue token then mutate with parallel requests).
+- Content-type switching to traverse alternate validators
+- Parameter duplication and case variants exploiting DI precedence
+- Method confusion via proxies (`X-HTTP-Method-Override`)
+- Race windows around dependency-validated state transitions (issue token then mutate with parallel requests)
 
-## Special Contexts
+## Testing Methodology
 
-### Pydantic Edges
+1. **Enumerate** - Fetch OpenAPI, diff with 404-fuzzing for hidden endpoints
+2. **Matrix testing** - Test each route across: unauth/user/admin × HTTP/WebSocket × JSON/form/multipart
+3. **Dependency analysis** - Map which dependencies enforce auth vs parse input
+4. **Cross-environment** - Compare dev/stage/prod for middleware and docs exposure differences
+5. **Channel consistency** - Verify same authorization on HTTP and WebSocket for equivalent operations
 
-- Coercion: strings to ints/bools, empty strings to None; exploit truthiness and boundary conditions.
-- Extra fields: if models allow/ignore extras, sneak in control fields for downstream logic (scope/role/ownerId) that are later trusted.
-- Unions and `Annotated`: craft shapes hitting unintended branches.
+## Validation Requirements
 
-### Graphql And Alt Stacks
-
-- If GraphQL (Strawberry/Graphene) is mounted, validate resolver-level authorization and IDOR on node/global IDs.
-- If SQLModel/SQLAlchemy present, probe for raw query usage and row-level authorization gaps.
-
-## Validation
-
-1. Show unauthorized data access or action with side-by-side owner vs non-owner requests (or different tenants).
-2. Demonstrate cross-channel consistency (HTTP and WebSocket) for the same rule.
-3. Include proof where proxies/headers/caches alter outcomes (Host/XFF/CORS).
-4. Provide minimal payloads confirming template/SSRF execution or token misuse, with safe or OAST-based oracles.
-5. Document exact dependency paths (router-level, route-level) that missed enforcement.
-
-## Pro Tips
-
-1. Always fetch `/openapi.json` first; it’s the blueprint. If hidden, brute-force likely admin/report/export routes.
-2. Trace dependencies per route; map which ones enforce auth/scopes vs merely parse input.
-3. Treat tokens returned by `OAuth2PasswordBearer` as untrusted strings—verify actual signature and claims on the server.
-4. Test CORS with arbitrary Origins and with credentials; verify preflight and actual request deltas.
-5. Add Host and X-Forwarded-* fuzzing when behind proxies; watch for redirect/absolute URL differences.
-6. For uploads, vary filename encodings, dot segments, and NUL-like bytes; verify storage paths and served URLs.
-7. Use content-type toggling to hit alternate validators and code paths.
-8. For WebSockets, test cookie-based auth, origin restrictions, and per-message authorization.
-9. Mine client bundles/env for secret paths and preview/admin flags; many teams hide routes via UI only.
-10. Keep PoCs minimal and durable (IDs, headers, small payloads) and prefer reproducible diffs over noisy payloads.
-
-## Remember
-
-Authorization and validation must be enforced in the dependency graph and at the resource boundary for every path and channel. If any route, middleware, or mount skips binding subject, action, and object/tenant, expect cross-user and cross-tenant breakage.
+- Side-by-side requests showing unauthorized access (owner vs non-owner, cross-tenant)
+- Cross-channel proof (HTTP and WebSocket for same rule)
+- Header/proxy manipulation showing altered outcomes (Host/XFF/CORS)
+- Minimal payloads for template injection, SSRF, token misuse with safe/OAST oracles
+- Document exact dependency paths (router-level, route-level) that missed enforcement

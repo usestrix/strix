@@ -1,145 +1,157 @@
-# DEEP SCAN MODE
+---
+name: deep
+description: Exhaustive security assessment with maximum coverage, depth, and vulnerability chaining
+---
 
-Exhaustive Security Assessment
+# Deep Testing Mode
 
-This mode is for thorough security reviews where finding vulnerabilities is critical.
+Exhaustive security assessment. Maximum coverage, maximum depth. Finding what others miss is the goal.
 
-PHASE 1: EXHAUSTIVE RECONNAISSANCE AND MAPPING
-Spend significant effort understanding the target before exploitation.
+## Approach
 
-For whitebox (source code available):
-- Map EVERY file, module, and code path in the repository
+Thorough understanding before exploitation. Test every parameter, every endpoint, every edge case. Chain findings for maximum impact.
+
+## Phase 1: Exhaustive Reconnaissance
+
+**Whitebox (source available)**
+- Map every file, module, and code path in the repository
 - Trace all entry points from HTTP handlers to database queries
-- Identify all authentication mechanisms and their implementations
-- Map all authorization checks and understand the access control model
+- Document all authentication mechanisms and implementations
+- Map authorization checks and access control model
 - Identify all external service integrations and API calls
-- Analyze all configuration files for secrets and misconfigurations
-- Review all database schemas and understand data relationships
-- Map all background jobs, cron tasks, and async processing
+- Analyze configuration for secrets and misconfigurations
+- Review database schemas and data relationships
+- Map background jobs, cron tasks, async processing
 - Identify all serialization/deserialization points
-- Review all file handling operations (upload, download, processing)
+- Review file handling: upload, download, processing
 - Understand the deployment model and infrastructure assumptions
-- Check all dependency versions against known CVE databases
+- Check all dependency versions against CVE databases
 
-For blackbox (no source code):
-- Exhaustive subdomain enumeration using multiple sources and tools
-- Full port scanning to identify all services
+**Blackbox (no source)**
+- Exhaustive subdomain enumeration with multiple sources and tools
+- Full port scanning across all services
 - Complete content discovery with multiple wordlists
-- Technology fingerprinting on all discovered assets
-- API endpoint discovery through documentation, JavaScript analysis, and fuzzing
+- Technology fingerprinting on all assets
+- API discovery via docs, JavaScript analysis, fuzzing
 - Identify all parameters including hidden and rarely-used ones
-- Map all user roles by testing with different account types
-- Understand rate limiting, WAF rules, and security controls in place
-- Document the complete application architecture as understood from outside
+- Map all user roles with different account types
+- Document rate limiting, WAF rules, security controls
+- Document complete application architecture as understood from outside
 
-EXECUTION STRATEGY - HIERARCHICAL AGENT SWARM:
-After Phase 1 (Recon & Mapping) is complete:
-1. Divide the application into major components/parts (e.g., Auth System, Payment Gateway, User Profile, Admin Panel)
-2. Spawn a specialized subagent for EACH major component
-3. Each component agent must then:
-   - Further subdivide its scope into subparts (e.g., Login Form, Registration API, Password Reset)
-   - Spawn sub-subagents for each distinct subpart
-4. At the lowest level (specific functionality), spawn specialized agents for EACH potential vulnerability type:
-   - "Auth System" → "Login Form" → "SQLi Agent", "XSS Agent", "Auth Bypass Agent"
-   - This creates a massive parallel swarm covering every angle
-   - Do NOT overload a single agent with multiple vulnerability types
-   - Scale horizontally to maximum capacity
+## Phase 2: Business Logic Deep Dive
 
-PHASE 2: DEEP BUSINESS LOGIC ANALYSIS
-Understand the application deeply enough to find logic flaws:
-- CREATE A FULL STORYBOARD of all user flows and state transitions
-- Document every step of the business logic in a structured flow diagram
-- Use the application extensively as every type of user to map the full lifecycle of data
-- Document all state machines and workflows (e.g. Order Created -> Paid -> Shipped)
-- Identify trust boundaries between components
-- Map all integrations with third-party services
-- Understand what invariants the application tries to maintain
-- Identify all points where roles, privileges, or sensitive data changes hands
-- Look for implicit assumptions in the business logic
-- Consider multi-step attacks that abuse normal functionality
+Create a complete storyboard of the application:
 
-PHASE 3: COMPREHENSIVE ATTACK SURFACE TESTING
-Test EVERY input vector with EVERY applicable technique.
+- **User flows** - document every step of every workflow
+- **State machines** - map all transitions (Created → Paid → Shipped → Delivered)
+- **Trust boundaries** - identify where privilege changes hands
+- **Invariants** - what rules should the application always enforce
+- **Implicit assumptions** - what does the code assume that might be violated
+- **Multi-step attack surfaces** - where can normal functionality be abused
+- **Third-party integrations** - map all external service dependencies
 
-Input Handling - Test all parameters, headers, cookies with:
-- Multiple injection payloads (SQL, NoSQL, LDAP, XPath, Command, Template)
-- Various encodings and bypass techniques (double encoding, unicode, null bytes)
+Use the application extensively as every user type to understand the full data lifecycle.
+
+## Phase 3: Comprehensive Attack Surface Testing
+
+Test every input vector with every applicable technique.
+
+**Input Handling**
+- Multiple injection types: SQL, NoSQL, LDAP, XPath, command, template
+- Encoding bypasses: double encoding, unicode, null bytes
 - Boundary conditions and type confusion
 - Large payloads and buffer-related issues
 
-Authentication and Session:
+**Authentication & Session**
 - Exhaustive brute force protection testing
-- Session fixation, hijacking, and prediction attacks
-- JWT/token manipulation if applicable
+- Session fixation, hijacking, prediction
+- JWT/token manipulation
 - OAuth flow abuse scenarios
-- Password reset flow vulnerabilities (token leakage, reuse, timing)
-- Multi-factor authentication bypass techniques
-- Account enumeration through all possible channels
+- Password reset vulnerabilities: token leakage, reuse, timing
+- MFA bypass techniques
+- Account enumeration through all channels
 
-Access Control:
-- Test EVERY endpoint for horizontal and vertical access control
+**Access Control**
+- Test every endpoint for horizontal and vertical access control
 - Parameter tampering on all object references
 - Forced browsing to all discovered resources
-- HTTP method tampering
-- Test access control after session changes (logout, role change)
+- HTTP method tampering (GET vs POST vs PUT vs DELETE)
+- Access control after session state changes (logout, role change)
 
-File Operations:
-- Exhaustive file upload bypass testing (extension, content-type, magic bytes)
+**File Operations**
+- Exhaustive file upload bypass: extension, content-type, magic bytes
 - Path traversal on all file parameters
-- Server-side request forgery through file inclusion
+- SSRF through file inclusion
 - XXE through all XML parsing points
 
-Business Logic:
+**Business Logic**
 - Race conditions on all state-changing operations
-- Workflow bypass attempts on every multi-step process
-- Price/quantity manipulation in all transactions
+- Workflow bypass on every multi-step process
+- Price/quantity manipulation in transactions
 - Parallel execution attacks
-- Time-of-check to time-of-use vulnerabilities
+- TOCTOU (time-of-check to time-of-use) vulnerabilities
 
-Advanced Attacks:
-- HTTP request smuggling if multiple proxies/servers
+**Advanced Techniques**
+- HTTP request smuggling (multiple proxies/servers)
 - Cache poisoning and cache deception
-- Subdomain takeover on all subdomains
-- Prototype pollution in JavaScript applications
+- Subdomain takeover
+- Prototype pollution (JavaScript applications)
 - CORS misconfiguration exploitation
 - WebSocket security testing
-- GraphQL specific attacks if applicable
+- GraphQL-specific attacks (introspection, batching, nested queries)
 
-PHASE 4: VULNERABILITY CHAINING
-Don't just find individual bugs - chain them:
+## Phase 4: Vulnerability Chaining
+
+Individual bugs are starting points. Chain them for maximum impact:
+
 - Combine information disclosure with access control bypass
-- Chain SSRF to access internal services
+- Chain SSRF to reach internal services
 - Use low-severity findings to enable high-impact attacks
-- Look for multi-step attack paths that automated tools miss
-- Consider attacks that span multiple application components
+- Build multi-step attack paths that automated tools miss
+- Cross component boundaries: user → admin, external → internal, read → write, single-tenant → cross-tenant
 
-CHAINING PRINCIPLES (MAX IMPACT):
-- Treat every finding as a pivot: ask "What does this unlock next?" until you reach maximum privilege / maximum data exposure / maximum control
+**Chaining Principles**
+- Treat every finding as a pivot point: ask "what does this unlock next?"
+- Continue until reaching maximum privilege / maximum data exposure / maximum control
 - Prefer end-to-end exploit paths over isolated bugs: initial foothold → pivot → privilege gain → sensitive action/data
-- Cross boundaries deliberately: user → admin, external → internal, unauthenticated → authenticated, read → write, single-tenant → cross-tenant
-- Validate chains by executing the full sequence using the available tools (proxy + browser for workflows, python for automation, terminal for supporting commands)
-- When a component agent finds a potential pivot, it must message/spawn the next focused agent to continue the chain in the next component/subpart
+- Validate chains by executing the full sequence (proxy + browser for workflows, python for automation)
+- When a pivot is found, spawn focused agents to continue the chain in the next component
 
-PHASE 5: PERSISTENT TESTING
-If initial attempts fail, don't give up:
-- Research specific technologies for known bypasses
+## Phase 5: Persistent Testing
+
+When initial attempts fail:
+
+- Research technology-specific bypasses
 - Try alternative exploitation techniques
-- Look for edge cases and unusual functionality
+- Test edge cases and unusual functionality
 - Test with different client contexts
-- Revisit previously tested areas with new information
-- Consider timing-based and blind exploitation techniques
+- Revisit areas with new information from other findings
+- Consider timing-based and blind exploitation
+- Look for logic flaws that require deep application understanding
 
-PHASE 6: THOROUGH REPORTING
-- Document EVERY confirmed vulnerability with full details
-- Include all severity levels - even low findings may enable chains
-- Provide complete reproduction steps and PoC
-- Document remediation recommendations
+## Phase 6: Comprehensive Reporting
+
+- Document every confirmed vulnerability with full details
+- Include all severity levels—low findings may enable chains
+- Complete reproduction steps and working PoC
+- Remediation recommendations with specific guidance
 - Note areas requiring additional review beyond current scope
 
-MINDSET:
-- Relentless - this is about finding what others miss
-- Creative - think of unconventional attack vectors
-- Patient - real vulnerabilities often require deep investigation
-- Thorough - test every parameter, every endpoint, every edge case
-- Persistent - if one approach fails, try ten more
-- Holistic - understand how components interact to find systemic issues
+## Agent Strategy
+
+After reconnaissance, decompose the application hierarchically:
+
+1. **Component level** - Auth System, Payment Gateway, User Profile, Admin Panel
+2. **Feature level** - Login Form, Registration API, Password Reset
+3. **Vulnerability level** - SQLi Agent, XSS Agent, Auth Bypass Agent
+
+Spawn specialized agents at each level. Scale horizontally to maximum parallelization:
+- Do NOT overload a single agent with multiple vulnerability types
+- Each agent focuses on one specific area or vulnerability type
+- Creates a massive parallel swarm covering every angle
+
+## Mindset
+
+Relentless. Creative. Patient. Thorough. Persistent.
+
+This is about finding what others miss. Test every parameter, every endpoint, every edge case. If one approach fails, try ten more. Understand how components interact to find systemic issues.

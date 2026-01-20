@@ -1,42 +1,37 @@
-# INSECURE DIRECT OBJECT REFERENCE (IDOR)
+---
+name: idor
+description: IDOR/BOLA testing for object-level authorization failures and cross-account data access
+---
 
-## Critical
+# IDOR
 
-Object- and function-level authorization failures (BOLA/IDOR) routinely lead to cross-account data exposure and unauthorized state changes across APIs, web, mobile, and microservices. Treat every object reference as untrusted until proven bound to the caller.
+Object-level authorization failures (BOLA/IDOR) lead to cross-account data exposure and unauthorized state changes across APIs, web, mobile, and microservices. Treat every object reference as untrusted until proven bound to the caller.
 
-## Scope
+## Attack Surface
 
+**Scope**
 - Horizontal access: access another subject's objects of the same type
 - Vertical access: access privileged objects/actions (admin-only, staff-only)
 - Cross-tenant access: break isolation boundaries in multi-tenant systems
 - Cross-service access: token or context accepted by the wrong service
 
-## Methodology
+**Reference Locations**
+- Paths, query params, JSON bodies, form-data, headers, cookies
+- JWT claims, GraphQL arguments, WebSocket messages, gRPC messages
 
-1. Build a Subject × Object × Action matrix (who can do what to which resource).
-2. For each resource type, obtain at least two principals: owner and non-owner (plus admin/staff if applicable). Capture at least one valid object ID per principal.
-3. Exercise every action (R/W/D/Export) while swapping IDs, tokens, tenants, and channels (web, mobile, API, GraphQL, WebSocket, gRPC).
-4. Track consistency: the same rule must hold regardless of transport, content-type, serialization, or gateway.
+**Identifier Forms**
+- Integers, UUID/ULID/CUID, Snowflake, slugs
+- Composite keys (e.g., `{orgId}:{userId}`)
+- Opaque tokens, base64/hex-encoded blobs
 
-## Discovery Techniques
+**Relationship References**
+- parentId, ownerId, accountId, tenantId, organization, teamId, projectId, subscriptionId
 
-### Parameter Analysis
+**Expansion/Projection Knobs**
+- `fields`, `include`, `expand`, `projection`, `with`, `select`, `populate`
+- Often bypass authorization in resolvers or serializers
 
-- Object references appear in: paths, query params, JSON bodies, form-data, headers, cookies, JWT claims, GraphQL arguments, WebSocket messages, gRPC messages
-- Identifier forms: integers, UUID/ULID/CUID, Snowflake, slugs, composite keys (e.g., {orgId}:{userId}), opaque tokens, base64/hex-encoded blobs
-- Relationship references: parentId, ownerId, accountId, tenantId, organization, teamId, projectId, subscriptionId
-- Expansion/projection knobs: fields, include, expand, projection, with, select, populate (often bypass authorization in resolvers or serializers)
-- Pagination/cursors: page[offset], page[limit], cursor, nextPageToken (often reveal or accept cross-tenant/state)
-
-### Advanced Enumeration
-
-- Alternate types: `{"id":123}` vs `{"id":"123"}`, arrays vs scalars, objects vs scalars, null/empty/0/-1/MAX_INT, scientific notation, overflows, unknown attributes retained by backend
-- Duplicate keys/parameter pollution: id=1&id=2, JSON duplicate keys `{"id":1,"id":2}` (parser precedence differences)
-- Case/aliasing: userId vs userid vs USER_ID; alt names like resourceId, targetId, account
-- Path traversal-like in virtual file systems: /files/user_123/../../user_456/report.csv
-- Directory/list endpoints as seeders: search/list/suggest/export often leak object IDs for secondary exploitation
-
-## High Value Targets
+## High-Value Targets
 
 - Exports/backups/reporting endpoints (CSV/PDF/ZIP)
 - Messaging/mailbox/notifications, audit logs, activity feeds
@@ -47,43 +42,62 @@ Object- and function-level authorization failures (BOLA/IDOR) routinely lead to 
 - Background jobs: import/export job IDs, task results
 - Multi-tenant resources: organizations, workspaces, projects
 
-## Exploitation Techniques
+## Reconnaissance
 
-### Horizontal Vertical
+**Parameter Analysis**
+- Pagination/cursors: `page[offset]`, `page[limit]`, `cursor`, `nextPageToken` (often reveal or accept cross-tenant/state)
+- Directory/list endpoints as seeders: search/list/suggest/export often leak object IDs for secondary exploitation
 
-- Swap object IDs between principals using the same token to probe horizontal access; then repeat with lower-privilege tokens to probe vertical access
+**Enumeration Techniques**
+- Alternate types: `{"id":123}` vs `{"id":"123"}`, arrays vs scalars, objects vs scalars
+- Edge values: null/empty/0/-1/MAX_INT, scientific notation, overflows
+- Duplicate keys/parameter pollution: `id=1&id=2`, JSON duplicate keys `{"id":1,"id":2}` (parser precedence)
+- Case/aliasing: userId vs userid vs USER_ID; alt names like resourceId, targetId, account
+- Path traversal-like in virtual file systems: `/files/user_123/../../user_456/report.csv`
+
+**UUID/Opaque ID Sources**
+- Logs, exports, JS bundles, analytics endpoints, emails, public activity
+- Time-based IDs (UUIDv1, ULID) may be guessable within a window
+
+## Key Vulnerabilities
+
+### Horizontal & Vertical Access
+
+- Swap object IDs between principals using the same token to probe horizontal access
+- Repeat with lower-privilege tokens to probe vertical access
 - Target partial updates (PATCH, JSON Patch/JSON Merge Patch) for silent unauthorized modifications
 
-### Bulk And Batch
+### Bulk & Batch Operations
 
 - Batch endpoints (bulk update/delete) often validate only the first element; include cross-tenant IDs mid-array
 - CSV/JSON imports referencing foreign object IDs (ownerId, orgId) may bypass create-time checks
 
-### Secondary Idor
+### Secondary IDOR
 
-- Use list/search endpoints, notifications, emails, webhooks, and client logs to collect valid IDs, then fetch or mutate those objects directly
+- Use list/search endpoints, notifications, emails, webhooks, and client logs to collect valid IDs
+- Fetch or mutate those objects directly
 - Pagination/cursor manipulation to skip filters and pull other users' pages
 
-### Job Task Objects
+### Job/Task Objects
 
-- Access job/task IDs from one user to retrieve results for another (export/{jobId}/download, reports/{taskId})
+- Access job/task IDs from one user to retrieve results for another (`export/{jobId}/download`, `reports/{taskId}`)
 - Cancel/approve someone else's jobs by referencing their task IDs
 
-### File Object Storage
+### File/Object Storage
 
-- Direct object paths or weakly scoped signed URLs; attempt key prefix changes, content-disposition tricks, or stale signatures reused across tenants
+- Direct object paths or weakly scoped signed URLs
+- Attempt key prefix changes, content-disposition tricks, or stale signatures reused across tenants
 - Replace share tokens with tokens from other tenants; try case/URL-encoding variations
 
-## Advanced Techniques
+### GraphQL
 
-### Graphql
+- Enforce resolver-level checks: do not rely on a top-level gate
+- Verify field and edge resolvers bind the resource to the caller on every hop
+- Abuse batching/aliases to retrieve multiple users' nodes in one request
+- Global node patterns (Relay): decode base64 IDs and swap raw IDs
+- Overfetching via fragments on privileged types
 
-- Enforce resolver-level checks: do not rely on a top-level gate. Verify field and edge resolvers bind the resource to the caller on every hop
-- Abuse batching/aliases to retrieve multiple users' nodes in one request and compare responses
-- Global node patterns (Relay): decode base64 IDs and swap raw IDs; test `node(id: "...base64..."){...}`
-- Overfetching via fragments on privileged types; verify hidden fields cannot be queried by unprivileged callers
-- Example:
-```
+```graphql
 query IDOR {
   me { id }
   u1: user(id: "VXNlcjo0NTY=") { email billing { last4 } }
@@ -91,64 +105,57 @@ query IDOR {
 }
 ```
 
-### Microservices Gateways
+### Microservices & Gateways
 
-- Token confusion: a token scoped for Service A accepted by Service B due to shared JWT verification but missing audience/claims checks
-- Trust on headers: reverse proxies or API gateways injecting/trusting headers like X-User-Id, X-Organization-Id; try overriding or removing them
+- Token confusion: token scoped for Service A accepted by Service B due to shared JWT verification but missing audience/claims checks
+- Trust on headers: reverse proxies or API gateways injecting/trusting headers like `X-User-Id`, `X-Organization-Id`; try overriding or removing them
 - Context loss: async consumers (queues, workers) re-process requests without re-checking authorization
 
-### Multi Tenant
+### Multi-Tenant
 
-- Probe tenant scoping through headers, subdomains, and path params (e.g., X-Tenant-ID, org slug). Try mixing org of token with resource from another org
+- Probe tenant scoping through headers, subdomains, and path params (`X-Tenant-ID`, org slug)
+- Try mixing org of token with resource from another org
 - Test cross-tenant reports/analytics rollups and admin views which aggregate multiple tenants
 
-### Uuid And Opaque Ids
+### WebSocket
 
-- UUID/ULID are not authorization: acquire valid IDs from logs, exports, JS bundles, analytics endpoints, emails, or public activity, then test ownership binding
-- Time-based IDs (UUIDv1, ULID) may be guessable within a window; combine with leakage sources for targeted access
-
-### Blind Channels
-
-- Use differential responses (status, size, ETag, timing) to detect existence; error shape often differs for owned vs foreign objects
-- HEAD/OPTIONS, conditional requests (If-None-Match/If-Modified-Since) can confirm existence without full content
-
-## Bypass Techniques
-
-### Parser And Transport
-
-- Content-type switching: application/json ↔ application/x-www-form-urlencoded ↔ multipart/form-data; some paths enforce checks per parser
-- Method tunneling: X-HTTP-Method-Override, _method=PATCH; or using GET on endpoints incorrectly accepting state changes
-- JSON duplicate keys/array injection to bypass naive validators
-
-### Parameter Pollution
-
-- Duplicate parameters in query/body to influence server-side precedence (id=123&id=456); try both orderings
-- Mix case/alias param names so gateway and backend disagree (userId vs userid)
-
-### Cache And Gateway
-
-- CDN/proxy key confusion: responses keyed without Authorization or tenant headers expose cached objects to other users; manipulate Vary and Accept
-- Redirect chains and 304/206 behaviors can leak content across tenants
-
-### Race Windows
-
-- Time-of-check vs time-of-use: change the referenced ID between validation and execution using parallel requests
-
-## Special Contexts
-
-### Websocket
-
-- Authorization per-subscription: ensure channel/topic names cannot be guessed (user_{id}, org_{id}); subscribe/publish checks must run server-side, not only at handshake
+- Authorization per-subscription: ensure channel/topic names cannot be guessed (`user_{id}`, `org_{id}`)
+- Subscribe/publish checks must run server-side, not only at handshake
 - Try sending messages with target user IDs after subscribing to own channels
 
-### Grpc
+### gRPC
 
-- Direct protobuf fields (owner_id, tenant_id) often bypass HTTP-layer middleware; validate references via grpcurl with tokens from different principals
+- Direct protobuf fields (`owner_id`, `tenant_id`) often bypass HTTP-layer middleware
+- Validate references via grpcurl with tokens from different principals
 
 ### Integrations
 
-- Webhooks/callbacks referencing foreign objects (e.g., invoice_id) processed without verifying ownership
+- Webhooks/callbacks referencing foreign objects (e.g., `invoice_id`) processed without verifying ownership
 - Third-party importers syncing data into wrong tenant due to missing tenant binding
+
+## Bypass Techniques
+
+**Parser & Transport**
+- Content-type switching: `application/json` ↔ `application/x-www-form-urlencoded` ↔ `multipart/form-data`
+- Method tunneling: `X-HTTP-Method-Override`, `_method=PATCH`; or using GET on endpoints incorrectly accepting state changes
+- JSON duplicate keys/array injection to bypass naive validators
+
+**Parameter Pollution**
+- Duplicate parameters in query/body to influence server-side precedence (`id=123&id=456`); try both orderings
+- Mix case/alias param names so gateway and backend disagree (userId vs userid)
+
+**Cache & Gateway**
+- CDN/proxy key confusion: responses keyed without Authorization or tenant headers expose cached objects to other users
+- Manipulate Vary and Accept headers
+- Redirect chains and 304/206 behaviors can leak content across tenants
+
+**Race Windows**
+- Time-of-check vs time-of-use: change the referenced ID between validation and execution using parallel requests
+
+**Blind Channels**
+- Use differential responses (status, size, ETag, timing) to detect existence
+- Error shape often differs for owned vs foreign objects
+- HEAD/OPTIONS, conditional requests (`If-None-Match`/`If-Modified-Since`) can confirm existence without full content
 
 ## Chaining Attacks
 
@@ -157,13 +164,22 @@ query IDOR {
 - IDOR + SSRF: exfiltrate internal IDs, then access their corresponding resources
 - IDOR + Race: bypass spot checks with simultaneous requests
 
+## Testing Methodology
+
+1. **Build matrix** - Subject × Object × Action matrix (who can do what to which resource)
+2. **Obtain principals** - At least two: owner and non-owner (plus admin/staff if applicable)
+3. **Collect IDs** - Capture at least one valid object ID per principal from list/search/export endpoints
+4. **Cross-channel testing** - Exercise every action (R/W/D/Export) while swapping IDs, tokens, tenants
+5. **Transport variation** - Test across web, mobile, API, GraphQL, WebSocket, gRPC
+6. **Consistency check** - Same rule must hold regardless of transport, content-type, serialization, or gateway
+
 ## Validation
 
-1. Demonstrate access to an object not owned by the caller (content or metadata).
-2. Show the same request fails with appropriately enforced authorization when corrected.
-3. Prove cross-channel consistency: same unauthorized access via at least two transports (e.g., REST and GraphQL).
-4. Document tenant boundary violations (if applicable).
-5. Provide reproducible steps and evidence (requests/responses for owner vs non-owner).
+1. Demonstrate access to an object not owned by the caller (content or metadata)
+2. Show the same request fails with appropriately enforced authorization when corrected
+3. Prove cross-channel consistency: same unauthorized access via at least two transports (e.g., REST and GraphQL)
+4. Document tenant boundary violations (if applicable)
+5. Provide reproducible steps and evidence (requests/responses for owner vs non-owner)
 
 ## False Positives
 
@@ -181,17 +197,17 @@ query IDOR {
 
 ## Pro Tips
 
-1. Always test list/search/export endpoints first; they are rich ID seeders.
-2. Build a reusable ID corpus from logs, notifications, emails, and client bundles.
-3. Toggle content-types and transports; authorization middleware often differs per stack.
-4. In GraphQL, validate at resolver boundaries; never trust parent auth to cover children.
-5. In multi-tenant apps, vary org headers, subdomains, and path params independently.
-6. Check batch/bulk operations and background job endpoints; they frequently skip per-item checks.
-7. Inspect gateways for header trust and cache key configuration.
-8. Treat UUIDs as untrusted; obtain them via OSINT/leaks and test binding.
-9. Use timing/size/ETag differentials for blind confirmation when content is masked.
-10. Prove impact with precise before/after diffs and role-separated evidence.
+1. Always test list/search/export endpoints first; they are rich ID seeders
+2. Build a reusable ID corpus from logs, notifications, emails, and client bundles
+3. Toggle content-types and transports; authorization middleware often differs per stack
+4. In GraphQL, validate at resolver boundaries; never trust parent auth to cover children
+5. In multi-tenant apps, vary org headers, subdomains, and path params independently
+6. Check batch/bulk operations and background job endpoints; they frequently skip per-item checks
+7. Inspect gateways for header trust and cache key configuration
+8. Treat UUIDs as untrusted; obtain them via OSINT/leaks and test binding
+9. Use timing/size/ETag differentials for blind confirmation when content is masked
+10. Prove impact with precise before/after diffs and role-separated evidence
 
-## Remember
+## Summary
 
 Authorization must bind subject, action, and specific object on every request, regardless of identifier opacity or transport. If the binding is missing anywhere, the system is vulnerable.

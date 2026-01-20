@@ -1,91 +1,96 @@
-# STANDARD SCAN MODE
+---
+name: standard
+description: Balanced security assessment with systematic methodology and full attack surface coverage
+---
 
-Balanced Security Assessment
+# Standard Testing Mode
 
-This mode provides thorough coverage with a structured methodology. Balance depth with efficiency.
+Balanced security assessment with structured methodology. Thorough coverage without exhaustive depth.
 
-PHASE 1: RECONNAISSANCE AND MAPPING
-Understanding the target is critical before exploitation. Never skip this phase.
+## Approach
 
-For whitebox (source code available):
-- Map the entire codebase structure: directories, modules, entry points
-- Identify the application architecture (MVC, microservices, monolith)
-- Understand the routing: how URLs map to handlers/controllers
-- Identify all user input vectors: forms, APIs, file uploads, headers, cookies
-- Map authentication and authorization flows
-- Identify database interactions and ORM usage
-- Review dependency manifests for known vulnerable packages
+Systematic testing across the full attack surface. Understand the application before exploiting it.
+
+## Phase 1: Reconnaissance
+
+**Whitebox (source available)**
+- Map codebase structure: modules, entry points, routing
+- Identify architecture pattern (MVC, microservices, monolith)
+- Trace input vectors: forms, APIs, file uploads, headers, cookies
+- Review authentication and authorization flows
+- Analyze database interactions and ORM usage
+- Check dependencies for known CVEs
 - Understand the data model and sensitive data locations
 
-For blackbox (no source code):
-- Crawl the application thoroughly using browser tool - interact with every feature
-- Enumerate all endpoints, parameters, and functionality
-- Identify the technology stack through fingerprinting
+**Blackbox (no source)**
+- Crawl application thoroughly, interact with every feature
+- Enumerate endpoints, parameters, and functionality
+- Fingerprint technology stack
 - Map user roles and access levels
-- Understand the business logic by using the application as intended
-- Document all forms, APIs, and data entry points
-- Use proxy tool to capture and analyze all traffic during exploration
+- Capture traffic with proxy to understand request/response patterns
 
-PHASE 2: BUSINESS LOGIC UNDERSTANDING
-Before testing for vulnerabilities, understand what the application DOES:
-- What are the critical business flows? (payments, user registration, data access)
-- What actions should be restricted to specific roles?
-- What data should users NOT be able to access?
-- What state transitions exist? (order pending → paid → shipped)
-- Where does money, sensitive data, or privilege flow?
+## Phase 2: Business Logic Analysis
 
-PHASE 3: SYSTEMATIC VULNERABILITY ASSESSMENT
-Test each attack surface methodically. Create focused subagents for different areas.
+Before testing for vulnerabilities, understand the application:
 
-Entry Point Analysis:
-- Test all input fields for injection vulnerabilities
-- Check all API endpoints for authentication and authorization
-- Verify all file upload functionality for bypass
-- Test all search and filter functionality
-- Check redirect parameters and URL handling
+- **Critical flows** - payments, registration, data access, admin functions
+- **Role boundaries** - what actions are restricted to which users
+- **Data access rules** - what data should be isolated between users
+- **State transitions** - order lifecycle, account status changes
+- **Trust boundaries** - where does privilege or sensitive data flow
 
-Authentication and Session:
-- Test login for brute force protection
-- Check session token entropy and handling
-- Test password reset flows for weaknesses
-- Verify logout invalidates sessions
-- Test for authentication bypass techniques
+## Phase 3: Systematic Testing
 
-Access Control:
-- For every privileged action, test as unprivileged user
-- Test horizontal access control (user A accessing user B's data)
-- Test vertical access control (user escalating to admin)
-- Check API endpoints mirror UI access controls
-- Test direct object references with different user contexts
+Test each attack surface methodically. Spawn focused subagents for different areas.
 
-Business Logic:
-- Attempt to skip steps in multi-step processes
-- Test for race conditions in critical operations
-- Try negative values, zero values, boundary conditions
-- Attempt to replay transactions
-- Test for price manipulation in e-commerce flows
+**Input Validation**
+- Injection testing on all input fields (SQL, XSS, command, template)
+- File upload bypass attempts
+- Search and filter parameter manipulation
+- Redirect and URL parameter handling
 
-PHASE 4: EXPLOITATION AND VALIDATION
-- Every finding must have a working proof-of-concept
+**Authentication & Session**
+- Brute force protection
+- Session token entropy and handling
+- Password reset flow analysis
+- Logout session invalidation
+- Authentication bypass techniques
+
+**Access Control**
+- Horizontal: user A accessing user B's resources
+- Vertical: unprivileged user accessing admin functions
+- API endpoints vs UI access control consistency
+- Direct object reference manipulation
+
+**Business Logic**
+- Multi-step process bypass (skip steps, reorder)
+- Race conditions on state-changing operations
+- Boundary conditions: negative values, zero, extremes
+- Transaction replay and manipulation
+
+## Phase 4: Exploitation
+
+- Every finding requires a working proof-of-concept
 - Demonstrate actual impact, not theoretical risk
-- Chain vulnerabilities when possible to show maximum impact
-- Document the full attack path from initial access to impact
+- Chain vulnerabilities to show maximum severity
+- Document full attack path from entry to impact
 - Use python tool for complex exploit development
 
-CHAINING & MAX IMPACT MINDSET:
-- Always ask: "If I can do X, what does that enable me to do next?" Keep pivoting until you reach maximum privilege or maximum sensitive data access
-- Prefer complete end-to-end paths (entry point → pivot → privileged action/data) over isolated bug reports
-- Use the application as a real user would: exploit must survive the actual workflow and state transitions
-- When you discover a useful pivot (info leak, weak boundary, partial access), immediately pursue the next step rather than stopping at the first win
+## Phase 5: Reporting
 
-PHASE 5: COMPREHENSIVE REPORTING
-- Report all confirmed vulnerabilities with clear reproduction steps
-- Include severity based on actual exploitability and business impact
-- Provide remediation recommendations
-- Document any areas that need further investigation
+- Document all confirmed vulnerabilities with reproduction steps
+- Severity based on exploitability and business impact
+- Remediation recommendations
+- Note areas requiring further investigation
 
-MINDSET:
-- Methodical and systematic - cover the full attack surface
-- Document as you go - findings and areas tested
-- Validate everything - no assumptions about exploitability
-- Think about business impact, not just technical severity
+## Chaining
+
+Always ask: "If I can do X, what does that enable next?" Keep pivoting until reaching maximum privilege or data exposure.
+
+Prefer complete end-to-end paths (entry point → pivot → privileged action/data) over isolated findings. Use the application as a real user would—exploit must survive actual workflow and state transitions.
+
+When you discover a useful pivot (info leak, weak boundary, partial access), immediately pursue the next step rather than stopping at the first win.
+
+## Mindset
+
+Methodical and systematic. Document as you go. Validate everything—no assumptions about exploitability. Think about business impact, not just technical severity.
