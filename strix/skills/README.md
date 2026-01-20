@@ -49,8 +49,9 @@ A good skill is a structured knowledge package that typically includes:
 - **Practical examples** - Working payloads, commands, or test cases with variations
 - **Validation methods** - How to confirm findings and avoid false positives
 - **Context-specific insights** - Environment and version nuances, configuration-dependent behavior, and edge cases
+- **YAML frontmatter** - `name` and `description` fields for skill metadata
 
-Skills use XML-style tags for structure and focus on deep, specialized knowledge that significantly enhances agent capabilities for that specific context.
+Skills focus on deep, specialized knowledge to significantly enhance agent capabilities. They are dynamically injected into agent context when needed.
 
 ---
 
