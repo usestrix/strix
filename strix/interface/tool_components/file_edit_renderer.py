@@ -132,8 +132,8 @@ class ListFilesRenderer(BaseToolRenderer):
         path = args.get("path", "")
 
         text = Text()
-        text.append("📂 ")
-        text.append("Listing files", style="bold #10b981")
+        text.append("◇ ", style="#10b981")
+        text.append("list", style="dim")
         text.append(" ")
 
         if path:
