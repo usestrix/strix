@@ -83,35 +83,37 @@ Protocol-specific testing techniques.
 
 ## Skill Structure
 
-Each skill uses XML-style tags for structure:
+Each skill is a Markdown file with YAML frontmatter for metadata:
 
-```xml
-<vulnerability_guide>
-  <title>NAME</title>
+```markdown
+---
+name: skill_name
+description: Brief description of the skill's coverage
+---
 
-  <critical>Key insight about this vulnerability</critical>
+# Skill Title
 
-  <scope>What this skill covers</scope>
+Key insight about this vulnerability or technique.
 
-  <methodology>Step-by-step testing approach</methodology>
+## Attack Surface
+What this skill covers and where to look.
 
-  <discovery_techniques>How to find it</discovery_techniques>
+## Methodology
+Step-by-step testing approach.
 
-  <exploitation_techniques>How to exploit it</exploitation_techniques>
+## Techniques
+How to discover and exploit the vulnerability.
 
-  <bypass_techniques>How to bypass protections</bypass_techniques>
+## Bypass Methods
+How to bypass common protections.
 
-  <validation>How to confirm findings</validation>
-
-  <false_positives>What to watch out for</false_positives>
-
-  <pro_tips>Additional Expert advice</pro_tips>
-</vulnerability_guide>
+## Validation
+How to confirm findings and avoid false positives.
 ```
 
 ## Contributing Skills
 
-Community contributions are welcome. Good skills include:
+Community contributions are welcome. Create a `.md` file in the appropriate category with YAML frontmatter (`name` and `description` fields). Good skills include:
 
 1. **Real-world techniques** — Methods that work in practice
 2. **Practical payloads** — Working examples with variations
