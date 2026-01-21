@@ -1,0 +1,90 @@
+---
+title: "HTTP Proxy"
+description: "Caido-powered proxy for request interception and replay"
+---
+
+Strix includes [Caido](https://caido.io), a modern HTTP proxy built for security testing. All browser traffic flows through Caido, giving the agent full control over requests and responses.
+
+## Capabilities
+
+| Feature          | Description                                  |
+| ---------------- | -------------------------------------------- |
+| Request Capture  | Log all HTTP/HTTPS traffic automatically     |
+| Request Replay   | Repeat any request with modifications        |
+| HTTPQL           | Query captured traffic with powerful filters |
+| Scope Management | Focus on specific domains or paths           |
+| Sitemap          | Visualize the discovered attack surface      |
+
+## HTTPQL Filtering
+
+Query captured requests using Caido's HTTPQL syntax
+
+## Request Replay
+
+The agent can take any captured request and replay it with modifications:
+
+- Change path parameters (test for IDOR)
+- Modify request body (test for injection)
+- Add/remove headers (test for auth bypass)
+- Alter cookies (test for session issues)
+
+## Python Integration
+
+All proxy functions are automatically available in Python sessions. This enables powerful scripted security testing:
+
+```python
+# List recent POST requests
+post_requests = list_requests(
+    httpql_filter='req.method.eq:"POST"',
+    page_size=20
+)
+
+# View a specific request
+request_details = view_request("req_123", part="request")
+
+# Replay with modified payload
+response = repeat_request("req_123", {
+    "body": '{"user_id": "admin"}'
+})
+print(f"Status: {response['status_code']}")
+```
+
+### Available Functions
+
+| Function               | Description                                |
+| ---------------------- | ------------------------------------------ |
+| `list_requests()`      | Query captured traffic with HTTPQL filters |
+| `view_request()`       | Get full request/response details          |
+| `repeat_request()`     | Replay a request with modifications        |
+| `send_request()`       | Send a new HTTP request                    |
+| `scope_rules()`        | Manage proxy scope (allowlist/denylist)    |
+| `list_sitemap()`       | View discovered endpoints                  |
+| `view_sitemap_entry()` | Get details for a sitemap entry            |
+
+### Example: Automated IDOR Testing
+
+```python
+# Get all requests to user endpoints
+user_requests = list_requests(
+    httpql_filter='req.path.cont:"/users/"'
+)
+
+for req in user_requests.get('requests', []):
+    # Try accessing with different user IDs
+    for test_id in ['1', '2', 'admin', '../admin']:
+        response = repeat_request(req['id'], {
+            'url': req['path'].replace('/users/1', f'/users/{test_id}')
+        })
+
+        if response['status_code'] == 200:
+            print(f"Potential IDOR: {test_id} returned 200")
+```
+
+## Scope
+
+Create scopes to filter traffic to relevant domains:
+
+```
+Allowlist: ["api.example.com", "*.example.com"]
+Denylist: ["*.gif", "*.jpg", "*.png", "*.css", "*.js"]
+```

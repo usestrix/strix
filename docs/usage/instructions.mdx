@@ -1,0 +1,73 @@
+---
+title: "Custom Instructions"
+description: "Guide Strix with custom testing instructions"
+---
+
+Use instructions to provide context, credentials, or focus areas for your scan.
+
+## Inline Instructions
+
+```bash
+strix --target https://app.com --instruction "Focus on authentication vulnerabilities"
+```
+
+## File-Based Instructions
+
+For complex instructions, use a file:
+
+```bash
+strix --target https://app.com --instruction-file ./pentest-instructions.md
+```
+
+## Common Use Cases
+
+### Authenticated Testing
+
+```bash
+strix --target https://app.com \
+  --instruction "Login with email: test@example.com, password: TestPass123"
+```
+
+### Focused Scope
+
+```bash
+strix --target https://api.example.com \
+  --instruction "Focus on IDOR vulnerabilities in the /api/users endpoints"
+```
+
+### Exclusions
+
+```bash
+strix --target https://app.com \
+  --instruction "Do not test /admin or /internal endpoints"
+```
+
+### API Testing
+
+```bash
+strix --target https://api.example.com \
+  --instruction "Use API key header: X-API-Key: abc123. Focus on rate limiting bypass."
+```
+
+## Instruction File Example
+
+```markdown instructions.md
+# Penetration Test Instructions
+
+## Credentials
+- Admin: admin@example.com / AdminPass123
+- User: user@example.com / UserPass123
+
+## Focus Areas
+1. IDOR in user profile endpoints
+2. Privilege escalation between roles
+3. JWT token manipulation
+
+## Out of Scope
+- /health endpoints
+- Third-party integrations
+```
+
+<Tip>
+Be specific. Good instructions help Strix prioritize the most valuable attack paths.
+</Tip>

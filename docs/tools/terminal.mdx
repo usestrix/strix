@@ -1,0 +1,61 @@
+---
+title: "Terminal"
+description: "Bash shell for running commands and security tools"
+---
+
+Strix has access to a persistent bash terminal running inside the Docker sandbox. This gives the agent access to all [pre-installed security tools](/tools/sandbox).
+
+## Capabilities
+
+| Feature           | Description                                                |
+| ----------------- | ---------------------------------------------------------- |
+| Persistent state  | Working directory and environment persist between commands |
+| Multiple sessions | Run parallel terminals for concurrent operations           |
+| Background jobs   | Start long-running processes without blocking              |
+| Interactive       | Respond to prompts and control running processes           |
+
+## Common Uses
+
+### Running Security Tools
+
+```bash
+# Subdomain enumeration
+subfinder -d example.com
+
+# Vulnerability scanning
+nuclei -u https://example.com
+
+# SQL injection testing
+sqlmap -u "https://example.com/page?id=1"
+```
+
+### Code Analysis
+
+```bash
+# Search for secrets
+trufflehog filesystem ./
+
+# Static analysis
+semgrep --config auto ./src
+
+# Grep for patterns
+grep -r "password" ./
+```
+
+### Custom Scripts
+
+```bash
+# Run Python exploits
+python3 exploit.py
+
+# Execute shell scripts
+./test_auth_bypass.sh
+```
+
+## Session Management
+
+The agent can run multiple terminal sessions concurrently, for example:
+
+- Main session for primary testing
+- Secondary session for monitoring
+- Background processes for servers or watchers

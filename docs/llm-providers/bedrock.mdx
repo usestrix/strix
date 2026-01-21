@@ -1,0 +1,47 @@
+---
+title: "AWS Bedrock"
+description: "Configure Strix with models via AWS Bedrock"
+---
+
+## Setup
+
+```bash
+export STRIX_LLM="bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0"
+```
+
+No API key required—uses AWS credentials from environment.
+
+## Authentication
+
+### Option 1: AWS CLI Profile
+
+```bash
+export AWS_PROFILE="your-profile"
+export AWS_REGION="us-east-1"
+```
+
+### Option 2: Access Keys
+
+```bash
+export AWS_ACCESS_KEY_ID="AKIA..."
+export AWS_SECRET_ACCESS_KEY="..."
+export AWS_REGION="us-east-1"
+```
+
+### Option 3: IAM Role (EC2/ECS)
+
+Automatically uses instance role credentials.
+
+## Available Models
+
+| Model | Description |
+|-------|-------------|
+| `bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0` | Claude 4.5 Sonnet |
+| `bedrock/anthropic.claude-4-5-opus-20251022-v1:0` | Claude 4.5 Opus |
+| `bedrock/anthropic.claude-4-5-haiku-20251022-v1:0` | Claude 4.5 Haiku |
+| `bedrock/amazon.titan-text-premier-v2:0` | Amazon Titan Premier v2 |
+
+## Prerequisites
+
+1. Enable model access in the AWS Bedrock console
+2. Ensure your IAM role/user has `bedrock:InvokeModel` permission

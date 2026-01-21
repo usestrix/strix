@@ -1,0 +1,56 @@
+---
+title: "Local Models"
+description: "Run Strix with self-hosted LLMs for privacy and air-gapped testing"
+---
+
+Running Strix with local models allows for completely offline, privacy-first security assessments. Data never leaves your machine, making this ideal for sensitive internal networks or air-gapped environments.
+
+## Privacy vs Performance
+
+| Feature | Local Models | Cloud Models (GPT-5/Claude 4.5) |
+|---------|--------------|--------------------------------|
+| **Privacy** | 🔒 Data stays local | Data sent to provider |
+| **Cost** | Free (hardware only) | Pay-per-token |
+| **Reasoning** | Lower (struggles with agents) | State-of-the-art |
+| **Setup** | Complex (GPU required) | Instant |
+
+<Warning>
+**Compatibility Note**: Strix relies on advanced agentic capabilities (tool use, multi-step planning, self-correction). Most local models, especially those under 70B parameters, struggle with these complex tasks.
+
+For critical assessments, we strongly recommend using state-of-the-art cloud models like **Claude 4.5 Sonnet** or **GPT-5**. Use local models only when privacy is the absolute priority.
+</Warning>
+
+## Ollama
+
+[Ollama](https://ollama.ai) is the easiest way to run local models on macOS, Linux, and Windows.
+
+### Setup
+
+1. Install Ollama from [ollama.ai](https://ollama.ai)
+2. Pull a high-performance model:
+   ```bash
+   ollama pull qwen3-vl
+   ```
+3. Configure Strix:
+   ```bash
+   export STRIX_LLM="ollama/qwen3-vl"
+   export LLM_API_BASE="http://localhost:11434"
+   ```
+
+### Recommended Models
+
+We recommend these models for the best balance of reasoning and tool use:
+
+**Recommended models:**
+- **Qwen3 VL** (`ollama pull qwen3-vl`)
+- **DeepSeek V3.1** (`ollama pull deepseek-v3.1`)
+- **Devstral 2** (`ollama pull devstral-2`)
+
+## LM Studio / OpenAI Compatible
+
+If you use LM Studio, vLLM, or other runners:
+
+```bash
+export STRIX_LLM="openai/local-model"
+export LLM_API_BASE="http://localhost:1234/v1"  # Adjust port as needed
+```

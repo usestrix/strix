@@ -1,0 +1,34 @@
+---
+title: "Browser"
+description: "Playwright-powered Chrome for web application testing"
+---
+
+Strix uses a headless Chrome browser via Playwright to interact with web applications exactly like a real user would.
+
+## How It Works
+
+All browser traffic is automatically routed through the Caido proxy, giving Strix full visibility into every request and response. This enables:
+
+- Testing client-side vulnerabilities (XSS, DOM manipulation)
+- Navigating authenticated flows (login, OAuth, MFA)
+- Triggering JavaScript-heavy functionality
+- Capturing dynamically generated requests
+
+## Capabilities
+
+| Action     | Description                                 |
+| ---------- | ------------------------------------------- |
+| Navigate   | Go to URLs, follow links, handle redirects  |
+| Click      | Interact with buttons, links, form elements |
+| Type       | Fill in forms, search boxes, input fields   |
+| Execute JS | Run custom JavaScript in the page context   |
+| Screenshot | Capture visual state for reports            |
+| Multi-tab  | Test across multiple browser tabs           |
+
+## Example Flow
+
+1. Agent launches browser and navigates to login page
+2. Fills in credentials and submits form
+3. Proxy captures the authentication request
+4. Agent navigates to protected areas
+5. Tests for IDOR by replaying requests with modified IDs

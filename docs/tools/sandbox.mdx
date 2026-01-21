@@ -1,0 +1,83 @@
+---
+title: "Sandbox Tools"
+description: "Pre-installed security tools in the Strix container"
+---
+
+Strix runs inside a Kali Linux-based Docker container with a comprehensive set of security tools pre-installed. The agent can use any of these tools through the [terminal](/tools/terminal).
+
+## Reconnaissance
+
+| Tool                                                       | Description                            |
+| ---------------------------------------------------------- | -------------------------------------- |
+| [Subfinder](https://github.com/projectdiscovery/subfinder) | Subdomain discovery                    |
+| [Naabu](https://github.com/projectdiscovery/naabu)         | Fast port scanner                      |
+| [httpx](https://github.com/projectdiscovery/httpx)         | HTTP probing and analysis              |
+| [Katana](https://github.com/projectdiscovery/katana)       | Web crawling and spidering             |
+| [ffuf](https://github.com/ffuf/ffuf)                       | Fast web fuzzer                        |
+| [Nmap](https://nmap.org)                                   | Network scanning and service detection |
+
+## Web Testing
+
+| Tool                                                   | Description                      |
+| ------------------------------------------------------ | -------------------------------- |
+| [Arjun](https://github.com/s0md3v/Arjun)               | HTTP parameter discovery         |
+| [Dirsearch](https://github.com/maurosoria/dirsearch)   | Directory and file brute-forcing |
+| [wafw00f](https://github.com/EnableSecurity/wafw00f)   | WAF fingerprinting               |
+| [GoSpider](https://github.com/jaeles-project/gospider) | Web spider for link extraction   |
+
+## Automated Scanners
+
+| Tool                                                 | Description                                        |
+| ---------------------------------------------------- | -------------------------------------------------- |
+| [Nuclei](https://github.com/projectdiscovery/nuclei) | Template-based vulnerability scanner               |
+| [SQLMap](https://sqlmap.org)                         | Automatic SQL injection detection and exploitation |
+| [Wapiti](https://wapiti-scanner.github.io)           | Web application vulnerability scanner              |
+| [ZAP](https://zaproxy.org)                           | OWASP Zed Attack Proxy                             |
+
+## JavaScript Analysis
+
+| Tool                                                     | Description                    |
+| -------------------------------------------------------- | ------------------------------ |
+| [JS-Snooper](https://github.com/aravind0x7/JS-Snooper)   | JavaScript reconnaissance      |
+| [jsniper](https://github.com/xchopath/jsniper.sh)        | JavaScript file analysis       |
+| [Retire.js](https://retirejs.github.io/retire.js)        | Detect vulnerable JS libraries |
+| [ESLint](https://eslint.org)                             | JavaScript static analysis     |
+| [js-beautify](https://github.com/beautifier/js-beautify) | JavaScript deobfuscation       |
+| [JSHint](https://jshint.com)                             | JavaScript code quality tool   |
+
+## Secret Detection
+
+| Tool                                                        | Description                           |
+| ----------------------------------------------------------- | ------------------------------------- |
+| [TruffleHog](https://github.com/trufflesecurity/trufflehog) | Find secrets in code and history      |
+| [Semgrep](https://github.com/semgrep/semgrep)               | Static analysis for security patterns |
+| [Bandit](https://bandit.readthedocs.io)                     | Python security linter                |
+
+## Authentication Testing
+
+| Tool                                                         | Description                        |
+| ------------------------------------------------------------ | ---------------------------------- |
+| [jwt_tool](https://github.com/ticarpi/jwt_tool)              | JWT token testing and exploitation |
+| [Interactsh](https://github.com/projectdiscovery/interactsh) | Out-of-band interaction detection  |
+
+## Container & Supply Chain
+
+| Tool                       | Description                                    |
+| -------------------------- | ---------------------------------------------- |
+| [Trivy](https://trivy.dev) | Container and dependency vulnerability scanner |
+
+## HTTP Proxy
+
+| Tool                      | Description                                   |
+| ------------------------- | --------------------------------------------- |
+| [Caido](https://caido.io) | Modern HTTP proxy for interception and replay |
+
+## Browser
+
+| Tool                                 | Description                 |
+| ------------------------------------ | --------------------------- |
+| [Playwright](https://playwright.dev) | Headless browser automation |
+
+<Note>
+  All tools are pre-configured and ready to use. The agent selects the appropriate tool based on the vulnerability being tested.
+</Note>

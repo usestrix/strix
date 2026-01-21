@@ -1,0 +1,60 @@
+---
+title: "GitHub Actions"
+description: "Run Strix security scans on every pull request"
+---
+
+Integrate Strix into your GitHub workflow to catch vulnerabilities before they reach production.
+
+## Basic Workflow
+
+```yaml .github/workflows/security.yml
+name: Security Scan
+
+on:
+  pull_request:
+
+jobs:
+  strix-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Strix
+        run: curl -sSL https://strix.ai/install | bash
+
+      - name: Run Security Scan
+        env:
+          STRIX_LLM: ${{ secrets.STRIX_LLM }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+        run: strix -n -t ./ --scan-mode quick
+```
+
+## Required Secrets
+
+Add these secrets to your repository:
+
+| Secret | Description |
+|--------|-------------|
+| `STRIX_LLM` | Model name (e.g., `openai/gpt-5`) |
+| `LLM_API_KEY` | API key for your LLM provider |
+
+## Exit Codes
+
+The workflow fails when vulnerabilities are found:
+
+| Code | Result |
+|------|--------|
+| 0 | Pass — No vulnerabilities |
+| 2 | Fail — Vulnerabilities found |
+
+## Scan Modes for CI
+
+| Mode | Duration | Use Case |
+|------|----------|----------|
+| `quick` | Minutes | Every PR |
+| `standard` | ~30 min | Nightly builds |
+| `deep` | 1-4 hours | Release candidates |
+
+<Tip>
+Use `quick` mode for PRs to keep feedback fast. Schedule `deep` scans nightly.
+</Tip>

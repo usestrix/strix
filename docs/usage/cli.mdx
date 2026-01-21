@@ -1,0 +1,58 @@
+---
+title: "CLI Reference"
+description: "Command-line options for Strix"
+---
+
+## Basic Usage
+
+```bash
+strix --target <target> [options]
+```
+
+## Options
+
+<ParamField path="--target, -t" type="string" required>
+  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times.
+</ParamField>
+
+<ParamField path="--instruction" type="string">
+  Custom instructions for the scan. Use for credentials, focus areas, or specific testing approaches.
+</ParamField>
+
+<ParamField path="--instruction-file" type="string">
+  Path to a file containing detailed instructions.
+</ParamField>
+
+<ParamField path="--scan-mode, -m" type="string" default="deep">
+  Scan depth: `quick`, `standard`, or `deep`.
+</ParamField>
+
+<ParamField path="--non-interactive, -n" type="boolean">
+  Run in headless mode without TUI. Ideal for CI/CD.
+</ParamField>
+
+## Examples
+
+```bash
+# Basic scan
+strix --target https://example.com
+
+# Authenticated testing
+strix --target https://app.com --instruction "Use credentials: user:pass"
+
+# Focused testing
+strix --target api.example.com --instruction "Focus on IDOR and auth bypass"
+
+# CI/CD mode
+strix -n --target ./ --scan-mode quick
+
+# Multi-target white-box testing
+strix -t https://github.com/org/app -t https://staging.example.com
+```
+
+## Exit Codes
+
+| Code | Meaning |
+|------|---------|
+| 0 | Scan completed, no vulnerabilities found |
+| 2 | Vulnerabilities found (headless mode only) |

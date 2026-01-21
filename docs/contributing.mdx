@@ -1,0 +1,96 @@
+---
+title: "Contributing"
+description: "Contribute to Strix development"
+---
+
+## Development Setup
+
+### Prerequisites
+
+- Python 3.12+
+- Docker (running)
+- Poetry
+- Git
+
+### Local Development
+
+<Steps>
+  <Step title="Clone the repository">
+    ```bash
+    git clone https://github.com/usestrix/strix.git
+    cd strix
+    ```
+  </Step>
+  <Step title="Install dependencies">
+    ```bash
+    make setup-dev
+
+    # or manually:
+    poetry install --with=dev
+    poetry run pre-commit install
+    ```
+  </Step>
+  <Step title="Configure LLM">
+    ```bash
+    export STRIX_LLM="openai/gpt-5"
+    export LLM_API_KEY="your-api-key"
+    ```
+  </Step>
+  <Step title="Run Strix">
+    ```bash
+    poetry run strix --target https://example.com
+    ```
+  </Step>
+</Steps>
+
+## Contributing Skills
+
+Skills are specialized knowledge packages that enhance agent capabilities. They live in `strix/skills/`
+
+### Creating a Skill
+
+1. Choose the right category
+2. Create a `.jinja` file with your skill content
+3. Include practical examples—working payloads, commands, test cases
+4. Provide validation methods to confirm findings
+5. Submit via PR
+
+## Contributing Code
+
+### Pull Request Process
+
+1. **Create an issue first** — Describe the problem or feature
+2. **Fork and branch** — Work from `main`
+3. **Make changes** — Follow existing code style
+4. **Write tests** — Ensure coverage for new features
+5. **Run checks** — `make check-all` should pass
+6. **Submit PR** — Link to issue and provide context
+
+### Code Style
+
+- PEP 8 with 100-character line limit
+- Type hints for all functions
+- Docstrings for public methods
+- Small, focused functions
+- Meaningful variable names
+
+## Reporting Issues
+
+Include:
+
+- Python version and OS
+- Strix version (`strix --version`)
+- LLM being used
+- Full error traceback
+- Steps to reproduce
+
+## Community
+
+<CardGroup cols={2}>
+  <Card title="Discord" icon="discord" href="https://discord.gg/YjKFvEZSdZ">
+    Join the community for help and discussion.
+  </Card>
+  <Card title="GitHub Issues" icon="github" href="https://github.com/usestrix/strix/issues">
+    Report bugs and request features.
+  </Card>
+</CardGroup>

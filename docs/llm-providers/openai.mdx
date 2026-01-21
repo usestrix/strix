@@ -1,0 +1,31 @@
+---
+title: "OpenAI"
+description: "Configure Strix with OpenAI models"
+---
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/gpt-5"
+export LLM_API_KEY="sk-..."
+```
+
+## Available Models
+
+See [OpenAI Models Documentation](https://platform.openai.com/docs/models) for the full list of available models.
+
+## Get API Key
+
+1. Go to [platform.openai.com](https://platform.openai.com)
+2. Navigate to API Keys
+3. Create a new secret key
+
+## Custom Base URL
+
+For OpenAI-compatible APIs:
+
+```bash
+export STRIX_LLM="openai/gpt-5"
+export LLM_API_KEY="your-key"
+export LLM_API_BASE="https://your-proxy.com/v1"
+```

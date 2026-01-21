@@ -1,0 +1,119 @@
+---
+title: "Skills"
+description: "Specialized knowledge packages that enhance agent capabilities"
+---
+
+Skills are structured knowledge packages that give Strix agents deep expertise in specific vulnerability types, technologies, and testing methodologies.
+
+## The Idea
+
+LLMs have broad but shallow security knowledge. They know _about_ SQL injection, but lack the nuanced techniques that experienced pentesters use—parser quirks, bypass methods, validation tricks, and chain attacks.
+
+Skills inject this deep, specialized knowledge directly into the agent's context, transforming it from a generalist into a specialist for the task at hand.
+
+## How They Work
+
+When Strix spawns an agent for a specific task, it selects up to 5 relevant skills based on the context:
+
+```python
+# Agent created for JWT testing automatically loads relevant skills
+create_agent(
+    task="Test authentication mechanisms",
+    skills=["authentication_jwt", "business_logic"]
+)
+```
+
+The skills are injected into the agent's system prompt, giving it access to:
+
+- **Advanced techniques** — Non-obvious methods beyond standard testing
+- **Working payloads** — Practical examples with variations
+- **Validation methods** — How to confirm findings and avoid false positives
+
+## Skill Categories
+
+### Vulnerabilities
+
+Core vulnerability classes with deep exploitation techniques.
+
+| Skill                                 | Coverage                                               |
+| ------------------------------------- | ------------------------------------------------------ |
+| `authentication_jwt`                  | JWT attacks, algorithm confusion, claim tampering      |
+| `idor`                                | Object reference attacks, horizontal/vertical access   |
+| `sql_injection`                       | SQL injection variants, WAF bypasses, blind techniques |
+| `xss`                                 | XSS types, filter bypasses, DOM exploitation           |
+| `ssrf`                                | Server-side request forgery, protocol handlers         |
+| `csrf`                                | Cross-site request forgery, token bypasses             |
+| `xxe`                                 | XML external entities, OOB exfiltration                |
+| `rce`                                 | Remote code execution vectors                          |
+| `business_logic`                      | Logic flaws, state manipulation, race conditions       |
+| `race_conditions`                     | TOCTOU, parallel request attacks                       |
+| `path_traversal_lfi_rfi`              | File inclusion, path traversal                         |
+| `open_redirect`                       | Redirect bypasses, URL parsing tricks                  |
+| `mass_assignment`                     | Attribute injection, hidden parameter pollution        |
+| `insecure_file_uploads`               | Upload bypasses, extension tricks                      |
+| `information_disclosure`              | Data leakage, error-based enumeration                  |
+| `subdomain_takeover`                  | Dangling DNS, cloud resource claims                    |
+| `broken_function_level_authorization` | Privilege escalation, role bypasses                    |
+
+### Frameworks
+
+Framework-specific testing patterns.
+
+| Skill     | Coverage                                     |
+| --------- | -------------------------------------------- |
+| `fastapi` | FastAPI security patterns, Pydantic bypasses |
+| `nextjs`  | Next.js SSR/SSG issues, API route security   |
+
+### Technologies
+
+Third-party service and platform security.
+
+| Skill                | Coverage                           |
+| -------------------- | ---------------------------------- |
+| `supabase`           | Supabase RLS bypasses, auth issues |
+| `firebase_firestore` | Firestore rules, Firebase auth     |
+
+### Protocols
+
+Protocol-specific testing techniques.
+
+| Skill     | Coverage                                         |
+| --------- | ------------------------------------------------ |
+| `graphql` | GraphQL introspection, batching, resolver issues |
+
+## Skill Structure
+
+Each skill uses XML-style tags for structure:
+
+```xml
+<vulnerability_guide>
+  <title>NAME</title>
+
+  <critical>Key insight about this vulnerability</critical>
+
+  <scope>What this skill covers</scope>
+
+  <methodology>Step-by-step testing approach</methodology>
+
+  <discovery_techniques>How to find it</discovery_techniques>
+
+  <exploitation_techniques>How to exploit it</exploitation_techniques>
+
+  <bypass_techniques>How to bypass protections</bypass_techniques>
+
+  <validation>How to confirm findings</validation>
+
+  <false_positives>What to watch out for</false_positives>
+
+  <pro_tips>Additional Expert advice</pro_tips>
+</vulnerability_guide>
+```
+
+## Contributing Skills
+
+Community contributions are welcome. Good skills include:
+
+1. **Real-world techniques** — Methods that work in practice
+2. **Practical payloads** — Working examples with variations
+3. **Validation steps** — How to confirm without false positives
+4. **Context awareness** — Version/environment-specific behavior

@@ -1,0 +1,37 @@
+---
+title: "OpenRouter"
+description: "Configure Strix with models via OpenRouter"
+---
+
+[OpenRouter](https://openrouter.ai) provides access to 100+ models from multiple providers through a single API.
+
+## Setup
+
+```bash
+export STRIX_LLM="openrouter/openai/gpt-5"
+export LLM_API_KEY="sk-or-..."
+```
+
+## Available Models
+
+Access any model on OpenRouter using the format `openrouter/<provider>/<model>`:
+
+| Model | Configuration |
+|-------|---------------|
+| GPT-5 | `openrouter/openai/gpt-5` |
+| Claude 4.5 Sonnet | `openrouter/anthropic/claude-sonnet-4.5` |
+| Gemini 3 Pro | `openrouter/google/gemini-3-pro-preview` |
+| GLM-4.7 | `openrouter/z-ai/glm-4.7` |
+
+## Get API Key
+
+1. Go to [openrouter.ai](https://openrouter.ai)
+2. Sign in and navigate to Keys
+3. Create a new API key
+
+## Benefits
+
+- **Single API** — Access models from OpenAI, Anthropic, Google, Meta, and more
+- **Fallback routing** — Automatic failover between providers
+- **Cost tracking** — Monitor usage across all models
+- **Higher rate limits** — OpenRouter handles provider limits for you

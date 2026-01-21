@@ -1,0 +1,76 @@
+---
+title: "Quick Start"
+description: "Install Strix and run your first security scan"
+---
+
+## Prerequisites
+
+- Docker (running)
+- An LLM provider API key (OpenAI, Anthropic, or local model)
+
+## Installation
+
+<Tabs>
+  <Tab title="curl">
+    ```bash
+    curl -sSL https://strix.ai/install | bash
+    ```
+  </Tab>
+  <Tab title="pipx">
+    ```bash
+    pipx install strix-agent
+    ```
+  </Tab>
+</Tabs>
+
+## Configuration
+
+Set your LLM provider:
+
+```bash
+export STRIX_LLM="openai/gpt-5"
+export LLM_API_KEY="your-api-key"
+```
+
+<Tip>
+For best results, use `openai/gpt-5`, `anthropic/claude-sonnet-4-5`, or `vertex_ai/gemini-3-pro-preview`.
+</Tip>
+
+## Run Your First Scan
+
+```bash
+strix --target ./your-app
+```
+
+<Note>
+First run pulls the Docker sandbox image automatically. Results are saved to `strix_runs/<run-name>`.
+</Note>
+
+## Target Types
+
+Strix accepts multiple target types:
+
+```bash
+# Local codebase
+strix --target ./app-directory
+
+# GitHub repository
+strix --target https://github.com/org/repo
+
+# Live web application
+strix --target https://your-app.com
+
+# Multiple targets (white-box testing)
+strix -t https://github.com/org/repo -t https://your-app.com
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="CLI Options" icon="terminal" href="/usage/cli">
+    Explore all command-line options.
+  </Card>
+  <Card title="Scan Modes" icon="gauge" href="/usage/scan-modes">
+    Choose the right scan depth.
+  </Card>
+</CardGroup>

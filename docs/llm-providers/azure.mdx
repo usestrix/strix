@@ -1,0 +1,37 @@
+---
+title: "Azure OpenAI"
+description: "Configure Strix with OpenAI models via Azure"
+---
+
+## Setup
+
+```bash
+export STRIX_LLM="azure/your-gpt5-deployment"
+export AZURE_API_KEY="your-azure-api-key"
+export AZURE_API_BASE="https://your-resource.openai.azure.com"
+export AZURE_API_VERSION="2025-11-01-preview"
+```
+
+## Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `STRIX_LLM` | `azure/<your-deployment-name>` |
+| `AZURE_API_KEY` | Your Azure OpenAI API key |
+| `AZURE_API_BASE` | Your Azure OpenAI endpoint URL |
+| `AZURE_API_VERSION` | API version (e.g., `2025-11-01-preview`) |
+
+## Example
+
+```bash
+export STRIX_LLM="azure/gpt-5-deployment"
+export AZURE_API_KEY="abc123..."
+export AZURE_API_BASE="https://mycompany.openai.azure.com"
+export AZURE_API_VERSION="2025-11-01-preview"
+```
+
+## Prerequisites
+
+1. Create an Azure OpenAI resource
+2. Deploy a model (e.g., GPT-5)
+3. Get the endpoint URL and API key from the Azure portal

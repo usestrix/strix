@@ -1,0 +1,45 @@
+---
+title: "Introduction"
+description: "Open-source AI hackers to secure your apps"
+---
+
+Strix are autonomous AI agents that act like real hackers—they run your code dynamically, find vulnerabilities, and validate them with proof-of-concepts.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Install and run your first scan in minutes.
+  </Card>
+  <Card title="CLI Reference" icon="terminal" href="/usage/cli">
+    Learn all command-line options.
+  </Card>
+  <Card title="Tools" icon="wrench" href="/tools/overview">
+    Explore the security testing toolkit.
+  </Card>
+  <Card title="GitHub Actions" icon="github" href="/integrations/github-actions">
+    Integrate into your CI/CD pipeline.
+  </Card>
+</CardGroup>
+
+## Key Capabilities
+
+- **Full hacker toolkit** — Browser automation, HTTP proxy, terminal, Python runtime
+- **Real validation** — PoCs, not false positives
+- **Multi-agent orchestration** — Specialized agents collaborate on complex targets
+- **Developer-first CLI** — Interactive TUI or headless mode for automation
+
+## Vulnerability Coverage
+
+Strix can identify and validate:
+
+| Category | Examples |
+|----------|----------|
+| Access Control | IDOR, privilege escalation, auth bypass |
+| Injection | SQL, NoSQL, command injection |
+| Server-Side | SSRF, XXE, deserialization |
+| Client-Side | XSS, prototype pollution, DOM vulnerabilities |
+| Business Logic | Race conditions, workflow manipulation |
+| Authentication | JWT vulnerabilities, session management |
+
+<Warning>
+Only test applications you own or have explicit permission to test.
+</Warning>
