@@ -128,12 +128,18 @@ class LLM:
     async def _stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[LLMResponse]:
         accumulated = ""
         chunks: list[Any] = []
+        done_streaming = 0
 
         self._total_stats.requests += 1
         response = await acompletion(**self._build_completion_args(messages), stream=True)
 
         async for chunk in response:
             chunks.append(chunk)
+            if done_streaming:
+                done_streaming += 1
+                if getattr(chunk, "usage", None) or done_streaming > 5:
+                    break
+                continue
             delta = self._get_chunk_content(chunk)
             if delta:
                 accumulated += delta
@@ -142,7 +148,8 @@ class LLM:
                         : accumulated.find("</function>") + len("</function>")
                     ]
                     yield LLMResponse(content=accumulated)
-                    break
+                    done_streaming = 1
+                    continue
                 yield LLMResponse(content=accumulated)
 
         if chunks:
