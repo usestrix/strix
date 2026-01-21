@@ -3,7 +3,7 @@ title: "Configuration"
 description: "Environment variables for Strix"
 ---
 
-Configure Strix using environment variables.
+Configure Strix using environment variables or a config file.
 
 ## LLM Configuration
 
@@ -23,16 +23,16 @@ Configure Strix using environment variables.
   Request timeout in seconds for LLM calls.
 </ParamField>
 
-<ParamField path="LLM_RATE_LIMIT_DELAY" type="float">
-  Delay in seconds between LLM requests for rate limiting.
-</ParamField>
-
-<ParamField path="LLM_RATE_LIMIT_CONCURRENT" type="integer">
-  Maximum concurrent LLM requests.
+<ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
+  Maximum number of retries for LLM API calls on transient failures.
 </ParamField>
 
 <ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
   Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults to `medium` for quick scan mode.
+</ParamField>
+
+<ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
+  Timeout in seconds for memory compression operations (context summarization).
 </ParamField>
 
 ## Optional Features
@@ -41,9 +41,17 @@ Configure Strix using environment variables.
   API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
 </ParamField>
 
+<ParamField path="STRIX_DISABLE_BROWSER" default="false" type="boolean">
+  Disable browser automation tools.
+</ParamField>
+
+<ParamField path="STRIX_TELEMETRY" default="1" type="string">
+  Enable/disable anonymous telemetry. Set to `0`, `false`, `no`, or `off` to disable.
+</ParamField>
+
 ## Docker Configuration
 
-<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:0.1.10" type="string">
+<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:0.1.11" type="string">
   Docker image to use for the sandbox container.
 </ParamField>
 
@@ -57,17 +65,33 @@ Configure Strix using environment variables.
 
 ## Sandbox Configuration
 
-<ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="500" type="float">
+<ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">
   Maximum execution time in seconds for sandbox operations.
 </ParamField>
 
-<ParamField path="STRIX_SANDBOX_CONNECT_TIMEOUT" default="10" type="float">
+<ParamField path="STRIX_SANDBOX_CONNECT_TIMEOUT" default="10" type="integer">
   Timeout in seconds for connecting to the sandbox container.
 </ParamField>
 
-<ParamField path="STRIX_DISABLE_BROWSER" default="false" type="boolean">
-  Disable browser tool.
-</ParamField>
+## Config File
+
+Strix stores configuration in `~/.strix/cli-config.json`. You can also specify a custom config file:
+
+```bash
+strix --target ./app --config /path/to/config.json
+```
+
+**Config file format:**
+
+```json
+{
+  "env": {
+    "STRIX_LLM": "openai/gpt-5",
+    "LLM_API_KEY": "sk-...",
+    "STRIX_REASONING_EFFORT": "high"
+  }
+}
+```
 
 ## Example Setup
 
@@ -81,7 +105,7 @@ export PERPLEXITY_API_KEY="pplx-..."
 
 # Optional: Custom timeouts
 export LLM_TIMEOUT="600"
-export STRIX_SANDBOX_EXECUTION_TIMEOUT="1000"
+export STRIX_SANDBOX_EXECUTION_TIMEOUT="300"
 
 # Optional: Use custom Docker image
 export STRIX_IMAGE="ghcr.io/usestrix/strix-sandbox:latest"
