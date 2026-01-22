@@ -3,7 +3,7 @@ title: "Introduction"
 description: "Open-source AI hackers to secure your apps"
 ---
 
-Strix are autonomous AI agents that act like real hackers—they run your code dynamically, find vulnerabilities, and validate them with proof-of-concepts.
+Strix are autonomous AI agents that act like real hackers—they run your code dynamically, find vulnerabilities, and validate them with proof-of-concepts. Built for developers and security teams who need fast, accurate security testing without the overhead of manual pentesting or the false positives of static analysis tools.
 
 <CardGroup cols={2}>
   <Card title="Quick Start" icon="rocket" href="/quickstart">
@@ -20,6 +20,13 @@ Strix are autonomous AI agents that act like real hackers—they run your code d
   </Card>
 </CardGroup>
 
+## Use Cases
+
+- **Application Security Testing** — Detect and validate critical vulnerabilities in your applications
+- **Rapid Penetration Testing** — Get penetration tests done in hours, not weeks
+- **Bug Bounty Automation** — Automate research and generate PoCs for faster reporting
+- **CI/CD Integration** — Block vulnerabilities before they reach production
+
 ## Key Capabilities
 
 - **Full hacker toolkit** — Browser automation, HTTP proxy, terminal, Python runtime
@@ -27,9 +34,20 @@ Strix are autonomous AI agents that act like real hackers—they run your code d
 - **Multi-agent orchestration** — Specialized agents collaborate on complex targets
 - **Developer-first CLI** — Interactive TUI or headless mode for automation
 
-## Vulnerability Coverage
+## Security Tools
 
-Strix can identify and validate:
+Strix agents come equipped with a comprehensive toolkit:
+
+| Tool | Purpose |
+|------|---------|
+| HTTP Proxy | Full request/response manipulation and analysis |
+| Browser Automation | Multi-tab browser for XSS, CSRF, auth flow testing |
+| Terminal | Interactive shells for command execution |
+| Python Runtime | Custom exploit development and validation |
+| Reconnaissance | Automated OSINT and attack surface mapping |
+| Code Analysis | Static and dynamic analysis capabilities |
+
+## Vulnerability Coverage
 
 | Category | Examples |
 |----------|----------|
@@ -39,6 +57,40 @@ Strix can identify and validate:
 | Client-Side | XSS, prototype pollution, DOM vulnerabilities |
 | Business Logic | Race conditions, workflow manipulation |
 | Authentication | JWT vulnerabilities, session management |
+| Infrastructure | Misconfigurations, exposed services |
+
+## Multi-Agent Architecture
+
+Strix uses a graph of specialized agents for comprehensive security testing:
+
+- **Distributed Workflows** — Specialized agents for different attacks and assets
+- **Scalable Testing** — Parallel execution for fast comprehensive coverage
+- **Dynamic Coordination** — Agents collaborate and share discoveries
+
+## Quick Example
+
+```bash
+# Install
+curl -sSL https://strix.ai/install | bash
+
+# Configure
+export STRIX_LLM="openai/gpt-5"
+export LLM_API_KEY="your-api-key"
+
+# Scan
+strix --target ./your-app
+```
+
+## Community
+
+<CardGroup cols={2}>
+  <Card title="Discord" icon="discord" href="https://discord.gg/strix-ai">
+    Join the community for help and discussion.
+  </Card>
+  <Card title="GitHub" icon="github" href="https://github.com/usestrix/strix">
+    Star the repo and contribute.
+  </Card>
+</CardGroup>
 
 <Warning>
 Only test applications you own or have explicit permission to test.
