@@ -104,12 +104,24 @@ def _summarize_messages(
     conversation = "\n".join(formatted)
     prompt = SUMMARY_PROMPT_TEMPLATE.format(conversation=conversation)
 
+    api_key = Config.get("llm_api_key")
+    api_base = (
+        Config.get("llm_api_base")
+        or Config.get("openai_api_base")
+        or Config.get("litellm_base_url")
+        or Config.get("ollama_api_base")
+    )
+
     try:
-        completion_args = {
+        completion_args: dict[str, Any] = {
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "timeout": timeout,
         }
+        if api_key:
+            completion_args["api_key"] = api_key
+        if api_base:
+            completion_args["api_base"] = api_base
 
         response = litellm.completion(**completion_args)
         summary = response.choices[0].message.content or ""
