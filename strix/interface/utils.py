@@ -8,7 +8,9 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
+from urllib.request import Request, urlopen
 
 import docker
 from docker.errors import DockerException, ImageNotFound
@@ -450,29 +452,42 @@ def generate_run_name(targets_info: list[dict[str, Any]] | None = None) -> str:
 
 
 # Target processing utilities
-def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
+
+
+def _is_http_git_repo(url: str) -> bool:
+    check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
+    try:
+        req = Request(check_url, headers={"User-Agent": "git/strix"})  # noqa: S310
+        with urlopen(req, timeout=10) as resp:  # noqa: S310  # nosec B310
+            return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
+    except HTTPError as e:
+        return e.code == 401
+    except (URLError, OSError, ValueError):
+        return False
+
+
+def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911, PLR0912
     if not target or not isinstance(target, str):
         raise ValueError("Target must be a non-empty string")
 
     target = target.strip()
 
-    lower_target = target.lower()
-    bare_repo_prefixes = (
-        "github.com/",
-        "www.github.com/",
-        "gitlab.com/",
-        "www.gitlab.com/",
-        "bitbucket.org/",
-        "www.bitbucket.org/",
-    )
-    if any(lower_target.startswith(p) for p in bare_repo_prefixes):
-        return "repository", {"target_repo": f"https://{target}"}
+    if target.startswith("git@"):
+        return "repository", {"target_repo": target}
+
+    if target.startswith("git://"):
+        return "repository", {"target_repo": target}
 
     parsed = urlparse(target)
     if parsed.scheme in ("http", "https"):
-        if any(
-            host in parsed.netloc.lower() for host in ["github.com", "gitlab.com", "bitbucket.org"]
-        ):
+        if parsed.username or parsed.password:
+            return "repository", {"target_repo": target}
+        if parsed.path.rstrip("/").endswith(".git"):
+            return "repository", {"target_repo": target}
+        if parsed.query or parsed.fragment:
+            return "web_application", {"target_url": target}
+        path_segments = [s for s in parsed.path.split("/") if s]
+        if len(path_segments) >= 2 and _is_http_git_repo(target):
             return "repository", {"target_repo": target}
         return "web_application", {"target_url": target}
 
@@ -487,14 +502,21 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
     try:
         if path.exists():
             if path.is_dir():
-                resolved = path.resolve()
-                return "local_code", {"target_path": str(resolved)}
+                return "local_code", {"target_path": str(path.resolve())}
             raise ValueError(f"Path exists but is not a directory: {target}")
     except (OSError, RuntimeError) as e:
         raise ValueError(f"Invalid path: {target} - {e!s}") from e
 
-    if target.startswith("git@") or target.endswith(".git"):
+    if target.endswith(".git"):
         return "repository", {"target_repo": target}
+
+    if "/" in target:
+        host_part, _, path_part = target.partition("/")
+        if "." in host_part and not host_part.startswith(".") and path_part:
+            full_url = f"https://{target}"
+            if _is_http_git_repo(full_url):
+                return "repository", {"target_repo": full_url}
+            return "web_application", {"target_url": full_url}
 
     if "." in target and "/" not in target and not target.startswith("."):
         parts = target.split(".")
@@ -505,7 +527,7 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         f"Invalid target: {target}\n"
         "Target must be one of:\n"
         "- A valid URL (http:// or https://)\n"
-        "- A Git repository URL (https://github.com/... or git@github.com:...)\n"
+        "- A Git repository URL (https://host/org/repo or git@host:org/repo.git)\n"
         "- A local directory path\n"
         "- A domain name (e.g., example.com)\n"
         "- An IP address (e.g., 192.168.1.10)"
