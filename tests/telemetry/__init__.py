@@ -1,1 +1,1 @@
-"""Tests for strix.telemetry module."""
+# Telemetry tests

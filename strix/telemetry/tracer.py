@@ -143,8 +143,34 @@ class Tracer:
         if self.vulnerability_found_callback:
             self.vulnerability_found_callback(report)
 
+        # Log to live tracer
+        self._log_vulnerability_to_live_tracer(report_id, title, severity, target)
+
         self.save_run_data()
         return report_id
+
+    def _log_vulnerability_to_live_tracer(
+        self,
+        vuln_id: str,
+        title: str,
+        severity: str,
+        target: str | None,
+    ) -> None:
+        """Log vulnerability to live tracer if enabled."""
+        try:
+            from strix.telemetry.live_tracer import get_live_tracer
+
+            tracer = get_live_tracer()
+            if tracer:
+                tracer.log_vulnerability_found(
+                    agent_id=None,  # Vulnerability reports don't always have agent context
+                    vuln_id=vuln_id,
+                    title=title,
+                    severity=severity,
+                    target=target,
+                )
+        except Exception:  # noqa: BLE001, S110
+            pass
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
         return list(self.vulnerability_reports)

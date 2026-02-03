@@ -1,5 +1,6 @@
 import inspect
 import os
+import time
 from typing import Any
 
 import httpx
@@ -266,9 +267,13 @@ async def _execute_single_tool(
     args = tool_inv.get("args", {})
     execution_id = None
     should_agent_finish = False
+    start_time = time.perf_counter()
 
     if tracer:
         execution_id = tracer.log_tool_execution_start(agent_id, tool_name, args)
+
+    # Log tool call to live tracer
+    _log_live_tool_call(agent_id, tool_name, args, execution_id)
 
     try:
         result = await execute_tool_invocation(tool_inv, agent_state)
@@ -287,10 +292,20 @@ async def _execute_single_tool(
 
         _update_tracer_with_result(tracer, execution_id, is_error, result, error_payload)
 
+        # Log tool result to live tracer
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        status = "error" if is_error else "completed"
+        _log_live_tool_result(agent_id, tool_name, status, result, execution_id, duration_ms)
+
     except (ConnectionError, RuntimeError, ValueError, TypeError, OSError) as e:
         error_msg = str(e)
         if tracer and execution_id:
             tracer.update_tool_execution(execution_id, "error", error_msg)
+
+        # Log tool error to live tracer
+        duration_ms = (time.perf_counter() - start_time) * 1000
+        _log_live_tool_result(agent_id, tool_name, "error", {"error": error_msg}, execution_id, duration_ms)
+
         raise
 
     observation_xml, images = _format_tool_result(tool_name, result)
@@ -362,3 +377,51 @@ def remove_screenshot_from_result(result: Any) -> Any:
         result_copy["screenshot"] = "[Image data extracted - see attached image]"
 
     return result_copy
+
+
+def _log_live_tool_call(
+    agent_id: str,
+    tool_name: str,
+    args: dict[str, Any],
+    execution_id: int | None,
+) -> None:
+    """Log tool call to live tracer if enabled."""
+    try:
+        from strix.telemetry.live_tracer import get_live_tracer
+
+        tracer = get_live_tracer()
+        if tracer:
+            tracer.log_tool_call(
+                agent_id=agent_id,
+                tool_name=tool_name,
+                args=args,
+                execution_id=execution_id,
+            )
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
+def _log_live_tool_result(
+    agent_id: str,
+    tool_name: str,
+    status: str,
+    result: Any,
+    execution_id: int | None,
+    duration_ms: float,
+) -> None:
+    """Log tool result to live tracer if enabled."""
+    try:
+        from strix.telemetry.live_tracer import get_live_tracer
+
+        tracer = get_live_tracer()
+        if tracer:
+            tracer.log_tool_result(
+                agent_id=agent_id,
+                tool_name=tool_name,
+                status=status,
+                result=result,
+                execution_id=execution_id,
+                duration_ms=duration_ms,
+            )
+    except Exception:  # noqa: BLE001, S110
+        pass

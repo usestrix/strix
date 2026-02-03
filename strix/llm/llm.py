@@ -1,4 +1,5 @@
 import asyncio
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -129,6 +130,10 @@ class LLM:
         accumulated = ""
         chunks: list[Any] = []
         done_streaming = 0
+        start_time = time.perf_counter()
+
+        # Log LLM request to live tracer
+        self._log_llm_request(messages)
 
         self._total_stats.requests += 1
         response = await acompletion(**self._build_completion_args(messages), stream=True)
@@ -155,11 +160,18 @@ class LLM:
         if chunks:
             self._update_usage_stats(stream_chunk_builder(chunks))
 
+        duration_ms = (time.perf_counter() - start_time) * 1000
         accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
+        tool_invocations = parse_tool_invocations(accumulated)
+        thinking_blocks = self._extract_thinking(chunks)
+
+        # Log LLM response to live tracer
+        self._log_llm_response(accumulated, tool_invocations, thinking_blocks, duration_ms)
+
         yield LLMResponse(
             content=accumulated,
-            tool_invocations=parse_tool_invocations(accumulated),
-            thinking_blocks=self._extract_thinking(chunks),
+            tool_invocations=tool_invocations,
+            thinking_blocks=thinking_blocks,
         )
 
     def _prepare_messages(self, conversation_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -271,7 +283,79 @@ class LLM:
         from strix.telemetry import posthog
 
         posthog.error("llm_error", type(e).__name__)
+
+        # Log error to live tracer
+        self._log_llm_error(e)
+
         raise LLMRequestFailedError(f"LLM request failed: {type(e).__name__}", str(e)) from e
+
+    def _log_llm_request(self, messages: list[dict[str, Any]]) -> None:
+        """Log LLM request to live tracer if enabled."""
+        try:
+            from strix.telemetry.live_tracer import get_live_tracer
+
+            tracer = get_live_tracer()
+            if tracer:
+                tracer.log_llm_request(
+                    agent_id=self.agent_id,
+                    model=self.config.model_name,
+                    messages=messages,
+                    metadata={
+                        "agent_name": self.agent_name,
+                        "reasoning_effort": self._reasoning_effort,
+                    },
+                )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    def _log_llm_response(
+        self,
+        content: str,
+        tool_invocations: list[dict[str, Any]] | None,
+        thinking_blocks: list[dict[str, Any]] | None,
+        duration_ms: float,
+    ) -> None:
+        """Log LLM response to live tracer if enabled."""
+        try:
+            from strix.telemetry.live_tracer import get_live_tracer
+
+            tracer = get_live_tracer()
+            if tracer:
+                usage = None
+                if self._total_stats:
+                    usage = {
+                        "input_tokens": self._total_stats.input_tokens,
+                        "output_tokens": self._total_stats.output_tokens,
+                        "cached_tokens": self._total_stats.cached_tokens,
+                    }
+
+                tracer.log_llm_response(
+                    agent_id=self.agent_id,
+                    content=content,
+                    usage=usage,
+                    tool_invocations=tool_invocations,
+                    thinking_blocks=thinking_blocks,
+                    duration_ms=duration_ms,
+                )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    def _log_llm_error(self, error: Exception) -> None:
+        """Log LLM error to live tracer if enabled."""
+        try:
+            from strix.telemetry.live_tracer import get_live_tracer
+
+            tracer = get_live_tracer()
+            if tracer:
+                retryable = self._should_retry(error)
+                tracer.log_llm_error(
+                    agent_id=self.agent_id,
+                    error_type=type(error).__name__,
+                    error_message=str(error),
+                    retryable=retryable,
+                )
+        except Exception:  # noqa: BLE001, S110
+            pass
 
     def _is_anthropic(self) -> bool:
         if not self.config.model_name:

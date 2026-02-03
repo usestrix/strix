@@ -22,6 +22,96 @@ from strix.utils.resource_paths import get_strix_resource_path
 from .state import AgentState
 
 
+def _log_live_agent_created(
+    agent_id: str,
+    agent_name: str,
+    task: str,
+    parent_id: str | None,
+    agent_type: str | None,
+) -> None:
+    """Log agent creation to live tracer if enabled."""
+    try:
+        from strix.telemetry.live_tracer import get_live_tracer
+
+        tracer = get_live_tracer()
+        if tracer:
+            tracer.log_agent_created(
+                agent_id=agent_id,
+                agent_name=agent_name,
+                task=task,
+                parent_id=parent_id,
+                agent_type=agent_type,
+            )
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
+def _log_live_agent_completed(
+    agent_id: str,
+    status: str,
+    result: dict[str, Any] | None = None,
+    error_message: str | None = None,
+) -> None:
+    """Log agent completion to live tracer if enabled."""
+    try:
+        from strix.telemetry.live_tracer import get_live_tracer
+
+        tracer = get_live_tracer()
+        if tracer:
+            tracer.log_agent_completed(
+                agent_id=agent_id,
+                status=status,
+                result=result,
+                error_message=error_message,
+            )
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
+def _log_live_state_change(
+    agent_id: str,
+    field: str,
+    old_value: Any,
+    new_value: Any,
+) -> None:
+    """Log agent state change to live tracer if enabled."""
+    try:
+        from strix.telemetry.live_tracer import get_live_tracer
+
+        tracer = get_live_tracer()
+        if tracer:
+            tracer.log_agent_state_change(
+                agent_id=agent_id,
+                field=field,
+                old_value=old_value,
+                new_value=new_value,
+            )
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
+def _log_live_message(
+    agent_id: str | None,
+    role: str,
+    content: str,
+    metadata: dict[str, Any] | None = None,
+) -> None:
+    """Log a chat message to live tracer if enabled."""
+    try:
+        from strix.telemetry.live_tracer import get_live_tracer
+
+        tracer = get_live_tracer()
+        if tracer:
+            tracer.log_message(
+                agent_id=agent_id,
+                role=role,
+                content=content if isinstance(content, str) else str(content),
+                metadata=metadata,
+            )
+    except Exception:  # noqa: BLE001, S110
+        pass
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -111,6 +201,15 @@ class BaseAgent(metaclass=AgentMeta):
                     },
                 )
                 tracer.update_tool_execution(execution_id=exec_id, status="completed", result={})
+
+        # Log to live tracer
+        _log_live_agent_created(
+            agent_id=self.state.agent_id,
+            agent_name=self.state.agent_name,
+            task=self.state.task,
+            parent_id=self.state.parent_id,
+            agent_type=self.__class__.__name__,
+        )
 
         self._add_to_agents_graph()
 
@@ -284,17 +383,38 @@ class BaseAgent(metaclass=AgentMeta):
         error_occurred: bool = False,
         was_cancelled: bool = False,
     ) -> None:
+        old_waiting = self.state.waiting_for_input
         self.state.enter_waiting_state()
 
+        # Determine status for logging
+        if task_completed:
+            status = "completed"
+        elif error_occurred:
+            status = "error"
+        elif was_cancelled:
+            status = "stopped"
+        else:
+            status = "stopped"
+
         if tracer:
-            if task_completed:
-                tracer.update_agent_status(self.state.agent_id, "completed")
-            elif error_occurred:
-                tracer.update_agent_status(self.state.agent_id, "error")
-            elif was_cancelled:
-                tracer.update_agent_status(self.state.agent_id, "stopped")
-            else:
-                tracer.update_agent_status(self.state.agent_id, "stopped")
+            tracer.update_agent_status(self.state.agent_id, status)
+
+        # Log state change to live tracer
+        _log_live_state_change(
+            agent_id=self.state.agent_id,
+            field="waiting_for_input",
+            old_value=old_waiting,
+            new_value=True,
+        )
+
+        # Log completion to live tracer if task completed or error
+        if task_completed or error_occurred:
+            _log_live_agent_completed(
+                agent_id=self.state.agent_id,
+                status=status,
+                result=self.state.final_result,
+                error_message=self.state.errors[-1] if self.state.errors else None,
+            )
 
         if task_completed:
             self.state.add_message(
@@ -344,6 +464,13 @@ class BaseAgent(metaclass=AgentMeta):
 
         self.state.add_message("user", task)
 
+        # Log user message to live tracer
+        _log_live_message(
+            agent_id=self.state.agent_id,
+            role="user",
+            content=task,
+        )
+
     async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool:
         final_response = None
 
@@ -380,6 +507,14 @@ class BaseAgent(metaclass=AgentMeta):
                 role="assistant",
                 agent_id=self.state.agent_id,
             )
+
+        # Log message to live tracer
+        _log_live_message(
+            agent_id=self.state.agent_id,
+            role="assistant",
+            content=final_response.content or "",
+            metadata={"has_thinking": bool(thinking_blocks)},
+        )
 
         actions = (
             final_response.tool_invocations
@@ -418,6 +553,14 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.set_completed({"success": True})
             if tracer:
                 tracer.update_agent_status(self.state.agent_id, "completed")
+
+            # Log agent completion to live tracer
+            _log_live_agent_completed(
+                agent_id=self.state.agent_id,
+                status="completed",
+                result={"success": True},
+            )
+
             if self.non_interactive and self.state.parent_id is None:
                 return True
             return True
