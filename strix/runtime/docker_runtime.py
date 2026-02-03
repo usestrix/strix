@@ -78,6 +78,26 @@ class DockerRuntime(AbstractRuntime):
         if port_bindings.get(port_key):
             self._tool_server_port = int(port_bindings[port_key][0]["HostPort"])
 
+    def _start_tool_server(self, container: Container) -> None:
+        """Start the tool server inside the container."""
+        try:
+            token = self._tool_server_token
+            port = CONTAINER_TOOL_SERVER_PORT
+            cmd = (
+                f"cd /app && "
+                f"PYTHONPATH=/app STRIX_SANDBOX_MODE=true "
+                f"/app/venv/bin/python -m strix.runtime.tool_server "
+                f"--token={token} --host=0.0.0.0 --port={port}"
+            )
+            container.exec_run(
+                ["/bin/bash", "-c", cmd],
+                detach=True,
+                user="pentester",
+                environment={"PYTHONUNBUFFERED": "1"},
+            )
+        except (DockerException, RequestsConnectionError, RequestsTimeout):
+            pass
+
     def _wait_for_tool_server(self, max_retries: int = 30, timeout: int = 5) -> None:
         host = self._resolve_docker_host()
         health_url = f"http://{host}:{self._tool_server_port}/health"
@@ -135,6 +155,7 @@ class DockerRuntime(AbstractRuntime):
                     labels={"strix-scan-id": scan_id},
                     environment={
                         "PYTHONUNBUFFERED": "1",
+                        "CAIDO_PORT": "48080",
                         "TOOL_SERVER_PORT": str(CONTAINER_TOOL_SERVER_PORT),
                         "TOOL_SERVER_TOKEN": self._tool_server_token,
                         "STRIX_SANDBOX_EXECUTION_TIMEOUT": str(execution_timeout),
@@ -145,6 +166,7 @@ class DockerRuntime(AbstractRuntime):
                 )
 
                 self._scan_container = container
+                self._start_tool_server(container)
                 self._wait_for_tool_server()
 
             except (DockerException, RequestsConnectionError, RequestsTimeout) as e:
@@ -184,10 +206,11 @@ class DockerRuntime(AbstractRuntime):
 
             self._scan_container = container
             self._recover_container_state(container)
+            self._start_tool_server(container)
+            self._wait_for_tool_server()
+            return container
         except NotFound:
             pass
-        else:
-            return container
 
         try:
             containers = self.client.containers.list(
@@ -201,6 +224,8 @@ class DockerRuntime(AbstractRuntime):
 
                 self._scan_container = container
                 self._recover_container_state(container)
+                self._start_tool_server(container)
+                self._wait_for_tool_server()
                 return container
         except DockerException:
             pass
