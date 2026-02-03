@@ -514,7 +514,7 @@ class BaseAgent(metaclass=AgentMeta):
             role="assistant",
             content=final_response.content or "",
             metadata={"has_thinking": bool(thinking_blocks)},
-        )
+            )
 
         actions = (
             final_response.tool_invocations

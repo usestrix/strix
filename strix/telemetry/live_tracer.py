@@ -8,6 +8,7 @@ Streams structured events to disk as they happen, capturing:
 - State changes
 
 Enable via --trace flag or STRIX_TRACE=1 environment variable.
+Use --trace-verbose for human-readable console output.
 """
 
 import json
@@ -18,6 +19,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from strix.telemetry.console_tracer import ConsoleTracer
 from strix.telemetry.redactor import SecretRedactor
 
 
@@ -60,11 +62,13 @@ class LiveTracer:
         output_path: Path | str | None = None,
         run_name: str | None = None,
         redact_secrets: bool = False,
+        verbose: bool = False,
     ):
         self.trace_id = f"trace-{uuid4().hex[:12]}"
         self.run_name = run_name or self.trace_id
         self.start_time = datetime.now(UTC).isoformat()
         self.redact_secrets = redact_secrets
+        self.verbose = verbose
         
         self._sequence = 0
         self._sequence_lock = threading.Lock()
@@ -74,6 +78,9 @@ class LiveTracer:
         
         # Initialize redactor
         self._redactor = SecretRedactor() if redact_secrets else None
+        
+        # Initialize console tracer for verbose output
+        self._console_tracer = ConsoleTracer() if verbose else None
         
         # Determine output path
         if output_path:
@@ -96,6 +103,10 @@ class LiveTracer:
                 "redact_secrets": self.redact_secrets,
             },
         )
+        
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_trace_start(self.run_name)
 
     def _open_file(self) -> None:
         """Open the trace file for writing."""
@@ -177,6 +188,10 @@ class LiveTracer:
         if metadata:
             data["metadata"] = metadata
         
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_llm_request(model, len(messages), agent_id)
+        
         return self._emit_event(
             event_type="llm_request",
             agent_id=agent_id,
@@ -191,6 +206,7 @@ class LiveTracer:
         tool_invocations: list[dict[str, Any]] | None = None,
         thinking_blocks: list[dict[str, Any]] | None = None,
         duration_ms: float | None = None,
+        model: str | None = None,
     ) -> str:
         """Log an LLM response received."""
         data: dict[str, Any] = {
@@ -208,6 +224,16 @@ class LiveTracer:
         if duration_ms is not None:
             data["duration_ms"] = round(duration_ms, 2)
         
+        # Console output
+        if self._console_tracer:
+            tokens = None
+            if usage:
+                tokens = {
+                    "input": usage.get("prompt_tokens", 0),
+                    "output": usage.get("completion_tokens", 0),
+                }
+            self._console_tracer.log_llm_response(model or "unknown", tokens, agent_id)
+        
         return self._emit_event(
             event_type="llm_response",
             agent_id=agent_id,
@@ -220,8 +246,13 @@ class LiveTracer:
         error_type: str,
         error_message: str,
         retryable: bool = False,
+        model: str | None = None,
     ) -> str:
         """Log an LLM error."""
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_llm_error(error_message, model)
+        
         return self._emit_event(
             event_type="llm_error",
             agent_id=agent_id,
@@ -244,6 +275,10 @@ class LiveTracer:
         execution_id: int | None = None,
     ) -> str:
         """Log a tool being called."""
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_tool_call(tool_name, args, agent_id)
+        
         return self._emit_event(
             event_type="tool_call",
             agent_id=agent_id,
@@ -262,6 +297,7 @@ class LiveTracer:
         result: Any,
         execution_id: int | None = None,
         duration_ms: float | None = None,
+        error: str | None = None,
     ) -> str:
         """Log a tool execution result."""
         # Summarize large results
@@ -275,6 +311,10 @@ class LiveTracer:
         }
         if duration_ms is not None:
             data["duration_ms"] = round(duration_ms, 2)
+        
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_tool_result(tool_name, result, error, agent_id)
         
         return self._emit_event(
             event_type="tool_result",
@@ -295,6 +335,10 @@ class LiveTracer:
         agent_type: str | None = None,
     ) -> str:
         """Log an agent being created."""
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_agent_created(agent_id, agent_name, task)
+        
         return self._emit_event(
             event_type="agent_created",
             agent_id=agent_id,
@@ -312,6 +356,7 @@ class LiveTracer:
         status: str,
         result: dict[str, Any] | None = None,
         error_message: str | None = None,
+        agent_name: str | None = None,
     ) -> str:
         """Log an agent completing its task."""
         data: dict[str, Any] = {"status": status}
@@ -319,6 +364,13 @@ class LiveTracer:
             data["result"] = self._summarize_result(result)
         if error_message:
             data["error_message"] = error_message
+        
+        # Console output
+        if self._console_tracer:
+            success = status in ("completed", "success")
+            self._console_tracer.log_agent_completed(
+                agent_id, agent_name or "Agent", success
+            )
         
         return self._emit_event(
             event_type="agent_completed",
@@ -334,6 +386,12 @@ class LiveTracer:
         new_value: Any,
     ) -> str:
         """Log a significant state change in an agent."""
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_state_change(
+                agent_id, str(new_value), str(field)
+            )
+        
         return self._emit_event(
             event_type="state_change",
             agent_id=agent_id,
@@ -383,6 +441,10 @@ class LiveTracer:
         target: str | None = None,
     ) -> str:
         """Log a vulnerability being discovered."""
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_vulnerability_found(vuln_id, title, severity)
+        
         return self._emit_event(
             event_type="vulnerability_found",
             agent_id=agent_id,
@@ -463,6 +525,10 @@ class LiveTracer:
         """Close the trace file."""
         if self._closed:
             return
+        
+        # Console output
+        if self._console_tracer:
+            self._console_tracer.log_trace_end(self.run_name)
         
         # Write trace end event
         self._emit_event(

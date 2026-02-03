@@ -394,6 +394,15 @@ Examples:
         ),
     )
 
+    parser.add_argument(
+        "--trace-verbose",
+        action="store_true",
+        help=(
+            "Output human-readable trace to console (requires --non-interactive). "
+            "Shows tool calls, agent actions, and LLM activity in real-time."
+        ),
+    )
+
     args = parser.parse_args()
 
     if args.instruction and args.instruction_file:
@@ -403,6 +412,9 @@ Examples:
 
     if args.trace_output and not args.trace:
         parser.error("--trace-output requires --trace to be enabled.")
+
+    if args.trace_verbose and not args.non_interactive:
+        parser.error("--trace-verbose requires --non-interactive mode.")
 
     # Check environment variables for tracing options
     trace_env = Config.get("strix_trace")
@@ -604,19 +616,22 @@ def main() -> None:
 
     # Initialize live tracer if enabled
     live_tracer: LiveTracer | None = None
-    if getattr(args, "trace", False):
+    trace_verbose = getattr(args, "trace_verbose", False)
+    if getattr(args, "trace", False) or trace_verbose:
         live_tracer = LiveTracer(
             output_path=getattr(args, "trace_output", None),
             run_name=args.run_name,
             redact_secrets=getattr(args, "redact_secrets", False),
+            verbose=trace_verbose,
         )
         set_live_tracer(live_tracer)
 
         console = Console()
-        console.print(f"[dim]Live trace enabled:[/] {live_tracer.output_path}")
-        if getattr(args, "redact_secrets", False):
-            console.print("[dim]Secret redaction:[/] enabled")
-        console.print()
+        if not trace_verbose:
+            console.print(f"[dim]Live trace enabled:[/] {live_tracer.output_path}")
+            if getattr(args, "redact_secrets", False):
+                console.print("[dim]Secret redaction:[/] enabled")
+            console.print()
 
     exit_reason = "user_exit"
     try:
