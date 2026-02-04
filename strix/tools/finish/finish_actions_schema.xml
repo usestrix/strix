@@ -51,16 +51,16 @@ Professional, customer-facing penetration test report rules (PDF-ready):
 </description>
     <parameters>
       <parameter name="executive_summary" type="string" required="true">
-        <description>High-level summary for executives: key findings, overall security posture, critical risks, business impact</description>
+        <description>High-level summary for non-technical stakeholders. Include: risk posture assessment, key findings in business context, potential business impact (data exposure, compliance, reputation), and an overarching remediation theme. Write in clear, accessible language for executive leadership.</description>
       </parameter>
       <parameter name="methodology" type="string" required="true">
-        <description>Testing methodology: approach, tools used, scope, techniques employed</description>
+        <description>Testing methodology and scope. Include: frameworks and standards followed (e.g., OWASP WSTG, PTES), engagement type and approach (black-box, gray-box), in-scope assets and target environment, categories of testing activities performed, and evidence validation standards applied.</description>
       </parameter>
       <parameter name="technical_analysis" type="string" required="true">
-        <description>Detailed technical findings and security assessment results over the scan</description>
+        <description>Consolidated overview of confirmed findings and risk patterns. Include: severity model used, a high-level summary of each finding with its severity rating, and systemic root causes or recurring themes observed across findings. Reference individual vulnerability reports for reproduction details — do not duplicate full evidence here.</description>
       </parameter>
       <parameter name="recommendations" type="string" required="true">
-        <description>Actionable security recommendations and remediation priorities</description>
+        <description>Prioritized, actionable remediation guidance organized by urgency (Immediate, Short-term, Medium-term). Each recommendation should provide specific technical remediation steps. Conclude with retest and validation guidance.</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
@@ -69,12 +69,11 @@ Professional, customer-facing penetration test report rules (PDF-ready):
     <examples>
 
 <function=finish_scan>
-  <parameter=executive_summary>Executive summary
-An external penetration test of the Acme Customer Portal and associated API identified multiple security weaknesses that, if exploited, could result in unauthorized access to customer data, cross-tenant exposure, and access to internal network resources.
+  <parameter=executive_summary>An external penetration test of the Acme Customer Portal and associated API identified multiple security weaknesses that, if exploited, could result in unauthorized access to customer data, cross-tenant exposure, and access to internal network resources.
 
 Overall risk posture: Elevated.
 
-Key outcomes
+Key findings
 - Confirmed server-side request forgery (SSRF) in a URL preview capability that enables the application to initiate outbound requests to attacker-controlled destinations and internal network ranges.
 - Identified broken access control patterns in business-critical workflows that can enable cross-tenant data access (tenant isolation failures).
 - Observed session and authorization hardening gaps that materially increase risk when combined with other weaknesses.
@@ -86,8 +85,7 @@ Business impact
 
 Remediation theme
 Prioritize eliminating SSRF pathways and centralizing authorization enforcement (deny-by-default). Follow with session hardening and monitoring improvements, then validate with a focused retest.</parameter>
-  <parameter=methodology>Methodology
-The assessment followed industry-standard penetration testing practices aligned to OWASP Web Security Testing Guide (WSTG) concepts and common web/API security testing methodology.
+  <parameter=methodology>The assessment was conducted in accordance with the OWASP Web Security Testing Guide (WSTG) and aligned to industry-standard penetration testing methodology.
 
 Engagement details
 - Assessment type: External penetration test (black-box with limited gray-box context)
@@ -107,13 +105,12 @@ High-level testing activities
 
 Evidence handling and validation standard
 Only validated issues with reproducible impact were treated as findings. Each finding was documented with clear reproduction steps and sufficient evidence to support remediation and verification testing.</parameter>
-  <parameter=technical_analysis>Technical analysis
-This section provides a consolidated view of the confirmed findings and observed risk patterns. Detailed reproduction steps and evidence are documented in the individual vulnerability reports.
+  <parameter=technical_analysis>This section provides a consolidated view of the confirmed findings and observed risk patterns. Detailed reproduction steps and evidence are documented in the individual vulnerability reports.
 
 Severity model
 Severity reflects a combination of exploitability and potential impact to confidentiality, integrity, and availability, considering realistic attacker capabilities.
 
-Confirmed findings (high level)
+Confirmed findings
 1) Server-side request forgery (SSRF) in URL preview (Critical)
 The application fetches user-supplied URLs server-side to generate previews. Validation controls were insufficient to prevent access to internal and link-local destinations. This creates a pathway to internal network enumeration and potential access to sensitive internal services. Redirect and DNS/normalization bypass risk must be assumed unless controls are comprehensive and applied on every request hop.
 
@@ -130,22 +127,40 @@ Systemic themes and root causes
 - Authorization enforcement appears distributed and inconsistent across endpoints instead of centralized and testable.
 - Outbound request functionality lacks a robust, deny-by-default policy for destination validation.
 - Hardening controls (session lifetime, sensitive-action controls, logging) are applied unevenly, increasing the likelihood of successful attack chains.</parameter>
-  <parameter=recommendations>Recommendations
-Priority 0
-- Eliminate SSRF by implementing a strict destination allowlist and deny-by-default policy for outbound requests. Block private, loopback, and link-local ranges (IPv4 and IPv6) after DNS resolution. Re-validate on every redirect hop. Apply URL parsing/normalization safeguards against ambiguous encodings and unusual IP notations.
-- Apply network egress controls so the application runtime cannot reach sensitive internal ranges or link-local services. Route necessary outbound requests through a policy-enforcing egress proxy with logging.
+  <parameter=recommendations>The following recommendations are prioritized by urgency and potential risk reduction.
 
-Priority 1
-- Centralize authorization enforcement for all object access and administrative actions. Implement consistent tenant-ownership checks for every read/write path involving orders, invoices, and account resources. Adopt deny-by-default authorization middleware/policies.
-- Add regression tests for authorization decisions, including cross-tenant negative cases and privilege-boundary testing for administrative endpoints.
-- Harden session management: secure cookie attributes, session rotation after authentication and privilege change events, reduced session lifetime for privileged contexts, and consistent CSRF protections for state-changing actions.
+Immediate priority
+These items address the most severe confirmed risks and should be prioritized for immediate remediation.
 
-Priority 2
-- Harden file handling and preview behaviors: strict content-type allowlists, forced download for active formats, safe rendering pipelines, and scanning/sanitization where applicable.
-- Improve monitoring and detection: alert on high-risk events such as repeated authorization failures, anomalous outbound fetch attempts, sensitive administrative actions, and unusual access patterns to business-critical resources.
+1. Remediate server-side request forgery
+Implement a strict destination allowlist with a deny-by-default policy for all server-initiated outbound requests. Block private, loopback, and link-local address ranges (IPv4 and IPv6) at the application layer after DNS resolution. Re-validate destination addresses on every redirect hop. Apply URL normalization to prevent bypass via ambiguous encodings, alternate IP notations, or DNS rebinding.
 
-Follow-up validation
-- Conduct a targeted retest after remediation to confirm SSRF controls, tenant isolation enforcement, and session hardening, and to ensure no bypasses exist via redirects, DNS rebinding, or encoding edge cases.</parameter>
+2. Enforce network-level egress controls
+Restrict application runtime network egress to prevent outbound connections to internal and link-local address spaces at the network layer. Route legitimate outbound requests through a policy-enforcing egress proxy with request logging and alerting.
+
+3. Enforce tenant-scoped authorization
+Implement consistent tenant-ownership validation on every read and write path for business-critical resources, including orders, invoices, and account data. Adopt centralized, deny-by-default authorization middleware that enforces object- and function-level access controls uniformly across all endpoints.
+
+Short-term priority
+These items reduce residual risk and harden defensive controls.
+
+4. Centralize and harden authorization logic
+Consolidate authorization enforcement into a centralized policy layer. Require re-authentication for high-risk administrative actions. Add regression tests covering cross-tenant access, privilege escalation, and negative authorization cases.
+
+5. Harden session management
+Enforce secure cookie attributes (Secure, HttpOnly, SameSite). Implement session rotation after authentication events and privilege changes. Reduce session lifetime for privileged contexts. Apply consistent CSRF protections to all state-changing operations.
+
+Medium-term priority
+These items strengthen defense-in-depth and improve operational visibility.
+
+6. Harden file handling and content rendering
+Enforce strict content-type allowlists for file uploads and previews. Force download disposition for active content types. Implement content sanitization and scanning where applicable. Prevent inline rendering of potentially executable formats.
+
+7. Improve security monitoring and detection
+Implement alerting for high-risk events: repeated authorization failures, anomalous outbound request patterns, sensitive administrative actions, and unusual access to business-critical resources. Ensure sufficient logging granularity to support incident investigation.
+
+Retest and validation
+Conduct a focused retest after remediation of immediate-priority items to verify the effectiveness of SSRF controls, tenant isolation enforcement, and session hardening. Validate that no bypasses exist through redirect chains, DNS rebinding, or encoding edge cases. Repeat authorization regression tests to confirm consistent enforcement across all endpoints.</parameter>
 </function>
     </examples>
   </tool>
