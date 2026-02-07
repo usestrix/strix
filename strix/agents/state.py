@@ -43,7 +43,9 @@ class AgentState(BaseModel):
         self.iteration += 1
         self.last_updated = datetime.now(UTC).isoformat()
 
-    def add_message(self, role: str, content: Any, thinking_blocks: list[dict[str, Any]] | None = None) -> None:
+    def add_message(
+        self, role: str, content: Any, thinking_blocks: list[dict[str, Any]] | None = None
+    ) -> None:
         message = {"role": role, "content": content}
         if thinking_blocks:
             message["thinking_blocks"] = thinking_blocks

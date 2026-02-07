@@ -38,6 +38,9 @@ from strix.llm.config import LLMConfig
 from strix.telemetry.tracer import Tracer, set_global_tracer
 
 
+logger = logging.getLogger(__name__)
+
+
 def get_package_version() -> str:
     try:
         return pkg_version("strix-agent")
@@ -91,6 +94,7 @@ class ChatTextArea(TextArea):  # type: ignore[misc]
 
 
 class SplashScreen(Static):  # type: ignore[misc]
+    ALLOW_SELECT = False
     PRIMARY_GREEN = "#22c55e"
     BANNER = (
         " ███████╗████████╗██████╗ ██╗██╗  ██╗\n"
@@ -667,6 +671,7 @@ class QuitScreen(ModalScreen):  # type: ignore[misc]
 
 class StrixTUIApp(App):  # type: ignore[misc]
     CSS_PATH = "assets/tui_styles.tcss"
+    ALLOW_SELECT = True
 
     SIDEBAR_MIN_WIDTH = 140
 
@@ -783,13 +788,16 @@ class StrixTUIApp(App):  # type: ignore[misc]
             chat_history.can_focus = True
 
             status_text = Static("", id="status_text")
+            status_text.ALLOW_SELECT = False
             keymap_indicator = Static("", id="keymap_indicator")
+            keymap_indicator.ALLOW_SELECT = False
 
             agent_status_display = Horizontal(
                 status_text, keymap_indicator, id="agent_status_display", classes="hidden"
             )
 
             chat_prompt = Static("> ", id="chat_prompt")
+            chat_prompt.ALLOW_SELECT = False
             chat_input = ChatTextArea(
                 "",
                 id="chat_input",
@@ -807,6 +815,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             agents_tree.guide_style = "dashed"
 
             stats_display = Static("", id="stats_display")
+            stats_display.ALLOW_SELECT = False
 
             vulnerabilities_panel = VulnerabilitiesPanel(id="vulnerabilities_panel")
 
@@ -1005,6 +1014,33 @@ class StrixTUIApp(App):  # type: ignore[misc]
         text.append(message)
         return text, f"chat-placeholder {placeholder_class}"
 
+    @staticmethod
+    def _merge_renderables(renderables: list[Any]) -> Text:
+        """Merge renderables into a single Text for mouse text selection support."""
+        combined = Text()
+        for i, item in enumerate(renderables):
+            if i > 0:
+                combined.append("\n")
+            StrixTUIApp._append_renderable(combined, item)
+        return combined
+
+    @staticmethod
+    def _append_renderable(combined: Text, item: Any) -> None:
+        """Recursively append a renderable's text content to a combined Text."""
+        if isinstance(item, Text):
+            combined.append_text(item)
+        elif isinstance(item, Group):
+            for j, sub in enumerate(item.renderables):
+                if j > 0:
+                    combined.append("\n")
+                StrixTUIApp._append_renderable(combined, sub)
+        else:
+            inner = getattr(item, "renderable", None)
+            if inner is not None:
+                StrixTUIApp._append_renderable(combined, inner)
+            else:
+                combined.append(str(item))
+
     def _get_rendered_events_content(self, events: list[dict[str, Any]]) -> Any:
         renderables: list[Any] = []
 
@@ -1036,10 +1072,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if not renderables:
             return Text()
 
-        if len(renderables) == 1:
+        if len(renderables) == 1 and isinstance(renderables[0], Text):
             return renderables[0]
 
-        return Group(*renderables)
+        return self._merge_renderables(renderables)
 
     def _render_streaming_content(self, content: str, agent_id: str | None = None) -> Any:
         cache_key = agent_id or self.selected_agent_id or ""
@@ -1072,10 +1108,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         if not renderables:
             result = Text()
-        elif len(renderables) == 1:
+        elif len(renderables) == 1 and isinstance(renderables[0], Text):
             result = renderables[0]
         else:
-            result = Group(*renderables)
+            result = self._merge_renderables(renderables)
 
         self._streaming_render_cache[cache_key] = (content_len, result)
         return result
@@ -1622,7 +1658,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             interrupted_text.append("\n")
             interrupted_text.append("⚠ ", style="yellow")
             interrupted_text.append("Interrupted by user", style="yellow dim")
-            return Group(streaming_result, interrupted_text)
+            return self._merge_renderables([streaming_result, interrupted_text])
 
         return AgentMessageRenderer.render_simple(content)
 
@@ -1930,6 +1966,92 @@ class StrixTUIApp(App):  # type: ignore[misc]
         else:
             sidebar.remove_class("-hidden")
             chat_area.remove_class("-full-width")
+
+    def on_mouse_up(self, _event: events.MouseUp) -> None:
+        self.set_timer(0.05, self._auto_copy_selection)
+
+    _ICON_PREFIXES: ClassVar[tuple[str, ...]] = (
+        "🐞 ",
+        "🌐 ",
+        "📋 ",
+        "🧠 ",
+        "◆ ",
+        "◇ ",
+        "◈ ",
+        "→ ",
+        "○ ",
+        "● ",
+        "✓ ",
+        "✗ ",
+        "⚠ ",
+        "▍ ",
+        "▍",
+        "┃ ",
+        "• ",
+        ">_ ",
+        "</> ",
+        "<~> ",
+        "[ ] ",
+        "[~] ",
+        "[•] ",
+    )
+
+    _DECORATIVE_LINES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "● In progress...",
+            "✓ Done",
+            "✗ Failed",
+            "✗ Error",
+            "○ Unknown",
+        }
+    )
+
+    @staticmethod
+    def _clean_copied_text(text: str) -> str:
+        lines = text.split("\n")
+        cleaned: list[str] = []
+        for line in lines:
+            stripped = line.lstrip()
+            if stripped in StrixTUIApp._DECORATIVE_LINES:
+                continue
+            if stripped and all(c == "─" for c in stripped):
+                continue
+            out = line
+            for prefix in StrixTUIApp._ICON_PREFIXES:
+                if stripped.startswith(prefix):
+                    leading = line[: len(line) - len(line.lstrip())]
+                    out = leading + stripped[len(prefix) :]
+                    break
+            cleaned.append(out)
+        return "\n".join(cleaned)
+
+    def _auto_copy_selection(self) -> None:
+        copied = False
+
+        try:
+            if self.screen.selections:
+                selected = self.screen.get_selected_text()
+                self.screen.clear_selection()
+                if selected:
+                    cleaned = self._clean_copied_text(selected)
+                    self.copy_to_clipboard(cleaned if cleaned.strip() else selected)
+                    copied = True
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to copy screen selection", exc_info=True)
+
+        if not copied:
+            try:
+                chat_input = self.query_one("#chat_input", ChatTextArea)
+                selected = chat_input.selected_text
+                if selected and selected.strip():
+                    self.copy_to_clipboard(selected)
+                    chat_input.move_cursor(chat_input.cursor_location)
+                    copied = True
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to copy chat input selection", exc_info=True)
+
+        if copied:
+            self.notify("Copied to clipboard", timeout=2)
 
 
 async def run_tui(args: argparse.Namespace) -> None:

@@ -3,6 +3,28 @@ Screen {
     color: #d4d4d4;
 }
 
+.screen--selection {
+    background: #2d3d2f;
+    color: #e5e5e5;
+}
+
+ToastRack {
+    dock: top;
+    align: right top;
+    margin-bottom: 0;
+    margin-top: 1;
+}
+
+Toast {
+    width: 25;
+    background: #000000;
+    border-left: outer #22c55e;
+}
+
+Toast.-information .toast--title {
+    color: #22c55e;
+}
+
 #splash_screen {
     height: 100%;
     width: 100%;
