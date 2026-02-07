@@ -2032,7 +2032,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if self.screen.selections:
                 selected = self.screen.get_selected_text()
                 self.screen.clear_selection()
-                if selected:
+                if selected and selected.strip():
                     cleaned = self._clean_copied_text(selected)
                     self.copy_to_clipboard(cleaned if cleaned.strip() else selected)
                     copied = True
