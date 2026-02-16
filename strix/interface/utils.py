@@ -163,32 +163,34 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
         text.append("\n")
         text.append(poc_script_code, style="dim")
 
-    code_file = report.get("code_file")
-    if code_file:
+    code_locations = report.get("code_locations")
+    if code_locations:
         text.append("\n\n")
-        text.append("Code File: ", style=field_style)
-        text.append(code_file)
-
-    code_before = report.get("code_before")
-    if code_before:
-        text.append("\n\n")
-        text.append("Code Before", style=field_style)
-        text.append("\n")
-        text.append(code_before, style="dim")
-
-    code_after = report.get("code_after")
-    if code_after:
-        text.append("\n\n")
-        text.append("Code After", style=field_style)
-        text.append("\n")
-        text.append(code_after, style="dim")
-
-    code_diff = report.get("code_diff")
-    if code_diff:
-        text.append("\n\n")
-        text.append("Code Diff", style=field_style)
-        text.append("\n")
-        text.append(code_diff, style="dim")
+        text.append("Code Locations", style=field_style)
+        for i, loc in enumerate(code_locations):
+            text.append("\n\n")
+            text.append(f"  Location {i + 1}: ", style="dim")
+            text.append(loc.get("file", "unknown"), style="bold")
+            start = loc.get("start_line")
+            end = loc.get("end_line")
+            if start is not None:
+                if end and end != start:
+                    text.append(f":{start}-{end}")
+                else:
+                    text.append(f":{start}")
+            if loc.get("label"):
+                text.append(f"\n  {loc['label']}", style="italic dim")
+            if loc.get("snippet"):
+                text.append("\n  ")
+                text.append(loc["snippet"], style="dim")
+            if loc.get("fix_before") or loc.get("fix_after"):
+                text.append("\n  Fix:")
+                if loc.get("fix_before"):
+                    text.append("\n  - ", style="dim")
+                    text.append(loc["fix_before"], style="dim")
+                if loc.get("fix_after"):
+                    text.append("\n  + ", style="dim")
+                    text.append(loc["fix_after"], style="dim")
 
     remediation_steps = report.get("remediation_steps")
     if remediation_steps:

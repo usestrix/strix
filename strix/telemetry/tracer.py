@@ -89,10 +89,8 @@ class Tracer:
         endpoint: str | None = None,
         method: str | None = None,
         cve: str | None = None,
-        code_file: str | None = None,
-        code_before: str | None = None,
-        code_after: str | None = None,
-        code_diff: str | None = None,
+        cwe: str | None = None,
+        code_locations: list[dict[str, Any]] | None = None,
     ) -> str:
         report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
 
@@ -127,14 +125,10 @@ class Tracer:
             report["method"] = method.strip()
         if cve:
             report["cve"] = cve.strip()
-        if code_file:
-            report["code_file"] = code_file.strip()
-        if code_before:
-            report["code_before"] = code_before.strip()
-        if code_after:
-            report["code_after"] = code_after.strip()
-        if code_diff:
-            report["code_diff"] = code_diff.strip()
+        if cwe:
+            report["cwe"] = cwe.strip()
+        if code_locations:
+            report["code_locations"] = code_locations
 
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")
@@ -323,6 +317,7 @@ class Tracer:
                             ("Endpoint", report.get("endpoint")),
                             ("Method", report.get("method")),
                             ("CVE", report.get("cve")),
+                            ("CWE", report.get("cwe")),
                         ]
                         cvss_score = report.get("cvss")
                         if cvss_score is not None:
@@ -353,15 +348,33 @@ class Tracer:
                                 f.write(f"{report['poc_script_code']}\n")
                                 f.write("```\n\n")
 
-                        if report.get("code_file") or report.get("code_diff"):
+                        if report.get("code_locations"):
                             f.write("## Code Analysis\n\n")
-                            if report.get("code_file"):
-                                f.write(f"**File:** {report['code_file']}\n\n")
-                            if report.get("code_diff"):
-                                f.write("**Changes:**\n")
-                                f.write("```diff\n")
-                                f.write(f"{report['code_diff']}\n")
-                                f.write("```\n\n")
+                            for i, loc in enumerate(report["code_locations"]):
+                                prefix = f"**Location {i + 1}:**"
+                                file_ref = loc.get("file", "unknown")
+                                line_ref = ""
+                                if loc.get("start_line") is not None:
+                                    if loc.get("end_line") and loc["end_line"] != loc["start_line"]:
+                                        line_ref = f" (lines {loc['start_line']}-{loc['end_line']})"
+                                    else:
+                                        line_ref = f" (line {loc['start_line']})"
+                                f.write(f"{prefix} `{file_ref}`{line_ref}\n")
+                                if loc.get("label"):
+                                    f.write(f"  {loc['label']}\n")
+                                if loc.get("snippet"):
+                                    f.write(f"  ```\n  {loc['snippet']}\n  ```\n")
+                                if loc.get("fix_before") or loc.get("fix_after"):
+                                    f.write("\n  **Suggested Fix:**\n")
+                                    f.write("  ```diff\n")
+                                    if loc.get("fix_before"):
+                                        for line in loc["fix_before"].splitlines():
+                                            f.write(f"  - {line}\n")
+                                    if loc.get("fix_after"):
+                                        for line in loc["fix_after"].splitlines():
+                                            f.write(f"  + {line}\n")
+                                    f.write("  ```\n")
+                                f.write("\n")
 
                         if report.get("remediation_steps"):
                             f.write("## Remediation\n\n")

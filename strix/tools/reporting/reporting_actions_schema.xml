@@ -14,7 +14,7 @@ DO NOT USE:
 - For reporting multiple vulnerabilities at once. Use a separate create_vulnerability_report for each vulnerability.
 - To re-report a vulnerability that was already reported (even with different details)
 
-White-box requirement (when you have access to the code): You MUST include code_file, code_before, code_after, and code_diff. These must contain the actual code (before/after) and a complete, apply-able unified diff.
+White-box requirement (when you have access to the code): You MUST include code_locations with nested XML, including fix_before/fix_after on locations where a fix is proposed.
 
 DEDUPLICATION: If this tool returns with success=false and mentions a duplicate, DO NOT attempt to re-submit. The vulnerability has already been reported. Move on to testing other areas.
 
@@ -30,7 +30,7 @@ Professional, customer-facing report rules (PDF-ready):
   6) Impact
   7) Remediation
   8) Evidence (optional request/response excerpts, etc.) in the technical analysis field.
-- Numbered steps are allowed ONLY within the proof of concept. Elsewhere, use clear, concise paragraphs suitable for customer-facing reports.
+- Numbered steps are allowed ONLY within the proof of concept and remediation sections. Elsewhere, use clear, concise paragraphs suitable for customer-facing reports.
 - Language must be precise and non-vague; avoid hedging.
 </description>
     <parameters>
@@ -58,51 +58,28 @@ Professional, customer-facing report rules (PDF-ready):
       <parameter name="remediation_steps" type="string" required="true">
         <description>Specific, actionable steps to fix the vulnerability</description>
       </parameter>
-      <parameter name="attack_vector" type="string" required="true">
-        <description>CVSS Attack Vector - How the vulnerability is exploited:
-N = Network (remotely exploitable)
-A = Adjacent (same network segment)
-L = Local (local access required)
-P = Physical (physical access required)</description>
-      </parameter>
-      <parameter name="attack_complexity" type="string" required="true">
-        <description>CVSS Attack Complexity - Conditions beyond attacker's control:
-L = Low (no special conditions)
-H = High (special conditions must exist)</description>
-      </parameter>
-      <parameter name="privileges_required" type="string" required="true">
-        <description>CVSS Privileges Required - Level of privileges needed:
-N = None (no privileges needed)
-L = Low (basic user privileges)
-H = High (admin privileges)</description>
-      </parameter>
-      <parameter name="user_interaction" type="string" required="true">
-        <description>CVSS User Interaction - Does exploit require user action:
-N = None (no user interaction needed)
-R = Required (user must perform some action)</description>
-      </parameter>
-      <parameter name="scope" type="string" required="true">
-        <description>CVSS Scope - Can the vulnerability affect resources beyond its security scope:
-U = Unchanged (only affects the vulnerable component)
-C = Changed (affects resources beyond vulnerable component)</description>
-      </parameter>
-      <parameter name="confidentiality" type="string" required="true">
-        <description>CVSS Confidentiality Impact - Impact to confidentiality:
-N = None (no impact)
-L = Low (some information disclosure)
-H = High (all information disclosed)</description>
-      </parameter>
-      <parameter name="integrity" type="string" required="true">
-        <description>CVSS Integrity Impact - Impact to integrity:
-N = None (no impact)
-L = Low (data can be modified but scope is limited)
-H = High (total loss of integrity)</description>
-      </parameter>
-      <parameter name="availability" type="string" required="true">
-        <description>CVSS Availability Impact - Impact to availability:
-N = None (no impact)
-L = Low (reduced performance or interruptions)
-H = High (total loss of availability)</description>
+      <parameter name="cvss_breakdown" type="string" required="true">
+        <description>CVSS 3.1 base score breakdown as nested XML. All 8 metrics are required.
+
+Each metric element contains a single uppercase letter value:
+- attack_vector: N (Network), A (Adjacent), L (Local), P (Physical)
+- attack_complexity: L (Low), H (High)
+- privileges_required: N (None), L (Low), H (High)
+- user_interaction: N (None), R (Required)
+- scope: U (Unchanged), C (Changed)
+- confidentiality: N (None), L (Low), H (High)
+- integrity: N (None), L (Low), H (High)
+- availability: N (None), L (Low), H (High)</description>
+        <format>
+          <attack_vector>N</attack_vector>
+          <attack_complexity>L</attack_complexity>
+          <privileges_required>N</privileges_required>
+          <user_interaction>N</user_interaction>
+          <scope>U</scope>
+          <confidentiality>H</confidentiality>
+          <integrity>H</integrity>
+          <availability>N</availability>
+        </format>
       </parameter>
       <parameter name="endpoint" type="string" required="false">
         <description>API endpoint(s) or URL path(s) (e.g., "/api/login") - for web vulnerabilities, or Git repository path(s) - for code vulnerabilities</description>
@@ -111,19 +88,64 @@ H = High (total loss of availability)</description>
         <description>HTTP method(s) (GET, POST, etc.) - for web vulnerabilities.</description>
       </parameter>
       <parameter name="cve" type="string" required="false">
-        <description>CVE identifier (e.g., "CVE-2024-1234"). Make sure it's a valid CVE. Use web search or vulnerability databases to make sure it's a valid CVE number.</description>
+        <description>CVE identifier. ONLY the ID, e.g. "CVE-2024-1234" — do NOT include the name or description.
+You must be 100% certain of the exact CVE number. Do NOT guess, approximate, or hallucinate CVE IDs.
+If web_search is available, use it to verify the CVE exists and matches this vulnerability. If you cannot verify it, omit this field entirely.</description>
       </parameter>
-      <parameter name="code_file" type="string" required="false">
-        <description>MANDATORY for white-box testing: exact affected source file path(s).</description>
+      <parameter name="cwe" type="string" required="false">
+        <description>CWE identifier. ONLY the ID, e.g. "CWE-89" — do NOT include the name or parenthetical (wrong: "CWE-89 (SQL Injection)").
+
+You must be 100% certain of the exact CWE number. Do NOT guess or approximate.
+If web_search is available and you are unsure, use it to look up the correct CWE. If you cannot be certain, omit this field entirely.
+Always prefer the most specific child CWE over a broad parent.
+For example, use CWE-89 instead of CWE-74, or CWE-78 instead of CWE-77.
+
+Reference (ID only — names here are just for your reference, do NOT include them in the value):
+- Injection: CWE-79 XSS, CWE-89 SQLi, CWE-78 OS Command Injection, CWE-94 Code Injection, CWE-77 Command Injection
+- Auth/Access: CWE-287 Improper Authentication, CWE-862 Missing Authorization, CWE-863 Incorrect Authorization, CWE-306 Missing Authentication for Critical Function, CWE-639 Authorization Bypass Through User-Controlled Key
+- Web: CWE-352 CSRF, CWE-918 SSRF, CWE-601 Open Redirect, CWE-434 Unrestricted Upload of File with Dangerous Type
+- Memory: CWE-787 Out-of-bounds Write, CWE-125 Out-of-bounds Read, CWE-416 Use After Free, CWE-120 Classic Buffer Overflow
+- Data: CWE-502 Deserialization of Untrusted Data, CWE-22 Path Traversal, CWE-611 XXE
+- Crypto/Config: CWE-798 Use of Hard-coded Credentials, CWE-327 Use of Broken or Risky Cryptographic Algorithm, CWE-311 Missing Encryption of Sensitive Data, CWE-916 Password Hash With Insufficient Computational Effort
+
+Do NOT use broad/parent CWEs like CWE-74, CWE-20, CWE-200, CWE-284, or CWE-693.</description>
       </parameter>
-      <parameter name="code_before" type="string" required="false">
-        <description>MANDATORY for white-box testing: actual vulnerable code snippet(s) copied verbatim from the repository.</description>
-      </parameter>
-      <parameter name="code_after" type="string" required="false">
-        <description>MANDATORY for white-box testing: corrected code snippet(s) exactly as they should appear after the fix.</description>
-      </parameter>
-      <parameter name="code_diff" type="string" required="false">
-        <description>MANDATORY for white-box testing: unified diff showing the code changes. Must be a complete, apply-able unified diff (git format) covering all affected files, with proper file headers, line numbers, and sufficient context.</description>
+      <parameter name="code_locations" type="string" required="false">
+        <description>Nested XML list of code locations where the vulnerability exists. MANDATORY for white-box testing.
+
+Order: first location is where the issue manifests (typically the sink). Additional locations provide data flow context (source → propagation → sink).
+
+Each location element fields:
+- file (REQUIRED): Path relative to repository root. No leading slash, no absolute paths, no ".." traversal.
+  Correct: "src/db/queries.ts" or "app/routes/users.py"
+  Wrong: "/workspace/repo/src/db/queries.ts", "./src/db/queries.ts", "../../etc/passwd"
+- start_line (REQUIRED): Exact 1-based line number where the vulnerable code begins. Must be a positive integer. You must be certain of this number — do not guess or approximate. Go back and verify against the actual file content if needed.
+- end_line (REQUIRED): Exact 1-based line number where the vulnerable code ends. Must be >= start_line. Set equal to start_line if the vulnerability is on a single line.
+- snippet (optional): The actual source code at this location, copied verbatim from the file. Do not paraphrase or summarize code — paste it exactly as it appears.
+- label (optional): Short role description for this location in the data flow, e.g. "User input from request parameter (source)", "Unsanitized input passed to SQL query (sink)".
+- fix_before (optional): The vulnerable code to be replaced, copied verbatim. Must match the actual source exactly — do not paraphrase, summarize, or add/remove whitespace. Only include on locations where a fix is proposed.
+- fix_after (optional): The corrected code that should replace fix_before. Must be syntactically valid and ready to apply as a direct replacement. Only include on locations where a fix is proposed.
+
+Locations without fix_before/fix_after are informational context (e.g. showing the source of tainted data).
+Locations with fix_before/fix_after are actionable fixes (used for PR review suggestions).</description>
+        <format>
+          <location>
+            <file>src/db/queries.ts</file>
+            <start_line>42</start_line>
+            <end_line>42</end_line>
+            <snippet>db.query(`SELECT * FROM users WHERE id = ${id}`)</snippet>
+            <label>Unsanitized input used in SQL query (sink)</label>
+            <fix_before>db.query(`SELECT * FROM users WHERE id = ${id}`)</fix_before>
+            <fix_after>db.query('SELECT * FROM users WHERE id = $1', [id])</fix_after>
+          </location>
+          <location>
+            <file>src/routes/users.ts</file>
+            <start_line>15</start_line>
+            <end_line>15</end_line>
+            <snippet>const id = req.params.id</snippet>
+            <label>User input from request parameter (source)</label>
+          </location>
+        </format>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
@@ -177,7 +199,6 @@ Impact validation:
 - Use a controlled internal endpoint (or a benign endpoint that returns a distinct marker) to demonstrate that the request is performed by the server, not the client.
 - If the application follows redirects, validate whether an allowlisted URL can redirect to a disallowed destination, and whether the redirected-to destination is still fetched.</parameter>
 <parameter=poc_script_code>import json
-import sys
 import time
 from urllib.parse import urljoin
 
@@ -262,16 +283,39 @@ if __name__ == "__main__":
 
 6. Monitoring and alerting
    - Log and alert on preview attempts to unusual destinations, repeated failures, high-frequency requests, or attempts to access blocked ranges.</parameter>
-<parameter=attack_vector>N</parameter>
-<parameter=attack_complexity>L</parameter>
-<parameter=privileges_required>L</parameter>
-<parameter=user_interaction>N</parameter>
-<parameter=scope>C</parameter>
-<parameter=confidentiality>H</parameter>
-<parameter=integrity>H</parameter>
-<parameter=availability>L</parameter>
+<parameter=cvss_breakdown>
+  <attack_vector>N</attack_vector>
+  <attack_complexity>L</attack_complexity>
+  <privileges_required>L</privileges_required>
+  <user_interaction>N</user_interaction>
+  <scope>C</scope>
+  <confidentiality>H</confidentiality>
+  <integrity>H</integrity>
+  <availability>L</availability>
+</parameter>
 <parameter=endpoint>/api/v1/link-preview</parameter>
 <parameter=method>POST</parameter>
+<parameter=cwe>CWE-918</parameter>
+<parameter=code_locations>
+  <location>
+    <file>src/services/link-preview.ts</file>
+    <start_line>47</start_line>
+    <end_line>47</end_line>
+    <snippet>const response = await fetch(userUrl)</snippet>
+    <label>Unvalidated user URL passed to server-side fetch (sink)</label>
+    <fix_before>const response = await fetch(userUrl)</fix_before>
+    <fix_after>const validated = await validateAndResolveUrl(userUrl)
+if (!validated) throw new ForbiddenError('URL not allowed')
+const response = await fetch(validated)</fix_after>
+  </location>
+  <location>
+    <file>src/routes/api/v1/links.ts</file>
+    <start_line>12</start_line>
+    <end_line>12</end_line>
+    <snippet>const userUrl = req.body.url</snippet>
+    <label>User-controlled URL from request body (source)</label>
+  </location>
+</parameter>
 </function>
     </examples>
   </tool>

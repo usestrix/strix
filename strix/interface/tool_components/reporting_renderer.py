@@ -6,6 +6,11 @@ from pygments.styles import get_style_by_name
 from rich.text import Text
 from textual.widgets import Static
 
+from strix.tools.reporting.reporting_actions import (
+    parse_code_locations_xml,
+    parse_cvss_xml,
+)
+
 from .base_renderer import BaseToolRenderer
 from .registry import register_tool_renderer
 
@@ -17,6 +22,13 @@ def _get_style_colors() -> dict[Any, str]:
 
 
 FIELD_STYLE = "bold #4ade80"
+DIM_STYLE = "dim"
+FILE_STYLE = "bold #60a5fa"
+LINE_STYLE = "#facc15"
+LABEL_STYLE = "italic #a1a1aa"
+CODE_STYLE = "#e2e8f0"
+BEFORE_STYLE = "#ef4444"
+AFTER_STYLE = "#22c55e"
 
 
 @register_tool_renderer
@@ -80,18 +92,13 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
         poc_script_code = args.get("poc_script_code", "")
         remediation_steps = args.get("remediation_steps", "")
 
-        attack_vector = args.get("attack_vector", "")
-        attack_complexity = args.get("attack_complexity", "")
-        privileges_required = args.get("privileges_required", "")
-        user_interaction = args.get("user_interaction", "")
-        scope = args.get("scope", "")
-        confidentiality = args.get("confidentiality", "")
-        integrity = args.get("integrity", "")
-        availability = args.get("availability", "")
+        cvss_breakdown_xml = args.get("cvss_breakdown", "")
+        code_locations_xml = args.get("code_locations", "")
 
         endpoint = args.get("endpoint", "")
         method = args.get("method", "")
         cve = args.get("cve", "")
+        cwe = args.get("cwe", "")
 
         severity = ""
         cvss_score = None
@@ -140,38 +147,30 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
             text.append("CVE: ", style=FIELD_STYLE)
             text.append(cve)
 
-        if any(
-            [
-                attack_vector,
-                attack_complexity,
-                privileges_required,
-                user_interaction,
-                scope,
-                confidentiality,
-                integrity,
-                availability,
-            ]
-        ):
+        if cwe:
+            text.append("\n\n")
+            text.append("CWE: ", style=FIELD_STYLE)
+            text.append(cwe)
+
+        parsed_cvss = parse_cvss_xml(cvss_breakdown_xml) if cvss_breakdown_xml else None
+        if parsed_cvss:
             text.append("\n\n")
             cvss_parts = []
-            if attack_vector:
-                cvss_parts.append(f"AV:{attack_vector}")
-            if attack_complexity:
-                cvss_parts.append(f"AC:{attack_complexity}")
-            if privileges_required:
-                cvss_parts.append(f"PR:{privileges_required}")
-            if user_interaction:
-                cvss_parts.append(f"UI:{user_interaction}")
-            if scope:
-                cvss_parts.append(f"S:{scope}")
-            if confidentiality:
-                cvss_parts.append(f"C:{confidentiality}")
-            if integrity:
-                cvss_parts.append(f"I:{integrity}")
-            if availability:
-                cvss_parts.append(f"A:{availability}")
+            for key, prefix in [
+                ("attack_vector", "AV"),
+                ("attack_complexity", "AC"),
+                ("privileges_required", "PR"),
+                ("user_interaction", "UI"),
+                ("scope", "S"),
+                ("confidentiality", "C"),
+                ("integrity", "I"),
+                ("availability", "A"),
+            ]:
+                val = parsed_cvss.get(key)
+                if val:
+                    cvss_parts.append(f"{prefix}:{val}")
             text.append("CVSS Vector: ", style=FIELD_STYLE)
-            text.append("/".join(cvss_parts), style="dim")
+            text.append("/".join(cvss_parts), style=DIM_STYLE)
 
         if description:
             text.append("\n\n")
@@ -190,6 +189,40 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
             text.append("Technical Analysis", style=FIELD_STYLE)
             text.append("\n")
             text.append(technical_analysis)
+
+        parsed_locations = (
+            parse_code_locations_xml(code_locations_xml) if code_locations_xml else None
+        )
+        if parsed_locations:
+            text.append("\n\n")
+            text.append("Code Locations", style=FIELD_STYLE)
+            for i, loc in enumerate(parsed_locations):
+                text.append("\n\n")
+                text.append(f"  Location {i + 1}: ", style=DIM_STYLE)
+                text.append(loc.get("file", "unknown"), style=FILE_STYLE)
+                start = loc.get("start_line")
+                end = loc.get("end_line")
+                if start is not None:
+                    if end and end != start:
+                        text.append(f":{start}-{end}", style=LINE_STYLE)
+                    else:
+                        text.append(f":{start}", style=LINE_STYLE)
+                if loc.get("label"):
+                    text.append(f"\n  {loc['label']}", style=LABEL_STYLE)
+                if loc.get("snippet"):
+                    text.append("\n  ")
+                    text.append(loc["snippet"], style=CODE_STYLE)
+                if loc.get("fix_before") or loc.get("fix_after"):
+                    text.append("\n  ")
+                    text.append("Fix:", style=DIM_STYLE)
+                    if loc.get("fix_before"):
+                        text.append("\n  ")
+                        text.append("- ", style=BEFORE_STYLE)
+                        text.append(loc["fix_before"], style=BEFORE_STYLE)
+                    if loc.get("fix_after"):
+                        text.append("\n  ")
+                        text.append("+ ", style=AFTER_STYLE)
+                        text.append(loc["fix_after"], style=AFTER_STYLE)
 
         if poc_description:
             text.append("\n\n")

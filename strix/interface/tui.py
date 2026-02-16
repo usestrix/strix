@@ -531,16 +531,30 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 lines.append("```")
 
         # Code Analysis
-        if vuln.get("code_file") or vuln.get("code_diff"):
+        if vuln.get("code_locations"):
             lines.extend(["", "## Code Analysis", ""])
-            if vuln.get("code_file"):
-                lines.append(f"**File:** {vuln['code_file']}")
+            for i, loc in enumerate(vuln["code_locations"]):
+                file_ref = loc.get("file", "unknown")
+                line_ref = ""
+                if loc.get("start_line") is not None:
+                    if loc.get("end_line") and loc["end_line"] != loc["start_line"]:
+                        line_ref = f" (lines {loc['start_line']}-{loc['end_line']})"
+                    else:
+                        line_ref = f" (line {loc['start_line']})"
+                lines.append(f"**Location {i + 1}:** `{file_ref}`{line_ref}")
+                if loc.get("label"):
+                    lines.append(f"  {loc['label']}")
+                if loc.get("snippet"):
+                    lines.append(f"```\n{loc['snippet']}\n```")
+                if loc.get("fix_before") or loc.get("fix_after"):
+                    lines.append("**Suggested Fix:**")
+                    lines.append("```diff")
+                    if loc.get("fix_before"):
+                        lines.extend(f"- {line}" for line in loc["fix_before"].splitlines())
+                    if loc.get("fix_after"):
+                        lines.extend(f"+ {line}" for line in loc["fix_after"].splitlines())
+                    lines.append("```")
                 lines.append("")
-            if vuln.get("code_diff"):
-                lines.append("**Changes:**")
-                lines.append("```diff")
-                lines.append(vuln["code_diff"])
-                lines.append("```")
 
         # Remediation
         if vuln.get("remediation_steps"):
