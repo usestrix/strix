@@ -366,14 +366,14 @@ class Tracer:
                                     f.write(f"  ```\n  {loc['snippet']}\n  ```\n")
                                 if loc.get("fix_before") or loc.get("fix_after"):
                                     f.write("\n  **Suggested Fix:**\n")
-                                    f.write("  ```diff\n")
+                                    f.write("```diff\n")
                                     if loc.get("fix_before"):
                                         for line in loc["fix_before"].splitlines():
-                                            f.write(f"  - {line}\n")
+                                            f.write(f"- {line}\n")
                                     if loc.get("fix_after"):
                                         for line in loc["fix_after"].splitlines():
-                                            f.write(f"  + {line}\n")
-                                    f.write("  ```\n")
+                                            f.write(f"+ {line}\n")
+                                    f.write("```\n")
                                 f.write("\n")
 
                         if report.get("remediation_steps"):
