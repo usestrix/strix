@@ -113,30 +113,58 @@ Do NOT use broad/parent CWEs like CWE-74, CWE-20, CWE-200, CWE-284, or CWE-693.<
       <parameter name="code_locations" type="string" required="false">
         <description>Nested XML list of code locations where the vulnerability exists. MANDATORY for white-box testing.
 
-Order: first location is where the issue manifests (typically the sink). Additional locations provide data flow context (source → propagation → sink).
+CRITICAL — HOW fix_before/fix_after WORK:
+fix_before and fix_after are LITERAL BLOCK-LEVEL REPLACEMENTS used directly for GitHub/GitLab PR suggestion blocks. When a reviewer clicks "Accept suggestion", the platform replaces the EXACT lines from start_line to end_line with the fix_after content. This means:
+
+1. fix_before MUST be an EXACT, VERBATIM copy of the source code at lines start_line through end_line. Same whitespace, same indentation, same line breaks. If fix_before does not match the actual file content character-for-character, the suggestion will be wrong or will corrupt the code when accepted.
+
+2. fix_after is the COMPLETE replacement for that entire block. It replaces ALL lines from start_line to end_line. It can be more lines, fewer lines, or the same number of lines as fix_before.
+
+3. start_line and end_line define the EXACT line range being replaced. They must precisely cover the lines in fix_before — no more, no less. If the vulnerable code spans lines 45-48, then start_line=45 and end_line=48, and fix_before must contain all 4 lines exactly as they appear in the file.
+
+MULTI-PART FIXES:
+Many fixes require changes in multiple non-contiguous parts of a file (e.g., adding an import at the top AND changing code lower down), or across multiple files. Since each fix_before/fix_after pair covers ONE contiguous block, you MUST create SEPARATE location entries for each part of the fix:
+
+- Each location covers one contiguous block of lines to change
+- Use the label field to describe how each part relates to the overall fix (e.g., "Add import for parameterized query library", "Replace string interpolation with parameterized query")
+- Order fix locations logically: primary fix first (where the vulnerability manifests), then supporting changes (imports, config, etc.)
+
+COMMON MISTAKES TO AVOID:
+- Do NOT guess line numbers. Read the file and verify the exact lines before reporting.
+- Do NOT paraphrase or reformat code in fix_before. It must be a verbatim copy.
+- Do NOT set start_line=end_line when the vulnerable code spans multiple lines. Cover the full range.
+- Do NOT put an import addition and a code change in the same fix_before/fix_after if they are not on adjacent lines. Split them into separate locations.
+- Do NOT include lines outside the vulnerable/fixed code in fix_before just to "pad" the range.
 
 Each location element fields:
 - file (REQUIRED): Path relative to repository root. No leading slash, no absolute paths, no ".." traversal.
   Correct: "src/db/queries.ts" or "app/routes/users.py"
   Wrong: "/workspace/repo/src/db/queries.ts", "./src/db/queries.ts", "../../etc/passwd"
-- start_line (REQUIRED): Exact 1-based line number where the vulnerable code begins. Must be a positive integer. You must be certain of this number — do not guess or approximate. Go back and verify against the actual file content if needed.
-- end_line (REQUIRED): Exact 1-based line number where the vulnerable code ends. Must be >= start_line. Set equal to start_line if the vulnerability is on a single line.
-- snippet (optional): The actual source code at this location, copied verbatim from the file. Do not paraphrase or summarize code — paste it exactly as it appears.
-- label (optional): Short role description for this location in the data flow, e.g. "User input from request parameter (source)", "Unsanitized input passed to SQL query (sink)".
-- fix_before (optional): The vulnerable code to be replaced, copied verbatim. Must match the actual source exactly — do not paraphrase, summarize, or add/remove whitespace. Only include on locations where a fix is proposed.
-- fix_after (optional): The corrected code that should replace fix_before. Must be syntactically valid and ready to apply as a direct replacement. Only include on locations where a fix is proposed.
+- start_line (REQUIRED): Exact 1-based line number where the vulnerable/affected code begins. Must be a positive integer. You must be certain of this number — go back and verify against the actual file content if needed.
+- end_line (REQUIRED): Exact 1-based line number where the vulnerable/affected code ends. Must be >= start_line. Set equal to start_line ONLY if the code is truly on a single line.
+- snippet (optional): The actual source code at this location, copied verbatim from the file.
+- label (optional): Short role description for this location. For multi-part fixes, use this to explain the purpose of each change (e.g., "Add import for escape utility", "Sanitize user input before SQL query").
+- fix_before (optional): The vulnerable code to be replaced — VERBATIM copy of lines start_line through end_line. Must match the actual source character-for-character including whitespace and indentation.
+- fix_after (optional): The corrected code that replaces the entire fix_before block. Must be syntactically valid and ready to apply as a direct replacement.
 
 Locations without fix_before/fix_after are informational context (e.g. showing the source of tainted data).
-Locations with fix_before/fix_after are actionable fixes (used for PR review suggestions).</description>
+Locations with fix_before/fix_after are actionable fixes (used directly for PR suggestion blocks).</description>
         <format>
           <location>
             <file>src/db/queries.ts</file>
             <start_line>42</start_line>
-            <end_line>42</end_line>
-            <snippet>db.query(`SELECT * FROM users WHERE id = ${id}`)</snippet>
+            <end_line>45</end_line>
+            <snippet>const query = (
+    `SELECT * FROM users ` +
+    `WHERE id = ${id}`
+);</snippet>
             <label>Unsanitized input used in SQL query (sink)</label>
-            <fix_before>db.query(`SELECT * FROM users WHERE id = ${id}`)</fix_before>
-            <fix_after>db.query('SELECT * FROM users WHERE id = $1', [id])</fix_after>
+            <fix_before>const query = (
+    `SELECT * FROM users ` +
+    `WHERE id = ${id}`
+);</fix_before>
+            <fix_after>const query = 'SELECT * FROM users WHERE id = $1';
+const result = await db.query(query, [id]);</fix_after>
           </location>
           <location>
             <file>src/routes/users.ts</file>
@@ -299,14 +327,33 @@ if __name__ == "__main__":
 <parameter=code_locations>
   <location>
     <file>src/services/link-preview.ts</file>
-    <start_line>47</start_line>
-    <end_line>47</end_line>
-    <snippet>const response = await fetch(userUrl)</snippet>
+    <start_line>45</start_line>
+    <end_line>48</end_line>
+    <snippet>  const options = { timeout: 5000 };
+  const response = await fetch(userUrl, options);
+  const html = await response.text();
+  return extractMetadata(html);</snippet>
     <label>Unvalidated user URL passed to server-side fetch (sink)</label>
-    <fix_before>const response = await fetch(userUrl)</fix_before>
-    <fix_after>const validated = await validateAndResolveUrl(userUrl)
-if (!validated) throw new ForbiddenError('URL not allowed')
-const response = await fetch(validated)</fix_after>
+    <fix_before>  const options = { timeout: 5000 };
+  const response = await fetch(userUrl, options);
+  const html = await response.text();
+  return extractMetadata(html);</fix_before>
+    <fix_after>  const validated = await validateAndResolveUrl(userUrl);
+  if (!validated) throw new ForbiddenError('URL not allowed');
+  const options = { timeout: 5000 };
+  const response = await fetch(validated, options);
+  const html = await response.text();
+  return extractMetadata(html);</fix_after>
+  </location>
+  <location>
+    <file>src/services/link-preview.ts</file>
+    <start_line>2</start_line>
+    <end_line>2</end_line>
+    <snippet>import { extractMetadata } from '../utils/html';</snippet>
+    <label>Add import for URL validation utility</label>
+    <fix_before>import { extractMetadata } from '../utils/html';</fix_before>
+    <fix_after>import { extractMetadata } from '../utils/html';
+import { validateAndResolveUrl } from '../utils/url-validator';</fix_after>
   </location>
   <location>
     <file>src/routes/api/v1/links.ts</file>
