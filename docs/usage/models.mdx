@@ -1,0 +1,116 @@
+---
+title: "Models"
+description: "Configure LLM providers for Strix"
+---
+
+## Strix Models (Recommended)
+
+Strix Models is a curated list of tested and verified models optimized for security testing.
+
+<Note>
+Strix Models is completely optional. You can use any LiteLLM-compatible provider with your own API keys.
+</Note>
+
+### Why Strix Models?
+
+Not all models perform equally well as security agents. Penetration testing requires models that can:
+
+- Follow complex multi-step attack chains
+- Accurately interpret tool outputs and error messages
+- Maintain context across long security assessments
+- Generate valid payloads and exploit code
+
+We tested a select group of models specifically for security testing workloads and worked with providers to ensure optimal configurations. The result is a curated list we feel confident recommending for penetration testing.
+
+<Tip>
+Strix Models gives you access to these vetted model/provider combinations through a single API.
+</Tip>
+
+### Quick Start
+
+```bash
+export STRIX_API_KEY='your-strix-api-key'
+export STRIX_LLM='strix/claude-opus-4.5'
+```
+
+<ParamField path="STRIX_API_KEY" type="string" required>
+  Your Strix API key. Get one at [strix.ai/settings](https://strix.ai/settings).
+</ParamField>
+
+<ParamField path="STRIX_LLM" type="string" required>
+  Model to use. Prefix with `strix/` for hosted models.
+</ParamField>
+
+### API Endpoint
+
+```
+https://models.strix.ai/api/v1/chat/completions
+```
+
+For custom integrations, set `LLM_API_BASE` to `https://models.strix.ai/v1`.
+
+## Supported Models
+
+### Anthropic
+
+| Model | ID |
+|-------|-----|
+| Claude Opus 4.6 | `strix/claude-opus-4.6` |
+| Claude Opus 4.5 | `strix/claude-opus-4.5` |
+| Claude Opus 4.1 | `strix/claude-opus-4.1` |
+| Claude Opus 4 | `strix/claude-opus-4` |
+| Claude Sonnet 4.5 | `strix/claude-sonnet-4.5` |
+| Claude Sonnet 4 | `strix/claude-sonnet-4` |
+
+### OpenAI
+
+| Model | ID |
+|-------|-----|
+| GPT-5.2 Pro | `strix/gpt-5.2-pro` |
+| GPT-5.2 | `strix/gpt-5.2` |
+| GPT-5.1 | `strix/gpt-5.1` |
+| GPT-5 | `strix/gpt-5` |
+| GPT-5.2 Codex | `strix/gpt-5.2-codex` |
+| GPT-5.1 Codex Max | `strix/gpt-5.1-codex-max` |
+| GPT-5.1 Codex | `strix/gpt-5.1-codex` |
+| GPT-5 Codex | `strix/gpt-5-codex` |
+| Codex Mini | `strix/codex-mini` |
+
+### Google
+
+| Model | ID |
+|-------|-----|
+| Gemini 3 Pro | `strix/gemini-3-pro-preview` |
+| Gemini 3 Flash | `strix/gemini-3-flash-preview` |
+
+### Z-AI
+
+| Model | ID |
+|-------|-----|
+| GLM-5 | `strix/glm-5` |
+| GLM-4.7 | `strix/glm-4.7` |
+| GLM-4.7 Flash | `strix/glm-4.7-flash` |
+
+### Moonshot
+
+| Model | ID |
+|-------|-----|
+| Kimi K2.5 | `strix/kimi-k2.5` |
+
+## Bring Your Own Key
+
+Use models directly from providers by setting `LLM_API_KEY` and omitting the `strix/` prefix:
+
+```bash
+export LLM_API_KEY='your-provider-api-key'
+export STRIX_LLM='openai/gpt-5'
+```
+
+Supported provider prefixes: `openai/`, `anthropic/`, `google/`, `openrouter/`.
+
+For local models (Ollama, LMStudio), also set `LLM_API_BASE`:
+
+```bash
+export STRIX_LLM='ollama/llama3'
+export LLM_API_BASE='http://localhost:11434'
+```
