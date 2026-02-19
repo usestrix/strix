@@ -27,13 +27,23 @@ description: "Install Strix and run your first security scan"
 
 Set your LLM provider:
 
-```bash
-export STRIX_LLM="openai/gpt-5"
-export LLM_API_KEY="your-api-key"
-```
+<Tabs>
+  <Tab title="Strix Models">
+    ```bash
+    export STRIX_LLM="strix/claude-sonnet-4.5"
+    export STRIX_API_KEY="your-strix-api-key"
+    ```
+  </Tab>
+  <Tab title="Bring Your Own Key">
+    ```bash
+    export STRIX_LLM="openai/gpt-5"
+    export LLM_API_KEY="your-api-key"
+    ```
+  </Tab>
+</Tabs>
 
 <Tip>
-For best results, use `openai/gpt-5`, `anthropic/claude-sonnet-4-5`, or `vertex_ai/gemini-3-pro-preview`.
+For best results, use `strix/claude-opus-4.5`, `strix/gpt-5`, or `strix/claude-sonnet-4-5`.
 </Tip>
 
 ## Run Your First Scan
