@@ -99,7 +99,7 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                 error_text.append("• ", style="white")
                 error_text.append("STRIX_LLM", style="bold cyan")
                 error_text.append(
-                    " - Model name to use with litellm (e.g., 'openai/gpt-5')\n",
+                    " - Model name to use with litellm (e.g., 'anthropic/claude-sonnet-4-6')\n",
                     style="white",
                 )
 
@@ -139,9 +139,9 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
 
         error_text.append("\nExample setup:\n", style="white")
         if uses_strix_models:
-            error_text.append("export STRIX_LLM='strix/claude-opus-4.5'\n", style="dim white")
+            error_text.append("export STRIX_LLM='strix/claude-sonnet-4.6'\n", style="dim white")
         else:
-            error_text.append("export STRIX_LLM='openai/gpt-5'\n", style="dim white")
+            error_text.append("export STRIX_LLM='anthropic/claude-sonnet-4-6'\n", style="dim white")
 
         if missing_optional_vars:
             for var in missing_optional_vars:

@@ -27,7 +27,7 @@ If applicable, add screenshots to help explain your problem.
 - OS: [e.g. Ubuntu 22.04]
 - Strix Version or Commit: [e.g. 0.1.18]
 - Python Version: [e.g. 3.12]
-- LLM Used: [e.g. GPT-5, Claude Sonnet 4]
+- LLM Used: [e.g. GPT-5, Claude Sonnet 4.6]
 
 **Additional context**
 Add any other context about the problem here.

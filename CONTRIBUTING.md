@@ -30,7 +30,7 @@ Thank you for your interest in contributing to Strix! This guide will help you g
 
 3. **Configure your LLM provider**
    ```bash
-   export STRIX_LLM="openai/gpt-5"
+   export STRIX_LLM="anthropic/claude-sonnet-4-6"
    export LLM_API_KEY="your-api-key"
    ```
 

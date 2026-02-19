@@ -5,31 +5,43 @@ description: "Configure your AI model for Strix"
 
 Strix uses [LiteLLM](https://docs.litellm.ai/docs/providers) for model compatibility, supporting 100+ LLM providers.
 
-## Recommended Models
+## Strix Router (Recommended)
 
-For best results, use one of these models:
+The fastest way to get started. [Strix Router](/llm-providers/models) gives you access to tested models with the highest rate limits and zero data retention.
+
+```bash
+export STRIX_LLM="strix/claude-sonnet-4.6"
+export LLM_API_KEY="your-strix-api-key"
+```
+
+Get your API key at [models.strix.ai](https://models.strix.ai).
+
+## Bring Your Own Key
+
+You can also use any LiteLLM-compatible provider with your own API keys:
 
 | Model             | Provider      | Configuration                    |
 | ----------------- | ------------- | -------------------------------- |
+| Claude Sonnet 4.6 | Anthropic     | `anthropic/claude-sonnet-4-6`    |
 | GPT-5             | OpenAI        | `openai/gpt-5`                   |
-| Claude 4.5 Sonnet | Anthropic     | `anthropic/claude-sonnet-4-5`    |
 | Gemini 3 Pro      | Google Vertex | `vertex_ai/gemini-3-pro-preview` |
 
-## Quick Setup
-
 ```bash
-export STRIX_LLM="openai/gpt-5"
+export STRIX_LLM="anthropic/claude-sonnet-4-6"
 export LLM_API_KEY="your-api-key"
 ```
 
 ## Provider Guides
 
 <CardGroup cols={2}>
+  <Card title="Strix Router" href="/llm-providers/models">
+    Recommended models router with high rate limits.
+  </Card>
   <Card title="OpenAI" href="/llm-providers/openai">
     GPT-5 and Codex models.
   </Card>
   <Card title="Anthropic" href="/llm-providers/anthropic">
-    Claude 4.5 Sonnet, Opus, and Haiku.
+    Claude Sonnet 4.6, Opus, and Haiku.
   </Card>
   <Card title="OpenRouter" href="/llm-providers/openrouter">
     Access 100+ models through a single API.
@@ -38,7 +50,7 @@ export LLM_API_KEY="your-api-key"
     Gemini 3 models via Google Cloud.
   </Card>
   <Card title="AWS Bedrock" href="/llm-providers/bedrock">
-    Claude 4.5 and Titan models via AWS.
+    Claude and Titan models via AWS.
   </Card>
   <Card title="Azure OpenAI" href="/llm-providers/azure">
     GPT-5 via Azure.
@@ -53,8 +65,8 @@ export LLM_API_KEY="your-api-key"
 Use LiteLLM's `provider/model-name` format:
 
 ```
+anthropic/claude-sonnet-4-6
 openai/gpt-5
-anthropic/claude-sonnet-4-5
 vertex_ai/gemini-3-pro-preview
 bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0
 ollama/llama4

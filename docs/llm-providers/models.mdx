@@ -1,50 +1,52 @@
 ---
-title: "Models"
-description: "Configure LLM providers for Strix"
+title: "Strix Router"
+description: "Access top LLMs through a single API with high rate limits and zero data retention"
 ---
 
-## Strix Router (Recommended)
+Strix Router gives you access to the best LLMs through a single API key.
 
 <Note>
-Strix Router is currently in **beta**. You can also use any LiteLLM-compatible provider with your own API keys.
+Strix Router is currently in **beta**. It's completely optional — Strix works with any [LiteLLM-compatible provider](/llm-providers/overview) using your own API keys. Strix Router is just the setup we test and optimize for.
 </Note>
 
-Strix Router is a curated routing layer for tested and verified models optimized for security testing.
+## Why Use Strix Router?
 
-### Why Strix Router?
+- **High rate limits** — No throttling during long-running scans
+- **Zero data retention** — Routes to providers with zero data retention policies enabled
+- **Failover & load balancing** — Automatic fallback across providers for reliability
+- **Simple setup** — One API key, one environment variable, no provider accounts needed
+- **No markup** — Same token pricing as the underlying providers, no extra fees
+- **$10 free credit** — Try it free on signup, no credit card required
 
-- **Highest rate limits** - No throttling during intensive security assessments
-- **Zero data retention (ZDR)** - Your prompts and responses are never stored
-- **Reliable** - Built-in failover and load balancing across providers
-- **Tested & benchmarked** - Every model is validated for penetration testing workloads
+## Quick Start
 
-Not all models perform equally well as security agents. Penetration testing requires models that can follow complex multi-step attack chains, accurately interpret tool outputs, maintain context across long assessments, and generate valid payloads.
-
-<Tip>
-Strix Router gives you access to vetted model/provider combinations through a single API.
-</Tip>
-
-### Quick Start
+1. Get your API key at [models.strix.ai](https://models.strix.ai)
+2. Set your environment:
 
 ```bash
 export LLM_API_KEY='your-strix-api-key'
-export STRIX_LLM='strix/claude-opus-4.6'
+export STRIX_LLM='strix/claude-sonnet-4.6'
 ```
 
-<ParamField path="LLM_API_KEY" type="string" required>
-  Your Strix API key. Get one at [models.strix.ai](https://models.strix.ai).
-</ParamField>
+3. Run a scan:
 
-<ParamField path="STRIX_LLM" type="string" required>
-  Model to use. Prefix with `strix/` for hosted models.
-</ParamField>
+```bash
+strix --target ./your-app
+```
 
-## Supported Models
+## Available Models
+
+### Anthropic
 
 | Model | ID |
 |-------|-----|
-| Claude Opus 4.6 | `strix/claude-opus-4.6` |
 | Claude Sonnet 4.6 | `strix/claude-sonnet-4.6` |
+| Claude Opus 4.6 | `strix/claude-opus-4.6` |
+
+### OpenAI
+
+| Model | ID |
+|-------|-----|
 | GPT-5.2 | `strix/gpt-5.2` |
 | GPT-5.1 | `strix/gpt-5.1` |
 | GPT-5 | `strix/gpt-5` |
@@ -52,7 +54,27 @@ export STRIX_LLM='strix/claude-opus-4.6'
 | GPT-5.1 Codex Max | `strix/gpt-5.1-codex-max` |
 | GPT-5.1 Codex | `strix/gpt-5.1-codex` |
 | GPT-5 Codex | `strix/gpt-5-codex` |
+
+### Google
+
+| Model | ID |
+|-------|-----|
 | Gemini 3 Pro | `strix/gemini-3-pro-preview` |
 | Gemini 3 Flash | `strix/gemini-3-flash-preview` |
+
+### Other
+
+| Model | ID |
+|-------|-----|
 | GLM-5 | `strix/glm-5` |
 | GLM-4.7 | `strix/glm-4.7` |
+
+## Configuration Reference
+
+<ParamField path="LLM_API_KEY" type="string" required>
+  Your Strix API key from [models.strix.ai](https://models.strix.ai).
+</ParamField>
+
+<ParamField path="STRIX_LLM" type="string" required>
+  Model ID from the tables above. Must be prefixed with `strix/`.
+</ParamField>

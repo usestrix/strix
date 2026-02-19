@@ -8,7 +8,7 @@ Configure Strix using environment variables or a config file.
 ## LLM Configuration
 
 <ParamField path="STRIX_LLM" type="string" required>
-  Model name in LiteLLM format (e.g., `openai/gpt-5`, `anthropic/claude-sonnet-4-5`).
+  Model name in LiteLLM format (e.g., `anthropic/claude-sonnet-4-6`, `openai/gpt-5`).
 </ParamField>
 
 <ParamField path="LLM_API_KEY" type="string">
@@ -86,7 +86,7 @@ strix --target ./app --config /path/to/config.json
 ```json
 {
   "env": {
-    "STRIX_LLM": "openai/gpt-5",
+    "STRIX_LLM": "anthropic/claude-sonnet-4-6",
     "LLM_API_KEY": "sk-...",
     "STRIX_REASONING_EFFORT": "high"
   }
@@ -97,7 +97,7 @@ strix --target ./app --config /path/to/config.json
 
 ```bash
 # Required
-export STRIX_LLM="openai/gpt-5"
+export STRIX_LLM="anthropic/claude-sonnet-4-6"
 export LLM_API_KEY="sk-..."
 
 # Optional: Enable web search
