@@ -66,10 +66,7 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
         ]
     )
 
-    if uses_strix_models:
-        if not Config.get("strix_api_key"):
-            missing_optional_vars.append("STRIX_API_KEY")
-    elif not Config.get("llm_api_key"):
+    if not Config.get("llm_api_key"):
         missing_optional_vars.append("LLM_API_KEY")
 
     if not has_base_url:
@@ -109,14 +106,7 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
         if missing_optional_vars:
             error_text.append("\nOptional environment variables:\n", style="white")
             for var in missing_optional_vars:
-                if var == "STRIX_API_KEY":
-                    error_text.append("• ", style="white")
-                    error_text.append("STRIX_API_KEY", style="bold cyan")
-                    error_text.append(
-                        " - API key for Strix hosted models (strix/...)\n",
-                        style="white",
-                    )
-                elif var == "LLM_API_KEY":
+                if var == "LLM_API_KEY":
                     error_text.append("• ", style="white")
                     error_text.append("LLM_API_KEY", style="bold cyan")
                     error_text.append(
@@ -155,12 +145,7 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
 
         if missing_optional_vars:
             for var in missing_optional_vars:
-                if var == "STRIX_API_KEY":
-                    error_text.append(
-                        "export STRIX_API_KEY='your-strix-api-key-here'\n",
-                        style="dim white",
-                    )
-                elif var == "LLM_API_KEY":
+                if var == "LLM_API_KEY":
                     error_text.append(
                         "export LLM_API_KEY='your-api-key-here'  "
                         "# not needed for local models, Vertex AI, AWS, etc.\n",

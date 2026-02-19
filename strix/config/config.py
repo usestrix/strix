@@ -13,7 +13,6 @@ class Config:
 
     # LLM Configuration
     strix_llm = None
-    strix_api_key = None
     llm_api_key = None
     llm_api_base = None
     openai_api_base = None
@@ -25,7 +24,6 @@ class Config:
     llm_timeout = "300"
     _LLM_CANONICAL_NAMES = (
         "strix_llm",
-        "strix_api_key",
         "llm_api_key",
         "llm_api_base",
         "openai_api_base",
@@ -194,13 +192,13 @@ def resolve_llm_config() -> tuple[str | None, str | None, str | None]:
     if not model:
         return None, None, None
 
+    api_key = Config.get("llm_api_key")
+
     if model.startswith("strix/"):
         model_name = "openai/" + model[6:]
-        api_key = Config.get("strix_api_key")
         api_base: str | None = STRIX_API_BASE
     else:
         model_name = model
-        api_key = Config.get("llm_api_key")
         api_base = (
             Config.get("llm_api_base")
             or Config.get("openai_api_base")
