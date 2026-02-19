@@ -72,7 +72,9 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 
 **Prerequisites:**
 - Docker (running)
-- An LLM API key — use [Strix Router](https://models.strix.ai) for the easiest setup, or bring your own key from any [supported provider](https://docs.strix.ai/llm-providers/overview)
+- An LLM API key:
+  - Any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+  - Or [Strix Router](https://models.strix.ai) — single API key for multiple providers with $10 free credit on signup
 
 ### Installation & First Scan
 
