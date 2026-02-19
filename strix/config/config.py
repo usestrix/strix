@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 
 
-STRIX_API_BASE = "https://models.strix.ai/v1"
+STRIX_API_BASE = "https://models.strix.ai/api/v1"
 
 
 class Config:
