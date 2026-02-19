@@ -200,15 +200,10 @@ class LLM:
             "stream_options": {"include_usage": True},
         }
 
-        if api_key := Config.get("llm_api_key"):
-            args["api_key"] = api_key
-        if api_base := (
-            Config.get("llm_api_base")
-            or Config.get("openai_api_base")
-            or Config.get("litellm_base_url")
-            or Config.get("ollama_api_base")
-        ):
-            args["api_base"] = api_base
+        if self.config.api_key:
+            args["api_key"] = self.config.api_key
+        if self.config.api_base:
+            args["api_base"] = self.config.api_base
         if self._supports_reasoning():
             args["reasoning_effort"] = self._reasoning_effort
 

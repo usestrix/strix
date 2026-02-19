@@ -51,10 +51,13 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
     missing_required_vars = []
     missing_optional_vars = []
 
-    if not Config.get("strix_llm"):
+    strix_llm = Config.get("strix_llm")
+    uses_strix_models = strix_llm and strix_llm.startswith("strix/")
+
+    if not strix_llm:
         missing_required_vars.append("STRIX_LLM")
 
-    has_base_url = any(
+    has_base_url = uses_strix_models or any(
         [
             Config.get("llm_api_base"),
             Config.get("openai_api_base"),
@@ -63,7 +66,10 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
         ]
     )
 
-    if not Config.get("llm_api_key"):
+    if uses_strix_models:
+        if not Config.get("strix_api_key"):
+            missing_optional_vars.append("STRIX_API_KEY")
+    elif not Config.get("llm_api_key"):
         missing_optional_vars.append("LLM_API_KEY")
 
     if not has_base_url:
@@ -103,7 +109,14 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
         if missing_optional_vars:
             error_text.append("\nOptional environment variables:\n", style="white")
             for var in missing_optional_vars:
-                if var == "LLM_API_KEY":
+                if var == "STRIX_API_KEY":
+                    error_text.append("• ", style="white")
+                    error_text.append("STRIX_API_KEY", style="bold cyan")
+                    error_text.append(
+                        " - API key for Strix hosted models (strix/...)\n",
+                        style="white",
+                    )
+                elif var == "LLM_API_KEY":
                     error_text.append("• ", style="white")
                     error_text.append("LLM_API_KEY", style="bold cyan")
                     error_text.append(
@@ -135,11 +148,19 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                     )
 
         error_text.append("\nExample setup:\n", style="white")
-        error_text.append("export STRIX_LLM='openai/gpt-5'\n", style="dim white")
+        if uses_strix_models:
+            error_text.append("export STRIX_LLM='strix/claude-opus-4.5'\n", style="dim white")
+        else:
+            error_text.append("export STRIX_LLM='openai/gpt-5'\n", style="dim white")
 
         if missing_optional_vars:
             for var in missing_optional_vars:
-                if var == "LLM_API_KEY":
+                if var == "STRIX_API_KEY":
+                    error_text.append(
+                        "export STRIX_API_KEY='your-strix-api-key-here'\n",
+                        style="dim white",
+                    )
+                elif var == "LLM_API_KEY":
                     error_text.append(
                         "export LLM_API_KEY='your-api-key-here'  "
                         "# not needed for local models, Vertex AI, AWS, etc.\n",
@@ -198,17 +219,12 @@ def check_docker_installed() -> None:
 
 
 async def warm_up_llm() -> None:
+    from strix.config.config import resolve_llm_config
+
     console = Console()
 
     try:
-        model_name = Config.get("strix_llm")
-        api_key = Config.get("llm_api_key")
-        api_base = (
-            Config.get("llm_api_base")
-            or Config.get("openai_api_base")
-            or Config.get("litellm_base_url")
-            or Config.get("ollama_api_base")
-        )
+        model_name, api_key, api_base = resolve_llm_config()
 
         test_messages = [
             {"role": "system", "content": "You are a helpful assistant."},

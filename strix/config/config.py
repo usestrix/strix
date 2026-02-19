@@ -5,11 +5,15 @@ from pathlib import Path
 from typing import Any
 
 
+STRIX_API_BASE = "https://models.strix.ai/v1"
+
+
 class Config:
     """Configuration Manager for Strix."""
 
     # LLM Configuration
     strix_llm = None
+    strix_api_key = None
     llm_api_key = None
     llm_api_base = None
     openai_api_base = None
@@ -21,6 +25,7 @@ class Config:
     llm_timeout = "300"
     _LLM_CANONICAL_NAMES = (
         "strix_llm",
+        "strix_api_key",
         "llm_api_key",
         "llm_api_base",
         "openai_api_base",
@@ -177,3 +182,30 @@ def apply_saved_config(force: bool = False) -> dict[str, str]:
 
 def save_current_config() -> bool:
     return Config.save_current()
+
+
+def resolve_llm_config() -> tuple[str | None, str | None, str | None]:
+    """Resolve LLM model, api_key, and api_base based on STRIX_LLM prefix.
+
+    Returns:
+        tuple: (model_name, api_key, api_base)
+    """
+    model = Config.get("strix_llm")
+    if not model:
+        return None, None, None
+
+    if model.startswith("strix/"):
+        model_name = "openai/" + model[6:]
+        api_key = Config.get("strix_api_key")
+        api_base: str | None = STRIX_API_BASE
+    else:
+        model_name = model
+        api_key = Config.get("llm_api_key")
+        api_base = (
+            Config.get("llm_api_base")
+            or Config.get("openai_api_base")
+            or Config.get("litellm_base_url")
+            or Config.get("ollama_api_base")
+        )
+
+    return model_name, api_key, api_base
