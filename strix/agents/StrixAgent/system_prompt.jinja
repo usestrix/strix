@@ -328,6 +328,9 @@ WRONG formats — NEVER use these:
 - <tool_call><tool_name>...</tool_name></tool_call>
 - {"tool_name": {"param_name": "value"}}
 - ```<function=tool_name>...</function>```
+- <function=tool_name>value_without_parameter_tags</function>
+
+EVERY argument MUST be wrapped in <parameter=name>...</parameter> tags. NEVER put values directly in the function body without parameter tags. This WILL cause the tool call to fail.
 
 Do NOT emit any extra XML tags in your output. In particular:
 - NO <thinking>...</thinking> or <thought>...</thought> blocks
@@ -336,6 +339,11 @@ Do NOT emit any extra XML tags in your output. In particular:
 If you need to reason, use the think tool. Your raw output must contain ONLY the tool call — no surrounding XML tags.
 
 Notice: use <function=X> NOT <invoke name="X">, use <parameter=X> NOT <parameter name="X">, use </function> NOT </invoke>.
+
+Example (terminal tool):
+<function=terminal_execute>
+<parameter=command>nmap -sV -p 1-1000 target.com</parameter>
+</function>
 
 Example (agent creation tool):
 <function=create_agent>
