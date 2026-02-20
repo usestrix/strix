@@ -6,24 +6,29 @@ from typing import Any
 _INVOKE_OPEN = re.compile(r'<invoke\s+name="([^"]+)"\s*>')
 _PARAM_NAME_ATTR = re.compile(r'<parameter\s+name="([^"]+)"\s*>')
 _FUNCTION_CALLS_TAG = re.compile(r"</?function_calls>")
+_QUOTED_FUNCTION = re.compile(r'<function="([^"]+)">')
+_QUOTED_PARAMETER = re.compile(r'<parameter="([^"]+)">')
 
 
 def normalize_tool_format(content: str) -> str:
-    """Convert alternative tool-call XML format to the expected one.
+    """Convert alternative tool-call XML formats to the expected one.
 
     Handles:
       <function_calls>...</function_calls>  → stripped
       <invoke name="X">                     → <function=X>
       <parameter name="X">                  → <parameter=X>
       </invoke>                             → </function>
+      <function="X">                        → <function=X>
+      <parameter="X">                       → <parameter=X>
     """
-    if "<invoke" not in content and "<function_calls" not in content:
-        return content
+    if "<invoke" in content or "<function_calls" in content:
+        content = _FUNCTION_CALLS_TAG.sub("", content)
+        content = _INVOKE_OPEN.sub(r"<function=\1>", content)
+        content = _PARAM_NAME_ATTR.sub(r"<parameter=\1>", content)
+        content = content.replace("</invoke>", "</function>")
 
-    content = _FUNCTION_CALLS_TAG.sub("", content)
-    content = _INVOKE_OPEN.sub(r"<function=\1>", content)
-    content = _PARAM_NAME_ATTR.sub(r"<parameter=\1>", content)
-    return content.replace("</invoke>", "</function>")
+    content = _QUOTED_FUNCTION.sub(r"<function=\1>", content)
+    return _QUOTED_PARAMETER.sub(r"<parameter=\1>", content)
 
 
 STRIX_MODEL_MAP: dict[str, str] = {
