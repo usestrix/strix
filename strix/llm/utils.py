@@ -3,8 +3,8 @@ import re
 from typing import Any
 
 
-_INVOKE_OPEN = re.compile(r'<invoke\s+name=["\']([^"\']+)["\']\s*>')
-_PARAM_NAME_ATTR = re.compile(r'<parameter\s+name=["\']([^"\']+)["\']\s*>')
+_INVOKE_OPEN = re.compile(r'<invoke\s+name=["\']([^"\']+)["\']>')
+_PARAM_NAME_ATTR = re.compile(r'<parameter\s+name=["\']([^"\']+)["\']>')
 _FUNCTION_CALLS_TAG = re.compile(r"</?function_calls>")
 _QUOTED_FUNCTION = re.compile(r"""<function\s*=\s*['"]([^"']+)['"]\s*>""")
 _QUOTED_PARAMETER = re.compile(r"""<parameter\s*=\s*['"]([^"']+)['"]\s*>""")

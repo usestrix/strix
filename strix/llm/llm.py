@@ -145,11 +145,9 @@ class LLM:
             if delta:
                 accumulated += delta
                 if "</function>" in accumulated or "</invoke>" in accumulated:
-                    for end_tag in ("</function>", "</invoke>"):
-                        pos = accumulated.find(end_tag)
-                        if pos != -1:
-                            accumulated = accumulated[: pos + len(end_tag)]
-                            break
+                    end_tag = "</function>" if "</function>" in accumulated else "</invoke>"
+                    pos = accumulated.find(end_tag)
+                    accumulated = accumulated[: pos + len(end_tag)]
                     yield LLMResponse(content=accumulated)
                     done_streaming = 1
                     continue
