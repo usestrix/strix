@@ -3,11 +3,11 @@ import re
 from typing import Any
 
 
-_INVOKE_OPEN = re.compile(r'<invoke\s+name="([^"]+)"\s*>')
-_PARAM_NAME_ATTR = re.compile(r'<parameter\s+name="([^"]+)"\s*>')
+_INVOKE_OPEN = re.compile(r'<invoke\s+name=["\']([^"\']+)["\']\s*>')
+_PARAM_NAME_ATTR = re.compile(r'<parameter\s+name=["\']([^"\']+)["\']\s*>')
 _FUNCTION_CALLS_TAG = re.compile(r"</?function_calls>")
-_QUOTED_FUNCTION = re.compile(r'<function="([^"]+)">')
-_QUOTED_PARAMETER = re.compile(r'<parameter="([^"]+)">')
+_QUOTED_FUNCTION = re.compile(r"""<function\s*=\s*['"]([^"']+)['"]\s*>""")
+_QUOTED_PARAMETER = re.compile(r"""<parameter\s*=\s*['"]([^"']+)['"]\s*>""")
 
 
 def normalize_tool_format(content: str) -> str:
@@ -28,7 +28,10 @@ def normalize_tool_format(content: str) -> str:
         content = content.replace("</invoke>", "</function>")
 
     content = _QUOTED_FUNCTION.sub(r"<function=\1>", content)
-    return _QUOTED_PARAMETER.sub(r"<parameter=\1>", content)
+    content = _QUOTED_PARAMETER.sub(r"<parameter=\1>", content)
+
+    content = re.sub(r"<function=\s+", "<function=", content)
+    return re.sub(r"<parameter=\s+", "<parameter=", content)
 
 
 STRIX_MODEL_MAP: dict[str, str] = {
