@@ -3,8 +3,11 @@ import re
 from dataclasses import dataclass
 from typing import Literal
 
+from strix.llm.utils import normalize_tool_format
+
 
 _FUNCTION_TAG_PREFIX = "<function="
+_INVOKE_TAG_PREFIX = "<invoke "
 
 _FUNC_PATTERN = re.compile(r"<function=([^>]+)>")
 _FUNC_END_PATTERN = re.compile(r"</function>")
@@ -21,9 +24,8 @@ def _get_safe_content(content: str) -> tuple[str, str]:
         return content, ""
 
     suffix = content[last_lt:]
-    target = _FUNCTION_TAG_PREFIX  # "<function="
 
-    if target.startswith(suffix):
+    if _FUNCTION_TAG_PREFIX.startswith(suffix) or _INVOKE_TAG_PREFIX.startswith(suffix):
         return content[:last_lt], suffix
 
     return content, ""
@@ -41,6 +43,8 @@ class StreamSegment:
 def parse_streaming_content(content: str) -> list[StreamSegment]:
     if not content:
         return []
+
+    content = normalize_tool_format(content)
 
     segments: list[StreamSegment] = []
 

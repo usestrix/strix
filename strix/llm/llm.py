@@ -14,6 +14,7 @@ from strix.llm.memory_compressor import MemoryCompressor
 from strix.llm.utils import (
     _truncate_to_first_function,
     fix_incomplete_tool_call,
+    normalize_tool_format,
     parse_tool_invocations,
 )
 from strix.skills import load_skills
@@ -143,10 +144,12 @@ class LLM:
             delta = self._get_chunk_content(chunk)
             if delta:
                 accumulated += delta
-                if "</function>" in accumulated:
-                    accumulated = accumulated[
-                        : accumulated.find("</function>") + len("</function>")
-                    ]
+                if "</function>" in accumulated or "</invoke>" in accumulated:
+                    for end_tag in ("</function>", "</invoke>"):
+                        pos = accumulated.find(end_tag)
+                        if pos != -1:
+                            accumulated = accumulated[: pos + len(end_tag)]
+                            break
                     yield LLMResponse(content=accumulated)
                     done_streaming = 1
                     continue
@@ -155,6 +158,7 @@ class LLM:
         if chunks:
             self._update_usage_stats(stream_chunk_builder(chunks))
 
+        accumulated = normalize_tool_format(accumulated)
         accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
         yield LLMResponse(
             content=accumulated,

@@ -314,12 +314,28 @@ CRITICAL RULES:
 4. Use ONLY the exact format shown above. NEVER use JSON/YAML/INI or any other syntax for tools or parameters.
 5. When sending ANY multi-line content in tool parameters, use real newlines (actual line breaks). Do NOT emit literal "\n" sequences. Literal "\n" instead of real line breaks will cause tools to fail.
 6. Tool names must match exactly the tool "name" defined (no module prefixes, dots, or variants).
-   - Correct: <function=think> ... </function>
-   - Incorrect: <thinking_tools.think> ... </function>
-   - Incorrect: <think> ... </think>
-   - Incorrect: {"think": {...}}
 7. Parameters must use <parameter=param_name>value</parameter> exactly. Do NOT pass parameters as JSON or key:value lines. Do NOT add quotes/braces around values.
 8. Do NOT wrap tool calls in markdown/code fences or add any text before or after the tool block.
+
+CORRECT format — use this EXACTLY:
+<function=tool_name>
+<parameter=param_name>value</parameter>
+</function>
+
+WRONG formats — NEVER use these:
+- <invoke name="tool_name"><parameter name="param_name">value</parameter></invoke>
+- <function_calls><invoke name="tool_name">...</invoke></function_calls>
+- <tool_call><tool_name>...</tool_name></tool_call>
+- {"tool_name": {"param_name": "value"}}
+- ```<function=tool_name>...</function>```
+
+Do NOT emit any extra XML tags in your output. In particular:
+- NO <thinking>...</thinking> or <thought>...</thought> blocks
+- NO <scratchpad>...</scratchpad> or <reasoning>...</reasoning> blocks
+- NO <answer>...</answer> or <response>...</response> wrappers
+If you need to reason, use the think tool. Your raw output must contain ONLY the tool call — no surrounding XML tags.
+
+Notice: use <function=X> NOT <invoke name="X">, use <parameter=X> NOT <parameter name="X">, use </function> NOT </invoke>.
 
 Example (agent creation tool):
 <function=create_agent>
