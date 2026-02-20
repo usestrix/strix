@@ -42,6 +42,7 @@ from strix.interface.utils import (  # noqa: E402
 )
 from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME  # noqa: E402
 from strix.telemetry import posthog  # noqa: E402
+from strix.telemetry.live_tracer import LiveTracer, set_live_tracer  # noqa: E402
 from strix.telemetry.tracer import get_global_tracer  # noqa: E402
 
 
@@ -366,12 +367,70 @@ Examples:
         help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
     )
 
+    parser.add_argument(
+        "--trace",
+        action="store_true",
+        help=(
+            "Enable live tracing mode. Creates a complete JSONL audit trail of the run "
+            "including LLM requests/responses, tool calls, and agent events. "
+            "Output defaults to strix_runs/<run>/trace.jsonl. "
+            "Can also be enabled via STRIX_TRACE=1 environment variable."
+        ),
+    )
+
+    parser.add_argument(
+        "--trace-output",
+        type=str,
+        help=(
+            "Custom path for trace output file (requires --trace). "
+            "Defaults to strix_runs/<run>/trace.jsonl."
+        ),
+    )
+
+    parser.add_argument(
+        "--redact-secrets",
+        action="store_true",
+        help=(
+            "Redact sensitive information (API keys, tokens, passwords) in trace output. "
+            "Recommended when sharing traces externally. "
+            "Can also be enabled via STRIX_REDACT_SECRETS=1 environment variable."
+        ),
+    )
+
+    parser.add_argument(
+        "--trace-verbose",
+        action="store_true",
+        help=(
+            "Output human-readable trace to console (requires --non-interactive). "
+            "Shows tool calls, agent actions, and LLM activity in real-time."
+        ),
+    )
+
     args = parser.parse_args()
 
     if args.instruction and args.instruction_file:
         parser.error(
             "Cannot specify both --instruction and --instruction-file. Use one or the other."
         )
+
+    if args.trace_output and not args.trace:
+        parser.error("--trace-output requires --trace to be enabled.")
+
+    if args.trace_verbose and not args.non_interactive:
+        parser.error("--trace-verbose requires --non-interactive mode.")
+
+    # Check environment variables for tracing options
+    trace_env = Config.get("strix_trace")
+    if trace_env and trace_env.lower() in ("1", "true", "yes"):
+        args.trace = True
+
+    redact_env = Config.get("strix_redact_secrets")
+    if redact_env and redact_env.lower() in ("1", "true", "yes"):
+        args.redact_secrets = True
+
+    # Check environment variable for trace output path
+    if not args.trace_output:
+        args.trace_output = Config.get("strix_trace_output")
 
     if args.instruction_file:
         instruction_path = Path(args.instruction_file)
@@ -558,6 +617,25 @@ def main() -> None:
         has_instructions=bool(args.instruction),
     )
 
+    # Initialize live tracer if enabled
+    live_tracer: LiveTracer | None = None
+    trace_verbose = getattr(args, "trace_verbose", False)
+    if getattr(args, "trace", False) or trace_verbose:
+        live_tracer = LiveTracer(
+            output_path=getattr(args, "trace_output", None),
+            run_name=args.run_name,
+            redact_secrets=getattr(args, "redact_secrets", False),
+            verbose=trace_verbose,
+        )
+        set_live_tracer(live_tracer)
+
+        console = Console()
+        if not trace_verbose:
+            console.print(f"[dim]Live trace enabled:[/] {live_tracer.output_path}")
+            if getattr(args, "redact_secrets", False):
+                console.print("[dim]Secret redaction:[/] enabled")
+            console.print()
+
     exit_reason = "user_exit"
     try:
         if args.non_interactive:
@@ -574,6 +652,11 @@ def main() -> None:
         tracer = get_global_tracer()
         if tracer:
             posthog.end(tracer, exit_reason=exit_reason)
+
+        # Close live tracer
+        if live_tracer:
+            live_tracer.close()
+            set_live_tracer(None)
 
     results_path = Path("strix_runs") / args.run_name
     display_completion_message(args, results_path)

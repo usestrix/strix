@@ -107,12 +107,29 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     def cleanup_on_exit() -> None:
         from strix.runtime import cleanup_runtime
+        from strix.telemetry.live_tracer import get_live_tracer, set_live_tracer
 
         tracer.cleanup()
+
+        # Clean up live tracer
+        live_tracer = get_live_tracer()
+        if live_tracer:
+            live_tracer.close()
+            set_live_tracer(None)
+
         cleanup_runtime()
 
     def signal_handler(_signum: int, _frame: Any) -> None:
+        from strix.telemetry.live_tracer import get_live_tracer, set_live_tracer
+
         tracer.cleanup()
+
+        # Clean up live tracer
+        live_tracer = get_live_tracer()
+        if live_tracer:
+            live_tracer.close()
+            set_live_tracer(None)
+
         sys.exit(1)
 
     atexit.register(cleanup_on_exit)

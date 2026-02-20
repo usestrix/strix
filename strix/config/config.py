@@ -48,6 +48,11 @@ class Config:
     # Telemetry
     strix_telemetry = "1"
 
+    # Live Tracing
+    strix_trace = None  # Enable live tracing (set to "1" or "true")
+    strix_trace_output = None  # Custom trace output path (defaults to strix_runs/<run>/trace.jsonl)
+    strix_redact_secrets = None  # Redact secrets in trace output (set to "1" or "true")
+
     # Config file override (set via --config CLI arg)
     _config_file_override: Path | None = None
 
