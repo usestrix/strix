@@ -91,7 +91,7 @@ def _summarize_messages(
     if not messages:
         empty_summary = "<context_summary message_count='0'>{text}</context_summary>"
         return {
-            "role": "assistant",
+            "role": "user",
             "content": empty_summary.format(text="No messages to summarize"),
         }
 
@@ -123,7 +123,7 @@ def _summarize_messages(
             return messages[0]
         summary_msg = "<context_summary message_count='{count}'>{text}</context_summary>"
         return {
-            "role": "assistant",
+            "role": "user",
             "content": summary_msg.format(count=len(messages), text=summary),
         }
     except Exception:
