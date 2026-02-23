@@ -51,6 +51,13 @@ A good skill is a structured knowledge package that typically includes:
 - **Context-specific insights** - Environment and version nuances, configuration-dependent behavior, and edge cases
 - **YAML frontmatter** - `name` and `description` fields for skill metadata
 
+```yaml
+---
+name: skill-name
+description: one-line summary of what this skill covers and when to use it
+---
+```
+
 Skills focus on deep, specialized knowledge to significantly enhance agent capabilities. They are dynamically injected into agent context when needed.
 
 ---
