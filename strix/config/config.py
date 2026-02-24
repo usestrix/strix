@@ -53,6 +53,10 @@ class Config:
     traceloop_api_key = None
     traceloop_headers = None
 
+    # Webhook
+    strix_webhook_url: str | None = None
+    strix_webhook_format = "generic"
+
     # Config file override (set via --config CLI arg)
     _config_file_override: Path | None = None
 
