@@ -15,6 +15,7 @@ from strix.interface.webhooks import (
     _resolve_format,
     _severity_counts,
     _targets_summary,
+    _truncate,
     _vulnerability_summary,
     send_completion_webhook,
 )
@@ -270,3 +271,66 @@ class TestSendCompletionWebhook:
 
         # Should not raise
         send_completion_webhook("https://example.com/hook", "generic", tracer, args)
+
+    @patch("strix.interface.webhooks.requests.post")
+    def test_none_tracer_skips_delivery(self, mock_post: MagicMock) -> None:
+        """When tracer is None, webhook should not be sent."""
+        args = _make_args()
+        send_completion_webhook("https://example.com/hook", "generic", None, args)
+        mock_post.assert_not_called()
+
+    @patch("strix.interface.webhooks.requests.post")
+    def test_invalid_url_scheme_skips_delivery(self, mock_post: MagicMock) -> None:
+        """Non-http(s) URLs should be rejected."""
+        tracer = _make_tracer()
+        args = _make_args()
+        send_completion_webhook("ftp://example.com/hook", "generic", tracer, args)
+        mock_post.assert_not_called()
+
+
+class TestTruncate:
+    """Tests for the _truncate helper."""
+
+    def test_short_string_unchanged(self) -> None:
+        assert _truncate("hello", 10) == "hello"
+
+    def test_exact_limit_unchanged(self) -> None:
+        assert _truncate("hello", 5) == "hello"
+
+    def test_long_string_truncated(self) -> None:
+        result = _truncate("hello world", 6)
+        assert len(result) == 6
+        assert result.endswith("\u2026")
+
+    def test_preserves_content_before_ellipsis(self) -> None:
+        result = _truncate("abcdefghij", 5)
+        assert result == "abcd\u2026"
+
+
+class TestNoneTracer:
+    """Tests for None tracer handling in helpers and formatters."""
+
+    def test_severity_counts_with_none(self) -> None:
+        counts = _severity_counts(None)
+        assert all(v == 0 for v in counts.values())
+
+    def test_vulnerability_summary_with_none(self) -> None:
+        assert _vulnerability_summary(None) == []
+
+    def test_format_generic_with_none(self) -> None:
+        args = _make_args()
+        payload = _format_generic(None, args)
+        assert payload["vulnerability_count"] == 0
+        assert payload["stats"]["agents"] == 0
+
+    def test_format_slack_with_none(self) -> None:
+        args = _make_args()
+        payload = _format_slack(None, args)
+        assert "blocks" in payload
+        assert len(payload["blocks"]) == 3  # header + section + severity
+
+    def test_format_discord_with_none(self) -> None:
+        args = _make_args()
+        payload = _format_discord(None, args)
+        assert "embeds" in payload
+        assert payload["embeds"][0]["color"] == 0xEAB308  # yellow (scan not completed)

@@ -21,6 +21,18 @@ logger = logging.getLogger(__name__)
 
 WEBHOOK_TIMEOUT = 10
 
+# Platform limits for field truncation
+_SLACK_SECTION_TEXT_LIMIT = 3000
+_DISCORD_FIELD_VALUE_LIMIT = 1024
+_DISCORD_TITLE_LIMIT = 256
+
+
+def _truncate(text: str, limit: int) -> str:
+    """Truncate *text* to *limit* characters, appending an ellipsis if trimmed."""
+    if len(text) <= limit:
+        return text
+    return text[: limit - 1] + "\u2026"
+
 
 def send_completion_webhook(
     webhook_url: str,
@@ -36,6 +48,16 @@ def send_completion_webhook(
         tracer: The global :class:`Tracer` instance containing scan results.
         args: Parsed CLI arguments (used to extract target info and run name).
     """
+    # Validate URL scheme
+    parsed = urlparse(webhook_url)
+    if parsed.scheme not in ("http", "https"):
+        logger.warning("Invalid webhook URL scheme %r — skipping delivery", parsed.scheme)
+        return
+
+    if not tracer:
+        logger.warning("No tracer available — skipping webhook delivery")
+        return
+
     resolved_format = _resolve_format(webhook_url, webhook_format)
 
     formatters: dict[str, Any] = {
@@ -92,6 +114,8 @@ def _targets_summary(args: argparse.Namespace) -> str:
 
 def _vulnerability_summary(tracer: Any) -> list[dict[str, Any]]:
     """Return a lightweight list of vulnerability dicts safe for JSON serialisation."""
+    if not tracer:
+        return []
     return [
         {
             "id": report.get("id", ""),
@@ -108,6 +132,8 @@ def _vulnerability_summary(tracer: Any) -> list[dict[str, Any]]:
 
 def _severity_counts(tracer: Any) -> dict[str, int]:
     counts: dict[str, int] = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
+    if not tracer:
+        return counts
     for report in tracer.vulnerability_reports:
         severity = report.get("severity", "").lower()
         if severity in counts:
@@ -130,18 +156,19 @@ def _format_generic(tracer: Any, args: argparse.Namespace) -> dict[str, Any]:
     """Plain JSON payload with full scan data."""
     completed = _scan_completed(tracer)
     llm_stats = tracer.get_total_llm_stats()["total"] if tracer else {}
+    vuln_reports = tracer.vulnerability_reports if tracer else []
     return {
         "event": "scan_completed" if completed else "scan_ended",
         "run_name": getattr(args, "run_name", ""),
         "targets": _targets_summary(args),
         "scan_mode": getattr(args, "scan_mode", ""),
         "completed": completed,
-        "vulnerability_count": len(tracer.vulnerability_reports),
+        "vulnerability_count": len(vuln_reports),
         "severity_counts": _severity_counts(tracer),
         "vulnerabilities": _vulnerability_summary(tracer),
         "stats": {
-            "agents": len(tracer.agents),
-            "tools": tracer.get_real_tool_count(),
+            "agents": len(tracer.agents) if tracer else 0,
+            "tools": tracer.get_real_tool_count() if tracer else 0,
             "input_tokens": llm_stats.get("input_tokens", 0),
             "output_tokens": llm_stats.get("output_tokens", 0),
             "cost": llm_stats.get("cost", 0),
@@ -152,7 +179,8 @@ def _format_generic(tracer: Any, args: argparse.Namespace) -> dict[str, Any]:
 def _format_slack(tracer: Any, args: argparse.Namespace) -> dict[str, Any]:
     """Slack Block Kit payload."""
     completed = _scan_completed(tracer)
-    vuln_count = len(tracer.vulnerability_reports)
+    vuln_reports = tracer.vulnerability_reports if tracer else []
+    vuln_count = len(vuln_reports)
     counts = _severity_counts(tracer)
 
     status_emoji = ":white_check_mark:" if completed else ":warning:"
@@ -191,13 +219,14 @@ def _format_slack(tracer: Any, args: argparse.Namespace) -> dict[str, Any]:
     ]
 
     # Add top vulnerabilities (max 5)
-    for report in tracer.vulnerability_reports[:5]:
-        title = report.get("title", "Untitled")
+    for report in vuln_reports[:5]:
+        title = _truncate(report.get("title", "Untitled"), 200)
         severity = report.get("severity", "unknown").upper()
         endpoint = report.get("endpoint", "")
         text = f":rotating_light: *[{severity}]* {title}"
         if endpoint:
-            text += f"\n`{endpoint}`"
+            text += f"\n`{_truncate(endpoint, 200)}`"
+        text = _truncate(text, _SLACK_SECTION_TEXT_LIMIT)
         blocks.append(
             {
                 "type": "section",
@@ -211,7 +240,8 @@ def _format_slack(tracer: Any, args: argparse.Namespace) -> dict[str, Any]:
 def _format_discord(tracer: Any, args: argparse.Namespace) -> dict[str, Any]:
     """Discord webhook payload with an embed."""
     completed = _scan_completed(tracer)
-    vuln_count = len(tracer.vulnerability_reports)
+    vuln_reports = tracer.vulnerability_reports if tracer else []
+    vuln_count = len(vuln_reports)
     counts = _severity_counts(tracer)
 
     color = 0x22C55E if completed else 0xEAB308  # green / yellow
@@ -226,27 +256,33 @@ def _format_discord(tracer: Any, args: argparse.Namespace) -> dict[str, Any]:
     )
 
     fields: list[dict[str, Any]] = [
-        {"name": "Target", "value": _targets_summary(args), "inline": True},
+        {
+            "name": "Target",
+            "value": _truncate(_targets_summary(args), _DISCORD_FIELD_VALUE_LIMIT),
+            "inline": True,
+        },
         {"name": "Scan Mode", "value": getattr(args, "scan_mode", "N/A"), "inline": True},
         {"name": "Vulnerabilities", "value": str(vuln_count), "inline": True},
         {"name": "Severity Breakdown", "value": severity_line, "inline": False},
     ]
 
     # Top vulnerabilities (max 5)
-    for report in tracer.vulnerability_reports[:5]:
-        title = report.get("title", "Untitled")
+    for report in vuln_reports[:5]:
+        title = _truncate(report.get("title", "Untitled"), 200)
         severity = report.get("severity", "unknown").upper()
         endpoint = report.get("endpoint", "")
         value = f"**[{severity}]** {title}"
         if endpoint:
-            value += f"\n`{endpoint}`"
+            value += f"\n`{_truncate(endpoint, 200)}`"
+        value = _truncate(value, _DISCORD_FIELD_VALUE_LIMIT)
         fields.append({"name": "\u200b", "value": value, "inline": False})
 
     status_text = "Scan Completed" if completed else "Scan Ended"
+    run_name = _truncate(getattr(args, "run_name", "N/A"), _DISCORD_TITLE_LIMIT)
 
     embed: dict[str, Any] = {
-        "title": f"\ud83d\udd12 Strix \u2014 {status_text}",
-        "description": f"Run: **{getattr(args, 'run_name', 'N/A')}**",
+        "title": _truncate(f"\ud83d\udd12 Strix \u2014 {status_text}", _DISCORD_TITLE_LIMIT),
+        "description": f"Run: **{run_name}**",
         "color": color,
         "fields": fields,
         "footer": {"text": "Strix Security Scanner"},
