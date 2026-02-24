@@ -9,7 +9,7 @@ if [ ! -f /app/certs/ca.p12 ]; then
   exit 1
 fi
 
-caido-cli --listen 127.0.0.1:${CAIDO_PORT} \
+caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
           --allow-guests \
           --no-logging \
           --no-open \

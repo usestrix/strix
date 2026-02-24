@@ -56,6 +56,7 @@ class Tracer:
         self._next_message_id = 1
         self._saved_vuln_ids: set[str] = set()
 
+        self.caido_url: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
 
     def set_run_name(self, run_name: str) -> None:

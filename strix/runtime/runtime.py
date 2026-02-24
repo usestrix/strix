@@ -7,6 +7,7 @@ class SandboxInfo(TypedDict):
     api_url: str
     auth_token: str | None
     tool_server_port: int
+    caido_port: int
     agent_id: str
 
 

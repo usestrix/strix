@@ -333,6 +333,14 @@ class BaseAgent(metaclass=AgentMeta):
 
                 if "agent_id" in sandbox_info:
                     self.state.sandbox_info["agent_id"] = sandbox_info["agent_id"]
+
+                caido_port = sandbox_info.get("caido_port")
+                if caido_port:
+                    from strix.telemetry.tracer import get_global_tracer
+
+                    tracer = get_global_tracer()
+                    if tracer:
+                        tracer.caido_url = f"localhost:{caido_port}"
             except Exception as e:
                 from strix.telemetry import posthog
 
