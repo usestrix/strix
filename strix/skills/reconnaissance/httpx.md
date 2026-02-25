@@ -5,7 +5,7 @@ description: httpx HTTP probing, technology detection, status filtering, and res
 
 # httpx
 
-httpx is a fast multi-purpose HTTP toolkit for probing web servers. It confirms which hosts are alive on HTTP/HTTPS, extracts titles, status codes, response sizes, server banners, and technology fingerprints. Run it after port discovery (nmap) and before vulnerability scanning (nuclei) to filter down to live targets.
+httpx is a fast multi-purpose HTTP toolkit for probing web servers. It confirms which hosts are alive on HTTP/HTTPS, extracts titles, status codes, response sizes, server banners, and technology fingerprints. Run it after port discovery (nmap) and before vulnerability scanning (nuclei) to filter down to live targets. Only use against authorized targets within the defined scope.
 
 ## Core Usage
 
@@ -149,14 +149,16 @@ httpx -l hosts.txt -status-code -title -tech-detect -json -o results.jsonl
 
 ### Key JSON fields
 
+Field names may use hyphens or underscores depending on httpx version. Use fallback access (`r.get('status_code', r.get('status-code'))`) when parsing programmatically.
+
 - `url` -- final URL after redirects
-- `status-code` -- HTTP response code
+- `status_code` / `status-code` -- HTTP response code
 - `title` -- extracted page title
 - `webserver` -- `Server` header value
 - `tech` -- detected technology list
-- `content-length` -- response size in bytes
-- `content-type` -- response MIME type
-- `tls-grab` -- TLS certificate details
+- `content_length` / `content-length` -- response size in bytes
+- `content_type` / `content-type` -- response MIME type
+- `tls-grab` / `tls` -- TLS certificate details
 - `host` -- resolved IP address
 - `cname` -- CNAME chain
 
@@ -165,10 +167,19 @@ httpx -l hosts.txt -status-code -title -tech-detect -json -o results.jsonl
 ```python
 import json
 
+def get(r, *keys):
+    """Version-safe field access for httpx JSON output."""
+    for k in keys:
+        if k in r:
+            return r[k]
+    return None
+
 with open("results.jsonl") as f:
     for line in f:
         r = json.loads(line)
-        print(f"[{r.get('status-code')}] {r['url']} | {r.get('title','')} | {', '.join(r.get('tech', []))}")
+        status = get(r, 'status_code', 'status-code')
+        tech = r.get('tech', [])
+        print(f"[{status}] {r['url']} | {r.get('title','')} | {', '.join(tech)}")
 ```
 
 ## Recommended Scan Sequences
@@ -219,8 +230,10 @@ subfinder -d example.com -silent | \
   nuclei -tags exposure,misconfig -severity medium,high,critical
 
 # nmap -> httpx (probe discovered HTTP ports)
-nmap -p- --open -oG - <target> | grep open | awk -F/ '{print $1}' | \
-  xargs -I{} echo "http://<target>:{}" | httpx -status-code -title -silent
+TARGET="10.0.0.1"
+nmap -p- --open -oG - $TARGET | \
+  awk '/Ports:/{for(i=1;i<=NF;i++) if($i ~ /\/open\//) {split($i,p,"/"); print p[1]}}' | \
+  xargs -I{} echo "http://$TARGET:{}" | httpx -status-code -title -silent
 
 # httpx tech detection -> targeted nuclei scan
 httpx -l subdomains.txt -tech-detect -json -o tech.jsonl -silent

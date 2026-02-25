@@ -5,7 +5,7 @@ description: ffuf web fuzzing for directory/file discovery, parameter fuzzing, v
 
 # ffuf
 
-ffuf (Fuzz Faster U Fool) is a fast web fuzzer for directory and file discovery, parameter enumeration, virtual host brute-forcing, and any HTTP-based fuzzing task. The `FUZZ` keyword marks the injection point in the request -- it can appear in the URL path, query string, headers, or POST body.
+ffuf (Fuzz Faster U Fool) is a fast web fuzzer for directory and file discovery, parameter enumeration, virtual host brute-forcing, and any HTTP-based fuzzing task. The `FUZZ` keyword marks the injection point in the request -- it can appear in the URL path, query string, headers, or POST body. Only use against authorized targets within the defined scope.
 
 ## Core Usage
 

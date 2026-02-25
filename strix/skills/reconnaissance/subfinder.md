@@ -5,7 +5,7 @@ description: subfinder passive subdomain enumeration, source configuration, API 
 
 # subfinder
 
-subfinder is a passive subdomain discovery tool that aggregates results from 50+ sources (certificate transparency logs, DNS datasets, search engines, passive DNS databases, and threat intelligence APIs). It discovers subdomains without sending probes to the target -- all queries go to third-party data sources. Run it first in a recon pipeline before httpx and nuclei to build a complete attack surface inventory.
+subfinder is a passive subdomain discovery tool that aggregates results from 50+ sources (certificate transparency logs, DNS datasets, search engines, passive DNS databases, and threat intelligence APIs). It discovers subdomains without sending probes to the target -- all queries go to third-party data sources. Run it first in a recon pipeline before httpx and nuclei to build a complete attack surface inventory. Only use against authorized targets within the defined scope.
 
 ## Core Usage
 

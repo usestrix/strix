@@ -5,7 +5,7 @@ description: Nuclei template-based vulnerability scanning, tag and severity filt
 
 # Nuclei
 
-Nuclei is a fast, template-based vulnerability scanner. Each template encodes a specific check -- CVE, misconfiguration, exposure, or default credential -- and runs against one or more targets. Templates are updated automatically in the Strix sandbox (`nuclei -update-templates` runs at container build time).
+Nuclei is a fast, template-based vulnerability scanner. Each template encodes a specific check -- CVE, misconfiguration, exposure, or default credential -- and runs against one or more targets. Templates are updated automatically in the Strix sandbox (`nuclei -update-templates` runs at container build time). Only use against authorized targets within the defined scope.
 
 ## Core Usage
 

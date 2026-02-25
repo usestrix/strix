@@ -5,7 +5,7 @@ description: Nmap port scanning, service detection, OS fingerprinting, and NSE s
 
 # Nmap
 
-Nmap is the primary network discovery and port scanning tool in the Strix sandbox. Use it to map open ports, identify running services and versions, fingerprint operating systems, and run targeted NSE scripts against discovered services.
+Nmap is the primary network discovery and port scanning tool in the Strix sandbox. Use it to map open ports, identify running services and versions, fingerprint operating systems, and run targeted NSE scripts against discovered services. Only use against authorized targets within the defined scope.
 
 ## Core Scan Types
 
@@ -118,35 +118,6 @@ nmap --script=mysql-info,mysql-empty-password -p 3306 <target>
 nmap --script=pgsql-brute -p 5432 <target>
 ```
 
-## Output Parsing
-
-### Extract open ports for follow-up tools
-
-```bash
-# Get comma-separated open ports from nmap output
-grep "^[0-9]" ports.txt | awk -F/ '{print $1}' | tr '\n' ',' | sed 's/,$//'
-
-# Use with httpx for HTTP probing
-nmap -sS -p- --open -T4 <target> -oG - | grep "open" | awk '{print $2}' | xargs -I{} httpx -u {}
-```
-
-### Read XML output programmatically
-
-```bash
-# Parse XML for service data
-python3 -c "
-import xml.etree.ElementTree as ET
-tree = ET.parse('deep_scan.xml')
-for host in tree.findall('.//host'):
-    for port in host.findall('.//port'):
-        state = port.find('state').get('state')
-        if state == 'open':
-            portid = port.get('portid')
-            service = port.find('service')
-            print(f'{portid}: {service.get(\"name\",\"unknown\")} {service.get(\"version\",\"\")}')
-"
-```
-
 ## Common Scenarios
 
 ### Web application target
@@ -180,6 +151,51 @@ nmap -sV -p 80,443,3000,4000,5000,8000,8080,8443,8888,9000,9090,10080 <target>
 - Avoid **T5** on production targets -- causes packet loss and missed ports.
 - For IDS evasion, use **T1** or **T2** with `-f` (packet fragmentation).
 
+## Output Parsing
+
+### Extract open ports for follow-up tools
+
+```bash
+# Get comma-separated open ports from normal output (-oN)
+grep "^[0-9]" ports.txt | awk -F/ '{print $1}' | tr '\n' ',' | sed 's/,$//'
+
+# Extract open ports from greppable output (-oG)
+nmap -sS -p- --open -T4 <target> -oG - | \
+  awk '/Ports:/{for(i=1;i<=NF;i++) if($i ~ /\/open\//) {split($i,p,"/"); print p[1]}}' | \
+  sort -un
+```
+
+### Read XML output programmatically
+
+```bash
+# Parse XML for service data
+python3 -c "
+import xml.etree.ElementTree as ET
+tree = ET.parse('deep_scan.xml')
+for host in tree.findall('.//host'):
+    for port in host.findall('.//port'):
+        state = port.find('state').get('state')
+        if state == 'open':
+            portid = port.get('portid')
+            service = port.find('service')
+            print(f'{portid}: {service.get(\"name\",\"unknown\")} {service.get(\"version\",\"\")}')
+"
+```
+
+## Chaining with Other Tools
+
+```bash
+# Nmap -> httpx: probe discovered HTTP ports
+TARGET="10.0.0.1"
+nmap -p- --open -oG - $TARGET | \
+  awk '/Ports:/{for(i=1;i<=NF;i++) if($i ~ /\/open\//) {split($i,p,"/"); print p[1]}}' | \
+  xargs -I{} echo "http://$TARGET:{}" | httpx -status-code -title
+
+# Nmap -> nuclei: scan discovered services
+nmap -sV -p 80,443 -oX scan.xml <target>
+nuclei -target <target> -tags http,ssl -severity medium,high,critical
+```
+
 ## Validation
 
 1. Confirm open ports by connecting directly: `nc -zv <target> <port>` or `curl -I http://<target>:<port>`
@@ -193,18 +209,6 @@ nmap -sV -p 80,443,3000,4000,5000,8000,8080,8443,8888,9000,9090,10080 <target>
 - **Version detection can be wrong** -- services may report misleading banners; validate manually
 - **vuln scripts produce false positives** -- always verify script findings with targeted manual testing
 - **OS detection is unreliable** behind load balancers, NAT, or containers
-
-## Chaining with Other Tools
-
-```bash
-# Nmap -> httpx: probe discovered HTTP ports
-nmap -p- --open -oG - <target> | grep open | awk -F/ '{print $1}' | \
-  xargs -I{} echo "http://<target>:{}" | httpx -status-code -title
-
-# Nmap -> nuclei: scan discovered services
-nmap -sV -p 80,443 -oX scan.xml <target>
-nuclei -target <target> -tags http,ssl -severity medium,high,critical
-```
 
 ## Pro Tips
 

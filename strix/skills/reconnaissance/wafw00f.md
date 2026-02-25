@@ -5,7 +5,7 @@ description: wafw00f WAF detection and fingerprinting to identify web applicatio
 
 # wafw00f
 
-wafw00f fingerprints Web Application Firewalls (WAFs) by analyzing HTTP responses to normal and crafted requests. Identifying the WAF before scanning is critical -- it determines whether nuclei, ffuf, and sqlmap payloads need to be rate-limited, obfuscated, or adjusted to avoid triggering blocks. Run wafw00f immediately after httpx tech detection and before any active vulnerability scanning.
+wafw00f fingerprints Web Application Firewalls (WAFs) by analyzing HTTP responses to normal and crafted requests. Identifying the WAF before scanning is critical -- it determines whether nuclei, ffuf, and sqlmap payloads need to be rate-limited, obfuscated, or adjusted to avoid triggering blocks. Run wafw00f immediately after httpx tech detection and before any active vulnerability scanning. Only use against authorized targets within the defined scope.
 
 ## Core Usage
 
