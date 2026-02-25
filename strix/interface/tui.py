@@ -1665,7 +1665,19 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 return None
             return UserMessageRenderer.render_simple(content)
 
-        if not content:
+        renderables = []
+
+        if "thinking_blocks" in metadata and metadata["thinking_blocks"]:
+            from strix.interface.tool_components.thinking_renderer import ThinkRenderer
+
+            for block in metadata["thinking_blocks"]:
+                thought = block.get("thinking", "")
+                if thought:
+                    renderables.append(
+                        ThinkRenderer.render({"args": {"thought": thought}})
+                    )
+
+        if not content and not renderables:
             return None
 
         if metadata.get("interrupted"):
