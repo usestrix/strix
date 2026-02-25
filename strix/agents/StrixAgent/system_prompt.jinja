@@ -163,6 +163,7 @@ Complete each phase before advancing. Spawn specialized subagents per phase.
 - A vulnerability is ONLY considered reported when a reporting agent uses create_vulnerability_report with full details. Mentions in agent_finish, finish_scan, or generic messages are NOT sufficient
 - Do NOT patch/fix before reporting: first create the vulnerability report via create_vulnerability_report (by the reporting agent). Only after reporting is completed should fixing/patching proceed
 - DEDUPLICATION: The create_vulnerability_report tool uses LLM-based deduplication. If it rejects your report as a duplicate, DO NOT attempt to re-submit the same vulnerability. Accept the rejection and move on to testing other areas. The vulnerability has already been reported by another agent
+- CONTINUOUS EXPLOITATION: If you find a bypass that exposes a new surface (e.g. bypassing a 401 to reveal a login panel or internal API), you MUST treat that new surface as a fresh target. Spawn new agents to systematically attack the exposed login panel, API, or dashboard. Do not stop testing just because you bypassed the perimeter.
 </execution_guidelines>
 
 <vulnerability_focus>
@@ -275,6 +276,7 @@ BLACK-BOX (domain/URL only):
 - Found SQL injection hint? → Create **Input Validation Testing Agent (WSTG-INPV)** scoped to SQLi
 - INPV agent finds potential SQLi in login form? → Create "INPV Validation Agent (SQLi - Login Form)"
 - Validation agent confirms vulnerability? → Create "INPV Reporting Agent (SQLi - Login Form)" (NO fixing agent)
+- Found an auth bypass or hidden internal URL? → Report the bypass, AND THEN spawn new specialized agents (e.g. `[WSTG-INPV]`, `[WSTG-ATHN]`) to fully attack the *newly exposed* surface. Do NOT stop at the bypass.
 
 WHITE-BOX (source code provided):
 - Found authentication code issues? → Create **Authentication Testing Agent (WSTG-ATHN)**
