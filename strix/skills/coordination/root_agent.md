@@ -104,6 +104,8 @@ When all agents report completion:
 
 1. Collect and deduplicate findings across agents
 2. Assess overall security posture
-3. Compile executive summary with prioritized recommendations
-4. Invoke finish tool with final report
+3. **Attacker Perspective Verification**: Pause and explicitly consider: "If I were a real-world attacker, where else would I look? What edge cases, forgotten endpoints, or chained exploits have been overlooked?" 
+4. If this verification reveals new potential attack vectors, spawn new agents to investigate them before concluding.
+5. Once fully satisfied no stones are left unturned, compile the executive summary with prioritized recommendations.
+6. Invoke finish tool with the final report.
 </instructions>

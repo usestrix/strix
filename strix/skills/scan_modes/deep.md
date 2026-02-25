@@ -139,6 +139,13 @@ When initial attempts fail:
 - Remediation recommendations with specific guidance
 - Note areas requiring additional review beyond current scope
 
+## Phase 7: Attacker Perspective Verification
+
+1. Pause and critically reflect before wrapping up the assessment.
+2. Ask yourself: "If I were an actual advanced attacker with unlimited time, where else would I look? Have I missed any obscure edge cases, complex chained vectors, or business logic flaws?"
+3. Review the attack surface one last time to ensure absolutely no stones are left unturned.
+4. If new vectors are identified, dive deep into them before fully concluding.
+
 ## Agent Strategy (WSTG-Aligned)
 
 After reconnaissance, decompose the application hierarchically using WSTG categories:

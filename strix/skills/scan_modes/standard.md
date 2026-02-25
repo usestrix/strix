@@ -84,6 +84,13 @@ Test each attack surface methodically. Spawn focused subagents for different WST
 - Remediation recommendations
 - Note areas requiring further investigation
 
+## Phase 6: Attacker Perspective Verification
+
+1. Pause and reflect before wrapping up the assessment.
+2. Ask yourself: "If I were an actual attacker, where else would I look? Have I missed any obvious edge cases, forgotten endpoints, or unprotected integrations?"
+3. Review the attack surface one last time to ensure no critical paths were overlooked.
+4. If new vectors are identified, investigate them before fully concluding.
+
 ## Chaining
 
 Always ask: "If I can do X, what does that enable next?" Keep pivoting until reaching maximum privilege or data exposure.
