@@ -167,7 +167,10 @@ import json
 with open("nuclei_results.json") as f:
     for line in f:
         finding = json.loads(line)
-        print(f"[{finding['info']['severity'].upper()}] {finding['template-id']}: {finding['matched-at']}")
+        severity = finding.get('info', {}).get('severity', 'unknown').upper()
+        template = finding.get('template-id', 'unknown')
+        matched = finding.get('matched-at', '')
+        print(f"[{severity}] {template}: {matched}")
 ```
 
 ### Key JSON fields
@@ -199,8 +202,10 @@ subfinder -d example.com -silent | \
   nuclei -tags exposure,misconfig -severity medium,high,critical
 
 # nmap open ports -> nuclei network templates
-nmap -p- --open <target> -oG - | grep open | awk -F/ '{print $1}' | \
-  xargs -I{} nuclei -target tcp://<target>:{} -tags network
+TARGET="10.0.0.1"
+nmap -p- --open $TARGET -oG - | \
+  awk '/Ports:/{for(i=1;i<=NF;i++) if($i ~ /\/open\//) {split($i,p,"/"); print p[1]}}' | \
+  xargs -I{} nuclei -target "tcp://$TARGET:{}" -tags network
 ```
 
 ## Validation
