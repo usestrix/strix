@@ -1399,7 +1399,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if not has_active_agents:
             has_active_agents = any(
                 agent_data.get("status", "running") in ["running", "waiting"]
-                for agent_data in self.tracer.agents.values()
+                for agent_data in list(self.tracer.agents.values())
             )
 
         if not has_active_agents:

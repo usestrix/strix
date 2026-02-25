@@ -125,10 +125,9 @@ class LLM:
             try:
                 if tracer and self.agent_id:
                     tracer.update_agent_system_message(self.agent_id, "Waiting for LLM provider...")
+                    tracer.update_agent_system_message(self.agent_id, "Generating response...")
 
                 async for response in self._stream(messages):
-                    if tracer and self.agent_id:
-                        tracer.update_agent_system_message(self.agent_id, "Generating response...")
                     yield response
                 return  # noqa: TRY300
             except Exception as e:  # noqa: BLE001

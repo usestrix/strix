@@ -405,7 +405,7 @@ class BaseAgent(metaclass=AgentMeta):
 
         if actions:
             if tracer:
-                tool_names = [a.get("tool_name", "tool") if isinstance(a, dict) else getattr(a, "tool_name", "tool") for a in actions]
+                tool_names = [a.get("toolName") or a.get("tool_name") or "tool" for a in actions]
                 tracer.update_agent_system_message(self.state.agent_id, f"Executing {', '.join(tool_names[:2])}...")
             return await self._execute_actions(actions, tracer)
 
