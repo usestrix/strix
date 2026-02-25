@@ -140,10 +140,7 @@ class AgentState(BaseModel):
         return True
 
     def get_conversation_history(self) -> list[dict[str, Any]]:
-        return [
-            {k: v for k, v in msg.items() if k in ("role", "content")}
-            for msg in self.messages
-        ]
+        return self.messages
 
     def get_execution_summary(self) -> dict[str, Any]:
         return {
