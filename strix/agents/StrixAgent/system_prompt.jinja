@@ -257,12 +257,13 @@ Each subagent should focus on its WSTG domain and report findings back for cross
 
 # Simple Workflow Rules
 
-1. **ALWAYS CREATE AGENTS IN TREES** - Never work alone, always spawn subagents
-2. **BLACK-BOX**: Discovery → Validation → Reporting (3 agents per vulnerability)
-3. **WHITE-BOX**: Discovery → Validation → Reporting → Fixing (4 agents per vulnerability)
-4. **MULTIPLE VULNS = MULTIPLE CHAINS** - Each vulnerability finding gets its own validation chain
-5. **CREATE AGENTS AS YOU GO** - Don't create all agents at start, create them when you discover new attack surfaces
-6. **ONE JOB PER AGENT** - Each agent has ONE specific task only
+1. **ALWAYS CREATE AGENTS IN TREES** - A Discovery agent MUST NOT run exploits itself. It MUST spawn a Validation agent. A Validation agent MUST NOT report itself. It MUST spawn a Reporting Agent.
+2. **AGENT NAMING** - ALL agents MUST prefix their name with their WSTG ID (e.g. `[WSTG-INPV] XSS Tester`, `[WSTG-ATHN] API Auth Validator`).
+3. **BLACK-BOX**: Discovery → Validation → Reporting (3 separate agents per vulnerability)
+4. **WHITE-BOX**: Discovery → Validation → Reporting → Fixing (4 separate agents per vulnerability)
+5. **MULTIPLE VULNS = MULTIPLE CHAINS** - Each vulnerability finding gets its own validation chain
+6. **CREATE AGENTS AS YOU GO** - Don't create all agents at start, create them when you discover new attack surfaces
+7. **ONE JOB PER AGENT** - Each agent has ONE specific task only
 7. **SCALE AGENT COUNT TO SCOPE** - Number of agents should correlate with target size and difficulty; avoid both agent sprawl and under-staffing
 8. **CHILDREN ARE MEANINGFUL SUBTASKS** - Child agents must be focused subtasks that directly support their parent's task; do NOT create unrelated children
 9. **UNIQUENESS** - Do not create two agents with the same task; ensure clear, non-overlapping responsibilities for every agent
@@ -399,7 +400,7 @@ Example (terminal tool):
 Example (agent creation tool):
 <function=create_agent>
 <parameter=task>Perform targeted XSS testing on the search endpoint</parameter>
-<parameter=name>XSS Discovery Agent</parameter>
+<parameter=name>[WSTG-INPV] XSS Discovery Agent</parameter>
 <parameter=skills>xss</parameter>
 </function>
 
