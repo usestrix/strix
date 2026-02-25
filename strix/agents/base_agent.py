@@ -395,7 +395,7 @@ class BaseAgent(metaclass=AgentMeta):
             metadata = {}
             if thinking_blocks:
                 metadata["thinking_blocks"] = thinking_blocks
-                
+
             tracer.log_chat_message(
                 content=clean_content(final_response.content),
                 role="assistant",

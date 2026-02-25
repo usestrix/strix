@@ -1660,9 +1660,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
         content = msg_data.get("content", "")
         metadata = msg_data.get("metadata", {})
 
-        if not content:
-            return None
-
         if role == "user":
             return UserMessageRenderer.render_simple(content)
 
@@ -1680,6 +1677,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
                     text.append(indented_thought, style="italic dim")
                     renderables.append(Static(text, classes="tool-call thinking-tool completed"))
 
+        if not content and not renderables:
+            return None
+
         if metadata.get("interrupted"):
             streaming_result = self._render_streaming_content(content)
             interrupted_text = Text()
@@ -1687,19 +1687,17 @@ class StrixTUIApp(App):  # type: ignore[misc]
             interrupted_text.append("⚠ ", style="yellow")
             interrupted_text.append("Interrupted by user", style="yellow dim")
             renderables.append(self._merge_renderables([streaming_result, interrupted_text]))
-        else:
+        elif content:
             msg_renderable = AgentMessageRenderer.render_simple(content)
-            if hasattr(msg_renderable, "renderable") and hasattr(msg_renderable.renderable, "_text") and not msg_renderable.renderable._text:
-                pass
-            elif getattr(msg_renderable, "plain", True): 
+            if getattr(msg_renderable, "plain", True):
                 renderables.append(msg_renderable)
-        
+
         if not renderables:
             return None
-            
+
         if len(renderables) == 1:
             return renderables[0]
-            
+
         return self._merge_renderables(renderables)
 
     def _render_tool_content_simple(self, tool_data: dict[str, Any]) -> Any:
