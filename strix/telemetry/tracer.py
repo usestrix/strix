@@ -261,9 +261,9 @@ class Tracer:
         if agent_id in self.agents:
             self.agents[agent_id]["status"] = status
             self.agents[agent_id]["updated_at"] = datetime.now(UTC).isoformat()
-            if error_message:
+            if error_message is not None:
                 self.agents[agent_id]["error_message"] = error_message
-            if system_message:
+            if system_message is not None:
                 self.agents[agent_id]["system_message"] = system_message
 
     def update_agent_system_message(self, agent_id: str, message: str) -> None:

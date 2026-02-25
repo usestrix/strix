@@ -1689,8 +1689,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             renderables.append(self._merge_renderables([streaming_result, interrupted_text]))
         elif content:
             msg_renderable = AgentMessageRenderer.render_simple(content)
-            if getattr(msg_renderable, "plain", True):
-                renderables.append(msg_renderable)
+            renderables.append(msg_renderable)
 
         if not renderables:
             return None
