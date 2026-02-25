@@ -1222,7 +1222,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 animated_text.append(" ", style="dim")
                 animated_text.append("stop", style="dim")
                 return (animated_text, keymap_styled([("ctrl-q", "quit")]), True)
-            animated_text = self._get_animated_verb_text(agent_id, "Initializing")
+            msg = agent_data.get("system_message", "Initializing...")
+            animated_text = self._get_animated_verb_text(agent_id, msg)
             return (animated_text, keymap_styled([("ctrl-q", "quit")]), True)
 
         return (None, Text(), False)

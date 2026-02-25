@@ -112,12 +112,23 @@ class LLM:
     async def generate(
         self, conversation_history: list[dict[str, Any]]
     ) -> AsyncIterator[LLMResponse]:
+        from strix.telemetry.tracer import get_global_tracer
+
+        tracer = get_global_tracer()
+        if tracer and self.agent_id:
+            tracer.update_agent_system_message(self.agent_id, "Compressing memory...")
+
         messages = self._prepare_messages(conversation_history)
         max_retries = int(Config.get("strix_llm_max_retries") or "5")
 
         for attempt in range(max_retries + 1):
             try:
+                if tracer and self.agent_id:
+                    tracer.update_agent_system_message(self.agent_id, "Waiting for LLM provider...")
+
                 async for response in self._stream(messages):
+                    if tracer and self.agent_id:
+                        tracer.update_agent_system_message(self.agent_id, "Generating response...")
                     yield response
                 return  # noqa: TRY300
             except Exception as e:  # noqa: BLE001

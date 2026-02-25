@@ -321,6 +321,11 @@ class BaseAgent(metaclass=AgentMeta):
         sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
         if not sandbox_mode and self.state.sandbox_id is None:
             from strix.runtime import get_runtime
+            from strix.telemetry.tracer import get_global_tracer
+
+            tracer = get_global_tracer()
+            if tracer:
+                tracer.update_agent_system_message(self.state.agent_id, "Setting up sandbox environment...")
 
             try:
                 runtime = get_runtime()
