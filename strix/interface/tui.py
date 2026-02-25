@@ -1666,15 +1666,41 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if role == "user":
             return UserMessageRenderer.render_simple(content)
 
+        renderables = []
+
+        if "thinking_blocks" in metadata and metadata["thinking_blocks"]:
+            for block in metadata["thinking_blocks"]:
+                thought = block.get("thinking", "")
+                if thought:
+                    text = Text()
+                    text.append("🧠 ")
+                    text.append("Thinking", style="bold #a855f7")
+                    text.append("\n  ")
+                    indented_thought = "\n  ".join(thought.split("\n"))
+                    text.append(indented_thought, style="italic dim")
+                    renderables.append(Static(text, classes="tool-call thinking-tool completed"))
+
         if metadata.get("interrupted"):
             streaming_result = self._render_streaming_content(content)
             interrupted_text = Text()
             interrupted_text.append("\n")
             interrupted_text.append("⚠ ", style="yellow")
             interrupted_text.append("Interrupted by user", style="yellow dim")
-            return self._merge_renderables([streaming_result, interrupted_text])
-
-        return AgentMessageRenderer.render_simple(content)
+            renderables.append(self._merge_renderables([streaming_result, interrupted_text]))
+        else:
+            msg_renderable = AgentMessageRenderer.render_simple(content)
+            if hasattr(msg_renderable, "renderable") and hasattr(msg_renderable.renderable, "_text") and not msg_renderable.renderable._text:
+                pass
+            elif getattr(msg_renderable, "plain", True): 
+                renderables.append(msg_renderable)
+        
+        if not renderables:
+            return None
+            
+        if len(renderables) == 1:
+            return renderables[0]
+            
+        return self._merge_renderables(renderables)
 
     def _render_tool_content_simple(self, tool_data: dict[str, Any]) -> Any:
         tool_name = tool_data.get("tool_name", "Unknown Tool")

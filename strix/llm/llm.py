@@ -125,7 +125,6 @@ class LLM:
             try:
                 if tracer and self.agent_id:
                     tracer.update_agent_system_message(self.agent_id, "Waiting for LLM provider...")
-                    tracer.update_agent_system_message(self.agent_id, "Generating response...")
 
                 async for response in self._stream(messages):
                     yield response
@@ -140,11 +139,20 @@ class LLM:
         accumulated = ""
         chunks: list[Any] = []
         done_streaming = 0
+        first_chunk_received = False
 
         self._total_stats.requests += 1
         response = await acompletion(**self._build_completion_args(messages), stream=True)
 
         async for chunk in response:
+            if not first_chunk_received:
+                first_chunk_received = True
+                from strix.telemetry.tracer import get_global_tracer
+
+                tracer = get_global_tracer()
+                if tracer and self.agent_id:
+                    tracer.update_agent_system_message(self.agent_id, "Generating response...")
+
             chunks.append(chunk)
             if done_streaming:
                 done_streaming += 1

@@ -362,6 +362,7 @@ class BaseAgent(metaclass=AgentMeta):
 
         if tracer:
             tracer.update_agent_system_message(self.state.agent_id, "Thinking...")
+            await asyncio.sleep(0)
 
         async for response in self.llm.generate(self.state.get_conversation_history()):
             final_response = response
@@ -391,10 +392,15 @@ class BaseAgent(metaclass=AgentMeta):
         self.state.add_message("assistant", final_response.content, thinking_blocks=thinking_blocks)
         if tracer:
             tracer.clear_streaming_content(self.state.agent_id)
+            metadata = {}
+            if thinking_blocks:
+                metadata["thinking_blocks"] = thinking_blocks
+                
             tracer.log_chat_message(
                 content=clean_content(final_response.content),
                 role="assistant",
                 agent_id=self.state.agent_id,
+                metadata=metadata if metadata else None,
             )
 
         actions = (
