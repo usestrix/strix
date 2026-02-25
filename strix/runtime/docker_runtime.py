@@ -22,6 +22,7 @@ from .runtime import AbstractRuntime, SandboxInfo
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60
 CONTAINER_TOOL_SERVER_PORT = 48081
+CONTAINER_CAIDO_PORT = 48080
 
 
 class DockerRuntime(AbstractRuntime):
@@ -37,6 +38,7 @@ class DockerRuntime(AbstractRuntime):
         self._scan_container: Container | None = None
         self._tool_server_port: int | None = None
         self._tool_server_token: str | None = None
+        self._caido_port: int | None = None
 
     def _find_available_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -77,6 +79,10 @@ class DockerRuntime(AbstractRuntime):
         port_key = f"{CONTAINER_TOOL_SERVER_PORT}/tcp"
         if port_bindings.get(port_key):
             self._tool_server_port = int(port_bindings[port_key][0]["HostPort"])
+
+        caido_port_key = f"{CONTAINER_CAIDO_PORT}/tcp"
+        if port_bindings.get(caido_port_key):
+            self._caido_port = int(port_bindings[caido_port_key][0]["HostPort"])
 
     def _wait_for_tool_server(self, max_retries: int = 30, timeout: int = 5) -> None:
         host = self._resolve_docker_host()
@@ -121,6 +127,7 @@ class DockerRuntime(AbstractRuntime):
                     time.sleep(1)
 
                 self._tool_server_port = self._find_available_port()
+                self._caido_port = self._find_available_port()
                 self._tool_server_token = secrets.token_urlsafe(32)
                 execution_timeout = Config.get("strix_sandbox_execution_timeout") or "120"
 
@@ -130,7 +137,10 @@ class DockerRuntime(AbstractRuntime):
                     detach=True,
                     name=container_name,
                     hostname=container_name,
-                    ports={f"{CONTAINER_TOOL_SERVER_PORT}/tcp": self._tool_server_port},
+                    ports={
+                        f"{CONTAINER_TOOL_SERVER_PORT}/tcp": self._tool_server_port,
+                        f"{CONTAINER_CAIDO_PORT}/tcp": self._caido_port,
+                    },
                     cap_add=["NET_ADMIN", "NET_RAW"],
                     labels={"strix-scan-id": scan_id},
                     environment={
@@ -152,6 +162,7 @@ class DockerRuntime(AbstractRuntime):
                 if attempt < max_retries:
                     self._tool_server_port = None
                     self._tool_server_token = None
+                    self._caido_port = None
                     time.sleep(2**attempt)
             else:
                 return container
@@ -173,6 +184,7 @@ class DockerRuntime(AbstractRuntime):
                 self._scan_container = None
                 self._tool_server_port = None
                 self._tool_server_token = None
+                self._caido_port = None
 
         try:
             container = self.client.containers.get(container_name)
@@ -260,7 +272,7 @@ class DockerRuntime(AbstractRuntime):
             raise RuntimeError("Docker container ID is unexpectedly None")
 
         token = existing_token or self._tool_server_token
-        if self._tool_server_port is None or token is None:
+        if self._tool_server_port is None or self._caido_port is None or token is None:
             raise RuntimeError("Tool server not initialized")
 
         host = self._resolve_docker_host()
@@ -273,6 +285,7 @@ class DockerRuntime(AbstractRuntime):
             "api_url": api_url,
             "auth_token": token,
             "tool_server_port": self._tool_server_port,
+            "caido_port": self._caido_port,
             "agent_id": agent_id,
         }
 
@@ -314,6 +327,7 @@ class DockerRuntime(AbstractRuntime):
             self._scan_container = None
             self._tool_server_port = None
             self._tool_server_token = None
+            self._caido_port = None
         except (NotFound, DockerException):
             pass
 
@@ -323,6 +337,7 @@ class DockerRuntime(AbstractRuntime):
             self._scan_container = None
             self._tool_server_port = None
             self._tool_server_token = None
+            self._caido_port = None
 
             if container_name is None:
                 return

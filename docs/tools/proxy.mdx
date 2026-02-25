@@ -80,6 +80,27 @@ for req in user_requests.get('requests', []):
             print(f"Potential IDOR: {test_id} returned 200")
 ```
 
+## Human-in-the-Loop
+
+Strix exposes the Caido proxy to your host machine, so you can interact with it alongside the automated scan. When the sandbox starts, the Caido URL is displayed in the TUI sidebar — click it to copy, then open it in Caido Desktop.
+
+### Accessing Caido
+
+1. Start a scan as usual
+2. Look for the **Caido** URL in the sidebar stats panel (e.g. `localhost:52341`)
+3. Open the URL in Caido Desktop
+4. Click **Continue as guest** to access the instance
+
+### What You Can Do
+
+- **Inspect traffic** — Browse all HTTP/HTTPS requests the agent is making in real time
+- **Replay requests** — Take any captured request and resend it with your own modifications
+- **Intercept and modify** — Pause requests mid-flight, edit them, then forward
+- **Explore the sitemap** — See the full attack surface the agent has discovered
+- **Manual testing** — Use Caido's tools to test findings the agent reports, or explore areas it hasn't reached
+
+This turns Strix from a fully automated scanner into a collaborative tool — the agent handles the heavy lifting while you focus on the interesting parts.
+
 ## Scope
 
 Create scopes to filter traffic to relevant domains:

@@ -40,7 +40,7 @@ class Config:
     strix_disable_browser = "false"
 
     # Runtime Configuration
-    strix_image = "ghcr.io/usestrix/strix-sandbox:0.1.11"
+    strix_image = "ghcr.io/usestrix/strix-sandbox:0.1.12"
     strix_runtime_backend = "docker"
     strix_sandbox_execution_timeout = "120"
     strix_sandbox_connect_timeout = "10"

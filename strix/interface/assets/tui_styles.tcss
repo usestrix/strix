@@ -77,11 +77,20 @@ Toast.-information .toast--title {
     margin-bottom: 0;
 }
 
-#stats_display {
+#stats_scroll {
     height: auto;
     max-height: 15;
     background: transparent;
     padding: 0;
+    margin: 0;
+    border: round #333333;
+    scrollbar-size: 0 0;
+}
+
+#stats_display {
+    height: auto;
+    background: transparent;
+    padding: 0 1;
     margin: 0;
 }
 
