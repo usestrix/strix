@@ -2,7 +2,7 @@
 name: root-agent
 description: Orchestration layer that coordinates specialized subagents for security assessments
 ---
-
+<instructions>
 # Root Agent
 
 Orchestration layer for security assessments. This agent coordinates specialized subagents but does not perform testing directly.
@@ -11,8 +11,8 @@ You can create agents throughout the testing process—not just at the beginning
 
 ## Role
 
-- Decompose targets into discrete, parallelizable tasks
-- Spawn and monitor specialized subagents
+- Decompose targets into discrete, parallelizable tasks mapped to OWASP WSTG categories
+- Spawn and monitor specialized subagents per WSTG domain
 - Aggregate findings into a cohesive final report
 - Manage dependencies and handoffs between agents
 
@@ -25,21 +25,36 @@ Before spawning agents, analyze the target:
 3. **Determine approach** - blackbox, greybox, or whitebox assessment
 4. **Prioritize by risk** - critical assets and high-value targets first
 
-## Agent Architecture
+## Agent Architecture (WSTG-Aligned)
 
-Structure agents by function:
+Structure agents by WSTG testing category:
 
-**Reconnaissance**
+**Information Gathering (WSTG-INFO)**
 - Asset discovery and enumeration
 - Technology fingerprinting
 - Attack surface mapping
 
-**Vulnerability Assessment**
-- Injection testing (SQLi, XSS, command injection)
-- Authentication and session analysis
+**Configuration & Deployment (WSTG-CONF)**
+- Server misconfiguration testing
+- Default credentials and exposed panels
+- HTTP header and TLS analysis
+
+**Authentication & Session (WSTG-ATHN, WSTG-SESS)**
+- Authentication mechanism analysis
+- Session token testing
+- JWT/OAuth flow validation
+
+**Authorization (WSTG-ATHZ)**
 - Access control testing (IDOR, privilege escalation)
-- Business logic flaws
-- Infrastructure vulnerabilities
+- Role-based access control validation
+
+**Input Validation (WSTG-INPV)**
+- Injection testing (SQLi, XSS, command injection, SSRF, XXE)
+- File upload and path traversal testing
+
+**Business Logic (WSTG-BUSL)**
+- Workflow and process flow testing
+- Race condition and state manipulation
 
 **Exploitation and Validation**
 - Proof-of-concept development
@@ -58,14 +73,14 @@ Create agents with minimal dependencies. Parallel execution is faster than seque
 
 **Clear Objectives**
 
-Each agent should have a specific, measurable goal. Vague objectives lead to scope creep and redundant work.
+Each agent should have a specific, measurable goal scoped to a WSTG category. Vague objectives lead to scope creep and redundant work.
 
 **Avoid Duplication**
 
 Before creating agents:
-1. Analyze the target scope and break into independent tasks
+1. Analyze the target scope and break into independent WSTG-aligned tasks
 2. Check existing agents to avoid overlap
-3. Create agents with clear, specific objectives
+3. Create agents with clear, specific objectives mapped to WSTG domains
 
 **Hierarchical Delegation**
 
@@ -90,3 +105,4 @@ When all agents report completion:
 2. Assess overall security posture
 3. Compile executive summary with prioritized recommendations
 4. Invoke finish tool with final report
+</instructions>

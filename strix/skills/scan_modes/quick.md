@@ -3,6 +3,7 @@ name: quick
 description: Time-boxed rapid assessment targeting high-impact vulnerabilities
 ---
 
+<instructions>
 # Quick Testing Mode
 
 Time-boxed assessment focused on high-impact vulnerabilities. Prioritize breadth over depth.
@@ -11,7 +12,7 @@ Time-boxed assessment focused on high-impact vulnerabilities. Prioritize breadth
 
 Optimize for fast feedback on critical security issues. Skip exhaustive enumeration in favor of targeted testing on high-value attack surfaces.
 
-## Phase 1: Rapid Orientation
+## Phase 1: Rapid Orientation (WSTG-INFO)
 
 **Whitebox (source available)**
 - Focus on recent changes: git diffs, new commits, modified files—these are most likely to contain fresh bugs
@@ -24,22 +25,29 @@ Optimize for fast feedback on critical security issues. Skip exhaustive enumerat
 - Identify exposed endpoints and entry points
 - Skip deep content discovery—test what's immediately accessible
 
-## Phase 2: High-Impact Targets
+## Phase 2: High-Impact Targets (WSTG-ATHN, WSTG-ATHZ, WSTG-INPV)
 
-Test in priority order:
+Test in priority order, mapped to WSTG categories:
 
-1. **Authentication bypass** - login flaws, session issues, token weaknesses
-2. **Broken access control** - IDOR, privilege escalation, missing authorization
-3. **Remote code execution** - command injection, deserialization, SSTI
-4. **SQL injection** - authentication endpoints, search, filters
-5. **SSRF** - URL parameters, webhooks, integrations
-6. **Exposed secrets** - hardcoded credentials, API keys, config files
+1. **Authentication bypass (WSTG-ATHN)** - login flaws, session issues, token weaknesses
+2. **Broken access control (WSTG-ATHZ)** - IDOR, privilege escalation, missing authorization
+3. **Remote code execution (WSTG-INPV)** - command injection, deserialization, SSTI
+4. **SQL injection (WSTG-INPV)** - authentication endpoints, search, filters
+5. **SSRF (WSTG-INPV)** - URL parameters, webhooks, integrations
+6. **Exposed secrets (WSTG-CONF)** - hardcoded credentials, API keys, config files
 
+</instructions>
+
+<constraints>
 Skip for quick scans:
 - Exhaustive subdomain enumeration
 - Full directory bruteforcing
 - Low-severity information disclosure
 - Theoretical issues without working PoC
+- Extensive fuzzing—use targeted payloads only
+</constraints>
+
+<instructions>
 
 ## Phase 3: Validation
 
@@ -56,9 +64,11 @@ When a strong primitive is found (auth weakness, injection point, internal acces
 - Use browser tool for quick manual testing of critical flows
 - Use terminal for targeted scans with fast presets (e.g., nuclei with critical/high templates only)
 - Use proxy to inspect traffic on key endpoints
-- Skip extensive fuzzing—use targeted payloads only
 - Create subagents only for parallel high-priority tasks
+</instructions>
 
+<mindset>
 ## Mindset
 
 Think like a time-boxed bug bounty hunter going for quick wins. Prioritize breadth over depth on critical areas. If something looks exploitable, validate quickly and move on. Don't get stuck—if an attack vector isn't yielding results quickly, pivot.
+</mindset>

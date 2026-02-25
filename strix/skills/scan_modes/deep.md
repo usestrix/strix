@@ -2,7 +2,7 @@
 name: deep
 description: Exhaustive security assessment with maximum coverage, depth, and vulnerability chaining
 ---
-
+<instructions>
 # Deep Testing Mode
 
 Exhaustive security assessment. Maximum coverage, maximum depth. Finding what others miss is the goal.
@@ -11,7 +11,7 @@ Exhaustive security assessment. Maximum coverage, maximum depth. Finding what ot
 
 Thorough understanding before exploitation. Test every parameter, every endpoint, every edge case. Chain findings for maximum impact.
 
-## Phase 1: Exhaustive Reconnaissance
+## Phase 1: Exhaustive Reconnaissance (WSTG-INFO)
 
 **Whitebox (source available)**
 - Map every file, module, and code path in the repository
@@ -38,10 +38,11 @@ Thorough understanding before exploitation. Test every parameter, every endpoint
 - Document rate limiting, WAF rules, security controls
 - Document complete application architecture as understood from outside
 
-## Phase 2: Business Logic Deep Dive
+## Phase 2: Configuration & Business Logic Deep Dive (WSTG-CONF, WSTG-BUSL)
 
 Create a complete storyboard of the application:
 
+- **Configuration (WSTG-CONF)** - default credentials, exposed panels, HTTP headers, TLS, error handling
 - **User flows** - document every step of every workflow
 - **State machines** - map all transitions (Created → Paid → Shipped → Delivered)
 - **Trust boundaries** - identify where privilege changes hands
@@ -52,17 +53,17 @@ Create a complete storyboard of the application:
 
 Use the application extensively as every user type to understand the full data lifecycle.
 
-## Phase 3: Comprehensive Attack Surface Testing
+## Phase 3: Comprehensive Attack Surface Testing (WSTG-INPV, WSTG-ATHN, WSTG-ATHZ, WSTG-BUSL, WSTG-CRYP, WSTG-CLNT)
 
 Test every input vector with every applicable technique.
 
-**Input Handling**
+**Input Handling (WSTG-INPV)**
 - Multiple injection types: SQL, NoSQL, LDAP, XPath, command, template
 - Encoding bypasses: double encoding, unicode, null bytes
 - Boundary conditions and type confusion
 - Large payloads and buffer-related issues
 
-**Authentication & Session**
+**Authentication & Session (WSTG-ATHN, WSTG-SESS)**
 - Exhaustive brute force protection testing
 - Session fixation, hijacking, prediction
 - JWT/token manipulation
@@ -71,27 +72,27 @@ Test every input vector with every applicable technique.
 - MFA bypass techniques
 - Account enumeration through all channels
 
-**Access Control**
+**Access Control (WSTG-ATHZ)**
 - Test every endpoint for horizontal and vertical access control
 - Parameter tampering on all object references
 - Forced browsing to all discovered resources
 - HTTP method tampering (GET vs POST vs PUT vs DELETE)
 - Access control after session state changes (logout, role change)
 
-**File Operations**
+**File Operations (WSTG-INPV)**
 - Exhaustive file upload bypass: extension, content-type, magic bytes
 - Path traversal on all file parameters
 - SSRF through file inclusion
 - XXE through all XML parsing points
 
-**Business Logic**
+**Business Logic (WSTG-BUSL)**
 - Race conditions on all state-changing operations
 - Workflow bypass on every multi-step process
 - Price/quantity manipulation in transactions
 - Parallel execution attacks
 - TOCTOU (time-of-check to time-of-use) vulnerabilities
 
-**Advanced Techniques**
+**Advanced Techniques (WSTG-CLNT, WSTG-CRYP)**
 - HTTP request smuggling (multiple proxies/servers)
 - Cache poisoning and cache deception
 - Subdomain takeover
@@ -99,6 +100,7 @@ Test every input vector with every applicable technique.
 - CORS misconfiguration exploitation
 - WebSocket security testing
 - GraphQL-specific attacks (introspection, batching, nested queries)
+- Cryptographic weakness analysis (weak algorithms, padding oracle)
 
 ## Phase 4: Vulnerability Chaining
 
@@ -137,21 +139,24 @@ When initial attempts fail:
 - Remediation recommendations with specific guidance
 - Note areas requiring additional review beyond current scope
 
-## Agent Strategy
+## Agent Strategy (WSTG-Aligned)
 
-After reconnaissance, decompose the application hierarchically:
+After reconnaissance, decompose the application hierarchically using WSTG categories:
 
-1. **Component level** - Auth System, Payment Gateway, User Profile, Admin Panel
-2. **Feature level** - Login Form, Registration API, Password Reset
-3. **Vulnerability level** - SQLi Agent, XSS Agent, Auth Bypass Agent
+1. **WSTG Domain level** - Authentication (WSTG-ATHN), Authorization (WSTG-ATHZ), Input Validation (WSTG-INPV), Business Logic (WSTG-BUSL)
+2. **Component level** - Auth System, Payment Gateway, User Profile, Admin Panel
+3. **Validation level** - ATHN Validation Agent, INPV Validation Agent, ATHZ Validation Agent
 
 Spawn specialized agents at each level. Scale horizontally to maximum parallelization:
-- Do NOT overload a single agent with multiple vulnerability types
-- Each agent focuses on one specific area or vulnerability type
+- Do NOT overload a single agent with multiple WSTG categories
+- Each agent focuses on one specific WSTG domain or vulnerability type
 - Creates a massive parallel swarm covering every angle
+</instructions>
 
+<mindset>
 ## Mindset
 
 Relentless. Creative. Patient. Thorough. Persistent.
 
 This is about finding what others miss. Test every parameter, every endpoint, every edge case. If one approach fails, try ten more. Understand how components interact to find systemic issues.
+</mindset>

@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "strix-agent"
-version = "0.8.1"
+version = "0.8.2"
 description = "Open-source AI Hackers for your apps"
 authors = ["Strix <hi@usestrix.com>"]
 readme = "README.md"
