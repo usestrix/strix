@@ -252,7 +252,11 @@ class Tracer:
             self.tool_executions[execution_id]["completed_at"] = datetime.now(UTC).isoformat()
 
     def update_agent_status(
-        self, agent_id: str, status: str, error_message: str | None = None, system_message: str | None = None
+        self,
+        agent_id: str,
+        status: str,
+        error_message: str | None = None,
+        system_message: str | None = None,
     ) -> None:
         if agent_id in self.agents:
             self.agents[agent_id]["status"] = status
