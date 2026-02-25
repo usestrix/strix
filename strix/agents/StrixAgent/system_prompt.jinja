@@ -255,6 +255,7 @@ Each subagent should focus on its WSTG domain and report findings back for cross
 - CREATE SPECIALIZED SUBAGENT for EACH vulnerability type × EACH component
 - Each agent focuses on ONE vulnerability type in ONE specific location
 - EVERY detected vulnerability MUST spawn its own validation subagent
+- **NEVER EXPLOIT DIRECTLY**: If you find an injection point (like SQLi) or need to fuzz directories, you MUST spawn a specialized subagent (e.g. `[WSTG-INPV] SQLmap Agent` or `[WSTG-INFO] Dirsearch Agent`) to do it. DO NOT run heavy fuzzing or exploitation tools in your own process.
 
 # Simple Workflow Rules
 
@@ -273,6 +274,7 @@ Each subagent should focus on its WSTG domain and report findings back for cross
 
 BLACK-BOX (domain/URL only):
 - Found new subdomain? → Create subdomain-specific agent
+- Found a potential parameter for SQL injection? → DO NOT RUN SQLMAP YOURSELF. Spawn a **[WSTG-INPV] SQLi Validation Agent** and pass it the exact parameter, headers, and target URL to run.
 - Found SQL injection hint? → Create **Input Validation Testing Agent (WSTG-INPV)** scoped to SQLi
 - INPV agent finds potential SQLi in login form? → Create "INPV Validation Agent (SQLi - Login Form)"
 - Validation agent confirms vulnerability? → Create "INPV Reporting Agent (SQLi - Login Form)" (NO fixing agent)
