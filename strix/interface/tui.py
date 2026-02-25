@@ -1666,16 +1666,12 @@ class StrixTUIApp(App):  # type: ignore[misc]
         renderables = []
 
         if "thinking_blocks" in metadata and metadata["thinking_blocks"]:
+            from strix.interface.tool_components.thinking_renderer import ThinkRenderer
+
             for block in metadata["thinking_blocks"]:
                 thought = block.get("thinking", "")
                 if thought:
-                    text = Text()
-                    text.append("🧠 ")
-                    text.append("Thinking", style="bold #a855f7")
-                    text.append("\n  ")
-                    indented_thought = "\n  ".join(thought.split("\n"))
-                    text.append(indented_thought, style="italic dim")
-                    renderables.append(Static(text, classes="tool-call thinking-tool completed"))
+                    renderables.append(ThinkRenderer.render({"args": {"thought": thought}}))
 
         if not content and not renderables:
             return None

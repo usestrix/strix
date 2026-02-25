@@ -47,8 +47,8 @@ class AgentState(BaseModel):
         self, role: str, content: Any, thinking_blocks: list[dict[str, Any]] | None = None
     ) -> None:
         message = {"role": role, "content": content}
-        if thinking_blocks:
-            message["thinking_blocks"] = thinking_blocks
+        # We do not store thinking_blocks in AgentState.messages to prevent API schema errors
+        # when passing these messages back to the LLM provider. They are retained in Tracer metadata.
         self.messages.append(message)
         self.last_updated = datetime.now(UTC).isoformat()
 
