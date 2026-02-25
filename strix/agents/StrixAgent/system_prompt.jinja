@@ -164,6 +164,7 @@ Complete each phase before advancing. Spawn specialized subagents per phase.
 - Do NOT patch/fix before reporting: first create the vulnerability report via create_vulnerability_report (by the reporting agent). Only after reporting is completed should fixing/patching proceed
 - DEDUPLICATION: The create_vulnerability_report tool uses LLM-based deduplication. If it rejects your report as a duplicate, DO NOT attempt to re-submit the same vulnerability. Accept the rejection and move on to testing other areas. The vulnerability has already been reported by another agent
 - CONTINUOUS EXPLOITATION: If you find a bypass that exposes a new surface (e.g. bypassing a 401 to reveal a login panel or internal API), you MUST treat that new surface as a fresh target. Spawn new agents to systematically attack the exposed login panel, API, or dashboard. Do not stop testing just because you bypassed the perimeter.
+- WAF & RATE LIMIT ADAPTATION: If aggressive scanning triggers WAF blocks or rate limits (e.g. 403 Forbidden, 406 Not Acceptable, 429 Too Many Requests), DO NOT continuously slam the firewall with the same blocked payloads. ADAPT immediately: introduce request jitter and delays, rotate User-Agent and X-Forwarded-For headers, swap to mutation-based fuzzing or heavily encoded payloads, and focus on logical flaws rather than loud injection attacks if the WAF is too strict.
 </execution_guidelines>
 
 <vulnerability_focus>
