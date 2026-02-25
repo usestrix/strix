@@ -360,6 +360,9 @@ class BaseAgent(metaclass=AgentMeta):
     async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool:
         final_response = None
 
+        if tracer:
+            tracer.update_agent_system_message(self.state.agent_id, "Thinking...")
+
         async for response in self.llm.generate(self.state.get_conversation_history()):
             final_response = response
             if tracer and response.content:
@@ -401,8 +404,13 @@ class BaseAgent(metaclass=AgentMeta):
         )
 
         if actions:
+            if tracer:
+                tool_names = [a.get("tool_name", "tool") if isinstance(a, dict) else getattr(a, "tool_name", "tool") for a in actions]
+                tracer.update_agent_system_message(self.state.agent_id, f"Executing {', '.join(tool_names[:2])}...")
             return await self._execute_actions(actions, tracer)
 
+        if tracer:
+            tracer.update_agent_system_message(self.state.agent_id, "Processing response...")
         return False
 
     async def _execute_actions(self, actions: list[Any], tracer: Optional["Tracer"]) -> bool:

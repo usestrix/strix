@@ -1215,14 +1215,18 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return (Text(" "), keymap, False)
 
         if status == "running":
+            sys_msg = agent_data.get("system_message", "")
             if self._agent_has_real_activity(agent_id):
                 animated_text = Text()
                 animated_text.append_text(self._get_sweep_animation(self._sweep_colors))
+                if sys_msg:
+                    animated_text.append(sys_msg, style="dim italic")
+                    animated_text.append("  ", style="dim")
                 animated_text.append("esc", style="white")
                 animated_text.append(" ", style="dim")
                 animated_text.append("stop", style="dim")
                 return (animated_text, keymap_styled([("ctrl-q", "quit")]), True)
-            msg = agent_data.get("system_message", "Initializing...")
+            msg = sys_msg or "Initializing..."
             animated_text = self._get_animated_verb_text(agent_id, msg)
             return (animated_text, keymap_styled([("ctrl-q", "quit")]), True)
 
