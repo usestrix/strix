@@ -60,6 +60,7 @@ ffuf -u https://example.com/admin/FUZZ -w /usr/share/wordlists/dirb/common.txt
 | `-ac` | Auto-calibrate response filtering (recommended) |
 | `-ic` | Ignore wordlist comments |
 | `-r` | Follow redirects |
+| `-x <proxy>` | Route traffic through proxy (e.g. `-x http://127.0.0.1:8080`) |
 | `-k` | Skip TLS certificate verification |
 
 ## Wordlists Available in Sandbox
@@ -105,7 +106,7 @@ ffuf -u https://example.com/FUZZ -w wordlist.txt -mc 200,204,301,302,401,403
 ffuf -u https://example.com/FUZZ -w wordlist.txt -fc 404,400,500
 ```
 
-## Common Scan Scenarios
+## Common Scenarios
 
 ### Standard directory discovery
 
