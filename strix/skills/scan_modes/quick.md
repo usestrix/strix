@@ -36,18 +36,14 @@ Test in priority order, mapped to WSTG categories:
 5. **SSRF (WSTG-INPV)** - URL parameters, webhooks, integrations
 6. **Exposed secrets (WSTG-CONF)** - hardcoded credentials, API keys, config files
 
-</instructions>
+## Constraints
 
-<constraints>
 Skip for quick scans:
 - Exhaustive subdomain enumeration
 - Full directory bruteforcing
 - Low-severity information disclosure
 - Theoretical issues without working PoC
 - Extensive fuzzing—use targeted payloads only
-</constraints>
-
-<instructions>
 
 ## Phase 3: Validation
 
