@@ -125,7 +125,7 @@ class LLM:
                 if tracer and self.agent_id:
                     tracer.update_agent_system_message(self.agent_id, "Waiting for LLM provider...")
 
-                async for response in self._stream(messages):
+                async for response in self._stream(messages, tracer):
                     yield response
                 return  # noqa: TRY300
             except Exception as e:  # noqa: BLE001
@@ -134,7 +134,7 @@ class LLM:
                 wait = min(10, 2 * (2**attempt))
                 await asyncio.sleep(wait)
 
-    async def _stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[LLMResponse]:
+    async def _stream(self, messages: list[dict[str, Any]], tracer: Any = None) -> AsyncIterator[LLMResponse]:
         accumulated = ""
         chunks: list[Any] = []
         done_streaming = 0
@@ -146,9 +146,6 @@ class LLM:
         async for chunk in response:
             if not first_chunk_received:
                 first_chunk_received = True
-                from strix.telemetry.tracer import get_global_tracer
-
-                tracer = get_global_tracer()
                 if tracer and self.agent_id:
                     tracer.update_agent_system_message(self.agent_id, "Generating response...")
 

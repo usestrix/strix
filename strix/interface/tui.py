@@ -1674,7 +1674,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 thought = block.get("thinking", "")
                 if thought:
                     renderables.append(
-                        ThinkRenderer.render({"args": {"thought": thought}})
+                        ThinkRenderer.render({"args": {"thought": thought}}).renderable
                     )
 
         if not content and not renderables:

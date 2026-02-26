@@ -387,6 +387,7 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.add_message("user", corrective_message)
             return False
 
+        thinking_blocks = getattr(final_response, "thinking_blocks", None)
         self.state.add_message("assistant", final_response.content)
         if tracer:
             tracer.clear_streaming_content(self.state.agent_id)
@@ -405,7 +406,10 @@ class BaseAgent(metaclass=AgentMeta):
         if actions:
             if tracer:
                 tool_names = [a.get("toolName") or a.get("tool_name") or "tool" for a in actions]
-                tracer.update_agent_system_message(self.state.agent_id, f"Executing {', '.join(tool_names[:2])}...")
+                display_names = tool_names[:2]
+                overflow = len(tool_names) - 2
+                suffix = f" +{overflow} more" if overflow > 0 else ""
+                tracer.update_agent_system_message(self.state.agent_id, f"Executing {', '.join(display_names)}{suffix}...")
             return await self._execute_actions(actions, tracer)
 
         if tracer:
