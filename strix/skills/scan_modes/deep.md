@@ -102,7 +102,70 @@ Test every input vector with every applicable technique.
 - GraphQL-specific attacks (introspection, batching, nested queries)
 - Cryptographic weakness analysis (weak algorithms, padding oracle)
 
-## Phase 4: Vulnerability Chaining
+## Phase 4: Discovered Authentication Surface Exploitation (WSTG-ATHN, WSTG-SESS)
+
+When a bypass (IP restriction, WAF, forced browsing) exposes a login page, admin panel, or other auth-gated surface, treat it as a fresh target requiring exhaustive testing. Do NOT stop at the bypass — systematically attack the exposed surface.
+
+**Form Reconnaissance**
+- Identify the POST endpoint, method, and content-type (form-encoded, JSON, multipart)
+- Map all form fields: visible inputs, hidden fields, CSRF tokens, `_method` overrides
+- Check for client-side validation that can be bypassed server-side
+- Discover additional auth endpoints: `/register`, `/forgot-password`, `/reset-password`, `/verify`, `/mfa`, `/logout`
+- Identify the backend framework from error pages, headers, cookie names, form field naming conventions
+
+**Default & Common Credentials**
+- Test framework-specific defaults: `admin/admin`, `admin/password`, `admin/changeme`, `root/root`, `test/test`
+- Research target technology for known default credentials (CMS, routers, dashboards, CI/CD, database UIs)
+- Try credential pairs from public breach lists for discovered usernames
+
+**Brute Force & Rate Limiting**
+- Test for account lockout: how many failed attempts before lockout, lockout duration, per-IP vs per-account
+- Test rate limiting evasion: rotate `X-Forwarded-For`/`X-Real-IP`, vary `User-Agent`, add request jitter
+- If no lockout or rate limiting exists, perform targeted brute force with common password lists
+- Test CAPTCHA bypass: missing server-side validation, reusable tokens, OCR-solvable challenges
+
+**Injection on Credential Fields**
+- SQL injection on username and password fields: `' OR 1=1--`, `admin'--`, union-based, time-based blind
+- NoSQL injection: `{"$gt":""}`, `{"$ne":""}`, `{"$regex":".*"}` on both fields
+- LDAP injection if backend uses directory services: `*)(uid=*))(|(uid=*`
+- Authentication bypass payloads: null bytes, type juggling (`true`, `[]`, `0`), empty password with valid username
+
+**User Enumeration**
+- Compare responses for valid vs invalid usernames: status codes, response body, body length, error messages
+- Timing-based enumeration: valid usernames may trigger password hashing (measurable delay)
+- Enumerate via password reset: different responses for existing vs non-existing accounts
+- Enumerate via registration: "username already taken" reveals valid accounts
+- Check API endpoints that may leak user existence (e.g., `/api/users/check`, `/api/username/available`)
+
+**Session & Cookie Analysis**
+- After successful login (if achieved): inspect Set-Cookie attributes (Secure, HttpOnly, SameSite, Path, Domain, Expires)
+- Test session fixation: set a known session ID before login, verify if server accepts it post-auth
+- Analyze session token entropy and predictability
+- Test session invalidation: does logout actually destroy the session server-side?
+- Check for concurrent session limits and session revocation
+
+**Password Reset Flow**
+- Request password reset and analyze the token: length, entropy, predictability, expiration
+- Test token reuse: can the same reset link be used multiple times?
+- Test token leakage: is the token in the URL (Referer leakage), in email headers, or guessable?
+- Host header injection: does the reset email contain an attacker-controlled domain?
+- Race condition: request multiple reset tokens, verify if old tokens are invalidated
+
+**Post-Authentication Surface Mapping**
+- If any login succeeds, immediately map all accessible endpoints, admin functions, and API routes
+- Test for privilege escalation from the authenticated context
+- Look for additional auth-gated areas behind the initial panel
+
+**Agent Spawning Directive**
+- Spawn dedicated agents for each attack category on the exposed surface:
+  - `[ATHN] Login Brute Force Agent` — credential testing and rate limit analysis
+  - `[INPV] Auth Field Injection Agent` — SQLi/NoSQLi on credential fields
+  - `[ATHN] User Enumeration Agent` — differential analysis across auth endpoints
+  - `[SESS] Session Analysis Agent` — cookie and session management testing
+  - `[ATHN] Password Reset Agent` — reset flow exploitation
+- Each agent reports findings back for cross-correlation and chaining
+
+## Phase 5: Vulnerability Chaining
 
 Individual bugs are starting points. Chain them for maximum impact:
 
@@ -119,7 +182,7 @@ Individual bugs are starting points. Chain them for maximum impact:
 - Validate chains by executing the full sequence (proxy + browser for workflows, python for automation)
 - When a pivot is found, spawn focused agents to continue the chain in the next component
 
-## Phase 5: Persistent Testing
+## Phase 6: Persistent Testing
 
 When initial attempts fail:
 
@@ -131,7 +194,7 @@ When initial attempts fail:
 - Consider timing-based and blind exploitation
 - Look for logic flaws that require deep application understanding
 
-## Phase 6: Comprehensive Reporting
+## Phase 7: Comprehensive Reporting
 
 - Document every confirmed vulnerability with full details
 - Include all severity levels—low findings may enable chains
@@ -139,7 +202,7 @@ When initial attempts fail:
 - Remediation recommendations with specific guidance
 - Note areas requiring additional review beyond current scope
 
-## Phase 7: Attacker Perspective Verification
+## Phase 8: Attacker Perspective Verification
 
 1. Pause and critically reflect before wrapping up the assessment.
 2. Ask yourself: "If I were an actual advanced attacker with unlimited time, where else would I look? Have I missed any obscure edge cases, complex chained vectors, or business logic flaws?"
