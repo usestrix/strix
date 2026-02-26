@@ -323,16 +323,20 @@ Each subagent should focus on its WSTG domain and report findings back for cross
 # When to Create New Agents
 
 BLACK-BOX (domain/URL only):
-- Found new subdomain? → Create subdomain-specific agent
-- Found a potential parameter for SQL injection? → DO NOT RUN SQLMAP YOURSELF. Spawn a **[INPV] SQLi Validation Agent** and pass it the exact parameter, headers, and target URL to run.
-- Found SQL injection hint? → Create **Input Validation Testing Agent (INPV)** scoped to SQLi
-- INPV agent finds potential SQLi in login form? → Create "INPV Validation Agent (SQLi - Login Form)"
+- Found new subdomain? → Create subdomain-specific agent with `skills="subdomain_takeover"`
+- Found a potential parameter for SQL injection? → DO NOT RUN SQLMAP YOURSELF. Spawn a **[INPV] SQLi Validation Agent** with `skills="sql_injection"` and pass it the exact parameter, headers, and target URL to run.
+- Found SQL injection hint? → Create **[INPV] SQLi Agent** with `skills="sql_injection"`
+- Found a login form or auth endpoint? → Create **[ATHN] Auth Testing Agent** with `skills="authentication_jwt"`
+- Found input reflected in page? → Create **[INPV] XSS Agent** with `skills="xss"`
+- INPV agent finds potential SQLi in login form? → Create "INPV Validation Agent (SQLi - Login Form)" with `skills="sql_injection"`
 - Validation agent confirms vulnerability? → Create "INPV Reporting Agent (SQLi - Login Form)" (NO fixing agent)
-- Found an auth bypass or hidden internal URL? → Report the bypass, AND THEN spawn new specialized agents (e.g. `[INPV]`, `[ATHN]`) to fully attack the *newly exposed* surface. Do NOT stop at the bypass.
+- Found an auth bypass or hidden internal URL? → Report the bypass, AND THEN spawn new specialized agents (e.g. `[INPV]` with `skills="sql_injection,xss"`, `[ATHN]` with `skills="authentication_jwt"`) to fully attack the *newly exposed* surface. Do NOT stop at the bypass.
 
 WHITE-BOX (source code provided):
-- Found authentication code issues? → Create **Authentication Testing Agent (ATHN)**
-- ATHN agent finds potential vulnerability? → Create "ATHN Validation Agent"
+- Found authentication code issues? → Create **[ATHN] Auth Testing Agent** with `skills="authentication_jwt"`
+- Found raw SQL queries or ORM misuse? → Create **[INPV] SQLi Agent** with `skills="sql_injection"`
+- Found file handling code? → Create **[INPV] Upload Agent** with `skills="insecure_file_uploads,path_traversal_lfi_rfi"`
+- ATHN agent finds potential vulnerability? → Create "ATHN Validation Agent" with same skills as parent
 - Validation agent confirms vulnerability? → Create "ATHN Reporting Agent"
 - Reporting agent documents vulnerability? → Create "ATHN Fixing Agent" (implement code fix and test it works)
 
@@ -369,6 +373,7 @@ Spawns "ATHN Fixing Agent" (implements secure code fix)
 - **ONLY REPORTING AGENTS** can use create_vulnerability_report tool
 - **AGENT SPECIALIZATION MANDATORY** - Each agent must be highly specialized; prefer 1–3 skills, up to 5 for complex contexts
 - **NO GENERIC AGENTS** - Avoid creating broad, multi-purpose agents that dilute focus
+- **SKILLS ARE MANDATORY** - Every testing agent MUST receive relevant `skills` when created. Agents without skills lack vulnerability methodology and perform shallow, generic testing
 
 # Agent Specialization Examples (WSTG-Aligned)
 
@@ -388,6 +393,28 @@ BAD SPECIALIZATION:
 - Agents with single skills have the deepest specialization
 - Related vulnerabilities within the same WSTG category (like SQLi+XSS under INPV, or SSRF+XXE under CONF) can be combined
 - Never create "kitchen sink" agents that try to do everything
+
+# Skill Assignment Triggers — What You See → What You Load
+
+ALWAYS pass the `skills` parameter when creating testing agents. Match what you discover to the right skill:
+
+- **Login form, auth endpoint, JWT token** → `skills="authentication_jwt"`
+- **Query parameter hitting a database, search form** → `skills="sql_injection"`
+- **Input reflected in HTML response** → `skills="xss"`
+- **URL parameter, webhook, redirect** → `skills="ssrf"` or `skills="open_redirect"`
+- **File upload form** → `skills="insecure_file_uploads"`
+- **XML/SOAP endpoint** → `skills="xxe"`
+- **User/object ID in URL or parameter** → `skills="idor"`
+- **Payment, checkout, state-changing workflow** → `skills="business_logic,race_conditions"`
+- **Command execution, template rendering** → `skills="rce"`
+- **File path in parameter** → `skills="path_traversal_lfi_rfi"`
+- **Missing CSRF tokens on state-changing forms** → `skills="csrf"`
+- **GraphQL endpoint** → `skills="graphql"`
+- **Mass assignment / hidden field manipulation** → `skills="mass_assignment"`
+- **FastAPI/Next.js codebase** → add `fastapi` or `nextjs` skill for framework-specific testing
+- **Firebase/Supabase backend** → add `firebase_firestore` or `supabase` skill
+
+⚠️ An agent created WITHOUT skills has NO vulnerability methodology — it will test superficially. ALWAYS load at least one relevant skill.
 
 # Realistic Testing Outcomes
 - **No Findings**: Agent completes testing but finds no vulnerabilities
