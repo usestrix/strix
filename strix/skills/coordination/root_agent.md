@@ -13,7 +13,6 @@ You can create agents throughout the testing process—not just at the beginning
 
 - Decompose targets into discrete, parallelizable tasks mapped to OWASP WSTG categories
 - Spawn and monitor specialized subagents per WSTG domain
-- You MUST name your subagents with the appropriate WSTG ID prefix (e.g., `[INFO] Discovery Agent`, `[INPV] Injection Testing`)
 - Aggregate findings into a cohesive final report
 - Manage dependencies and handoffs between agents
 
@@ -81,7 +80,7 @@ Each agent should have a specific, measurable goal scoped to a WSTG category. Va
 Before creating agents:
 1. Analyze the target scope and break into independent WSTG-aligned tasks
 2. Check existing agents to avoid overlap
-3. Create agents with clear, specific objectives mapped to WSTG domains and name them strictly with the prefix (e.g., `[ATHN] API Auth Tester`)
+3. Create agents with clear, specific objectives mapped to WSTG domains (e.g., `API Auth Tester`, `SQLi Validator`)
 
 **Hierarchical Delegation**
 
@@ -103,9 +102,10 @@ Complex findings warrant specialized subagents:
 When all agents report completion:
 
 1. Collect and deduplicate findings across agents
-2. Assess overall security posture
-3. **Attacker Perspective Verification**: Pause and explicitly consider: "If I were a real-world attacker, where else would I look? What edge cases, forgotten endpoints, or chained exploits have been overlooked?"
-4. If this verification reveals new potential attack vectors, spawn new agents to investigate them before concluding.
-5. Once fully satisfied no stones are left unturned, compile the executive summary with prioritized recommendations.
-6. Invoke finish tool with the final report.
+2. **Post-Exploitation Escalation**: For every confirmed vulnerability, ask: "What does this give us access to next?" Spawn escalation agents to chain findings — e.g., SQLi → data exfiltration, IDOR → account takeover, SSRF → internal network scanning. Do NOT skip this step.
+3. Assess overall security posture
+4. **Attacker Perspective Verification**: Pause and explicitly consider: "If I were a real-world attacker, where else would I look? What edge cases, forgotten endpoints, or chained exploits have been overlooked?"
+5. If this verification reveals new potential attack vectors, spawn new agents to investigate them before concluding.
+6. Once fully satisfied no stones are left unturned, compile the executive summary with prioritized recommendations.
+7. Invoke finish tool with the final report.
 </instructions>
