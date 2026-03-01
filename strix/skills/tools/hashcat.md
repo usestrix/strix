@@ -94,3 +94,21 @@ hashcat --session=mycrack --show
 - Cracked credentials enable authenticated application testing
 - Password policy assessment based on cracking difficulty informs security recommendations
 - NetNTLM and Kerberos hashes from AD testing feed directly into Hashcat
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+hashcat [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

@@ -96,3 +96,21 @@ nuclei -l hosts.txt -t network/ -p 21,22,80,443,445,3306,3389,5432,8080 -o netwo
 - Technology detection results inform which skills to load for sub-agents
 - Exposed panels feed into Strix proxy for authenticated testing
 - CVE findings guide Metasploit module selection for the operator
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+nuclei [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

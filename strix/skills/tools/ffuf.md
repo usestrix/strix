@@ -85,3 +85,21 @@ ffuf -u https://TARGET/admin -H "X-Custom-Header: FUZZ" -w values.txt -mc 200 -o
 - Hidden parameters on API endpoints inform injection and access control testing
 - Virtual hosts discovered expand the scope for Strix assessments
 - Parameter names found here help craft targeted payloads for SQLi, XSS, IDOR testing
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+ffuf [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

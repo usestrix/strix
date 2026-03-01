@@ -78,3 +78,21 @@ curl "http://localhost:8080/JSON/core/view/alerts/?baseurl=https://TARGET&apikey
 - API specification import ensures comprehensive API endpoint coverage
 - ZAP findings complement Strix's manual testing with automated breadth
 - JSON reports can be parsed to prioritize Strix's exploitation efforts
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+owasp-zap [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

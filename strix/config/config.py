@@ -45,6 +45,9 @@ class Config:
     strix_sandbox_execution_timeout = "120"
     strix_sandbox_connect_timeout = "10"
 
+    # Human-in-the-Loop (HIL) file-based input
+    hil_inbox_path = None
+
     # Telemetry
     strix_telemetry = "1"
 

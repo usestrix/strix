@@ -74,3 +74,21 @@ setoolkit
 - Harvested credentials feed into authenticated web application testing via Strix
 - Employee information from theHarvester/OSINT informs phishing target selection
 - Successful phishing demonstrates risk for security awareness reporting
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+set [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

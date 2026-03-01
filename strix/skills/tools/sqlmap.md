@@ -100,3 +100,21 @@ sqlmap -u "https://TARGET/page" -H "X-Custom: 1*" --level=5 --risk=3 --batch
 - Extracted credentials feed into authentication testing against all services
 - Database schema knowledge informs business logic and IDOR testing
 - Confirmed SQLi with impact is documented via Strix reporting tools
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+sqlmap [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

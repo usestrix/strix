@@ -109,3 +109,21 @@ run
 - Successful shells feed back intelligence (internal IPs, credentials, configs) for further Strix testing
 - Pivoted network access expands Strix scope to internal web applications
 - Credential harvesting results inform authentication testing across all discovered services
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+metasploit [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

@@ -64,3 +64,21 @@ theHarvester -d TARGET_DOMAIN -b all -c -f output.json
 - Email patterns inform username enumeration against login endpoints
 - IP ranges define scope for network-level assessment
 - Employee names help build custom wordlists for credential testing
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+theharvester [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

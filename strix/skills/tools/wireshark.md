@@ -81,3 +81,21 @@ tshark -r capture.pcap -z follow,tcp,ascii,0
 - Cleartext credentials discovered feed into credential reuse testing
 - DNS analysis reveals internal architecture for expanded testing scope
 - TLS analysis confirms encryption weaknesses identified by other tools
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+wireshark [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

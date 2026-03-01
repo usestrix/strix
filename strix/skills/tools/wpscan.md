@@ -72,3 +72,21 @@ wpscan --url https://TARGET -e ap,u --plugins-detection passive --random-user-ag
 - Discovered usernames used for authentication testing against wp-login and XML-RPC
 - Plugin and theme info informs custom payload crafting for XSS and injection testing
 - wp-config exposure feeds into credential reuse testing against databases and other services
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+wpscan [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

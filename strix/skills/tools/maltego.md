@@ -75,3 +75,21 @@ OSINT and graphical link analysis tool for mapping relationships between people,
 - Infrastructure relationships inform attack surface prioritization
 - Employee intelligence supports social engineering assessment with SET
 - Technology identification guides skill selection for targeted Strix agents
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+maltego [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

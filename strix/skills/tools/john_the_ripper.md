@@ -90,3 +90,21 @@ john --incremental --max-length=8 hashes.txt
 - Cracked passwords enable authenticated testing across all discovered services
 - Password pattern analysis informs brute-force strategy for online attacks (Hydra)
 - Hash format analysis contributes to security assessment of password storage practices
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+john-the-ripper [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.

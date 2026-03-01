@@ -77,3 +77,21 @@ airbase-ng -e "Free WiFi" -c 6 wlan0mon
 - Network topology discovered via wireless expands Strix's assessment scope
 - Client devices on wireless networks become targets for further enumeration
 - Wireless segmentation testing validates network architecture security
+
+## Operator Help
+
+To provide tool output for this request, save the full command output to the
+HIL inbox file indicated by the agent:
+
+```
+strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+You can also pipe output directly:
+
+```
+aircrack-ng [OPTIONS] TARGET > strix/hil/inbox/resp_<TASK_ID>.txt
+```
+
+The agent will automatically detect and parse the response.  See the
+`HIL_INBOX_PATH` environment variable to customise the inbox location.
