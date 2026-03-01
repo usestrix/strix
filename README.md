@@ -142,6 +142,138 @@ Advanced multi-agent orchestration for comprehensive security testing:
 
 ---
 
+## Operator-Assisted Tools
+
+Strix agents can guide the operator through 25 professional-grade security tools via the Human-in-the-Loop (HIL) system. The agent selects the right tool, generates the exact command, and the operator executes it and drops the output into the inbox for automated analysis.
+
+### Reconnaissance & Scanning
+
+- **Nmap** -- Host discovery, port scanning, service/version detection, OS fingerprinting, and NSE vulnerability scripts
+- **Nikto** -- Web server vulnerability scanning and misconfiguration detection
+- **Nuclei** -- Template-based vulnerability scanning across web applications, networks, and cloud services
+- **Gobuster** -- Directory brute-forcing, DNS subdomain enumeration, and virtual host discovery
+- **FFUF** -- High-speed web fuzzing for directory discovery, parameter mining, and vhost enumeration
+- **theHarvester** -- OSINT gathering of emails, subdomains, IPs, and URLs from public sources
+- **WPScan** -- WordPress vulnerability scanning, plugin/theme enumeration, and user discovery
+- **Maltego** -- OSINT visualization, entity relationship mapping, and attack surface discovery
+
+### Exploitation & Post-Exploitation
+
+- **Metasploit Framework** -- Exploit execution, payload delivery, post-exploitation, and pivoting
+- **SQLMap** -- Automated SQL injection detection, exploitation, database enumeration, and data extraction
+- **Hydra** -- Online credential brute-forcing against network services (SSH, FTP, HTTP, SMB, etc.) and web forms
+- **BeEF** -- Browser exploitation, XSS hook management, and client-side attack delivery
+- **SET (Social Engineering Toolkit)** -- Phishing campaigns, credential harvesting, and client-side attacks
+- **NetExec** -- Active Directory enumeration, credential validation, and lateral movement
+- **Responder** -- LLMNR/NBT-NS/mDNS poisoning and NetNTLM hash capture on local networks
+
+### Proxy & Web Testing
+
+- **Burp Suite** -- Intercepting proxy, active scanning, Intruder attacks, and Collaborator out-of-band detection
+- **OWASP ZAP** -- Automated web scanning, spidering, fuzzing, and API security testing
+
+### Password Cracking
+
+- **Hashcat** -- GPU-accelerated offline password cracking with advanced attack modes (dictionary, mask, rules, combinator)
+- **John the Ripper** -- Offline password cracking with wordlists, rules, and automatic hash format detection
+
+### Network & Wireless
+
+- **Wireshark** -- Network traffic capture, protocol analysis, and credential extraction
+- **Bettercap** -- Network MITM attacks, traffic sniffing, ARP/DNS spoofing, and SSL stripping
+- **Aircrack-ng** -- Wireless network auditing, WPA/WPA2 cracking, and rogue AP detection
+
+### Active Directory
+
+- **BloodHound** -- AD attack path analysis, privilege escalation mapping, and Kerberoasting target identification
+
+### Reverse Engineering & Forensics
+
+- **Ghidra** -- Binary reverse engineering, vulnerability discovery, and firmware analysis
+- **Volatility** -- Memory forensics, credential extraction, and process/network analysis
+
+---
+
+## Human-in-the-Loop (HIL) Inbox System
+
+The HIL inbox is a file-based input system that replaces fragile copy-paste workflows (e.g. piping large Nmap or Metasploit output through terminal `input()` or Caido proxy). It lets the operator drop tool output of any size into a shared directory where the agent automatically picks it up.
+
+### How It Works
+
+The HIL system uses a simple request/response file protocol:
+
+```
+strix/hil/inbox/
+    req_<task_id>.txt    <-- Agent writes: what it needs (tool, command, instructions)
+    resp_<task_id>.txt   <-- Operator writes: full tool output
+```
+
+**Step-by-step flow:**
+
+1. The agent determines which tool to run and generates the exact command.
+2. The agent creates a request file (e.g. `req_a1b2c3.txt`) containing instructions for the operator.
+3. The agent prints the expected response filename and begins polling the inbox.
+4. The operator runs the tool and saves output to the response file (e.g. `resp_a1b2c3.txt`).
+5. The agent detects the response, reads the full content, parses the results, and continues analysis.
+6. Both files are cleaned up automatically after processing (configurable).
+
+### Usage in Code
+
+The module provides both standalone functions and a stateful `InputManager` class:
+
+```python
+# Standalone usage
+from strix.hil import request_input, wait_for_response
+
+task_id = "a1b2c3d4"
+request_input(task_id, "Run: nmap -sV -sC -O -oX scan.xml TARGET")
+output = wait_for_response(task_id, timeout=300)
+# Agent now has full Nmap output for parsing
+
+# Stateful session usage
+from strix.hil import InputManager
+
+mgr = InputManager(default_timeout=600)
+result = mgr.ask("task1", "Run: sqlmap -r request.txt --batch --dbs")
+# mgr.history tracks all request/response pairs
+```
+
+### Key Features
+
+- **No size limits** -- Handles megabytes of tool output that would break terminal copy-paste
+- **Persistent** -- Files survive agent restarts; the operator can take their time
+- **Configurable inbox path** -- Set `HIL_INBOX_PATH` env var to use any directory
+- **Automatic cleanup** -- Request and response files are deleted after processing (opt-out with `cleanup=False`)
+- **Pending request tracking** -- `list_pending_requests()` shows unanswered requests so nothing gets lost
+- **Full history** -- `InputManager.history` records every completed request/response pair for the session
+- **Timeout handling** -- Raises `HILTimeoutError` if the operator does not respond within the configured window
+
+### Operator Workflow
+
+When the agent requests tool output, the operator can provide it in two ways:
+
+```bash
+# Option 1: Redirect tool output directly to the response file
+nmap -sV -sC TARGET > strix/hil/inbox/resp_a1b2c3d4.txt
+
+# Option 2: Run the tool, then copy/move the output file
+nmap -sV -sC TARGET -oN scan_results.txt
+cp scan_results.txt strix/hil/inbox/resp_a1b2c3d4.txt
+```
+
+The agent will detect the file within seconds and continue automatically.
+
+### Configuration
+
+```bash
+# Override the default inbox location
+export HIL_INBOX_PATH="/path/to/custom/inbox"
+```
+
+The default inbox is `strix/hil/inbox/` relative to the package. The `HIL_INBOX_PATH` variable is tracked by the Strix Config system and can be persisted via `~/.strix/cli-config.json`.
+
+---
+
 ## Usage Examples
 
 ### Basic Usage
