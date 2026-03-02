@@ -1,11 +1,18 @@
 import asyncio
+from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
 import litellm
 from jinja2 import Environment, FileSystemLoader, select_autoescape
-from litellm import acompletion, completion_cost, stream_chunk_builder, supports_reasoning
+from litellm import (
+    acompletion,
+    aresponses,
+    completion_cost,
+    stream_chunk_builder,
+    supports_reasoning,
+)
 from litellm.utils import supports_prompt_caching, supports_vision
 
 from strix.config import Config
@@ -58,6 +65,186 @@ class RequestStats:
         }
 
 
+class ModelHandler(ABC):
+    @abstractmethod
+    async def call(self, config: LLMConfig, messages: list[dict[str, Any]]) -> Any:
+        pass
+
+    @abstractmethod
+    def get_chunk_content(self, chunk: Any) -> str:
+        pass
+
+    @abstractmethod
+    def extract_usage(self, chunks: list[Any], config: LLMConfig) -> tuple[int, int, int, float]:
+        pass
+
+    @abstractmethod
+    def extract_thinking(self, chunks: list[Any], config: LLMConfig) -> list[dict[str, Any]] | None:
+        pass
+
+
+class CompletionHandler(ModelHandler):
+    async def call(self, config: LLMConfig, messages: list[dict[str, Any]]) -> Any:
+        args = self._build_args(config, messages)
+        return await acompletion(**args, stream=True)
+
+    def _build_args(self, config: LLMConfig, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        args: dict[str, Any] = {
+            "model": config.litellm_model,
+            "messages": messages,
+            "timeout": config.timeout,
+            "stream_options": {"include_usage": True},
+        }
+        if config.api_key:
+            args["api_key"] = config.api_key
+        if config.api_base:
+            args["api_base"] = config.api_base
+        return args
+
+    def get_chunk_content(self, chunk: Any) -> str:
+        if hasattr(chunk, "choices") and chunk.choices and hasattr(chunk.choices[0], "delta"):
+            return getattr(chunk.choices[0].delta, "content", "") or ""
+        return ""
+
+    def extract_usage(self, chunks: list[Any], config: LLMConfig) -> tuple[int, int, int, float]:
+        try:
+            response = stream_chunk_builder(chunks)
+            if not hasattr(response, "usage") or not response.usage:
+                return 0, 0, 0, 0.0
+
+            input_tokens = (
+                getattr(response.usage, "prompt_tokens", 0)
+                or getattr(response.usage, "input_tokens", 0)
+                or 0
+            )
+            output_tokens = (
+                getattr(response.usage, "completion_tokens", 0)
+                or getattr(response.usage, "output_tokens", 0)
+                or 0
+            )
+
+            cached_tokens = 0
+            if hasattr(response.usage, "prompt_tokens_details"):
+                details = response.usage.prompt_tokens_details
+                if hasattr(details, "cached_tokens"):
+                    cached_tokens = details.cached_tokens or 0
+
+            cost = self._extract_cost(response, chunks, config)
+        except Exception:  # noqa: BLE001
+            return 0, 0, 0, 0.0
+        else:
+            return input_tokens, output_tokens, cached_tokens, cost
+
+    def _extract_cost(self, response: Any, chunks: list[Any], config: LLMConfig) -> float:
+        if hasattr(response, "usage") and response.usage:
+            direct_cost = getattr(response.usage, "cost", None)
+            if direct_cost is not None:
+                return float(direct_cost)
+        if chunks:
+            last_chunk = chunks[-1]
+            if hasattr(last_chunk, "usage") and last_chunk.usage:
+                cost = getattr(last_chunk.usage, "cost", None)
+                if cost is not None:
+                    return float(cost)
+        try:
+            if hasattr(response, "_hidden_params"):
+                response._hidden_params.pop("custom_llm_provider", None)
+            return completion_cost(response, model=config.canonical_model) or 0.0
+        except Exception:  # noqa: BLE001
+            return 0.0
+
+    def extract_thinking(self, chunks: list[Any], config: LLMConfig) -> list[dict[str, Any]] | None:
+        if not chunks:
+            return None
+        try:
+            if not supports_reasoning(model=config.canonical_model):
+                return None
+            resp = stream_chunk_builder(chunks)
+            if resp.choices and hasattr(resp.choices[0].message, "thinking_blocks"):
+                blocks: list[dict[str, Any]] = resp.choices[0].message.thinking_blocks
+                return blocks
+        except Exception:  # noqa: BLE001, S110  # nosec B110
+            pass
+        return None
+
+
+class ResponsesHandler(ModelHandler):
+    async def call(self, config: LLMConfig, messages: list[dict[str, Any]]) -> Any:
+        args = self._build_args(config, messages)
+        return await aresponses(**args, stream=True)
+
+    def _build_args(self, config: LLMConfig, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        args: dict[str, Any] = {
+            "model": config.litellm_model,
+            "input": self._messages_to_input(messages),
+        }
+        if config.api_key:
+            args["api_key"] = config.api_key
+        if config.api_base:
+            args["api_base"] = config.api_base
+        return args
+
+    def _messages_to_input(self, messages: list[dict[str, Any]]) -> str:
+        parts = []
+        for msg in messages:
+            role = msg.get("role", "user")
+            content = msg.get("content", "")
+            if isinstance(content, list):
+                content = " ".join(
+                    item.get("text", "") for item in content if item.get("type") == "text"
+                )
+            if role == "system":
+                parts.append(f"[System]\n{content}")
+            elif role == "assistant":
+                parts.append(f"[Assistant]\n{content}")
+            else:
+                parts.append(content)
+        return "\n\n".join(parts)
+
+    def get_chunk_content(self, chunk: Any) -> str:
+        chunk_type = getattr(chunk, "type", "")
+        if chunk_type == "response.output_text.delta":
+            return getattr(chunk, "delta", "") or ""
+        if hasattr(chunk, "delta") and isinstance(chunk.delta, str):
+            return chunk.delta
+        return ""
+
+    def extract_usage(
+        self,
+        chunks: list[Any],
+        config: LLMConfig,  # noqa: ARG002
+    ) -> tuple[int, int, int, float]:
+        try:
+            for chunk in reversed(chunks):
+                usage = None
+                if hasattr(chunk, "response") and chunk.response:
+                    usage = getattr(chunk.response, "usage", None)
+                elif hasattr(chunk, "usage"):
+                    usage = chunk.usage
+
+                if usage:
+                    input_tokens = getattr(usage, "input_tokens", 0) or 0
+                    output_tokens = getattr(usage, "output_tokens", 0) or 0
+                    cost = getattr(usage, "cost", 0.0) or 0.0
+                    return input_tokens, output_tokens, 0, cost
+        except Exception:  # noqa: BLE001, S110  # nosec B110
+            pass
+        return 0, 0, 0, 0.0
+
+    def extract_thinking(
+        self,
+        chunks: list[Any],  # noqa: ARG002
+        config: LLMConfig,  # noqa: ARG002
+    ) -> list[dict[str, Any]] | None:
+        return None
+
+
+def get_handler(model_name: str | None) -> ModelHandler:
+    if model_name and "-codex" in model_name.lower():
+        return ResponsesHandler()
+    return CompletionHandler()
+
+
 class LLM:
     def __init__(self, config: LLMConfig, agent_name: str | None = None):
         self.config = config
@@ -66,6 +253,7 @@ class LLM:
         self._total_stats = RequestStats()
         self.memory_compressor = MemoryCompressor(model_name=config.litellm_model)
         self.system_prompt = self._load_system_prompt(agent_name)
+        self._handler = get_handler(config.model_name)
 
         reasoning = Config.get("strix_reasoning_effort")
         if reasoning:
@@ -132,7 +320,16 @@ class LLM:
         done_streaming = 0
 
         self._total_stats.requests += 1
-        response = await acompletion(**self._build_completion_args(messages), stream=True)
+
+        if not self._supports_vision():
+            messages = self._strip_images(messages)
+
+        if isinstance(self._handler, CompletionHandler) and self._supports_reasoning():
+            args = self._handler._build_args(self.config, messages)
+            args["reasoning_effort"] = self._reasoning_effort
+            response = await acompletion(**args, stream=True)
+        else:
+            response = await self._handler.call(self.config, messages)
 
         async for chunk in response:
             chunks.append(chunk)
@@ -141,7 +338,7 @@ class LLM:
                 if getattr(chunk, "usage", None) or done_streaming > 5:
                     break
                 continue
-            delta = self._get_chunk_content(chunk)
+            delta = self._handler.get_chunk_content(chunk)
             if delta:
                 accumulated += delta
                 if "</function>" in accumulated or "</invoke>" in accumulated:
@@ -154,14 +351,18 @@ class LLM:
                 yield LLMResponse(content=accumulated)
 
         if chunks:
-            self._update_usage_stats(stream_chunk_builder(chunks))
+            inp, out, cached, cost = self._handler.extract_usage(chunks, self.config)
+            self._total_stats.input_tokens += inp
+            self._total_stats.output_tokens += out
+            self._total_stats.cached_tokens += cached
+            self._total_stats.cost += cost
 
         accumulated = normalize_tool_format(accumulated)
         accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
         yield LLMResponse(
             content=accumulated,
             tool_invocations=parse_tool_invocations(accumulated),
-            thinking_blocks=self._extract_thinking(chunks),
+            thinking_blocks=self._handler.extract_thinking(chunks, self.config),
         )
 
     def _prepare_messages(self, conversation_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -193,82 +394,6 @@ class LLM:
             messages = self._add_cache_control(messages)
 
         return messages
-
-    def _build_completion_args(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
-        if not self._supports_vision():
-            messages = self._strip_images(messages)
-
-        args: dict[str, Any] = {
-            "model": self.config.litellm_model,
-            "messages": messages,
-            "timeout": self.config.timeout,
-            "stream_options": {"include_usage": True},
-        }
-
-        if self.config.api_key:
-            args["api_key"] = self.config.api_key
-        if self.config.api_base:
-            args["api_base"] = self.config.api_base
-        if self._supports_reasoning():
-            args["reasoning_effort"] = self._reasoning_effort
-
-        return args
-
-    def _get_chunk_content(self, chunk: Any) -> str:
-        if chunk.choices and hasattr(chunk.choices[0], "delta"):
-            return getattr(chunk.choices[0].delta, "content", "") or ""
-        return ""
-
-    def _extract_thinking(self, chunks: list[Any]) -> list[dict[str, Any]] | None:
-        if not chunks or not self._supports_reasoning():
-            return None
-        try:
-            resp = stream_chunk_builder(chunks)
-            if resp.choices and hasattr(resp.choices[0].message, "thinking_blocks"):
-                blocks: list[dict[str, Any]] = resp.choices[0].message.thinking_blocks
-                return blocks
-        except Exception:  # noqa: BLE001, S110  # nosec B110
-            pass
-        return None
-
-    def _update_usage_stats(self, response: Any) -> None:
-        try:
-            if hasattr(response, "usage") and response.usage:
-                input_tokens = getattr(response.usage, "prompt_tokens", 0) or 0
-                output_tokens = getattr(response.usage, "completion_tokens", 0) or 0
-
-                cached_tokens = 0
-                if hasattr(response.usage, "prompt_tokens_details"):
-                    prompt_details = response.usage.prompt_tokens_details
-                    if hasattr(prompt_details, "cached_tokens"):
-                        cached_tokens = prompt_details.cached_tokens or 0
-
-                cost = self._extract_cost(response)
-            else:
-                input_tokens = 0
-                output_tokens = 0
-                cached_tokens = 0
-                cost = 0.0
-
-            self._total_stats.input_tokens += input_tokens
-            self._total_stats.output_tokens += output_tokens
-            self._total_stats.cached_tokens += cached_tokens
-            self._total_stats.cost += cost
-
-        except Exception:  # noqa: BLE001, S110  # nosec B110
-            pass
-
-    def _extract_cost(self, response: Any) -> float:
-        if hasattr(response, "usage") and response.usage:
-            direct_cost = getattr(response.usage, "cost", None)
-            if direct_cost is not None:
-                return float(direct_cost)
-        try:
-            if hasattr(response, "_hidden_params"):
-                response._hidden_params.pop("custom_llm_provider", None)
-            return completion_cost(response, model=self.config.canonical_model) or 0.0
-        except Exception:  # noqa: BLE001
-            return 0.0
 
     def _should_retry(self, e: Exception) -> bool:
         code = getattr(e, "status_code", None) or getattr(

@@ -213,24 +213,39 @@ async def warm_up_llm() -> None:
         litellm_model, _ = resolve_strix_model(model_name)
         litellm_model = litellm_model or model_name
 
-        test_messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Reply with just 'OK'."},
-        ]
+        is_codex = model_name and "-codex" in model_name.lower()
 
         llm_timeout = int(Config.get("llm_timeout") or "300")
 
-        completion_kwargs: dict[str, Any] = {
-            "model": litellm_model,
-            "messages": test_messages,
-            "timeout": llm_timeout,
-        }
-        if api_key:
-            completion_kwargs["api_key"] = api_key
-        if api_base:
-            completion_kwargs["api_base"] = api_base
+        if is_codex:
+            responses_kwargs: dict[str, Any] = {
+                "model": litellm_model,
+                "input": "Reply with just 'OK'.",
+                "timeout": llm_timeout,
+            }
+            if api_key:
+                responses_kwargs["api_key"] = api_key
+            if api_base:
+                responses_kwargs["api_base"] = api_base
 
-        response = litellm.completion(**completion_kwargs)
+            response = litellm.responses(**responses_kwargs)
+        else:
+            test_messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Reply with just 'OK'."},
+            ]
+
+            completion_kwargs: dict[str, Any] = {
+                "model": litellm_model,
+                "messages": test_messages,
+                "timeout": llm_timeout,
+            }
+            if api_key:
+                completion_kwargs["api_key"] = api_key
+            if api_base:
+                completion_kwargs["api_base"] = api_base
+
+            response = litellm.completion(**completion_kwargs)
 
         validate_llm_response(response)
 

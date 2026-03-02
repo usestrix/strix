@@ -817,8 +817,15 @@ def process_pull_line(
 
 # LLM utilities
 def validate_llm_response(response: Any) -> None:
-    if not response or not response.choices or not response.choices[0].message.content:
+    if not response:
         raise RuntimeError("Invalid response from LLM")
+    if hasattr(response, "choices") and response.choices:
+        if not response.choices[0].message.content:
+            raise RuntimeError("Invalid response from LLM")
+        return
+    if hasattr(response, "output") and response.output:
+        return
+    raise RuntimeError("Invalid response from LLM")
 
 
 def validate_config_file(config_path: str) -> Path:
