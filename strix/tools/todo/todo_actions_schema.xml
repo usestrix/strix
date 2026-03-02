@@ -35,7 +35,7 @@
         <description>Detailed description or notes about the task</description>
       </parameter>
       <parameter name="priority" type="string" required="false">
-        <description>Priority level: "low", "normal", "high", "critical" (default: "normal")</description>
+        <description>Priority level. MUST be EXACTLY one of: "low", "normal", "high", "critical". DO NOT use any other words (e.g., do not use "make a plan" or "maybe clarify?"). If unsure, omit this parameter to default to "normal".</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
