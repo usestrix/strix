@@ -255,7 +255,6 @@ class ProxyManager:
                 data=body or None,
                 proxies=self.proxies,
                 timeout=timeout,
-                verify=False,
             )
             response_time = int((time.time() - start_time) * 1000)
 
@@ -392,7 +391,6 @@ class ProxyManager:
                 data=request_data["body"] or None,
                 proxies=self.proxies,
                 timeout=30,
-                verify=False,
             )
             response_time = int((time.time() - start_time) * 1000)
 
