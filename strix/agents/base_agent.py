@@ -362,6 +362,7 @@ class BaseAgent(metaclass=AgentMeta):
 
         if tracer:
             tracer.update_agent_system_message(self.state.agent_id, "Thinking...")
+            await asyncio.sleep(0)
 
         async for response in self.llm.generate(self.state.get_conversation_history()):
             final_response = response
