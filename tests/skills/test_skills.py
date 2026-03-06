@@ -199,7 +199,7 @@ class TestGenerateSkillsDescription:
         # The description includes a comma-separated list of all skill names.
         for skill in NEW_SKILLS:
             if skill in all_names:
-                assert skill.replace("_", "_") in desc
+                assert skill in desc
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +214,8 @@ class TestGetAllCategories:
         cats = _get_all_categories()
         # Should include categories that get_available_skills excludes
         assert "vulnerabilities" in cats
+        assert "scan_modes" in cats, "scan_modes should be returned by _get_all_categories"
+        assert "coordination" in cats, "coordination should be returned by _get_all_categories"
 
     def test_returns_sorted_skills(self) -> None:
         for category, skills in _get_all_categories().items():
@@ -296,6 +298,9 @@ class TestEdgeCasesSkillContent:
     def test_frontmatter_description(self, frontmatter: dict[str, str]) -> None:
         desc = frontmatter.get("description", "")
         assert len(desc) > 10, "Description is too short"
+
+    def test_frontmatter_has_cwe(self, frontmatter: dict[str, str]) -> None:
+        assert "cwe" in frontmatter
 
     def test_required_sections_present(self, raw: str) -> None:
         for section in REQUIRED_SECTIONS:
