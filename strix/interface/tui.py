@@ -1036,13 +1036,39 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if i > 0:
                 combined.append("\n")
             StrixTUIApp._append_renderable(combined, item)
-        return combined
+        return StrixTUIApp._sanitize_text_spans(combined)
+
+    @staticmethod
+    def _sanitize_text_spans(text: Text) -> Text:
+        plain = text.plain
+        plain_len = len(plain)
+
+        if plain_len == 0 or not text.spans:
+            return text
+
+        sanitized = Text(
+            plain,
+            style=text.style,
+            justify=text.justify,
+            overflow=text.overflow,
+            no_wrap=text.no_wrap,
+            end=text.end,
+            tab_size=text.tab_size,
+        )
+
+        for span in text.spans:
+            start = max(0, min(span.start, plain_len))
+            end = max(0, min(span.end, plain_len))
+            if end > start:
+                sanitized.stylize(span.style, start, end)
+
+        return sanitized
 
     @staticmethod
     def _append_renderable(combined: Text, item: Any) -> None:
         """Recursively append a renderable's text content to a combined Text."""
         if isinstance(item, Text):
-            combined.append_text(item)
+            combined.append_text(StrixTUIApp._sanitize_text_spans(item))
         elif isinstance(item, Group):
             for j, sub in enumerate(item.renderables):
                 if j > 0:
