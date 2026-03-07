@@ -9,7 +9,7 @@ from strix.config.config import Config, resolve_llm_config
 logger = logging.getLogger(__name__)
 
 
-MAX_TOTAL_TOKENS = 100_000
+MAX_TOTAL_TOKENS = 80_000
 MIN_RECENT_MESSAGES = 15
 
 SUMMARY_PROMPT_TEMPLATE = """You are an agent performing context
