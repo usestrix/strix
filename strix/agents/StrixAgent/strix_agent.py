@@ -57,31 +57,45 @@ class StrixAgent(BaseAgent):
             elif target_type == "ip_address":
                 ip_addresses.append(details["target_ip"])
 
-        task_parts = []
+        target_lines = []
 
         if repositories:
-            task_parts.append("\n\nRepositories:")
             for repo in repositories:
                 if repo["workspace_path"]:
-                    task_parts.append(f"- {repo['url']} (available at: {repo['workspace_path']})")
+                    target_lines.append(f'  <target type="repository">{repo["url"]} (code at: {repo["workspace_path"]})</target>')
                 else:
-                    task_parts.append(f"- {repo['url']}")
+                    target_lines.append(f'  <target type="repository">{repo["url"]}</target>')
 
         if local_code:
-            task_parts.append("\n\nLocal Codebases:")
-            task_parts.extend(
-                f"- {code['path']} (available at: {code['workspace_path']})" for code in local_code
-            )
+            for code in local_code:
+                target_lines.append(f'  <target type="local_code">{code["path"]} (code at: {code["workspace_path"]})</target>')
 
         if urls:
-            task_parts.append("\n\nURLs:")
-            task_parts.extend(f"- {url}" for url in urls)
+            for url in urls:
+                target_lines.append(f'  <target type="url">{url}</target>')
 
         if ip_addresses:
-            task_parts.append("\n\nIP Addresses:")
-            task_parts.extend(f"- {ip}" for ip in ip_addresses)
+            for ip in ip_addresses:
+                target_lines.append(f'  <target type="ip">{ip}</target>')
 
-        task_description = " ".join(task_parts)
+        targets_block = "\n".join(target_lines)
+
+        has_code = bool(repositories or local_code)
+        has_urls = bool(urls or ip_addresses)
+        if has_code and has_urls:
+            mode = "COMBINED MODE (code + deployed target)"
+        elif has_code:
+            mode = "WHITE-BOX (source code provided)"
+        else:
+            mode = "BLACK-BOX (URL/domain targets)"
+
+        task_description = (
+            f"<scan_task>\n"
+            f"<targets>\n{targets_block}\n</targets>\n"
+            f"<mode>{mode}</mode>\n"
+            f"<action>Begin security assessment NOW. Your first tool call must be create_agent to spawn context-gathering subagents for the targets listed above. Do NOT call wait_for_message — the targets are already specified.</action>\n"
+            f"</scan_task>"
+        )
 
         if user_instructions:
             task_description += f"\n\nSpecial instructions: {user_instructions}"

@@ -7,6 +7,8 @@ _INVOKE_OPEN = re.compile(r'<invoke\s+name=["\']([^"\']+)["\']>')
 _PARAM_NAME_ATTR = re.compile(r'<parameter\s+name=["\']([^"\']+)["\']>')
 _FUNCTION_CALLS_TAG = re.compile(r"</?function_calls>")
 _STRIP_TAG_QUOTES = re.compile(r"<(function|parameter)\s*=\s*([^>]*?)>")
+# GLM-5 often messes up closing tags mirroring the '=' part, e.g. </function=think>
+_GLM5_MALFORMED_CLOSE = re.compile(r"</(function|parameter)=[^>]*>")
 
 
 def normalize_tool_format(content: str) -> str:
@@ -19,12 +21,15 @@ def normalize_tool_format(content: str) -> str:
       </invoke>                             → </function>
       <function="X">                        → <function=X>
       <parameter="X">                       → <parameter=X>
+      </function=X>, </parameter=X>         → </function>, </parameter> (GLM-5 workaround)
     """
     if "<invoke" in content or "<function_calls" in content:
         content = _FUNCTION_CALLS_TAG.sub("", content)
         content = _INVOKE_OPEN.sub(r"<function=\1>", content)
         content = _PARAM_NAME_ATTR.sub(r"<parameter=\1>", content)
         content = content.replace("</invoke>", "</function>")
+
+    content = _GLM5_MALFORMED_CLOSE.sub(lambda m: f"</{m.group(1)}>", content)
 
     return _STRIP_TAG_QUOTES.sub(
         lambda m: f"<{m.group(1)}={m.group(2).strip().strip(chr(34) + chr(39))}>", content
@@ -150,6 +155,7 @@ def clean_content(content: str) -> str:
 
     hidden_xml_patterns = [
         r"<inter_agent_message>.*?</inter_agent_message>",
+        r"<agent_message\b[^>]*>.*?</agent_message>",
         r"<agent_completion_report>.*?</agent_completion_report>",
     ]
     for pattern in hidden_xml_patterns:
