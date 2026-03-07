@@ -1113,7 +1113,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return Text()
 
         if len(renderables) == 1 and isinstance(renderables[0], Text):
-            return renderables[0]
+            return self._sanitize_text_spans(renderables[0])
 
         return self._merge_renderables(renderables)
 
@@ -1149,7 +1149,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if not renderables:
             result = Text()
         elif len(renderables) == 1 and isinstance(renderables[0], Text):
-            result = renderables[0]
+            result = self._sanitize_text_spans(renderables[0])
         else:
             result = self._merge_renderables(renderables)
 
@@ -1714,7 +1714,18 @@ class StrixTUIApp(App):  # type: ignore[misc]
             interrupted_text.append("Interrupted by user", style="yellow dim")
             return self._merge_renderables([streaming_result, interrupted_text])
 
-        return AgentMessageRenderer.render_simple(content)
+        if content:
+            msg_renderable = AgentMessageRenderer.render_simple(content)
+            renderables.append(msg_renderable)
+
+        if not renderables:
+            return None
+
+        if len(renderables) == 1:
+            r = renderables[0]
+            return self._sanitize_text_spans(r) if isinstance(r, Text) else r
+
+        return self._merge_renderables(renderables)
 
     def _render_tool_content_simple(self, tool_data: dict[str, Any]) -> Any:
         tool_name = tool_data.get("tool_name", "Unknown Tool")
