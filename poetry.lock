@@ -2202,9 +2202,10 @@ requests = ["requests (>=2.18.0,<3.0.0)"]
 name = "googleapis-common-protos"
 version = "1.72.0"
 description = "Common protobufs used in Google APIs"
-optional = false
+optional = true
 python-versions = ">=3.7"
 groups = ["main"]
+markers = "extra == \"vertex\" or extra == \"traceloop\""
 files = [
     {file = "googleapis_common_protos-1.72.0-py3-none-any.whl", hash = "sha256:4299c5a82d5ae1a9702ada957347726b167f9f8d1fc352477702a1e851ff4038"},
     {file = "googleapis_common_protos-1.72.0.tar.gz", hash = "sha256:e55a601c1b32b52d7a3e65f43563e2aa61bcd737998ee672ac9b951cd49319f5"},
@@ -4160,9 +4161,10 @@ et-xmlfile = "*"
 name = "opentelemetry-api"
 version = "1.40.0"
 description = "OpenTelemetry Python API"
-optional = false
+optional = true
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"traceloop\""
 files = [
     {file = "opentelemetry_api-1.40.0-py3-none-any.whl", hash = "sha256:82dd69331ae74b06f6a874704be0cfaa49a1650e1537d4a813b86ecef7d0ecf9"},
     {file = "opentelemetry_api-1.40.0.tar.gz", hash = "sha256:159be641c0b04d11e9ecd576906462773eb97ae1b657730f0ecf64d32071569f"},
@@ -4176,9 +4178,10 @@ typing-extensions = ">=4.5.0"
 name = "opentelemetry-exporter-otlp-proto-common"
 version = "1.40.0"
 description = "OpenTelemetry Protobuf encoding"
-optional = false
+optional = true
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"traceloop\""
 files = [
     {file = "opentelemetry_exporter_otlp_proto_common-1.40.0-py3-none-any.whl", hash = "sha256:7081ff453835a82417bf38dccf122c827c3cbc94f2079b03bba02a3165f25149"},
     {file = "opentelemetry_exporter_otlp_proto_common-1.40.0.tar.gz", hash = "sha256:1cbee86a4064790b362a86601ee7934f368b81cd4cc2f2e163902a6e7818a0fa"},
@@ -4220,9 +4223,10 @@ gcp-auth = ["opentelemetry-exporter-credential-provider-gcp (>=0.59b0)"]
 name = "opentelemetry-exporter-otlp-proto-http"
 version = "1.40.0"
 description = "OpenTelemetry Collector Protobuf over HTTP Exporter"
-optional = false
+optional = true
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"traceloop\""
 files = [
     {file = "opentelemetry_exporter_otlp_proto_http-1.40.0-py3-none-any.whl", hash = "sha256:a8d1dab28f504c5d96577d6509f80a8150e44e8f45f82cdbe0e34c99ab040069"},
     {file = "opentelemetry_exporter_otlp_proto_http-1.40.0.tar.gz", hash = "sha256:db48f5e0f33217588bbc00274a31517ba830da576e59503507c839b38fa0869c"},
@@ -5074,9 +5078,10 @@ instruments = ["writer"]
 name = "opentelemetry-proto"
 version = "1.40.0"
 description = "OpenTelemetry Python Proto"
-optional = false
+optional = true
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"traceloop\""
 files = [
     {file = "opentelemetry_proto-1.40.0-py3-none-any.whl", hash = "sha256:266c4385d88923a23d63e353e9761af0f47a6ed0d486979777fe4de59dc9b25f"},
     {file = "opentelemetry_proto-1.40.0.tar.gz", hash = "sha256:03f639ca129ba513f5819810f5b1f42bcb371391405d99c168fe6937c62febcd"},
@@ -5089,9 +5094,10 @@ protobuf = ">=5.0,<7.0"
 name = "opentelemetry-sdk"
 version = "1.40.0"
 description = "OpenTelemetry Python SDK"
-optional = false
+optional = true
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"traceloop\""
 files = [
     {file = "opentelemetry_sdk-1.40.0-py3-none-any.whl", hash = "sha256:787d2154a71f4b3d81f20524a8ce061b7db667d24e46753f32a7bc48f1c1f3f1"},
     {file = "opentelemetry_sdk-1.40.0.tar.gz", hash = "sha256:18e9f5ec20d859d268c7cb3c5198c8d105d073714db3de50b593b8c1345a48f2"},
@@ -5106,9 +5112,10 @@ typing-extensions = ">=4.5.0"
 name = "opentelemetry-semantic-conventions"
 version = "0.61b0"
 description = "OpenTelemetry Semantic Conventions"
-optional = false
+optional = true
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"traceloop\""
 files = [
     {file = "opentelemetry_semantic_conventions-0.61b0-py3-none-any.whl", hash = "sha256:fa530a96be229795f8cef353739b618148b0fe2b4b3f005e60e262926c4d38e2"},
     {file = "opentelemetry_semantic_conventions-0.61b0.tar.gz", hash = "sha256:072f65473c5d7c6dc0355b27d6c9d1a679d63b6d4b4b16a9773062cb7e31192a"},
@@ -5809,9 +5816,10 @@ testing = ["google-api-core (>=1.31.5)"]
 name = "protobuf"
 version = "6.33.5"
 description = ""
-optional = false
+optional = true
 python-versions = ">=3.9"
 groups = ["main"]
+markers = "extra == \"vertex\" or extra == \"traceloop\""
 files = [
     {file = "protobuf-6.33.5-cp310-abi3-win32.whl", hash = "sha256:d71b040839446bac0f4d162e758bea99c8251161dae9d0983a3b88dee345153b"},
     {file = "protobuf-6.33.5-cp310-abi3-win_amd64.whl", hash = "sha256:3093804752167bcab3998bec9f1048baae6e29505adaf1afd14a37bddede533c"},
@@ -8527,10 +8535,10 @@ type = ["pytest-mypy"]
 
 [extras]
 sandbox = ["fastapi", "gql", "ipython", "libtmux", "numpydoc", "openhands-aci", "playwright", "pyte", "uvicorn"]
-traceloop = ["traceloop-sdk"]
+traceloop = ["opentelemetry-exporter-otlp-proto-http", "traceloop-sdk"]
 vertex = ["google-cloud-aiplatform"]
 
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.12"
-content-hash = "f73344f6781a1f006e9d71c103bc785fa8d7a6207451a5c62ea4ea98d82ff99c"
+content-hash = "c7183ce56fb0a86463037a383507db3772b24174bb7b8058413e88674cd06794"
