@@ -56,7 +56,7 @@ textual = "^4.0.0"
 xmltodict = "^0.13.0"
 requests = "^2.32.0"
 cvss = "^3.2"
-traceloop-sdk = "^0.53.0"
+traceloop-sdk = { version = "^0.53.0", optional = true }
 opentelemetry-exporter-otlp-proto-http = "^1.40.0"
 
 # Optional LLM provider dependencies
@@ -77,6 +77,7 @@ defusedxml = "^0.7.1"
 [tool.poetry.extras]
 vertex = ["google-cloud-aiplatform"]
 sandbox = ["fastapi", "uvicorn", "ipython", "openhands-aci", "playwright", "gql", "pyte", "libtmux", "numpydoc"]
+traceloop = ["traceloop-sdk"]
 
 [tool.poetry.group.dev.dependencies]
 # Type checking and static analysis
