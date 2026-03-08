@@ -8,6 +8,7 @@ import pytest
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 
 from strix.telemetry import tracer as tracer_module
+from strix.telemetry import utils as telemetry_utils
 from strix.telemetry.tracer import Tracer, set_global_tracer
 
 
@@ -21,7 +22,7 @@ def _reset_tracer_globals(monkeypatch) -> None:
     monkeypatch.setattr(tracer_module, "_global_tracer", None)
     monkeypatch.setattr(tracer_module, "_OTEL_BOOTSTRAPPED", False)
     monkeypatch.setattr(tracer_module, "_OTEL_REMOTE_ENABLED", False)
-    monkeypatch.setattr(tracer_module, "_EVENTS_FILE_LOCKS", {})
+    telemetry_utils.reset_events_write_locks()
     monkeypatch.delenv("STRIX_TELEMETRY", raising=False)
     monkeypatch.delenv("STRIX_OTEL_TELEMETRY", raising=False)
     monkeypatch.delenv("STRIX_POSTHOG_TELEMETRY", raising=False)
@@ -311,6 +312,24 @@ def test_set_run_name_resets_cached_paths(monkeypatch, tmp_path) -> None:
     events = _load_events(new_events_path)
     assert any(event["event_type"] == "run.started" for event in events)
     assert any(event["event_type"] == "chat.message" for event in events)
+
+
+def test_set_run_name_resets_run_completed_flag(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    tracer = Tracer()
+    set_global_tracer(tracer)
+
+    tracer.save_run_data(mark_complete=True)
+    tracer.set_run_name("renamed-complete")
+    tracer.save_run_data(mark_complete=True)
+
+    events_path = tmp_path / "strix_runs" / "renamed-complete" / "events.jsonl"
+    events = _load_events(events_path)
+    run_completed = [event for event in events if event["event_type"] == "run.completed"]
+
+    assert any(event["event_type"] == "run.started" for event in events)
+    assert len(run_completed) == 1
 
 
 def test_set_run_name_updates_traceloop_association_properties(monkeypatch, tmp_path) -> None:

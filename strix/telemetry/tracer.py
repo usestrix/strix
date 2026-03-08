@@ -1,21 +1,18 @@
-import csv
 import json
 import logging
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
 
 from opentelemetry import trace
-from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import (
     BatchSpanProcessor,
     SimpleSpanProcessor,
-    SpanExporter,
-    SpanExportResult,
 )
 from opentelemetry.trace import SpanContext, SpanKind
 
@@ -24,9 +21,15 @@ from strix.telemetry import posthog
 from strix.telemetry.flags import is_otel_enabled
 from strix.telemetry.utils import (
     TelemetrySanitizer,
+    append_jsonl_record,
+    calculate_duration_seconds,
+    default_resource_attributes,
     format_span_id,
     format_trace_id,
-    iso_from_unix_ns,
+    get_events_write_lock,
+    JsonlSpanExporter,
+    parse_traceloop_headers,
+    save_run_artifacts,
     sanitize_run_dir_name,
 )
 
@@ -44,8 +47,6 @@ _global_tracer: Optional["Tracer"] = None
 _OTEL_BOOTSTRAP_LOCK = threading.Lock()
 _OTEL_BOOTSTRAPPED = False
 _OTEL_REMOTE_ENABLED = False
-_EVENTS_FILE_LOCKS_LOCK = threading.Lock()
-_EVENTS_FILE_LOCKS: dict[str, threading.Lock] = {}
 
 _STREAMING_EVENT_MIN_LENGTH_DELTA = 64
 _STREAMING_EVENT_MIN_INTERVAL_SECONDS = 1.0
@@ -58,104 +59,6 @@ def get_global_tracer() -> Optional["Tracer"]:
 def set_global_tracer(tracer: "Tracer") -> None:
     global _global_tracer  # noqa: PLW0603
     _global_tracer = tracer
-
-
-class JsonlSpanExporter(SpanExporter):
-    """Append OTEL spans to JSONL for local run artifacts."""
-
-    def __init__(
-        self,
-        output_path_getter: Callable[[], Path],
-        run_metadata_getter: Callable[[], dict[str, Any]],
-        sanitizer: Callable[[Any], Any],
-        write_lock_getter: Callable[[Path], threading.Lock],
-    ):
-        self._output_path_getter = output_path_getter
-        self._run_metadata_getter = run_metadata_getter
-        self._sanitize = sanitizer
-        self._write_lock_getter = write_lock_getter
-
-    def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
-        records: list[dict[str, Any]] = []
-        for span in spans:
-            attributes = dict(span.attributes or {})
-            if "strix.event_type" in attributes:
-                # Tracer events are written directly in Tracer._emit_event.
-                continue
-            records.append(self._span_to_record(span, attributes))
-
-        if not records:
-            return SpanExportResult.SUCCESS
-
-        try:
-            output_path = self._output_path_getter()
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._write_lock_getter(output_path), output_path.open("a", encoding="utf-8") as f:
-                for record in records:
-                    f.write(json.dumps(record, ensure_ascii=False) + "\n")
-        except OSError:
-            logger.exception("Failed to write OTEL span records to JSONL")
-            return SpanExportResult.FAILURE
-
-        return SpanExportResult.SUCCESS
-
-    def shutdown(self) -> None:
-        return None
-
-    def force_flush(self, timeout_millis: int = 30_000) -> bool:  # noqa: ARG002
-        return True
-
-    def _span_to_record(
-        self,
-        span: ReadableSpan,
-        attributes: dict[str, Any],
-    ) -> dict[str, Any]:
-        span_context = span.get_span_context()
-        parent_context = span.parent
-
-        status = None
-        if span.status and span.status.status_code:
-            status = span.status.status_code.name.lower()
-
-        event_type = str(attributes.get("gen_ai.operation.name", span.name))
-        run_metadata = self._run_metadata_getter()
-        run_id_attr = (
-            attributes.get("strix.run_id")
-            or attributes.get("strix_run_id")
-            or run_metadata.get("run_id")
-            or span.resource.attributes.get("strix.run_id")
-        )
-
-        record: dict[str, Any] = {
-            "timestamp": iso_from_unix_ns(span.end_time) or datetime.now(UTC).isoformat(),
-            "event_type": event_type,
-            "run_id": str(run_id_attr or run_metadata.get("run_id") or ""),
-            "trace_id": format_trace_id(span_context.trace_id),
-            "span_id": format_span_id(span_context.span_id),
-            "parent_span_id": format_span_id(parent_context.span_id if parent_context else None),
-            "actor": None,
-            "payload": None,
-            "status": status,
-            "error": None,
-            "source": "otel.span",
-            "span_name": span.name,
-            "span_kind": span.kind.name.lower(),
-            "attributes": self._sanitize(attributes),
-        }
-
-        if span.events:
-            record["otel_events"] = self._sanitize(
-                [
-                    {
-                        "name": event.name,
-                        "timestamp": iso_from_unix_ns(event.timestamp),
-                        "attributes": dict(event.attributes or {}),
-                    }
-                    for event in span.events
-                ]
-            )
-
-        return record
 
 
 class Tracer:
@@ -218,52 +121,13 @@ class Tracer:
 
     def _get_events_write_lock(self, output_path: Path | None = None) -> threading.Lock:
         path = output_path or self.events_file_path
-        path_key = str(path.resolve(strict=False))
-        with _EVENTS_FILE_LOCKS_LOCK:
-            lock = _EVENTS_FILE_LOCKS.get(path_key)
-            if lock is None:
-                lock = threading.Lock()
-                _EVENTS_FILE_LOCKS[path_key] = lock
-            return lock
+        return get_events_write_lock(path)
 
     def _active_run_metadata(self) -> dict[str, Any]:
         active = get_global_tracer()
         if active:
             return active.run_metadata
         return self.run_metadata
-
-    def _resource_attributes(self) -> dict[str, Any]:
-        return {
-            "service.name": "strix-agent",
-            "service.namespace": "strix",
-        }
-
-    def _parse_traceloop_headers(self) -> dict[str, str]:
-        raw_headers = (Config.get("traceloop_headers") or "").strip()
-        if not raw_headers:
-            return {}
-
-        if raw_headers.startswith("{"):
-            try:
-                parsed = json.loads(raw_headers)
-            except json.JSONDecodeError:
-                logger.warning("Invalid TRACELOOP_HEADERS JSON, ignoring custom headers")
-                return {}
-            if isinstance(parsed, dict):
-                return {str(k): str(v) for k, v in parsed.items() if v is not None}
-            logger.warning("TRACELOOP_HEADERS JSON must be an object, ignoring custom headers")
-            return {}
-
-        result: dict[str, str] = {}
-        for part in raw_headers.split(","):
-            key, sep, value = part.partition("=")
-            if not sep:
-                continue
-            key = key.strip()
-            value = value.strip()
-            if key and value:
-                result[key] = value
-        return result
 
     def _setup_telemetry(self) -> None:  # noqa: PLR0915
         global _OTEL_BOOTSTRAPPED, _OTEL_REMOTE_ENABLED  # noqa: PLW0603
@@ -292,7 +156,7 @@ class Tracer:
 
             base_url = (Config.get("traceloop_base_url") or "").strip()
             api_key = (Config.get("traceloop_api_key") or "").strip()
-            headers = self._parse_traceloop_headers()
+            headers = parse_traceloop_headers(Config.get("traceloop_headers") or "")
 
             remote_enabled = bool(base_url and api_key)
             otlp_headers = headers
@@ -307,7 +171,7 @@ class Tracer:
                         "app_name": "strix-agent",
                         "processor": local_processor,
                         "telemetry_enabled": False,
-                        "resource_attributes": self._resource_attributes(),
+                        "resource_attributes": default_resource_attributes(),
                     }
                     if remote_enabled:
                         init_kwargs.update(
@@ -326,7 +190,7 @@ class Tracer:
             if not otel_init_ok:
                 from opentelemetry.sdk.resources import Resource
 
-                provider = TracerProvider(resource=Resource.create(self._resource_attributes()))
+                provider = TracerProvider(resource=Resource.create(default_resource_attributes()))
                 provider.add_span_processor(local_processor)
                 if remote_enabled:
                     try:
@@ -371,12 +235,7 @@ class Tracer:
 
     def _append_event_record(self, record: dict[str, Any]) -> None:
         try:
-            output_path = self.events_file_path
-            output_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._get_events_write_lock(output_path), output_path.open(
-                "a", encoding="utf-8"
-            ) as f:
-                f.write(json.dumps(record, ensure_ascii=False) + "\n")
+            append_jsonl_record(self.events_file_path, record)
         except OSError:
             logger.exception("Failed to append JSONL event record")
 
@@ -489,6 +348,7 @@ class Tracer:
         self.run_metadata["run_id"] = run_name
         self._run_dir = None
         self._events_file_path = None
+        self._run_completed_emitted = False
         self._set_association_properties({"run_id": self.run_id, "run_name": self.run_name or ""})
         self._emit_run_started_event()
 
@@ -826,7 +686,7 @@ class Tracer:
             source="strix.run",
         )
 
-    def save_run_data(self, mark_complete: bool = False) -> None:  # noqa: PLR0912, PLR0915
+    def save_run_data(self, mark_complete: bool = False) -> None:
         try:
             run_dir = self.get_run_dir()
             if mark_complete:
@@ -835,141 +695,21 @@ class Tracer:
                 self.run_metadata["end_time"] = self.end_time
                 self.run_metadata["status"] = "completed"
 
-            if self.final_scan_result:
-                penetration_test_report_file = run_dir / "penetration_test_report.md"
-                with penetration_test_report_file.open("w", encoding="utf-8") as f:
-                    f.write("# Security Penetration Test Report\n\n")
-                    f.write(
-                        f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
-                    )
-                    f.write(f"{self.final_scan_result}\n")
-                logger.info(
-                    f"Saved final penetration test report to: {penetration_test_report_file}"
-                )
+            save_run_artifacts(
+                run_dir=run_dir,
+                final_scan_result=self.final_scan_result,
+                vulnerability_reports=self.vulnerability_reports,
+                saved_vuln_ids=self._saved_vuln_ids,
+            )
 
-            if self.vulnerability_reports:
-                vuln_dir = run_dir / "vulnerabilities"
-                vuln_dir.mkdir(exist_ok=True)
-
-                new_reports = [
-                    report
-                    for report in self.vulnerability_reports
-                    if report["id"] not in self._saved_vuln_ids
-                ]
-
-                severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
-                sorted_reports = sorted(
-                    self.vulnerability_reports,
-                    key=lambda x: (severity_order.get(x["severity"], 5), x["timestamp"]),
-                )
-
-                for report in new_reports:
-                    vuln_file = vuln_dir / f"{report['id']}.md"
-                    with vuln_file.open("w", encoding="utf-8") as f:
-                        f.write(f"# {report.get('title', 'Untitled Vulnerability')}\n\n")
-                        f.write(f"**ID:** {report.get('id', 'unknown')}\n")
-                        f.write(f"**Severity:** {report.get('severity', 'unknown').upper()}\n")
-                        f.write(f"**Found:** {report.get('timestamp', 'unknown')}\n")
-
-                        metadata_fields: list[tuple[str, Any]] = [
-                            ("Target", report.get("target")),
-                            ("Endpoint", report.get("endpoint")),
-                            ("Method", report.get("method")),
-                            ("CVE", report.get("cve")),
-                            ("CWE", report.get("cwe")),
-                        ]
-                        cvss_score = report.get("cvss")
-                        if cvss_score is not None:
-                            metadata_fields.append(("CVSS", cvss_score))
-
-                        for label, value in metadata_fields:
-                            if value:
-                                f.write(f"**{label}:** {value}\n")
-
-                        f.write("\n## Description\n\n")
-                        desc = report.get("description") or "No description provided."
-                        f.write(f"{desc}\n\n")
-
-                        if report.get("impact"):
-                            f.write("## Impact\n\n")
-                            f.write(f"{report['impact']}\n\n")
-
-                        if report.get("technical_analysis"):
-                            f.write("## Technical Analysis\n\n")
-                            f.write(f"{report['technical_analysis']}\n\n")
-
-                        if report.get("poc_description") or report.get("poc_script_code"):
-                            f.write("## Proof of Concept\n\n")
-                            if report.get("poc_description"):
-                                f.write(f"{report['poc_description']}\n\n")
-                            if report.get("poc_script_code"):
-                                f.write("```\n")
-                                f.write(f"{report['poc_script_code']}\n")
-                                f.write("```\n\n")
-
-                        if report.get("code_locations"):
-                            f.write("## Code Analysis\n\n")
-                            for i, loc in enumerate(report["code_locations"]):
-                                prefix = f"**Location {i + 1}:**"
-                                file_ref = loc.get("file", "unknown")
-                                line_ref = ""
-                                if loc.get("start_line") is not None:
-                                    if loc.get("end_line") and loc["end_line"] != loc["start_line"]:
-                                        line_ref = f" (lines {loc['start_line']}-{loc['end_line']})"
-                                    else:
-                                        line_ref = f" (line {loc['start_line']})"
-                                f.write(f"{prefix} `{file_ref}`{line_ref}\n")
-                                if loc.get("label"):
-                                    f.write(f"  {loc['label']}\n")
-                                if loc.get("snippet"):
-                                    f.write(f"  ```\n  {loc['snippet']}\n  ```\n")
-                                if loc.get("fix_before") or loc.get("fix_after"):
-                                    f.write("\n  **Suggested Fix:**\n")
-                                    f.write("```diff\n")
-                                    if loc.get("fix_before"):
-                                        for line in loc["fix_before"].splitlines():
-                                            f.write(f"- {line}\n")
-                                    if loc.get("fix_after"):
-                                        for line in loc["fix_after"].splitlines():
-                                            f.write(f"+ {line}\n")
-                                    f.write("```\n")
-                                f.write("\n")
-
-                        if report.get("remediation_steps"):
-                            f.write("## Remediation\n\n")
-                            f.write(f"{report['remediation_steps']}\n\n")
-
-                    self._saved_vuln_ids.add(report["id"])
-
-                vuln_csv_file = run_dir / "vulnerabilities.csv"
-                with vuln_csv_file.open("w", encoding="utf-8", newline="") as f:
-                    fieldnames = ["id", "title", "severity", "timestamp", "file"]
-                    writer = csv.DictWriter(f, fieldnames=fieldnames)
-                    writer.writeheader()
-
-                    for report in sorted_reports:
-                        writer.writerow(
-                            {
-                                "id": report["id"],
-                                "title": report["title"],
-                                "severity": report["severity"].upper(),
-                                "timestamp": report["timestamp"],
-                                "file": f"vulnerabilities/{report['id']}.md",
-                            }
-                        )
-
-                if new_reports:
-                    logger.info(
-                        f"Saved {len(new_reports)} new vulnerability report(s) to: {vuln_dir}"
-                    )
-                logger.info(f"Updated vulnerability index: {vuln_csv_file}")
-
-            logger.info(f"📊 Essential scan data saved to: {run_dir}")
+            logger.info("📊 Essential scan data saved to: %s", run_dir)
             if mark_complete and not self._run_completed_emitted:
                 self._emit_event(
                     "run.completed",
                     payload={
-                        "duration_seconds": self._calculate_duration(),
+                        "duration_seconds": calculate_duration_seconds(
+                            self.start_time, self.end_time
+                        ),
                         "vulnerability_count": len(self.vulnerability_reports),
                     },
                     status="completed",
@@ -982,14 +722,7 @@ class Tracer:
             logger.exception("Failed to save scan data")
 
     def _calculate_duration(self) -> float:
-        try:
-            start = datetime.fromisoformat(self.start_time.replace("Z", "+00:00"))
-            if self.end_time:
-                end = datetime.fromisoformat(self.end_time.replace("Z", "+00:00"))
-                return (end - start).total_seconds()
-        except (ValueError, TypeError):
-            pass
-        return 0.0
+        return calculate_duration_seconds(self.start_time, self.end_time)
 
     def get_agent_tools(self, agent_id: str) -> list[dict[str, Any]]:
         return [
