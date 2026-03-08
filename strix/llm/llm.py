@@ -26,6 +26,22 @@ litellm.drop_params = True
 litellm.modify_params = True
 
 
+def _ensure_litellm_otel_callback() -> None:
+    callbacks_value = getattr(litellm, "callbacks", None)
+    if callbacks_value is None:
+        callbacks: list[Any] = []
+    elif isinstance(callbacks_value, list):
+        callbacks = callbacks_value
+    elif isinstance(callbacks_value, tuple):
+        callbacks = list(callbacks_value)
+    else:
+        callbacks = [callbacks_value]
+
+    if "otel" not in callbacks:
+        callbacks.append("otel")
+    litellm.callbacks = callbacks
+
+
 class LLMRequestFailedError(Exception):
     def __init__(self, message: str, details: str | None = None):
         super().__init__(message)
@@ -74,6 +90,8 @@ class LLM:
             self._reasoning_effort = "medium"
         else:
             self._reasoning_effort = "high"
+
+        _ensure_litellm_otel_callback()
 
     def _load_system_prompt(self, agent_name: str | None) -> str:
         if not agent_name:
@@ -211,8 +229,32 @@ class LLM:
             args["api_base"] = self.config.api_base
         if self._supports_reasoning():
             args["reasoning_effort"] = self._reasoning_effort
+        metadata = self._build_trace_metadata()
+        if metadata:
+            args["metadata"] = metadata
 
         return args
+
+    def _build_trace_metadata(self) -> dict[str, Any]:
+        metadata: dict[str, Any] = {}
+
+        if self.agent_name:
+            metadata["strix_agent_name"] = self.agent_name
+        if self.agent_id:
+            metadata["strix_agent_id"] = self.agent_id
+
+        try:
+            from strix.telemetry.tracer import get_global_tracer
+
+            tracer = get_global_tracer()
+            if tracer:
+                metadata["strix_run_id"] = tracer.run_id
+                if tracer.run_name:
+                    metadata["strix_run_name"] = tracer.run_name
+        except (ImportError, AttributeError):
+            return metadata
+
+        return metadata
 
     def _get_chunk_content(self, chunk: Any) -> str:
         if chunk.choices and hasattr(chunk.choices[0], "delta"):

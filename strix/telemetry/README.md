@@ -2,11 +2,20 @@
 
 To help make Strix better for everyone, we collect anonymized data that helps us understand how to better improve our AI security agent for our users, guide the addition of new features, and fix common errors and bugs. This feedback loop is crucial for improving Strix's capabilities and user experience.
 
-We use [PostHog](https://posthog.com), an open-source analytics platform, for data collection and analysis. Our telemetry implementation is fully transparent - you can review the [source code](https://github.com/usestrix/strix/blob/main/strix/telemetry/posthog.py) to see exactly what we track.
+Strix has two telemetry channels:
+
+1. **Anonymous product telemetry** via [PostHog](https://posthog.com) for high-level usage and reliability metrics.
+2. **Run observability traces** via OpenTelemetry/OpenLLMetry, written locally to `strix_runs/<run_name>/events.jsonl` by default.
+
+Remote OpenTelemetry export is optional and only enabled when `TRACELOOP_BASE_URL` and `TRACELOOP_API_KEY` are set.
+Local telemetry logs are retained for 30 days by default (`STRIX_EVENTS_RETENTION_DAYS=30`). Set `STRIX_EVENTS_RETENTION_DAYS=0` to disable automatic pruning.
 
 ### Telemetry Policy
 
-Privacy is our priority. All collected data is anonymized by default. Each session gets a random UUID that is not persisted or tied to you. Your code, scan targets, vulnerability details, and findings always remain private and are never collected.
+Privacy is our priority.
+
+- PostHog telemetry is anonymized by default and does **not** include prompts, payloads, or findings content. Each session gets a random UUID that is not persisted or tied to you. Your code, scan targets, vulnerability details, and findings always remain private and are never collected.
+- OpenTelemetry run traces are stored locally in your run directory. If you configure a remote OTEL endpoint, those traces are exported to your configured destination.
 
 ### What We Track
 

@@ -49,6 +49,30 @@ Configure Strix using environment variables or a config file.
   Enable/disable anonymous telemetry. Set to `0`, `false`, `no`, or `off` to disable.
 </ParamField>
 
+<ParamField path="STRIX_EVENTS_RETENTION_DAYS" default="30" type="integer">
+  Retention window for local telemetry logs (`strix_runs/<run_name>/events.jsonl`). Files older than this are pruned at startup. Set to `0` to disable automatic pruning.
+</ParamField>
+
+<ParamField path="TRACELOOP_BASE_URL" type="string">
+  OTLP/Traceloop base URL for remote OpenTelemetry export. If unset, Strix keeps traces local only.
+</ParamField>
+
+<ParamField path="TRACELOOP_API_KEY" type="string">
+  API key used for remote trace export. Remote export is enabled only when both `TRACELOOP_BASE_URL` and `TRACELOOP_API_KEY` are set.
+</ParamField>
+
+<ParamField path="TRACELOOP_HEADERS" type="string">
+  Optional custom OTEL headers (JSON object or `key=value,key2=value2`). Useful for Langfuse or custom/self-hosted OTLP gateways.
+</ParamField>
+
+When remote OTEL vars are not set, Strix still writes complete run telemetry locally to:
+
+```bash
+strix_runs/<run_name>/events.jsonl
+```
+
+When remote vars are set, Strix dual-writes telemetry to both local JSONL and the remote OTEL endpoint.
+
 ## Docker Configuration
 
 <ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:0.1.12" type="string">
@@ -106,4 +130,12 @@ export PERPLEXITY_API_KEY="pplx-..."
 # Optional: Custom timeouts
 export LLM_TIMEOUT="600"
 export STRIX_SANDBOX_EXECUTION_TIMEOUT="300"
+export STRIX_EVENTS_RETENTION_DAYS="30"
+
+# Optional: Remote OTEL export (dual-write local + remote)
+export TRACELOOP_BASE_URL="https://otel.your-company.com"
+export TRACELOOP_API_KEY="your-api-key"
+
+# Optional: Langfuse style headers
+export TRACELOOP_HEADERS='{"Authorization":"Basic <base64-public-secret>"}'
 ```
