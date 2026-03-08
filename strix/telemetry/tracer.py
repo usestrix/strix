@@ -1,13 +1,10 @@
-import contextlib
 import csv
 import json
 import logging
-import re
 import threading
 import time
-import zlib
 from collections.abc import Callable, Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Optional
 from uuid import uuid4
@@ -25,6 +22,13 @@ from opentelemetry.trace import SpanContext, SpanKind
 from strix.config import Config
 from strix.telemetry import posthog
 from strix.telemetry.flags import is_otel_enabled
+from strix.telemetry.utils import (
+    TelemetrySanitizer,
+    format_span_id,
+    format_trace_id,
+    iso_from_unix_ns,
+    sanitize_run_dir_name,
+)
 
 
 try:
@@ -42,31 +46,9 @@ _OTEL_BOOTSTRAPPED = False
 _OTEL_REMOTE_ENABLED = False
 _EVENTS_FILE_LOCKS_LOCK = threading.Lock()
 _EVENTS_FILE_LOCKS: dict[str, threading.Lock] = {}
-_EVENTS_RETENTION_PRUNE_LOCK = threading.Lock()
-_EVENTS_RETENTION_PRUNED_DIRS: set[str] = set()
-
-_REDACTED = "[REDACTED]"
-_SENSITIVE_KEY_PATTERN = re.compile(
-    r"(api[_-]?key|token|secret|password|authorization|cookie|session|credential|private[_-]?key)",
-    re.IGNORECASE,
-)
-_SENSITIVE_BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+[a-z0-9._-]+\b")
-_SENSITIVE_GENERIC_TOKEN_PATTERN = re.compile(
-    r"(?i)\b(sk-[a-z0-9_-]{8,}|gh[pousr]_[a-z0-9_-]{12,}|xox[baprs]-[a-z0-9-]{12,})\b"
-)
-
-_PROXY_TOOL_NAMES = {
-    "list_requests",
-    "view_request",
-    "repeat_request",
-    "send_request",
-    "list_sitemap",
-    "view_sitemap_entry",
-}
 
 _STREAMING_EVENT_MIN_LENGTH_DELTA = 64
 _STREAMING_EVENT_MIN_INTERVAL_SECONDS = 1.0
-_DEFAULT_EVENTS_RETENTION_DAYS = 30
 
 
 def get_global_tracer() -> Optional["Tracer"]:
@@ -76,27 +58,6 @@ def get_global_tracer() -> Optional["Tracer"]:
 def set_global_tracer(tracer: "Tracer") -> None:
     global _global_tracer  # noqa: PLW0603
     _global_tracer = tracer
-
-
-def _format_trace_id(trace_id: int | None) -> str | None:
-    if trace_id is None or trace_id == 0:
-        return None
-    return f"{trace_id:032x}"
-
-
-def _format_span_id(span_id: int | None) -> str | None:
-    if span_id is None or span_id == 0:
-        return None
-    return f"{span_id:016x}"
-
-
-def _iso_from_unix_ns(unix_ns: int | None) -> str | None:
-    if unix_ns is None:
-        return None
-    try:
-        return datetime.fromtimestamp(unix_ns / 1_000_000_000, tz=UTC).isoformat()
-    except (OSError, OverflowError, ValueError):
-        return None
 
 
 class JsonlSpanExporter(SpanExporter):
@@ -166,12 +127,12 @@ class JsonlSpanExporter(SpanExporter):
         )
 
         record: dict[str, Any] = {
-            "timestamp": _iso_from_unix_ns(span.end_time) or datetime.now(UTC).isoformat(),
+            "timestamp": iso_from_unix_ns(span.end_time) or datetime.now(UTC).isoformat(),
             "event_type": event_type,
             "run_id": str(run_id_attr or run_metadata.get("run_id") or ""),
-            "trace_id": _format_trace_id(span_context.trace_id),
-            "span_id": _format_span_id(span_context.span_id),
-            "parent_span_id": _format_span_id(parent_context.span_id if parent_context else None),
+            "trace_id": format_trace_id(span_context.trace_id),
+            "span_id": format_span_id(span_context.span_id),
+            "parent_span_id": format_span_id(parent_context.span_id if parent_context else None),
             "actor": None,
             "payload": None,
             "status": status,
@@ -187,7 +148,7 @@ class JsonlSpanExporter(SpanExporter):
                 [
                     {
                         "name": event.name,
-                        "timestamp": _iso_from_unix_ns(event.timestamp),
+                        "timestamp": iso_from_unix_ns(event.timestamp),
                         "attributes": dict(event.attributes or {}),
                     }
                     for event in span.events
@@ -231,8 +192,8 @@ class Tracer:
         self._run_completed_emitted = False
         self._last_streaming_event_ts: dict[str, float] = {}
         self._last_streaming_event_len: dict[str, int] = {}
-        self._events_retention_days = self._resolve_events_retention_days()
         self._telemetry_enabled = is_otel_enabled()
+        self._sanitizer = TelemetrySanitizer()
 
         self._otel_tracer: Any = None
         self._remote_export_enabled = False
@@ -396,62 +357,6 @@ class Tracer:
                 _OTEL_REMOTE_ENABLED = remote_enabled
                 _OTEL_BOOTSTRAPPED = True
 
-    def _resolve_events_retention_days(self) -> int:
-        raw_value = (Config.get("strix_events_retention_days") or "").strip()
-        if not raw_value:
-            return _DEFAULT_EVENTS_RETENTION_DAYS
-
-        try:
-            value = int(raw_value)
-        except ValueError:
-            logger.warning(
-                "Invalid STRIX_EVENTS_RETENTION_DAYS value '%s'; defaulting to %d days",
-                raw_value,
-                _DEFAULT_EVENTS_RETENTION_DAYS,
-            )
-            return _DEFAULT_EVENTS_RETENTION_DAYS
-
-        return max(value, 0)
-
-    def _prune_expired_event_logs(self, runs_dir: Path) -> None:
-        retention_days = self._events_retention_days
-        if retention_days == 0:
-            return
-
-        runs_dir_key = str(runs_dir.resolve())
-        with _EVENTS_RETENTION_PRUNE_LOCK:
-            if runs_dir_key in _EVENTS_RETENTION_PRUNED_DIRS:
-                return
-            _EVENTS_RETENTION_PRUNED_DIRS.add(runs_dir_key)
-
-        cutoff = datetime.now(UTC) - timedelta(days=retention_days)
-        removed_files = 0
-
-        for events_file in runs_dir.glob("*/events.jsonl"):
-            try:
-                modified_at = datetime.fromtimestamp(events_file.stat().st_mtime, tz=UTC)
-            except OSError:
-                continue
-
-            if modified_at >= cutoff:
-                continue
-
-            try:
-                events_file.unlink()
-                with contextlib.suppress(OSError):
-                    events_file.parent.rmdir()
-                removed_files += 1
-            except OSError:
-                logger.debug("Failed to remove expired telemetry file: %s", events_file)
-
-        if removed_files:
-            logger.info(
-                "Removed %d telemetry log file(s) older than %d days from %s",
-                removed_files,
-                retention_days,
-                runs_dir,
-            )
-
     def _set_association_properties(self, properties: dict[str, Any]) -> None:
         if Traceloop is None:
             return
@@ -461,39 +366,8 @@ class Tracer:
         except Exception:  # noqa: BLE001
             logger.debug("Failed to set Traceloop association properties")
 
-    def _sanitize_data(self, data: Any, key_hint: str | None = None) -> Any:  # noqa: PLR0911
-        if data is None:
-            return None
-
-        if isinstance(data, dict):
-            sanitized: dict[str, Any] = {}
-            for key, value in data.items():
-                key_str = str(key)
-                if _SENSITIVE_KEY_PATTERN.search(key_str):
-                    sanitized[key_str] = _REDACTED
-                else:
-                    sanitized[key_str] = self._sanitize_data(value, key_hint=key_str)
-            return sanitized
-
-        if isinstance(data, list):
-            return [self._sanitize_data(item, key_hint=key_hint) for item in data]
-
-        if isinstance(data, tuple):
-            return [self._sanitize_data(item, key_hint=key_hint) for item in data]
-
-        if isinstance(data, str):
-            if key_hint and _SENSITIVE_KEY_PATTERN.search(key_hint):
-                return _REDACTED
-
-            return _SENSITIVE_GENERIC_TOKEN_PATTERN.sub(
-                _REDACTED,
-                _SENSITIVE_BEARER_PATTERN.sub(_REDACTED, data),
-            )
-
-        if isinstance(data, int | float | bool):
-            return data
-
-        return str(data)
+    def _sanitize_data(self, data: Any, key_hint: str | None = None) -> Any:
+        return self._sanitizer.sanitize(data, key_hint=key_hint)
 
     def _append_event_record(self, record: dict[str, Any]) -> None:
         try:
@@ -549,7 +423,7 @@ class Tracer:
 
         current_context = trace.get_current_span().get_span_context()
         if isinstance(current_context, SpanContext) and current_context.is_valid:
-            parent_span_id = _format_span_id(current_context.span_id)
+            parent_span_id = format_span_id(current_context.span_id)
 
         if self._otel_tracer is not None:
             try:
@@ -558,8 +432,8 @@ class Tracer:
                     kind=SpanKind.INTERNAL,
                 ) as span:
                     span_context = span.get_span_context()
-                    trace_id = _format_trace_id(span_context.trace_id)
-                    span_id = _format_span_id(span_context.span_id)
+                    trace_id = format_trace_id(span_context.trace_id)
+                    span_id = format_span_id(span_context.span_id)
 
                     span.set_attribute("strix.event_type", event_type)
                     span.set_attribute("strix.source", source)
@@ -587,9 +461,9 @@ class Tracer:
                 logger.debug("Failed to create OTEL span for event type '%s'", event_type)
 
         if trace_id is None:
-            trace_id = _format_trace_id(uuid4().int & ((1 << 128) - 1)) or uuid4().hex
+            trace_id = format_trace_id(uuid4().int & ((1 << 128) - 1)) or uuid4().hex
         if span_id is None:
-            span_id = _format_span_id(uuid4().int & ((1 << 64) - 1)) or uuid4().hex[:16]
+            span_id = format_span_id(uuid4().int & ((1 << 64) - 1)) or uuid4().hex[:16]
 
         record = {
             "timestamp": datetime.now(UTC).isoformat(),
@@ -629,7 +503,6 @@ class Tracer:
                 "start_time": self.start_time,
                 "local_jsonl_path": str(self.events_file_path),
                 "remote_export_enabled": self._remote_export_enabled,
-                "local_retention_days": self._events_retention_days,
             },
             status="running",
             include_run_metadata=True,
@@ -639,30 +512,13 @@ class Tracer:
         if self._run_dir is None:
             runs_dir = Path.cwd() / "strix_runs"
             runs_dir.mkdir(exist_ok=True)
-            self._prune_expired_event_logs(runs_dir)
 
             run_dir_name = self.run_name if self.run_name else self.run_id
-            safe_run_dir_name = self._sanitize_run_dir_name(run_dir_name)
+            safe_run_dir_name = sanitize_run_dir_name(run_dir_name)
             self._run_dir = runs_dir / safe_run_dir_name
             self._run_dir.mkdir(exist_ok=True)
 
         return self._run_dir
-
-    def _sanitize_run_dir_name(self, run_dir_name: str) -> str:
-        normalized = run_dir_name.strip()
-        digest = f"{zlib.crc32(normalized.encode('utf-8')):08x}"
-
-        sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized).strip(".-")
-        if not sanitized:
-            sanitized = f"run-{digest}"
-        elif sanitized != normalized:
-            sanitized = f"{sanitized}-{digest}"
-
-        if len(sanitized) > 80:
-            prefix = sanitized[:71].rstrip(".-")
-            sanitized = f"{prefix}-{digest}" if prefix else f"run-{digest}"
-
-        return sanitized
 
     def add_vulnerability_report(  # noqa: PLR0912
         self,
@@ -913,15 +769,6 @@ class Tracer:
             error=error_payload,
             source="strix.tools",
         )
-
-        if tool_name in _PROXY_TOOL_NAMES and status == "completed":
-            self._emit_event(
-                "traffic.intercepted",
-                actor={"agent_id": agent_id, "tool_name": tool_name},
-                payload={"execution_id": execution_id, "result": result},
-                status="captured",
-                source="strix.proxy",
-            )
 
         if tool_name == "create_vulnerability_report":
             finding_status = "reviewed" if status == "completed" else "rejected"

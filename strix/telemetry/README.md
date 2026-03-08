@@ -8,7 +8,6 @@ Strix has two telemetry channels:
 2. **Run observability traces** via OpenTelemetry/OpenLLMetry, written locally to `strix_runs/<run_name>/events.jsonl` by default.
 
 Remote OpenTelemetry export is optional and only enabled when `TRACELOOP_BASE_URL` and `TRACELOOP_API_KEY` are set.
-Local telemetry logs are retained for 30 days by default (`STRIX_EVENTS_RETENTION_DAYS=30`). Set `STRIX_EVENTS_RETENTION_DAYS=0` to disable automatic pruning.
 
 ### Telemetry Policy
 

@@ -57,10 +57,6 @@ Configure Strix using environment variables or a config file.
   Enable/disable PostHog product telemetry independently. When unset, falls back to `STRIX_TELEMETRY`.
 </ParamField>
 
-<ParamField path="STRIX_EVENTS_RETENTION_DAYS" default="30" type="integer">
-  Retention window for local telemetry logs (`strix_runs/<run_name>/events.jsonl`). Files older than this are pruned at startup. Set to `0` to disable automatic pruning.
-</ParamField>
-
 <ParamField path="TRACELOOP_BASE_URL" type="string">
   OTLP/Traceloop base URL for remote OpenTelemetry export. If unset, Strix keeps traces local only.
 </ParamField>
@@ -138,7 +134,6 @@ export PERPLEXITY_API_KEY="pplx-..."
 # Optional: Custom timeouts
 export LLM_TIMEOUT="600"
 export STRIX_SANDBOX_EXECUTION_TIMEOUT="300"
-export STRIX_EVENTS_RETENTION_DAYS="30"
 
 # Optional: Remote OTEL export (dual-write local + remote)
 export TRACELOOP_BASE_URL="https://otel.your-company.com"

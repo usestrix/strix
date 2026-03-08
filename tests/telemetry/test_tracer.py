@@ -1,7 +1,5 @@
 import json
-import os
 import sys
-import time
 import types
 from pathlib import Path
 from typing import Any, ClassVar
@@ -24,11 +22,9 @@ def _reset_tracer_globals(monkeypatch) -> None:
     monkeypatch.setattr(tracer_module, "_OTEL_BOOTSTRAPPED", False)
     monkeypatch.setattr(tracer_module, "_OTEL_REMOTE_ENABLED", False)
     monkeypatch.setattr(tracer_module, "_EVENTS_FILE_LOCKS", {})
-    monkeypatch.setattr(tracer_module, "_EVENTS_RETENTION_PRUNED_DIRS", set())
     monkeypatch.delenv("STRIX_TELEMETRY", raising=False)
     monkeypatch.delenv("STRIX_OTEL_TELEMETRY", raising=False)
     monkeypatch.delenv("STRIX_POSTHOG_TELEMETRY", raising=False)
-    monkeypatch.delenv("STRIX_EVENTS_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("TRACELOOP_BASE_URL", raising=False)
     monkeypatch.delenv("TRACELOOP_API_KEY", raising=False)
     monkeypatch.delenv("TRACELOOP_HEADERS", raising=False)
@@ -54,7 +50,7 @@ def test_tracer_local_mode_writes_jsonl_with_correlation(monkeypatch, tmp_path) 
 
     events = _load_events(events_path)
     assert any(event["event_type"] == "tool.execution.updated" for event in events)
-    assert any(event["event_type"] == "traffic.intercepted" for event in events)
+    assert not any(event["event_type"] == "traffic.intercepted" for event in events)
 
     for event in events:
         assert event["run_id"] == "local-observability"
@@ -373,50 +369,6 @@ def test_run_name_cannot_escape_strix_runs_directory(monkeypatch, tmp_path) -> N
     assert ".." not in run_dir.name
     assert "/" not in run_dir.name
     assert "\\" not in run_dir.name
-
-
-def test_default_events_retention_prunes_old_files(monkeypatch, tmp_path) -> None:
-    monkeypatch.chdir(tmp_path)
-
-    old_events = tmp_path / "strix_runs" / "old-run" / "events.jsonl"
-    recent_events = tmp_path / "strix_runs" / "recent-run" / "events.jsonl"
-    old_events.parent.mkdir(parents=True, exist_ok=True)
-    recent_events.parent.mkdir(parents=True, exist_ok=True)
-    old_events.write_text('{"event_type":"old"}\n', encoding="utf-8")
-    recent_events.write_text('{"event_type":"recent"}\n', encoding="utf-8")
-
-    now = time.time()
-    thirty_one_days = 31 * 24 * 60 * 60
-    five_days = 5 * 24 * 60 * 60
-    old_ts = now - thirty_one_days
-    recent_ts = now - five_days
-    old_events.touch()
-    recent_events.touch()
-    os.utime(old_events, (old_ts, old_ts))
-    os.utime(recent_events, (recent_ts, recent_ts))
-
-    tracer = Tracer("retention-default")
-    set_global_tracer(tracer)
-
-    assert not old_events.exists()
-    assert not old_events.parent.exists()
-    assert recent_events.exists()
-
-
-def test_events_retention_can_be_disabled(monkeypatch, tmp_path) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("STRIX_EVENTS_RETENTION_DAYS", "0")
-
-    old_events = tmp_path / "strix_runs" / "old-run" / "events.jsonl"
-    old_events.parent.mkdir(parents=True, exist_ok=True)
-    old_events.write_text('{"event_type":"old"}\n', encoding="utf-8")
-    old_ts = time.time() - (90 * 24 * 60 * 60)
-    os.utime(old_events, (old_ts, old_ts))
-
-    tracer = Tracer("retention-disabled")
-    set_global_tracer(tracer)
-
-    assert old_events.exists()
 
 
 def test_tracer_skips_jsonl_when_telemetry_disabled(monkeypatch, tmp_path) -> None:

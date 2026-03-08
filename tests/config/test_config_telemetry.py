@@ -8,7 +8,6 @@ def test_traceloop_vars_are_tracked() -> None:
 
     assert "STRIX_OTEL_TELEMETRY" in tracked
     assert "STRIX_POSTHOG_TELEMETRY" in tracked
-    assert "STRIX_EVENTS_RETENTION_DAYS" in tracked
     assert "TRACELOOP_BASE_URL" in tracked
     assert "TRACELOOP_API_KEY" in tracked
     assert "TRACELOOP_HEADERS" in tracked
@@ -20,7 +19,6 @@ def test_apply_saved_uses_saved_traceloop_vars(monkeypatch, tmp_path) -> None:
         json.dumps(
             {
                 "env": {
-                    "STRIX_EVENTS_RETENTION_DAYS": "14",
                     "TRACELOOP_BASE_URL": "https://otel.example.com",
                     "TRACELOOP_API_KEY": "api-key",
                     "TRACELOOP_HEADERS": "x-test=value",
@@ -31,14 +29,12 @@ def test_apply_saved_uses_saved_traceloop_vars(monkeypatch, tmp_path) -> None:
     )
 
     monkeypatch.setattr(Config, "_config_file_override", config_path)
-    monkeypatch.delenv("STRIX_EVENTS_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("TRACELOOP_BASE_URL", raising=False)
     monkeypatch.delenv("TRACELOOP_API_KEY", raising=False)
     monkeypatch.delenv("TRACELOOP_HEADERS", raising=False)
 
     applied = Config.apply_saved()
 
-    assert applied["STRIX_EVENTS_RETENTION_DAYS"] == "14"
     assert applied["TRACELOOP_BASE_URL"] == "https://otel.example.com"
     assert applied["TRACELOOP_API_KEY"] == "api-key"
     assert applied["TRACELOOP_HEADERS"] == "x-test=value"
