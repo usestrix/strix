@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -18,8 +19,12 @@ from strix.llm.utils import (
     parse_tool_invocations,
 )
 from strix.skills import load_skills
+from strix.telemetry import posthog
 from strix.tools import get_tools_prompt
 from strix.utils.resource_paths import get_strix_resource_path
+
+
+logger = logging.getLogger(__name__)
 
 
 litellm.drop_params = True
@@ -75,6 +80,11 @@ class LLM:
         else:
             self._reasoning_effort = "high"
 
+        try:
+            posthog.configure_litellm_posthog()
+        except Exception as e:
+            logger.error(f"Could not config posthog traces: {e}")            
+
     def _load_system_prompt(self, agent_name: str | None) -> str:
         if not agent_name:
             return ""
@@ -129,18 +139,14 @@ class LLM:
     async def _stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[LLMResponse]:
         accumulated = ""
         chunks: list[Any] = []
-        done_streaming = 0
+        found_function_end = False
 
         self._total_stats.requests += 1
-        response = await acompletion(**self._build_completion_args(messages), stream=True)
+        completion_args = self._build_completion_args(messages)
+        response = await acompletion(**completion_args, stream=True)
 
         async for chunk in response:
-            chunks.append(chunk)
-            if done_streaming:
-                done_streaming += 1
-                if getattr(chunk, "usage", None) or done_streaming > 5:
-                    break
-                continue
+            chunks.append(chunk)            
             delta = self._get_chunk_content(chunk)
             if delta:
                 accumulated += delta
@@ -149,12 +155,15 @@ class LLM:
                     pos = accumulated.find(end_tag)
                     accumulated = accumulated[: pos + len(end_tag)]
                     yield LLMResponse(content=accumulated)
-                    done_streaming = 1
+                    found_function_end = True
                     continue
-                yield LLMResponse(content=accumulated)
+                
+                if not found_function_end:
+                    yield LLMResponse(content=accumulated)
 
         if chunks:
-            self._update_usage_stats(stream_chunk_builder(chunks))
+            final_response = stream_chunk_builder(chunks)
+            self._update_usage_stats(final_response)
 
         accumulated = normalize_tool_format(accumulated)
         accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
@@ -209,6 +218,29 @@ class LLM:
             args["api_key"] = self.config.api_key
         if self.config.api_base:
             args["api_base"] = self.config.api_base
+        metadata: dict[str, Any] = {}
+
+        try:
+            from strix.telemetry.tracer import get_global_tracer
+
+            tracer = get_global_tracer()
+            if tracer:
+                run_id = tracer.run_id
+                metadata["$ai_trace_id"] = run_id
+        except Exception as e:
+            logger.error(f"Could not set trace metadata: {e}")
+        if metadata:
+            args["metadata"] = metadata
+
+        if api_key := Config.get("llm_api_key"):
+            args["api_key"] = api_key
+        if api_base := (
+            Config.get("llm_api_base")
+            or Config.get("openai_api_base")
+            or Config.get("litellm_base_url")
+            or Config.get("ollama_api_base")
+        ):
+            args["api_base"] = api_base
         if self._supports_reasoning():
             args["reasoning_effort"] = self._reasoning_effort
 
