@@ -9,8 +9,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from opentelemetry.sdk.trace import ReadableSpan
-from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
+from opentelemetry import trace
+from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+from opentelemetry.sdk.trace.export import (
+    BatchSpanProcessor,
+    SimpleSpanProcessor,
+    SpanExporter,
+    SpanExportResult,
+)
 from scrubadub import Scrubber
 from scrubadub.detectors import RegexDetector
 from scrubadub.filth import Filth
@@ -275,6 +281,103 @@ class JsonlSpanExporter(SpanExporter):
         return record
 
 
+def bootstrap_otel(
+    *,
+    bootstrapped: bool,
+    remote_enabled_state: bool,
+    bootstrap_lock: threading.Lock,
+    traceloop: Any,
+    base_url: str,
+    api_key: str,
+    headers_raw: str,
+    output_path_getter: Callable[[], Path],
+    run_metadata_getter: Callable[[], dict[str, Any]],
+    sanitizer: Callable[[Any], Any],
+    write_lock_getter: Callable[[Path], threading.Lock],
+    tracer_name: str = "strix.telemetry.tracer",
+) -> tuple[Any, bool, bool, bool]:
+    with bootstrap_lock:
+        if bootstrapped:
+            return (
+                trace.get_tracer(tracer_name),
+                remote_enabled_state,
+                bootstrapped,
+                remote_enabled_state,
+            )
+
+        local_exporter = JsonlSpanExporter(
+            output_path_getter=output_path_getter,
+            run_metadata_getter=run_metadata_getter,
+            sanitizer=sanitizer,
+            write_lock_getter=write_lock_getter,
+        )
+        local_processor = SimpleSpanProcessor(local_exporter)
+
+        headers = parse_traceloop_headers(headers_raw)
+        remote_enabled = bool(base_url and api_key)
+        otlp_headers = headers
+        if remote_enabled:
+            otlp_headers = {"Authorization": f"Bearer {api_key}"}
+            otlp_headers.update(headers)
+
+        otel_init_ok = False
+        if traceloop:
+            try:
+                init_kwargs: dict[str, Any] = {
+                    "app_name": "strix-agent",
+                    "processor": local_processor,
+                    "telemetry_enabled": False,
+                    "resource_attributes": default_resource_attributes(),
+                }
+                if remote_enabled:
+                    init_kwargs.update(
+                        {
+                            "api_endpoint": base_url,
+                            "api_key": api_key,
+                            "headers": headers,
+                        }
+                    )
+                traceloop.init(**init_kwargs)
+                otel_init_ok = True
+            except Exception:
+                logger.exception("Failed to initialize Traceloop/OpenLLMetry")
+                remote_enabled = False
+
+        if not otel_init_ok:
+            from opentelemetry.sdk.resources import Resource
+
+            provider = TracerProvider(resource=Resource.create(default_resource_attributes()))
+            provider.add_span_processor(local_processor)
+            if remote_enabled:
+                try:
+                    from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+                        OTLPSpanExporter,
+                    )
+
+                    endpoint = base_url.rstrip("/") + "/v1/traces"
+                    provider.add_span_processor(
+                        BatchSpanProcessor(
+                            OTLPSpanExporter(endpoint=endpoint, headers=otlp_headers)
+                        )
+                    )
+                except Exception:
+                    logger.exception("Failed to configure OTLP HTTP exporter")
+                    remote_enabled = False
+
+            try:
+                trace.set_tracer_provider(provider)
+                otel_init_ok = True
+            except Exception:
+                logger.exception("Failed to set OpenTelemetry tracer provider")
+                remote_enabled = False
+
+        otel_tracer = trace.get_tracer(tracer_name)
+        if otel_init_ok:
+            return otel_tracer, remote_enabled, True, remote_enabled
+
+        return otel_tracer, remote_enabled, bootstrapped, remote_enabled_state
+
+
 def calculate_duration_seconds(start_time: str, end_time: str | None) -> float:
     try:
         start = datetime.fromisoformat(start_time.replace("Z", "+00:00"))
@@ -365,7 +468,10 @@ def save_run_artifacts(
                     file_ref = location.get("file", "unknown")
                     line_ref = ""
                     if location.get("start_line") is not None:
-                        if location.get("end_line") and location["end_line"] != location["start_line"]:
+                        if (
+                            location.get("end_line")
+                            and location["end_line"] != location["start_line"]
+                        ):
                             line_ref = f" (lines {location['start_line']}-{location['end_line']})"
                         else:
                             line_ref = f" (line {location['start_line']})"

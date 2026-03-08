@@ -2,18 +2,12 @@ import json
 import logging
 import threading
 import time
-from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
 from opentelemetry import trace
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import (
-    BatchSpanProcessor,
-    SimpleSpanProcessor,
-)
 from opentelemetry.trace import SpanContext, SpanKind
 
 from strix.config import Config
@@ -22,15 +16,13 @@ from strix.telemetry.flags import is_otel_enabled
 from strix.telemetry.utils import (
     TelemetrySanitizer,
     append_jsonl_record,
+    bootstrap_otel,
     calculate_duration_seconds,
-    default_resource_attributes,
     format_span_id,
     format_trace_id,
     get_events_write_lock,
-    JsonlSpanExporter,
-    parse_traceloop_headers,
-    save_run_artifacts,
     sanitize_run_dir_name,
+    save_run_artifacts,
 )
 
 
@@ -129,8 +121,8 @@ class Tracer:
             return active.run_metadata
         return self.run_metadata
 
-    def _setup_telemetry(self) -> None:  # noqa: PLR0915
-        global _OTEL_BOOTSTRAPPED, _OTEL_REMOTE_ENABLED  # noqa: PLW0603
+    def _setup_telemetry(self) -> None:
+        global _OTEL_BOOTSTRAPPED, _OTEL_REMOTE_ENABLED
 
         if not self._telemetry_enabled:
             self._otel_tracer = None
@@ -139,87 +131,29 @@ class Tracer:
 
         run_dir = self.get_run_dir()
         self._events_file_path = run_dir / "events.jsonl"
+        base_url = (Config.get("traceloop_base_url") or "").strip()
+        api_key = (Config.get("traceloop_api_key") or "").strip()
+        headers_raw = Config.get("traceloop_headers") or ""
 
-        with _OTEL_BOOTSTRAP_LOCK:
-            if _OTEL_BOOTSTRAPPED:
-                self._otel_tracer = trace.get_tracer("strix.telemetry.tracer")
-                self._remote_export_enabled = _OTEL_REMOTE_ENABLED
-                return
-
-            local_exporter = JsonlSpanExporter(
-                output_path_getter=self._active_events_file_path,
-                run_metadata_getter=self._active_run_metadata,
-                sanitizer=self._sanitize_data,
-                write_lock_getter=self._get_events_write_lock,
-            )
-            local_processor = SimpleSpanProcessor(local_exporter)
-
-            base_url = (Config.get("traceloop_base_url") or "").strip()
-            api_key = (Config.get("traceloop_api_key") or "").strip()
-            headers = parse_traceloop_headers(Config.get("traceloop_headers") or "")
-
-            remote_enabled = bool(base_url and api_key)
-            otlp_headers = headers
-            if remote_enabled:
-                otlp_headers = {"Authorization": f"Bearer {api_key}"}
-                otlp_headers.update(headers)
-
-            otel_init_ok = False
-            if Traceloop:
-                try:
-                    init_kwargs: dict[str, Any] = {
-                        "app_name": "strix-agent",
-                        "processor": local_processor,
-                        "telemetry_enabled": False,
-                        "resource_attributes": default_resource_attributes(),
-                    }
-                    if remote_enabled:
-                        init_kwargs.update(
-                            {
-                                "api_endpoint": base_url,
-                                "api_key": api_key,
-                                "headers": headers,
-                            }
-                        )
-                    Traceloop.init(**init_kwargs)
-                    otel_init_ok = True
-                except Exception:
-                    logger.exception("Failed to initialize Traceloop/OpenLLMetry")
-                    remote_enabled = False
-
-            if not otel_init_ok:
-                from opentelemetry.sdk.resources import Resource
-
-                provider = TracerProvider(resource=Resource.create(default_resource_attributes()))
-                provider.add_span_processor(local_processor)
-                if remote_enabled:
-                    try:
-                        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
-                            OTLPSpanExporter,
-                        )
-
-                        endpoint = base_url.rstrip("/") + "/v1/traces"
-                        provider.add_span_processor(
-                            BatchSpanProcessor(
-                                OTLPSpanExporter(endpoint=endpoint, headers=otlp_headers)
-                            )
-                        )
-                    except Exception:
-                        logger.exception("Failed to configure OTLP HTTP exporter")
-                        remote_enabled = False
-
-                try:
-                    trace.set_tracer_provider(provider)
-                    otel_init_ok = True
-                except Exception:
-                    logger.exception("Failed to set OpenTelemetry tracer provider")
-                    remote_enabled = False
-
-            self._otel_tracer = trace.get_tracer("strix.telemetry.tracer")
-            self._remote_export_enabled = remote_enabled
-            if otel_init_ok:
-                _OTEL_REMOTE_ENABLED = remote_enabled
-                _OTEL_BOOTSTRAPPED = True
+        (
+            self._otel_tracer,
+            self._remote_export_enabled,
+            _OTEL_BOOTSTRAPPED,
+            _OTEL_REMOTE_ENABLED,
+        ) = bootstrap_otel(
+            bootstrapped=_OTEL_BOOTSTRAPPED,
+            remote_enabled_state=_OTEL_REMOTE_ENABLED,
+            bootstrap_lock=_OTEL_BOOTSTRAP_LOCK,
+            traceloop=Traceloop,
+            base_url=base_url,
+            api_key=api_key,
+            headers_raw=headers_raw,
+            output_path_getter=self._active_events_file_path,
+            run_metadata_getter=self._active_run_metadata,
+            sanitizer=self._sanitize_data,
+            write_lock_getter=self._get_events_write_lock,
+            tracer_name="strix.telemetry.tracer",
+        )
 
     def _set_association_properties(self, properties: dict[str, Any]) -> None:
         if Traceloop is None:
