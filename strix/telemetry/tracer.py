@@ -321,8 +321,10 @@ class Tracer:
             headers = self._parse_traceloop_headers()
 
             remote_enabled = bool(base_url and api_key)
-            if remote_enabled and not headers:
-                headers = {"Authorization": f"Bearer {api_key}"}
+            otlp_headers = headers
+            if remote_enabled:
+                otlp_headers = {"Authorization": f"Bearer {api_key}"}
+                otlp_headers.update(headers)
 
             otel_init_ok = False
             if Traceloop:
@@ -360,7 +362,9 @@ class Tracer:
 
                         endpoint = base_url.rstrip("/") + "/v1/traces"
                         provider.add_span_processor(
-                            BatchSpanProcessor(OTLPSpanExporter(endpoint=endpoint, headers=headers))
+                            BatchSpanProcessor(
+                                OTLPSpanExporter(endpoint=endpoint, headers=otlp_headers)
+                            )
                         )
                     except Exception:
                         logger.exception("Failed to configure OTLP HTTP exporter")

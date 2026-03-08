@@ -1,11 +1,13 @@
 import json
 import os
+import sys
 import time
+import types
 from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 
 from strix.telemetry import tracer as tracer_module
 from strix.telemetry.tracer import Tracer, set_global_tracer
@@ -151,6 +153,47 @@ def test_tracer_local_mode_avoids_traceloop_remote_endpoint(monkeypatch, tmp_pat
     assert "headers" not in init_kwargs
     assert isinstance(init_kwargs["processor"], SimpleSpanProcessor)
     assert tracer._remote_export_enabled is False
+
+
+def test_otlp_fallback_includes_auth_and_custom_headers(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(tracer_module, "Traceloop", None)
+    monkeypatch.setenv("TRACELOOP_BASE_URL", "https://otel.example.com")
+    monkeypatch.setenv("TRACELOOP_API_KEY", "test-api-key")
+    monkeypatch.setenv("TRACELOOP_HEADERS", '{"x-custom":"header"}')
+
+    captured: dict[str, Any] = {}
+
+    class FakeOTLPSpanExporter:
+        def __init__(self, endpoint: str, headers: dict[str, str] | None = None, **kwargs: Any):
+            captured["endpoint"] = endpoint
+            captured["headers"] = headers or {}
+            captured["kwargs"] = kwargs
+
+        def export(self, spans: Any) -> SpanExportResult:  # noqa: ARG002
+            return SpanExportResult.SUCCESS
+
+        def shutdown(self) -> None:
+            return None
+
+        def force_flush(self, timeout_millis: int = 30_000) -> bool:  # noqa: ARG002
+            return True
+
+    fake_module = types.ModuleType("opentelemetry.exporter.otlp.proto.http.trace_exporter")
+    fake_module.OTLPSpanExporter = FakeOTLPSpanExporter
+    monkeypatch.setitem(
+        sys.modules,
+        "opentelemetry.exporter.otlp.proto.http.trace_exporter",
+        fake_module,
+    )
+
+    tracer = Tracer("otlp-fallback")
+    set_global_tracer(tracer)
+
+    assert tracer._remote_export_enabled is True
+    assert captured["endpoint"] == "https://otel.example.com/v1/traces"
+    assert captured["headers"]["Authorization"] == "Bearer test-api-key"
+    assert captured["headers"]["x-custom"] == "header"
 
 
 def test_traceloop_init_failure_does_not_mark_bootstrapped_on_provider_failure(
