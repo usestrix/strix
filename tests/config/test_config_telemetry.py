@@ -6,6 +6,8 @@ from strix.config.config import Config
 def test_traceloop_vars_are_tracked() -> None:
     tracked = Config.tracked_vars()
 
+    assert "STRIX_OTEL_TELEMETRY" in tracked
+    assert "STRIX_POSTHOG_TELEMETRY" in tracked
     assert "STRIX_EVENTS_RETENTION_DAYS" in tracked
     assert "TRACELOOP_BASE_URL" in tracked
     assert "TRACELOOP_API_KEY" in tracked

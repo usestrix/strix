@@ -46,7 +46,15 @@ Configure Strix using environment variables or a config file.
 </ParamField>
 
 <ParamField path="STRIX_TELEMETRY" default="1" type="string">
-  Enable/disable anonymous telemetry. Set to `0`, `false`, `no`, or `off` to disable.
+  Global telemetry default toggle. Set to `0`, `false`, `no`, or `off` to disable both PostHog and OTEL unless overridden by per-channel flags below.
+</ParamField>
+
+<ParamField path="STRIX_OTEL_TELEMETRY" type="string">
+  Enable/disable OpenTelemetry run observability independently. When unset, falls back to `STRIX_TELEMETRY`.
+</ParamField>
+
+<ParamField path="STRIX_POSTHOG_TELEMETRY" type="string">
+  Enable/disable PostHog product telemetry independently. When unset, falls back to `STRIX_TELEMETRY`.
 </ParamField>
 
 <ParamField path="STRIX_EVENTS_RETENTION_DAYS" default="30" type="integer">

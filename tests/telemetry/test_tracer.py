@@ -26,6 +26,8 @@ def _reset_tracer_globals(monkeypatch) -> None:
     monkeypatch.setattr(tracer_module, "_EVENTS_FILE_LOCKS", {})
     monkeypatch.setattr(tracer_module, "_EVENTS_RETENTION_PRUNED_DIRS", set())
     monkeypatch.delenv("STRIX_TELEMETRY", raising=False)
+    monkeypatch.delenv("STRIX_OTEL_TELEMETRY", raising=False)
+    monkeypatch.delenv("STRIX_POSTHOG_TELEMETRY", raising=False)
     monkeypatch.delenv("STRIX_EVENTS_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("TRACELOOP_BASE_URL", raising=False)
     monkeypatch.delenv("TRACELOOP_API_KEY", raising=False)
@@ -428,3 +430,17 @@ def test_tracer_skips_jsonl_when_telemetry_disabled(monkeypatch, tmp_path) -> No
 
     events_path = tmp_path / "strix_runs" / "telemetry-disabled" / "events.jsonl"
     assert not events_path.exists()
+
+
+def test_tracer_otel_flag_overrides_global_telemetry(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("STRIX_TELEMETRY", "0")
+    monkeypatch.setenv("STRIX_OTEL_TELEMETRY", "1")
+
+    tracer = Tracer("otel-enabled")
+    set_global_tracer(tracer)
+    tracer.log_chat_message("hello", "assistant", "agent-1")
+    tracer.save_run_data(mark_complete=True)
+
+    events_path = tmp_path / "strix_runs" / "otel-enabled" / "events.jsonl"
+    assert events_path.exists()

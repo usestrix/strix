@@ -24,6 +24,7 @@ from opentelemetry.trace import SpanContext, SpanKind
 
 from strix.config import Config
 from strix.telemetry import posthog
+from strix.telemetry.flags import is_otel_enabled
 
 
 try:
@@ -231,7 +232,7 @@ class Tracer:
         self._last_streaming_event_ts: dict[str, float] = {}
         self._last_streaming_event_len: dict[str, int] = {}
         self._events_retention_days = self._resolve_events_retention_days()
-        self._telemetry_enabled = posthog._is_enabled()
+        self._telemetry_enabled = is_otel_enabled()
 
         self._otel_tracer: Any = None
         self._remote_export_enabled = False

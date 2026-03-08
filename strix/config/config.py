@@ -47,6 +47,8 @@ class Config:
 
     # Telemetry
     strix_telemetry = "1"
+    strix_otel_telemetry = None
+    strix_posthog_telemetry = None
     strix_events_retention_days = "30"
     traceloop_base_url = None
     traceloop_api_key = None

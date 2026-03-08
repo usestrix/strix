@@ -44,4 +44,14 @@ Telemetry in Strix is entirely **optional**:
 export STRIX_TELEMETRY=0
 ```
 
-You can set this environment variable before running Strix to disable **all** telemetry.
+`STRIX_TELEMETRY` acts as the global default for both channels.
+
+You can also control channels independently:
+
+```bash
+# Disable only OpenTelemetry run traces
+export STRIX_OTEL_TELEMETRY=0
+
+# Disable only PostHog product telemetry
+export STRIX_POSTHOG_TELEMETRY=0
+```

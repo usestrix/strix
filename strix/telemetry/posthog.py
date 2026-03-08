@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from strix.config import Config
+from strix.telemetry.flags import is_posthog_enabled
 
 
 if TYPE_CHECKING:
@@ -19,7 +19,7 @@ _SESSION_ID = uuid4().hex[:16]
 
 
 def _is_enabled() -> bool:
-    return (Config.get("strix_telemetry") or "1").lower() not in ("0", "false", "no", "off")
+    return is_posthog_enabled()
 
 
 def _is_first_run() -> bool:

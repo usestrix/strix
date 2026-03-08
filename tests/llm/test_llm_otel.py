@@ -20,7 +20,8 @@ def test_llm_adds_otel_callback_without_clobbering_existing(monkeypatch) -> None
 
 
 def test_llm_skips_otel_callback_when_telemetry_disabled(monkeypatch) -> None:
-    monkeypatch.setenv("STRIX_TELEMETRY", "0")
+    monkeypatch.setenv("STRIX_TELEMETRY", "1")
+    monkeypatch.setenv("STRIX_OTEL_TELEMETRY", "0")
     monkeypatch.setattr(litellm, "callbacks", ["custom-callback"])
 
     llm = LLM(LLMConfig(model_name="openai/gpt-5"), agent_name=None)
@@ -50,7 +51,8 @@ def test_llm_trace_metadata_contains_run_and_agent_context(monkeypatch) -> None:
 
 
 def test_llm_otel_callback_registration_is_thread_safe(monkeypatch) -> None:
-    monkeypatch.setenv("STRIX_TELEMETRY", "1")
+    monkeypatch.setenv("STRIX_TELEMETRY", "0")
+    monkeypatch.setenv("STRIX_OTEL_TELEMETRY", "1")
     monkeypatch.setattr(litellm, "callbacks", [])
 
     threads = [

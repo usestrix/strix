@@ -19,7 +19,7 @@ from strix.llm.utils import (
     parse_tool_invocations,
 )
 from strix.skills import load_skills
-from strix.telemetry import posthog
+from strix.telemetry.flags import is_otel_enabled
 from strix.tools import get_tools_prompt
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -30,7 +30,7 @@ _LITELLM_CALLBACK_LOCK = threading.Lock()
 
 
 def _ensure_litellm_otel_callback() -> None:
-    if not posthog._is_enabled():
+    if not is_otel_enabled():
         return
 
     with _LITELLM_CALLBACK_LOCK:
