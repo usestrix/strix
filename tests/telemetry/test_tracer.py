@@ -23,6 +23,7 @@ def _reset_tracer_globals(monkeypatch) -> None:
     monkeypatch.setattr(tracer_module, "_global_tracer", None)
     monkeypatch.setattr(tracer_module, "_OTEL_BOOTSTRAPPED", False)
     monkeypatch.setattr(tracer_module, "_OTEL_REMOTE_ENABLED", False)
+    monkeypatch.setattr(tracer_module, "_EVENTS_FILE_LOCKS", {})
     monkeypatch.setattr(tracer_module, "_EVENTS_RETENTION_PRUNED_DIRS", set())
     monkeypatch.delenv("STRIX_TELEMETRY", raising=False)
     monkeypatch.delenv("STRIX_EVENTS_RETENTION_DAYS", raising=False)
@@ -337,6 +338,21 @@ def test_set_run_name_updates_traceloop_association_properties(monkeypatch, tmp_
     assert FakeTraceloop.associations
     assert FakeTraceloop.associations[-1]["run_id"] == "renamed-run"
     assert FakeTraceloop.associations[-1]["run_name"] == "renamed-run"
+
+
+def test_events_write_locks_are_scoped_by_events_file(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("STRIX_TELEMETRY", "0")
+
+    tracer_one = Tracer("lock-run-a")
+    tracer_two = Tracer("lock-run-b")
+
+    lock_a_from_one = tracer_one._get_events_write_lock(tracer_one.events_file_path)
+    lock_a_from_two = tracer_two._get_events_write_lock(tracer_one.events_file_path)
+    lock_b = tracer_two._get_events_write_lock(tracer_two.events_file_path)
+
+    assert lock_a_from_one is lock_a_from_two
+    assert lock_a_from_one is not lock_b
 
 
 def test_default_events_retention_prunes_old_files(monkeypatch, tmp_path) -> None:

@@ -38,7 +38,8 @@ _global_tracer: Optional["Tracer"] = None
 _OTEL_BOOTSTRAP_LOCK = threading.Lock()
 _OTEL_BOOTSTRAPPED = False
 _OTEL_REMOTE_ENABLED = False
-_EVENTS_FILE_WRITE_LOCK = threading.Lock()
+_EVENTS_FILE_LOCKS_LOCK = threading.Lock()
+_EVENTS_FILE_LOCKS: dict[str, threading.Lock] = {}
 _EVENTS_RETENTION_PRUNE_LOCK = threading.Lock()
 _EVENTS_RETENTION_PRUNED_DIRS: set[str] = set()
 
@@ -104,12 +105,12 @@ class JsonlSpanExporter(SpanExporter):
         output_path_getter: Callable[[], Path],
         run_metadata_getter: Callable[[], dict[str, Any]],
         sanitizer: Callable[[Any], Any],
-        write_lock: threading.Lock,
+        write_lock_getter: Callable[[Path], threading.Lock],
     ):
         self._output_path_getter = output_path_getter
         self._run_metadata_getter = run_metadata_getter
         self._sanitize = sanitizer
-        self._lock = write_lock
+        self._write_lock_getter = write_lock_getter
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         records: list[dict[str, Any]] = []
@@ -126,7 +127,7 @@ class JsonlSpanExporter(SpanExporter):
         try:
             output_path = self._output_path_getter()
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._lock, output_path.open("a", encoding="utf-8") as f:
+            with self._write_lock_getter(output_path), output_path.open("a", encoding="utf-8") as f:
                 for record in records:
                     f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
@@ -229,7 +230,6 @@ class Tracer:
         self._last_streaming_event_ts: dict[str, float] = {}
         self._last_streaming_event_len: dict[str, int] = {}
         self._events_retention_days = self._resolve_events_retention_days()
-        self._events_write_lock = _EVENTS_FILE_WRITE_LOCK
         self._telemetry_enabled = posthog._is_enabled()
 
         self._otel_tracer: Any = None
@@ -252,6 +252,16 @@ class Tracer:
         if active and active._events_file_path is not None:
             return active._events_file_path
         return self.events_file_path
+
+    def _get_events_write_lock(self, output_path: Path | None = None) -> threading.Lock:
+        path = output_path or self.events_file_path
+        path_key = str(path.resolve(strict=False))
+        with _EVENTS_FILE_LOCKS_LOCK:
+            lock = _EVENTS_FILE_LOCKS.get(path_key)
+            if lock is None:
+                lock = threading.Lock()
+                _EVENTS_FILE_LOCKS[path_key] = lock
+            return lock
 
     def _active_run_metadata(self) -> dict[str, Any]:
         active = get_global_tracer()
@@ -313,7 +323,7 @@ class Tracer:
                 output_path_getter=self._active_events_file_path,
                 run_metadata_getter=self._active_run_metadata,
                 sanitizer=self._sanitize_data,
-                write_lock=self._events_write_lock,
+                write_lock_getter=self._get_events_write_lock,
             )
             local_processor = SimpleSpanProcessor(local_exporter)
 
@@ -487,7 +497,9 @@ class Tracer:
         try:
             output_path = self.events_file_path
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with self._events_write_lock, output_path.open("a", encoding="utf-8") as f:
+            with self._get_events_write_lock(output_path), output_path.open(
+                "a", encoding="utf-8"
+            ) as f:
                 f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
             logger.exception("Failed to append JSONL event record")
