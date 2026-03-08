@@ -115,6 +115,8 @@ def test_tracer_remote_mode_configures_traceloop_export(monkeypatch, tmp_path) -
     assert init_kwargs["api_key"] == "test-api-key"
     assert init_kwargs["headers"] == {"x-custom": "header"}
     assert isinstance(init_kwargs["processor"], SimpleSpanProcessor)
+    assert "strix.run_id" not in init_kwargs["resource_attributes"]
+    assert "strix.run_name" not in init_kwargs["resource_attributes"]
 
     events_path = tmp_path / "strix_runs" / "remote-observability" / "events.jsonl"
     events = _load_events(events_path)
@@ -266,6 +268,31 @@ def test_set_run_name_resets_cached_paths(monkeypatch, tmp_path) -> None:
     events = _load_events(new_events_path)
     assert any(event["event_type"] == "run.started" for event in events)
     assert any(event["event_type"] == "chat.message" for event in events)
+
+
+def test_set_run_name_updates_traceloop_association_properties(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeTraceloop:
+        associations: ClassVar[list[dict[str, Any]]] = []
+
+        @staticmethod
+        def init(**kwargs: Any) -> None:  # noqa: ARG004
+            return None
+
+        @staticmethod
+        def set_association_properties(properties: dict[str, Any]) -> None:
+            FakeTraceloop.associations.append(properties)
+
+    monkeypatch.setattr(tracer_module, "Traceloop", FakeTraceloop)
+
+    tracer = Tracer()
+    set_global_tracer(tracer)
+    tracer.set_run_name("renamed-run")
+
+    assert FakeTraceloop.associations
+    assert FakeTraceloop.associations[-1]["run_id"] == "renamed-run"
+    assert FakeTraceloop.associations[-1]["run_name"] == "renamed-run"
 
 
 def test_default_events_retention_prunes_old_files(monkeypatch, tmp_path) -> None:

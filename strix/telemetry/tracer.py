@@ -153,7 +153,12 @@ class JsonlSpanExporter(SpanExporter):
 
         event_type = str(attributes.get("gen_ai.operation.name", span.name))
         run_metadata = self._run_metadata_getter()
-        run_id_attr = attributes.get("strix.run_id") or span.resource.attributes.get("strix.run_id")
+        run_id_attr = (
+            attributes.get("strix.run_id")
+            or attributes.get("strix_run_id")
+            or run_metadata.get("run_id")
+            or span.resource.attributes.get("strix.run_id")
+        )
 
         record: dict[str, Any] = {
             "timestamp": _iso_from_unix_ns(span.end_time) or datetime.now(UTC).isoformat(),
@@ -257,9 +262,6 @@ class Tracer:
         return {
             "service.name": "strix-agent",
             "service.namespace": "strix",
-            "strix.run_id": self.run_id,
-            "strix.run_name": self.run_name or "",
-            "strix.start_time": self.start_time,
         }
 
     def _parse_traceloop_headers(self) -> dict[str, str]:
@@ -592,6 +594,7 @@ class Tracer:
         self.run_metadata["run_id"] = run_name
         self._run_dir = None
         self._events_file_path = None
+        self._set_association_properties({"run_id": self.run_id, "run_name": self.run_name or ""})
         self._emit_run_started_event()
 
     def _emit_run_started_event(self) -> None:
