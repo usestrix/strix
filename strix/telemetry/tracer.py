@@ -17,12 +17,10 @@ from strix.telemetry.utils import (
     TelemetrySanitizer,
     append_jsonl_record,
     bootstrap_otel,
-    calculate_duration_seconds,
     format_span_id,
     format_trace_id,
     get_events_write_lock,
     sanitize_run_dir_name,
-    save_run_artifacts,
 )
 
 
@@ -629,21 +627,154 @@ class Tracer:
                 self.run_metadata["end_time"] = self.end_time
                 self.run_metadata["status"] = "completed"
 
-            save_run_artifacts(
-                run_dir=run_dir,
-                final_scan_result=self.final_scan_result,
-                vulnerability_reports=self.vulnerability_reports,
-                saved_vuln_ids=self._saved_vuln_ids,
-            )
+            if self.final_scan_result:
+                penetration_test_report_file = run_dir / "penetration_test_report.md"
+                with penetration_test_report_file.open("w", encoding="utf-8") as f:
+                    f.write("# Security Penetration Test Report\n\n")
+                    f.write(
+                        f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+                    )
+                    f.write(f"{self.final_scan_result}\n")
+                logger.info(
+                    "Saved final penetration test report to: %s",
+                    penetration_test_report_file,
+                )
+
+            if self.vulnerability_reports:
+                vuln_dir = run_dir / "vulnerabilities"
+                vuln_dir.mkdir(exist_ok=True)
+
+                new_reports = [
+                    report
+                    for report in self.vulnerability_reports
+                    if report["id"] not in self._saved_vuln_ids
+                ]
+
+                severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+                sorted_reports = sorted(
+                    self.vulnerability_reports,
+                    key=lambda report: (
+                        severity_order.get(report["severity"], 5),
+                        report["timestamp"],
+                    ),
+                )
+
+                for report in new_reports:
+                    vuln_file = vuln_dir / f"{report['id']}.md"
+                    with vuln_file.open("w", encoding="utf-8") as f:
+                        f.write(f"# {report.get('title', 'Untitled Vulnerability')}\n\n")
+                        f.write(f"**ID:** {report.get('id', 'unknown')}\n")
+                        f.write(f"**Severity:** {report.get('severity', 'unknown').upper()}\n")
+                        f.write(f"**Found:** {report.get('timestamp', 'unknown')}\n")
+
+                        metadata_fields: list[tuple[str, Any]] = [
+                            ("Target", report.get("target")),
+                            ("Endpoint", report.get("endpoint")),
+                            ("Method", report.get("method")),
+                            ("CVE", report.get("cve")),
+                            ("CWE", report.get("cwe")),
+                        ]
+                        cvss_score = report.get("cvss")
+                        if cvss_score is not None:
+                            metadata_fields.append(("CVSS", cvss_score))
+
+                        for label, value in metadata_fields:
+                            if value:
+                                f.write(f"**{label}:** {value}\n")
+
+                        f.write("\n## Description\n\n")
+                        description = report.get("description") or "No description provided."
+                        f.write(f"{description}\n\n")
+
+                        if report.get("impact"):
+                            f.write("## Impact\n\n")
+                            f.write(f"{report['impact']}\n\n")
+
+                        if report.get("technical_analysis"):
+                            f.write("## Technical Analysis\n\n")
+                            f.write(f"{report['technical_analysis']}\n\n")
+
+                        if report.get("poc_description") or report.get("poc_script_code"):
+                            f.write("## Proof of Concept\n\n")
+                            if report.get("poc_description"):
+                                f.write(f"{report['poc_description']}\n\n")
+                            if report.get("poc_script_code"):
+                                f.write("```\n")
+                                f.write(f"{report['poc_script_code']}\n")
+                                f.write("```\n\n")
+
+                        if report.get("code_locations"):
+                            f.write("## Code Analysis\n\n")
+                            for index, location in enumerate(report["code_locations"]):
+                                prefix = f"**Location {index + 1}:**"
+                                file_ref = location.get("file", "unknown")
+                                line_ref = ""
+                                if location.get("start_line") is not None:
+                                    if (
+                                        location.get("end_line")
+                                        and location["end_line"] != location["start_line"]
+                                    ):
+                                        line_ref = (
+                                            f" (lines {location['start_line']}-{location['end_line']})"
+                                        )
+                                    else:
+                                        line_ref = f" (line {location['start_line']})"
+                                f.write(f"{prefix} `{file_ref}`{line_ref}\n")
+                                if location.get("label"):
+                                    f.write(f"  {location['label']}\n")
+                                if location.get("snippet"):
+                                    f.write(f"  ```\n  {location['snippet']}\n  ```\n")
+                                if location.get("fix_before") or location.get("fix_after"):
+                                    f.write("\n  **Suggested Fix:**\n")
+                                    f.write("```diff\n")
+                                    if location.get("fix_before"):
+                                        for line in location["fix_before"].splitlines():
+                                            f.write(f"- {line}\n")
+                                    if location.get("fix_after"):
+                                        for line in location["fix_after"].splitlines():
+                                            f.write(f"+ {line}\n")
+                                    f.write("```\n")
+                                f.write("\n")
+
+                        if report.get("remediation_steps"):
+                            f.write("## Remediation\n\n")
+                            f.write(f"{report['remediation_steps']}\n\n")
+
+                    self._saved_vuln_ids.add(report["id"])
+
+                vuln_csv_file = run_dir / "vulnerabilities.csv"
+                with vuln_csv_file.open("w", encoding="utf-8", newline="") as f:
+                    import csv
+
+                    fieldnames = ["id", "title", "severity", "timestamp", "file"]
+                    writer = csv.DictWriter(f, fieldnames=fieldnames)
+                    writer.writeheader()
+
+                    for report in sorted_reports:
+                        writer.writerow(
+                            {
+                                "id": report["id"],
+                                "title": report["title"],
+                                "severity": report["severity"].upper(),
+                                "timestamp": report["timestamp"],
+                                "file": f"vulnerabilities/{report['id']}.md",
+                            }
+                        )
+
+                if new_reports:
+                    logger.info(
+                        "Saved %d new vulnerability report(s) to: %s",
+                        len(new_reports),
+                        vuln_dir,
+                    )
+                logger.info("Updated vulnerability index: %s", vuln_csv_file)
 
             logger.info("📊 Essential scan data saved to: %s", run_dir)
             if mark_complete and not self._run_completed_emitted:
                 self._emit_event(
                     "run.completed",
                     payload={
-                        "duration_seconds": calculate_duration_seconds(
-                            self.start_time, self.end_time
-                        ),
+                        "duration_seconds": self._calculate_duration(),
                         "vulnerability_count": len(self.vulnerability_reports),
                     },
                     status="completed",
@@ -656,7 +787,14 @@ class Tracer:
             logger.exception("Failed to save scan data")
 
     def _calculate_duration(self) -> float:
-        return calculate_duration_seconds(self.start_time, self.end_time)
+        try:
+            start = datetime.fromisoformat(self.start_time.replace("Z", "+00:00"))
+            if self.end_time:
+                end = datetime.fromisoformat(self.end_time.replace("Z", "+00:00"))
+                return (end - start).total_seconds()
+        except (ValueError, TypeError):
+            pass
+        return 0.0
 
     def get_agent_tools(self, agent_id: str) -> list[dict[str, Any]]:
         return [
