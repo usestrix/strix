@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, ClassVar
 
 import pytest
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter, SpanExportResult
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 
 from strix.telemetry import tracer as tracer_module
 from strix.telemetry.tracer import Tracer, set_global_tracer
@@ -87,24 +87,8 @@ def test_tracer_redacts_sensitive_payloads(monkeypatch, tmp_path) -> None:
 def test_tracer_remote_mode_configures_traceloop_export(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
 
-    class _NoopExporter(SpanExporter):
-        def export(self, spans: Any) -> SpanExportResult:  # noqa: ARG002
-            return SpanExportResult.SUCCESS
-
-        def shutdown(self) -> None:
-            return None
-
-        def force_flush(self, timeout_millis: int = 30_000) -> bool:  # noqa: ARG002
-            return True
-
     class FakeTraceloop:
         init_calls: ClassVar[list[dict[str, Any]]] = []
-        default_processor_calls: ClassVar[list[dict[str, Any]]] = []
-
-        @staticmethod
-        def get_default_span_processor(**kwargs: Any) -> SimpleSpanProcessor:
-            FakeTraceloop.default_processor_calls.append(kwargs)
-            return SimpleSpanProcessor(_NoopExporter())
 
         @staticmethod
         def init(**kwargs: Any) -> None:
@@ -124,13 +108,46 @@ def test_tracer_remote_mode_configures_traceloop_export(monkeypatch, tmp_path) -
     tracer.log_chat_message("hello", "user", "agent-1")
 
     assert tracer._remote_export_enabled is True
-    assert FakeTraceloop.default_processor_calls
     assert FakeTraceloop.init_calls
+    init_kwargs = FakeTraceloop.init_calls[-1]
+    assert init_kwargs["api_endpoint"] == "https://otel.example.com"
+    assert init_kwargs["api_key"] == "test-api-key"
+    assert init_kwargs["headers"] == {"x-custom": "header"}
+    assert isinstance(init_kwargs["processor"], SimpleSpanProcessor)
 
     events_path = tmp_path / "strix_runs" / "remote-observability" / "events.jsonl"
     events = _load_events(events_path)
     run_started = next(event for event in events if event["event_type"] == "run.started")
     assert run_started["payload"]["remote_export_enabled"] is True
+
+
+def test_tracer_local_mode_avoids_traceloop_remote_endpoint(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeTraceloop:
+        init_calls: ClassVar[list[dict[str, Any]]] = []
+
+        @staticmethod
+        def init(**kwargs: Any) -> None:
+            FakeTraceloop.init_calls.append(kwargs)
+
+        @staticmethod
+        def set_association_properties(properties: dict[str, Any]) -> None:  # noqa: ARG004
+            return None
+
+    monkeypatch.setattr(tracer_module, "Traceloop", FakeTraceloop)
+
+    tracer = Tracer("local-traceloop")
+    set_global_tracer(tracer)
+    tracer.log_chat_message("hello", "user", "agent-1")
+
+    assert FakeTraceloop.init_calls
+    init_kwargs = FakeTraceloop.init_calls[-1]
+    assert "api_endpoint" not in init_kwargs
+    assert "api_key" not in init_kwargs
+    assert "headers" not in init_kwargs
+    assert isinstance(init_kwargs["processor"], SimpleSpanProcessor)
+    assert tracer._remote_export_enabled is False
 
 
 def test_run_completed_event_emitted_once(monkeypatch, tmp_path) -> None:
@@ -181,6 +198,26 @@ def test_events_with_agent_id_include_agent_name(monkeypatch, tmp_path) -> None:
 
     assert chat_event["actor"]["agent_id"] == "agent-1"
     assert chat_event["actor"]["agent_name"] == "Root Agent"
+
+
+def test_run_metadata_is_only_on_run_lifecycle_events(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    tracer = Tracer("metadata-scope")
+    set_global_tracer(tracer)
+    tracer.log_chat_message("hello", "assistant", "agent-1")
+    tracer.save_run_data(mark_complete=True)
+
+    events_path = tmp_path / "strix_runs" / "metadata-scope" / "events.jsonl"
+    events = _load_events(events_path)
+
+    run_started = next(event for event in events if event["event_type"] == "run.started")
+    run_completed = next(event for event in events if event["event_type"] == "run.completed")
+    chat_event = next(event for event in events if event["event_type"] == "chat.message")
+
+    assert "run_metadata" in run_started
+    assert "run_metadata" in run_completed
+    assert "run_metadata" not in chat_event
 
 
 def test_default_events_retention_prunes_old_files(monkeypatch, tmp_path) -> None:

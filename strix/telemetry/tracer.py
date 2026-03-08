@@ -17,7 +17,6 @@ from opentelemetry.sdk.trace.export import (
     SimpleSpanProcessor,
     SpanExporter,
     SpanExportResult,
-    SpanProcessor,
 )
 from opentelemetry.trace import SpanContext, SpanKind
 
@@ -38,6 +37,7 @@ _global_tracer: Optional["Tracer"] = None
 _OTEL_BOOTSTRAP_LOCK = threading.Lock()
 _OTEL_BOOTSTRAPPED = False
 _OTEL_REMOTE_ENABLED = False
+_EVENTS_FILE_WRITE_LOCK = threading.Lock()
 
 _REDACTED = "[REDACTED]"
 _SENSITIVE_KEY_PATTERN = re.compile(
@@ -101,11 +101,12 @@ class JsonlSpanExporter(SpanExporter):
         output_path_getter: Callable[[], Path],
         run_metadata_getter: Callable[[], dict[str, Any]],
         sanitizer: Callable[[Any], Any],
+        write_lock: threading.Lock,
     ):
         self._output_path_getter = output_path_getter
         self._run_metadata_getter = run_metadata_getter
         self._sanitize = sanitizer
-        self._lock = threading.Lock()
+        self._lock = write_lock
 
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         records: list[dict[str, Any]] = []
@@ -221,6 +222,7 @@ class Tracer:
         self._last_streaming_event_len: dict[str, int] = {}
         self._events_retention_days = self._resolve_events_retention_days()
         self._events_retention_pruned = False
+        self._events_write_lock = _EVENTS_FILE_WRITE_LOCK
 
         self._otel_tracer: Any = None
         self._remote_export_enabled = False
@@ -239,6 +241,7 @@ class Tracer:
                 "local_retention_days": self._events_retention_days,
             },
             status="running",
+            include_run_metadata=True,
         )
 
     @property
@@ -311,9 +314,9 @@ class Tracer:
                 output_path_getter=self._active_events_file_path,
                 run_metadata_getter=self._active_run_metadata,
                 sanitizer=self._sanitize_data,
+                write_lock=self._events_write_lock,
             )
             local_processor = SimpleSpanProcessor(local_exporter)
-            processors: list[SpanProcessor] = [local_processor]
 
             base_url = (Config.get("traceloop_base_url") or "").strip()
             api_key = (Config.get("traceloop_api_key") or "").strip()
@@ -324,30 +327,25 @@ class Tracer:
                 headers = {"Authorization": f"Bearer {api_key}"}
 
             if Traceloop:
-                if remote_enabled:
-                    try:
-                        remote_processor = Traceloop.get_default_span_processor(
-                            api_endpoint=base_url,
-                            api_key=api_key,
-                            headers=headers,
-                        )
-                        processors.append(remote_processor)
-                    except Exception:
-                        logger.exception("Failed to configure Traceloop remote exporter")
-                        remote_enabled = False
-
                 try:
-                    Traceloop.init(
-                        app_name="strix-agent",
-                        api_endpoint=base_url or "https://api.traceloop.com",
-                        api_key=api_key or None,
-                        headers=headers,
-                        processor=processors if len(processors) > 1 else processors[0],
-                        telemetry_enabled=False,
-                        resource_attributes=self._resource_attributes(),
-                    )
+                    init_kwargs: dict[str, Any] = {
+                        "app_name": "strix-agent",
+                        "processor": local_processor,
+                        "telemetry_enabled": False,
+                        "resource_attributes": self._resource_attributes(),
+                    }
+                    if remote_enabled:
+                        init_kwargs.update(
+                            {
+                                "api_endpoint": base_url,
+                                "api_key": api_key,
+                                "headers": headers,
+                            }
+                        )
+                    Traceloop.init(**init_kwargs)
                 except Exception:
                     logger.exception("Failed to initialize Traceloop/OpenLLMetry")
+                    remote_enabled = False
             else:
                 from opentelemetry.sdk.resources import Resource
 
@@ -476,7 +474,7 @@ class Tracer:
         try:
             output_path = self.events_file_path
             output_path.parent.mkdir(parents=True, exist_ok=True)
-            with output_path.open("a", encoding="utf-8") as f:
+            with self._events_write_lock, output_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(self._sanitize_data(record), ensure_ascii=False) + "\n")
         except OSError:
             logger.exception("Failed to append JSONL event record")
@@ -508,6 +506,7 @@ class Tracer:
         status: str | None = None,
         error: Any | None = None,
         source: str = "strix.tracer",
+        include_run_metadata: bool = False,
     ) -> None:
         enriched_actor = self._enrich_actor(actor)
         sanitized_actor = self._sanitize_data(enriched_actor) if enriched_actor else None
@@ -574,8 +573,9 @@ class Tracer:
             "status": status,
             "error": sanitized_error,
             "source": source,
-            "run_metadata": self._sanitize_data(self.run_metadata),
         }
+        if include_run_metadata:
+            record["run_metadata"] = self._sanitize_data(self.run_metadata)
         self._append_event_record(record)
 
     def set_run_name(self, run_name: str) -> None:
@@ -1060,6 +1060,7 @@ class Tracer:
                     },
                     status="completed",
                     source="strix.run",
+                    include_run_metadata=True,
                 )
                 self._run_completed_emitted = True
 
