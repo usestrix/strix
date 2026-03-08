@@ -233,19 +233,7 @@ class Tracer:
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
 
         self._setup_telemetry()
-        if self._telemetry_enabled:
-            self._emit_event(
-                "run.started",
-                payload={
-                    "run_name": self.run_name,
-                    "start_time": self.start_time,
-                    "local_jsonl_path": str(self.events_file_path),
-                    "remote_export_enabled": self._remote_export_enabled,
-                    "local_retention_days": self._events_retention_days,
-                },
-                status="running",
-                include_run_metadata=True,
-            )
+        self._emit_run_started_event()
 
     @property
     def events_file_path(self) -> Path:
@@ -309,8 +297,8 @@ class Tracer:
             self._remote_export_enabled = False
             return
 
-        self.get_run_dir()
-        self._events_file_path = self.get_run_dir() / "events.jsonl"
+        run_dir = self.get_run_dir()
+        self._events_file_path = run_dir / "events.jsonl"
 
         with _OTEL_BOOTSTRAP_LOCK:
             if _OTEL_BOOTSTRAPPED:
@@ -604,6 +592,24 @@ class Tracer:
         self.run_metadata["run_id"] = run_name
         self._run_dir = None
         self._events_file_path = None
+        self._emit_run_started_event()
+
+    def _emit_run_started_event(self) -> None:
+        if not self._telemetry_enabled:
+            return
+
+        self._emit_event(
+            "run.started",
+            payload={
+                "run_name": self.run_name,
+                "start_time": self.start_time,
+                "local_jsonl_path": str(self.events_file_path),
+                "remote_export_enabled": self._remote_export_enabled,
+                "local_retention_days": self._events_retention_days,
+            },
+            status="running",
+            include_run_metadata=True,
+        )
 
     def get_run_dir(self) -> Path:
         if self._run_dir is None:

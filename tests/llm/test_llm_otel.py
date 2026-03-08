@@ -1,5 +1,8 @@
+import threading
+
 import litellm
 
+from strix.llm import llm as llm_module
 from strix.llm.config import LLMConfig
 from strix.llm.llm import LLM
 from strix.telemetry import tracer as tracer_module
@@ -44,3 +47,18 @@ def test_llm_trace_metadata_contains_run_and_agent_context(monkeypatch) -> None:
     assert metadata["strix_run_name"] == "test-run"
     assert metadata["strix_agent_name"] == "Root Agent"
     assert metadata["strix_agent_id"] == "agent-1"
+
+
+def test_llm_otel_callback_registration_is_thread_safe(monkeypatch) -> None:
+    monkeypatch.setenv("STRIX_TELEMETRY", "1")
+    monkeypatch.setattr(litellm, "callbacks", [])
+
+    threads = [
+        threading.Thread(target=llm_module._ensure_litellm_otel_callback) for _ in range(20)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert litellm.callbacks.count("otel") == 1

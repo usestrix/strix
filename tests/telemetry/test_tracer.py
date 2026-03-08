@@ -264,6 +264,7 @@ def test_set_run_name_resets_cached_paths(monkeypatch, tmp_path) -> None:
     assert new_events_path == tmp_path / "strix_runs" / "renamed-run" / "events.jsonl"
 
     events = _load_events(new_events_path)
+    assert any(event["event_type"] == "run.started" for event in events)
     assert any(event["event_type"] == "chat.message" for event in events)
 
 

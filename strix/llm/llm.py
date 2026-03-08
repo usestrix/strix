@@ -1,4 +1,5 @@
 import asyncio
+import threading
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -25,25 +26,27 @@ from strix.utils.resource_paths import get_strix_resource_path
 
 litellm.drop_params = True
 litellm.modify_params = True
+_LITELLM_CALLBACK_LOCK = threading.Lock()
 
 
 def _ensure_litellm_otel_callback() -> None:
     if not posthog._is_enabled():
         return
 
-    callbacks_value = getattr(litellm, "callbacks", None)
-    if callbacks_value is None:
-        callbacks: list[Any] = []
-    elif isinstance(callbacks_value, list):
-        callbacks = callbacks_value
-    elif isinstance(callbacks_value, tuple):
-        callbacks = list(callbacks_value)
-    else:
-        callbacks = [callbacks_value]
+    with _LITELLM_CALLBACK_LOCK:
+        callbacks_value = getattr(litellm, "callbacks", None)
+        if callbacks_value is None:
+            callbacks: list[Any] = []
+        elif isinstance(callbacks_value, list):
+            callbacks = callbacks_value
+        elif isinstance(callbacks_value, tuple):
+            callbacks = list(callbacks_value)
+        else:
+            callbacks = [callbacks_value]
 
-    if "otel" not in callbacks:
-        callbacks.append("otel")
-    litellm.callbacks = callbacks
+        if "otel" not in callbacks:
+            callbacks.append("otel")
+        litellm.callbacks = callbacks
 
 
 class LLMRequestFailedError(Exception):
