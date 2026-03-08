@@ -150,6 +150,34 @@ def test_tracer_local_mode_avoids_traceloop_remote_endpoint(monkeypatch, tmp_pat
     assert tracer._remote_export_enabled is False
 
 
+def test_traceloop_init_failure_does_not_mark_bootstrapped_on_provider_failure(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class FakeTraceloop:
+        @staticmethod
+        def init(**kwargs: Any) -> None:  # noqa: ARG004
+            raise RuntimeError("traceloop init failed")
+
+        @staticmethod
+        def set_association_properties(properties: dict[str, Any]) -> None:  # noqa: ARG004
+            return None
+
+    monkeypatch.setattr(tracer_module, "Traceloop", FakeTraceloop)
+
+    def _raise_provider_error(provider: Any) -> None:
+        raise RuntimeError("provider setup failed")
+
+    monkeypatch.setattr(tracer_module.trace, "set_tracer_provider", _raise_provider_error)
+
+    tracer = Tracer("bootstrap-failure")
+    set_global_tracer(tracer)
+
+    assert tracer_module._OTEL_BOOTSTRAPPED is False
+    assert tracer._remote_export_enabled is False
+
+
 def test_run_completed_event_emitted_once(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
 
@@ -218,6 +246,24 @@ def test_run_metadata_is_only_on_run_lifecycle_events(monkeypatch, tmp_path) -> 
     assert "run_metadata" in run_started
     assert "run_metadata" in run_completed
     assert "run_metadata" not in chat_event
+
+
+def test_set_run_name_resets_cached_paths(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    tracer = Tracer()
+    set_global_tracer(tracer)
+    old_events_path = tracer.events_file_path
+
+    tracer.set_run_name("renamed-run")
+    tracer.log_chat_message("hello", "assistant", "agent-1")
+
+    new_events_path = tracer.events_file_path
+    assert new_events_path != old_events_path
+    assert new_events_path == tmp_path / "strix_runs" / "renamed-run" / "events.jsonl"
+
+    events = _load_events(new_events_path)
+    assert any(event["event_type"] == "chat.message" for event in events)
 
 
 def test_default_events_retention_prunes_old_files(monkeypatch, tmp_path) -> None:

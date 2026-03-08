@@ -326,6 +326,7 @@ class Tracer:
             if remote_enabled and not headers:
                 headers = {"Authorization": f"Bearer {api_key}"}
 
+            otel_init_ok = False
             if Traceloop:
                 try:
                     init_kwargs: dict[str, Any] = {
@@ -343,10 +344,12 @@ class Tracer:
                             }
                         )
                     Traceloop.init(**init_kwargs)
+                    otel_init_ok = True
                 except Exception:
                     logger.exception("Failed to initialize Traceloop/OpenLLMetry")
                     remote_enabled = False
-            else:
+
+            if not otel_init_ok:
                 from opentelemetry.sdk.resources import Resource
 
                 provider = TracerProvider(resource=Resource.create(self._resource_attributes()))
@@ -367,13 +370,16 @@ class Tracer:
 
                 try:
                     trace.set_tracer_provider(provider)
+                    otel_init_ok = True
                 except Exception:
                     logger.exception("Failed to set OpenTelemetry tracer provider")
+                    remote_enabled = False
 
             self._otel_tracer = trace.get_tracer("strix.telemetry.tracer")
             self._remote_export_enabled = remote_enabled
-            _OTEL_REMOTE_ENABLED = remote_enabled
-            _OTEL_BOOTSTRAPPED = True
+            if otel_init_ok:
+                _OTEL_REMOTE_ENABLED = remote_enabled
+                _OTEL_BOOTSTRAPPED = True
 
     def _resolve_events_retention_days(self) -> int:
         raw_value = (Config.get("strix_events_retention_days") or "").strip()
@@ -583,6 +589,8 @@ class Tracer:
         self.run_id = run_name
         self.run_metadata["run_name"] = run_name
         self.run_metadata["run_id"] = run_name
+        self._run_dir = None
+        self._events_file_path = None
 
     def get_run_dir(self) -> Path:
         if self._run_dir is None:
