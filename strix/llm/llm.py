@@ -18,6 +18,7 @@ from strix.llm.utils import (
     parse_tool_invocations,
 )
 from strix.skills import load_skills
+from strix.telemetry import posthog
 from strix.tools import get_tools_prompt
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -27,6 +28,9 @@ litellm.modify_params = True
 
 
 def _ensure_litellm_otel_callback() -> None:
+    if not posthog._is_enabled():
+        return
+
     callbacks_value = getattr(litellm, "callbacks", None)
     if callbacks_value is None:
         callbacks: list[Any] = []

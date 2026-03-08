@@ -21,6 +21,7 @@ def _reset_tracer_globals(monkeypatch) -> None:
     monkeypatch.setattr(tracer_module, "_global_tracer", None)
     monkeypatch.setattr(tracer_module, "_OTEL_BOOTSTRAPPED", False)
     monkeypatch.setattr(tracer_module, "_OTEL_REMOTE_ENABLED", False)
+    monkeypatch.delenv("STRIX_TELEMETRY", raising=False)
     monkeypatch.delenv("STRIX_EVENTS_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("TRACELOOP_BASE_URL", raising=False)
     monkeypatch.delenv("TRACELOOP_API_KEY", raising=False)
@@ -290,6 +291,7 @@ def test_default_events_retention_prunes_old_files(monkeypatch, tmp_path) -> Non
     set_global_tracer(tracer)
 
     assert not old_events.exists()
+    assert not old_events.parent.exists()
     assert recent_events.exists()
 
 
@@ -307,3 +309,16 @@ def test_events_retention_can_be_disabled(monkeypatch, tmp_path) -> None:
     set_global_tracer(tracer)
 
     assert old_events.exists()
+
+
+def test_tracer_skips_jsonl_when_telemetry_disabled(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("STRIX_TELEMETRY", "0")
+
+    tracer = Tracer("telemetry-disabled")
+    set_global_tracer(tracer)
+    tracer.log_chat_message("hello", "assistant", "agent-1")
+    tracer.save_run_data(mark_complete=True)
+
+    events_path = tmp_path / "strix_runs" / "telemetry-disabled" / "events.jsonl"
+    assert not events_path.exists()

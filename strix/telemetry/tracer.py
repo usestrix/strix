@@ -1,3 +1,4 @@
+import contextlib
 import csv
 import json
 import logging
@@ -223,6 +224,7 @@ class Tracer:
         self._events_retention_days = self._resolve_events_retention_days()
         self._events_retention_pruned = False
         self._events_write_lock = _EVENTS_FILE_WRITE_LOCK
+        self._telemetry_enabled = posthog._is_enabled()
 
         self._otel_tracer: Any = None
         self._remote_export_enabled = False
@@ -231,18 +233,19 @@ class Tracer:
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
 
         self._setup_telemetry()
-        self._emit_event(
-            "run.started",
-            payload={
-                "run_name": self.run_name,
-                "start_time": self.start_time,
-                "local_jsonl_path": str(self.events_file_path),
-                "remote_export_enabled": self._remote_export_enabled,
-                "local_retention_days": self._events_retention_days,
-            },
-            status="running",
-            include_run_metadata=True,
-        )
+        if self._telemetry_enabled:
+            self._emit_event(
+                "run.started",
+                payload={
+                    "run_name": self.run_name,
+                    "start_time": self.start_time,
+                    "local_jsonl_path": str(self.events_file_path),
+                    "remote_export_enabled": self._remote_export_enabled,
+                    "local_retention_days": self._events_retention_days,
+                },
+                status="running",
+                include_run_metadata=True,
+            )
 
     @property
     def events_file_path(self) -> Path:
@@ -298,8 +301,13 @@ class Tracer:
                 result[key] = value
         return result
 
-    def _setup_telemetry(self) -> None:
+    def _setup_telemetry(self) -> None:  # noqa: PLR0915
         global _OTEL_BOOTSTRAPPED, _OTEL_REMOTE_ENABLED  # noqa: PLW0603
+
+        if not self._telemetry_enabled:
+            self._otel_tracer = None
+            self._remote_export_enabled = False
+            return
 
         self.get_run_dir()
         self._events_file_path = self.get_run_dir() / "events.jsonl"
@@ -421,6 +429,8 @@ class Tracer:
 
             try:
                 events_file.unlink()
+                with contextlib.suppress(OSError):
+                    events_file.parent.rmdir()
                 removed_files += 1
             except OSError:
                 logger.debug("Failed to remove expired telemetry file: %s", events_file)
@@ -481,7 +491,7 @@ class Tracer:
             output_path = self.events_file_path
             output_path.parent.mkdir(parents=True, exist_ok=True)
             with self._events_write_lock, output_path.open("a", encoding="utf-8") as f:
-                f.write(json.dumps(self._sanitize_data(record), ensure_ascii=False) + "\n")
+                f.write(json.dumps(record, ensure_ascii=False) + "\n")
         except OSError:
             logger.exception("Failed to append JSONL event record")
 
@@ -514,6 +524,9 @@ class Tracer:
         source: str = "strix.tracer",
         include_run_metadata: bool = False,
     ) -> None:
+        if not self._telemetry_enabled:
+            return
+
         enriched_actor = self._enrich_actor(actor)
         sanitized_actor = self._sanitize_data(enriched_actor) if enriched_actor else None
         sanitized_payload = self._sanitize_data(payload) if payload is not None else None

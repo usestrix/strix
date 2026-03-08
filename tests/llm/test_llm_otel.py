@@ -16,6 +16,17 @@ def test_llm_adds_otel_callback_without_clobbering_existing(monkeypatch) -> None
     assert litellm.callbacks.count("otel") == 1
 
 
+def test_llm_skips_otel_callback_when_telemetry_disabled(monkeypatch) -> None:
+    monkeypatch.setenv("STRIX_TELEMETRY", "0")
+    monkeypatch.setattr(litellm, "callbacks", ["custom-callback"])
+
+    llm = LLM(LLMConfig(model_name="openai/gpt-5"), agent_name=None)
+
+    assert llm is not None
+    assert "custom-callback" in litellm.callbacks
+    assert "otel" not in litellm.callbacks
+
+
 def test_llm_trace_metadata_contains_run_and_agent_context(monkeypatch) -> None:
     class FakeTracer:
         run_id = "run-1234"
