@@ -926,7 +926,6 @@ class Tracer:
                 "max_iterations": config.get("max_iterations", 200),
             }
         )
-        self.get_run_dir()
         self._set_association_properties(
             {
                 "run_id": self.run_id,
