@@ -5,6 +5,7 @@ import logging
 import re
 import threading
 import time
+import zlib
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -640,10 +641,27 @@ class Tracer:
             self._prune_expired_event_logs(runs_dir)
 
             run_dir_name = self.run_name if self.run_name else self.run_id
-            self._run_dir = runs_dir / run_dir_name
+            safe_run_dir_name = self._sanitize_run_dir_name(run_dir_name)
+            self._run_dir = runs_dir / safe_run_dir_name
             self._run_dir.mkdir(exist_ok=True)
 
         return self._run_dir
+
+    def _sanitize_run_dir_name(self, run_dir_name: str) -> str:
+        normalized = run_dir_name.strip()
+        digest = f"{zlib.crc32(normalized.encode('utf-8')):08x}"
+
+        sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized).strip(".-")
+        if not sanitized:
+            sanitized = f"run-{digest}"
+        elif sanitized != normalized:
+            sanitized = f"{sanitized}-{digest}"
+
+        if len(sanitized) > 80:
+            prefix = sanitized[:71].rstrip(".-")
+            sanitized = f"{prefix}-{digest}" if prefix else f"run-{digest}"
+
+        return sanitized
 
     def add_vulnerability_report(  # noqa: PLR0912
         self,

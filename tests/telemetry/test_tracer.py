@@ -355,6 +355,24 @@ def test_events_write_locks_are_scoped_by_events_file(monkeypatch, tmp_path) -> 
     assert lock_a_from_one is not lock_b
 
 
+def test_run_name_cannot_escape_strix_runs_directory(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    tracer = Tracer("../../outside-dir")
+    set_global_tracer(tracer)
+    tracer.log_chat_message("hello", "assistant", "agent-1")
+
+    runs_dir = (tmp_path / "strix_runs").resolve()
+    run_dir = tracer.get_run_dir().resolve()
+    events_path = tracer.events_file_path.resolve()
+
+    assert run_dir.is_relative_to(runs_dir)
+    assert events_path.is_relative_to(runs_dir)
+    assert ".." not in run_dir.name
+    assert "/" not in run_dir.name
+    assert "\\" not in run_dir.name
+
+
 def test_default_events_retention_prunes_old_files(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
 
