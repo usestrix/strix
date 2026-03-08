@@ -39,6 +39,8 @@ _OTEL_BOOTSTRAP_LOCK = threading.Lock()
 _OTEL_BOOTSTRAPPED = False
 _OTEL_REMOTE_ENABLED = False
 _EVENTS_FILE_WRITE_LOCK = threading.Lock()
+_EVENTS_RETENTION_PRUNE_LOCK = threading.Lock()
+_EVENTS_RETENTION_PRUNED_DIRS: set[str] = set()
 
 _REDACTED = "[REDACTED]"
 _SENSITIVE_KEY_PATTERN = re.compile(
@@ -227,7 +229,6 @@ class Tracer:
         self._last_streaming_event_ts: dict[str, float] = {}
         self._last_streaming_event_len: dict[str, int] = {}
         self._events_retention_days = self._resolve_events_retention_days()
-        self._events_retention_pruned = False
         self._events_write_lock = _EVENTS_FILE_WRITE_LOCK
         self._telemetry_enabled = posthog._is_enabled()
 
@@ -401,13 +402,15 @@ class Tracer:
         return max(value, 0)
 
     def _prune_expired_event_logs(self, runs_dir: Path) -> None:
-        if self._events_retention_pruned:
-            return
-
-        self._events_retention_pruned = True
         retention_days = self._events_retention_days
         if retention_days == 0:
             return
+
+        runs_dir_key = str(runs_dir.resolve())
+        with _EVENTS_RETENTION_PRUNE_LOCK:
+            if runs_dir_key in _EVENTS_RETENTION_PRUNED_DIRS:
+                return
+            _EVENTS_RETENTION_PRUNED_DIRS.add(runs_dir_key)
 
         cutoff = datetime.now(UTC) - timedelta(days=retention_days)
         removed_files = 0

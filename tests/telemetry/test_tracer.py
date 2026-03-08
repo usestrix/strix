@@ -23,6 +23,7 @@ def _reset_tracer_globals(monkeypatch) -> None:
     monkeypatch.setattr(tracer_module, "_global_tracer", None)
     monkeypatch.setattr(tracer_module, "_OTEL_BOOTSTRAPPED", False)
     monkeypatch.setattr(tracer_module, "_OTEL_REMOTE_ENABLED", False)
+    monkeypatch.setattr(tracer_module, "_EVENTS_RETENTION_PRUNED_DIRS", set())
     monkeypatch.delenv("STRIX_TELEMETRY", raising=False)
     monkeypatch.delenv("STRIX_EVENTS_RETENTION_DAYS", raising=False)
     monkeypatch.delenv("TRACELOOP_BASE_URL", raising=False)
