@@ -239,26 +239,6 @@ def test_run_completed_event_emitted_once(monkeypatch, tmp_path) -> None:
     assert len(run_completed) == 1
 
 
-def test_streaming_updates_are_throttled(monkeypatch, tmp_path) -> None:
-    monkeypatch.chdir(tmp_path)
-    monkeypatch.setattr(tracer_module, "_STREAMING_EVENT_MIN_LENGTH_DELTA", 50)
-    monkeypatch.setattr(tracer_module, "_STREAMING_EVENT_MIN_INTERVAL_SECONDS", 1000.0)
-    monkeypatch.setattr(tracer_module.time, "monotonic", lambda: 1.0)
-
-    tracer = Tracer("throttled-stream")
-    set_global_tracer(tracer)
-
-    tracer.update_streaming_content("agent-1", "a" * 10)
-    tracer.update_streaming_content("agent-1", "a" * 20)
-    tracer.update_streaming_content("agent-1", "a" * 30)
-    tracer.update_streaming_content("agent-1", "a" * 70)
-
-    events_path = tmp_path / "strix_runs" / "throttled-stream" / "events.jsonl"
-    events = _load_events(events_path)
-    stream_updates = [event for event in events if event["event_type"] == "agent.streaming.updated"]
-    assert len(stream_updates) == 2
-
-
 def test_events_with_agent_id_include_agent_name(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
 

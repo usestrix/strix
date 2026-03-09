@@ -1,7 +1,6 @@
 import json
 import logging
 import threading
-import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -37,10 +36,6 @@ _global_tracer: Optional["Tracer"] = None
 _OTEL_BOOTSTRAP_LOCK = threading.Lock()
 _OTEL_BOOTSTRAPPED = False
 _OTEL_REMOTE_ENABLED = False
-
-_STREAMING_EVENT_MIN_LENGTH_DELTA = 64
-_STREAMING_EVENT_MIN_INTERVAL_SECONDS = 1.0
-
 
 def get_global_tracer() -> Optional["Tracer"]:
     return _global_tracer
@@ -83,8 +78,6 @@ class Tracer:
         self._next_message_id = 1
         self._saved_vuln_ids: set[str] = set()
         self._run_completed_emitted = False
-        self._last_streaming_event_ts: dict[str, float] = {}
-        self._last_streaming_event_len: dict[str, int] = {}
         self._telemetry_enabled = is_otel_enabled()
         self._sanitizer = TelemetrySanitizer()
 
@@ -705,33 +698,28 @@ class Tracer:
 
                         if report.get("code_locations"):
                             f.write("## Code Analysis\n\n")
-                            for index, location in enumerate(report["code_locations"]):
-                                prefix = f"**Location {index + 1}:**"
-                                file_ref = location.get("file", "unknown")
+                            for i, loc in enumerate(report["code_locations"]):
+                                prefix = f"**Location {i + 1}:**"
+                                file_ref = loc.get("file", "unknown")
                                 line_ref = ""
-                                if location.get("start_line") is not None:
-                                    if (
-                                        location.get("end_line")
-                                        and location["end_line"] != location["start_line"]
-                                    ):
-                                        line_ref = (
-                                            f" (lines {location['start_line']}-{location['end_line']})"
-                                        )
+                                if loc.get("start_line") is not None:
+                                    if loc.get("end_line") and loc["end_line"] != loc["start_line"]:
+                                        line_ref = f" (lines {loc['start_line']}-{loc['end_line']})"
                                     else:
-                                        line_ref = f" (line {location['start_line']})"
+                                        line_ref = f" (line {loc['start_line']})"
                                 f.write(f"{prefix} `{file_ref}`{line_ref}\n")
-                                if location.get("label"):
-                                    f.write(f"  {location['label']}\n")
-                                if location.get("snippet"):
-                                    f.write(f"  ```\n  {location['snippet']}\n  ```\n")
-                                if location.get("fix_before") or location.get("fix_after"):
+                                if loc.get("label"):
+                                    f.write(f"  {loc['label']}\n")
+                                if loc.get("snippet"):
+                                    f.write(f"  ```\n  {loc['snippet']}\n  ```\n")
+                                if loc.get("fix_before") or loc.get("fix_after"):
                                     f.write("\n  **Suggested Fix:**\n")
                                     f.write("```diff\n")
-                                    if location.get("fix_before"):
-                                        for line in location["fix_before"].splitlines():
+                                    if loc.get("fix_before"):
+                                        for line in loc["fix_before"].splitlines():
                                             f.write(f"- {line}\n")
-                                    if location.get("fix_after"):
-                                        for line in location["fix_after"].splitlines():
+                                    if loc.get("fix_after"):
+                                        for line in loc["fix_after"].splitlines():
                                             f.write(f"+ {line}\n")
                                     f.write("```\n")
                                 f.write("\n")
@@ -837,62 +825,11 @@ class Tracer:
             "total_tokens": total_stats["input_tokens"] + total_stats["output_tokens"],
         }
 
-    def _should_emit_streaming_update(self, agent_id: str, content_length: int) -> bool:
-        previous_length = self._last_streaming_event_len.get(agent_id)
-        previous_timestamp = self._last_streaming_event_ts.get(agent_id)
-        now = time.monotonic()
-
-        if previous_length is None or previous_timestamp is None:
-            return True
-
-        if content_length < previous_length:
-            return True
-
-        if (content_length - previous_length) >= _STREAMING_EVENT_MIN_LENGTH_DELTA:
-            return True
-
-        return (now - previous_timestamp) >= _STREAMING_EVENT_MIN_INTERVAL_SECONDS
-
-    def _emit_streaming_update(
-        self,
-        agent_id: str,
-        content_length: int,
-        force: bool = False,
-    ) -> None:
-        if not force and not self._should_emit_streaming_update(agent_id, content_length):
-            return
-
-        now = time.monotonic()
-        self._last_streaming_event_ts[agent_id] = now
-        self._last_streaming_event_len[agent_id] = content_length
-        self._emit_event(
-            "agent.streaming.updated",
-            actor={"agent_id": agent_id},
-            payload={"content_length": content_length},
-            status="streaming",
-            source="strix.agents",
-        )
-
     def update_streaming_content(self, agent_id: str, content: str) -> None:
         self.streaming_content[agent_id] = content
-        self._emit_streaming_update(agent_id, len(content))
 
     def clear_streaming_content(self, agent_id: str) -> None:
-        content = self.streaming_content.pop(agent_id, None)
-        if content:
-            content_length = len(content)
-            last_length = self._last_streaming_event_len.get(agent_id)
-            if last_length != content_length:
-                self._emit_streaming_update(agent_id, content_length, force=True)
-
-        self._last_streaming_event_ts.pop(agent_id, None)
-        self._last_streaming_event_len.pop(agent_id, None)
-        self._emit_event(
-            "agent.streaming.cleared",
-            actor={"agent_id": agent_id},
-            status="cleared",
-            source="strix.agents",
-        )
+        self.streaming_content.pop(agent_id, None)
 
     def get_streaming_content(self, agent_id: str) -> str | None:
         return self.streaming_content.get(agent_id)
@@ -900,22 +837,12 @@ class Tracer:
     def finalize_streaming_as_interrupted(self, agent_id: str) -> str | None:
         content = self.streaming_content.pop(agent_id, None)
         if content and content.strip():
-            self._emit_streaming_update(agent_id, len(content), force=True)
-            self._last_streaming_event_ts.pop(agent_id, None)
-            self._last_streaming_event_len.pop(agent_id, None)
             self.interrupted_content[agent_id] = content
             self.log_chat_message(
                 content=content,
                 role="assistant",
                 agent_id=agent_id,
                 metadata={"interrupted": True},
-            )
-            self._emit_event(
-                "agent.streaming.interrupted",
-                actor={"agent_id": agent_id},
-                payload={"content_length": len(content)},
-                status="interrupted",
-                source="strix.agents",
             )
             return content
 
