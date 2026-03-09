@@ -39,6 +39,18 @@ _SENSITIVE_TOKEN_PATTERN = re.compile(
 _SCRUBADUB_PLACEHOLDER_PATTERN = re.compile(r"\{\{[^}]+\}\}")
 _EVENTS_FILE_LOCKS_LOCK = threading.Lock()
 _EVENTS_FILE_LOCKS: dict[str, threading.Lock] = {}
+_NOISY_OTEL_CONTENT_PREFIXES = (
+    "gen_ai.prompt.",
+    "gen_ai.completion.",
+    "llm.input_messages.",
+    "llm.output_messages.",
+)
+_NOISY_OTEL_EXACT_KEYS = {
+    "llm.input",
+    "llm.output",
+    "llm.prompt",
+    "llm.completion",
+}
 
 
 class _SecretFilth(Filth):
@@ -182,6 +194,29 @@ def parse_traceloop_headers(raw_headers: str) -> dict[str, str]:
     return result
 
 
+def prune_otel_span_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
+    """Drop high-volume LLM payload attributes to keep JSONL event files compact."""
+    filtered: dict[str, Any] = {}
+    filtered_count = 0
+
+    for key, value in attributes.items():
+        key_str = str(key)
+        if key_str in _NOISY_OTEL_EXACT_KEYS:
+            filtered_count += 1
+            continue
+
+        if key_str.endswith(".content") and key_str.startswith(_NOISY_OTEL_CONTENT_PREFIXES):
+            filtered_count += 1
+            continue
+
+        filtered[key_str] = value
+
+    if filtered_count:
+        filtered["strix.filtered_attributes_count"] = filtered_count
+
+    return filtered
+
+
 class JsonlSpanExporter(SpanExporter):
     """Append OTEL spans to JSONL for local run artifacts."""
 
@@ -200,7 +235,7 @@ class JsonlSpanExporter(SpanExporter):
     def export(self, spans: Sequence[ReadableSpan]) -> SpanExportResult:
         records: list[dict[str, Any]] = []
         for span in spans:
-            attributes = dict(span.attributes or {})
+            attributes = prune_otel_span_attributes(dict(span.attributes or {}))
             if "strix.event_type" in attributes:
                 # Tracer events are written directly in Tracer._emit_event.
                 continue
@@ -375,4 +410,3 @@ def bootstrap_otel(
             return otel_tracer, remote_enabled, True, remote_enabled
 
         return otel_tracer, remote_enabled, bootstrapped, remote_enabled_state
-
