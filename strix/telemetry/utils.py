@@ -354,7 +354,15 @@ def bootstrap_otel(
                             "headers": headers,
                         }
                     )
-                traceloop.init(**init_kwargs)
+                import io
+                import sys
+
+                _stdout = sys.stdout
+                sys.stdout = io.StringIO()
+                try:
+                    traceloop.init(**init_kwargs)
+                finally:
+                    sys.stdout = _stdout
                 otel_init_ok = True
             except Exception:
                 logger.exception("Failed to initialize Traceloop/OpenLLMetry")
