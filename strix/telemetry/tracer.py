@@ -27,7 +27,7 @@ from strix.telemetry.utils import (
 try:
     from traceloop.sdk import Traceloop
 except ImportError:  # pragma: no cover - exercised when dependency is absent
-    Traceloop = None  # type: ignore[assignment]
+    Traceloop = None  # type: ignore[assignment,unused-ignore]
 
 
 logger = logging.getLogger(__name__)

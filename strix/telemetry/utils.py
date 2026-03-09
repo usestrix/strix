@@ -53,11 +53,11 @@ _NOISY_OTEL_EXACT_KEYS = {
 }
 
 
-class _SecretFilth(Filth):
+class _SecretFilth(Filth):  # type: ignore[misc]
     type = "secret"
 
 
-class _SecretTokenDetector(RegexDetector):
+class _SecretTokenDetector(RegexDetector):  # type: ignore[misc]
     name = "strix_secret_token_detector"
     filth_cls = _SecretFilth
     regex = _SENSITIVE_TOKEN_PATTERN
@@ -217,7 +217,7 @@ def prune_otel_span_attributes(attributes: dict[str, Any]) -> dict[str, Any]:
     return filtered
 
 
-class JsonlSpanExporter(SpanExporter):
+class JsonlSpanExporter(SpanExporter):  # type: ignore[misc]
     """Append OTEL spans to JSONL for local run artifacts."""
 
     def __init__(

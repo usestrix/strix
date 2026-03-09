@@ -151,6 +151,9 @@ module = [
     "libtmux.*",
     "pytest.*",
     "cvss.*",
+    "opentelemetry.*",
+    "scrubadub.*",
+    "traceloop.*",
 ]
 ignore_missing_imports = true
 
@@ -158,6 +161,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_decorators = false
+disallow_untyped_defs = false
 
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)

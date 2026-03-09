@@ -211,32 +211,8 @@ class LLM:
             args["api_base"] = self.config.api_base
         if self._supports_reasoning():
             args["reasoning_effort"] = self._reasoning_effort
-        metadata = self._build_trace_metadata()
-        if metadata:
-            args["metadata"] = metadata
 
         return args
-
-    def _build_trace_metadata(self) -> dict[str, Any]:
-        metadata: dict[str, Any] = {}
-
-        if self.agent_name:
-            metadata["strix_agent_name"] = self.agent_name
-        if self.agent_id:
-            metadata["strix_agent_id"] = self.agent_id
-
-        try:
-            from strix.telemetry.tracer import get_global_tracer
-
-            tracer = get_global_tracer()
-            if tracer:
-                metadata["strix_run_id"] = tracer.run_id
-                if tracer.run_name:
-                    metadata["strix_run_name"] = tracer.run_name
-        except (ImportError, AttributeError):
-            return metadata
-
-        return metadata
 
     def _get_chunk_content(self, chunk: Any) -> str:
         if chunk.choices and hasattr(chunk.choices[0], "delta"):
