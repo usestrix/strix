@@ -344,11 +344,17 @@ def bootstrap_otel(
         otel_init_ok = False
         if traceloop:
             try:
+                from traceloop.sdk.instruments import Instruments
+
                 init_kwargs: dict[str, Any] = {
                     "app_name": "strix-agent",
                     "processor": local_processor,
                     "telemetry_enabled": False,
                     "resource_attributes": default_resource_attributes(),
+                    "block_instruments": {
+                        Instruments.URLLIB3,
+                        Instruments.REQUESTS,
+                    },
                 }
                 if remote_enabled:
                     init_kwargs.update(
