@@ -46,8 +46,36 @@ Configure Strix using environment variables or a config file.
 </ParamField>
 
 <ParamField path="STRIX_TELEMETRY" default="1" type="string">
-  Enable/disable anonymous telemetry. Set to `0`, `false`, `no`, or `off` to disable.
+  Global telemetry default toggle. Set to `0`, `false`, `no`, or `off` to disable both PostHog and OTEL unless overridden by per-channel flags below.
 </ParamField>
+
+<ParamField path="STRIX_OTEL_TELEMETRY" type="string">
+  Enable/disable OpenTelemetry run observability independently. When unset, falls back to `STRIX_TELEMETRY`.
+</ParamField>
+
+<ParamField path="STRIX_POSTHOG_TELEMETRY" type="string">
+  Enable/disable PostHog product telemetry independently. When unset, falls back to `STRIX_TELEMETRY`.
+</ParamField>
+
+<ParamField path="TRACELOOP_BASE_URL" type="string">
+  OTLP/Traceloop base URL for remote OpenTelemetry export. If unset, Strix keeps traces local only.
+</ParamField>
+
+<ParamField path="TRACELOOP_API_KEY" type="string">
+  API key used for remote trace export. Remote export is enabled only when both `TRACELOOP_BASE_URL` and `TRACELOOP_API_KEY` are set.
+</ParamField>
+
+<ParamField path="TRACELOOP_HEADERS" type="string">
+  Optional custom OTEL headers (JSON object or `key=value,key2=value2`). Useful for Langfuse or custom/self-hosted OTLP gateways.
+</ParamField>
+
+When remote OTEL vars are not set, Strix still writes complete run telemetry locally to:
+
+```bash
+strix_runs/<run_name>/events.jsonl
+```
+
+When remote vars are set, Strix dual-writes telemetry to both local JSONL and the remote OTEL endpoint.
 
 ## Docker Configuration
 
@@ -106,4 +134,5 @@ export PERPLEXITY_API_KEY="pplx-..."
 # Optional: Custom timeouts
 export LLM_TIMEOUT="600"
 export STRIX_SANDBOX_EXECUTION_TIMEOUT="300"
+
 ```

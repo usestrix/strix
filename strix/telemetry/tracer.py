@@ -1,20 +1,40 @@
+import json
 import logging
+import threading
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import Any, Callable, Optional
 from uuid import uuid4
 
+from opentelemetry import trace
+from opentelemetry.trace import SpanContext, SpanKind
+
+from strix.config import Config
 from strix.telemetry import posthog
+from strix.telemetry.flags import is_otel_enabled
+from strix.telemetry.utils import (
+    TelemetrySanitizer,
+    append_jsonl_record,
+    bootstrap_otel,
+    format_span_id,
+    format_trace_id,
+    get_events_write_lock,
+)
 
 
-if TYPE_CHECKING:
-    from collections.abc import Callable
+try:
+    from traceloop.sdk import Traceloop
+except ImportError:  # pragma: no cover - exercised when dependency is absent
+    Traceloop = None  # type: ignore[assignment,unused-ignore]
 
 
 logger = logging.getLogger(__name__)
 
 _global_tracer: Optional["Tracer"] = None
 
+_OTEL_BOOTSTRAP_LOCK = threading.Lock()
+_OTEL_BOOTSTRAPPED = False
+_OTEL_REMOTE_ENABLED = False
 
 def get_global_tracer() -> Optional["Tracer"]:
     return _global_tracer
@@ -52,16 +72,225 @@ class Tracer:
             "status": "running",
         }
         self._run_dir: Path | None = None
+        self._events_file_path: Path | None = None
         self._next_execution_id = 1
         self._next_message_id = 1
         self._saved_vuln_ids: set[str] = set()
+        self._run_completed_emitted = False
+        self._telemetry_enabled = is_otel_enabled()
+        self._sanitizer = TelemetrySanitizer()
+
+        self._otel_tracer: Any = None
+        self._remote_export_enabled = False
 
         self.caido_url: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
 
+        self._setup_telemetry()
+        self._emit_run_started_event()
+
+    @property
+    def events_file_path(self) -> Path:
+        if self._events_file_path is None:
+            self._events_file_path = self.get_run_dir() / "events.jsonl"
+        return self._events_file_path
+
+    def _active_events_file_path(self) -> Path:
+        active = get_global_tracer()
+        if active and active._events_file_path is not None:
+            return active._events_file_path
+        return self.events_file_path
+
+    def _get_events_write_lock(self, output_path: Path | None = None) -> threading.Lock:
+        path = output_path or self.events_file_path
+        return get_events_write_lock(path)
+
+    def _active_run_metadata(self) -> dict[str, Any]:
+        active = get_global_tracer()
+        if active:
+            return active.run_metadata
+        return self.run_metadata
+
+    def _setup_telemetry(self) -> None:
+        global _OTEL_BOOTSTRAPPED, _OTEL_REMOTE_ENABLED
+
+        if not self._telemetry_enabled:
+            self._otel_tracer = None
+            self._remote_export_enabled = False
+            return
+
+        run_dir = self.get_run_dir()
+        self._events_file_path = run_dir / "events.jsonl"
+        base_url = (Config.get("traceloop_base_url") or "").strip()
+        api_key = (Config.get("traceloop_api_key") or "").strip()
+        headers_raw = Config.get("traceloop_headers") or ""
+
+        (
+            self._otel_tracer,
+            self._remote_export_enabled,
+            _OTEL_BOOTSTRAPPED,
+            _OTEL_REMOTE_ENABLED,
+        ) = bootstrap_otel(
+            bootstrapped=_OTEL_BOOTSTRAPPED,
+            remote_enabled_state=_OTEL_REMOTE_ENABLED,
+            bootstrap_lock=_OTEL_BOOTSTRAP_LOCK,
+            traceloop=Traceloop,
+            base_url=base_url,
+            api_key=api_key,
+            headers_raw=headers_raw,
+            output_path_getter=self._active_events_file_path,
+            run_metadata_getter=self._active_run_metadata,
+            sanitizer=self._sanitize_data,
+            write_lock_getter=self._get_events_write_lock,
+            tracer_name="strix.telemetry.tracer",
+        )
+
+    def _set_association_properties(self, properties: dict[str, Any]) -> None:
+        if Traceloop is None:
+            return
+        sanitized = self._sanitize_data(properties)
+        try:
+            Traceloop.set_association_properties(sanitized)
+        except Exception:  # noqa: BLE001
+            logger.debug("Failed to set Traceloop association properties")
+
+    def _sanitize_data(self, data: Any, key_hint: str | None = None) -> Any:
+        return self._sanitizer.sanitize(data, key_hint=key_hint)
+
+    def _append_event_record(self, record: dict[str, Any]) -> None:
+        try:
+            append_jsonl_record(self.events_file_path, record)
+        except OSError:
+            logger.exception("Failed to append JSONL event record")
+
+    def _enrich_actor(self, actor: dict[str, Any] | None) -> dict[str, Any] | None:
+        if not actor:
+            return None
+
+        enriched = dict(actor)
+        if "agent_name" in enriched:
+            return enriched
+
+        agent_id = enriched.get("agent_id")
+        if not isinstance(agent_id, str):
+            return enriched
+
+        agent_data = self.agents.get(agent_id, {})
+        agent_name = agent_data.get("name")
+        if isinstance(agent_name, str) and agent_name:
+            enriched["agent_name"] = agent_name
+
+        return enriched
+
+    def _emit_event(
+        self,
+        event_type: str,
+        actor: dict[str, Any] | None = None,
+        payload: Any | None = None,
+        status: str | None = None,
+        error: Any | None = None,
+        source: str = "strix.tracer",
+        include_run_metadata: bool = False,
+    ) -> None:
+        if not self._telemetry_enabled:
+            return
+
+        enriched_actor = self._enrich_actor(actor)
+        sanitized_actor = self._sanitize_data(enriched_actor) if enriched_actor else None
+        sanitized_payload = self._sanitize_data(payload) if payload is not None else None
+        sanitized_error = self._sanitize_data(error) if error is not None else None
+
+        trace_id: str | None = None
+        span_id: str | None = None
+        parent_span_id: str | None = None
+
+        current_context = trace.get_current_span().get_span_context()
+        if isinstance(current_context, SpanContext) and current_context.is_valid:
+            parent_span_id = format_span_id(current_context.span_id)
+
+        if self._otel_tracer is not None:
+            try:
+                with self._otel_tracer.start_as_current_span(
+                    f"strix.{event_type}",
+                    kind=SpanKind.INTERNAL,
+                ) as span:
+                    span_context = span.get_span_context()
+                    trace_id = format_trace_id(span_context.trace_id)
+                    span_id = format_span_id(span_context.span_id)
+
+                    span.set_attribute("strix.event_type", event_type)
+                    span.set_attribute("strix.source", source)
+                    span.set_attribute("strix.run_id", self.run_id)
+                    span.set_attribute("strix.run_name", self.run_name or "")
+
+                    if status:
+                        span.set_attribute("strix.status", status)
+                    if sanitized_actor is not None:
+                        span.set_attribute(
+                            "strix.actor",
+                            json.dumps(sanitized_actor, ensure_ascii=False),
+                        )
+                    if sanitized_payload is not None:
+                        span.set_attribute(
+                            "strix.payload",
+                            json.dumps(sanitized_payload, ensure_ascii=False),
+                        )
+                    if sanitized_error is not None:
+                        span.set_attribute(
+                            "strix.error",
+                            json.dumps(sanitized_error, ensure_ascii=False),
+                        )
+            except Exception:  # noqa: BLE001
+                logger.debug("Failed to create OTEL span for event type '%s'", event_type)
+
+        if trace_id is None:
+            trace_id = format_trace_id(uuid4().int & ((1 << 128) - 1)) or uuid4().hex
+        if span_id is None:
+            span_id = format_span_id(uuid4().int & ((1 << 64) - 1)) or uuid4().hex[:16]
+
+        record = {
+            "timestamp": datetime.now(UTC).isoformat(),
+            "event_type": event_type,
+            "run_id": self.run_id,
+            "trace_id": trace_id,
+            "span_id": span_id,
+            "parent_span_id": parent_span_id,
+            "actor": sanitized_actor,
+            "payload": sanitized_payload,
+            "status": status,
+            "error": sanitized_error,
+            "source": source,
+        }
+        if include_run_metadata:
+            record["run_metadata"] = self._sanitize_data(self.run_metadata)
+        self._append_event_record(record)
+
     def set_run_name(self, run_name: str) -> None:
         self.run_name = run_name
         self.run_id = run_name
+        self.run_metadata["run_name"] = run_name
+        self.run_metadata["run_id"] = run_name
+        self._run_dir = None
+        self._events_file_path = None
+        self._run_completed_emitted = False
+        self._set_association_properties({"run_id": self.run_id, "run_name": self.run_name or ""})
+        self._emit_run_started_event()
+
+    def _emit_run_started_event(self) -> None:
+        if not self._telemetry_enabled:
+            return
+
+        self._emit_event(
+            "run.started",
+            payload={
+                "run_name": self.run_name,
+                "start_time": self.start_time,
+                "local_jsonl_path": str(self.events_file_path),
+                "remote_export_enabled": self._remote_export_enabled,
+            },
+            status="running",
+            include_run_metadata=True,
+        )
 
     def get_run_dir(self) -> Path:
         if self._run_dir is None:
@@ -134,6 +363,12 @@ class Tracer:
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")
         posthog.finding(severity)
+        self._emit_event(
+            "finding.created",
+            payload={"report": report},
+            status=report["severity"],
+            source="strix.findings",
+        )
 
         if self.vulnerability_found_callback:
             self.vulnerability_found_callback(report)
@@ -178,11 +413,24 @@ class Tracer:
 """
 
         logger.info("Updated scan final fields")
+        self._emit_event(
+            "finding.reviewed",
+            payload={
+                "scan_completed": True,
+                "vulnerability_count": len(self.vulnerability_reports),
+            },
+            status="completed",
+            source="strix.findings",
+        )
         self.save_run_data(mark_complete=True)
         posthog.end(self, exit_reason="finished_by_tool")
 
     def log_agent_creation(
-        self, agent_id: str, name: str, task: str, parent_id: str | None = None
+        self,
+        agent_id: str,
+        name: str,
+        task: str,
+        parent_id: str | None = None,
     ) -> None:
         agent_data: dict[str, Any] = {
             "id": agent_id,
@@ -196,6 +444,13 @@ class Tracer:
         }
 
         self.agents[agent_id] = agent_data
+        self._emit_event(
+            "agent.created",
+            actor={"agent_id": agent_id, "agent_name": name},
+            payload={"task": task, "parent_id": parent_id},
+            status="running",
+            source="strix.agents",
+        )
 
     def log_chat_message(
         self,
@@ -217,9 +472,21 @@ class Tracer:
         }
 
         self.chat_messages.append(message_data)
+        self._emit_event(
+            "chat.message",
+            actor={"agent_id": agent_id, "role": role},
+            payload={"message_id": message_id, "content": content, "metadata": metadata or {}},
+            status="logged",
+            source="strix.chat",
+        )
         return message_id
 
-    def log_tool_execution_start(self, agent_id: str, tool_name: str, args: dict[str, Any]) -> int:
+    def log_tool_execution_start(
+        self,
+        agent_id: str,
+        tool_name: str,
+        args: dict[str, Any],
+    ) -> int:
         execution_id = self._next_execution_id
         self._next_execution_id += 1
 
@@ -241,15 +508,61 @@ class Tracer:
         if agent_id in self.agents:
             self.agents[agent_id]["tool_executions"].append(execution_id)
 
+        self._emit_event(
+            "tool.execution.started",
+            actor={
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "execution_id": execution_id,
+            },
+            payload={"args": args},
+            status="running",
+            source="strix.tools",
+        )
+
         return execution_id
 
     def update_tool_execution(
-        self, execution_id: int, status: str, result: Any | None = None
+        self,
+        execution_id: int,
+        status: str,
+        result: Any | None = None,
     ) -> None:
-        if execution_id in self.tool_executions:
-            self.tool_executions[execution_id]["status"] = status
-            self.tool_executions[execution_id]["result"] = result
-            self.tool_executions[execution_id]["completed_at"] = datetime.now(UTC).isoformat()
+        if execution_id not in self.tool_executions:
+            return
+
+        tool_data = self.tool_executions[execution_id]
+        tool_data["status"] = status
+        tool_data["result"] = result
+        tool_data["completed_at"] = datetime.now(UTC).isoformat()
+
+        tool_name = str(tool_data.get("tool_name", "unknown"))
+        agent_id = str(tool_data.get("agent_id", "unknown"))
+        error_payload = result if status in {"error", "failed"} else None
+
+        self._emit_event(
+            "tool.execution.updated",
+            actor={
+                "agent_id": agent_id,
+                "tool_name": tool_name,
+                "execution_id": execution_id,
+            },
+            payload={"result": result},
+            status=status,
+            error=error_payload,
+            source="strix.tools",
+        )
+
+        if tool_name == "create_vulnerability_report":
+            finding_status = "reviewed" if status == "completed" else "rejected"
+            self._emit_event(
+                "finding.reviewed",
+                actor={"agent_id": agent_id, "tool_name": tool_name},
+                payload={"execution_id": execution_id, "result": result},
+                status=finding_status,
+                error=error_payload,
+                source="strix.findings",
+            )
 
     def update_agent_status(
         self,
@@ -271,6 +584,15 @@ class Tracer:
             self.agents[agent_id]["system_message"] = message
             self.agents[agent_id]["updated_at"] = datetime.now(UTC).isoformat()
 
+        self._emit_event(
+            "agent.status.updated",
+            actor={"agent_id": agent_id},
+            payload={"error_message": error_message},
+            status=status,
+            error=error_message,
+            source="strix.agents",
+        )
+
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config
         self.run_metadata.update(
@@ -280,13 +602,29 @@ class Tracer:
                 "max_iterations": config.get("max_iterations", 200),
             }
         )
-        self.get_run_dir()
+        self._set_association_properties(
+            {
+                "run_id": self.run_id,
+                "run_name": self.run_name or "",
+                "targets": config.get("targets", []),
+                "max_iterations": config.get("max_iterations", 200),
+            }
+        )
+        self._emit_event(
+            "run.configured",
+            payload={"scan_config": config},
+            status="configured",
+            source="strix.run",
+        )
 
-    def save_run_data(self, mark_complete: bool = False) -> None:  # noqa: PLR0912, PLR0915
+    def save_run_data(self, mark_complete: bool = False) -> None:
         try:
             run_dir = self.get_run_dir()
             if mark_complete:
-                self.end_time = datetime.now(UTC).isoformat()
+                if self.end_time is None:
+                    self.end_time = datetime.now(UTC).isoformat()
+                self.run_metadata["end_time"] = self.end_time
+                self.run_metadata["status"] = "completed"
 
             if self.final_scan_result:
                 penetration_test_report_file = run_dir / "penetration_test_report.md"
@@ -297,7 +635,8 @@ class Tracer:
                     )
                     f.write(f"{self.final_scan_result}\n")
                 logger.info(
-                    f"Saved final penetration test report to: {penetration_test_report_file}"
+                    "Saved final penetration test report to: %s",
+                    penetration_test_report_file,
                 )
 
             if self.vulnerability_reports:
@@ -313,7 +652,10 @@ class Tracer:
                 severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
                 sorted_reports = sorted(
                     self.vulnerability_reports,
-                    key=lambda x: (severity_order.get(x["severity"], 5), x["timestamp"]),
+                    key=lambda report: (
+                        severity_order.get(report["severity"], 5),
+                        report["timestamp"],
+                    ),
                 )
 
                 for report in new_reports:
@@ -340,8 +682,8 @@ class Tracer:
                                 f.write(f"**{label}:** {value}\n")
 
                         f.write("\n## Description\n\n")
-                        desc = report.get("description") or "No description provided."
-                        f.write(f"{desc}\n\n")
+                        description = report.get("description") or "No description provided."
+                        f.write(f"{description}\n\n")
 
                         if report.get("impact"):
                             f.write("## Impact\n\n")
@@ -415,11 +757,25 @@ class Tracer:
 
                 if new_reports:
                     logger.info(
-                        f"Saved {len(new_reports)} new vulnerability report(s) to: {vuln_dir}"
+                        "Saved %d new vulnerability report(s) to: %s",
+                        len(new_reports),
+                        vuln_dir,
                     )
-                logger.info(f"Updated vulnerability index: {vuln_csv_file}")
+                logger.info("Updated vulnerability index: %s", vuln_csv_file)
 
-            logger.info(f"📊 Essential scan data saved to: {run_dir}")
+            logger.info("📊 Essential scan data saved to: %s", run_dir)
+            if mark_complete and not self._run_completed_emitted:
+                self._emit_event(
+                    "run.completed",
+                    payload={
+                        "duration_seconds": self._calculate_duration(),
+                        "vulnerability_count": len(self.vulnerability_reports),
+                    },
+                    status="completed",
+                    source="strix.run",
+                    include_run_metadata=True,
+                )
+                self._run_completed_emitted = True
 
         except (OSError, RuntimeError):
             logger.exception("Failed to save scan data")

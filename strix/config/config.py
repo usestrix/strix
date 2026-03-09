@@ -47,6 +47,11 @@ class Config:
 
     # Telemetry
     strix_telemetry = "1"
+    strix_otel_telemetry = None
+    strix_posthog_telemetry = None
+    traceloop_base_url = None
+    traceloop_api_key = None
+    traceloop_headers = None
 
     # Config file override (set via --config CLI arg)
     _config_file_override: Path | None = None

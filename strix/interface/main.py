@@ -413,8 +413,6 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     if tracer and tracer.scan_results:
         scan_completed = tracer.scan_results.get("scan_completed", False)
 
-    has_vulnerabilities = tracer and len(tracer.vulnerability_reports) > 0
-
     completion_text = Text()
     if scan_completed:
         completion_text.append("Penetration test completed", style="bold #22c55e")
@@ -439,13 +437,12 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     if stats_text.plain:
         panel_parts.extend(["\n", stats_text])
 
-    if scan_completed or has_vulnerabilities:
-        results_text = Text()
-        results_text.append("\n")
-        results_text.append("Output", style="dim")
-        results_text.append("  ")
-        results_text.append(str(results_path), style="#60a5fa")
-        panel_parts.extend(["\n", results_text])
+    results_text = Text()
+    results_text.append("\n")
+    results_text.append("Output", style="dim")
+    results_text.append("  ")
+    results_text.append(str(results_path), style="#60a5fa")
+    panel_parts.extend(["\n", results_text])
 
     panel_content = Text.assemble(*panel_parts)
 

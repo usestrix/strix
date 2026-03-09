@@ -32,9 +32,6 @@
 </div>
 
 
-> [!TIP]
-> **New!** Strix integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production!
-
 ---
 
 
@@ -74,7 +71,7 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 - Docker (running)
 - An LLM API key:
   - Any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
-  - Or [Strix Router](https://models.strix.ai) — single API key for multiple providers with $10 free credit on signup
+  - Or [Strix Router](https://models.strix.ai) — single API key for multiple providers
 
 ### Installation & First Scan
 
@@ -92,6 +89,20 @@ strix --target ./app-directory
 
 > [!NOTE]
 > First run automatically pulls the sandbox Docker image. Results are saved to `strix_runs/<run-name>`
+
+---
+
+## ☁️ Strix Platform
+
+Try the Strix full-stack security platform at **[app.strix.ai](https://app.strix.ai)** — sign up for free, connect your repos and domains, and launch a pentest in minutes.
+
+- **Validated findings with PoCs** and reproduction steps
+- **One-click autofix** as ready-to-merge pull requests
+- **Continuous monitoring** across code, cloud, and infrastructure
+- **Integrations** with GitHub, Slack, Jira, Linear, and CI/CD pipelines
+- **Continuous learning** that builds on past findings and remediations
+
+[**Start your first pentest →**](https://app.strix.ai)
 
 ---
 
@@ -219,6 +230,10 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 - [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) — `vertex_ai/gemini-3-pro-preview`
 
 See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, and local models.
+
+## Enterprise
+
+Get the same Strix experience with [enterprise-grade](https://strix.ai/demo) controls: SSO (SAML/OIDC), custom compliance reports, dedicated support & SLA, custom deployment options (VPC/self-hosted), BYOK model support, and tailored agents optimized for your environment. [Learn more](https://strix.ai/demo).
 
 ## Documentation
 
