@@ -23,6 +23,8 @@ from scrubadub.filth import Filth
 logger = logging.getLogger(__name__)
 
 _REDACTED = "[REDACTED]"
+_SCREENSHOT_OMITTED = "[SCREENSHOT_OMITTED]"
+_SCREENSHOT_KEY_PATTERN = re.compile(r"screenshot", re.IGNORECASE)
 _SENSITIVE_KEY_PATTERN = re.compile(
     r"(api[_-]?key|token|secret|password|authorization|cookie|session|credential|private[_-]?key)",
     re.IGNORECASE,
@@ -74,7 +76,9 @@ class TelemetrySanitizer:
             sanitized: dict[str, Any] = {}
             for key, value in data.items():
                 key_str = str(key)
-                if _SENSITIVE_KEY_PATTERN.search(key_str):
+                if _SCREENSHOT_KEY_PATTERN.search(key_str):
+                    sanitized[key_str] = _SCREENSHOT_OMITTED
+                elif _SENSITIVE_KEY_PATTERN.search(key_str):
                     sanitized[key_str] = _REDACTED
                 else:
                     sanitized[key_str] = self.sanitize(value, key_hint=key_str)
