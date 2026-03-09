@@ -2,7 +2,6 @@ import json
 import logging
 import re
 import threading
-import zlib
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -120,22 +119,6 @@ def iso_from_unix_ns(unix_ns: int | None) -> str | None:
     except (OSError, OverflowError, ValueError):
         return None
 
-
-def sanitize_run_dir_name(run_dir_name: str) -> str:
-    normalized = run_dir_name.strip()
-    digest = f"{zlib.crc32(normalized.encode('utf-8')):08x}"
-
-    sanitized = re.sub(r"[^A-Za-z0-9._-]+", "-", normalized).strip(".-")
-    if not sanitized:
-        sanitized = f"run-{digest}"
-    elif sanitized != normalized:
-        sanitized = f"{sanitized}-{digest}"
-
-    if len(sanitized) > 80:
-        prefix = sanitized[:71].rstrip(".-")
-        sanitized = f"{prefix}-{digest}" if prefix else f"run-{digest}"
-
-    return sanitized
 
 
 def get_events_write_lock(output_path: Path) -> threading.Lock:

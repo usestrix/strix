@@ -19,7 +19,6 @@ from strix.telemetry.utils import (
     format_span_id,
     format_trace_id,
     get_events_write_lock,
-    sanitize_run_dir_name,
 )
 
 
@@ -299,8 +298,7 @@ class Tracer:
             runs_dir.mkdir(exist_ok=True)
 
             run_dir_name = self.run_name if self.run_name else self.run_id
-            safe_run_dir_name = sanitize_run_dir_name(run_dir_name)
-            self._run_dir = runs_dir / safe_run_dir_name
+            self._run_dir = runs_dir / run_dir_name
             self._run_dir.mkdir(exist_ok=True)
 
         return self._run_dir
