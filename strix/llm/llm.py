@@ -37,7 +37,6 @@ class LLMRequestFailedError(Exception):
 class LLMResponse:
     content: str
     tool_invocations: list[dict[str, Any]] | None = None
-    thinking_blocks: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -179,7 +178,6 @@ class LLM:
         yield LLMResponse(
             content=accumulated,
             tool_invocations=parse_tool_invocations(accumulated),
-            thinking_blocks=self._extract_thinking(chunks),
         )
 
     def _prepare_messages(self, conversation_history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -237,17 +235,7 @@ class LLM:
             return getattr(chunk.choices[0].delta, "content", "") or ""
         return ""
 
-    def _extract_thinking(self, chunks: list[Any]) -> list[dict[str, Any]] | None:
-        if not chunks or not self._supports_reasoning():
-            return None
-        try:
-            resp = stream_chunk_builder(chunks)
-            if resp.choices and hasattr(resp.choices[0].message, "thinking_blocks"):
-                blocks: list[dict[str, Any]] = resp.choices[0].message.thinking_blocks
-                return blocks
-        except Exception:  # noqa: BLE001, S110  # nosec B110
-            pass
-        return None
+
 
     def _update_usage_stats(self, response: Any) -> None:
         try:
