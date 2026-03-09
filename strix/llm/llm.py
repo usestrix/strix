@@ -1,5 +1,4 @@
 import asyncio
-import threading
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -19,34 +18,12 @@ from strix.llm.utils import (
     parse_tool_invocations,
 )
 from strix.skills import load_skills
-from strix.telemetry.flags import is_otel_enabled
 from strix.tools import get_tools_prompt
 from strix.utils.resource_paths import get_strix_resource_path
 
 
 litellm.drop_params = True
 litellm.modify_params = True
-_LITELLM_CALLBACK_LOCK = threading.Lock()
-
-
-def _ensure_litellm_otel_callback() -> None:
-    if not is_otel_enabled():
-        return
-
-    with _LITELLM_CALLBACK_LOCK:
-        callbacks_value = getattr(litellm, "callbacks", None)
-        if callbacks_value is None:
-            callbacks: list[Any] = []
-        elif isinstance(callbacks_value, list):
-            callbacks = callbacks_value
-        elif isinstance(callbacks_value, tuple):
-            callbacks = list(callbacks_value)
-        else:
-            callbacks = [callbacks_value]
-
-        if "otel" not in callbacks:
-            callbacks.append("otel")
-        litellm.callbacks = callbacks
 
 
 class LLMRequestFailedError(Exception):
@@ -97,8 +74,6 @@ class LLM:
             self._reasoning_effort = "medium"
         else:
             self._reasoning_effort = "high"
-
-        _ensure_litellm_otel_callback()
 
     def _load_system_prompt(self, agent_name: str | None) -> str:
         if not agent_name:

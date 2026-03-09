@@ -1,34 +1,19 @@
-import threading
-
 import litellm
 
-from strix.llm import llm as llm_module
 from strix.llm.config import LLMConfig
 from strix.llm.llm import LLM
 from strix.telemetry import tracer as tracer_module
 
 
-def test_llm_adds_otel_callback_without_clobbering_existing(monkeypatch) -> None:
-    monkeypatch.setattr(litellm, "callbacks", ["custom-callback"])
-
-    llm = LLM(LLMConfig(model_name="openai/gpt-5"), agent_name=None)
-
-    assert llm is not None
-    assert "custom-callback" in litellm.callbacks
-    assert "otel" in litellm.callbacks
-    assert litellm.callbacks.count("otel") == 1
-
-
-def test_llm_skips_otel_callback_when_telemetry_disabled(monkeypatch) -> None:
+def test_llm_does_not_modify_litellm_callbacks(monkeypatch) -> None:
     monkeypatch.setenv("STRIX_TELEMETRY", "1")
-    monkeypatch.setenv("STRIX_OTEL_TELEMETRY", "0")
+    monkeypatch.setenv("STRIX_OTEL_TELEMETRY", "1")
     monkeypatch.setattr(litellm, "callbacks", ["custom-callback"])
 
     llm = LLM(LLMConfig(model_name="openai/gpt-5"), agent_name=None)
 
     assert llm is not None
-    assert "custom-callback" in litellm.callbacks
-    assert "otel" not in litellm.callbacks
+    assert litellm.callbacks == ["custom-callback"]
 
 
 def test_llm_trace_metadata_contains_run_and_agent_context(monkeypatch) -> None:
@@ -48,19 +33,3 @@ def test_llm_trace_metadata_contains_run_and_agent_context(monkeypatch) -> None:
     assert metadata["strix_run_name"] == "test-run"
     assert metadata["strix_agent_name"] == "Root Agent"
     assert metadata["strix_agent_id"] == "agent-1"
-
-
-def test_llm_otel_callback_registration_is_thread_safe(monkeypatch) -> None:
-    monkeypatch.setenv("STRIX_TELEMETRY", "0")
-    monkeypatch.setenv("STRIX_OTEL_TELEMETRY", "1")
-    monkeypatch.setattr(litellm, "callbacks", [])
-
-    threads = [
-        threading.Thread(target=llm_module._ensure_litellm_otel_callback) for _ in range(20)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
-
-    assert litellm.callbacks.count("otel") == 1
