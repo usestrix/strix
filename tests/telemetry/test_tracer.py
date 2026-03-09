@@ -255,6 +255,55 @@ def test_events_with_agent_id_include_agent_name(monkeypatch, tmp_path) -> None:
     assert chat_event["actor"]["agent_name"] == "Root Agent"
 
 
+def test_update_agent_status_emits_status_event(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    tracer = Tracer("agent-status-update")
+    set_global_tracer(tracer)
+    tracer.log_agent_creation("agent-1", "Root Agent", "scan auth")
+
+    tracer.update_agent_status(
+        "agent-1",
+        "failed",
+        error_message="sandbox timeout",
+        system_message="Retrying sandbox setup",
+    )
+
+    events_path = tmp_path / "strix_runs" / "agent-status-update" / "events.jsonl"
+    events = _load_events(events_path)
+    status_event = next(event for event in events if event["event_type"] == "agent.status.updated")
+
+    assert status_event["actor"]["agent_id"] == "agent-1"
+    assert status_event["actor"]["agent_name"] == "Root Agent"
+    assert status_event["status"] == "failed"
+    assert status_event["payload"]["error_message"] == "sandbox timeout"
+    assert status_event["payload"]["system_message"] == "Retrying sandbox setup"
+    assert status_event["error"] == "sandbox timeout"
+
+
+def test_update_agent_system_message_emits_message_event(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    tracer = Tracer("agent-system-message-update")
+    set_global_tracer(tracer)
+    tracer.log_agent_creation("agent-1", "Root Agent", "scan auth")
+
+    tracer.update_agent_system_message("agent-1", "Generating response...")
+
+    assert tracer.agents["agent-1"]["system_message"] == "Generating response..."
+
+    events_path = tmp_path / "strix_runs" / "agent-system-message-update" / "events.jsonl"
+    events = _load_events(events_path)
+    message_event = next(
+        event for event in events if event["event_type"] == "agent.system_message.updated"
+    )
+
+    assert message_event["actor"]["agent_id"] == "agent-1"
+    assert message_event["actor"]["agent_name"] == "Root Agent"
+    assert message_event["payload"]["system_message"] == "Generating response..."
+    assert message_event["error"] is None
+
+
 def test_run_metadata_is_only_on_run_lifecycle_events(monkeypatch, tmp_path) -> None:
     monkeypatch.chdir(tmp_path)
 

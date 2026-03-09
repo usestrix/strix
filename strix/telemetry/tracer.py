@@ -579,17 +579,30 @@ class Tracer:
             if system_message is not None:
                 self.agents[agent_id]["system_message"] = system_message
 
+        payload: dict[str, Any] = {}
+        if error_message is not None:
+            payload["error_message"] = error_message
+        if system_message is not None:
+            payload["system_message"] = system_message
+
+        self._emit_event(
+            "agent.status.updated",
+            actor={"agent_id": agent_id},
+            payload=payload or None,
+            status=status,
+            error=error_message,
+            source="strix.agents",
+        )
+
     def update_agent_system_message(self, agent_id: str, message: str) -> None:
         if agent_id in self.agents:
             self.agents[agent_id]["system_message"] = message
             self.agents[agent_id]["updated_at"] = datetime.now(UTC).isoformat()
 
         self._emit_event(
-            "agent.status.updated",
+            "agent.system_message.updated",
             actor={"agent_id": agent_id},
-            payload={"error_message": error_message},
-            status=status,
-            error=error_message,
+            payload={"system_message": message},
             source="strix.agents",
         )
 
