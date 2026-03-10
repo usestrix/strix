@@ -9,6 +9,12 @@ _FUNCTION_CALLS_TAG = re.compile(r"</?function_calls>")
 _STRIP_TAG_QUOTES = re.compile(r"<(function|parameter)\s*=\s*([^>]*?)>")
 # GLM-5 often messes up closing tags mirroring the '=' part, e.g. </function=think>
 _GLM5_MALFORMED_CLOSE = re.compile(r"</(function|parameter)=[^>]*>")
+_MALFORMED_FUNCTION_OPEN = re.compile(
+    r"<function>([^<>\s]+)>(?=(?s:.*?)(?:<parameter|</function>|</invoke>))"
+)
+_MALFORMED_PARAMETER_OPEN = re.compile(
+    r"<parameter>([^<>\s]+)>(?=(?s:.*?)(?:</parameter>))"
+)
 
 
 def normalize_tool_format(content: str) -> str:
@@ -30,6 +36,8 @@ def normalize_tool_format(content: str) -> str:
         content = content.replace("</invoke>", "</function>")
 
     content = _GLM5_MALFORMED_CLOSE.sub(lambda m: f"</{m.group(1)}>", content)
+    content = _MALFORMED_FUNCTION_OPEN.sub(r"<function=\1>", content)
+    content = _MALFORMED_PARAMETER_OPEN.sub(r"<parameter=\1>", content)
 
     return _STRIP_TAG_QUOTES.sub(
         lambda m: f"<{m.group(1)}={m.group(2).strip().strip(chr(34) + chr(39))}>", content
