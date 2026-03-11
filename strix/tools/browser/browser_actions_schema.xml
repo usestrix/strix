@@ -1,188 +1,276 @@
 <tools>
-  <tool name="browser_action">
-    <description>Perform browser actions using a Playwright-controlled browser with multiple tabs.
-  The browser is PERSISTENT and remains active until explicitly closed, allowing for
-  multi-step workflows and long-running processes across multiple tabs.</description>
+  <tool name="browser_actions">
+    <description>Control a browser via natural language or granular commands. Supports two modes:
+
+      **Sandboxed** (default): The browser runs inside the sandbox container (with Caido proxy
+      intercepting all traffic) and is controlled remotely via Chrome DevTools Protocol (CDP).
+      **Local** (use_local=true): Uses the system Chrome installation directly. No sandbox
+      required. Preserves existing login sessions, cookies, and extensions. You may need to
+      fully close Chrome before launching. Optionally select a Chrome profile.
+
+      The browser is PERSISTENT and remains active until explicitly closed, allowing for
+      multi-step workflows. State (cookies, auth, tabs) carries over between calls.
+
+      Two usage styles:
+      - **Agent mode** (action="run"): Give a natural-language task and the browser-use agent
+        autonomously navigates, clicks, fills forms, and extracts information.
+      - **Granular mode**: Use specific actions (open, click, type, scroll, etc.) for precise,
+        deterministic control of the browser via CDP.</description>
     <parameters>
       <parameter name="action" type="string" required="true">
+        <description>The action to perform:
+          **Lifecycle:**
+          - launch: Start the browser. MUST be called before any other actions.
+            Pass use_local=true for local Chrome. Optionally pass profile_directory.
+          - close: Shut down the browser session.
+
+          **Agent mode:**
+          - run: Execute a natural-language browser task. Requires 'task' parameter.
+
+          **Navigation:**
+          - open: Navigate to a URL. Requires 'url'.
+          - back: Navigate back in history.
+
+          **Interaction:**
+          - click: Click an element by 'index' or coordinates ('x', 'y').
+          - type: Insert text at the current cursor position. Requires 'text'.
+          - input: Click an element then type into it. Requires 'index' and 'text'.
+          - hover: Hover over an element. Requires 'index'.
+          - dblclick: Double-click an element. Requires 'index'.
+          - rightclick: Right-click an element. Requires 'index'.
+          - keys: Send keyboard keys (e.g. "Enter", "Ctrl+a"). Requires 'keys'.
+          - select: Select a dropdown option. Requires 'index' and 'value'.
+          - scroll: Scroll the page. Optional 'direction' (up/down/left/right) and 'amount'.
+
+          **Information:**
+          - screenshot: Capture a screenshot. Optional 'full' (full page) and 'path' (save to file).
+          - state: Get the current page DOM state with element indices.
+          - eval: Execute JavaScript. Requires 'js'.
+          - get: Get page info. Requires 'subcommand': title, html, text, value, attributes, bbox.
+
+          **Cookies:**
+          - cookies: Cookie operations. Requires 'subcommand': get, set, clear, export, import.
+
+          **Waiting:**
+          - wait: Wait for conditions. Requires 'subcommand': selector, text.
+
+          **Tabs:**
+          - switch: Switch to a tab by index. Requires 'tab'.
+          - close_tab: Close a tab. Optional 'tab' (defaults to focused tab).</description>
+      </parameter>
+      <parameter name="task" type="string" required="false">
+        <description>Required for 'run' action. A natural-language description of what to do in
+          the browser, e.g. "Go to example.com and find the contact email".</description>
+      </parameter>
+      <parameter name="use_local" type="boolean" required="false">
+        <description>Only used with action='launch'. When true, uses the local system Chrome
+          installation instead of connecting to the sandbox container via CDP. Default: false.</description>
+      </parameter>
+      <parameter name="profile_directory" type="string" required="false">
+        <description>Only used with action='launch' and use_local=true. The Chrome profile
+          directory to use, e.g. "Default", "Profile 1". If not specified, auto-selected.</description>
       </parameter>
       <parameter name="url" type="string" required="false">
-        <description>Required for 'launch', 'goto', and optionally for 'new_tab' actions. The URL to launch the browser at, navigate to, or load in new tab. Must include appropriate protocol (e.g., http://, https://, file://).</description>
+        <description>URL to navigate to. Required for 'open' action. Also used by cookies get/clear/export.</description>
       </parameter>
-      <parameter name="coordinate" type="string" required="false">
-        <description>Required for 'click', 'double_click', and 'hover' actions. Format: "x,y" (e.g., "432,321"). Coordinates should target the center of elements (buttons, links, etc.). Must be within the browser viewport resolution. Be very careful to calculate the coordinates correctly based on the previous screenshot.</description>
+      <parameter name="index" type="integer" required="false">
+        <description>Element index from the DOM state. Used by: click, input, select, hover, dblclick,
+          rightclick, and get (text/value/attributes/bbox).</description>
       </parameter>
       <parameter name="text" type="string" required="false">
-        <description>Required for 'type' action. The text to type in the field.</description>
+        <description>Text content. Required for 'type' and 'input' actions. Also used by wait text.</description>
       </parameter>
-      <parameter name="tab_id" type="string" required="false">
-        <description>Required for 'switch_tab' and 'close_tab' actions. Optional for other actions to specify which tab to operate on. The ID of the tab to operate on. The first tab created during 'launch' has ID "tab_1". If not provided, actions will operate on the currently active tab.</description>
+      <parameter name="value" type="string" required="false">
+        <description>Value to select. Required for 'select' action. Also used for cookie value in cookies set.</description>
       </parameter>
-      <parameter name="js_code" type="string" required="false">
-        <description>Required for 'execute_js' action. JavaScript code to execute in the page context. The code runs in the context of the current page and has access to the DOM and all page-defined variables and functions. The last evaluated expression's value is returned in the response.</description>
+      <parameter name="selector" type="string" required="false">
+        <description>CSS selector. Used by wait selector and get html.</description>
       </parameter>
-      <parameter name="duration" type="string" required="false">
-        <description>Required for 'wait' action. Number of seconds to pause execution. Can be fractional (e.g., 0.5 for half a second).</description>
+      <parameter name="keys" type="string" required="false">
+        <description>Keyboard keys to send. Required for 'keys' action. Examples: "Enter", "Ctrl+a", "Escape".</description>
       </parameter>
-      <parameter name="key" type="string" required="false">
-        <description>Required for 'press_key' action. The key to press. Valid values include: - Single characters: 'a'-'z', 'A'-'Z', '0'-'9' - Special keys: 'Enter', 'Escape', 'ArrowLeft', 'ArrowRight', etc. - Modifier keys: 'Shift', 'Control', 'Alt', 'Meta' - Function keys: 'F1'-'F12'</description>
+      <parameter name="js" type="string" required="false">
+        <description>JavaScript code to execute. Required for 'eval' action.</description>
       </parameter>
-      <parameter name="file_path" type="string" required="false">
-        <description>Required for 'save_pdf' action. The file path where to save the PDF.</description>
+      <parameter name="direction" type="string" required="false">
+        <description>Scroll direction: "up", "down", "left", "right". Default: "down".</description>
       </parameter>
-      <parameter name="clear" type="boolean" required="false">
-        <description>For 'get_console_logs' action: whether to clear console logs after retrieving them. Default is False (keep logs).</description>
+      <parameter name="amount" type="integer" required="false">
+        <description>Scroll amount in pixels. Default: 500.</description>
+      </parameter>
+      <parameter name="tab" type="integer" required="false">
+        <description>Tab index. Required for 'switch', optional for 'close_tab'.</description>
+      </parameter>
+      <parameter name="x" type="number" required="false">
+        <description>X coordinate for click action (use with 'y' for coordinate-based clicking).</description>
+      </parameter>
+      <parameter name="y" type="number" required="false">
+        <description>Y coordinate for click action (use with 'x' for coordinate-based clicking).</description>
+      </parameter>
+      <parameter name="full" type="boolean" required="false">
+        <description>For 'screenshot': capture the full page. Default: false.</description>
+      </parameter>
+      <parameter name="path" type="string" required="false">
+        <description>For 'screenshot': save to this file path instead of returning base64.</description>
+      </parameter>
+      <parameter name="subcommand" type="string" required="false">
+        <description>Sub-action for compound commands:
+          - cookies: "get", "set", "clear", "export", "import"
+          - wait: "selector", "text"
+          - get: "title", "html", "text", "value", "attributes", "bbox"</description>
+      </parameter>
+      <parameter name="query" type="string" required="false">
+        <description>Query for 'extract' action (requires agent mode).</description>
+      </parameter>
+      <parameter name="name" type="string" required="false">
+        <description>Cookie name. Used by cookies set.</description>
+      </parameter>
+      <parameter name="domain" type="string" required="false">
+        <description>Cookie domain. Used by cookies set.</description>
+      </parameter>
+      <parameter name="file" type="string" required="false">
+        <description>File path for cookies export/import.</description>
+      </parameter>
+      <parameter name="timeout" type="integer" required="false">
+        <description>Timeout in milliseconds for wait actions. Default: 30000.</description>
+      </parameter>
+      <parameter name="state" type="string" required="false">
+        <description>Wait state for wait selector: "visible", "hidden", "attached", "detached". Default: "visible".</description>
+      </parameter>
+      <parameter name="secure" type="boolean" required="false">
+        <description>Cookie secure flag. Used by cookies set. Default: false.</description>
+      </parameter>
+      <parameter name="http_only" type="boolean" required="false">
+        <description>Cookie httpOnly flag. Used by cookies set. Default: false.</description>
+      </parameter>
+      <parameter name="same_site" type="string" required="false">
+        <description>Cookie SameSite policy. Used by cookies set. Values: "Strict", "Lax", "None".</description>
+      </parameter>
+      <parameter name="expires" type="number" required="false">
+        <description>Cookie expiration timestamp. Used by cookies set.</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
-      <description>Response containing: - screenshot: Base64 encoded PNG of the current page state - url: Current page URL - title: Current page title - viewport: Current browser viewport dimensions - tab_id: ID of the current active tab - all_tabs: Dict of all open tab IDs and their URLs - message: Status message about the action performed - js_result: Result of JavaScript execution (for execute_js action) - pdf_saved: File path of saved PDF (for save_pdf action) - console_logs: Array of console messages (for get_console_logs action)   Limited to 50KB total and 200 most recent logs. Individual messages truncated at 1KB. - page_source: HTML source code (for view_source action)   Large pages are truncated to 100KB (keeping beginning and end sections).</description>
+      <description>Returns a dict with action-specific results. On error, returns an error field.
+        For 'run': message + result. For granular actions: action-specific keys.</description>
     </returns>
     <notes>
-  Important usage rules:
-  1. PERSISTENCE: The browser remains active and maintains its state until
-     explicitly closed with the 'close' action. This allows for multi-step workflows
-     across multiple tool calls and tabs.
-  2. Browser interaction MUST start with 'launch' and end with 'close'.
-  3. Only one action can be performed per call.
-  4. To visit a new URL not reachable from current page, either:
-     - Use 'goto' action
-     - Open a new tab with the URL
-     - Close browser and relaunch
-  5. Click coordinates must be derived from the most recent screenshot.
-  6. You MUST click on the center of the element, not the edge. You MUST calculate
-     the coordinates correctly based on the previous screenshot, otherwise the click
-     will fail. After clicking, check the new screenshot to verify the click was
-     successful.
-  7. Tab management:
-     - First tab from 'launch' is "tab_1"
-     - New tabs are numbered sequentially ("tab_2", "tab_3", etc.)
-     - Must have at least one tab open at all times
-     - Actions affect the currently active tab unless tab_id is specified
-  8. JavaScript execution (following Playwright evaluation patterns):
-     - Code runs in the browser page context, not the tool context
-     - Has access to DOM (document, window, etc.) and page variables/functions
-     - The LAST EVALUATED EXPRESSION is automatically returned - no return statement needed
-     - For simple values: document.title (returns the title)
-     - For objects: {title: document.title, url: location.href} (returns the object)
-     - For async operations: Use await and the promise result will be returned
-     - AVOID explicit return statements - they can break evaluation
-     - object literals must be wrapped in paranthesis when they are the final expression
-     - Variables from tool context are NOT available - pass data as parameters if needed
-     - Examples of correct patterns:
-       * Single value: document.querySelectorAll('img').length
-       * Object result: {images: document.images.length, links: document.links.length}
-       * Async operation: await fetch(location.href).then(r => r.status)
-       * DOM manipulation: document.body.style.backgroundColor = 'red'; 'background changed'
-
-  9. Wait action:
-     - Time is specified in seconds
-     - Can be used to wait for page loads, animations, etc.
-     - Can be fractional (e.g., 0.5 seconds)
-     - Screenshot is captured after the wait
-  10. The browser can operate concurrently with other tools. You may invoke
-      terminal, python, or other tools (in separate assistant messages) while maintaining
-      the active browser session, enabling sophisticated multi-tool workflows.
-  11. Keyboard actions:
-      - Use press_key for individual key presses
-      - Use type for typing regular text
-      - Some keys have special names based on Playwright's key documentation
-  12. All code in the js_code parameter is executed as-is - there's no need to
-      escape special characters or worry about formatting. Just write your JavaScript
-      code normally. It can be single line or multi-line.
-  13. For form filling, click on the field first, then use 'type' to enter text.
-  14. The browser runs in headless mode using Chrome engine for security and performance.
-  15. RESOURCE MANAGEMENT:
-      - ALWAYS close tabs you no longer need using 'close_tab' action.
-      - ALWAYS close the browser with 'close' action when you have completely finished
-        all browser-related tasks. Do not leave the browser running if you're done with it.
-      - If you opened multiple tabs, close them as soon as you've extracted the needed
-        information from each one.
+      Important usage rules:
+      1. PERSISTENCE: The browser remains active and maintains its state (cookies, auth, tabs)
+      until explicitly closed with the 'close' action.
+      2. Browser interaction MUST start with 'launch' and end with 'close'.
+      3. You MUST call 'launch' before any other actions. Calling actions without launching
+      first will return an error.
+      4. For 'run' action: the browser-use agent autonomously handles the task. You MUST wait
+      for the result — it is returned synchronously.
+      5. For granular actions: use 'state' first to get element indices, then use those indices
+      with click, input, select, hover, etc.
+      6. The browser persists across tasks. Do NOT close it between actions.
+      7. ALWAYS close the browser with 'close' when completely finished.
+      8. There is a 5-minute timeout per 'run' task. Break large tasks into smaller steps.
+      9. Granular actions are faster and more deterministic than 'run' for simple operations.
+      Use 'run' for complex multi-step tasks; use granular actions for precise control.
     </notes>
     <examples>
-  # Launch browser at URL (creates tab_1)
-  <function=browser_action>
-  <parameter=action>launch</parameter>
-  <parameter=url>https://example.com</parameter>
-  </function>
+      # Launch the sandbox browser (default, must be done first)
+      <function=browser_actions>
+        <parameter=action>launch</parameter>
+      </function>
 
-  # Navigate to different URL
-  <function=browser_action>
-  <parameter=action>goto</parameter>
-  <parameter=url>https://github.com</parameter>
-  </function>
+      # Launch the local system Chrome instead
+      <function=browser_actions>
+        <parameter=action>launch</parameter>
+        <parameter=use_local>true</parameter>
+      </function>
 
-  # Open new tab with different URL
-  <function=browser_action>
-  <parameter=action>new_tab</parameter>
-  <parameter=url>https://another-site.com</parameter>
-  </function>
+      # Navigate to a URL
+      <function=browser_actions>
+        <parameter=action>open</parameter>
+        <parameter=url>https://example.com</parameter>
+      </function>
 
-  # Wait for page load
-  <function=browser_action>
-  <parameter=action>wait</parameter>
-  <parameter=duration>2.5</parameter>
-  </function>
+      # Get current page state with element indices
+      <function=browser_actions>
+        <parameter=action>state</parameter>
+      </function>
 
-  # Click login button at coordinates from screenshot
-  <function=browser_action>
-  <parameter=action>click</parameter>
-  <parameter=coordinate>450,300</parameter>
-  </function>
+      # Click element by index (from state output)
+      <function=browser_actions>
+        <parameter=action>click</parameter>
+        <parameter=index>5</parameter>
+      </function>
 
-  # Click username field and type
-  <function=browser_action>
-  <parameter=action>click</parameter>
-  <parameter=coordinate>400,200</parameter>
-  </function>
+      # Click by coordinates
+      <function=browser_actions>
+        <parameter=action>click</parameter>
+        <parameter=x>100</parameter>
+        <parameter=y>200</parameter>
+      </function>
 
-  <function=browser_action>
-  <parameter=action>type</parameter>
-  <parameter=text>user@example.com</parameter>
-  </function>
+      # Type into an input field (click + type)
+      <function=browser_actions>
+        <parameter=action>input</parameter>
+        <parameter=index>3</parameter>
+        <parameter=text>admin@example.com</parameter>
+      </function>
 
-  # Click password field and type
-  <function=browser_action>
-  <parameter=action>click</parameter>
-  <parameter=coordinate>400,250</parameter>
-  </function>
+      # Send keyboard keys
+      <function=browser_actions>
+        <parameter=action>keys</parameter>
+        <parameter=keys>Enter</parameter>
+      </function>
 
-  <function=browser_action>
-  <parameter=action>type</parameter>
-  <parameter=text>mypassword123</parameter>
-  </function>
+      # Scroll down
+      <function=browser_actions>
+        <parameter=action>scroll</parameter>
+        <parameter=direction>down</parameter>
+        <parameter=amount>500</parameter>
+      </function>
 
-  # Press Enter key
-  <function=browser_action>
-  <parameter=action>press_key</parameter>
-  <parameter=key>Enter</parameter>
-  </function>
+      # Take a screenshot
+      <function=browser_actions>
+        <parameter=action>screenshot</parameter>
+        <parameter=full>true</parameter>
+        <parameter=path>/tmp/page.png</parameter>
+      </function>
 
-  # Execute JavaScript to get page stats (correct pattern - no return statement)
-  <function=browser_action>
-  <parameter=action>execute_js</parameter>
-  <parameter=js_code>const images = document.querySelectorAll('img');
-const links = document.querySelectorAll('a');
-{
-    images: images.length,
-    links: links.length,
-    title: document.title
-}</parameter>
-  </function>
+      # Get page title
+      <function=browser_actions>
+        <parameter=action>get</parameter>
+        <parameter=subcommand>title</parameter>
+      </function>
 
-  # Scroll down
-  <function=browser_action>
-  <parameter=action>scroll_down</parameter>
-  </function>
+      # Wait for an element to appear
+      <function=browser_actions>
+        <parameter=action>wait</parameter>
+        <parameter=subcommand>selector</parameter>
+        <parameter=selector>#login-form</parameter>
+        <parameter=timeout>10000</parameter>
+      </function>
 
-  # Get console logs
-  <function=browser_action>
-  <parameter=action>get_console_logs</parameter>
-  </function>
+      # Get cookies for a URL
+      <function=browser_actions>
+        <parameter=action>cookies</parameter>
+        <parameter=subcommand>get</parameter>
+        <parameter=url>https://example.com</parameter>
+      </function>
 
-  # View page source
-  <function=browser_action>
-  <parameter=action>view_source</parameter>
-  </function>
+      # Execute JavaScript
+      <function=browser_actions>
+        <parameter=action>eval</parameter>
+        <parameter=js>document.title</parameter>
+      </function>
+
+      # Run a natural-language browser task
+      <function=browser_actions>
+        <parameter=action>run</parameter>
+        <parameter=task>Go to https://example.com/login, fill in username "admin" and password "secret", then click the login button</parameter>
+      </function>
+
+      # Close the browser when done
+      <function=browser_actions>
+        <parameter=action>close</parameter>
+      </function>
     </examples>
   </tool>
 </tools>

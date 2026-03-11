@@ -33,7 +33,7 @@ RUN apt-get update && \
     net-tools dnsutils whois \
     jq parallel ripgrep grep \
     less man-db procps htop \
-    iproute2 iputils-ping netcat-traditional \
+    iproute2 iputils-ping netcat-traditional socat \
     nmap ncat ndiff \
     sqlmap nuclei subfinder naabu ffuf \
     nodejs npm pipx \
@@ -215,7 +215,11 @@ RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/p
 
 USER root
 COPY containers/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+COPY containers/healthcheck.sh /usr/local/bin/healthcheck.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/healthcheck.sh
+
+HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
+  CMD healthcheck.sh
 
 USER pentester
 WORKDIR /workspace

@@ -135,8 +135,30 @@ async def register_agent(
     return {"status": "registered", "agent_id": agent_id}
 
 
+async def _check_cdp_health() -> dict[str, Any]:
+    """Probe the container-local Chromium CDP endpoint."""
+    cdp_port = os.getenv("CDP_INTERNAL_PORT", "19222")
+    cdp_url = f"http://127.0.0.1:{cdp_port}/json/version"
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
+            resp = await client.get(cdp_url)
+            if resp.status_code == 200:
+                data = resp.json()
+                return {
+                    "status": "healthy",
+                    "browser": data.get("Browser", "unknown"),
+                    "ws_url": data.get("webSocketDebuggerUrl", ""),
+                }
+            return {"status": "unhealthy", "detail": f"HTTP {resp.status_code}"}
+    except Exception as exc:  # noqa: BLE001
+        return {"status": "unhealthy", "detail": str(exc)}
+
+
 @app.get("/health")
 async def health_check() -> dict[str, Any]:
+    cdp_health = await _check_cdp_health()
     return {
         "status": "healthy",
         "sandbox_mode": str(SANDBOX_MODE),
@@ -144,6 +166,7 @@ async def health_check() -> dict[str, Any]:
         "auth_configured": "true" if EXPECTED_TOKEN else "false",
         "active_agents": len(agent_tasks),
         "agents": list(agent_tasks.keys()),
+        "chromium_cdp": cdp_health,
     }
 
 
