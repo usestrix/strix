@@ -333,22 +333,5 @@ done
 
 echo "✅ Container ready"
 
-# ---------------------------------------------------------------------------
-# Instead of exec (which orphans background processes), run the user command
-# and then wait so that the entrypoint stays alive as PID 1 to reap children.
-# ---------------------------------------------------------------------------
 cd /workspace
-if [ $# -gt 0 ]; then
-  "$@" &
-  CMD_PID=$!
-  echo "Started user command (PID $CMD_PID): $*"
-
-  # Forward SIGTERM/SIGINT to all children for graceful shutdown
-  trap 'echo "Shutting down..."; kill $CMD_PID $TOOL_SERVER_PID $WATCHDOG_PID ${CHROMIUM_PID:-0} ${SOCAT_PID:-0} ${CAIDO_PID:-0} 2>/dev/null; wait' SIGTERM SIGINT
-
-  wait $CMD_PID
-else
-  # No command: just keep running (wait on tool server)
-  trap 'echo "Shutting down..."; kill $TOOL_SERVER_PID $WATCHDOG_PID ${CHROMIUM_PID:-0} ${SOCAT_PID:-0} ${CAIDO_PID:-0} 2>/dev/null; wait' SIGTERM SIGINT
-  wait $TOOL_SERVER_PID
-fi
+exec "$@"
