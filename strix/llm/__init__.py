@@ -13,6 +13,7 @@ __all__ = [
     "LLMRequestFailedError",
 ]
 
+litellm.suppress_debug_info = True
 litellm._logging._disable_debugging()
 logging.getLogger("asyncio").setLevel(logging.CRITICAL)
 logging.getLogger("asyncio").propagate = False
