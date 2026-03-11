@@ -26,6 +26,7 @@
 
           **Agent mode:**
           - run: Execute a natural-language browser task. Requires 'task' parameter.
+            Optionally pass 'return_fields' to select which history data to include in the response.
 
           **Navigation:**
           - open: Navigate to a URL. Requires 'url'.
@@ -149,6 +150,30 @@
       <parameter name="expires" type="number" required="false">
         <description>Cookie expiration timestamp. Used by cookies set.</description>
       </parameter>
+      <parameter name="return_fields" type="array" required="false">
+        <description>Only used with action='run'. A list of history fields to include in the
+          response under a "fields" key. By default only the final result is returned. Use this
+          to request additional data from the agent run.
+
+          Available fields:
+          - urls: List of visited URLs
+          - screenshot_paths: List of screenshot file paths
+          - screenshots: List of screenshots as base64 strings
+          - action_names: Names of executed actions
+          - extracted_content: Extracted content from all actions
+          - errors: List of errors (None for steps without errors)
+          - model_actions: All actions with their parameters
+          - model_outputs: All model outputs
+          - last_action: Last action in history
+          - final_result: Final extracted content (last step)
+          - is_done: Whether the agent completed
+          - has_errors: Whether any errors occurred
+          - model_thoughts: Agent reasoning process
+          - action_results: All ActionResult objects
+          - action_history: Truncated action history with essential fields
+          - number_of_steps: Number of steps taken
+          - total_duration_seconds: Total duration of all steps</description>
+      </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
       <description>Returns a dict with action-specific results. On error, returns an error field.
@@ -265,6 +290,13 @@
       <function=browser_actions>
         <parameter=action>run</parameter>
         <parameter=task>Go to https://example.com/login, fill in username "admin" and password "secret", then click the login button</parameter>
+      </function>
+
+      # Run a task and request specific output fields
+      <function=browser_actions>
+        <parameter=action>run</parameter>
+        <parameter=task>Navigate through the site and collect all page titles</parameter>
+        <parameter=return_fields>["urls", "extracted_content", "number_of_steps"]</parameter>
       </function>
 
       # Close the browser when done

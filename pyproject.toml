@@ -239,6 +239,9 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"containers/**/*.py" = [
+  "T201", # print is the only logging mechanism in container scripts
+]
 "tests/**/*.py" = [
   "S106",    # Possible hardcoded password
   "S108",    # Possible insecure usage of temporary file/directory
@@ -254,6 +257,11 @@ ignore = [
   "PLR0911", # Too many return statements (dispatchers and complex browser logic)
   "PLR0912", # Too many branches (dispatch functions)
   "PLR0915", # Too many statements (complex browser task handling)
+]
+"strix/interface/tool_components/browser_renderer.py" = [
+  "PLR0911", # Too many return statements (action dispatcher)
+  "PLR0912", # Too many branches
+  "PLR0915", # Too many statements
 ]
 "strix/telemetry/tracer.py" = [
   "PLR0912", # Too many branches (save_run_data is legitimately complex)

@@ -36,6 +36,7 @@ _background_tasks: set[asyncio.Task[None]] = set()
 
 class _BrowserSession:
     __slots__ = (
+        "auth_token",
         "browser",
         "cdp_url",
         "consecutive_failures",
@@ -53,9 +54,11 @@ class _BrowserSession:
         cdp_url: str,
         ws_url: str,
         *,
+        auth_token: str = "",  # nosec B107
         local: bool = False,
         profile_directory: str | None = None,
     ) -> None:
+        self.auth_token = auth_token
         self.browser = browser
         self.cdp_url = cdp_url
         self.ws_url = ws_url
@@ -84,26 +87,55 @@ _sessions: dict[str, _BrowserSession] = {}
 _lock = threading.Lock()
 
 
+def _squelch_connection_error(
+    loop: asyncio.AbstractEventLoop,
+    context: dict[str, Any],
+) -> None:
+    """Swallow 'Client is stopping' futures left behind by the CDP client.
+
+    During browser shutdown the CDP WebSocket layer may reject pending
+    futures with ``ConnectionError('Client is stopping')``.  Because no
+    caller ever awaits them, asyncio logs noisy "Future exception was
+    never retrieved" tracebacks.  This handler silences that specific
+    case and delegates everything else to the default handler.
+    """
+    exc = context.get("exception")
+    if isinstance(exc, ConnectionError) and "Client is stopping" in str(exc):
+        logger.debug("Suppressed CDP teardown noise: %s", exc)
+        return
+    loop.default_exception_handler(context)
+
+
 async def _safe_close_browser(browser: Any, label: str = "") -> None:
     """Best-effort close/stop of a Browser object, swallowing all errors."""
     if browser is None:
         return
+
+    loop = asyncio.get_running_loop()
+    original_handler = loop.get_exception_handler()
+    loop.set_exception_handler(_squelch_connection_error)
+
     tag = f" ({label})" if label else ""
-    for method_name in ("close", "stop"):
-        fn = getattr(browser, method_name, None)
-        if not callable(fn):
-            continue
-        try:
-            coro = fn()
-            if asyncio.iscoroutine(coro):
-                await asyncio.wait_for(coro, timeout=10)
-        except TimeoutError:
-            logger.warning("Browser%s %s() timed out after 10s", tag, method_name)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("Browser%s %s() failed: %s", tag, method_name, exc)
-        else:
-            logger.debug("Browser%s closed via %s()", tag, method_name)
-            return
+    try:
+        for method_name in ("close", "stop"):
+            fn = getattr(browser, method_name, None)
+            if not callable(fn):
+                continue
+            try:
+                coro = fn()
+                if asyncio.iscoroutine(coro):
+                    await asyncio.wait_for(coro, timeout=10)
+            except TimeoutError:
+                logger.warning("Browser%s %s() timed out after 10s", tag, method_name)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Browser%s %s() failed: %s", tag, method_name, exc)
+            else:
+                logger.debug("Browser%s closed via %s()", tag, method_name)
+                return
+    finally:
+        # Give straggler futures a moment to settle before restoring.
+        await asyncio.sleep(0.1)
+        loop.set_exception_handler(original_handler)
 
 
 async def _refresh_browser(session: _BrowserSession) -> None:
@@ -139,6 +171,7 @@ async def _refresh_browser(session: _BrowserSession) -> None:
     ws_url, _ = await asyncio.to_thread(
         _wait_for_cdp,
         session.cdp_url,
+        session.auth_token,
         max_attempts=10,
         interval=2.0,
     )
@@ -154,7 +187,10 @@ async def _refresh_browser(session: _BrowserSession) -> None:
 
 
 def _wait_for_cdp(
-    cdp_url: str, max_attempts: int = 30, interval: float = 1.0
+    cdp_url: str,
+    auth_token: str = "",  # nosec B107
+    max_attempts: int = 30,
+    interval: float = 1.0,
 ) -> tuple[str, dict[str, Any]]:
     """Block until the CDP endpoint at *cdp_url* responds to ``/json/version``.
 
@@ -164,21 +200,24 @@ def _wait_for_cdp(
     reachable from the host — we replace the host:port with the values from
     *cdp_url* (the Docker-mapped endpoint).
 
-    The Chromium process inside the sandbox container may still be starting
-    when the tool server is already healthy.  We poll the CDP ``/json/version``
-    endpoint before handing the URL to browser-use.
+    When *auth_token* is provided it is sent as a Bearer header on the
+    HTTP probe and appended as a ``?token=`` query parameter on the
+    rewritten WebSocket URL (for the CDP auth proxy).
     """
     from urllib.parse import urlparse
 
     import httpx
 
     version_url = cdp_url.rstrip("/") + "/json/version"
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
     last_error: str = ""
 
     for attempt in range(1, max_attempts + 1):
         try:
             with httpx.Client(trust_env=False, timeout=5) as client:
-                resp = client.get(version_url)
+                resp = client.get(version_url, headers=headers)
                 if resp.status_code == 200 and "webSocketDebuggerUrl" in resp.text:
                     version_info = resp.json()
                     raw_ws = version_info.get("webSocketDebuggerUrl", "")
@@ -193,13 +232,24 @@ def _wait_for_cdp(
                         f"{parsed_cdp.hostname}:{parsed_cdp.port}",
                     )
 
+                    # Append auth token so browser-use's WebSocket upgrade
+                    # request passes through the CDP auth proxy.
+                    if auth_token:
+                        sep = "&" if "?" in ws_url else "?"
+                        ws_url = f"{ws_url}{sep}token={auth_token}"
+
+                    # Log the WS URL with the token redacted to avoid
+                    # leaking credentials into log files.
+                    import re
+
+                    safe_ws = re.sub(r"([?&])token=[^&]+", r"\1token=REDACTED", ws_url)
                     logger.info(
                         "CDP ready at %s (attempt %d): browser=%s, ws_raw=%s, ws_rewritten=%s",
                         cdp_url,
                         attempt,
                         version_info.get("Browser", "unknown"),
                         raw_ws,
-                        ws_url,
+                        safe_ws,
                     )
                     return ws_url, version_info
                 last_error = f"HTTP {resp.status_code}, body={resp.text[:200]}"
@@ -222,7 +272,7 @@ def _wait_for_cdp(
     )
 
 
-async def _launch_browser(cdp_url: str, agent_id: str) -> _BrowserSession:
+async def _launch_browser(cdp_url: str, agent_id: str, auth_token: str = "") -> _BrowserSession:  # nosec B107
     """Create a new browser session connected to the sandbox browser via CDP.
 
     The *cdp_url* points to the Chromium instance running inside the Docker
@@ -243,7 +293,7 @@ async def _launch_browser(cdp_url: str, agent_id: str) -> _BrowserSession:
     # Wait for the container's Chromium to be ready and get the rewritten WS URL.
     # We pass the ws:// URL directly so browser-use skips its own /json/version
     # fetch (which would get the container-internal address).
-    ws_url, version_info = await asyncio.to_thread(_wait_for_cdp, cdp_url)
+    ws_url, version_info = await asyncio.to_thread(_wait_for_cdp, cdp_url, auth_token)
     logger.info(
         "Chromium version: %s, protocol: %s, user-agent: %s",
         version_info.get("Browser", "?"),
@@ -260,7 +310,9 @@ async def _launch_browser(cdp_url: str, agent_id: str) -> _BrowserSession:
         ws_url,
     )
 
-    session = _BrowserSession(browser=browser, cdp_url=cdp_url, ws_url=ws_url)
+    session = _BrowserSession(
+        browser=browser, cdp_url=cdp_url, ws_url=ws_url, auth_token=auth_token
+    )
 
     with _lock:
         if agent_id in _sessions:
@@ -380,15 +432,27 @@ def cleanup_agent(agent_id: str) -> None:
 
 def _close_all() -> None:
     with _lock:
-        agent_ids = list(_sessions.keys())
-    for aid in agent_ids:
-        with contextlib.suppress(Exception):
-            with _lock:
-                session = _sessions.pop(aid, None)
-            if session is not None:
-                # At atexit there's no running loop, so create one.
-                with contextlib.suppress(Exception):
-                    asyncio.run(_shutdown_session(session))
+        sessions = [_sessions.pop(aid) for aid in list(_sessions) if aid in _sessions]
+    if not sessions:
+        return
+    for session in sessions:
+        session.invalidated = True
+        browser = session.browser
+        session.browser = None
+        if browser is None:
+            continue
+        # Attempt a synchronous best-effort close without spinning up a
+        # full asyncio.run(), which hangs when a signal handler fires
+        # inside the new loop's select().
+        for method_name in ("close", "stop"):
+            fn = getattr(browser, method_name, None)
+            if not callable(fn):
+                continue
+            with contextlib.suppress(Exception):
+                coro = fn()
+                if asyncio.iscoroutine(coro):
+                    coro.close()  # discard; can't await at atexit
+                break
 
 
 atexit.register(_close_all)
@@ -428,14 +492,17 @@ async def _reinitialize_after_agent(session: _BrowserSession) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _check_cdp_alive(cdp_url: str) -> bool:
+def _check_cdp_alive(cdp_url: str, auth_token: str = "") -> bool:  # nosec B107
     """Quick check that the CDP endpoint is reachable (non-blocking from sync)."""
     import httpx
 
     version_url = cdp_url.rstrip("/") + "/json/version"
+    headers: dict[str, str] = {}
+    if auth_token:
+        headers["Authorization"] = f"Bearer {auth_token}"
     try:
         with httpx.Client(trust_env=False, timeout=5) as client:
-            resp = client.get(version_url)
+            resp = client.get(version_url, headers=headers)
             return resp.status_code == 200 and "webSocketDebuggerUrl" in resp.text
     except Exception:  # noqa: BLE001
         return False
@@ -449,7 +516,7 @@ async def _wait_for_cdp_recovery(session: _BrowserSession, task_num: int) -> boo
     max_attempts = int(_CDP_RECOVERY_TIMEOUT / _CDP_RECOVERY_INTERVAL)
     for attempt in range(1, max_attempts + 1):
         await asyncio.sleep(_CDP_RECOVERY_INTERVAL)
-        if await asyncio.to_thread(_check_cdp_alive, session.cdp_url):
+        if await asyncio.to_thread(_check_cdp_alive, session.cdp_url, session.auth_token):
             logger.info(
                 "Task #%d: CDP recovered after %ds",
                 task_num,
@@ -504,7 +571,7 @@ async def _ensure_healthy_session(session: _BrowserSession, task_num: int) -> st
             reason,
         )
         # Make sure CDP is alive first (may need watchdog restart).
-        cdp_alive = await asyncio.to_thread(_check_cdp_alive, session.cdp_url)
+        cdp_alive = await asyncio.to_thread(_check_cdp_alive, session.cdp_url, session.auth_token)
         if not cdp_alive and not await _wait_for_cdp_recovery(session, task_num):
             return (
                 f"Chromium CDP at {session.cdp_url} is not responding after "
@@ -519,7 +586,7 @@ async def _ensure_healthy_session(session: _BrowserSession, task_num: int) -> st
         return None
 
     # 2) Normal pre-flight: verify CDP is alive.
-    if await asyncio.to_thread(_check_cdp_alive, session.cdp_url):
+    if await asyncio.to_thread(_check_cdp_alive, session.cdp_url, session.auth_token):
         return None  # all good
 
     # 3) CDP down — wait for watchdog, then refresh.

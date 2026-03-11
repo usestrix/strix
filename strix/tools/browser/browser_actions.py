@@ -168,7 +168,12 @@ async def _cleanup_agent(agent: Any) -> None:
                     await asyncio.wait_for(coro, timeout=5)
 
 
-async def _run_agent_task(task: str, session: _BrowserSession) -> dict[str, Any]:
+async def _run_agent_task(
+    task: str,
+    session: _BrowserSession,
+    *,
+    return_fields: list[str] | None = None,
+) -> dict[str, Any]:
     """Run a browser-use task on the session's browser with resilient reconnection.
 
     Lifecycle:
@@ -253,7 +258,7 @@ async def _run_agent_task(task: str, session: _BrowserSession) -> dict[str, Any]
             return {"error": f"Browser task failed: {exc}", "is_running": False}
 
         # --- Success path ---
-        interpreted = _interpret_agent_result(result)
+        interpreted = _interpret_agent_result(result, return_fields=return_fields)
 
         if "error" in interpreted:
             error_msg = str(interpreted["error"])
@@ -291,12 +296,51 @@ async def _run_agent_task(task: str, session: _BrowserSession) -> dict[str, Any]
     }
 
 
-def _interpret_agent_result(result: Any) -> dict[str, Any]:
+_JSON_PRIMITIVES = str | int | float | bool | None
+
+
+def _json_safe(value: Any) -> Any:
+    """Coerce a value into a JSON-serialisable form."""
+    if isinstance(value, _JSON_PRIMITIVES):
+        return value
+    if isinstance(value, list):
+        return [v if isinstance(v, _JSON_PRIMITIVES) else str(v) for v in value]
+    return str(value)
+
+
+_HISTORY_ACCESSORS: dict[str, str] = {
+    "urls": "urls",
+    "screenshot_paths": "screenshot_paths",
+    "screenshots": "screenshots",
+    "action_names": "action_names",
+    "extracted_content": "extracted_content",
+    "errors": "errors",
+    "model_actions": "model_actions",
+    "model_outputs": "model_outputs",
+    "last_action": "last_action",
+    "final_result": "final_result",
+    "is_done": "is_done",
+    "has_errors": "has_errors",
+    "model_thoughts": "model_thoughts",
+    "action_results": "action_results",
+    "action_history": "action_history",
+    "number_of_steps": "number_of_steps",
+    "total_duration_seconds": "total_duration_seconds",
+}
+
+
+def _interpret_agent_result(
+    result: Any,
+    return_fields: list[str] | None = None,
+) -> dict[str, Any]:
     """Inspect an ``AgentHistoryList`` and return a success or error dict.
 
     If the browser-use agent encountered errors (CDP failures, navigation
     errors, etc.) this returns an ``{"error": ...}`` dict so the calling
     strix agent treats the task as failed rather than succeeded.
+
+    When *return_fields* is provided, the requested history accessors are
+    included in the response under a ``"fields"`` key.
     """
     # Collect errors reported by the browser-use agent.
     errors: list[str] = []
@@ -343,11 +387,31 @@ def _interpret_agent_result(result: Any) -> dict[str, Any]:
             "is_running": False,
         }
 
-    return {
+    out: dict[str, Any] = {
         "message": "Task completed",
         "result": final_result or str(result),
         "is_running": False,
     }
+
+    # Attach optional fields requested by the caller.
+    if return_fields:
+        fields: dict[str, Any] = {}
+        available = ", ".join(sorted(_HISTORY_ACCESSORS))
+        for field in return_fields:
+            accessor = _HISTORY_ACCESSORS.get(field)
+            if accessor is None:
+                fields[field] = f"unknown field (available: {available})"
+                continue
+            try:
+                attr = getattr(result, accessor, None)
+                value = attr() if callable(attr) else attr
+                fields[field] = _json_safe(value)
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("Error extracting field %s: %s", field, exc)
+                fields[field] = f"error: {exc}"
+        out["fields"] = fields
+
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -355,12 +419,15 @@ def _interpret_agent_result(result: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
-def _resolve_cdp_url(agent_state: Any) -> str:
-    """Extract the CDP URL from agent_state's sandbox_info.
+def _resolve_cdp_url(agent_state: Any) -> tuple[str, str]:
+    """Extract the CDP URL and auth token from agent_state's sandbox_info.
 
     The sandbox container runs Chromium with ``--remote-debugging-port``
     and the Docker runtime maps it to an ephemeral host port stored in
-    ``sandbox_info["browser_cdp_port"]``.
+    ``sandbox_info["browser_cdp_port"]``.  The auth token (shared with
+    the tool server) is used to authenticate against the CDP auth proxy.
+
+    Returns ``(cdp_url, auth_token)``.
     """
     if not hasattr(agent_state, "sandbox_info") or not agent_state.sandbox_info:
         raise ValueError(
@@ -378,6 +445,8 @@ def _resolve_cdp_url(agent_state: Any) -> str:
             "The sandbox container may not have Chromium CDP enabled. "
             f"Available keys: {list(sandbox_info.keys())}"
         )
+
+    auth_token: str = sandbox_info.get("auth_token", "")
 
     # Resolve the Docker host (same logic used by the tool server URL).
     docker_host = os.getenv("DOCKER_HOST", "")
@@ -400,7 +469,7 @@ def _resolve_cdp_url(agent_state: Any) -> str:
         host,
         sandbox_info.get("workspace_id", "?")[:12],
     )
-    return cdp_url
+    return cdp_url, auth_token
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +509,7 @@ async def browser_actions(
     http_only: bool = False,
     same_site: str | None = None,
     expires: float | None = None,
+    return_fields: list[str] | None = None,
     *,
     agent_state: Any = None,
 ) -> dict[str, Any]:
@@ -511,13 +581,18 @@ async def browser_actions(
                     "profile_directory": session.profile_directory or "auto",
                     "is_running": True,
                 }
-            cdp_url = _resolve_cdp_url(agent_state)
-            session = await _launch_browser(cdp_url, agent_id)
+            cdp_url, auth_token = _resolve_cdp_url(agent_state)
+            session = await _launch_browser(cdp_url, agent_id, auth_token)
+            # Strip auth token from the ws_url before returning — the
+            # token is a secret and must not leak to the calling agent.
+            import re
+
+            safe_ws = re.sub(r"[?&]token=[^&]+", "", session.ws_url)
             return {
                 "message": "Browser launched and ready",
                 "mode": "sandboxed",
                 "cdp_url": session.cdp_url,
-                "ws_url": session.ws_url,
+                "ws_url": safe_ws,
                 "is_running": True,
             }
 
@@ -537,7 +612,7 @@ async def browser_actions(
                 session.local,
                 task,
             )
-            result = await _run_agent_task(task, session)
+            result = await _run_agent_task(task, session, return_fields=return_fields)
             logger.info("Browser task completed for agent %s", agent_id)
 
             # Agent.run() calls browser_session.kill() which destroys the

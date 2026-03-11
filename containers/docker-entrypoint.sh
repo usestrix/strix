@@ -153,7 +153,7 @@ echo "✅ CA added to browser trust store"
 
 CDP_PORT="${BROWSER_CDP_PORT:-9222}"
 # Chromium always binds CDP to 127.0.0.1 regardless of --remote-debugging-address.
-# We launch it on an internal port and use socat to expose it on 0.0.0.0.
+# We launch it on an internal port and use an auth proxy to expose it on 0.0.0.0.
 CDP_INTERNAL_PORT=19222
 CHROMIUM_BIN=""
 CHROMIUM_RESTART_COUNT=0
@@ -167,8 +167,8 @@ if [ -z "$CHROMIUM_BIN" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# start_chromium: launches Chromium + socat, waits for CDP readiness.
-# Sets CHROMIUM_PID and SOCAT_PID on success.
+# start_chromium: launches Chromium + auth proxy, waits for CDP readiness.
+# Sets CHROMIUM_PID and CDP_PROXY_PID on success.
 # ---------------------------------------------------------------------------
 start_chromium() {
   if [ -z "$CHROMIUM_BIN" ]; then
@@ -215,30 +215,30 @@ start_chromium() {
     return 1
   fi
 
-  # Kill any leftover socat from a previous run
-  if [ -n "${SOCAT_PID:-}" ] && kill -0 "$SOCAT_PID" 2>/dev/null; then
-    kill "$SOCAT_PID" 2>/dev/null || true
-    wait "$SOCAT_PID" 2>/dev/null || true
+  # Kill any leftover CDP auth proxy from a previous run
+  if [ -n "${CDP_PROXY_PID:-}" ] && kill -0 "$CDP_PROXY_PID" 2>/dev/null; then
+    kill "$CDP_PROXY_PID" 2>/dev/null || true
+    wait "$CDP_PROXY_PID" 2>/dev/null || true
   fi
 
-  # Expose CDP on 0.0.0.0 so Docker port mapping can reach it from the host.
-  socat TCP-LISTEN:${CDP_PORT},fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:${CDP_INTERNAL_PORT} &
-  SOCAT_PID=$!
-  echo "Started socat CDP forwarder (PID $SOCAT_PID): 0.0.0.0:${CDP_PORT} -> 127.0.0.1:${CDP_INTERNAL_PORT}"
+  # Expose CDP on 0.0.0.0 via an authenticated proxy (replaces raw socat).
+  python3 /usr/local/bin/cdp-auth-proxy.py &
+  CDP_PROXY_PID=$!
+  echo "Started CDP auth proxy (PID $CDP_PROXY_PID): 0.0.0.0:${CDP_PORT} -> 127.0.0.1:${CDP_INTERNAL_PORT}"
 
-  # Verify the socat-forwarded CDP port is reachable
+  # Verify the proxied CDP port is reachable (with auth)
   local fwd_ready=false
   for i in 1 2 3 4 5; do
-    if curl -s "http://127.0.0.1:${CDP_PORT}/json/version" | grep -q "webSocketDebuggerUrl"; then
-      echo "✅ CDP forwarded and reachable on port ${CDP_PORT} (attempt $i)"
+    if curl -s -H "Authorization: Bearer ${TOOL_SERVER_TOKEN}" "http://127.0.0.1:${CDP_PORT}/json/version" | grep -q "webSocketDebuggerUrl"; then
+      echo "✅ CDP auth proxy reachable on port ${CDP_PORT} (attempt $i)"
       fwd_ready=true
       break
     fi
     sleep 1
   done
   if [ "$fwd_ready" = false ]; then
-    echo "WARNING: CDP not reachable via socat on port ${CDP_PORT}"
-    echo "  socat PID $SOCAT_PID alive: $(kill -0 $SOCAT_PID 2>&1 && echo yes || echo no)"
+    echo "WARNING: CDP not reachable via auth proxy on port ${CDP_PORT}"
+    echo "  proxy PID $CDP_PROXY_PID alive: $(kill -0 $CDP_PROXY_PID 2>&1 && echo yes || echo no)"
     echo "  ss output: $(ss -tlnp 2>/dev/null | grep ${CDP_PORT} || echo 'port not listening')"
     return 1
   fi

@@ -18,7 +18,6 @@ if not SANDBOX_MODE:
     raise RuntimeError("Tool server should only run in sandbox mode (STRIX_SANDBOX_MODE=true)")
 
 parser = argparse.ArgumentParser(description="Start Strix tool server")
-parser.add_argument("--token", required=True, help="Authentication token")
 parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")  # nosec
 parser.add_argument("--port", type=int, required=True, help="Port to bind to")
 parser.add_argument(
@@ -29,7 +28,11 @@ parser.add_argument(
 )
 
 args = parser.parse_args()
-EXPECTED_TOKEN = args.token
+
+# Read token from environment to avoid leaking it in /proc/<pid>/cmdline.
+EXPECTED_TOKEN = os.environ.get("TOOL_SERVER_TOKEN", "")
+if not EXPECTED_TOKEN:
+    raise RuntimeError("TOOL_SERVER_TOKEN environment variable must be set")
 REQUEST_TIMEOUT = args.timeout
 
 app = FastAPI()
@@ -136,7 +139,12 @@ async def register_agent(
 
 
 async def _check_cdp_health() -> dict[str, Any]:
-    """Probe the container-local Chromium CDP endpoint."""
+    """Probe the container-local Chromium CDP endpoint.
+
+    Returns only a boolean status — never the ``webSocketDebuggerUrl``
+    or browser version, because the ``/health`` endpoint is
+    unauthenticated and those fields would leak session secrets.
+    """
     cdp_port = os.getenv("CDP_INTERNAL_PORT", "19222")
     cdp_url = f"http://127.0.0.1:{cdp_port}/json/version"
     try:
@@ -145,15 +153,31 @@ async def _check_cdp_health() -> dict[str, Any]:
         async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
             resp = await client.get(cdp_url)
             if resp.status_code == 200:
-                data = resp.json()
-                return {
-                    "status": "healthy",
-                    "browser": data.get("Browser", "unknown"),
-                    "ws_url": data.get("webSocketDebuggerUrl", ""),
-                }
-            return {"status": "unhealthy", "detail": f"HTTP {resp.status_code}"}
-    except Exception as exc:  # noqa: BLE001
-        return {"status": "unhealthy", "detail": str(exc)}
+                return {"status": "healthy"}
+            return {"status": "unhealthy"}
+    except Exception:  # noqa: BLE001
+        return {"status": "unhealthy"}
+
+
+@app.get("/cdp/version")
+async def cdp_version(
+    credentials: HTTPAuthorizationCredentials = security_dependency,  # noqa: ARG001
+) -> dict[str, Any]:
+    """Return Chromium's ``/json/version`` data via the authenticated tool server.
+
+    This lets the host discover the WebSocket debugger URL (which contains
+    a random browser GUID) without exposing ``/json/version`` on the
+    unauthenticated CDP port.
+    """
+    cdp_port = os.getenv("CDP_INTERNAL_PORT", "19222")
+    cdp_url = f"http://127.0.0.1:{cdp_port}/json/version"
+    import httpx
+
+    async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+        resp = await client.get(cdp_url)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        return data
 
 
 @app.get("/health")
