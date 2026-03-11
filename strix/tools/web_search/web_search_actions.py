@@ -46,7 +46,7 @@ def web_search(query: str) -> dict[str, Any]:
         headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
         payload = {
-            "model": "sonar-reasoning",
+            "model": "sonar-reasoning-pro",
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": query},
