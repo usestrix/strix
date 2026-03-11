@@ -244,7 +244,8 @@ async def _cmd_screenshot(
 
 async def _cmd_state(bs: Any) -> dict[str, Any]:
     state = await bs.get_browser_state_summary()
-    assert state.dom_state is not None
+    if state.dom_state is None:
+        return {"error": "Browser state has no DOM — the page may still be loading"}
     state_text = state.dom_state.llm_representation()
     if state.page_info:
         pi = state.page_info

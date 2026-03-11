@@ -1,6 +1,6 @@
 #!/bin/bash
 # Healthcheck script for the strix sandbox container.
-# Checks: tool server, Caido proxy, Chromium CDP (via socat).
+# Checks: tool server, Caido proxy, Chromium CDP.
 # Exit 0 = healthy, exit 1 = unhealthy.
 
 set -e
@@ -21,9 +21,9 @@ if ! curl -sf --max-time 3 -o /dev/null "http://127.0.0.1:${CAIDO_PORT}/graphql/
   exit 1
 fi
 
-# 3. Chromium CDP must be reachable (via socat forwarder)
-if ! curl -sf --max-time 3 "http://127.0.0.1:${CDP_PORT}/json/version" | grep -q "webSocketDebuggerUrl"; then
-  echo "UNHEALTHY: Chromium CDP not responding on port ${CDP_PORT}"
+# 3. Chromium CDP must be reachable (probe internal port directly — no auth needed inside the container)
+if ! curl -sf --max-time 3 "http://127.0.0.1:${CDP_INTERNAL_PORT:-19222}/json/version" | grep -q "webSocketDebuggerUrl"; then
+  echo "UNHEALTHY: Chromium CDP not responding on internal port ${CDP_INTERNAL_PORT:-19222}"
   exit 1
 fi
 
