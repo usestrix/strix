@@ -19,6 +19,9 @@ _MAX_SESSION_AGE = 1800  # 30 minutes
 _CDP_RECOVERY_TIMEOUT = 60
 _CDP_RECOVERY_INTERVAL = 2
 
+# Strong refs to fire-and-forget background tasks so they aren't GC'd.
+_background_tasks: set[asyncio.Task[None]] = set()
+
 
 # ---------------------------------------------------------------------------
 # Persistent browser session
@@ -261,8 +264,11 @@ async def _launch_browser(cdp_url: str, agent_id: str) -> _BrowserSession:
 
     with _lock:
         if agent_id in _sessions:
-            # Another thread raced us; discard ours.
+            # Another coroutine raced us; close ours and return theirs.
             logger.info("Race: another session appeared for agent %s, discarding ours", agent_id)
+            task = asyncio.ensure_future(_safe_close_browser(browser, label="race-discarded"))
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
             return _sessions[agent_id]
         _sessions[agent_id] = session
 

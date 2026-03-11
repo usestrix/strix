@@ -105,6 +105,12 @@ def _serialize_messages(messages: list[BaseMessage]) -> list[dict[str, Any]]:
                     for tc in msg.tool_calls
                 ]
             result.append(d)
+
+        else:
+            logger.warning(
+                "_serialize_messages: unhandled message type %s — skipping",
+                type(msg).__name__,
+            )
     return result
 
 
