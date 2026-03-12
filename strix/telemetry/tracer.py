@@ -588,7 +588,7 @@ class Tracer:
         self._emit_event(
             "agent.status.updated",
             actor={"agent_id": agent_id},
-            payload=payload or None,
+            payload=payload if payload else {"error_message": None},
             status=status,
             error=error_message,
             source="strix.agents",

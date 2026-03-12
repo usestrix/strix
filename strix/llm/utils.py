@@ -10,10 +10,10 @@ _STRIP_TAG_QUOTES = re.compile(r"<(function|parameter)\s*=\s*([^>]*?)>")
 # GLM-5 often messes up closing tags mirroring the '=' part, e.g. </function=think>
 _GLM5_MALFORMED_CLOSE = re.compile(r"</(function|parameter)=[^>]*>")
 _MALFORMED_FUNCTION_OPEN = re.compile(
-    r"<function>([^<>\s]+)>(?=(?s:.*?)(?:<parameter|</function>|</invoke>))"
+    r"<function>([^<>\s]+)>(?=(?s:(?!<function).)*?(?:<parameter|</function>|</invoke>))"
 )
 _MALFORMED_PARAMETER_OPEN = re.compile(
-    r"<parameter>([^<>\s]+)>(?=(?s:.*?)(?:</parameter>))"
+    r"<parameter>([^<>\s]+)>(?=(?s:(?!<parameter).)*?(?:</parameter>))"
 )
 
 
