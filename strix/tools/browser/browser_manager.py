@@ -613,3 +613,16 @@ async def _ensure_healthy_session(session: _BrowserSession, task_num: int) -> st
         return f"Chromium restarted but reconnection failed: {exc}"
 
     return None
+
+
+def llm_supports_vision() -> bool:
+    """Check whether the configured LLM supports vision/image input."""
+    try:
+        import litellm
+
+        from strix.config.config import resolve_llm_config
+
+        model, _, _ = resolve_llm_config()
+        return bool(model and litellm.supports_vision(model))
+    except Exception:  # noqa: BLE001
+        return False

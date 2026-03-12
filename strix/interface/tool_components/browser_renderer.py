@@ -56,18 +56,6 @@ class BrowserRenderer(BaseToolRenderer):
         return text
 
     @classmethod
-    def _head(cls) -> Text:
-        text = Text()
-        text.append("@ ", style=cls.DIM)
-        return text
-
-    @classmethod
-    def _icon(cls, color: str) -> Text:
-        text = Text()
-        text.append("◈ ", style=color)
-        return text
-
-    @classmethod
     def _status_mark(cls, status: str) -> Text:
         text = Text()
         if status == "completed":
@@ -128,7 +116,7 @@ class BrowserRenderer(BaseToolRenderer):
             "extract": "extracting content",
         }
         if action in simple:
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append(simple[action], style=cls.DIM)
             text.append_text(cls._status_mark(status))
             return text
@@ -136,14 +124,18 @@ class BrowserRenderer(BaseToolRenderer):
         # --- launch ----------------------------------------------------
         if action == "launch":
             mode = "local" if args.get("use_local") else "sandboxed"
-            text = cls._icon(cls.LIFE)
+            text = Text("◈ ", style=cls.LIFE)
             text.append("launching browser", style=f"bold {cls.LIFE}")
             text.append(f" {mode}", style=cls.DIM)
+            res = result if isinstance(result, dict) else {}
+            warning = res.get("warning")
+            if warning:
+                text.append(f"\n  ⚠ {warning}", style=f"italic {cls.DIM}")
             return text
 
         # --- navigate --------------------------------------------------
         if action == "open":
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append("navigating to ", style=cls.DIM)
             url = args.get("url", "")
             if len(url) > 80:
@@ -160,7 +152,7 @@ class BrowserRenderer(BaseToolRenderer):
                 "rightclick": "right clicking",
                 "hover": "hovering over",
             }
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append(labels[action], style=cls.DIM)
             index = args.get("index")
             if index is not None:
@@ -173,7 +165,7 @@ class BrowserRenderer(BaseToolRenderer):
         # --- text input ------------------------------------------------
         if action in ("type", "input"):
             label = "typing" if action == "type" else "inputting"
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append(label, style=cls.DIM)
             t = args.get("text")
             if t:
@@ -185,7 +177,7 @@ class BrowserRenderer(BaseToolRenderer):
         # --- scroll ----------------------------------------------------
         if action == "scroll":
             d = args.get("direction", "down")
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append("scrolling ", style=cls.DIM)
             text.append(d, style=cls.INTERACT)
             text.append_text(cls._status_mark(status))
@@ -193,7 +185,7 @@ class BrowserRenderer(BaseToolRenderer):
 
         # --- tab switch ------------------------------------------------
         if action == "switch":
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append("switching to tab ", style=cls.DIM)
             text.append(str(args.get("tab", "?")), style=f"bold {cls.NAV}")
             text.append_text(cls._status_mark(status))
@@ -201,7 +193,7 @@ class BrowserRenderer(BaseToolRenderer):
 
         # --- keyboard --------------------------------------------------
         if action == "keys":
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append("pressing ", style=cls.DIM)
             text.append(args.get("keys", ""), style=f"bold {cls.INTERACT}")
             text.append_text(cls._status_mark(status))
@@ -209,37 +201,42 @@ class BrowserRenderer(BaseToolRenderer):
 
         # --- select ----------------------------------------------------
         if action == "select":
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append("selecting ", style=cls.DIM)
             text.append(args.get("value", ""), style=f"bold {cls.INTERACT}")
             text.append_text(cls._status_mark(status))
+
             return text
 
         # --- eval js ---------------------------------------------------
         if action == "eval":
-            text = cls._head()
+            js = args.get("js")
+
+            text = Text("@ ", style=cls.DIM)
             text.append("executing javascript", style=cls.DIM)
             text.append_text(cls._status_mark(status))
-            js = args.get("js")
             if js:
                 text.append("\n")
                 text.append_text(cls._highlight_js(js))
+
             return text
 
         # --- cookies ---------------------------------------------------
         if action == "cookies":
             sub = args.get("subcommand", "")
-            text = cls._head()
+
+            text = Text("@ ", style=cls.DIM)
             text.append("cookies ", style=cls.DIM)
             text.append(sub, style=cls.OBSERVE)
             text.append_text(cls._status_mark(status))
+
             return text
 
         # --- wait ------------------------------------------------------
         if action == "wait":
             sub = args.get("subcommand", "")
             target = args.get("selector") or args.get("text") or ""
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             if status == "completed":
                 text.append(f"waited for {sub}", style=cls.DIM)
                 text.append_text(cls._status_mark(status))
@@ -253,14 +250,14 @@ class BrowserRenderer(BaseToolRenderer):
         # --- get -------------------------------------------------------
         if action == "get":
             sub = args.get("subcommand", "")
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append("getting ", style=cls.DIM)
             text.append(sub, style=cls.OBSERVE)
             text.append_text(cls._status_mark(status))
             return text
 
         # --- fallback --------------------------------------------------
-        text = cls._head()
+        text = Text("@ ", style=cls.DIM)
         if action:
             text.append(action, style=cls.DIM)
         text.append_text(cls._status_mark(status))
@@ -280,7 +277,7 @@ class BrowserRenderer(BaseToolRenderer):
         task = args.get("task", "")
 
         if status == "running":
-            text = cls._head()
+            text = Text("@ ", style=cls.DIM)
             text.append("running task", style=f"bold {cls.EXEC}")
             if task:
                 text.append("\n  ")
@@ -298,7 +295,7 @@ class BrowserRenderer(BaseToolRenderer):
             has_error = "error" in res
 
             if has_error:
-                text = cls._head()
+                text = Text("@ ", style=cls.DIM)
                 text.append("task failed", style=f"bold {cls.ERR}")
                 if task:
                     text.append("\n  ")
@@ -309,8 +306,8 @@ class BrowserRenderer(BaseToolRenderer):
                     error_msg = error_msg[:197] + "..."
                 text.append(error_msg, style=cls.ERR)
             else:
-                text = cls._head()
-                text.append("task completed", style=f"bold {cls.OK}")
+                text = Text("@ ", style=cls.DIM)
+                text.append("browser task completed", style=f"bold {cls.OK}")
                 if task:
                     text.append("\n  ")
                     text.append(task, style=cls.DIM)
@@ -325,8 +322,8 @@ class BrowserRenderer(BaseToolRenderer):
             return text
 
         # Unknown status
-        text = cls._head()
-        text.append("running task", style=cls.DIM)
+        text = Text("@ ", style=cls.DIM)
+        text.append("running browser task", style=cls.DIM)
         if task:
             text.append("\n  ")
             text.append(task, style=cls.DIM)

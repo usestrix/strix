@@ -15,6 +15,7 @@ from .browser_manager import (
     _launch_browser,
     _launch_local_browser,
     _reinitialize_after_agent,
+    llm_supports_vision,
 )
 
 
@@ -209,7 +210,13 @@ async def _run_agent_task(
 
     for attempt in range(1, max_attempts + 1):
         llm = _build_llm()
-        agent = Agent(task=task, llm=llm, browser=session.browser, flash_mode=True)
+        agent = Agent(
+            task=task,
+            llm=llm,
+            browser=session.browser,
+            flash_mode=True,
+            use_vision=llm.supports_vision,
+        )
 
         try:
             result = await asyncio.wait_for(agent.run(), timeout=_TASK_TIMEOUT)
@@ -575,26 +582,33 @@ async def browser_actions(
         if action == "launch":
             if use_local:
                 session = await _launch_local_browser(agent_id, profile_directory)
-                return {
+                result: dict[str, Any] = {
                     "message": "Local browser launched and ready",
                     "mode": "local",
                     "profile_directory": session.profile_directory or "auto",
                     "is_running": True,
                 }
-            cdp_url, auth_token = _resolve_cdp_url(agent_state)
-            session = await _launch_browser(cdp_url, agent_id, auth_token)
-            # Strip auth token from the ws_url before returning — the
-            # token is a secret and must not leak to the calling agent.
-            import re
+            else:
+                cdp_url, auth_token = _resolve_cdp_url(agent_state)
+                session = await _launch_browser(cdp_url, agent_id, auth_token)
+                # Strip auth token from the ws_url before returning — the
+                # token is a secret and must not leak to the calling agent.
+                import re
 
-            safe_ws = re.sub(r"[?&]token=[^&]+", "", session.ws_url)
-            return {
-                "message": "Browser launched and ready",
-                "mode": "sandboxed",
-                "cdp_url": session.cdp_url,
-                "ws_url": safe_ws,
-                "is_running": True,
-            }
+                safe_ws = re.sub(r"[?&]token=[^&]+", "", session.ws_url)
+                result = {
+                    "message": "Browser launched and ready",
+                    "mode": "sandboxed",
+                    "cdp_url": session.cdp_url,
+                    "ws_url": safe_ws,
+                    "is_running": True,
+                }
+            if not llm_supports_vision():
+                result["warning"] = (
+                    "The current model does not support vision — "
+                    "the browser agent will operate without screenshots."
+                )
+            return result
 
         if action == "close":
             await _close_session(agent_id)

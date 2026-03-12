@@ -143,6 +143,7 @@ class ChatLiteLLM(BaseChatModel):
     # Resolved lazily in __post_init__
     _provider_name: str = field(default="", init=False, repr=False)
     _clean_model: str = field(default="", init=False, repr=False)
+    _supports_vision: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Resolve provider info from the model string via litellm."""
@@ -157,12 +158,20 @@ class ChatLiteLLM(BaseChatModel):
                 self._provider_name = "openai"
                 self._clean_model = self.model
 
+        try:
+            import litellm
+
+            self._supports_vision = bool(litellm.supports_vision(self.model))
+        except Exception:  # noqa: BLE001
+            self._supports_vision = False
+
         logger.debug(
-            "ChatLiteLLM initialized: model=%s, provider=%s, clean=%s, api_base=%s",
+            "ChatLiteLLM initialized: model=%s, provider=%s, clean=%s, api_base=%s, vision=%s",
             self.model,
             self._provider_name,
             self._clean_model,
             self.api_base or "(default)",
+            self._supports_vision,
         )
 
     @property
@@ -172,6 +181,10 @@ class ChatLiteLLM(BaseChatModel):
     @property
     def name(self) -> str:
         return self._clean_model or self.model
+
+    @property
+    def supports_vision(self) -> bool:
+        return self._supports_vision
 
     # ------------------------------------------------------------------
     # Usage parsing
