@@ -140,6 +140,8 @@ module = [
   "traceloop.*",
   "browser_use",
   "browser_use.*",
+  "langchain_community",
+  "langchain_community.*",
   "cdp_use",
   "cdp_use.*",
 ]

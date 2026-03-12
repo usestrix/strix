@@ -83,9 +83,9 @@ def _build_llm() -> Any:
 
     Returns a ``ChatLiteLLM`` instance that routes to any provider via litellm.
     """
-    from strix.config.config import resolve_llm_config
+    from langchain_community.chat_models import ChatLiteLLM
 
-    from .llm import ChatLiteLLM
+    from strix.config.config import resolve_llm_config
 
     model, api_key, api_base = resolve_llm_config()
     if not model:

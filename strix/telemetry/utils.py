@@ -353,6 +353,7 @@ def bootstrap_otel(
                     "block_instruments": {
                         Instruments.URLLIB3,
                         Instruments.REQUESTS,
+                        Instruments.LANGCHAIN,
                     },
                 }
                 if remote_enabled:
