@@ -20,23 +20,6 @@ T = TypeVar("T", bound=BaseModel)
 
 @dataclass
 class ChatLiteLLM(BaseChatModel):
-    """Chat model that routes to any provider via LiteLLM.
-
-    Uses litellm's unified ``acompletion`` API to support all providers
-    (OpenAI, Anthropic, Google, Ollama, OpenRouter, DeepSeek, etc.)
-    through a single interface.
-
-    The ``model`` parameter uses litellm's model format, e.g.::
-
-            "gpt-4o"
-            "anthropic/claude-sonnet-4-20250514"
-            "openrouter/google/gemini-2.0-flash-001"
-            "ollama/llama3"
-
-    Structured output (``output_format``) is handled via litellm's
-    ``response_format`` parameter which translates across providers.
-    """
-
     model: str
     api_key: str | None = None
     api_base: str | None = None
@@ -128,16 +111,6 @@ class ChatLiteLLM(BaseChatModel):
         output_format: type[T] | None = None,
         **kwargs: Any,  # noqa: ARG002
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
-        """Invoke the model via litellm.
-
-        Args:
-                messages: List of browser-use chat messages.
-                output_format: Optional Pydantic model class for structured output.
-                **kwargs: Extra keyword args (``session_id`` etc.) — ignored.
-
-        Returns:
-                ``ChatInvokeCompletion`` with either a string or parsed Pydantic model.
-        """
         import litellm
 
         litellm_messages = LiteLLMMessageSerializer.serialize(messages)

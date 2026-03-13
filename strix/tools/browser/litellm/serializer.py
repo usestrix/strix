@@ -11,13 +11,10 @@ from browser_use.llm.messages import (
 
 
 class LiteLLMMessageSerializer:
-    """Serializer for converting browser-use message types to LiteLLM format."""
-
     @staticmethod
     def _serialize_user_content(
         content: str | list[ContentPartTextParam | ContentPartImageParam],
     ) -> str | list[dict[str, Any]]:
-        """Convert user message content for LiteLLM compatibility."""
         if isinstance(content, str):
             return content
 
@@ -46,7 +43,6 @@ class LiteLLMMessageSerializer:
     def _serialize_system_content(
         content: str | list[ContentPartTextParam],
     ) -> str | list[dict[str, Any]]:
-        """Convert system message content for LiteLLM compatibility."""
         if isinstance(content, str):
             return content
 
@@ -62,7 +58,6 @@ class LiteLLMMessageSerializer:
     def _serialize_assistant_content(
         content: str | list[Any] | None,
     ) -> str | list[dict[str, Any]] | None:
-        """Convert assistant message content for LiteLLM compatibility."""
         if content is None:
             return None
         if isinstance(content, str):
@@ -88,11 +83,6 @@ class LiteLLMMessageSerializer:
 
     @staticmethod
     def serialize(messages: list[BaseMessage]) -> list[dict[str, Any]]:
-        """Convert browser-use messages to litellm-compatible dicts (OpenAI format).
-
-        LiteLLM accepts OpenAI-format message dicts for all providers, handling
-        provider-specific conversion (e.g. image blocks for Anthropic) internally.
-        """
         result: list[dict[str, Any]] = []
         for msg in messages:
             if isinstance(msg, UserMessage):
