@@ -142,7 +142,6 @@ class DockerRuntime(AbstractRuntime):
                         f"{CONTAINER_CAIDO_PORT}/tcp": self._caido_port,
                     },
                     cap_add=["NET_ADMIN", "NET_RAW"],
-                    shm_size="256m",
                     labels={"strix-scan-id": scan_id},
                     environment={
                         "PYTHONUNBUFFERED": "1",
