@@ -151,15 +151,14 @@ sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
 
-CDP_PORT="${BROWSER_CDP_PORT:-9222}"
-# Chromium always binds CDP to 127.0.0.1 regardless of --remote-debugging-address.
-# We launch it on an internal port and use an auth proxy to expose it on 0.0.0.0.
+# Chromium always binds CDP to 127.0.0.1.
+# The tool server proxies CDP traffic via /cdp/proxy/.
 CDP_INTERNAL_PORT=19222
 CHROMIUM_BIN=""
 CHROMIUM_RESTART_COUNT=0
 CHROMIUM_MAX_RESTARTS=10
 
-echo "Launching Chromium with CDP (internal port $CDP_INTERNAL_PORT, exposed on $CDP_PORT)..."
+echo "Launching Chromium with CDP on internal port $CDP_INTERNAL_PORT..."
 CHROMIUM_BIN=$(find /usr/lib/chromium* /usr/bin -name "chromium" -o -name "chromium-browser" -o -name "chrome" 2>/dev/null | head -1)
 if [ -z "$CHROMIUM_BIN" ]; then
   # Playwright-installed Chromium
@@ -212,34 +211,6 @@ start_chromium() {
 
   if [ "$cdp_ready" = false ]; then
     echo "WARNING: Chromium CDP did not become ready within 20s"
-    return 1
-  fi
-
-  # Kill any leftover CDP auth proxy from a previous run
-  if [ -n "${CDP_PROXY_PID:-}" ] && kill -0 "$CDP_PROXY_PID" 2>/dev/null; then
-    kill "$CDP_PROXY_PID" 2>/dev/null || true
-    wait "$CDP_PROXY_PID" 2>/dev/null || true
-  fi
-
-  # Expose CDP on 0.0.0.0 via an authenticated proxy (replaces raw socat).
-  python3 /usr/local/bin/proxy.py &
-  CDP_PROXY_PID=$!
-  echo "Started CDP auth proxy (PID $CDP_PROXY_PID): 0.0.0.0:${CDP_PORT} -> 127.0.0.1:${CDP_INTERNAL_PORT}"
-
-  # Verify the proxied CDP port is reachable (with auth)
-  local fwd_ready=false
-  for i in 1 2 3 4 5; do
-    if curl -s -H "Authorization: Bearer ${TOOL_SERVER_TOKEN}" "http://127.0.0.1:${CDP_PORT}/json/version" | grep -q "webSocketDebuggerUrl"; then
-      echo "✅ CDP auth proxy reachable on port ${CDP_PORT} (attempt $i)"
-      fwd_ready=true
-      break
-    fi
-    sleep 1
-  done
-  if [ "$fwd_ready" = false ]; then
-    echo "WARNING: CDP not reachable via auth proxy on port ${CDP_PORT}"
-    echo "  proxy PID $CDP_PROXY_PID alive: $(kill -0 $CDP_PROXY_PID 2>&1 && echo yes || echo no)"
-    echo "  ss output: $(ss -tlnp 2>/dev/null | grep ${CDP_PORT} || echo 'port not listening')"
     return 1
   fi
 
@@ -304,8 +275,6 @@ cd /app
 export PYTHONPATH=/app
 export STRIX_SANDBOX_MODE=true
 export TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
-export CDP_INTERNAL_PORT
-export CDP_PORT
 TOOL_SERVER_LOG="/tmp/tool_server.log"
 
 sudo -E -u pentester \
@@ -313,12 +282,13 @@ sudo -E -u pentester \
   --token="$TOOL_SERVER_TOKEN" \
   --host=0.0.0.0 \
   --port="$TOOL_SERVER_PORT" \
-  --timeout="$TOOL_SERVER_TIMEOUT" > "$TOOL_SERVER_LOG" 2>&1 &
+  --timeout="$TOOL_SERVER_TIMEOUT" \
+  --cdp-upstream="http://127.0.0.1:$CDP_INTERNAL_PORT" > "$TOOL_SERVER_LOG" 2>&1 &
 
 TOOL_SERVER_PID=$!
 
 for i in {1..10}; do
-  if curl -s "http://127.0.0.1:$TOOL_SERVER_PORT/health" | grep -q '"status":"healthy"'; then
+  if curl -s -H "Authorization: Bearer ${TOOL_SERVER_TOKEN}" "http://127.0.0.1:$TOOL_SERVER_PORT/health" | grep -q '"status":"healthy"'; then
     echo "✅ Tool server healthy on port $TOOL_SERVER_PORT"
     break
   fi

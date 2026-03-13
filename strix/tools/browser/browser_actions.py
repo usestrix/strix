@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import os
 import re
 from typing import Any, Literal
 
@@ -88,18 +87,11 @@ def _build_llm() -> Any:
 
 def _resolve_cdp_url(agent_state: Any) -> tuple[str, str]:
     info = agent_state.sandbox_info
-    cdp_port = info.get("browser_cdp_port")
-    if not cdp_port:
-        raise ValueError("Missing browser_cdp_port in sandbox_info")
+    api_url = info.get("api_url")
+    if not api_url:
+        raise ValueError("Missing api_url in sandbox_info")
 
-    host = "127.0.0.1"
-    if docker_host := os.getenv("DOCKER_HOST"):
-        from urllib.parse import urlparse
-
-        if (parsed := urlparse(docker_host)).hostname:
-            host = parsed.hostname
-
-    return f"http://{host}:{cdp_port}", info.get("auth_token", "")
+    return f"{api_url}/cdp/proxy", info.get("auth_token", "")
 
 
 async def _execute_task(session: BrowserSession, operation: Any, desc: str) -> dict[str, Any]:
@@ -246,7 +238,6 @@ async def _run_browser_tool(
 async def browser_actions(
     action: BrowserUseLocalAction,
     task: str | None = None,
-    use_local: bool = False,
     profile_directory: str | None = None,
     return_fields: list[str] | None = None,
     *,
@@ -259,7 +250,8 @@ async def browser_actions(
         agent_id = get_current_agent_id()
 
         if action == "launch":
-            if use_local:
+            has_sandbox = agent_state and getattr(agent_state, "sandbox_info", None)
+            if not has_sandbox:
                 session = await _launch_local_browser(agent_id, profile_directory)
                 result = {
                     "message": "Local browser ready",

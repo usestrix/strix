@@ -112,7 +112,7 @@ class BrowserRenderer(BaseToolRenderer):
         # Dispatch to action-specific builders
         builders: dict[str, Callable[[], Text]] = {
             "run": lambda: cls._build_run(args, status, result),
-            "launch": lambda: cls._build_launch(args, status, result),
+            "launch": lambda: cls._build_launch(status, result),
             "navigate": lambda: cls._build_navigate(args, status),
             "search": lambda: cls._build_search(args, status),
             "click": lambda: cls._build_click(args, status),
@@ -159,8 +159,8 @@ class BrowserRenderer(BaseToolRenderer):
         return text
 
     @classmethod
-    def _build_launch(cls, args: dict[str, Any], status: str, result: Any) -> Text:
-        mode = "local" if args.get("use_local") else "sandboxed"
+    def _build_launch(cls, status: str, result: Any) -> Text:
+        mode = result.get("mode", "sandboxed") if isinstance(result, dict) else "sandboxed"
         text = Text("◈ ", style=cls.LIFE)
         text.append("launching browser", style=f"bold {cls.LIFE}")
         text.append(f" {mode}", style=cls.DIM)

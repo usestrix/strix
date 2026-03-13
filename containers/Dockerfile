@@ -216,8 +216,7 @@ RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/p
 USER root
 COPY containers/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY containers/healthcheck.sh /usr/local/bin/healthcheck.sh
-COPY containers/proxy.py /usr/local/bin/proxy.py
-RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/healthcheck.sh /usr/local/bin/proxy.py
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh /usr/local/bin/healthcheck.sh
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
   CMD healthcheck.sh

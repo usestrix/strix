@@ -1,12 +1,9 @@
 <tools>
   <tool name="browser_actions">
-    <description>Control a browser via natural language or granular commands. Supports two modes:
+    <description>Control a browser via natural language or granular commands.
 
-      **Sandboxed** (default): The browser runs inside the sandbox container (with Caido proxy
-      intercepting all traffic) and is controlled remotely via Chrome DevTools Protocol (CDP).
-      **Local** (use_local=true): Uses the system Chrome installation directly. No sandbox
-      required. Preserves existing login sessions, cookies, and extensions. You may need to
-      fully close Chrome before launching. Optionally select a Chrome profile.
+      The browser runs inside the sandbox container (with Caido proxy intercepting all traffic)
+      and is controlled remotely via Chrome DevTools Protocol (CDP).
 
       The browser is PERSISTENT and remains active until explicitly closed, allowing for
       multi-step workflows. State (cookies, auth, tabs) carries over between calls.
@@ -21,7 +18,6 @@
         <description>The action to perform:
           **Lifecycle:**
           - launch: Start the browser. MUST be called before any other actions.
-            Pass use_local=true for local Chrome. Optionally pass profile_directory.
           - close_browser: Shut down the browser session.
 
           **Agent mode:**
@@ -75,12 +71,8 @@
         <description>Required for 'run' action. A natural-language description of what to do in
           the browser, e.g. "Go to example.com and find the contact email".</description>
       </parameter>
-      <parameter name="use_local" type="boolean" required="false">
-        <description>Only used with action='launch'. When true, uses the local system Chrome
-          installation instead of connecting to the sandbox container via CDP. Default: false.</description>
-      </parameter>
       <parameter name="profile_directory" type="string" required="false">
-        <description>Only used with action='launch' and use_local=true. The Chrome profile
+        <description>Only used with action='launch' outside sandbox mode. The Chrome profile
           directory to use, e.g. "Default", "Profile 1". If not specified, auto-selected.</description>
       </parameter>
       <parameter name="query" type="string" required="false">
@@ -259,12 +251,6 @@
       # Launch the sandbox browser (default, must be done first)
       <function=browser_actions>
         <parameter=action>launch</parameter>
-      </function>
-
-      # Launch the local system Chrome instead
-      <function=browser_actions>
-        <parameter=action>launch</parameter>
-        <parameter=use_local>true</parameter>
       </function>
 
       # Run a natural-language browser task

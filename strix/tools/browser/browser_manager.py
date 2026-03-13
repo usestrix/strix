@@ -232,13 +232,13 @@ def _wait_for_cdp(
 
                     # Rewrite the WebSocket URL: Chromium reports the container-
                     # internal address (e.g. ws://127.0.0.1:19222/devtools/...)
-                    # but we need it on the Docker-mapped host:port.
+                    # but we need it routed through the tool server's CDP proxy.
                     parsed_cdp = urlparse(cdp_url)
                     parsed_ws = urlparse(raw_ws)
-                    ws_url = raw_ws.replace(
-                        f"{parsed_ws.hostname}:{parsed_ws.port}",
-                        f"{parsed_cdp.hostname}:{parsed_cdp.port}",
-                    )
+                    ws_url = parsed_ws._replace(
+                        netloc=parsed_cdp.netloc,
+                        path=parsed_cdp.path.rstrip("/") + parsed_ws.path,
+                    ).geturl()
 
                     # Append auth token so browser-use's WebSocket upgrade
                     # request passes through the CDP auth proxy.

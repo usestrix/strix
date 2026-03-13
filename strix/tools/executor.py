@@ -99,17 +99,9 @@ async def _execute_tool_in_sandbox(tool_name: str, agent_state: Any, **kwargs: A
 
 
 async def _execute_tool_locally(tool_name: str, agent_state: Any | None, **kwargs: Any) -> Any:
-    from strix.tools.context import set_current_agent_id
-
     tool_func = get_tool_by_name(tool_name)
     if not tool_func:
         raise ValueError(f"Tool '{tool_name}' not found")
-
-    # Propagate agent_id so tools can scope per-agent resources (e.g. browser instances).
-    # NOTE: This is needed for browser_use tools to work correctly.
-    agent_id = getattr(agent_state, "agent_id", None) if agent_state else None
-    if agent_id:
-        set_current_agent_id(agent_id)
 
     converted_kwargs = convert_arguments(tool_func, kwargs)
 

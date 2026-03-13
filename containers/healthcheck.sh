@@ -7,10 +7,9 @@ set -e
 
 TOOL_SERVER_PORT="${TOOL_SERVER_PORT:-48081}"
 CAIDO_PORT=48080
-CDP_PORT="${BROWSER_CDP_PORT:-9222}"
 
 # 1. Tool server must respond healthy
-if ! curl -sf --max-time 3 "http://127.0.0.1:${TOOL_SERVER_PORT}/health" | grep -q '"status":"healthy"'; then
+if ! curl -sf --max-time 3 -H "Authorization: Bearer ${TOOL_SERVER_TOKEN}" "http://127.0.0.1:${TOOL_SERVER_PORT}/health" | grep -q '"status":"healthy"'; then
   echo "UNHEALTHY: tool server not responding on port ${TOOL_SERVER_PORT}"
   exit 1
 fi

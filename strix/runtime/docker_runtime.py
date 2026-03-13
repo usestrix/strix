@@ -23,7 +23,6 @@ HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60
 CONTAINER_TOOL_SERVER_PORT = 48081
 CONTAINER_CAIDO_PORT = 48080
-CONTAINER_BROWSER_CDP_PORT = 9222
 
 
 class DockerRuntime(AbstractRuntime):
@@ -40,7 +39,6 @@ class DockerRuntime(AbstractRuntime):
         self._tool_server_port: int | None = None
         self._tool_server_token: str | None = None
         self._caido_port: int | None = None
-        self._browser_cdp_port: int | None = None
 
     def _find_available_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -86,10 +84,6 @@ class DockerRuntime(AbstractRuntime):
         if port_bindings.get(caido_port_key):
             self._caido_port = int(port_bindings[caido_port_key][0]["HostPort"])
 
-        cdp_port_key = f"{CONTAINER_BROWSER_CDP_PORT}/tcp"
-        if port_bindings.get(cdp_port_key):
-            self._browser_cdp_port = int(port_bindings[cdp_port_key][0]["HostPort"])
-
     def _wait_for_tool_server(self, max_retries: int = 30, timeout: int = 5) -> None:
         host = self._resolve_docker_host()
         health_url = f"http://{host}:{self._tool_server_port}/health"
@@ -134,7 +128,6 @@ class DockerRuntime(AbstractRuntime):
 
                 self._tool_server_port = self._find_available_port()
                 self._caido_port = self._find_available_port()
-                self._browser_cdp_port = self._find_available_port()
                 self._tool_server_token = secrets.token_urlsafe(32)
                 execution_timeout = Config.get("strix_sandbox_execution_timeout") or "120"
 
@@ -147,7 +140,6 @@ class DockerRuntime(AbstractRuntime):
                     ports={
                         f"{CONTAINER_TOOL_SERVER_PORT}/tcp": self._tool_server_port,
                         f"{CONTAINER_CAIDO_PORT}/tcp": self._caido_port,
-                        f"{CONTAINER_BROWSER_CDP_PORT}/tcp": self._browser_cdp_port,
                     },
                     cap_add=["NET_ADMIN", "NET_RAW"],
                     shm_size="256m",
@@ -158,7 +150,6 @@ class DockerRuntime(AbstractRuntime):
                         "TOOL_SERVER_TOKEN": self._tool_server_token,
                         "STRIX_SANDBOX_EXECUTION_TIMEOUT": str(execution_timeout),
                         "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
-                        "BROWSER_CDP_PORT": str(CONTAINER_BROWSER_CDP_PORT),
                     },
                     extra_hosts={HOST_GATEWAY_HOSTNAME: "host-gateway"},
                     tty=True,
@@ -173,7 +164,6 @@ class DockerRuntime(AbstractRuntime):
                     self._tool_server_port = None
                     self._tool_server_token = None
                     self._caido_port = None
-                    self._browser_cdp_port = None
                     time.sleep(2**attempt)
             else:
                 return container
@@ -196,7 +186,6 @@ class DockerRuntime(AbstractRuntime):
                 self._tool_server_port = None
                 self._tool_server_token = None
                 self._caido_port = None
-                self._browser_cdp_port = None
 
         try:
             container = self.client.containers.get(container_name)
@@ -290,9 +279,6 @@ class DockerRuntime(AbstractRuntime):
         if self._caido_port is None:
             raise RuntimeError("Caido port not initialized")
 
-        if self._browser_cdp_port is None:
-            raise RuntimeError("Browser CDP port not initialized")
-
         host = self._resolve_docker_host()
         api_url = f"http://{host}:{self._tool_server_port}"
 
@@ -304,7 +290,6 @@ class DockerRuntime(AbstractRuntime):
             "auth_token": token,
             "tool_server_port": self._tool_server_port,
             "caido_port": self._caido_port,
-            "browser_cdp_port": self._browser_cdp_port,
             "agent_id": agent_id,
         }
 
@@ -347,7 +332,6 @@ class DockerRuntime(AbstractRuntime):
             self._tool_server_port = None
             self._tool_server_token = None
             self._caido_port = None
-            self._browser_cdp_port = None
         except (NotFound, DockerException):
             pass
 
@@ -358,7 +342,6 @@ class DockerRuntime(AbstractRuntime):
             self._tool_server_port = None
             self._tool_server_token = None
             self._caido_port = None
-            self._browser_cdp_port = None
 
             if container_name is None:
                 return

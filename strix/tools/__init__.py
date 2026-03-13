@@ -55,13 +55,12 @@ if not SANDBOX_MODE:
     if HAS_PERPLEXITY_API:
         from .web_search import *  # noqa: F403
 else:
+    if not DISABLE_BROWSER:
+        from .browser import *  # noqa: F403
     from .file_edit import *  # noqa: F403
     from .proxy import *  # noqa: F403
     from .python import *  # noqa: F403
     from .terminal import *  # noqa: F403
-
-    if not DISABLE_BROWSER:
-        from .browser import *  # noqa: F403
 
 __all__ = [
     "ImplementedInClientSideOnlyError",

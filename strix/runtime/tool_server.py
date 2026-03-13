@@ -7,8 +7,11 @@ import signal
 import sys
 from typing import Any
 
+import httpx
 import uvicorn
-from fastapi import Depends, FastAPI, HTTPException, status
+import websockets
+from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, status
+from fastapi.responses import Response
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ValidationError
 
@@ -27,10 +30,16 @@ parser.add_argument(
     default=120,
     help="Hard timeout in seconds for each request execution (default: 120)",
 )
+parser.add_argument(
+    "--cdp-upstream",
+    default="http://127.0.0.1:19222",
+    help="Chromium CDP upstream address (default: http://127.0.0.1:19222)",
+)
 
 args = parser.parse_args()
 EXPECTED_TOKEN = args.token
 REQUEST_TIMEOUT = args.timeout
+CDP_UPSTREAM = args.cdp_upstream.rstrip("/")
 
 app = FastAPI()
 security = HTTPBearer()
@@ -55,6 +64,14 @@ def verify_token(credentials: HTTPAuthorizationCredentials) -> str:
         )
 
     return credentials.credentials
+
+
+def verify_ws_token(ws: WebSocket) -> None:
+    auth = ws.headers.get("Authorization", "")
+    token_param = ws.query_params.get("token")
+    if auth == f"Bearer {EXPECTED_TOKEN}" or token_param == EXPECTED_TOKEN:
+        return
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED)
 
 
 class ToolExecutionRequest(BaseModel):
@@ -136,45 +153,14 @@ async def register_agent(
 
 
 async def _check_cdp_health() -> dict[str, Any]:
-    """Probe the container-local Chromium CDP endpoint.
-
-    Returns only a boolean status — never the ``webSocketDebuggerUrl``
-    or browser version, because the ``/health`` endpoint is
-    unauthenticated and those fields would leak session secrets.
-    """
-    cdp_port = os.getenv("CDP_INTERNAL_PORT", "19222")
-    cdp_url = f"http://127.0.0.1:{cdp_port}/json/version"
     try:
-        import httpx
-
         async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
-            resp = await client.get(cdp_url)
+            resp = await client.get(f"{CDP_UPSTREAM}/json/version")
             if resp.status_code == 200:
                 return {"status": "healthy"}
             return {"status": "unhealthy"}
     except Exception:  # noqa: BLE001
         return {"status": "unhealthy"}
-
-
-@app.get("/cdp/version")
-async def cdp_version(
-    credentials: HTTPAuthorizationCredentials = security_dependency,  # noqa: ARG001
-) -> dict[str, Any]:
-    """Return Chromium's ``/json/version`` data via the authenticated tool server.
-
-    This lets the host discover the WebSocket debugger URL (which contains
-    a random browser GUID) without exposing ``/json/version`` on the
-    unauthenticated CDP port.
-    """
-    cdp_port = os.getenv("CDP_INTERNAL_PORT", "19222")
-    cdp_url = f"http://127.0.0.1:{cdp_port}/json/version"
-    import httpx
-
-    async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
-        resp = await client.get(cdp_url)
-        resp.raise_for_status()
-        data: dict[str, Any] = resp.json()
-        return data
 
 
 @app.get("/health")
@@ -189,6 +175,76 @@ async def health_check() -> dict[str, Any]:
         "agents": list(agent_tasks.keys()),
         "chromium_cdp": cdp_health,
     }
+
+
+# -- CDP auth proxy ----------------------------------------------------------
+# Proxies HTTP and WebSocket traffic to the container-local Chromium CDP.
+
+
+def _cdp_upstream_url(path: str) -> str:
+    # Strip the /cdp/proxy prefix to get the upstream path
+    suffix = path.removeprefix("/cdp/proxy")
+    return f"{CDP_UPSTREAM}{suffix}"
+
+
+@app.websocket("/cdp/proxy/{path:path}")
+async def cdp_proxy_ws(ws: WebSocket, path: str) -> None:  # noqa: ARG001
+    verify_ws_token(ws)
+    url = _cdp_upstream_url(ws.url.path).replace("http", "ws", 1)
+    await ws.accept()
+
+    async with websockets.connect(url) as upstream:
+
+        async def relay_client_to_upstream() -> None:
+            async for msg in ws.iter_text():
+                await upstream.send(msg)
+
+        async def relay_upstream_to_client() -> None:
+            async for msg in upstream:
+                if isinstance(msg, str):
+                    await ws.send_text(msg)
+                else:
+                    await ws.send_bytes(msg)
+
+        _, pending = await asyncio.wait(
+            [
+                asyncio.create_task(relay_client_to_upstream()),
+                asyncio.create_task(relay_upstream_to_client()),
+            ],
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+        for t in pending:
+            t.cancel()
+
+
+@app.api_route(
+    "/cdp/proxy/{path:path}",
+    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+)
+async def cdp_proxy_http(
+    request: Request,
+    path: str,  # noqa: ARG001
+    credentials: HTTPAuthorizationCredentials = security_dependency,
+) -> Response:
+    verify_token(credentials)
+    url = _cdp_upstream_url(request.url.path)
+    headers = {
+        k: v for k, v in request.headers.items() if k.lower() not in ("host", "authorization")
+    }
+
+    async with httpx.AsyncClient() as client:
+        resp = await client.request(
+            request.method,
+            url,
+            headers=headers,
+            content=await request.body(),
+        )
+
+    return Response(
+        content=resp.content,
+        status_code=resp.status_code,
+        headers={k: v for k, v in resp.headers.items() if k.lower() != "transfer-encoding"},
+    )
 
 
 def signal_handler(_signum: int, _frame: Any) -> None:
