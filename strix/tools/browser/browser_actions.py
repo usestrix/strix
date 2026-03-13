@@ -135,6 +135,11 @@ async def _run_browser_agent(
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     llm = _build_llm(metadata=metadata)
+
+    # [fix] prevent browseruse from killing the cdp
+    #       connection after execution (go figure)
+    session.browser.browser_profile.keep_alive = True
+
     agent: Any = Agent(
         task=task,
         llm=llm,
