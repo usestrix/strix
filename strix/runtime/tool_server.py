@@ -18,6 +18,7 @@ if not SANDBOX_MODE:
     raise RuntimeError("Tool server should only run in sandbox mode (STRIX_SANDBOX_MODE=true)")
 
 parser = argparse.ArgumentParser(description="Start Strix tool server")
+parser.add_argument("--token", required=True, help="Authentication token")
 parser.add_argument("--host", default="0.0.0.0", help="Host to bind to")  # nosec
 parser.add_argument("--port", type=int, required=True, help="Port to bind to")
 parser.add_argument(
@@ -28,11 +29,7 @@ parser.add_argument(
 )
 
 args = parser.parse_args()
-
-# Read token from environment to avoid leaking it in /proc/<pid>/cmdline.
-EXPECTED_TOKEN = os.environ.get("TOOL_SERVER_TOKEN", "")
-if not EXPECTED_TOKEN:
-    raise RuntimeError("TOOL_SERVER_TOKEN environment variable must be set")
+EXPECTED_TOKEN = args.token
 REQUEST_TIMEOUT = args.timeout
 
 app = FastAPI()

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import asyncio
+import logging
 import os
 import re
 from typing import Any
@@ -7,6 +8,8 @@ from typing import Any
 import aiohttp
 from aiohttp import WSMsgType, web
 
+
+logger = logging.getLogger(__name__)
 
 TOKEN = os.environ["TOOL_SERVER_TOKEN"]
 LISTEN_PORT = int(os.environ.get("CDP_PORT", "9222"))
@@ -39,7 +42,7 @@ async def _proxy_ws(req: web.Request, url: str, headers: dict[str, Any]) -> web.
                 elif msg.type == WSMsgType.BINARY:
                     await dst.send_bytes(msg.data)
                 else:
-                    print(str.format("Unexpected WebSocket message type: %s", msg.type))
+                    logger.warning("Unexpected WebSocket message type: %s", msg.type)
                     break
 
         await asyncio.gather(
@@ -81,5 +84,5 @@ app = web.Application()
 app.router.add_route("*", "/{path:.*}", _handle)
 
 if __name__ == "__main__":
-    print(f"CDP auth proxy: 0.0.0.0:{LISTEN_PORT} -> {UPSTREAM}", flush=True)
+    logger.info("CDP auth proxy: 0.0.0.0:%s -> %s", LISTEN_PORT, UPSTREAM)
     web.run_app(app, host="0.0.0.0", port=LISTEN_PORT, print=None)
