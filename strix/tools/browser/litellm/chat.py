@@ -129,11 +129,11 @@ class ChatLiteLLM(BaseChatModel):
         **kwargs: Any,
     ) -> ChatInvokeCompletion[T]: ...
 
-    async def ainvoke(
+    async def ainvoke(  # noqa: PLR0912
         self,
         messages: list[BaseMessage],
         output_format: type[T] | None = None,
-        **kwargs: Any,
+        **kwargs: Any,  # noqa: ARG002
     ) -> ChatInvokeCompletion[T] | ChatInvokeCompletion[str]:
         """Invoke the model via litellm.
 

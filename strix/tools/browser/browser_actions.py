@@ -139,6 +139,109 @@ async def _execute_task(session: BrowserSession, operation: Any, desc: str) -> d
     return {"error": "Failed after 2 attempts", "is_running": False}
 
 
+async def _run_browser_agent(
+    session: BrowserSession,
+    task: str,
+    return_fields: list[str] | None,
+) -> dict[str, Any]:
+    llm = _build_llm()
+    agent: Any = Agent(
+        task=task,
+        llm=llm,
+        browser=session.browser,
+        flash_mode=True,
+        use_vision=llm_supports_vision(),
+    )
+
+    async def log_step(step: Any) -> None:
+        logger.info("Agent step completed: %s", step)
+
+    try:
+        result = await agent.run(on_step_end=log_step)
+
+        if hasattr(result, "is_successful") and not result.is_successful():
+            final_result = (
+                result.final_result() if callable(result.final_result) else result.final_result
+            )
+            return {"error": final_result or "Agent failed", "is_running": False}
+
+        final_result = (
+            result.final_result()
+            if hasattr(result, "final_result") and callable(result.final_result)
+            else getattr(result, "final_result", str(result))
+        )
+        out = {"message": "Task completed", "result": final_result, "is_running": False}
+
+        if return_fields:
+            fields = {f: getattr(result, f, None) for f in return_fields}
+            out["fields"] = fields
+
+        return out
+    finally:
+        for name in ("close", "stop"):
+            if fn := getattr(agent, name, None):
+                try:
+                    if asyncio.iscoroutine(coro := fn()):
+                        await asyncio.wait_for(coro, timeout=5)
+                except Exception:  # noqa: BLE001,S110
+                    pass
+
+
+def _fix_json_in_xml(kws: dict[str, Any]) -> dict[str, Any]:
+    result = {}
+    for k, v in kws.items():
+        if v is None:
+            continue
+        if isinstance(v, str) and v.startswith(("[", "{")):
+            try:
+                result[k] = json.loads(v)
+            except (json.JSONDecodeError, ValueError):
+                result[k] = v
+        else:
+            result[k] = v
+    return result
+
+
+async def _run_browser_tool(
+    session: BrowserSession,
+    action: str,
+    params: dict[str, Any],
+) -> Any:
+    if not session.browser.is_cdp_connected:
+        await session.browser.start()
+
+    llm = _build_llm()
+
+    if session.local:
+        from pathlib import Path
+
+        from browser_use.filesystem.file_system import FileSystem
+
+        base_dir = Path.cwd() / "browser_files"
+        base_dir.mkdir(parents=True, exist_ok=True)
+        file_system = FileSystem(base_dir=str(base_dir), create_default_files=False)
+    else:
+
+        class StubFileSystem:
+            def __getattr__(self, name: str) -> Any:
+                def soft_error(*args: Any, **kwargs: Any) -> dict[str, str]:
+                    error_msg = f"File operation '{name}' not available in sandboxed environment"
+                    logger.warning(error_msg)
+                    return {"error": error_msg}
+
+                return soft_error
+
+        file_system = StubFileSystem()
+
+    return await Tools().registry.execute_action(
+        action,
+        params=params,
+        browser_session=session.browser,
+        page_extraction_llm=llm,
+        file_system=file_system,
+    )
+
+
 @register_tool(sandbox_execution=False)
 async def browser_actions(
     action: BrowserUseLocalAction,
@@ -155,11 +258,9 @@ async def browser_actions(
 
         agent_id = get_current_agent_id()
 
-        # Launch
         if action == "launch":
             if use_local:
                 session = await _launch_local_browser(agent_id, profile_directory)
-
                 result = {
                     "message": "Local browser ready",
                     "mode": "local",
@@ -170,7 +271,6 @@ async def browser_actions(
                 cdp_url, auth_token = _resolve_cdp_url(agent_state)
                 session = await _launch_browser(cdp_url, agent_id, auth_token)
                 ws_url = re.sub(r"[?&]token=[^&]+", "", session.ws_url)
-
                 result = {
                     "message": "Browser ready",
                     "mode": "sandboxed",
@@ -183,129 +283,28 @@ async def browser_actions(
 
             return result
 
-        # Close
         if action == "close_browser":
             await _close_session(agent_id)
             return {"message": "Browser closed", "is_running": False}
 
         session = _get_session(agent_id)
 
-        # Agent mode
         if action == "run":
             if not task:
-                msg = "task required for run action"
-                return {"error": msg, "is_running": False}
+                return {"error": "task required for run action", "is_running": False}
 
-            async def run_agent() -> dict[str, Any]:
-                llm = _build_llm()
-
-                agent: Any = Agent(
-                    task=task,
-                    llm=llm,
-                    browser=session.browser,
-                    flash_mode=True,
-                    use_vision=llm_supports_vision(),
-                )
-
-                async def log_step(step: Any) -> None:
-                    logger.info("Agent step completed: %s", step)
-
-                try:
-                    result = await agent.run(on_step_end=log_step)
-
-                    # Extract result
-                    if hasattr(result, "is_successful") and not result.is_successful():
-                        final_result = (
-                            result.final_result()
-                            if callable(result.final_result)
-                            else result.final_result
-                        )
-                        return {
-                            "error": final_result or "Agent failed",
-                            "is_running": False,
-                        }
-
-                    final_result = (
-                        result.final_result()
-                        if hasattr(result, "final_result") and callable(result.final_result)
-                        else getattr(result, "final_result", str(result))
-                    )
-                    out = {"message": "Task completed", "result": final_result, "is_running": False}
-
-                    # Return fields
-                    if return_fields:
-                        fields = {f: getattr(result, f, None) for f in return_fields}
-                        out["fields"] = fields
-
-                    return out
-                finally:
-                    # Cleanup
-                    for name in ("close", "stop"):
-                        if fn := getattr(agent, name, None):
-                            try:
-                                if asyncio.iscoroutine(coro := fn()):
-                                    await asyncio.wait_for(coro, timeout=5)
-                            except Exception:  # noqa: BLE001,S110
-                                pass
-
-            return await _execute_task(session, run_agent, task)
-
-        # [fix] parse json nested in xml
-        def fix_json_in_xml(kws: dict[str, Any]) -> dict[str, Any]:
-            result = {}
-            for k, v in kws.items():
-                if v is None:
-                    continue
-                if isinstance(v, str) and v.startswith(("[", "{")):
-                    try:
-                        result[k] = json.loads(v)
-                    except (json.JSONDecodeError, ValueError):
-                        result[k] = v
-                else:
-                    result[k] = v
-            return result
-
-        params = fix_json_in_xml(kwargs)
-
-        async def run_tool() -> Any:
-            # [resiliency] this happens really randomly. Better to be proactive
-            if not session.browser.is_cdp_connected:
-                await session.browser.start()
-
-            llm = _build_llm()
-
-            if session.local:
-                from pathlib import Path
-
-                from browser_use.filesystem.file_system import FileSystem
-
-                base_dir = Path.cwd() / "browser_files"
-                base_dir.mkdir(parents=True, exist_ok=True)
-                file_system = FileSystem(base_dir=str(base_dir), create_default_files=False)
-            else:
-                # [monkeypatch] this is to make the screenshot tool work
-                class StubFileSystem:
-                    def __getattr__(self, name: str) -> Any:
-                        def soft_error(*args: Any, **kwargs: Any) -> dict[str, str]:
-                            error_msg = (
-                                f"File operation '{name}' not available in sandboxed environment"
-                            )
-                            logger.warning(error_msg)
-                            return {"error": error_msg}
-
-                        return soft_error
-
-                file_system = StubFileSystem()
-
-            return await Tools().registry.execute_action(
-                action,
-                params=params,
-                browser_session=session.browser,
-                page_extraction_llm=llm,
-                file_system=file_system,
+            return await _execute_task(
+                session,
+                lambda: _run_browser_agent(session, task, return_fields),
+                task,
             )
 
-        return await _execute_task(session, run_tool, f"{action}({list(params.keys())[:3]})")
+        params = _fix_json_in_xml(kwargs)
+        return await _execute_task(
+            session,
+            lambda: _run_browser_tool(session, action, params),
+            f"{action}({list(params.keys())[:3]})",
+        )
 
     except Exception as error:
         logger.exception("browser_actions error: %s", action)

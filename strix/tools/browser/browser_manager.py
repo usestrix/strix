@@ -146,33 +146,24 @@ class BrowserSession:
                     return f"Failed to refresh local browser session: {exc}"
             return None
 
-        if self.needs_refresh:
-            cdp_alive = await asyncio.to_thread(_check_cdp_alive, self.cdp_url, self.auth_token)
-            if not cdp_alive and not await _wait_for_cdp_recovery(self, task_num):
-                return (
-                    f"Chromium CDP at {self.cdp_url} is not responding "
-                    f"after {_CDP_RECOVERY_TIMEOUT}s"
-                )
-            try:
-                await self.refresh()
-            except Exception as exc:  # noqa: BLE001
-                return f"Failed to refresh browser session: {exc}"
+        cdp_alive = await asyncio.to_thread(_check_cdp_alive, self.cdp_url, self.auth_token)
+
+        if not self.needs_refresh and cdp_alive:
             return None
 
-        if await asyncio.to_thread(_check_cdp_alive, self.cdp_url, self.auth_token):
-            return None
-
-        if not await _wait_for_cdp_recovery(self, task_num):
-            self.invalidated = True
+        if not cdp_alive and not await _wait_for_cdp_recovery(self, task_num):
+            if not self.needs_refresh:
+                self.invalidated = True
             return (
                 f"Chromium CDP at {self.cdp_url} is not responding after {_CDP_RECOVERY_TIMEOUT}s"
             )
+
         try:
             await self.refresh()
         except Exception as exc:  # noqa: BLE001
-            self.invalidated = True
-            return f"Chromium restarted but reconnection failed: {exc}"
-
+            if not self.needs_refresh:
+                self.invalidated = True
+            return f"Failed to refresh browser session: {exc}"
         return None
 
 

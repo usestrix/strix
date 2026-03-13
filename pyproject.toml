@@ -138,11 +138,8 @@ module = [
     "opentelemetry.*",
     "scrubadub.*",
     "traceloop.*",
-    "browser_use",
     "browser_use.*",
-    "cdp_use",
     "cdp_use.*",
-    "aiohttp",
     "aiohttp.*",
 ]
 ignore_missing_imports = true
@@ -250,21 +247,6 @@ ignore = [
 ]
 "strix/tools/**/*.py" = [
     "ARG001", # Unused function argument (tools may have unused args for interface consistency)
-]
-"strix/tools/browser/**/*.py" = [
-  "ARG002",  # Unused method argument (interface methods may not use all args)
-  "PLR0911", # Too many return statements (dispatchers and complex browser logic)
-  "PLR0912", # Too many branches (dispatch functions)
-  "PLR0915", # Too many statements (complex browser task handling)
-]
-"strix/interface/tool_components/browser_renderer.py" = [
-  "PLR0911", # Too many return statements (action dispatcher)
-  "PLR0912", # Too many branches
-  "PLR0915", # Too many statements
-]
-"strix/telemetry/tracer.py" = [
-  "PLR0912", # Too many branches (save_run_data is legitimately complex)
-  "PLR0915", # Too many statements
 ]
 
 [tool.ruff.lint.isort]
