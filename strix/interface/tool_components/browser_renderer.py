@@ -108,12 +108,13 @@ class BrowserRenderer(BaseToolRenderer):
 
         # --- simple one-liners ----------------------------------------
         simple = {
-            "back": "going back",
-            "close": "closing browser",
+            "go_back": "going back",
+            "close_browser": "closing browser",
             "close_tab": "closing tab",
             "screenshot": "taking screenshot",
-            "state": "reading page state",
+            "save_as_pdf": "saving page as pdf",
             "extract": "extracting content",
+            "read_long_content": "reading long content",
         }
         if action in simple:
             text = Text("@ ", style=cls.DIM)
@@ -133,84 +134,150 @@ class BrowserRenderer(BaseToolRenderer):
                 text.append(f"\n  ⚠ {warning}", style=f"italic {cls.DIM}")
             return text
 
-        # --- navigate --------------------------------------------------
-        if action == "open":
+        # --- navigate / search ----------------------------------------
+        if action == "navigate":
             text = Text("@ ", style=cls.DIM)
             text.append("navigating to ", style=cls.DIM)
             url = args.get("url", "")
             if len(url) > 80:
                 url = url[:77] + "..."
             text.append(url, style=f"{cls.NAV} underline")
+            if args.get("new_tab"):
+                text.append(" in new tab", style=cls.DIM)
+            text.append_text(cls._status_mark(status))
+            return text
+
+        if action == "search":
+            text = Text("@ ", style=cls.DIM)
+            text.append("searching for ", style=cls.DIM)
+            query = args.get("query", "")
+            if query:
+                preview = query if len(query) <= 80 else query[:77] + "..."
+                text.append(f'"{preview}"', style=cls.INTERACT)
+            engine = args.get("engine")
+            if engine:
+                text.append(f" via {engine}", style=cls.DIM)
             text.append_text(cls._status_mark(status))
             return text
 
         # --- pointer actions -------------------------------------------
-        if action in ("click", "dblclick", "rightclick", "hover"):
-            labels = {
-                "click": "clicking",
-                "dblclick": "double clicking",
-                "rightclick": "right clicking",
-                "hover": "hovering over",
-            }
+        if action == "click":
             text = Text("@ ", style=cls.DIM)
-            text.append(labels[action], style=cls.DIM)
+            text.append("clicking", style=cls.DIM)
             index = args.get("index")
             if index is not None:
                 text.append(f" #{index}", style=f"bold {cls.INTERACT}")
-            elif args.get("x") is not None and args.get("y") is not None:
-                text.append(f" ({args['x']}, {args['y']})", style=cls.INTERACT)
             text.append_text(cls._status_mark(status))
             return text
 
-        # --- text input ------------------------------------------------
-        if action in ("type", "input"):
-            label = "typing" if action == "type" else "inputting"
+        # --- text / file input ----------------------------------------
+        if action == "input":
             text = Text("@ ", style=cls.DIM)
-            text.append(label, style=cls.DIM)
-            t = args.get("text")
-            if t:
-                preview = t if len(t) <= 60 else t[:57] + "..."
+            text.append("inputting", style=cls.DIM)
+            index = args.get("index")
+            if index is not None:
+                text.append(f" #{index}", style=f"bold {cls.INTERACT}")
+            value = args.get("text")
+            if value:
+                preview = value if len(value) <= 60 else value[:57] + "..."
                 text.append(f' "{preview}"', style=cls.INTERACT)
+            if args.get("clear"):
+                text.append(" (clear)", style=cls.DIM)
             text.append_text(cls._status_mark(status))
             return text
 
-        # --- scroll ----------------------------------------------------
+        if action == "upload_file":
+            text = Text("@ ", style=cls.DIM)
+            text.append("uploading file", style=cls.DIM)
+            index = args.get("index")
+            if index is not None:
+                text.append(f" #{index}", style=f"bold {cls.INTERACT}")
+            path = args.get("path", "")
+            if path:
+                text.append(" ", style=cls.DIM)
+                text.append(path, style=cls.NAV)
+            text.append_text(cls._status_mark(status))
+            return text
+
+        # --- scroll / find --------------------------------------------
         if action == "scroll":
-            d = args.get("direction", "down")
+            direction = "down" if args.get("down", True) else "up"
             text = Text("@ ", style=cls.DIM)
             text.append("scrolling ", style=cls.DIM)
-            text.append(d, style=cls.INTERACT)
+            text.append(direction, style=cls.INTERACT)
+            pages = args.get("pages")
+            if pages is not None:
+                text.append(f" {pages} page(s)", style=cls.DIM)
+            index = args.get("index")
+            if index is not None:
+                text.append(" on ", style=cls.DIM)
+                text.append(f"#{index}", style=f"bold {cls.INTERACT}")
             text.append_text(cls._status_mark(status))
             return text
 
-        # --- tab switch ------------------------------------------------
-        if action == "switch":
+        if action == "find_text":
             text = Text("@ ", style=cls.DIM)
-            text.append("switching to tab ", style=cls.DIM)
-            text.append(str(args.get("tab", "?")), style=f"bold {cls.NAV}")
+            text.append("finding text ", style=cls.DIM)
+            value = args.get("text", "")
+            if value:
+                preview = value if len(value) <= 80 else value[:77] + "..."
+                text.append(f'"{preview}"', style=cls.OBSERVE)
             text.append_text(cls._status_mark(status))
             return text
 
         # --- keyboard --------------------------------------------------
-        if action == "keys":
+        if action == "send_keys":
             text = Text("@ ", style=cls.DIM)
             text.append("pressing ", style=cls.DIM)
             text.append(args.get("keys", ""), style=f"bold {cls.INTERACT}")
             text.append_text(cls._status_mark(status))
             return text
 
-        # --- select ----------------------------------------------------
-        if action == "select":
+        # --- search/extract helpers -----------------------------------
+        if action == "search_page":
             text = Text("@ ", style=cls.DIM)
-            text.append("selecting ", style=cls.DIM)
-            text.append(args.get("value", ""), style=f"bold {cls.INTERACT}")
+            text.append("searching page for ", style=cls.DIM)
+            pattern = args.get("pattern", "")
+            if pattern:
+                preview = pattern if len(pattern) <= 80 else pattern[:77] + "..."
+                text.append(f'"{preview}"', style=cls.OBSERVE)
             text.append_text(cls._status_mark(status))
+            return text
 
+        if action == "find_elements":
+            text = Text("@ ", style=cls.DIM)
+            text.append("finding elements ", style=cls.DIM)
+            selector = args.get("selector", "")
+            if selector:
+                text.append(selector, style=cls.OBSERVE)
+            text.append_text(cls._status_mark(status))
+            return text
+
+        # --- dropdowns -------------------------------------------------
+        if action == "dropdown_options":
+            text = Text("@ ", style=cls.DIM)
+            text.append("reading dropdown options", style=cls.DIM)
+            index = args.get("index")
+            if index is not None:
+                text.append(f" #{index}", style=f"bold {cls.INTERACT}")
+            text.append_text(cls._status_mark(status))
+            return text
+
+        if action == "select_dropdown":
+            text = Text("@ ", style=cls.DIM)
+            text.append("selecting dropdown value", style=cls.DIM)
+            index = args.get("index")
+            if index is not None:
+                text.append(f" #{index}", style=f"bold {cls.INTERACT}")
+            value = args.get("text", "")
+            if value:
+                text.append(f' "{value}"', style=f"bold {cls.INTERACT}")
+            text.append_text(cls._status_mark(status))
             return text
 
         # --- eval js ---------------------------------------------------
-        if action == "eval":
-            js = args.get("js")
+        if action == "evaluate":
+            js = args.get("code")
 
             text = Text("@ ", style=cls.DIM)
             text.append("executing javascript", style=cls.DIM)
@@ -221,38 +288,60 @@ class BrowserRenderer(BaseToolRenderer):
 
             return text
 
-        # --- cookies ---------------------------------------------------
-        if action == "cookies":
-            sub = args.get("subcommand", "")
-
-            text = Text("@ ", style=cls.DIM)
-            text.append("cookies ", style=cls.DIM)
-            text.append(sub, style=cls.OBSERVE)
-            text.append_text(cls._status_mark(status))
-
-            return text
-
         # --- wait ------------------------------------------------------
         if action == "wait":
-            sub = args.get("subcommand", "")
-            target = args.get("selector") or args.get("text") or ""
             text = Text("@ ", style=cls.DIM)
+            seconds = args.get("seconds")
             if status == "completed":
-                text.append(f"waited for {sub}", style=cls.DIM)
-                text.append_text(cls._status_mark(status))
+                text.append("waited", style=cls.DIM)
             else:
-                text.append(f"waiting for {sub}", style=cls.DIM)
-            if target:
-                text.append(" ", style=cls.DIM)
-                text.append(target, style=cls.OBSERVE)
+                text.append("waiting", style=cls.DIM)
+            if seconds is not None:
+                text.append(f" {seconds}s", style=cls.INTERACT)
+            text.append_text(cls._status_mark(status))
             return text
 
-        # --- get -------------------------------------------------------
-        if action == "get":
-            sub = args.get("subcommand", "")
+        # --- tab switch ------------------------------------------------
+        if action == "switch":
             text = Text("@ ", style=cls.DIM)
-            text.append("getting ", style=cls.DIM)
-            text.append(sub, style=cls.OBSERVE)
+            text.append("switching to tab ", style=cls.DIM)
+            text.append(str(args.get("tab_id", "?")), style=f"bold {cls.NAV}")
+            text.append_text(cls._status_mark(status))
+            return text
+
+        # --- file operations ------------------------------------------
+        if action in {"write_file", "read_file", "replace_file"}:
+            labels = {
+                "write_file": "writing file",
+                "read_file": "reading file",
+                "replace_file": "replacing file content",
+            }
+            text = Text("@ ", style=cls.DIM)
+            text.append(labels[action], style=cls.DIM)
+            file_name = args.get("file_name", "")
+            if file_name:
+                text.append(" ", style=cls.DIM)
+                text.append(file_name, style=cls.NAV)
+            text.append_text(cls._status_mark(status))
+            return text
+
+        # --- completion ------------------------------------------------
+        if action == "done":
+            text = Text("@ ", style=cls.DIM)
+            success = args.get("success")
+            if success is True:
+                text.append("marking task done", style=f"bold {cls.OK}")
+            elif success is False:
+                text.append("marking task failed", style=f"bold {cls.ERR}")
+            else:
+                text.append("marking task done", style=cls.DIM)
+
+            summary = args.get("text", "")
+            if summary:
+                preview = summary if len(summary) <= 120 else summary[:117] + "..."
+                text.append("\n  ")
+                text.append(preview, style=cls.DIM)
+
             text.append_text(cls._status_mark(status))
             return text
 
