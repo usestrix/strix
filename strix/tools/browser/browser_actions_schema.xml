@@ -14,7 +14,7 @@
       Two usage styles:
       - **Agent mode** (action="run"): Give a natural-language task and the browser-use agent
         autonomously navigates, clicks, fills forms, and extracts information.
-      - **Granular mode**: Use specific actions (open, click, type, scroll, etc.) for precise,
+      - **Granular mode**: Use specific actions matching browser-use's built-in tools for precise,
         deterministic control of the browser via CDP.</description>
     <parameters>
       <parameter name="action" type="string" required="true">
@@ -22,42 +22,54 @@
           **Lifecycle:**
           - launch: Start the browser. MUST be called before any other actions.
             Pass use_local=true for local Chrome. Optionally pass profile_directory.
-          - close: Shut down the browser session.
+          - close_browser: Shut down the browser session.
 
           **Agent mode:**
           - run: Execute a natural-language browser task. Requires 'task' parameter.
             Optionally pass 'return_fields' to select which history data to include in the response.
 
-          **Navigation:**
-          - open: Navigate to a URL. Requires 'url'.
-          - back: Navigate back in history.
+          **Navigation & Browser Control:**
+          - search: Search queries (DuckDuckGo, Google, Bing). Requires 'query', optional 'engine'.
+          - navigate: Navigate to URLs. Requires 'url', optional 'new_tab'.
+          - go_back: Go back in browser history.
+          - wait: Wait for specified seconds. Optional 'seconds'.
 
-          **Interaction:**
-          - click: Click an element by 'index' or coordinates ('x', 'y').
-          - type: Insert text at the current cursor position. Requires 'text'.
-          - input: Click an element then type into it. Requires 'index' and 'text'.
-          - hover: Hover over an element. Requires 'index'.
-          - dblclick: Double-click an element. Requires 'index'.
-          - rightclick: Right-click an element. Requires 'index'.
-          - keys: Send keyboard keys (e.g. "Enter", "Ctrl+a"). Requires 'keys'.
-          - select: Select a dropdown option. Requires 'index' and 'value'.
-          - scroll: Scroll the page. Optional 'direction' (up/down/left/right) and 'amount'.
+          **Page Interaction:**
+          - click: Click element by index. Requires 'index'.
+          - input: Input text into form fields. Requires 'index' and 'text', optional 'clear'.
+          - upload_file: Upload files. Requires 'index' and 'path'.
+          - scroll: Scroll the page. Optional 'down' (bool), 'pages' (float), 'index'.
+          - find_text: Scroll to specific text. Requires 'text'.
+          - send_keys: Send special keys (Enter, Escape, etc.). Requires 'keys'.
 
-          **Information:**
-          - screenshot: Capture a screenshot. Optional 'full' (full page) and 'path' (save to file).
-          - state: Get the current page DOM state with element indices.
-          - eval: Execute JavaScript. Requires 'js'.
-          - get: Get page info. Requires 'subcommand': title, html, text, value, attributes, bbox.
+          **Content Extraction:**
+          - extract: Extract data from webpages using LLM. Requires 'query', optional 'extract_links', 'start_from_char', 'output_schema'.
+          - search_page: Search page text (like grep). Requires 'pattern', optional 'regex', 'case_sensitive', 'context_chars', 'css_scope', 'max_results'.
+          - find_elements: Query DOM by CSS selector. Requires 'selector', optional 'attributes', 'max_results', 'include_text'.
 
-          **Cookies:**
-          - cookies: Cookie operations. Requires 'subcommand': get, set, clear, export, import.
+          **Visual Analysis:** [Requires to be running in non-sandbox environment]
+          - screenshot: Capture screenshot. Optional 'file_name'.
+          - save_as_pdf: Save page as PDF. Optional 'file_name', 'print_background', 'landscape', 'scale', 'paper_format'.
 
-          **Waiting:**
-          - wait: Wait for conditions. Requires 'subcommand': selector, text.
+          **Form Controls:**
+          - dropdown_options: Get dropdown options. Requires 'index'.
+          - select_dropdown: Select dropdown option. Requires 'index' and 'text'.
 
-          **Tabs:**
-          - switch: Switch to a tab by index. Requires 'tab'.
-          - close_tab: Close a tab. Optional 'tab' (defaults to focused tab).</description>
+          **JavaScript Execution:**
+          - evaluate: Execute custom JavaScript code. Requires 'code'.
+
+          **Tab Management:**
+          - switch: Switch between tabs. Requires 'tab_id'.
+          - close_tab: Close browser tab. Requires 'tab_id'.
+
+          **File Operations:** [Requires to be running in non-sandbox environment]
+          - write_file: Write content to files. Requires 'file_name' and 'content', optional 'append', 'trailing_newline', 'leading_newline'.
+          - read_file: Read file contents. Requires 'file_name'.
+          - replace_file: Replace text in files. Requires 'file_name', 'old_str', 'new_str'.
+          - read_long_content: Read long content intelligently. Requires 'goal', optional 'source', 'context'.
+
+          **Task Completion:**
+          - done: Complete the task. Requires 'text', optional 'success', 'files_to_display'.</description>
       </parameter>
       <parameter name="task" type="string" required="false">
         <description>Required for 'run' action. A natural-language description of what to do in
@@ -71,84 +83,131 @@
         <description>Only used with action='launch' and use_local=true. The Chrome profile
           directory to use, e.g. "Default", "Profile 1". If not specified, auto-selected.</description>
       </parameter>
+      <parameter name="query" type="string" required="false">
+        <description>Search query. Required for 'search' and 'extract' actions.</description>
+      </parameter>
+      <parameter name="engine" type="string" required="false">
+        <description>Search engine for 'search' action. Options: "google", "duckduckgo", "bing".</description>
+      </parameter>
       <parameter name="url" type="string" required="false">
-        <description>URL to navigate to. Required for 'open' action. Also used by cookies get/clear/export.</description>
+        <description>URL to navigate to. Required for 'navigate' action.</description>
+      </parameter>
+      <parameter name="new_tab" type="boolean" required="false">
+        <description>Open URL in new tab for 'navigate' action. Default: false.</description>
+      </parameter>
+      <parameter name="seconds" type="number" required="false">
+        <description>Seconds to wait for 'wait' action.</description>
       </parameter>
       <parameter name="index" type="integer" required="false">
-        <description>Element index from the DOM state. Used by: click, input, select, hover, dblclick,
-          rightclick, and get (text/value/attributes/bbox).</description>
+        <description>Element index from the DOM state. Used by: click, input, upload_file, dropdown_options, select_dropdown, scroll (for scrollable elements).</description>
       </parameter>
       <parameter name="text" type="string" required="false">
-        <description>Text content. Required for 'type' and 'input' actions. Also used by wait text.</description>
+        <description>Text content. Required for 'input', 'select_dropdown', 'find_text', and 'done' actions.</description>
       </parameter>
-      <parameter name="value" type="string" required="false">
-        <description>Value to select. Required for 'select' action. Also used for cookie value in cookies set.</description>
-      </parameter>
-      <parameter name="selector" type="string" required="false">
-        <description>CSS selector. Used by wait selector and get html.</description>
-      </parameter>
-      <parameter name="keys" type="string" required="false">
-        <description>Keyboard keys to send. Required for 'keys' action. Examples: "Enter", "Ctrl+a", "Escape".</description>
-      </parameter>
-      <parameter name="js" type="string" required="false">
-        <description>JavaScript code to execute. Required for 'eval' action.</description>
-      </parameter>
-      <parameter name="direction" type="string" required="false">
-        <description>Scroll direction: "up", "down", "left", "right". Default: "down".</description>
-      </parameter>
-      <parameter name="amount" type="integer" required="false">
-        <description>Scroll amount in pixels. Default: 500.</description>
-      </parameter>
-      <parameter name="tab" type="integer" required="false">
-        <description>Tab index. Required for 'switch', optional for 'close_tab'.</description>
-      </parameter>
-      <parameter name="x" type="number" required="false">
-        <description>X coordinate for click action (use with 'y' for coordinate-based clicking).</description>
-      </parameter>
-      <parameter name="y" type="number" required="false">
-        <description>Y coordinate for click action (use with 'x' for coordinate-based clicking).</description>
-      </parameter>
-      <parameter name="full" type="boolean" required="false">
-        <description>For 'screenshot': capture the full page. Default: false.</description>
+      <parameter name="clear" type="boolean" required="false">
+        <description>Clear existing text before input. Used by 'input' action. Default: false.</description>
       </parameter>
       <parameter name="path" type="string" required="false">
-        <description>For 'screenshot': save to this file path instead of returning base64.</description>
+        <description>File path for 'upload_file' action.</description>
       </parameter>
-      <parameter name="subcommand" type="string" required="false">
-        <description>Sub-action for compound commands:
-          - cookies: "get", "set", "clear", "export", "import"
-          - wait: "selector", "text"
-          - get: "title", "html", "text", "value", "attributes", "bbox"</description>
+      <parameter name="down" type="boolean" required="false">
+        <description>Scroll direction for 'scroll' action. True=down, False=up. Default: true.</description>
       </parameter>
-      <parameter name="query" type="string" required="false">
-        <description>Query for 'extract' action (requires agent mode).</description>
+      <parameter name="pages" type="number" required="false">
+        <description>Number of pages to scroll for 'scroll' action. Range: 0.5-10.0. Default: 1.0.</description>
       </parameter>
-      <parameter name="name" type="string" required="false">
-        <description>Cookie name. Used by cookies set.</description>
+      <parameter name="keys" type="string" required="false">
+        <description>Keyboard keys to send. Required for 'send_keys' action. Examples: "Enter", "Escape", "Tab".</description>
       </parameter>
-      <parameter name="domain" type="string" required="false">
-        <description>Cookie domain. Used by cookies set.</description>
+      <parameter name="extract_links" type="boolean" required="false">
+        <description>Extract URLs from page for 'extract' action. Default: false.</description>
       </parameter>
-      <parameter name="file" type="string" required="false">
-        <description>File path for cookies export/import.</description>
+      <parameter name="start_from_char" type="integer" required="false">
+        <description>Character position to start extraction from for 'extract' action (for truncated content).</description>
       </parameter>
-      <parameter name="timeout" type="integer" required="false">
-        <description>Timeout in milliseconds for wait actions. Default: 30000.</description>
+      <parameter name="output_schema" type="object" required="false">
+        <description>Pydantic model schema for structured extraction in 'extract' action.</description>
       </parameter>
-      <parameter name="state" type="string" required="false">
-        <description>Wait state for wait selector: "visible", "hidden", "attached", "detached". Default: "visible".</description>
+      <parameter name="pattern" type="string" required="false">
+        <description>Search pattern for 'search_page' action. Can be regex if regex=true.</description>
       </parameter>
-      <parameter name="secure" type="boolean" required="false">
-        <description>Cookie secure flag. Used by cookies set. Default: false.</description>
+      <parameter name="regex" type="boolean" required="false">
+        <description>Treat pattern as regex for 'search_page' action. Default: false.</description>
       </parameter>
-      <parameter name="http_only" type="boolean" required="false">
-        <description>Cookie httpOnly flag. Used by cookies set. Default: false.</description>
+      <parameter name="case_sensitive" type="boolean" required="false">
+        <description>Case-sensitive search for 'search_page' action. Default: false.</description>
       </parameter>
-      <parameter name="same_site" type="string" required="false">
-        <description>Cookie SameSite policy. Used by cookies set. Values: "Strict", "Lax", "None".</description>
+      <parameter name="context_chars" type="integer" required="false">
+        <description>Number of context characters around matches for 'search_page' action.</description>
       </parameter>
-      <parameter name="expires" type="number" required="false">
-        <description>Cookie expiration timestamp. Used by cookies set.</description>
+      <parameter name="css_scope" type="string" required="false">
+        <description>CSS selector to limit search scope for 'search_page' action.</description>
+      </parameter>
+      <parameter name="max_results" type="integer" required="false">
+        <description>Maximum results for 'search_page' and 'find_elements' actions.</description>
+      </parameter>
+      <parameter name="selector" type="string" required="false">
+        <description>CSS selector for 'find_elements' action.</description>
+      </parameter>
+      <parameter name="attributes" type="array" required="false">
+        <description>Attribute names to extract for 'find_elements' action. E.g. ["href", "src"].</description>
+      </parameter>
+      <parameter name="include_text" type="boolean" required="false">
+        <description>Include element text content for 'find_elements' action. Default: true.</description>
+      </parameter>
+      <parameter name="file_name" type="string" required="false">
+        <description>File name for 'screenshot', 'save_as_pdf', 'write_file', 'read_file', 'replace_file' actions.</description>
+      </parameter>
+      <parameter name="print_background" type="boolean" required="false">
+        <description>Include background graphics in PDF for 'save_as_pdf' action. Default: false.</description>
+      </parameter>
+      <parameter name="landscape" type="boolean" required="false">
+        <description>Landscape orientation for 'save_as_pdf' action. Default: false.</description>
+      </parameter>
+      <parameter name="scale" type="number" required="false">
+        <description>Scale factor for 'save_as_pdf' action. Range: 0.1-2.0.</description>
+      </parameter>
+      <parameter name="paper_format" type="string" required="false">
+        <description>Paper format for 'save_as_pdf' action. E.g. "A4", "Letter".</description>
+      </parameter>
+      <parameter name="code" type="string" required="false">
+        <description>JavaScript code to execute. Required for 'evaluate' action.</description>
+      </parameter>
+      <parameter name="tab_id" type="string" required="false">
+        <description>Tab ID for 'switch' and 'close_tab' actions. Last 4 chars of target_id from browser state.</description>
+      </parameter>
+      <parameter name="content" type="string" required="false">
+        <description>File content for 'write_file' action.</description>
+      </parameter>
+      <parameter name="append" type="boolean" required="false">
+        <description>Append to file instead of overwriting for 'write_file' action. Default: false.</description>
+      </parameter>
+      <parameter name="trailing_newline" type="boolean" required="false">
+        <description>Add trailing newline for 'write_file' action.</description>
+      </parameter>
+      <parameter name="leading_newline" type="boolean" required="false">
+        <description>Add leading newline for 'write_file' action.</description>
+      </parameter>
+      <parameter name="old_str" type="string" required="false">
+        <description>String to replace for 'replace_file' action.</description>
+      </parameter>
+      <parameter name="new_str" type="string" required="false">
+        <description>Replacement string for 'replace_file' action.</description>
+      </parameter>
+      <parameter name="goal" type="string" required="false">
+        <description>Information goal for 'read_long_content' action.</description>
+      </parameter>
+      <parameter name="source" type="string" required="false">
+        <description>Content source for 'read_long_content' action. Options: "page", file path.</description>
+      </parameter>
+      <parameter name="context" type="string" required="false">
+        <description>Additional context for 'read_long_content' action.</description>
+      </parameter>
+      <parameter name="success" type="boolean" required="false">
+        <description>Task success status for 'done' action.</description>
+      </parameter>
+      <parameter name="files_to_display" type="array" required="false">
+        <description>Files to display for 'done' action.</description>
       </parameter>
       <parameter name="return_fields" type="array" required="false">
         <description>Only used with action='run'. A list of history fields to include in the
@@ -208,100 +267,171 @@
         <parameter=use_local>true</parameter>
       </function>
 
-      # Navigate to a URL
-      <function=browser_actions>
-        <parameter=action>open</parameter>
-        <parameter=url>https://example.com</parameter>
-      </function>
-
-      # Get current page state with element indices
-      <function=browser_actions>
-        <parameter=action>state</parameter>
-      </function>
-
-      # Click element by index (from state output)
-      <function=browser_actions>
-        <parameter=action>click</parameter>
-        <parameter=index>5</parameter>
-      </function>
-
-      # Click by coordinates
-      <function=browser_actions>
-        <parameter=action>click</parameter>
-        <parameter=x>100</parameter>
-        <parameter=y>200</parameter>
-      </function>
-
-      # Type into an input field (click + type)
-      <function=browser_actions>
-        <parameter=action>input</parameter>
-        <parameter=index>3</parameter>
-        <parameter=text>admin@example.com</parameter>
-      </function>
-
-      # Send keyboard keys
-      <function=browser_actions>
-        <parameter=action>keys</parameter>
-        <parameter=keys>Enter</parameter>
-      </function>
-
-      # Scroll down
-      <function=browser_actions>
-        <parameter=action>scroll</parameter>
-        <parameter=direction>down</parameter>
-        <parameter=amount>500</parameter>
-      </function>
-
-      # Take a screenshot
-      <function=browser_actions>
-        <parameter=action>screenshot</parameter>
-        <parameter=full>true</parameter>
-        <parameter=path>/tmp/page.png</parameter>
-      </function>
-
-      # Get page title
-      <function=browser_actions>
-        <parameter=action>get</parameter>
-        <parameter=subcommand>title</parameter>
-      </function>
-
-      # Wait for an element to appear
-      <function=browser_actions>
-        <parameter=action>wait</parameter>
-        <parameter=subcommand>selector</parameter>
-        <parameter=selector>#login-form</parameter>
-        <parameter=timeout>10000</parameter>
-      </function>
-
-      # Get cookies for a URL
-      <function=browser_actions>
-        <parameter=action>cookies</parameter>
-        <parameter=subcommand>get</parameter>
-        <parameter=url>https://example.com</parameter>
-      </function>
-
-      # Execute JavaScript
-      <function=browser_actions>
-        <parameter=action>eval</parameter>
-        <parameter=js>document.title</parameter>
-      </function>
-
       # Run a natural-language browser task
       <function=browser_actions>
         <parameter=action>run</parameter>
         <parameter=task>Go to https://example.com/login, fill in username "admin" and password "secret", then click the login button</parameter>
       </function>
 
-      # Run a task and request specific output fields
+      # Search with DuckDuckGo
       <function=browser_actions>
-        <parameter=action>run</parameter>
-        <parameter=task>Navigate through the site and collect all page titles</parameter>
-        <parameter=return_fields>["urls", "extracted_content", "number_of_steps"]</parameter>
+        <parameter=action>search</parameter>
+        <parameter=query>Python web scraping</parameter>
       </function>
 
-      # Close the browser when done
+      # Navigate to a URL
       <function=browser_actions>
-        <parameter=action>close</parameter>
+        <parameter=action>navigate</parameter>
+        <parameter=url>https://example.com</parameter>
+      </function>
+
+      # Go back in history
+      <function=browser_actions>
+        <parameter=action>go_back</parameter>
+      </function>
+
+      # Wait 2 seconds
+      <function=browser_actions>
+        <parameter=action>wait</parameter>
+        <parameter=seconds>2</parameter>
+      </function>
+
+      # Click element by index
+      <function=browser_actions>
+        <parameter=action>click</parameter>
+        <parameter=index>5</parameter>
+      </function>
+
+      # Type into an input field
+      <function=browser_actions>
+        <parameter=action>input</parameter>
+        <parameter=index>3</parameter>
+        <parameter=text>admin@example.com</parameter>
+      </function>
+
+      # Upload a file
+      <function=browser_actions>
+        <parameter=action>upload_file</parameter>
+        <parameter=index>7</parameter>
+        <parameter=path>/path/to/file.pdf</parameter>
+      </function>
+
+      # Scroll down
+      <function=browser_actions>
+        <parameter=action>scroll</parameter>
+        <parameter=down>true</parameter>
+        <parameter=pages>1.5</parameter>
+      </function>
+
+      # Scroll to text
+      <function=browser_actions>
+        <parameter=action>find_text</parameter>
+        <parameter=text>Contact Us</parameter>
+      </function>
+
+      # Send keyboard keys
+      <function=browser_actions>
+        <parameter=action>send_keys</parameter>
+        <parameter=keys>Enter</parameter>
+      </function>
+
+      # Extract structured data from page
+      <function=browser_actions>
+        <parameter=action>extract</parameter>
+        <parameter=query>Extract all product names and prices</parameter>
+        <parameter=extract_links>true</parameter>
+      </function>
+
+      # Search within the page
+      <function=browser_actions>
+        <parameter=action>search_page</parameter>
+        <parameter=pattern>error|warning</parameter>
+        <parameter=regex>true</parameter>
+        <parameter=case_sensitive>false</parameter>
+      </function>
+
+      # Find elements by CSS selector
+      <function=browser_actions>
+        <parameter=action>find_elements</parameter>
+        <parameter=selector>a.product-link</parameter>
+        <parameter=attributes>["href", "title"]</parameter>
+      </function>
+
+      # Take a screenshot
+      <function=browser_actions>
+        <parameter=action>screenshot</parameter>
+        <parameter=file_name>page_screenshot.png</parameter>
+      </function>
+
+      # Save page as PDF
+      <function=browser_actions>
+        <parameter=action>save_as_pdf</parameter>
+        <parameter=file_name>report.pdf</parameter>
+        <parameter=landscape>true</parameter>
+      </function>
+
+      # Get dropdown options
+      <function=browser_actions>
+        <parameter=action>dropdown_options</parameter>
+        <parameter=index>10</parameter>
+      </function>
+
+      # Select dropdown option
+      <function=browser_actions>
+        <parameter=action>select_dropdown</parameter>
+        <parameter=index>10</parameter>
+        <parameter=text>Option 2</parameter>
+      </function>
+
+      # Execute JavaScript
+      <function=browser_actions>
+        <parameter=action>evaluate</parameter>
+        <parameter=code>(function(){return document.title})()</parameter>
+      </function>
+
+      # Switch to another tab
+      <function=browser_actions>
+        <parameter=action>switch</parameter>
+        <parameter=tab_id>a3f2</parameter>
+      </function>
+
+      # Close a tab
+      <function=browser_actions>
+        <parameter=action>close_tab</parameter>
+        <parameter=tab_id>a3f2</parameter>
+      </function>
+
+      # Write content to file
+      <function=browser_actions>
+        <parameter=action>write_file</parameter>
+        <parameter=file_name>results.txt</parameter>
+        <parameter=content>Extracted data here</parameter>
+      </function>
+
+      # Read a file
+      <function=browser_actions>
+        <parameter=action>read_file</parameter>
+        <parameter=file_name>data.json</parameter>
+      </function>
+
+      # Replace text in file
+      <function=browser_actions>
+        <parameter=action>replace_file</parameter>
+        <parameter=file_name>config.txt</parameter>
+        <parameter=old_str>old_value</parameter>
+        <parameter=new_str>new_value</parameter>
+      </function>
+
+      # Complete the task
+      <function=browser_actions>
+        <parameter=action>done</parameter>
+        <parameter=text>Successfully extracted all product data</parameter>
+        <parameter=success>true</parameter>
+      </function>
+
+      # Close the browser when completely done
+      <function=browser_actions>
+        <parameter=action>close_browser</parameter>
       </function>
     </examples>
   </tool>

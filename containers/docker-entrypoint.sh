@@ -222,7 +222,7 @@ start_chromium() {
   fi
 
   # Expose CDP on 0.0.0.0 via an authenticated proxy (replaces raw socat).
-  python3 /usr/local/bin/cdp-auth-proxy.py &
+  python3 /usr/local/bin/proxy.py &
   CDP_PROXY_PID=$!
   echo "Started CDP auth proxy (PID $CDP_PROXY_PID): 0.0.0.0:${CDP_PORT} -> 127.0.0.1:${CDP_INTERNAL_PORT}"
 
