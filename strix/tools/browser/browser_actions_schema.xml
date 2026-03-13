@@ -25,7 +25,6 @@
             Optionally pass 'return_fields' to select which history data to include in the response.
 
           **Navigation & Browser Control:**
-          - search: Search queries (DuckDuckGo, Google, Bing). Requires 'query', optional 'engine'.
           - navigate: Navigate to URLs. Requires 'url', optional 'new_tab'.
           - go_back: Go back in browser history.
           - wait: Wait for specified seconds. Optional 'seconds'.
@@ -58,12 +57,6 @@
           - switch: Switch between tabs. Requires 'tab_id'.
           - close_tab: Close browser tab. Requires 'tab_id'.
 
-          **File Operations:** [Requires to be running in non-sandbox environment]
-          - write_file: Write content to files. Requires 'file_name' and 'content', optional 'append', 'trailing_newline', 'leading_newline'.
-          - read_file: Read file contents. Requires 'file_name'.
-          - replace_file: Replace text in files. Requires 'file_name', 'old_str', 'new_str'.
-          - read_long_content: Read long content intelligently. Requires 'goal', optional 'source', 'context'.
-
           **Task Completion:**
           - done: Complete the task. Requires 'text', optional 'success', 'files_to_display'.</description>
       </parameter>
@@ -76,10 +69,7 @@
           directory to use, e.g. "Default", "Profile 1". If not specified, auto-selected.</description>
       </parameter>
       <parameter name="query" type="string" required="false">
-        <description>Search query. Required for 'search' and 'extract' actions.</description>
-      </parameter>
-      <parameter name="engine" type="string" required="false">
-        <description>Search engine for 'search' action. Options: "google", "duckduckgo", "bing".</description>
+        <description>Query string. Required for 'extract' action.</description>
       </parameter>
       <parameter name="url" type="string" required="false">
         <description>URL to navigate to. Required for 'navigate' action.</description>
@@ -168,33 +158,6 @@
       <parameter name="tab_id" type="string" required="false">
         <description>Tab ID for 'switch' and 'close_tab' actions. Last 4 chars of target_id from browser state.</description>
       </parameter>
-      <parameter name="content" type="string" required="false">
-        <description>File content for 'write_file' action.</description>
-      </parameter>
-      <parameter name="append" type="boolean" required="false">
-        <description>Append to file instead of overwriting for 'write_file' action. Default: false.</description>
-      </parameter>
-      <parameter name="trailing_newline" type="boolean" required="false">
-        <description>Add trailing newline for 'write_file' action.</description>
-      </parameter>
-      <parameter name="leading_newline" type="boolean" required="false">
-        <description>Add leading newline for 'write_file' action.</description>
-      </parameter>
-      <parameter name="old_str" type="string" required="false">
-        <description>String to replace for 'replace_file' action.</description>
-      </parameter>
-      <parameter name="new_str" type="string" required="false">
-        <description>Replacement string for 'replace_file' action.</description>
-      </parameter>
-      <parameter name="goal" type="string" required="false">
-        <description>Information goal for 'read_long_content' action.</description>
-      </parameter>
-      <parameter name="source" type="string" required="false">
-        <description>Content source for 'read_long_content' action. Options: "page", file path.</description>
-      </parameter>
-      <parameter name="context" type="string" required="false">
-        <description>Additional context for 'read_long_content' action.</description>
-      </parameter>
       <parameter name="success" type="boolean" required="false">
         <description>Task success status for 'done' action.</description>
       </parameter>
@@ -257,12 +220,6 @@
       <function=browser_actions>
         <parameter=action>run</parameter>
         <parameter=task>Go to https://example.com/login, fill in username "admin" and password "secret", then click the login button</parameter>
-      </function>
-
-      # Search with DuckDuckGo
-      <function=browser_actions>
-        <parameter=action>search</parameter>
-        <parameter=query>Python web scraping</parameter>
       </function>
 
       # Navigate to a URL
@@ -385,27 +342,6 @@
       <function=browser_actions>
         <parameter=action>close_tab</parameter>
         <parameter=tab_id>a3f2</parameter>
-      </function>
-
-      # Write content to file
-      <function=browser_actions>
-        <parameter=action>write_file</parameter>
-        <parameter=file_name>results.txt</parameter>
-        <parameter=content>Extracted data here</parameter>
-      </function>
-
-      # Read a file
-      <function=browser_actions>
-        <parameter=action>read_file</parameter>
-        <parameter=file_name>data.json</parameter>
-      </function>
-
-      # Replace text in file
-      <function=browser_actions>
-        <parameter=action>replace_file</parameter>
-        <parameter=file_name>config.txt</parameter>
-        <parameter=old_str>old_value</parameter>
-        <parameter=new_str>new_value</parameter>
       </function>
 
       # Complete the task

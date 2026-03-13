@@ -387,9 +387,10 @@ class BrowserRenderer(BaseToolRenderer):
 
     @classmethod
     def _build_fallback(cls, action: str, status: str) -> Text:
+        if not action:
+            return Text()
         text = Text("@ ", style=cls.DIM)
-        if action:
-            text.append(action, style=cls.DIM)
+        text.append(action, style=cls.DIM)
         text.append_text(cls._status_mark(status))
         return text
 

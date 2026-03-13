@@ -247,6 +247,7 @@ class LLM:
             "messages": messages,
             "timeout": self.config.timeout,
             "stream_options": {"include_usage": True},
+            "metadata": {"litellm_session_id": self.agent_id},
         }
 
         if self.config.api_key:

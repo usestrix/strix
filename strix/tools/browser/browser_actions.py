@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import re
+from functools import partial
 from typing import Any, Literal
 
 from browser_use import Agent
@@ -26,7 +27,6 @@ BrowserUseLocalAction = Literal[
     "launch",
     "run",
     "close_browser",
-    "search",
     "navigate",
     "go_back",
     "wait",
@@ -46,10 +46,6 @@ BrowserUseLocalAction = Literal[
     "evaluate",
     "switch",
     "close_tab",
-    "write_file",
-    "read_file",
-    "replace_file",
-    "read_long_content",
     "done",
 ]
 
@@ -69,7 +65,7 @@ def _is_ws_error(exc: BaseException) -> bool:
     return any(kw in msg for kw in _WS_ERRORS)
 
 
-def _build_llm() -> Any:
+def _build_llm(metadata: dict[str, Any] | None = None) -> Any:
     from strix.config.config import resolve_llm_config
 
     from .litellm.chat import ChatLiteLLM
@@ -82,6 +78,7 @@ def _build_llm() -> Any:
         model=model,
         api_key=api_key,
         api_base=api_base,
+        metadata=metadata,
     )
 
 
@@ -135,8 +132,9 @@ async def _run_browser_agent(
     session: BrowserSession,
     task: str,
     return_fields: list[str] | None,
+    metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    llm = _build_llm()
+    llm = _build_llm(metadata=metadata)
     agent: Any = Agent(
         task=task,
         llm=llm,
@@ -148,35 +146,26 @@ async def _run_browser_agent(
     async def log_step(step: Any) -> None:
         logger.info("Agent step completed: %s", step)
 
-    try:
-        result = await agent.run(on_step_end=log_step)
+    result = await agent.run(on_step_end=log_step)
 
-        if hasattr(result, "is_successful") and not result.is_successful():
-            final_result = (
-                result.final_result() if callable(result.final_result) else result.final_result
-            )
-            return {"error": final_result or "Agent failed", "is_running": False}
-
+    if hasattr(result, "is_successful") and not result.is_successful():
         final_result = (
-            result.final_result()
-            if hasattr(result, "final_result") and callable(result.final_result)
-            else getattr(result, "final_result", str(result))
+            result.final_result() if callable(result.final_result) else result.final_result
         )
-        out = {"message": "Task completed", "result": final_result, "is_running": False}
+        return {"error": final_result or "Agent failed", "is_running": False}
 
-        if return_fields:
-            fields = {f: getattr(result, f, None) for f in return_fields}
-            out["fields"] = fields
+    final_result = (
+        result.final_result()
+        if hasattr(result, "final_result") and callable(result.final_result)
+        else getattr(result, "final_result", str(result))
+    )
+    out = {"message": "Task completed", "result": final_result, "is_running": False}
 
-        return out
-    finally:
-        for name in ("close", "stop"):
-            if fn := getattr(agent, name, None):
-                try:
-                    if asyncio.iscoroutine(coro := fn()):
-                        await asyncio.wait_for(coro, timeout=5)
-                except Exception:  # noqa: BLE001,S110
-                    pass
+    if return_fields:
+        fields = {f: getattr(result, f, None) for f in return_fields}
+        out["fields"] = fields
+
+    return out
 
 
 def _fix_json_in_xml(kws: dict[str, Any]) -> dict[str, Any]:
@@ -198,11 +187,12 @@ async def _run_browser_tool(
     session: BrowserSession,
     action: str,
     params: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
 ) -> Any:
     if not session.browser.is_cdp_connected:
         await session.browser.start()
 
-    llm = _build_llm()
+    llm = _build_llm(metadata=metadata)
 
     if session.local:
         from pathlib import Path
@@ -234,6 +224,43 @@ async def _run_browser_tool(
     )
 
 
+async def populate_response(session: BrowserSession, response: dict[str, Any]) -> dict[str, Any]:
+    try:
+        screenshot = await session.browser.take_screenshot()
+    except Exception as e:  # noqa: BLE001
+        screenshot = None
+        response["screenshot_error"] = str(e)
+
+    try:
+        title = await session.browser.get_current_page_title()
+        url = await session.browser.get_current_page_url()
+        all_tabs = await session.browser.get_tabs()
+    except Exception as e:  # noqa: BLE001
+        # TODO: Consider a fallback way to retrieve the url?
+        url = f"URL retrieval failed: {e}"
+        title = "Title retrieval failed with same error"
+        all_tabs = []
+
+    try:
+        # this can fail if the browser disconnects during the tool completion
+        vp = getattr(session.browser.browser_profile, "viewport", None)
+        viewport = {
+            "width": vp.width if vp else None,
+            "height": vp.height if vp else None,
+        }
+    except Exception as e:  # noqa: BLE001
+        viewport = {"error": f"Viewport retrieval failed: {e}"}
+
+    return {
+        **response,
+        "screenshot": screenshot,
+        "url": url,
+        "title": title,
+        "viewport": viewport,
+        "tabs": all_tabs,
+    }
+
+
 @register_tool(sandbox_execution=False)
 async def browser_actions(
     action: BrowserUseLocalAction,
@@ -248,6 +275,8 @@ async def browser_actions(
         from strix.tools.context import get_current_agent_id
 
         agent_id = get_current_agent_id()
+
+        metadata = {"litellm_session_id": agent_id}
 
         if action == "launch":
             has_sandbox = agent_state and getattr(agent_state, "sandbox_info", None)
@@ -285,18 +314,19 @@ async def browser_actions(
             if not task:
                 return {"error": "task required for run action", "is_running": False}
 
-            return await _execute_task(
-                session,
-                lambda: _run_browser_agent(session, task, return_fields),
-                task,
-            )
+            runner = partial(_run_browser_agent, session, task, return_fields, metadata)
+            desc = task
+        else:
+            params = _fix_json_in_xml(kwargs)
+            runner = partial(_run_browser_tool, session, action, params, metadata)
+            desc = f"{action}({list(kwargs.keys())[:3]})"
 
-        params = _fix_json_in_xml(kwargs)
-        return await _execute_task(
-            session,
-            lambda: _run_browser_tool(session, action, params),
-            f"{action}({list(params.keys())[:3]})",
-        )
+        task_output = await _execute_task(session, runner, desc)
+
+        if "error" in task_output:
+            return task_output
+
+        return await populate_response(session, task_output)
 
     except Exception as error:
         logger.exception("browser_actions error: %s", action)

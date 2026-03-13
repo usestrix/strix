@@ -33,7 +33,7 @@ RUN apt-get update && \
     net-tools dnsutils whois \
     jq parallel ripgrep grep \
     less man-db procps htop \
-    iproute2 iputils-ping netcat-traditional socat \
+    iproute2 iputils-ping netcat-traditional \
     nmap ncat ndiff \
     sqlmap nuclei subfinder naabu ffuf \
     nodejs npm pipx \

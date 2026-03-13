@@ -5,6 +5,8 @@ import logging
 import time
 from typing import Any
 
+from browser_use import Browser
+
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +81,7 @@ class BrowserSession:
 
     def __init__(
         self,
-        browser: Any,
+        browser: Browser,
         cdp_url: str,
         ws_url: str,
         *,

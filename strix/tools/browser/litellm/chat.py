@@ -43,17 +43,10 @@ class ChatLiteLLM(BaseChatModel):
     temperature: float | None = 0.0
     max_tokens: int | None = 4096
     max_retries: int = 3
+    metadata: dict[str, Any] | None = None
 
-    _provider_name: str = field(
-        default="",
-        init=False,
-        repr=False,
-    )
-    _clean_model: str = field(
-        default="",
-        init=False,
-        repr=False,
-    )
+    _provider_name: str = field(default="", init=False, repr=False)
+    _clean_model: str = field(default="", init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Resolve provider info from the model string via litellm."""
@@ -163,6 +156,8 @@ class ChatLiteLLM(BaseChatModel):
             params["api_key"] = self.api_key
         if self.api_base:
             params["api_base"] = self.api_base
+        if self.metadata:
+            params["metadata"] = self.metadata
 
         if output_format is not None:
             schema = SchemaOptimizer.create_optimized_json_schema(output_format)
