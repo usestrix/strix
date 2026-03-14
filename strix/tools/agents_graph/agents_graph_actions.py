@@ -227,26 +227,37 @@ def create_agent(
         from strix.agents.state import AgentState
         from strix.llm.config import LLMConfig
 
-        state = AgentState(task=task, agent_name=name, parent_id=parent_id, max_iterations=300)
-
         parent_agent = _agent_instances.get(parent_id)
 
         timeout = None
         scan_mode = "deep"
+        interactive = False
         if parent_agent and hasattr(parent_agent, "llm_config"):
             if hasattr(parent_agent.llm_config, "timeout"):
                 timeout = parent_agent.llm_config.timeout
             if hasattr(parent_agent.llm_config, "scan_mode"):
                 scan_mode = parent_agent.llm_config.scan_mode
+            interactive = getattr(parent_agent.llm_config, "interactive", False)
 
-        llm_config = LLMConfig(skills=skill_list, timeout=timeout, scan_mode=scan_mode)
+        state = AgentState(
+            task=task,
+            agent_name=name,
+            parent_id=parent_id,
+            max_iterations=300,
+            waiting_timeout=300 if interactive else 600,
+        )
+
+        llm_config = LLMConfig(
+            skills=skill_list,
+            timeout=timeout,
+            scan_mode=scan_mode,
+            interactive=interactive,
+        )
 
         agent_config = {
             "llm_config": llm_config,
             "state": state,
         }
-        if parent_agent and hasattr(parent_agent, "non_interactive"):
-            agent_config["non_interactive"] = parent_agent.non_interactive
 
         agent = StrixAgent(agent_config)
 

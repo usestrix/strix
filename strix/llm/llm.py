@@ -97,6 +97,7 @@ class LLM:
             result = env.get_template("system_prompt.jinja").render(
                 get_tools_prompt=get_tools_prompt,
                 loaded_skill_names=list(skill_content.keys()),
+                interactive=self.config.interactive,
                 **skill_content,
             )
             return str(result)
@@ -186,7 +187,7 @@ class LLM:
         conversation_history.extend(compressed)
         messages.extend(compressed)
 
-        if messages[-1].get("role") == "assistant":
+        if messages[-1].get("role") == "assistant" and not self.config.interactive:
             messages.append({"role": "user", "content": "<meta>Continue the task.</meta>"})
 
         if self._is_anthropic() and self.config.enable_prompt_caching:

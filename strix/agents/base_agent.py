@@ -56,7 +56,6 @@ class BaseAgent(metaclass=AgentMeta):
         self.config = config
 
         self.local_sources = config.get("local_sources", [])
-        self.non_interactive = config.get("non_interactive", False)
 
         if "max_iterations" in config:
             self.max_iterations = config["max_iterations"]
@@ -74,6 +73,9 @@ class BaseAgent(metaclass=AgentMeta):
                 max_iterations=self.max_iterations,
             )
 
+        self.interactive = getattr(self.llm_config, "interactive", False)
+        if self.interactive and self.state.parent_id is None:
+            self.state.waiting_timeout = 0
         self.llm = LLM(self.llm_config, agent_name=self.agent_name)
 
         with contextlib.suppress(Exception):
@@ -169,7 +171,7 @@ class BaseAgent(metaclass=AgentMeta):
                 continue
 
             if self.state.should_stop():
-                if self.non_interactive:
+                if not self.interactive:
                     return self.state.final_result or {}
                 await self._enter_waiting_state(tracer)
                 continue
@@ -213,8 +215,12 @@ class BaseAgent(metaclass=AgentMeta):
                 should_finish = await iteration_task
                 self._current_task = None
 
+                if should_finish is None and self.interactive:
+                    await self._enter_waiting_state(tracer, text_response=True)
+                    continue
+
                 if should_finish:
-                    if self.non_interactive:
+                    if not self.interactive:
                         self.state.set_completed({"success": True})
                         if tracer:
                             tracer.update_agent_status(self.state.agent_id, "completed")
@@ -230,7 +236,7 @@ class BaseAgent(metaclass=AgentMeta):
                         self.state.add_message(
                             "assistant", f"{partial_content}\n\n[ABORTED BY USER]"
                         )
-                if self.non_interactive:
+                if not self.interactive:
                     raise
                 await self._enter_waiting_state(tracer, error_occurred=False, was_cancelled=True)
                 continue
@@ -243,7 +249,7 @@ class BaseAgent(metaclass=AgentMeta):
 
             except (RuntimeError, ValueError, TypeError) as e:
                 if not await self._handle_iteration_error(e, tracer):
-                    if self.non_interactive:
+                    if not self.interactive:
                         self.state.set_completed({"success": False, "error": str(e)})
                         if tracer:
                             tracer.update_agent_status(self.state.agent_id, "failed")
@@ -283,11 +289,14 @@ class BaseAgent(metaclass=AgentMeta):
         task_completed: bool = False,
         error_occurred: bool = False,
         was_cancelled: bool = False,
+        text_response: bool = False,
     ) -> None:
         self.state.enter_waiting_state()
 
         if tracer:
-            if task_completed:
+            if text_response:
+                tracer.update_agent_status(self.state.agent_id, "waiting_for_input")
+            elif task_completed:
                 tracer.update_agent_status(self.state.agent_id, "completed")
             elif error_occurred:
                 tracer.update_agent_status(self.state.agent_id, "error")
@@ -295,6 +304,9 @@ class BaseAgent(metaclass=AgentMeta):
                 tracer.update_agent_status(self.state.agent_id, "stopped")
             else:
                 tracer.update_agent_status(self.state.agent_id, "stopped")
+
+        if text_response:
+            return
 
         if task_completed:
             self.state.add_message(
@@ -352,7 +364,7 @@ class BaseAgent(metaclass=AgentMeta):
 
         self.state.add_message("user", task)
 
-    async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool:
+    async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool | None:
         final_response = None
 
         async for response in self.llm.generate(self.state.get_conversation_history()):
@@ -398,7 +410,7 @@ class BaseAgent(metaclass=AgentMeta):
         if actions:
             return await self._execute_actions(actions, tracer)
 
-        return False
+        return None
 
     async def _execute_actions(self, actions: list[Any], tracer: Optional["Tracer"]) -> bool:
         """Execute actions and return True if agent should finish."""
@@ -426,7 +438,7 @@ class BaseAgent(metaclass=AgentMeta):
             self.state.set_completed({"success": True})
             if tracer:
                 tracer.update_agent_status(self.state.agent_id, "completed")
-            if self.non_interactive and self.state.parent_id is None:
+            if not self.interactive and self.state.parent_id is None:
                 return True
             return True
 
@@ -526,7 +538,7 @@ class BaseAgent(metaclass=AgentMeta):
         error_details = error.details
         self.state.add_error(error_msg)
 
-        if self.non_interactive:
+        if not self.interactive:
             self.state.set_completed({"success": False, "error": error_msg})
             if tracer:
                 tracer.update_agent_status(self.state.agent_id, "failed", error_msg)
@@ -561,7 +573,7 @@ class BaseAgent(metaclass=AgentMeta):
         error_details = getattr(error, "details", None)
         self.state.add_error(error_msg)
 
-        if self.non_interactive:
+        if not self.interactive:
             self.state.set_completed({"success": False, "error": error_msg})
             if tracer:
                 tracer.update_agent_status(self.state.agent_id, "failed", error_msg)
