@@ -13,11 +13,9 @@ from strix.tools.registry import register_tool
 from .browser_manager import (
     BrowserSession,
     _close_session,
-    _ensure_healthy_session,
     _get_session,
     _launch_browser,
     _launch_local_browser,
-    llm_supports_vision,
 )
 
 
@@ -50,22 +48,11 @@ BrowserUseLocalAction = Literal[
 ]
 
 _TASK_TIMEOUT = 300
-_WS_ERRORS = (
-    "websocket",
-    "cdp",
-    "not initialized",
-    "not connected",
-    "connection closed",
-    "disconnected",
-)
 
 
-def _is_ws_error(exc: BaseException) -> bool:
-    msg = (type(exc).__name__ + str(exc)).lower()
-    return any(kw in msg for kw in _WS_ERRORS)
+def _build_llm(metadata: dict[str, Any] | None = None) -> tuple[Any, bool]:
+    import litellm
 
-
-def _build_llm(metadata: dict[str, Any] | None = None) -> Any:
     from strix.config.config import resolve_llm_config
 
     from .litellm.chat import ChatLiteLLM
@@ -79,7 +66,7 @@ def _build_llm(metadata: dict[str, Any] | None = None) -> Any:
         api_key=api_key,
         api_base=api_base,
         metadata=metadata,
-    )
+    ), litellm.supports_vision(model)
 
 
 def _resolve_cdp_url(agent_state: Any) -> tuple[str, str]:
@@ -93,39 +80,28 @@ def _resolve_cdp_url(agent_state: Any) -> tuple[str, str]:
 
 async def _execute_task(session: BrowserSession, operation: Any, desc: str) -> dict[str, Any]:
     session.task_count += 1
-    task_num = session.task_count
-    logger.info("Task #%d: %s", task_num, desc[:200])
+    logger.info("Task #%d: %s", session.task_count, desc[:200])
 
-    if err := await _ensure_healthy_session(session, task_num):
-        session.consecutive_failures += 1
-        return {"error": err, "is_running": False}
-
-    for attempt in range(2):
-        try:
-            result = await asyncio.wait_for(operation(), timeout=_TASK_TIMEOUT)
-            session.consecutive_failures = 0
-            return result if isinstance(result, dict) else {"result": result, "is_running": False}
-        except TimeoutError:
-            session.invalidated = True
-            session.consecutive_failures += 1
-
-            return {"error": f"Timeout after {_TASK_TIMEOUT}s", "is_running": False}
-
-        except Exception as exc:  # noqa: BLE001
-            if _is_ws_error(exc) and attempt == 0:
-                session.invalidated = True
-
-                if err := await _ensure_healthy_session(session, task_num):
-                    session.consecutive_failures += 1
-                    return {"error": err, "is_running": False}
-
-                continue
-            session.consecutive_failures += 1
-            if _is_ws_error(exc):
-                session.invalidated = True
-            return {"error": f"Failed: {exc}", "is_running": False}
-
-    return {"error": "Failed after 2 attempts", "is_running": False}
+    try:
+        result = await asyncio.wait_for(operation(), timeout=_TASK_TIMEOUT)
+        return (
+            result
+            if isinstance(result, dict)
+            else {
+                "result": result,
+                "is_running": False,
+            }
+        )
+    except TimeoutError:
+        return {
+            "error": f"Timeout after {_TASK_TIMEOUT}s",
+            "is_running": False,
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {
+            "error": f"Failed: {exc}",
+            "is_running": False,
+        }
 
 
 async def _run_browser_agent(
@@ -134,10 +110,9 @@ async def _run_browser_agent(
     return_fields: list[str] | None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    llm = _build_llm(metadata=metadata)
+    llm, vision = _build_llm(metadata=metadata)
 
-    # [fix] prevent browseruse from killing the cdp
-    #       connection after execution (go figure)
+    # [monkeypatch] prevent browseruse from killing the cdp connection after execution
     session.browser.browser_profile.keep_alive = True
 
     agent: Any = Agent(
@@ -145,7 +120,7 @@ async def _run_browser_agent(
         llm=llm,
         browser=session.browser,
         flash_mode=True,
-        use_vision=llm_supports_vision(),
+        use_vision=vision,
     )
 
     async def log_step(step: Any) -> None:
@@ -157,14 +132,21 @@ async def _run_browser_agent(
         final_result = (
             result.final_result() if callable(result.final_result) else result.final_result
         )
-        return {"error": final_result or "Agent failed", "is_running": False}
+        return {
+            "error": final_result or "Agent failed",
+            "is_running": False,
+        }
 
     final_result = (
         result.final_result()
         if hasattr(result, "final_result") and callable(result.final_result)
         else getattr(result, "final_result", str(result))
     )
-    out = {"message": "Task completed", "result": final_result, "is_running": False}
+    out = {
+        "message": "Task completed",
+        "result": final_result,
+        "is_running": False,
+    }
 
     if return_fields:
         fields = {f: getattr(result, f, None) for f in return_fields}
@@ -197,7 +179,7 @@ async def _run_browser_tool(
     if not session.browser.is_cdp_connected:
         await session.browser.start()
 
-    llm = _build_llm(metadata=metadata)
+    llm, _ = _build_llm(metadata=metadata)
 
     if session.local:
         from pathlib import Path
@@ -241,13 +223,11 @@ async def populate_response(session: BrowserSession, response: dict[str, Any]) -
         url = await session.browser.get_current_page_url()
         all_tabs = await session.browser.get_tabs()
     except Exception as e:  # noqa: BLE001
-        # TODO: Consider a fallback way to retrieve the url?
         url = f"URL retrieval failed: {e}"
         title = "Title retrieval failed with same error"
         all_tabs = []
 
     try:
-        # this can fail if the browser disconnects during the tool completion
         vp = getattr(session.browser.browser_profile, "viewport", None)
         viewport = {
             "width": vp.width if vp else None,
@@ -304,20 +284,23 @@ async def browser_actions(
                     "is_running": True,
                 }
 
-            if not llm_supports_vision():
-                result["warning"] = "Model does not support vision"
-
             return result
 
         if action == "close_browser":
             await _close_session(agent_id)
-            return {"message": "Browser closed", "is_running": False}
+            return {
+                "message": "Browser closed",
+                "is_running": False,
+            }
 
         session = _get_session(agent_id)
 
         if action == "run":
             if not task:
-                return {"error": "task required for run action", "is_running": False}
+                return {
+                    "error": "task required for run action",
+                    "is_running": False,
+                }
 
             runner = partial(_run_browser_agent, session, task, return_fields, metadata)
             desc = task
@@ -335,4 +318,7 @@ async def browser_actions(
 
     except Exception as error:
         logger.exception("browser_actions error: %s", action)
-        return {"error": str(error), "is_running": False}
+        return {
+            "error": str(error),
+            "is_running": False,
+        }
