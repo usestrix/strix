@@ -24,9 +24,22 @@ from .registry import (
 
 SANDBOX_MODE = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
 
-HAS_PERPLEXITY_API = bool(Config.get("perplexity_api_key"))
 
-DISABLE_BROWSER = (Config.get("strix_disable_browser") or "false").lower() == "true"
+def _is_browser_disabled() -> bool:
+    if os.getenv("STRIX_DISABLE_BROWSER", "").lower() == "true":
+        return True
+    val: str = Config.load().get("env", {}).get("STRIX_DISABLE_BROWSER", "")
+    return str(val).lower() == "true"
+
+
+DISABLE_BROWSER = _is_browser_disabled()
+
+
+def _has_perplexity_api() -> bool:
+    if os.getenv("PERPLEXITY_API_KEY"):
+        return True
+    return bool(Config.load().get("env", {}).get("PERPLEXITY_API_KEY"))
+
 
 if not SANDBOX_MODE:
     from .agents_graph import *  # noqa: F403
@@ -43,7 +56,7 @@ if not SANDBOX_MODE:
     from .thinking import *  # noqa: F403
     from .todo import *  # noqa: F403
 
-    if HAS_PERPLEXITY_API:
+    if _has_perplexity_api():
         from .web_search import *  # noqa: F403
 else:
     if not DISABLE_BROWSER:
