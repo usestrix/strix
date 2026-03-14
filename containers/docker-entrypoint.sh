@@ -151,7 +151,7 @@ sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
 
-# Chromium binds CDP to 127.0.0.1, tool server proxies via /cdp/proxy/
+# Chromium binds CDP to 127.0.0.1, tool server proxies WS via /cdp/ws
 CDP_INTERNAL_PORT=19222
 CHROMIUM_BIN=$(find /usr/lib/chromium* /usr/bin -name "chromium" -o -name "chromium-browser" -o -name "chrome" 2>/dev/null | head -1)
 [ -z "$CHROMIUM_BIN" ] && CHROMIUM_BIN=$(find /home/pentester/.cache/ms-playwright -name "chrome" -type f 2>/dev/null | head -1)
@@ -204,7 +204,7 @@ sudo -E -u pentester \
 TOOL_SERVER_PID=$!
 
 for i in {1..10}; do
-  if curl -s -H "Authorization: Bearer ${TOOL_SERVER_TOKEN}" "http://127.0.0.1:$TOOL_SERVER_PORT/health" | grep -q '"status":"healthy"'; then
+  if curl -s "http://127.0.0.1:$TOOL_SERVER_PORT/health" | grep -q '"status":"healthy"'; then
     echo "✅ Tool server healthy on port $TOOL_SERVER_PORT"
     break
   fi

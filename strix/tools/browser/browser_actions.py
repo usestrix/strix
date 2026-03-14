@@ -1,5 +1,5 @@
 import asyncio
-import json
+import base64
 import logging
 import re
 from functools import partial
@@ -72,7 +72,7 @@ def _resolve_cdp_url(agent_state: Any) -> tuple[str, str]:
     if not api_url:
         raise ValueError("Missing api_url in sandbox_info")
 
-    return f"{api_url}/cdp/proxy", info.get("auth_token", "")
+    return api_url, info.get("auth_token", "")
 
 
 async def _execute_task(session: BrowserSession, operation: Any, desc: str) -> dict[str, Any]:
@@ -120,6 +120,17 @@ async def _run_browser_agent(
         use_vision=vision,
     )
 
+    # browseruse's setup_logging() adds a StreamHandler and disables propagation;
+    # undo that so logs flow to our root file handler instead of the console
+    for _name in ("browser_use", "bubus"):
+        _bl = logging.getLogger(_name)
+        _bl.handlers = [
+            h
+            for h in _bl.handlers
+            if not isinstance(h, logging.StreamHandler) or isinstance(h, logging.FileHandler)
+        ]
+        _bl.propagate = True
+
     async def log_step(step: Any) -> None:
         logger.info("Agent step completed: %s", step)
 
@@ -150,21 +161,6 @@ async def _run_browser_agent(
         out["fields"] = fields
 
     return out
-
-
-def _fix_json_in_xml(kws: dict[str, Any]) -> dict[str, Any]:
-    result = {}
-    for k, v in kws.items():
-        if v is None:
-            continue
-        if isinstance(v, str) and v.startswith(("[", "{")):
-            try:
-                result[k] = json.loads(v)
-            except (json.JSONDecodeError, ValueError):
-                result[k] = v
-        else:
-            result[k] = v
-    return result
 
 
 async def _run_browser_tool(
@@ -214,8 +210,9 @@ async def _run_browser_tool(
 async def populate_response(session: BrowserSession, response: dict[str, Any]) -> dict[str, Any]:
     try:
         screenshot = await session.browser.take_screenshot()
+        screenshot_b64 = base64.b64encode(screenshot).decode("utf-8")
     except Exception as e:  # noqa: BLE001
-        screenshot = None
+        screenshot_b64 = None
         response["screenshot_error"] = str(e)
 
     try:
@@ -238,7 +235,7 @@ async def populate_response(session: BrowserSession, response: dict[str, Any]) -
 
     return {
         **response,
-        "screenshot": screenshot,
+        "screenshot": screenshot_b64,
         "url": url,
         "title": title,
         "viewport": viewport,
@@ -247,7 +244,7 @@ async def populate_response(session: BrowserSession, response: dict[str, Any]) -
 
 
 @register_tool(sandbox_execution=False)
-async def browser_actions(
+async def browser_action(
     action: BrowserUseLocalAction,
     task: str | None = None,
     profile_directory: str | None = None,
@@ -305,8 +302,7 @@ async def browser_actions(
             runner = partial(_run_browser_agent, session, task, return_fields, metadata)
             desc = task
         else:
-            params = _fix_json_in_xml(kwargs)
-            runner = partial(_run_browser_tool, session, action, params, metadata)
+            runner = partial(_run_browser_tool, session, action, kwargs, metadata)
             desc = f"{action}({list(kwargs.keys())[:3]})"
 
         task_output = await _execute_task(session, runner, desc)
@@ -317,7 +313,7 @@ async def browser_actions(
         return await populate_response(session, task_output)
 
     except Exception as error:
-        logger.exception("browser_actions error: %s", action)
+        logger.exception("browser_action error: %s", action)
         return {
             "error": str(error),
             "is_running": False,

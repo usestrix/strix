@@ -10,8 +10,7 @@ from typing import Any
 import httpx
 import uvicorn
 import websockets
-from fastapi import Depends, FastAPI, HTTPException, Request, WebSocket, status
-from fastapi.responses import Response
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ValidationError
 
@@ -152,20 +151,13 @@ async def register_agent(
     return {"status": "registered", "agent_id": agent_id}
 
 
-async def _check_cdp_health() -> dict[str, Any]:
-    try:
-        async with httpx.AsyncClient(timeout=3, trust_env=False) as client:
-            resp = await client.get(f"{CDP_UPSTREAM}/json/version")
-            if resp.status_code == 200:
-                return {"status": "healthy"}
-            return {"status": "unhealthy"}
-    except Exception:  # noqa: BLE001
-        return {"status": "unhealthy"}
+def _check_cdp_health() -> dict[str, str]:
+    return {"status": "healthy" if _cdp_ws_internal else "unhealthy"}
 
 
 @app.get("/health")
 async def health_check() -> dict[str, Any]:
-    cdp_health = await _check_cdp_health()
+    cdp_health = _check_cdp_health()
     return {
         "status": "healthy",
         "sandbox_mode": str(SANDBOX_MODE),
@@ -177,23 +169,52 @@ async def health_check() -> dict[str, Any]:
     }
 
 
-# -- CDP auth proxy ----------------------------------------------------------
-# Proxies HTTP and WebSocket traffic to the container-local Chromium CDP.
+# -- CDP proxy ---------------------------------------------------------------
+# Resolves the internal Chromium WS debugger URL on startup and pins the
+# WebSocket proxy to that exact path. No catch-all proxy — avoids SSRF.
+
+_cdp_ws_internal: str | None = None
 
 
-def _cdp_upstream_url(path: str) -> str:
-    # Strip the /cdp/proxy prefix to get the upstream path
-    suffix = path.removeprefix("/cdp/proxy")
-    return f"{CDP_UPSTREAM}{suffix}"
+async def _resolve_cdp_ws() -> None:
+    global _cdp_ws_internal  # noqa: PLW0603
+    async with httpx.AsyncClient(trust_env=False, timeout=5) as client:
+        for _ in range(30):
+            try:
+                resp = await client.get(f"{CDP_UPSTREAM}/json/version")
+                if resp.status_code == 200 and "webSocketDebuggerUrl" in resp.text:
+                    _cdp_ws_internal = resp.json()["webSocketDebuggerUrl"]
+                    return
+            except httpx.HTTPError:
+                pass
+            await asyncio.sleep(1)
 
 
-@app.websocket("/cdp/proxy/{path:path}")
-async def cdp_proxy_ws(ws: WebSocket, path: str) -> None:  # noqa: ARG001
+@app.on_event("startup")
+async def startup() -> None:
+    await _resolve_cdp_ws()
+
+
+@app.get("/cdp/info")
+async def cdp_info(
+    credentials: HTTPAuthorizationCredentials = security_dependency,
+) -> dict[str, Any]:
+    verify_token(credentials)
+    if not _cdp_ws_internal:
+        raise HTTPException(status_code=503, detail="CDP not ready")
+    return {"ws_url": "/cdp/ws", "status": "ready"}
+
+
+@app.websocket("/cdp/ws")
+async def cdp_proxy_ws(ws: WebSocket) -> None:
     verify_ws_token(ws)
-    url = _cdp_upstream_url(ws.url.path).replace("http", "ws", 1)
+    if not _cdp_ws_internal:
+        await ws.close(code=1013, reason="CDP not ready")
+        return
+
     await ws.accept()
 
-    async with websockets.connect(url) as upstream:
+    async with websockets.connect(_cdp_ws_internal) as upstream:
 
         async def relay_client_to_upstream() -> None:
             async for msg in ws.iter_text():
@@ -215,36 +236,6 @@ async def cdp_proxy_ws(ws: WebSocket, path: str) -> None:  # noqa: ARG001
         )
         for t in pending:
             t.cancel()
-
-
-@app.api_route(
-    "/cdp/proxy/{path:path}",
-    methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
-)
-async def cdp_proxy_http(
-    request: Request,
-    path: str,  # noqa: ARG001
-    credentials: HTTPAuthorizationCredentials = security_dependency,
-) -> Response:
-    verify_token(credentials)
-    url = _cdp_upstream_url(request.url.path)
-    headers = {
-        k: v for k, v in request.headers.items() if k.lower() not in ("host", "authorization")
-    }
-
-    async with httpx.AsyncClient() as client:
-        resp = await client.request(
-            request.method,
-            url,
-            headers=headers,
-            content=await request.body(),
-        )
-
-    return Response(
-        content=resp.content,
-        status_code=resp.status_code,
-        headers={k: v for k, v in resp.headers.items() if k.lower() != "transfer-encoding"},
-    )
 
 
 def signal_handler(_signum: int, _frame: Any) -> None:

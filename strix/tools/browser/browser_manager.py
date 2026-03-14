@@ -3,7 +3,6 @@ import atexit
 import contextlib
 import logging
 from typing import Any
-from urllib.parse import urlparse
 
 import httpx
 from browser_use import Browser
@@ -130,60 +129,44 @@ class _CDPNotReadyError(Exception):
     reraise=True,
 )
 async def _wait_for_cdp(
-    cdp_url: str,
+    api_url: str,
     auth_token: str = "",  # nosec B107
-) -> tuple[str, dict[str, Any]]:
-    version_url = cdp_url.rstrip("/") + "/json/version"
+) -> str:
+    """Poll the tool server's /cdp/info until the WS proxy is ready."""
     headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
-
     async with httpx.AsyncClient(trust_env=False, timeout=5) as client:
         try:
-            resp = await client.get(version_url, headers=headers)
+            resp = await client.get(f"{api_url}/cdp/info", headers=headers)
         except httpx.HTTPError as e:
             raise _CDPNotReadyError(f"{type(e).__name__}: {e}") from e
 
-    if resp.status_code != 200 or "webSocketDebuggerUrl" not in resp.text:
+    if resp.status_code != 200:
         raise _CDPNotReadyError(f"HTTP {resp.status_code}")
 
-    info = resp.json()
-
-    # [info] convert http://localhost:9117 or whatever to this format:
-    #        > ws://localhost:9117/browser/proxy/<debugger url>?token=
-    #        for the debugger url to work (since its randomly generated)
-    ws_url = _rewrite_ws_url(cdp_url, info.get("webSocketDebuggerUrl", ""), auth_token)
-
-    logger.info("CDP ready: %s", info.get("Browser", "?"))
-    return ws_url, info
-
-
-def _rewrite_ws_url(cdp_url: str, raw_ws: str, auth_token: str) -> str:
-    parsed_cdp = urlparse(cdp_url)
-    parsed_ws = urlparse(raw_ws)
-    ws_url = parsed_ws._replace(
-        netloc=parsed_cdp.netloc,
-        path=parsed_cdp.path.rstrip("/") + parsed_ws.path,
-    ).geturl()
+    # Build the full WS URL from the tool server's relative path
+    ws_path: str = resp.json()["ws_url"]
+    ws_url = api_url.replace("http", "ws", 1) + ws_path
     if auth_token:
-        sep = "&" if "?" in ws_url else "?"
-        ws_url = f"{ws_url}{sep}token={auth_token}"
+        ws_url = f"{ws_url}?token={auth_token}"
+
+    logger.info("CDP ready via %s", ws_url.split("?")[0])
     return ws_url
 
 
-async def _launch_browser(cdp_url: str, agent_id: str, auth_token: str = "") -> BrowserSession:  # nosec B107
+async def _launch_browser(api_url: str, agent_id: str, auth_token: str = "") -> BrowserSession:  # nosec B107
     if session := _manager.get(agent_id):
         return session
 
-    ws_url, _ = await _wait_for_cdp(cdp_url, auth_token)
+    ws_url = await _wait_for_cdp(api_url, auth_token)
     browser = Browser(cdp_url=ws_url)
 
     if session := _manager.get(agent_id):
-        # [lint] ruff requires us to store background future tasks
         task = asyncio.ensure_future(_close_browser(browser))
         _manager.background_tasks.add(task)
         task.add_done_callback(_manager.background_tasks.discard)
         return session
 
-    return _manager.create(agent_id, browser, cdp_url, ws_url, auth_token=auth_token)
+    return _manager.create(agent_id, browser, api_url, ws_url, auth_token=auth_token)
 
 
 async def _launch_local_browser(

@@ -1,5 +1,5 @@
 <tools>
-  <tool name="browser_actions">
+  <tool name="browser_action">
     <description>Control a browser via natural language or granular commands.
 
       The browser runs inside the sandbox container (with Caido proxy intercepting all traffic)
@@ -188,74 +188,74 @@
     </notes>
     <examples>
       # Launch the sandbox browser (default, must be done first)
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>launch</parameter>
       </function>
 
       # Run a natural-language browser task
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>run</parameter>
         <parameter=task>Go to https://example.com/login, fill in username "admin" and password "secret", then click the login button</parameter>
       </function>
 
       # Navigate to a URL
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>navigate</parameter>
         <parameter=url>https://example.com</parameter>
       </function>
 
       # Go back in history
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>go_back</parameter>
       </function>
 
       # Wait 2 seconds
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>wait</parameter>
         <parameter=seconds>2</parameter>
       </function>
 
       # Click element by index
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>click</parameter>
         <parameter=index>5</parameter>
       </function>
 
       # Type into an input field
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>input</parameter>
         <parameter=index>3</parameter>
         <parameter=text>admin@example.com</parameter>
       </function>
 
       # Scroll down
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>scroll</parameter>
         <parameter=down>true</parameter>
         <parameter=pages>1.5</parameter>
       </function>
 
       # Scroll to text
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>find_text</parameter>
         <parameter=text>Contact Us</parameter>
       </function>
 
       # Send keyboard keys
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>send_keys</parameter>
         <parameter=keys>Enter</parameter>
       </function>
 
       # Extract structured data from page
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>extract</parameter>
         <parameter=query>Extract all product names and prices</parameter>
         <parameter=extract_links>true</parameter>
       </function>
 
       # Search within the page
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>search_page</parameter>
         <parameter=pattern>error|warning</parameter>
         <parameter=regex>true</parameter>
@@ -263,51 +263,51 @@
       </function>
 
       # Find elements by CSS selector
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>find_elements</parameter>
         <parameter=selector>a.product-link</parameter>
         <parameter=attributes>["href", "title"]</parameter>
       </function>
 
       # Take a screenshot
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>screenshot</parameter>
         <parameter=file_name>page_screenshot.png</parameter>
       </function>
 
       # Get dropdown options
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>dropdown_options</parameter>
         <parameter=index>10</parameter>
       </function>
 
       # Select dropdown option
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>select_dropdown</parameter>
         <parameter=index>10</parameter>
         <parameter=text>Option 2</parameter>
       </function>
 
       # Execute JavaScript
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>evaluate</parameter>
         <parameter=code>(function(){return document.title})()</parameter>
       </function>
 
       # Switch to another tab
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>switch</parameter>
         <parameter=tab_id>a3f2</parameter>
       </function>
 
       # Close a tab
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>close_tab</parameter>
         <parameter=tab_id>a3f2</parameter>
       </function>
 
       # Close the browser when completely done
-      <function=browser_actions>
+      <function=browser_action>
         <parameter=action>close_browser</parameter>
       </function>
     </examples>

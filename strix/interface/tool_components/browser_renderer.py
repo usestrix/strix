@@ -24,7 +24,7 @@ def _get_style_colors() -> dict[Any, str]:
 
 @register_tool_renderer
 class BrowserRenderer(BaseToolRenderer):
-    tool_name: ClassVar[str] = "browser_actions"
+    tool_name: ClassVar[str] = "browser_action"
     css_classes: ClassVar[list[str]] = ["tool-call", "browser-tool"]
 
     # -- palette (used only for highlights) ----------------------------
