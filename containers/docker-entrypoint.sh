@@ -151,33 +151,15 @@ sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
 
-# Chromium always binds CDP to 127.0.0.1.
-# The tool server proxies CDP traffic via /cdp/proxy/.
+# Chromium binds CDP to 127.0.0.1, tool server proxies via /cdp/proxy/
 CDP_INTERNAL_PORT=19222
-CHROMIUM_BIN=""
-CHROMIUM_RESTART_COUNT=0
-CHROMIUM_MAX_RESTARTS=10
-
-echo "Launching Chromium with CDP on internal port $CDP_INTERNAL_PORT..."
 CHROMIUM_BIN=$(find /usr/lib/chromium* /usr/bin -name "chromium" -o -name "chromium-browser" -o -name "chrome" 2>/dev/null | head -1)
-if [ -z "$CHROMIUM_BIN" ]; then
-  # Playwright-installed Chromium
-  CHROMIUM_BIN=$(find /home/pentester/.cache/ms-playwright -name "chrome" -type f 2>/dev/null | head -1)
-fi
+[ -z "$CHROMIUM_BIN" ] && CHROMIUM_BIN=$(find /home/pentester/.cache/ms-playwright -name "chrome" -type f 2>/dev/null | head -1)
 
-# ---------------------------------------------------------------------------
-# start_chromium: launches Chromium + auth proxy, waits for CDP readiness.
-# Sets CHROMIUM_PID and CDP_PROXY_PID on success.
-# ---------------------------------------------------------------------------
-start_chromium() {
-  if [ -z "$CHROMIUM_BIN" ]; then
-    echo "WARNING: Chromium binary not found, browser CDP will not be available"
-    return 1
-  fi
-
-  # Clean up stale profile lock files from previous crashes
+if [ -n "$CHROMIUM_BIN" ]; then
   rm -f /tmp/chromium-profile/SingletonLock /tmp/chromium-profile/SingletonCookie /tmp/chromium-profile/SingletonSocket 2>/dev/null || true
 
+  echo "Launching Chromium with CDP on internal port $CDP_INTERNAL_PORT..."
   sudo -u pentester "$CHROMIUM_BIN" \
     --headless \
     --no-sandbox \
@@ -188,87 +170,21 @@ start_chromium() {
     --ignore-certificate-errors \
     --user-data-dir=/tmp/chromium-profile \
     > /tmp/chromium.log 2>&1 &
-
   CHROMIUM_PID=$!
   echo "Started Chromium with PID $CHROMIUM_PID"
 
   echo "Waiting for Chromium CDP to be ready..."
-  local cdp_ready=false
   for i in {1..20}; do
-    if ! kill -0 $CHROMIUM_PID 2>/dev/null; then
-      echo "WARNING: Chromium process died during startup (iteration $i)"
-      echo "=== Chromium log ==="
-      cat /tmp/chromium.log 2>/dev/null || echo "(no log)"
-      return 1
-    fi
     if curl -s "http://127.0.0.1:${CDP_INTERNAL_PORT}/json/version" | grep -q "webSocketDebuggerUrl"; then
-      echo "✅ Chromium CDP ready on internal port $CDP_INTERNAL_PORT (attempt $i)"
-      cdp_ready=true
+      echo "Chromium CDP ready on port $CDP_INTERNAL_PORT (attempt $i)"
       break
     fi
+    [ $i -eq 20 ] && echo "WARNING: Chromium CDP did not become ready within 20s"
     sleep 1
   done
-
-  if [ "$cdp_ready" = false ]; then
-    echo "WARNING: Chromium CDP did not become ready within 20s"
-    return 1
-  fi
-
-  return 0
-}
-
-# Initial Chromium launch
-if ! start_chromium; then
-  echo "WARNING: Initial Chromium launch failed — browser_use_local may not work"
+else
+  echo "WARNING: Chromium binary not found, browser CDP will not be available"
 fi
-
-# ---------------------------------------------------------------------------
-# Chromium watchdog: runs in the background, checks every 10s, restarts on
-# crash. Stops after CHROMIUM_MAX_RESTARTS consecutive failures.
-# ---------------------------------------------------------------------------
-chromium_watchdog() {
-  sleep 15  # let everything settle before first check
-  local consecutive_failures=0
-
-  while true; do
-    sleep 10
-
-    # If we don't have a Chromium binary, nothing to watch
-    [ -z "$CHROMIUM_BIN" ] && return
-
-    # Check if Chromium is still alive
-    if [ -n "${CHROMIUM_PID:-}" ] && kill -0 "$CHROMIUM_PID" 2>/dev/null; then
-      # Process alive — also verify CDP is actually responding
-      if curl -sf --max-time 3 "http://127.0.0.1:${CDP_INTERNAL_PORT}/json/version" | grep -q "webSocketDebuggerUrl"; then
-        consecutive_failures=0
-        continue
-      fi
-      echo "WATCHDOG: Chromium PID $CHROMIUM_PID alive but CDP not responding, killing..."
-      kill "$CHROMIUM_PID" 2>/dev/null || true
-      wait "$CHROMIUM_PID" 2>/dev/null || true
-    fi
-
-    CHROMIUM_RESTART_COUNT=$((CHROMIUM_RESTART_COUNT + 1))
-    consecutive_failures=$((consecutive_failures + 1))
-
-    if [ $consecutive_failures -gt $CHROMIUM_MAX_RESTARTS ]; then
-      echo "WATCHDOG: Exceeded $CHROMIUM_MAX_RESTARTS consecutive restart failures, giving up"
-      return
-    fi
-
-    echo "WATCHDOG: Chromium died — restarting (attempt $CHROMIUM_RESTART_COUNT, consecutive=$consecutive_failures)..."
-    if start_chromium; then
-      echo "WATCHDOG: Chromium restarted successfully (PID $CHROMIUM_PID)"
-      consecutive_failures=0
-    else
-      echo "WATCHDOG: Chromium restart failed"
-    fi
-  done
-}
-
-chromium_watchdog &
-WATCHDOG_PID=$!
-echo "Started Chromium watchdog with PID $WATCHDOG_PID"
 
 echo "Starting tool server..."
 cd /app
