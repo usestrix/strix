@@ -131,10 +131,13 @@ async def _run_browser_agent(
         ]
         _bl.propagate = True
 
-    async def log_step(step: Any) -> None:
-        logger.info("Agent step completed: %s", step)
+    # cdp_use.client spams "unexpected message" warnings from Chromium; suppress
+    _cdp_client = logging.getLogger("cdp_use.client")
+    _cdp_client.handlers = []
+    _cdp_client.setLevel(logging.ERROR)
+    _cdp_client.propagate = False
 
-    result = await agent.run(on_step_end=log_step)
+    result = await agent.run()
 
     if hasattr(result, "is_successful") and not result.is_successful():
         final_result = (

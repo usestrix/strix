@@ -160,10 +160,8 @@ class BrowserRenderer(BaseToolRenderer):
 
     @classmethod
     def _build_launch(cls, status: str, result: Any) -> Text:
-        mode = result.get("mode", "sandboxed") if isinstance(result, dict) else "sandboxed"
         text = Text("◈ ", style=cls.LIFE)
         text.append("launching browser", style=f"bold {cls.LIFE}")
-        text.append(f" {mode}", style=cls.DIM)
         text.append_text(cls._status_mark(status))
         res = result if isinstance(result, dict) else {}
         warning = res.get("warning")

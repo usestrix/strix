@@ -46,7 +46,31 @@ from strix.telemetry import posthog  # noqa: E402
 from strix.telemetry.tracer import get_global_tracer  # noqa: E402
 
 
-logging.getLogger().setLevel(logging.ERROR)
+_log_dir = Path("strix_runs")
+_log_dir.mkdir(exist_ok=True)
+_file_handler = logging.FileHandler(_log_dir / "strix.log")
+_file_handler.setLevel(logging.INFO)
+_file_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+
+_root = logging.getLogger()
+_root.setLevel(logging.INFO)
+_root.handlers = [_file_handler]
+
+# prevent any library from adding StreamHandlers (console) to the root logger
+_orig_add_handler = logging.Logger.addHandler
+
+
+def _guarded_add_handler(self: logging.Logger, handler: logging.Handler) -> None:
+    if (
+        self is _root
+        and isinstance(handler, logging.StreamHandler)
+        and not isinstance(handler, logging.FileHandler)
+    ):
+        return
+    _orig_add_handler(self, handler)
+
+
+logging.Logger.addHandler = _guarded_add_handler  # type: ignore[assignment]
 
 
 def validate_environment() -> None:  # noqa: PLR0912, PLR0915
