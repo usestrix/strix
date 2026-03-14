@@ -146,7 +146,12 @@ async def _wait_for_cdp(
         raise _CDPNotReadyError(f"HTTP {resp.status_code}")
 
     info = resp.json()
+
+    # [info] convert http://localhost:9117 or whatever to this format:
+    #        > ws://localhost:9117/browser/proxy/<debugger url>?token=
+    #        for the debugger url to work (since its randomly generated)
     ws_url = _rewrite_ws_url(cdp_url, info.get("webSocketDebuggerUrl", ""), auth_token)
+
     logger.info("CDP ready: %s", info.get("Browser", "?"))
     return ws_url, info
 
@@ -172,6 +177,7 @@ async def _launch_browser(cdp_url: str, agent_id: str, auth_token: str = "") -> 
     browser = Browser(cdp_url=ws_url)
 
     if session := _manager.get(agent_id):
+        # [lint] ruff requires us to store background future tasks
         task = asyncio.ensure_future(_close_browser(browser))
         _manager.background_tasks.add(task)
         task.add_done_callback(_manager.background_tasks.discard)
