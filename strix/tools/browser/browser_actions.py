@@ -30,7 +30,6 @@ BrowserUseLocalAction = Literal[
     "wait",
     "click",
     "input",
-    "upload_file",
     "scroll",
     "find_text",
     "send_keys",
@@ -178,6 +177,7 @@ async def _run_browser_tool(
         await session.browser.start()
 
     llm, _ = _build_llm(metadata=metadata)
+    tools = Tools()
 
     if session.local:
         from pathlib import Path
@@ -199,8 +199,10 @@ async def _run_browser_tool(
                 return soft_error
 
         file_system = StubFileSystem()
+        # [security] sandboxed browsers have no local filesystem access
+        tools.exclude_action("upload_file")
 
-    return await Tools().registry.execute_action(
+    return await tools.registry.execute_action(
         action,
         params=params,
         browser_session=session.browser,

@@ -32,8 +32,7 @@
           **Page Interaction:**
           - click: Click element by index. Requires 'index'.
           - input: Input text into form fields. Requires 'index' and 'text', optional 'clear'.
-          - upload_file: Upload files. Requires 'index' and 'path'.
-          - scroll: Scroll the page. Optional 'down' (bool), 'pages' (float), 'index'.
+- scroll: Scroll the page. Optional 'down' (bool), 'pages' (float), 'index'.
           - find_text: Scroll to specific text. Requires 'text'.
           - send_keys: Send special keys (Enter, Escape, etc.). Requires 'keys'.
 
@@ -79,16 +78,13 @@
         <description>Seconds to wait for 'wait' action.</description>
       </parameter>
       <parameter name="index" type="integer" required="false">
-        <description>Element index from the DOM state. Used by: click, input, upload_file, dropdown_options, select_dropdown, scroll (for scrollable elements).</description>
+        <description>Element index from the DOM state. Used by: click, input, dropdown_options, select_dropdown, scroll (for scrollable elements).</description>
       </parameter>
       <parameter name="text" type="string" required="false">
         <description>Text content. Required for 'input', 'select_dropdown', and 'find_text' actions.</description>
       </parameter>
       <parameter name="clear" type="boolean" required="false">
         <description>Clear existing text before input. Used by 'input' action. Default: false.</description>
-      </parameter>
-      <parameter name="path" type="string" required="false">
-        <description>File path for 'upload_file' action.</description>
       </parameter>
       <parameter name="down" type="boolean" required="false">
         <description>Scroll direction for 'scroll' action. True=down, False=up. Default: true.</description>
@@ -230,13 +226,6 @@
         <parameter=action>input</parameter>
         <parameter=index>3</parameter>
         <parameter=text>admin@example.com</parameter>
-      </function>
-
-      # Upload a file
-      <function=browser_actions>
-        <parameter=action>upload_file</parameter>
-        <parameter=index>7</parameter>
-        <parameter=path>/path/to/file.pdf</parameter>
       </function>
 
       # Scroll down
