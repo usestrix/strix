@@ -38,13 +38,11 @@ BrowserUseLocalAction = Literal[
     "search_page",
     "find_elements",
     "screenshot",
-    "save_as_pdf",
     "dropdown_options",
     "select_dropdown",
     "evaluate",
     "switch",
     "close_tab",
-    "done",
 ]
 
 _TASK_TIMEOUT = 300

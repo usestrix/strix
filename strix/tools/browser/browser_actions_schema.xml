@@ -44,7 +44,6 @@
 
           **Visual Analysis:** [Requires to be running in non-sandbox environment]
           - screenshot: Capture screenshot. Optional 'file_name'.
-          - save_as_pdf: Save page as PDF. Optional 'file_name', 'print_background', 'landscape', 'scale', 'paper_format'.
 
           **Form Controls:**
           - dropdown_options: Get dropdown options. Requires 'index'.
@@ -57,8 +56,7 @@
           - switch: Switch between tabs. Requires 'tab_id'.
           - close_tab: Close browser tab. Requires 'tab_id'.
 
-          **Task Completion:**
-          - done: Complete the task. Requires 'text', optional 'success', 'files_to_display'.</description>
+          </description>
       </parameter>
       <parameter name="task" type="string" required="false">
         <description>Required for 'run' action. A natural-language description of what to do in
@@ -84,7 +82,7 @@
         <description>Element index from the DOM state. Used by: click, input, upload_file, dropdown_options, select_dropdown, scroll (for scrollable elements).</description>
       </parameter>
       <parameter name="text" type="string" required="false">
-        <description>Text content. Required for 'input', 'select_dropdown', 'find_text', and 'done' actions.</description>
+        <description>Text content. Required for 'input', 'select_dropdown', and 'find_text' actions.</description>
       </parameter>
       <parameter name="clear" type="boolean" required="false">
         <description>Clear existing text before input. Used by 'input' action. Default: false.</description>
@@ -138,31 +136,13 @@
         <description>Include element text content for 'find_elements' action. Default: true.</description>
       </parameter>
       <parameter name="file_name" type="string" required="false">
-        <description>File name for 'screenshot', 'save_as_pdf', 'write_file', 'read_file', 'replace_file' actions.</description>
-      </parameter>
-      <parameter name="print_background" type="boolean" required="false">
-        <description>Include background graphics in PDF for 'save_as_pdf' action. Default: false.</description>
-      </parameter>
-      <parameter name="landscape" type="boolean" required="false">
-        <description>Landscape orientation for 'save_as_pdf' action. Default: false.</description>
-      </parameter>
-      <parameter name="scale" type="number" required="false">
-        <description>Scale factor for 'save_as_pdf' action. Range: 0.1-2.0.</description>
-      </parameter>
-      <parameter name="paper_format" type="string" required="false">
-        <description>Paper format for 'save_as_pdf' action. E.g. "A4", "Letter".</description>
+        <description>File name for 'screenshot' action.</description>
       </parameter>
       <parameter name="code" type="string" required="false">
         <description>JavaScript code to execute. Required for 'evaluate' action.</description>
       </parameter>
       <parameter name="tab_id" type="string" required="false">
         <description>Tab ID for 'switch' and 'close_tab' actions. Last 4 chars of target_id from browser state.</description>
-      </parameter>
-      <parameter name="success" type="boolean" required="false">
-        <description>Task success status for 'done' action.</description>
-      </parameter>
-      <parameter name="files_to_display" type="array" required="false">
-        <description>Files to display for 'done' action.</description>
       </parameter>
       <parameter name="return_fields" type="array" required="false">
         <description>Only used with action='run'. A list of history fields to include in the
@@ -306,13 +286,6 @@
         <parameter=file_name>page_screenshot.png</parameter>
       </function>
 
-      # Save page as PDF
-      <function=browser_actions>
-        <parameter=action>save_as_pdf</parameter>
-        <parameter=file_name>report.pdf</parameter>
-        <parameter=landscape>true</parameter>
-      </function>
-
       # Get dropdown options
       <function=browser_actions>
         <parameter=action>dropdown_options</parameter>
@@ -342,13 +315,6 @@
       <function=browser_actions>
         <parameter=action>close_tab</parameter>
         <parameter=tab_id>a3f2</parameter>
-      </function>
-
-      # Complete the task
-      <function=browser_actions>
-        <parameter=action>done</parameter>
-        <parameter=text>Successfully extracted all product data</parameter>
-        <parameter=success>true</parameter>
       </function>
 
       # Close the browser when completely done
