@@ -132,7 +132,6 @@ async def _wait_for_cdp(
     api_url: str,
     auth_token: str = "",  # nosec B107
 ) -> str:
-    """Poll the tool server's /cdp/info until the WS proxy is ready."""
     headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else {}
     async with httpx.AsyncClient(trust_env=False, timeout=5) as client:
         try:
@@ -143,7 +142,6 @@ async def _wait_for_cdp(
     if resp.status_code != 200:
         raise _CDPNotReadyError(f"HTTP {resp.status_code}")
 
-    # Build the full WS URL from the tool server's relative path
     ws_path: str = resp.json()["ws_url"]
     ws_url = api_url.replace("http", "ws", 1) + ws_path
     if auth_token:
