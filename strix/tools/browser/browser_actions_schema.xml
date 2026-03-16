@@ -169,16 +169,16 @@
     <notes>
       Important usage rules:
       1. PERSISTENCE: The browser remains active and maintains its state (cookies, auth, tabs)
-      until explicitly closed with the 'close' action.
-      2. Browser interaction MUST start with 'launch' and end with 'close'.
+      until explicitly closed with 'close_browser'.
+      2. Browser interaction MUST start with 'launch' and end with 'close_browser'.
       3. You MUST call 'launch' before any other actions. Calling actions without launching
       first will return an error.
       4. For 'run' action: the browser-use agent autonomously handles the task. You MUST wait
       for the result — it is returned synchronously.
-      5. For granular actions: use 'state' first to get element indices, then use those indices
-      with click, input, select, hover, etc.
+      5. For granular actions: use element indices from the page state with click, input,
+      scroll, dropdown_options, and select_dropdown.
       6. The browser persists across tasks. Do NOT close it between actions.
-      7. ALWAYS close the browser with 'close' when completely finished.
+      7. ALWAYS close the browser with 'close_browser' when completely finished.
       8. There is a 5-minute timeout per 'run' task. Break large tasks into smaller steps.
       9. Granular actions are faster and more deterministic than 'run' for simple operations.
       Use 'run' for complex multi-step tasks; use granular actions for precise control.
