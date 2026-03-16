@@ -120,23 +120,6 @@ async def _run_browser_agent(
         use_vision=vision,
     )
 
-    # browseruse's setup_logging() adds a StreamHandler and disables propagation;
-    # undo that so logs flow to our root file handler instead of the console
-    for _name in ("browser_use", "bubus"):
-        _bl = logging.getLogger(_name)
-        _bl.handlers = [
-            h
-            for h in _bl.handlers
-            if not isinstance(h, logging.StreamHandler) or isinstance(h, logging.FileHandler)
-        ]
-        _bl.propagate = True
-
-    # cdp_use.client spams "unexpected message" warnings from Chromium; suppress
-    _cdp_client = logging.getLogger("cdp_use.client")
-    _cdp_client.handlers = []
-    _cdp_client.setLevel(logging.ERROR)
-    _cdp_client.propagate = False
-
     result = await agent.run()
 
     if hasattr(result, "is_successful") and not result.is_successful():
