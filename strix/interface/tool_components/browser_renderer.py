@@ -114,10 +114,8 @@ class BrowserRenderer(BaseToolRenderer):
             "run": lambda: cls._build_run(args, status, result),
             "launch": lambda: cls._build_launch(status, result),
             "navigate": lambda: cls._build_navigate(args, status),
-            "search": lambda: cls._build_search(args, status),
             "click": lambda: cls._build_click(args, status),
             "input": lambda: cls._build_input(args, status),
-            "upload_file": lambda: cls._build_upload_file(args, status),
             "scroll": lambda: cls._build_scroll(args, status),
             "find_text": lambda: cls._build_find_text(args, status),
             "send_keys": lambda: cls._build_send_keys(args, status),
@@ -128,7 +126,6 @@ class BrowserRenderer(BaseToolRenderer):
             "evaluate": lambda: cls._build_evaluate(args, status),
             "wait": lambda: cls._build_wait(args, status),
             "switch": lambda: cls._build_switch(args, status),
-            "done": lambda: cls._build_done(args, status),
         }
 
         simple_actions = {
@@ -136,19 +133,13 @@ class BrowserRenderer(BaseToolRenderer):
             "close_browser": "closing browser",
             "close_tab": "closing tab",
             "screenshot": "taking screenshot",
-            "save_as_pdf": "saving page as pdf",
             "extract": "extracting content",
-            "read_long_content": "reading long content",
         }
-
-        file_actions = {"write_file", "read_file", "replace_file"}
 
         if action in builders:
             return builders[action]()
         if action in simple_actions:
             return cls._build_simple(simple_actions[action], status)
-        if action in file_actions:
-            return cls._build_file_operation(action, args, status)
         return cls._build_fallback(action, status)
 
     @classmethod
@@ -183,20 +174,6 @@ class BrowserRenderer(BaseToolRenderer):
         return text
 
     @classmethod
-    def _build_search(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("searching for ", style=cls.DIM)
-        query = args.get("query", "")
-        if query:
-            preview = query if len(query) <= 80 else query[:77] + "..."
-            text.append(f'"{preview}"', style=cls.INTERACT)
-        engine = args.get("engine")
-        if engine:
-            text.append(f" via {engine}", style=cls.DIM)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
     def _build_click(cls, args: dict[str, Any], status: str) -> Text:
         text = Text("@ ", style=cls.DIM)
         text.append("clicking", style=cls.DIM)
@@ -219,20 +196,6 @@ class BrowserRenderer(BaseToolRenderer):
             text.append(f' "{preview}"', style=cls.INTERACT)
         if args.get("clear"):
             text.append(" (clear)", style=cls.DIM)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_upload_file(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("uploading file", style=cls.DIM)
-        index = args.get("index")
-        if index is not None:
-            text.append(f" #{index}", style=f"bold {cls.INTERACT}")
-        path = args.get("path", "")
-        if path:
-            text.append(" ", style=cls.DIM)
-            text.append(path, style=cls.NAV)
         text.append_text(cls._status_mark(status))
         return text
 
@@ -344,42 +307,6 @@ class BrowserRenderer(BaseToolRenderer):
         text = Text("@ ", style=cls.DIM)
         text.append("switching to tab ", style=cls.DIM)
         text.append(str(args.get("tab_id", "?")), style=f"bold {cls.NAV}")
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_file_operation(cls, action: str, args: dict[str, Any], status: str) -> Text:
-        labels = {
-            "write_file": "writing file",
-            "read_file": "reading file",
-            "replace_file": "replacing file content",
-        }
-        text = Text("@ ", style=cls.DIM)
-        text.append(labels[action], style=cls.DIM)
-        file_name = args.get("file_name", "")
-        if file_name:
-            text.append(" ", style=cls.DIM)
-            text.append(file_name, style=cls.NAV)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_done(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        success = args.get("success")
-        if success is True:
-            text.append("marking task done", style=f"bold {cls.OK}")
-        elif success is False:
-            text.append("marking task failed", style=f"bold {cls.ERR}")
-        else:
-            text.append("marking task done", style=cls.DIM)
-
-        summary = args.get("text", "")
-        if summary:
-            preview = summary if len(summary) <= 120 else summary[:117] + "..."
-            text.append("\n  ")
-            text.append(preview, style=cls.DIM)
-
         text.append_text(cls._status_mark(status))
         return text
 
