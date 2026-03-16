@@ -1,0 +1,144 @@
+import base64
+import binascii
+
+import pytest
+from pytest_check import check
+
+from . import console as ui
+from .helpers import Fail, setup_screenshots_dir
+
+
+pytestmark = pytest.mark.integration
+
+setup_screenshots_dir()
+
+
+def test_navigate(browser):
+    ui.status("test_navigate → example.com")
+    result = browser.navigate(url="https://example.com")
+    ui.log(f"navigate → url={result.get('url')} title={result.get('title')}")
+
+    with check:
+        check.is_in("example.com", result.get("url", "").lower())
+        check.is_in("example", result.get("title", "").lower())
+
+
+def test_click(browser):
+    ui.status("test_click → example.com link")
+    browser.navigate(url="https://example.com")
+
+    result = browser.click(index=1)
+    ui.log(f"click → url={result.get('url')}")
+
+
+def test_go_back(browser):
+    ui.status("test_go_back → navigate to iana.org, then back")
+    browser.navigate(url="https://example.com")
+    browser.navigate(url="https://www.iana.org")
+
+    result = browser.go_back()
+    url = result.get("url", "")
+    ui.log(f"go_back → url={url}")
+
+    if "example.com" not in url.lower():
+        Fail(result).expected("url containing 'example.com'").got(url)
+
+
+def test_scroll(browser):
+    ui.status("test_scroll → example.com")
+    browser.navigate(url="https://example.com")
+
+    result = browser.scroll(direction="down", amount=3)
+    result_keys = list(result.keys()) if isinstance(result, dict) else type(result)
+    ui.log(f"scroll → {result_keys}")
+
+
+def test_extract(browser):
+    ui.status("test_extract → example.com")
+    browser.navigate(url="https://example.com")
+
+    result = browser.extract(query="What is on this page?")
+    ui.log(f"extract → {str(result)[:120]}")
+
+    if "example" not in str(result).lower():
+        Fail(result).expected("content containing 'example'").got(str(result)[:200])
+
+
+def test_find_text(browser):
+    ui.status("test_find_text → 'example'")
+    browser.navigate(url="https://example.com")
+
+    result = browser.find_text(text="example")
+    result_keys = list(result.keys()) if isinstance(result, dict) else type(result)
+    ui.log(f"find_text → {result_keys}")
+
+
+def test_evaluate(browser):
+    ui.status("test_evaluate → document.title")
+    browser.navigate(url="https://example.com")
+
+    result = browser.evaluate(code="document.title")
+    ui.log(f"evaluate → {str(result)[:120]}")
+
+    if "example" not in str(result).lower():
+        Fail(result).expected("result containing 'example'").got(str(result)[:200])
+
+
+def test_screenshot(browser):
+    ui.status("test_screenshot → example.com")
+    browser.navigate(url="https://example.com")
+
+    result = browser.screenshot()
+    screenshot = result.get("screenshot", "")
+    ui.log(f"screenshot → {len(screenshot)} bytes base64")
+
+    if len(screenshot) <= 100:
+        Fail(result).expected("> 100 bytes").got(f"{len(screenshot)} bytes")
+    try:
+        base64.b64decode(screenshot)
+    except (ValueError, binascii.Error) as e:
+        Fail(result).error(f"invalid base64: {e}")
+
+
+def test_input(browser):
+    ui.status("test_input → example.com")
+    browser.navigate(url="https://example.com")
+
+    result = browser.input(index=1, text="integration test")
+    result_keys = list(result.keys()) if isinstance(result, dict) else type(result)
+    ui.log(f"input → {result_keys}")
+
+
+def test_send_keys(browser):
+    ui.status("test_send_keys → Tab")
+    browser.navigate(url="https://example.com")
+
+    result = browser.send_keys(keys="Tab")
+    result_keys = list(result.keys()) if isinstance(result, dict) else type(result)
+    ui.log(f"send_keys → {result_keys}")
+
+
+def _tab_id(tab_info):
+    return getattr(tab_info, "target_id", "")[-4:]
+
+
+def test_switch_and_close_tab(browser):
+    ui.status("test_switch_and_close_tab → open, switch, close")
+    result = browser.navigate(url="https://example.com")
+    tabs = result.get("tabs", [])
+    original = _tab_id(tabs[0]) if tabs else None
+
+    ui.status("test_switch_and_close_tab → opening new tab")
+    result = browser.evaluate(code="window.open('https://example.com', '_blank')")
+    tabs = result.get("tabs", [])
+    ui.log(f"obtained tabs {tabs}")
+    new = _tab_id(tabs[-1]) if tabs else None
+
+    if new:
+        ui.status("test_switch_and_close_tab → switching to new tab")
+        result = browser.switch(tab_id=new)
+        ui.log(f"switch → url={result.get('url')}")
+
+    if original:
+        ui.status("test_switch_and_close_tab → switching back")
+        browser.switch(tab_id=original)

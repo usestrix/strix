@@ -139,6 +139,7 @@ module = [
     "scrubadub.*",
     "traceloop.*",
     "browser_use.*",
+    "pytest_check.*",
     "cdp_use.*",
     "aiohttp.*",
     "websockets.*",
@@ -155,6 +156,7 @@ disallow_subclassing_any = false
 module = ["tests.*"]
 disallow_untyped_decorators = false
 disallow_untyped_defs = false
+disallow_untyped_calls = false
 
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)
@@ -241,10 +243,13 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**/*.py" = [
-    "S106",   # Possible hardcoded password
-    "S108",   # Possible insecure usage of temporary file/directory
-    "ARG001", # Unused function argument
+    "S106",    # Possible hardcoded password
+    "S108",    # Possible insecure usage of temporary file/directory
+    "S603",    # subprocess call with untrusted input
+    "S607",    # Partial executable path
+    "ARG001",  # Unused function argument
     "PLR2004", # Magic value used in comparison
+    "PLW0603", # Global statement (acceptable for test UI state)
 ]
 "strix/tools/**/*.py" = [
     "ARG001", # Unused function argument (tools may have unused args for interface consistency)
@@ -351,6 +356,10 @@ python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 python_classes = ["Test*"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "session"
+markers = [
+    "integration: end-to-end tests requiring Docker and network access",
+]
 
 [tool.coverage.run]
 source = ["strix"]
