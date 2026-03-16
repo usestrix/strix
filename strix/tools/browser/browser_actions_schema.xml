@@ -42,7 +42,7 @@
           - find_elements: Query DOM by CSS selector. Requires 'selector', optional 'attributes', 'max_results', 'include_text'.
 
           **Visual Analysis:** [Requires to be running in non-sandbox environment]
-          - screenshot: Capture screenshot. Optional 'file_name'.
+          - screenshot: Capture screenshot.
 
           **Form Controls:**
           - dropdown_options: Get dropdown options. Requires 'index'.
@@ -130,9 +130,6 @@
       </parameter>
       <parameter name="include_text" type="boolean" required="false">
         <description>Include element text content for 'find_elements' action. Default: true.</description>
-      </parameter>
-      <parameter name="file_name" type="string" required="false">
-        <description>File name for 'screenshot' action.</description>
       </parameter>
       <parameter name="code" type="string" required="false">
         <description>JavaScript code to execute. Required for 'evaluate' action.</description>
@@ -272,7 +269,6 @@
       # Take a screenshot
       <function=browser_action>
         <parameter=action>screenshot</parameter>
-        <parameter=file_name>page_screenshot.png</parameter>
       </function>
 
       # Get dropdown options
