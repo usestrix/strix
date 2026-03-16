@@ -118,6 +118,19 @@ def test_send_keys(browser):
     ui.log(f"send_keys → {result_keys}")
 
 
+def test_run(browser):
+    ui.status("test_run → asking agent to read example.com title")
+    browser.navigate(url="https://example.com")
+
+    result = browser.run(task="What is the title of this page? Return only the title text.")
+    ui.log(f"run → {str(result.get('result', ''))[:120]}")
+
+    if "example" not in str(result.get("result", "")).lower():
+        Fail(result).expected("result containing 'example'").got(
+            str(result.get("result", ""))[:200]
+        )
+
+
 def _tab_id(tab_info):
     return getattr(tab_info, "target_id", "")[-4:]
 
