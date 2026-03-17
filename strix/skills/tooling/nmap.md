@@ -1,6 +1,6 @@
 ---
 name: nmap
-description: Canonical Nmap CLI syntax, two-pass scanning workflow, and runtime-bound performance flags.
+description: Canonical Nmap CLI syntax, two-pass scanning workflow, and sandbox-safe bounded scan patterns.
 ---
 
 # Nmap CLI Playbook
@@ -30,22 +30,22 @@ High-signal flags:
 - `-oA <prefix>` output in normal/XML/grepable formats
 
 Agent-safe baseline for automation:
-`nmap -n -Pn -sV -sC --open --top-ports 1000 --max-retries 2 --host-timeout 2m -oA nmap_scan <host>`
+`nmap -n -Pn --open --top-ports 200 -T4 --max-retries 1 --host-timeout 90s -oA nmap_quick <host>`
 
 Common patterns:
 - Fast first pass:
-  `nmap -n -Pn --top-ports 1000 --open -T4 --max-retries 2 --host-timeout 2m <host>`
-- Full TCP port discovery (bounded):
-  `nmap -n -Pn -p- -T4 --min-rate 1000 --max-retries 1 --host-timeout 15m <host>`
+  `nmap -n -Pn --top-ports 200 --open -T4 --max-retries 1 --host-timeout 90s <host>`
 - Service/script enrichment on discovered ports:
-  `nmap -n -Pn -sV -sC -p <comma_ports> --script-timeout 60s -oA nmap_services <host>`
+  `nmap -n -Pn -sV -sC -p <comma_ports> --script-timeout 30s --host-timeout 3m -oA nmap_services <host>`
 - No-root fallback:
-  `nmap -n -Pn -sT --top-ports 1000 --open <host>`
+  `nmap -n -Pn -sT --top-ports 200 --open --host-timeout 90s <host>`
 
 Critical correctness rules:
 - Always set target scope explicitly.
 - Prefer two-pass scanning: discovery pass, then enrichment pass.
-- Bound long scans with `--host-timeout` and sensible retry settings.
+- Bound scans with `--host-timeout` and sensible retry settings.
+- In sandboxed runs, avoid exhaustive sweeps (`-p-`, very high `--top-ports`, or wide host ranges) unless explicitly required.
+- Prefer `naabu` for broad port discovery; use `nmap` for scoped verification/enrichment.
 
 Usage rules:
 - Add `-n` by default in automation to avoid DNS delays.

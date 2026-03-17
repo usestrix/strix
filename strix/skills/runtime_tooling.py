@@ -125,6 +125,12 @@ def build_tooling_preflight_message(
             url = _TOOL_DOC_URLS.get(tool)
             if url:
                 lines.append(f"- {tool}: {url}")
+        if "nmap" in tools_with_new_skills:
+            lines.append(
+                "Sandbox stability note for nmap: prefer quick scoped scans "
+                "(explicit `-p` or small `--top-ports`) and avoid long exhaustive sweeps "
+                "unless explicitly required."
+            )
 
     if help_requested_tools:
         preferred = ", ".join(help_requested_tools)
