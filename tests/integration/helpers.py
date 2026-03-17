@@ -6,7 +6,6 @@ from pathlib import Path
 from pytest_check import check
 
 from . import console as ui
-from .conftest import _run_in_bg
 
 
 SCREENSHOTS_DIR = Path(__file__).parent / "screenshots"
@@ -19,25 +18,41 @@ def setup_screenshots_dir():
 
 
 class Browser:
-    def __init__(self, agent_state):
-        self._state = agent_state
+    def __init__(self, agent_id):
+        self._agent_id = agent_id
 
     def __getattr__(self, action):
+        import asyncio
+
         from strix.tools.browser.browser_actions import browser_action
+        from strix.tools.context import set_current_agent_id
+
+        from .conftest import _bg_loop
 
         def call(**kwargs):
-            result = _run_in_bg(
-                browser_action(
-                    action=action,
-                    agent_state=self._state,
-                    **kwargs,
-                )
-            )
+            async def _run():
+                set_current_agent_id(self._agent_id)
+                return await browser_action(agent_state=None, action=action, **kwargs)
+
+            future = asyncio.run_coroutine_threadsafe(_run(), _bg_loop)
+            result = future.result(timeout=120)
             if "error" in result:
                 Fail(result).error(result["error"])
             return result
 
         return call
+
+
+def act_parallel(tasks):
+    from concurrent.futures import ThreadPoolExecutor
+
+    def _run_one(browser, kwargs):
+        action = kwargs.pop("action")
+        return getattr(browser, action)(**kwargs)
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as pool:
+        futures = [pool.submit(_run_one, b, dict(kw)) for b, kw in tasks]
+        return [f.result(timeout=120) for f in futures]
 
 
 def _caller_test_name():

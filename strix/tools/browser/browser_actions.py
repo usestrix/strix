@@ -156,7 +156,7 @@ async def _run_browser_tool(
     metadata: dict[str, Any] | None = None,
 ) -> Any:
     if not session.browser.is_cdp_connected:
-        await session.browser.start()
+        await session.start()
 
     llm, _ = _build_llm(metadata=metadata)
     tools = Tools()

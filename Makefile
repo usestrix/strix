@@ -1,4 +1,4 @@
-.PHONY: help install dev-install format lint type-check test test-cov clean pre-commit setup-dev
+.PHONY: help install dev-install format lint type-check test test-cov clean pre-commit setup-dev integration
 
 help:
 	@echo "Available commands:"
@@ -14,8 +14,10 @@ help:
 	@echo "  check-all     - Run all code quality checks"
 	@echo ""
 	@echo "Testing:"
-	@echo "  test          - Run tests with pytest"
-	@echo "  test-cov      - Run tests with coverage reporting"
+	@echo "  test               - Run tests with pytest"
+	@echo "  test-cov           - Run tests with coverage reporting"
+	@echo "  integration          - Run integration tests (verbose)"
+	@echo "  PRETTY=1 integration - Run integration tests (clean TUI)"
 	@echo ""
 	@echo "Development:"
 	@echo "  pre-commit    - Run pre-commit hooks on all files"
@@ -69,6 +71,15 @@ test-cov:
 	uv run pytest -v --cov=strix --cov-report=term-missing --cov-report=html
 	@echo "✅ Tests with coverage complete!"
 	@echo "📊 Coverage report generated in htmlcov/"
+
+integration:
+ifdef PRETTY
+	poetry run pytest tests/integration/ -m integration --no-cov --no-header -q --tb=no -p no:logging -s --pretty
+else
+	@echo "🧪 Running integration tests..."
+	poetry run pytest tests/integration/ -v -s --log-cli-level=INFO -m integration --no-cov
+	@echo "✅ Integration tests complete!"
+endif
 
 pre-commit:
 	@echo "🔧 Running pre-commit hooks..."

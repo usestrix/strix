@@ -359,6 +359,7 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 markers = [
     "integration: end-to-end tests requiring Docker and network access",
+    "browsers(n): launch n isolated browser sessions for the test",
 ]
 
 [tool.coverage.run]

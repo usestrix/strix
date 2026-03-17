@@ -60,6 +60,7 @@ class BrowserSession:
     __slots__ = (
         "auth_token",
         "browser",
+        "browser_context_id",
         "cdp_url",
         "local",
         "profile_directory",
@@ -83,9 +84,45 @@ class BrowserSession:
         self.auth_token = auth_token
         self.local = local
         self.profile_directory = profile_directory
+        self.browser_context_id: str | None = None
         self.task_count = 0
 
+    async def start(self) -> None:
+        from cdp_use.cdp.target.commands import CreateTargetParameters
+
+        await self.browser.start()
+
+        # [info] Really annoying discovery: despite being isolated in
+        #        different internal sessions, browser use does not
+        #        *actually* isolate the cookies and internals.
+        #
+        # [fix]  We use CDP browser contexts manually to make the
+        #        sessions unique per CDP connection. Nothing groundbreaking
+        cdp = self.browser.cdp_client
+        ctx = await cdp.send.Target.createBrowserContext(params={"disposeOnDetach": True})
+        self.browser_context_id = ctx["browserContextId"]
+
+        async def _scoped(
+            url: str = "about:blank", background: bool = False, new_window: bool = False
+        ) -> str:
+            params = CreateTargetParameters(
+                url=url, background=background, browserContextId=self.browser_context_id
+            )
+            if new_window:
+                params["newWindow"] = True
+            return (await cdp.send.Target.createTarget(params=params))["targetId"]  # type: ignore[no-any-return]
+
+        self.browser._cdp_create_new_page = _scoped
+        target_id = await _scoped(new_window=True)
+        await self.browser.get_or_create_cdp_session(target_id, focus=True)
+
     async def close(self) -> None:
+        if self.browser_context_id and self.browser and self.browser.is_cdp_connected:
+            with contextlib.suppress(Exception):
+                # [fix] properly dispose the session on closure.
+                await self.browser.cdp_client.send.Target.disposeBrowserContext(
+                    params={"browserContextId": self.browser_context_id},
+                )
         await _close_browser(self.browser)
         self.browser = None
 
@@ -164,7 +201,9 @@ async def _launch_browser(api_url: str, agent_id: str, auth_token: str = "") -> 
         task.add_done_callback(_manager.background_tasks.discard)
         return session
 
-    return _manager.create(agent_id, browser, api_url, ws_url, auth_token=auth_token)
+    session = _manager.create(agent_id, browser, api_url, ws_url, auth_token=auth_token)
+    await session.start()
+    return session
 
 
 async def _launch_local_browser(

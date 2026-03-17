@@ -2,7 +2,6 @@ import base64
 import binascii
 
 import pytest
-from pytest_check import check
 
 from . import console as ui
 from .helpers import Fail, setup_screenshots_dir
@@ -18,9 +17,10 @@ def test_navigate(browser):
     result = browser.navigate(url="https://example.com")
     ui.log(f"navigate → url={result.get('url')} title={result.get('title')}")
 
-    with check:
-        check.is_in("example.com", result.get("url", "").lower())
-        check.is_in("example", result.get("title", "").lower())
+    if "example.com" not in result.get("url", "").lower():
+        Fail(result).expected("url containing 'example.com'").got(result.get("url"))
+    if "example" not in result.get("title", "").lower():
+        Fail(result).expected("title containing 'example'").got(result.get("title"))
 
 
 def test_click(browser):

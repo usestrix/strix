@@ -131,19 +131,32 @@ def agent_state(sandbox_info):
     )
 
 
-@pytest.fixture(scope="session")
-def browser_session(agent_state):
-    set_current_agent_id(_SESSION_AGENT_ID)
-    ui.status("Launching browser…")
-    result = _run_in_bg(browser_action(action="launch", agent_state=agent_state))
-    if "error" in result:
-        pytest.fail(f"Browser launch failed: {result}")
-    ui.log(f"Browser ready: mode={result.get('mode')}")
-    yield agent_state
+@pytest.fixture
+def browsers(agent_state, request):
     from strix.tools.browser.browser_manager import _manager
 
-    _manager.sessions.pop(_SESSION_AGENT_ID, None)
-    _bg_loop.call_soon_threadsafe(_bg_loop.stop)
+    from .helpers import Browser
+
+    marker = request.node.get_closest_marker("browsers")
+    count = marker.args[0] if marker else 1
+
+    agent_ids = [f"{_SESSION_AGENT_ID}-{i}" for i in range(count)]
+    for aid in agent_ids:
+        set_current_agent_id(aid)
+        result = _run_in_bg(browser_action(action="launch", agent_state=agent_state))
+        if "error" in result:
+            pytest.fail(f"Browser launch failed for {aid}: {result}")
+
+    yield [Browser(aid) for aid in agent_ids]
+
+    for aid in agent_ids:
+        _manager.sessions.pop(aid, None)
+    set_current_agent_id(_SESSION_AGENT_ID)
+
+
+@pytest.fixture
+def browser(browsers):
+    return browsers[0]
 
 
 def pytest_runtest_logstart(nodeid, location):
@@ -164,10 +177,3 @@ def pytest_runtest_logreport(report):
 @pytest.fixture(autouse=True)
 def _set_agent_context():
     set_current_agent_id(_SESSION_AGENT_ID)
-
-
-@pytest.fixture
-def browser(browser_session):
-    from .helpers import Browser
-
-    return Browser(browser_session)
