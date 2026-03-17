@@ -358,13 +358,13 @@ def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
         return {
             "success": True,
             "requested_skills": requested_skills,
-            "loaded_skills": canonical_valid_skills,
-            "newly_loaded_skills": newly_loaded,
-            "already_loaded_skills": already_loaded,
-            "message": (
-                "Runtime skills loaded into this agent prompt context. "
-                "Continue with commands using the newly loaded guidance."
-            ),
+    except Exception as e:  # noqa: BLE001
+        return {
+            "success": False,
+            "error": f"Failed to load skill(s): {e!s}",
+            "requested_skills": requested_skills if "requested_skills" in dir() else [s.strip() for s in skills.split(",") if s.strip()],
+            "loaded_skills": [],
+        }
         }
 
 
