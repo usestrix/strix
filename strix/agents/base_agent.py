@@ -14,7 +14,7 @@ from jinja2 import (
 )
 
 from strix.llm import LLM, LLMConfig, LLMRequestFailedError
-from strix.llm.utils import clean_content
+from strix.llm.utils import clean_content, strip_invalid_api_tags
 from strix.runtime import SandboxInitializationError
 from strix.tools import process_tool_invocations
 from strix.utils.resource_paths import get_strix_resource_path
@@ -380,7 +380,12 @@ class BaseAgent(metaclass=AgentMeta):
             return False
 
         thinking_blocks = getattr(final_response, "thinking_blocks", None)
-        self.state.add_message("assistant", final_response.content, thinking_blocks=thinking_blocks)
+        # Strip invalid API tags before adding to conversation history.
+        # This prevents OpenAI-compatible APIs from rejecting messages containing
+        # unsupported tags like <analysis>, <channel>, <final>, etc. that may come
+        # from reasoning-capable models, while preserving tool invocations.
+        stripped_content = strip_invalid_api_tags(final_response.content)
+        self.state.add_message("assistant", stripped_content, thinking_blocks=thinking_blocks)
         if tracer:
             tracer.clear_streaming_content(self.state.agent_id)
             tracer.log_chat_message(
