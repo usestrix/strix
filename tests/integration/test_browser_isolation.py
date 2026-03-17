@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 
 from . import console as ui
@@ -147,3 +149,89 @@ def test_relaunch_parallel_no_side_effects(browsers: list[Browser]) -> None:
         Fail(a_state).expected("agent A on example.com").got(a_state.get("url"))
     if "iana.org" not in b_state.get("url", ""):
         Fail(b_state).expected("agent B on iana.org").got(b_state.get("url"))
+
+
+def test_dialog_does_not_block_other_agent(browsers: list[Browser]) -> None:
+    a, b = browsers
+    a.navigate(url="https://example.com")
+    b.navigate(url="https://example.com")
+
+    a._call("evaluate", code="setTimeout(() => alert('blocked'), 0)")
+
+    result = b._call("evaluate", code="document.title")
+    ui.log(f"agent B after A's alert: {result}")
+    if "error" in result:
+        Fail(result).error(f"agent B blocked by A's dialog: {result['error']}")
+
+
+def test_close_during_active_operation(browsers: list[Browser]) -> None:
+    a, b = browsers
+    a.navigate(url="https://example.com")
+    b.navigate(url="https://example.com")
+
+    def slow_b():
+        return b._call(
+            "evaluate", code="new Promise(r => setTimeout(() => r(document.title), 2000))"
+        )
+
+    def close_a():
+        import time
+
+        time.sleep(0.5)
+        return a._call("close_browser")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_b = pool.submit(slow_b)
+        fut_a = pool.submit(close_a)
+        fut_a.result(timeout=10)
+        result_b = fut_b.result(timeout=10)
+
+    ui.log(f"agent B after A closed mid-action: {result_b}")
+    if "error" in result_b:
+        Fail(result_b).error(f"agent B broke when A closed mid-action: {result_b['error']}")
+
+
+def test_concurrent_context_disposal(browsers: list[Browser]) -> None:
+    a, b = browsers
+    a.navigate(url="https://example.com")
+    b.navigate(url="https://example.com")
+
+    def dispose_a():
+        return a._call("close_browser")
+
+    def new_tab_b():
+        return b._call(
+            "evaluate", code="window.open('https://example.com', '_blank'); document.title"
+        )
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        fut_a = pool.submit(dispose_a)
+        fut_b = pool.submit(new_tab_b)
+        fut_a.result(timeout=10)
+        result_b = fut_b.result(timeout=10)
+
+    ui.log(f"agent B after concurrent disposal: {result_b}")
+    if "error" in result_b:
+        Fail(result_b).error(f"B's tab creation broke during A's disposal: {result_b['error']}")
+
+
+def test_duplicate_launch_race(browsers: list[Browser]) -> None:
+    a, _ = browsers
+    a.close_browser()
+
+    def launch():
+        return a._call("launch")
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = [f.result(timeout=30) for f in [pool.submit(launch), pool.submit(launch)]]
+
+    ui.log(f"race launch results: {[r.get('message') for r in results]}")
+    for r in results:
+        if "error" in r:
+            Fail(r).error(f"race launch failed: {r['error']}")
+
+    result = a._call("navigate", url="https://example.com")
+    if "error" in result:
+        Fail(result).error(f"session unusable after race: {result['error']}")
+    if "example.com" not in result.get("url", ""):
+        Fail(result).expected("url containing 'example.com'").got(result.get("url"))

@@ -10,7 +10,7 @@ class Browser:
         self._agent_id = agent_id
         self._agent_state = agent_state
 
-    def __getattr__(self, action):
+    def _call(self, action, **kwargs):
         import asyncio
 
         from strix.tools.browser.browser_actions import browser_action
@@ -18,21 +18,25 @@ class Browser:
 
         from .conftest import _bg_loop
 
-        def call(**kwargs):
-            async def _run():
-                set_current_agent_id(self._agent_id)
-                return await browser_action(
-                    agent_state=self._agent_state,
-                    action=action,
-                    **kwargs,
-                )
+        async def _run():
+            set_current_agent_id(self._agent_id)
+            return await browser_action(
+                agent_state=self._agent_state,
+                action=action,
+                **kwargs,
+            )
 
-            future = asyncio.run_coroutine_threadsafe(_run(), _bg_loop)
-            result = future.result(timeout=120)
+        future = asyncio.run_coroutine_threadsafe(_run(), _bg_loop)
+        result = future.result(timeout=120)
+        if "screenshot" in result:
+            result["screenshot"] = "[Image]"
+        return result
+
+    def __getattr__(self, action):
+        def call(**kwargs):
+            result = self._call(action, **kwargs)
             if "error" in result:
                 Fail(result).error(result["error"])
-            if "screenshot" in result:
-                result["screenshot"] = "[Image]"
             return result
 
         return call
