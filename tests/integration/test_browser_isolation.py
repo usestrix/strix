@@ -119,17 +119,14 @@ def test_relaunch_parallel_no_side_effects(browsers: list[Browser]) -> None:
     a.navigate(url="https://example.com")
     b.navigate(url="https://www.iana.org")
 
-    # close A, verify B is unaffected
     a.close_browser()
     b_check = b.screenshot()
     if "iana.org" not in b_check.get("url", ""):
         Fail(b_check).expected("agent B still on iana.org").got(b_check.get("url"))
 
-    # relaunch A
     a.launch()
     a.navigate(url="https://example.com")
 
-    # parallel actions on both after relaunch
     results = act_parallel(
         [
             (a, {"action": "evaluate", "code": "document.title"}),
@@ -143,7 +140,6 @@ def test_relaunch_parallel_no_side_effects(browsers: list[Browser]) -> None:
         if "error" in r:
             Fail(r).error(r["error"])
 
-    # verify no cross-contamination after relaunch (use url, titles vary)
     a_state, b_state = results[2], results[3]
     if "example.com" not in a_state.get("url", ""):
         Fail(a_state).expected("agent A on example.com").got(a_state.get("url"))
