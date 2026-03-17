@@ -1,3 +1,4 @@
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -166,23 +167,28 @@ def test_close_during_active_operation(browsers: list[Browser]) -> None:
     b.navigate(url="https://example.com")
 
     def slow_b():
-        return b._call(
+        ui.log(f"agent B waiting for A to close at {time.time()}")
+        result = b._call(
             "evaluate", code="new Promise(r => setTimeout(() => r(document.title), 2000))"
         )
+        ui.log(f"agent B after A closed at: {time.time()}")
+        return result
 
     def close_a():
-        import time
-
-        time.sleep(0.5)
-        return a._call("close_browser")
+        ui.log(f"agent A closing at {time.time()}")
+        result = a._call("close_browser")
+        ui.log(f"agent A closed at: {time.time()}")
+        return result
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         fut_b = pool.submit(slow_b)
         fut_a = pool.submit(close_a)
-        fut_a.result(timeout=10)
+        result_a = fut_a.result(timeout=10)
         result_b = fut_b.result(timeout=10)
 
     ui.log(f"agent B after A closed mid-action: {result_b}")
+    if "error" in result_a:
+        Fail(result_a).error(f"agent A failed to close browser: {result_a['error']}")
     if "error" in result_b:
         Fail(result_b).error(f"agent B broke when A closed mid-action: {result_b['error']}")
 
