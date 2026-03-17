@@ -22,12 +22,14 @@ High-signal flags:
 - `-es <sources>` exclude specific sources
 - `-rl <n>` global rate limit
 - `-rls <source=n/s,...>` per-source rate limits
+- `-proxy <http://host:port>` proxy outbound source requests
 - `-silent` compact output
 - `-o <file>` output file
 - `-oJ, -json` JSONL output
 - `-cs, -collect-sources` include source metadata (`-oJ` output)
 - `-nW, -active` show only active subdomains
 - `-timeout <seconds>` request timeout
+- `-max-time <minutes>` overall enumeration cap
 
 Agent-safe baseline for automation:
 `subfinder -d example.com -all -recursive -rl 20 -timeout 30 -silent -oJ -o subfinder.jsonl`
@@ -41,10 +43,13 @@ Common patterns:
   `subfinder -dL domains.txt -all -recursive -rl 20 -silent -o subfinder_out.txt`
 - Source-attributed JSONL output:
   `subfinder -d example.com -all -oJ -cs -o subfinder_sources.jsonl`
+- Passive enum via explicit proxy:
+  `subfinder -d example.com -all -recursive -proxy http://127.0.0.1:48080 -silent -oJ -o subfinder_proxy.jsonl`
 
 Critical correctness rules:
 - `-cs` is useful only with JSON output (`-oJ`).
 - Many sources require API keys in provider config; low results can be config-related, not target-related.
+- `-nW` performs active resolution/filtering and can drop passive-only hits.
 - Keep passive enum first, then validate with `httpx`.
 
 Usage rules:

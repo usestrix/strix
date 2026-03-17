@@ -21,6 +21,8 @@ High-signal flags:
 - `-t <n>` threads
 - `-rate <n>` request rate
 - `-timeout <seconds>` HTTP timeout
+- `-x <proxy_url>` upstream proxy (HTTP/SOCKS)
+- `-ignore-body` skip downloading response body
 - `-noninteractive` disable interactive console mode
 - `-recursion` and `-recursion-depth <n>` recursive discovery
 - `-H <header>` custom headers
@@ -41,9 +43,12 @@ Common patterns:
   `ffuf -w payloads.txt -u https://target.tld/login -X POST -H 'Content-Type: application/x-www-form-urlencoded' -d 'username=admin&password=FUZZ' -fc 401 -noninteractive`
 - Recursive discovery:
   `ffuf -w dirs.txt -u https://target.tld/FUZZ -recursion -recursion-depth 2 -ac -t 30 -noninteractive`
+- Proxy-instrumented run:
+  `ffuf -w wordlist.txt -u https://target.tld/FUZZ -x http://127.0.0.1:48080 -mc 200,301,302,403 -ac -noninteractive`
 
 Critical correctness rules:
 - `FUZZ` must appear exactly at the mutation point in URL/header/body.
+- If using `-w file:KEYWORD`, that same `KEYWORD` must be present in URL/header/body.
 - Always include `-noninteractive` in agent/script execution to prevent ffuf console mode from swallowing subsequent shell commands.
 - Save structured output with `-of json -o <file>` for deterministic parsing.
 

