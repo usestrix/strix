@@ -233,6 +233,14 @@ def _split_shell_segments(command: str) -> list[str]:
             index += 2
             continue
 
+        if char == "&":
+            segment = "".join(current).strip()
+            if segment:
+                segments.append(segment)
+            current = []
+            index += 1
+            continue
+
         current.append(char)
         index += 1
 

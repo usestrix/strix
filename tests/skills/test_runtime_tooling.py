@@ -39,6 +39,22 @@ def test_get_tooling_preflight_handles_wrappers_and_assignments() -> None:
     assert preflight.tools_with_new_skills == ("naabu",)
 
 
+def test_get_tooling_preflight_splits_single_background_operator() -> None:
+    actions = [
+        {
+            "toolName": "terminal_execute",
+            "args": {
+                "command": "nmap -sV target.tld & sqlmap -u http://target.tld --forms",
+            },
+        },
+    ]
+
+    preflight = get_tooling_preflight(actions, already_loaded_skills=set())
+
+    assert preflight.skills_to_load == ("tooling/nmap", "tooling/sqlmap")
+    assert preflight.tools_with_new_skills == ("nmap", "sqlmap")
+
+
 def test_get_tooling_preflight_detects_help_flags() -> None:
     actions = [
         {
