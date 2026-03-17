@@ -1,20 +1,8 @@
-import base64
 import inspect
-import shutil
-from pathlib import Path
 
 from pytest_check import check
 
 from . import console as ui
-
-
-SCREENSHOTS_DIR = Path(__file__).parent / "screenshots"
-
-
-def setup_screenshots_dir():
-    if SCREENSHOTS_DIR.exists():
-        shutil.rmtree(SCREENSHOTS_DIR)
-    SCREENSHOTS_DIR.mkdir(exist_ok=True)
 
 
 class Browser:
@@ -43,7 +31,8 @@ class Browser:
             result = future.result(timeout=120)
             if "error" in result:
                 Fail(result).error(result["error"])
-            _strip_screenshot(result, _caller_test_name())
+            if "screenshot" in result:
+                result["screenshot"] = "[Image]"
             return result
 
         return call
@@ -68,20 +57,10 @@ def _caller_test_name():
     return "unknown"
 
 
-def _strip_screenshot(result, name):
-    b64 = result.pop("screenshot", None)
-    if not b64 or not isinstance(b64, str) or len(b64) < 100:
-        return
-    path = SCREENSHOTS_DIR / f"{name}.png"
-    path.write_bytes(base64.b64decode(b64))
-    result["screenshot_path"] = str(path)
-
-
 class Fail:
     def __init__(self, result=None):
         self._result = result
         self._name = _caller_test_name()
-        self._screenshot = result.get("screenshot_path") if result else None
 
     def expected(self, value):
         self._expected = value
@@ -100,7 +79,6 @@ class Fail:
             self._name,
             reason,
             self._result,
-            self._screenshot,
         )
         with check:
             check.fail(f"[{self._name}] {reason}")

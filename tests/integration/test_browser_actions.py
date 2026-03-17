@@ -1,14 +1,10 @@
-from pathlib import Path
-
 import pytest
 
 from . import console as ui
-from .helpers import Fail, setup_screenshots_dir
+from .helpers import Fail
 
 
 pytestmark = pytest.mark.integration
-
-setup_screenshots_dir()
 
 
 def test_navigate(browser):
@@ -88,13 +84,10 @@ def test_screenshot(browser):
     browser.navigate(url="https://example.com")
 
     result = browser.screenshot()
-    path = result.get("screenshot_path")
-    ui.log(f"screenshot → {path}")
+    ui.log(f"screenshot → {result.get('screenshot')}")
 
-    if not path:
-        Fail(result).error("no screenshot saved")
-    elif not Path(path).exists():
-        Fail(result).error(f"screenshot file missing: {path}")
+    if result.get("screenshot") != "[Image]":
+        Fail(result).error("expected screenshot in response")
 
 
 def test_input(browser):

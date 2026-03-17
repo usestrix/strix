@@ -111,7 +111,6 @@ def record_failure(
     label,
     reason,
     result=None,
-    screenshot_path=None,
 ):
     _failures.append(
         {
@@ -119,7 +118,6 @@ def record_failure(
             "label": label,
             "reason": reason,
             "result": result,
-            "screenshot": screenshot_path,
         }
     )
 
@@ -138,7 +136,6 @@ def _print_summary():
             name = f.get("name", "?")
             reason = str(f.get("reason", f.get("details", "")))
             result = f.get("result")
-            screenshot = f.get("screenshot")
 
             _console.print(f"  [bold red]── {name} ──[/]")
 
@@ -150,15 +147,10 @@ def _print_summary():
                 _console.print("     [red]│[/]")
                 _console.print("     [red]╰─▶[/] [dim]result:[/]")
                 for k, v in result.items():
-                    if k == "screenshot":
-                        continue
                     v_str = str(v)
                     if len(v_str) > 120:
                         v_str = v_str[:120] + "…"
                     _console.print(f"          [dim]{k}:[/] {rich_escape(v_str)}")
-
-            if screenshot:
-                _console.print(f"     [dim]screenshot:[/] [underline]{rich_escape(screenshot)}[/]")
 
             _console.print()
 
