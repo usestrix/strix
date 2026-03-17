@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import re
 import shlex
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -61,9 +62,9 @@ _TIMEOUT_VALUE_RE = re.compile(r"^\d+(\.\d+)?([smhd])?$")
 
 @dataclass(frozen=True)
 class ToolingPreflight:
-    skills_to_load: list[str]
-    tools_with_new_skills: list[str]
-    help_requested_tools: list[str]
+    skills_to_load: tuple[str, ...]
+    tools_with_new_skills: tuple[str, ...]
+    help_requested_tools: tuple[str, ...]
 
 
 def get_tooling_preflight(
@@ -101,15 +102,15 @@ def get_tooling_preflight(
                     tools_with_new_skills.append(detected.name)
 
     return ToolingPreflight(
-        skills_to_load=skills_to_load,
-        tools_with_new_skills=tools_with_new_skills,
-        help_requested_tools=help_requested_tools,
+        skills_to_load=tuple(skills_to_load),
+        tools_with_new_skills=tuple(tools_with_new_skills),
+        help_requested_tools=tuple(help_requested_tools),
     )
 
 
 def build_tooling_preflight_message(
-    tools_with_new_skills: list[str],
-    help_requested_tools: list[str],
+    tools_with_new_skills: Sequence[str],
+    help_requested_tools: Sequence[str],
 ) -> str:
     lines: list[str] = ["<runtime_tool_skill_context>"]
 
@@ -138,6 +139,13 @@ def build_tooling_preflight_message(
     )
     lines.append("</runtime_tool_skill_context>")
     return "\n".join(lines)
+
+
+def canonical_runtime_skill_name(skill_name: str) -> str:
+    normalized = skill_name.strip()
+    if not normalized:
+        return normalized
+    return _TOOL_SKILL_PATHS.get(normalized, normalized)
 
 
 @dataclass(frozen=True)

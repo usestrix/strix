@@ -15,9 +15,9 @@ def test_get_tooling_preflight_loads_new_tool_skills() -> None:
 
     preflight = get_tooling_preflight(actions, already_loaded_skills=set())
 
-    assert preflight.skills_to_load == ["tooling/nmap", "tooling/httpx"]
-    assert preflight.tools_with_new_skills == ["nmap", "httpx"]
-    assert preflight.help_requested_tools == []
+    assert preflight.skills_to_load == ("tooling/nmap", "tooling/httpx")
+    assert preflight.tools_with_new_skills == ("nmap", "httpx")
+    assert preflight.help_requested_tools == ()
 
 
 def test_get_tooling_preflight_handles_wrappers_and_assignments() -> None:
@@ -35,8 +35,8 @@ def test_get_tooling_preflight_handles_wrappers_and_assignments() -> None:
 
     preflight = get_tooling_preflight(actions, already_loaded_skills=set())
 
-    assert preflight.skills_to_load == ["tooling/naabu"]
-    assert preflight.tools_with_new_skills == ["naabu"]
+    assert preflight.skills_to_load == ("tooling/naabu",)
+    assert preflight.tools_with_new_skills == ("naabu",)
 
 
 def test_get_tooling_preflight_detects_help_flags() -> None:
@@ -53,8 +53,8 @@ def test_get_tooling_preflight_detects_help_flags() -> None:
 
     preflight = get_tooling_preflight(actions, already_loaded_skills=set())
 
-    assert preflight.tools_with_new_skills == ["katana", "nuclei"]
-    assert preflight.help_requested_tools == ["katana", "nuclei"]
+    assert preflight.tools_with_new_skills == ("katana", "nuclei")
+    assert preflight.help_requested_tools == ("katana", "nuclei")
 
 
 def test_get_tooling_preflight_ignores_non_tool_mentions() -> None:
@@ -71,9 +71,9 @@ def test_get_tooling_preflight_ignores_non_tool_mentions() -> None:
 
     preflight = get_tooling_preflight(actions, already_loaded_skills=set())
 
-    assert preflight.skills_to_load == []
-    assert preflight.tools_with_new_skills == []
-    assert preflight.help_requested_tools == []
+    assert preflight.skills_to_load == ()
+    assert preflight.tools_with_new_skills == ()
+    assert preflight.help_requested_tools == ()
 
 
 def test_get_tooling_preflight_skips_already_loaded_skills() -> None:
@@ -86,8 +86,8 @@ def test_get_tooling_preflight_skips_already_loaded_skills() -> None:
 
     preflight = get_tooling_preflight(actions, already_loaded_skills={"tooling/ffuf"})
 
-    assert preflight.skills_to_load == []
-    assert preflight.tools_with_new_skills == []
+    assert preflight.skills_to_load == ()
+    assert preflight.tools_with_new_skills == ()
 
 
 def test_build_tooling_preflight_message_includes_docs_and_help_guidance() -> None:

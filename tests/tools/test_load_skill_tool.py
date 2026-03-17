@@ -46,6 +46,25 @@ def test_load_skill_success_and_context_update() -> None:
         instances.update(original_instances)
 
 
+def test_load_skill_short_tool_name_is_canonicalized_in_context() -> None:
+    instances = agents_graph_actions.__dict__["_agent_instances"]
+    original_instances = dict(instances)
+    try:
+        state = _DummyAgentState("agent_test_load_skill_short_name")
+        instances.clear()
+        instances[state.agent_id] = _DummyAgent()
+
+        result = agents_graph_actions.load_skill(state, "nmap")
+
+        assert result["success"] is True
+        assert result["loaded_skills"] == ["tooling/nmap"]
+        assert result["newly_loaded_skills"] == ["tooling/nmap"]
+        assert state.context["runtime_skills_loaded"] == ["tooling/nmap"]
+    finally:
+        instances.clear()
+        instances.update(original_instances)
+
+
 def test_load_skill_invalid_skill_returns_error() -> None:
     instances = agents_graph_actions.__dict__["_agent_instances"]
     original_instances = dict(instances)

@@ -36,6 +36,7 @@ _OTEL_BOOTSTRAP_LOCK = threading.Lock()
 _OTEL_BOOTSTRAPPED = False
 _OTEL_REMOTE_ENABLED = False
 
+
 def get_global_tracer() -> Optional["Tracer"]:
     return _global_tracer
 

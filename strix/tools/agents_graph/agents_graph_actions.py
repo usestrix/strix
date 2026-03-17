@@ -2,6 +2,7 @@ import threading
 from datetime import UTC, datetime
 from typing import Any, Literal
 
+from strix.skills.runtime_tooling import canonical_runtime_skill_name
 from strix.tools.registry import register_tool
 
 
@@ -335,13 +336,15 @@ def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
                 "loaded_skills": [],
             }
 
-        newly_loaded = current_agent.llm.add_runtime_skills(valid_skills)
-        already_loaded = [skill for skill in valid_skills if skill not in newly_loaded]
+        canonical_valid_skills = [canonical_runtime_skill_name(skill) for skill in valid_skills]
+        newly_loaded = current_agent.llm.add_runtime_skills(canonical_valid_skills)
+        already_loaded = [skill for skill in canonical_valid_skills if skill not in newly_loaded]
 
         prior = agent_state.context.get("runtime_skills_loaded", [])
         if not isinstance(prior, list):
             prior = []
-        merged_runtime = sorted(set(prior).union(valid_skills))
+        canonical_prior = [canonical_runtime_skill_name(skill) for skill in prior]
+        merged_runtime = sorted(set(canonical_prior).union(canonical_valid_skills))
         agent_state.update_context("runtime_skills_loaded", merged_runtime)
 
     except Exception as e:  # noqa: BLE001
@@ -355,7 +358,7 @@ def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
         return {
             "success": True,
             "requested_skills": requested_skills,
-            "loaded_skills": valid_skills,
+            "loaded_skills": canonical_valid_skills,
             "newly_loaded_skills": newly_loaded,
             "already_loaded_skills": already_loaded,
             "message": (
