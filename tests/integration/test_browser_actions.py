@@ -1,5 +1,4 @@
-import base64
-import binascii
+from pathlib import Path
 
 import pytest
 
@@ -89,15 +88,13 @@ def test_screenshot(browser):
     browser.navigate(url="https://example.com")
 
     result = browser.screenshot()
-    screenshot = result.get("screenshot", "")
-    ui.log(f"screenshot → {len(screenshot)} bytes base64")
+    path = result.get("screenshot_path")
+    ui.log(f"screenshot → {path}")
 
-    if len(screenshot) <= 100:
-        Fail(result).expected("> 100 bytes").got(f"{len(screenshot)} bytes")
-    try:
-        base64.b64decode(screenshot)
-    except (ValueError, binascii.Error) as e:
-        Fail(result).error(f"invalid base64: {e}")
+    if not path:
+        Fail(result).error("no screenshot saved")
+    elif not Path(path).exists():
+        Fail(result).error(f"screenshot file missing: {path}")
 
 
 def test_input(browser):

@@ -92,12 +92,6 @@ class BrowserSession:
 
         await self.browser.start()
 
-        # [info] Really annoying discovery: despite being isolated in
-        #        different internal sessions, browser use does not
-        #        *actually* isolate the cookies and internals.
-        #
-        # [fix]  We use CDP browser contexts manually to make the
-        #        sessions unique per CDP connection. Nothing groundbreaking
         cdp = self.browser.cdp_client
         ctx = await cdp.send.Target.createBrowserContext(params={"disposeOnDetach": True})
         self.browser_context_id = ctx["browserContextId"]
@@ -116,13 +110,16 @@ class BrowserSession:
         target_id = await _scoped(new_window=True)
         await self.browser.get_or_create_cdp_session(target_id, focus=True)
 
-    async def close(self) -> None:
+    async def dispose_context(self) -> None:
         if self.browser_context_id and self.browser and self.browser.is_cdp_connected:
             with contextlib.suppress(Exception):
-                # [fix] properly dispose the session on closure.
                 await self.browser.cdp_client.send.Target.disposeBrowserContext(
                     params={"browserContextId": self.browser_context_id},
                 )
+            self.browser_context_id = None
+
+    async def close(self) -> None:
+        await self.dispose_context()
         await _close_browser(self.browser)
         self.browser = None
 

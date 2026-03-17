@@ -39,7 +39,6 @@ def _preflight():
 
 _preflight()
 
-# in pretty mode, silence all loggers and suppress pytest's own terminal output
 if ui.is_pretty():
     for _name in (
         "strix.tests.integration",
@@ -147,10 +146,12 @@ def browsers(agent_state, request):
         if "error" in result:
             pytest.fail(f"Browser launch failed for {aid}: {result}")
 
-    yield [Browser(aid) for aid in agent_ids]
+    yield [Browser(aid, agent_state) for aid in agent_ids]
 
     for aid in agent_ids:
-        _manager.sessions.pop(aid, None)
+        session = _manager.remove(aid)
+        if session:
+            _run_in_bg(session.dispose_context())
     set_current_agent_id(_SESSION_AGENT_ID)
 
 

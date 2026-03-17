@@ -1,13 +1,13 @@
 import pytest
 
 from . import console as ui
-from .helpers import Fail, act_parallel
+from .helpers import Browser, Fail, act_parallel
 
 
 pytestmark = [pytest.mark.integration, pytest.mark.browsers(2)]
 
 
-def test_session_objects_are_distinct(browsers):
+def test_session_objects_are_distinct(browsers: list[Browser]) -> None:
     from strix.tools.browser.browser_manager import _manager
 
     a, b = browsers
@@ -25,7 +25,7 @@ def test_session_objects_are_distinct(browsers):
         )
 
 
-def test_parallel_navigate_isolated(browsers):
+def test_parallel_navigate_isolated(browsers: list[Browser]) -> None:
     a, b = browsers
     ui.status("isolation → navigating both agents concurrently")
     result_a, result_b = act_parallel(
@@ -55,7 +55,7 @@ def test_parallel_navigate_isolated(browsers):
         Fail(state_b).expected("agent B still on iana.org").got(state_b.get("url"))
 
 
-def test_cookie_isolation(browsers):
+def test_cookie_isolation(browsers: list[Browser]) -> None:
     a, b = browsers
     a.navigate(url="https://example.com")
     a.evaluate(code="document.cookie = 'agent=A; path=/'")
@@ -76,7 +76,7 @@ def test_cookie_isolation(browsers):
         Fail(result_a).expected("cookie 'agent=A' present").got(cookie_a)
 
 
-def test_concurrent_mixed_actions(browsers):
+def test_concurrent_mixed_actions(browsers: list[Browser]) -> None:
     a, b = browsers
     a.navigate(url="https://example.com")
     b.navigate(url="https://www.iana.org")
@@ -94,3 +94,56 @@ def test_concurrent_mixed_actions(browsers):
     for r in results:
         if "error" in r:
             Fail(r).error(r["error"])
+
+
+def test_session_close_does_not_affect_other(browsers: list[Browser]) -> None:
+    a, b = browsers
+    a.navigate(url="https://example.com")
+    b.navigate(url="https://www.iana.org")
+
+    a.close_browser()
+    ui.log("agent A closed")
+
+    result = b.navigate(url="https://example.com")
+    ui.log(f"agent B navigation result: {result}")
+    if "error" in result:
+        Fail(result).error(f"agent B broken after A closed: {result['error']}")
+    if "example.com" not in result.get("url", ""):
+        Fail(result).expected("url containing 'example.com'").got(result.get("url"))
+
+
+def test_relaunch_parallel_no_side_effects(browsers: list[Browser]) -> None:
+    a, b = browsers
+    a.navigate(url="https://example.com")
+    b.navigate(url="https://www.iana.org")
+
+    # close A, verify B is unaffected
+    a.close_browser()
+    b_check = b.screenshot()
+    if "iana.org" not in b_check.get("url", ""):
+        Fail(b_check).expected("agent B still on iana.org").got(b_check.get("url"))
+
+    # relaunch A
+    a.launch()
+    a.navigate(url="https://example.com")
+
+    # parallel actions on both after relaunch
+    results = act_parallel(
+        [
+            (a, {"action": "evaluate", "code": "document.title"}),
+            (b, {"action": "evaluate", "code": "document.title"}),
+            (a, {"action": "screenshot"}),
+            (b, {"action": "screenshot"}),
+        ]
+    )
+
+    for r in results:
+        if "error" in r:
+            Fail(r).error(r["error"])
+
+    # verify no cross-contamination after relaunch (use url, titles vary)
+    a_state, b_state = results[2], results[3]
+    if "example.com" not in a_state.get("url", ""):
+        Fail(a_state).expected("agent A on example.com").got(a_state.get("url"))
+    if "iana.org" not in b_state.get("url", ""):
+        Fail(b_state).expected("agent B on iana.org").got(b_state.get("url"))
