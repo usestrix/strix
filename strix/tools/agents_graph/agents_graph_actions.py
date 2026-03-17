@@ -282,6 +282,79 @@ def create_agent(
 
 
 @register_tool(sandbox_execution=False)
+def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
+    try:
+        requested_skills = [s.strip() for s in skills.split(",") if s.strip()]
+        if not requested_skills:
+            return {
+                "success": False,
+                "error": "No skills provided. Pass one or more comma-separated skill names.",
+                "requested_skills": [],
+            }
+
+        from strix.skills import load_skills
+
+        valid_skills: list[str] = []
+        invalid_skills: list[str] = []
+
+        for skill_name in requested_skills:
+            if load_skills([skill_name]):
+                valid_skills.append(skill_name)
+            else:
+                invalid_skills.append(skill_name)
+
+        if invalid_skills:
+            return {
+                "success": False,
+                "error": f"Invalid skills: {invalid_skills}",
+                "requested_skills": requested_skills,
+                "loaded_skills": [],
+                "invalid_skills": invalid_skills,
+            }
+
+        current_agent = _agent_instances.get(agent_state.agent_id)
+        if current_agent is None or not hasattr(current_agent, "llm"):
+            return {
+                "success": False,
+                "error": (
+                    "Could not find running agent instance for runtime skill loading. "
+                    "Try again in the current active agent."
+                ),
+                "requested_skills": requested_skills,
+                "loaded_skills": [],
+            }
+
+        newly_loaded = current_agent.llm.add_runtime_skills(valid_skills)
+        already_loaded = [skill for skill in valid_skills if skill not in newly_loaded]
+
+        prior = agent_state.context.get("runtime_skills_loaded", [])
+        if not isinstance(prior, list):
+            prior = []
+        merged_runtime = sorted(set(prior).union(valid_skills))
+        agent_state.update_context("runtime_skills_loaded", merged_runtime)
+
+    except Exception as e:  # noqa: BLE001
+        return {
+            "success": False,
+            "error": f"Failed to load skill(s): {e!s}",
+            "requested_skills": skills,
+            "loaded_skills": [],
+        }
+    else:
+        return {
+            "success": True,
+            "requested_skills": requested_skills,
+            "loaded_skills": valid_skills,
+            "newly_loaded_skills": newly_loaded,
+            "already_loaded_skills": already_loaded,
+            "message": (
+                "Runtime skills loaded into this agent prompt context. "
+                "Continue with commands using the newly loaded guidance."
+            ),
+        }
+
+
+@register_tool(sandbox_execution=False)
 def send_message_to_agent(
     agent_state: Any,
     target_agent_id: str,

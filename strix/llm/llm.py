@@ -63,6 +63,7 @@ class LLM:
         self.config = config
         self.agent_name = agent_name
         self.agent_id: str | None = None
+        self._runtime_skills: list[str] = []
         self._total_stats = RequestStats()
         self.memory_compressor = MemoryCompressor(model_name=config.litellm_model)
         self.system_prompt = self._load_system_prompt(agent_name)
@@ -87,10 +88,7 @@ class LLM:
                 autoescape=select_autoescape(enabled_extensions=(), default_for_string=False),
             )
 
-            skills_to_load = [
-                *list(self.config.skills or []),
-                f"scan_modes/{self.config.scan_mode}",
-            ]
+            skills_to_load = self._get_skills_to_load()
             skill_content = load_skills(skills_to_load)
             env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
@@ -102,6 +100,36 @@ class LLM:
             return str(result)
         except Exception:  # noqa: BLE001
             return ""
+
+    def _get_skills_to_load(self) -> list[str]:
+        ordered_skills = [*list(self.config.skills or []), *self._runtime_skills]
+        ordered_skills.append(f"scan_modes/{self.config.scan_mode}")
+
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for skill_name in ordered_skills:
+            if skill_name not in seen:
+                deduped.append(skill_name)
+                seen.add(skill_name)
+
+        return deduped
+
+    def add_runtime_skills(self, skill_names: list[str]) -> list[str]:
+        added: list[str] = []
+        for skill_name in skill_names:
+            if not skill_name or skill_name in self._runtime_skills:
+                continue
+            self._runtime_skills.append(skill_name)
+            added.append(skill_name)
+
+        if not added:
+            return []
+
+        updated_prompt = self._load_system_prompt(self.agent_name)
+        if updated_prompt:
+            self.system_prompt = updated_prompt
+
+        return added
 
     def set_agent_identity(self, agent_name: str | None, agent_id: str | None) -> None:
         if agent_name:
