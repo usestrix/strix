@@ -53,7 +53,7 @@ Common patterns:
 
 Critical correctness rules:
 - `-kf` must be followed by one of `all`, `robotstxt`, or `sitemapxml`.
-- Use `-hl` for headless mode (do not assume `-hh` exists).
+- Use documented `-hl` for headless mode.
 - `-proxy` expects a single proxy URL string (for example `http://127.0.0.1:8080`).
 - `-ho` expects comma-separated Chrome options (example: `-ho --disable-gpu,proxy-server=http://127.0.0.1:8080`).
 - For `-kf`, keep depth at least `-d 3` so known files are fully covered.
@@ -69,7 +69,7 @@ Usage rules:
 Failure recovery:
 - If crawl runs too long, lower `-d` and optionally add `-ct`.
 - If memory spikes, disable `-jsl` and lower `-c/-p`.
-- If headless fails with Chrome errors, drop `-sc` or provide `-scp`/install Chrome.
+- If headless fails with Chrome errors, drop `-sc` or install system Chrome.
 - If output is noisy, tighten scope and add `-ef` filters.
 
 If uncertain, query web_search with:
