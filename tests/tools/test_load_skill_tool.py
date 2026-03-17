@@ -1,6 +1,7 @@
 from typing import Any
 
-from strix.tools.agents_graph import agents_graph_actions
+import strix.runtime_agent_registry as runtime_registry
+from strix.tools.runtime_skills import runtime_skills_actions
 
 
 class _DummyLLM:
@@ -28,14 +29,14 @@ class _DummyAgentState:
 
 
 def test_load_skill_success_and_context_update() -> None:
-    instances = agents_graph_actions.__dict__["_agent_instances"]
+    instances = runtime_registry.__dict__["_agent_instances"]
     original_instances = dict(instances)
     try:
         state = _DummyAgentState("agent_test_load_skill_success")
         instances.clear()
         instances[state.agent_id] = _DummyAgent()
 
-        result = agents_graph_actions.load_skill(state, "tooling/ffuf,xss")
+        result = runtime_skills_actions.load_skill(state, "tooling/ffuf,xss")
 
         assert result["success"] is True
         assert result["loaded_skills"] == ["tooling/ffuf", "xss"]
@@ -47,14 +48,14 @@ def test_load_skill_success_and_context_update() -> None:
 
 
 def test_load_skill_short_tool_name_is_canonicalized_in_context() -> None:
-    instances = agents_graph_actions.__dict__["_agent_instances"]
+    instances = runtime_registry.__dict__["_agent_instances"]
     original_instances = dict(instances)
     try:
         state = _DummyAgentState("agent_test_load_skill_short_name")
         instances.clear()
         instances[state.agent_id] = _DummyAgent()
 
-        result = agents_graph_actions.load_skill(state, "nmap")
+        result = runtime_skills_actions.load_skill(state, "nmap")
 
         assert result["success"] is True
         assert result["loaded_skills"] == ["tooling/nmap"]
@@ -66,14 +67,14 @@ def test_load_skill_short_tool_name_is_canonicalized_in_context() -> None:
 
 
 def test_load_skill_invalid_skill_returns_error() -> None:
-    instances = agents_graph_actions.__dict__["_agent_instances"]
+    instances = runtime_registry.__dict__["_agent_instances"]
     original_instances = dict(instances)
     try:
         state = _DummyAgentState("agent_test_load_skill_invalid")
         instances.clear()
         instances[state.agent_id] = _DummyAgent()
 
-        result = agents_graph_actions.load_skill(state, "definitely_not_a_real_skill")
+        result = runtime_skills_actions.load_skill(state, "definitely_not_a_real_skill")
 
         assert result["success"] is False
         assert "Invalid skills" in result["error"]
@@ -83,13 +84,13 @@ def test_load_skill_invalid_skill_returns_error() -> None:
 
 
 def test_load_skill_missing_agent_instance_returns_error() -> None:
-    instances = agents_graph_actions.__dict__["_agent_instances"]
+    instances = runtime_registry.__dict__["_agent_instances"]
     original_instances = dict(instances)
     try:
         state = _DummyAgentState("agent_test_load_skill_missing_instance")
         instances.clear()
 
-        result = agents_graph_actions.load_skill(state, "tooling/httpx")
+        result = runtime_skills_actions.load_skill(state, "tooling/httpx")
 
         assert result["success"] is False
         assert "running agent instance" in result["error"]

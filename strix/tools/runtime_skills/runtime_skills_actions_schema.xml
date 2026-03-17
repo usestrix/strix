@@ -1,0 +1,30 @@
+<tools>
+  <tool name="load_skill">
+    <description>Dynamically load one or more skills into the current agent at runtime.
+
+Use this when you need exact guidance right before acting (tool syntax, exploit workflow, or protocol details).
+This updates the current agent's prompt context immediately.</description>
+    <details>Accepts one skill or a comma-separated skill bundle. Works for root agents and subagents.
+Examples:
+- Single skill: `xss`
+- Category-qualified skill: `tooling/katana`
+- Bundle: `tooling/httpx,tooling/ffuf,xss`</details>
+    <parameters>
+      <parameter name="skills" type="string" required="true">
+        <description>One or more skill names, comma-separated. Use plain names (e.g. `xss`) or category-qualified paths (e.g. `tooling/nuclei`). {{DYNAMIC_SKILLS_DESCRIPTION}}</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - success: Whether runtime loading succeeded - requested_skills: Skills requested - loaded_skills: Skills validated and applied - newly_loaded_skills: Skills newly injected into prompt - already_loaded_skills: Skills already present in prompt context</description>
+    </returns>
+    <examples>
+  <function=load_skill>
+  <parameter=skills>tooling/katana</parameter>
+  </function>
+
+  <function=load_skill>
+  <parameter=skills>tooling/httpx,tooling/ffuf</parameter>
+  </function>
+    </examples>
+  </tool>
+</tools>

@@ -29,6 +29,8 @@ High-signal flags:
 - `-proxy, -http-proxy <url>` proxy target requests
 - `-tlsi, -tls-impersonate` experimental TLS impersonation
 - `-j, -json` JSONL output
+- `-sr, -store-response` store request/response artifacts
+- `-srd, -store-response-dir <dir>` custom directory for stored artifacts
 - `-silent` compact output
 - `-rl <n>` requests/second cap
 - `-t <n>` threads
@@ -50,12 +52,15 @@ Common patterns:
   `httpx -l hosts.txt -vhost -sc -title -silent -j -o httpx_vhost.jsonl`
 - Proxy-instrumented probing:
   `httpx -l hosts.txt -sc -title -proxy http://127.0.0.1:48080 -silent -j -o httpx_proxy.jsonl`
+- Response-storage pass for downstream content parsing:
+  `httpx -l hosts.txt -fr -sr -srd recon/httpx_store -sc -title -server -cl -ct -location -probe -silent`
 
 Critical correctness rules:
 - For machine parsing, prefer `-j -o <file>`.
 - Keep `-rl` and `-t` explicit for reproducible throughput.
 - Use `-nf` when you need dual-scheme probing from host-only input.
 - When using `-path` or `-ports`, keep scope tight to avoid accidental scan inflation.
+- Use `-sr -srd <dir>` when later steps need raw response artifacts (JS/route extraction, grepping, replay).
 
 Usage rules:
 - Use `-silent` for pipeline-friendly output.

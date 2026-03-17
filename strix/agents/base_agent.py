@@ -16,6 +16,7 @@ from jinja2 import (
 from strix.llm import LLM, LLMConfig, LLMRequestFailedError
 from strix.llm.utils import clean_content
 from strix.runtime import SandboxInitializationError
+from strix.runtime_agent_registry import register_agent_instance
 from strix.skills.runtime_tooling import build_tooling_preflight_message, get_tooling_preflight
 from strix.tools import process_tool_invocations
 from strix.utils.resource_paths import get_strix_resource_path
@@ -115,6 +116,7 @@ class BaseAgent(metaclass=AgentMeta):
                 )
                 tracer.update_tool_execution(execution_id=exec_id, status="completed", result={})
 
+        register_agent_instance(self.state.agent_id, self)
         self._add_to_agents_graph()
 
     def _add_to_agents_graph(self) -> None:
