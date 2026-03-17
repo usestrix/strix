@@ -11,6 +11,7 @@ class LLMConfig:
         skills: list[str] | None = None,
         timeout: int | None = None,
         scan_mode: str = "deep",
+        interactive: bool = False,
     ):
         resolved_model, self.api_key, self.api_base = resolve_llm_config()
         self.model_name = model_name or resolved_model
@@ -28,3 +29,5 @@ class LLMConfig:
         self.timeout = timeout or int(Config.get("llm_timeout") or "300")
 
         self.scan_mode = scan_mode if scan_mode in ["quick", "standard", "deep"] else "deep"
+
+        self.interactive = interactive

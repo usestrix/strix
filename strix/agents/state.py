@@ -25,6 +25,7 @@ class AgentState(BaseModel):
     waiting_for_input: bool = False
     llm_failed: bool = False
     waiting_start_time: datetime | None = None
+    waiting_timeout: int = 600
     final_result: dict[str, Any] | None = None
     max_iterations_warning_sent: bool = False
 
@@ -116,6 +117,9 @@ class AgentState(BaseModel):
         return self.iteration >= int(self.max_iterations * threshold)
 
     def has_waiting_timeout(self) -> bool:
+        if self.waiting_timeout == 0:
+            return False
+
         if not self.waiting_for_input or not self.waiting_start_time:
             return False
 
@@ -128,7 +132,7 @@ class AgentState(BaseModel):
             return False
 
         elapsed = (datetime.now(UTC) - self.waiting_start_time).total_seconds()
-        return elapsed > 600
+        return elapsed > self.waiting_timeout
 
     def has_empty_last_messages(self, count: int = 3) -> bool:
         if len(self.messages) < count:

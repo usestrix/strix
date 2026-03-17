@@ -78,7 +78,6 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     agent_config = {
         "llm_config": llm_config,
         "max_iterations": 300,
-        "non_interactive": True,
     }
 
     if getattr(args, "local_sources", None):
