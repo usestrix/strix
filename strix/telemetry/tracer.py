@@ -277,6 +277,10 @@ class Tracer:
             if mark_complete:
                 self.end_time = datetime.now(UTC).isoformat()
 
+            # Save intermediate results summary if scan is incomplete but has progress
+            if mark_complete and not self.final_scan_result and not self.vulnerability_reports:
+                self._save_run_summary(run_dir)
+
             if self.final_scan_result:
                 penetration_test_report_file = run_dir / "penetration_test_report.md"
                 with penetration_test_report_file.open("w", encoding="utf-8") as f:
@@ -486,6 +490,49 @@ class Tracer:
             return content
 
         return self.interrupted_content.pop(agent_id, None)
+
+    def _save_run_summary(self, run_dir: Path) -> None:
+        """Save a summary of the run execution when scan is incomplete."""
+        import json
+
+        try:
+            summary_file = run_dir / "run_summary.json"
+            duration = self._calculate_duration()
+
+            # Prepare agents summary
+            agents_summary = []
+            for agent_id, agent_info in self.agents.items():
+                agents_summary.append(
+                    {
+                        "id": agent_id,
+                        "name": agent_info.get("name", "Unknown"),
+                        "status": agent_info.get("status", "unknown"),
+                        "tool_executions": len(agent_info.get("tool_executions", [])),
+                        "error": agent_info.get("error_message"),
+                    }
+                )
+
+            summary = {
+                "run_id": self.run_id,
+                "run_name": self.run_name,
+                "status": "interrupted",
+                "start_time": self.start_time,
+                "end_time": self.end_time,
+                "duration_seconds": duration,
+                "chat_messages_count": len(self.chat_messages),
+                "tool_executions_count": len(self.tool_executions),
+                "vulnerability_reports_count": len(self.vulnerability_reports),
+                "agents": agents_summary,
+                "scan_config": self.scan_config or {},
+            }
+
+            with summary_file.open("w", encoding="utf-8") as f:
+                json.dump(summary, f, indent=2, default=str)
+
+            logger.info(f"Saved run summary to: {summary_file}")
+
+        except (OSError, TypeError, ValueError):
+            logger.exception("Failed to save run summary")
 
     def cleanup(self) -> None:
         self.save_run_data(mark_complete=True)

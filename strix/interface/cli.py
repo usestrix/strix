@@ -171,6 +171,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     if error_details:
                         console.print(f"[dim]{error_details}[/]")
                     console.print()
+                    # Ensure intermediate results are saved before exiting
+                    tracer.save_run_data(mark_complete=True)
                     sys.exit(1)
             finally:
                 stop_updates.set()
@@ -178,6 +180,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     except Exception as e:
         console.print(f"[bold red]Error during penetration test:[/] {e}")
+        # Ensure intermediate results are saved before re-raising
+        tracer.save_run_data(mark_complete=True)
         raise
 
     if tracer.final_scan_result:
