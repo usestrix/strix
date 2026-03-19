@@ -30,31 +30,36 @@ High-signal flags:
 - `-oA <prefix>` output in normal/XML/grepable formats
 
 Agent-safe baseline for automation:
-`nmap -n -Pn --open --top-ports 200 -T4 --max-retries 1 --host-timeout 90s -oA nmap_quick <host>`
+`nmap -n -Pn --open --top-ports 100 -T4 --max-retries 1 --host-timeout 90s -oA nmap_quick <host>`
 
 Common patterns:
 - Fast first pass:
-  `nmap -n -Pn --top-ports 200 --open -T4 --max-retries 1 --host-timeout 90s <host>`
+  `nmap -n -Pn --top-ports 100 --open -T4 --max-retries 1 --host-timeout 90s <host>`
+- Very small important-port pass:
+  `nmap -n -Pn -p 22,80,443,8080,8443 --open -T4 --max-retries 1 --host-timeout 90s <host>`
 - Service/script enrichment on discovered ports:
   `nmap -n -Pn -sV -sC -p <comma_ports> --script-timeout 30s --host-timeout 3m -oA nmap_services <host>`
 - No-root fallback:
-  `nmap -n -Pn -sT --top-ports 200 --open --host-timeout 90s <host>`
+  `nmap -n -Pn -sT --top-ports 100 --open --host-timeout 90s <host>`
 
 Critical correctness rules:
 - Always set target scope explicitly.
 - Prefer two-pass scanning: discovery pass, then enrichment pass.
-- Bound scans with `--host-timeout` and sensible retry settings.
+- Always set a timeout boundary with `--host-timeout`; add `--script-timeout` whenever NSE scripts are involved.
+- Keep discovery scans tight: use explicit important ports or a small `--top-ports` profile unless broader coverage is explicitly required.
 - In sandboxed runs, avoid exhaustive sweeps (`-p-`, very high `--top-ports`, or wide host ranges) unless explicitly required.
+- Do not spam traffic; start with the smallest port set that can answer the question.
 - Prefer `naabu` for broad port discovery; use `nmap` for scoped verification/enrichment.
 
 Usage rules:
 - Add `-n` by default in automation to avoid DNS delays.
 - Use `-oA` for reusable artifacts.
+- Prefer `-p 22,80,443,8080,8443` or `--top-ports 100` before considering larger sweeps.
 - Do not use `-h`/`--help` for routine usage unless absolutely necessary.
 
 Failure recovery:
 - If host appears down unexpectedly, rerun with `-Pn`.
-- If scan stalls, tighten scope (`--top-ports`) and lower retries.
+- If scan stalls, tighten scope (`-p` or smaller `--top-ports`) and lower retries.
 - If scripts run too long, add `--script-timeout`.
 
 If uncertain, query web_search with:
