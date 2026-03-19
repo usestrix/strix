@@ -1,0 +1,130 @@
+<tools>
+  <tool name="list_skills">
+    <description>Discover available skills that can be loaded dynamically at runtime.
+
+This tool helps you find specialized knowledge packages when you encounter unfamiliar technologies, vulnerability types, or frameworks during testing. Use this BEFORE load_skills to discover what expertise is available.
+
+Use this tool when:
+- You encounter a technology/framework you're not specialized in (e.g., FastAPI, Next.js, Firebase)
+- You need to test a vulnerability type not in your initial skills (e.g., XXE, SSRF, GraphQL)
+- You want to explore available expertise before starting a new testing phase
+- You need to find skills related to a specific category (vulnerabilities, frameworks, technologies, protocols, cloud)</description>
+    <details>Skills are specialized knowledge packages that provide deep expertise in specific areas:
+- **Vulnerabilities**: Advanced testing techniques for vulnerability classes (SQL injection, XSS, SSRF, etc.)
+- **Frameworks**: Framework-specific testing methods (Django, Express, FastAPI, Next.js)
+- **Technologies**: Third-party service testing (Supabase, Firebase, Auth0, payment gateways)
+- **Protocols**: Protocol-specific patterns (GraphQL, WebSocket, OAuth)
+- **Cloud**: Cloud provider security testing (AWS, Azure, GCP, Kubernetes)
+
+This tool returns a structured list of all available skills, optionally filtered by category, and always includes metadata (name, description) from skill files.</details>
+    <parameters>
+      <parameter name="category" type="string" required="false">
+        <description>Filter skills by category. Available categories: vulnerabilities, frameworks, technologies, protocols, cloud, reconnaissance, custom. If not specified, returns all skills across all categories.</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - success: Whether the operation succeeded - skills_by_category: Dictionary mapping category names to lists of skill names - all_skills: Flat list of all skill names (or filtered list if category specified) - categories: List of all available category names - metadata: Dictionary mapping skill names to their metadata (name, description) - always included</description>
+    </returns>
+    <examples>
+  # Discover all available skills with names and descriptions
+  <function=list_skills>
+  </function>
+
+  # Find skills for a specific vulnerability type
+  <function=list_skills>
+  <parameter=category>vulnerabilities</parameter>
+  </function>
+
+  # Explore framework-specific skills
+  <function=list_skills>
+  <parameter=category>frameworks</parameter>
+  </function>
+
+  # Check what technologies have specialized testing knowledge
+  <function=list_skills>
+  <parameter=category>technologies</parameter>
+  </function>
+    </examples>
+  </tool>
+  <tool name="load_skills">
+    <description>Load specialized skill content dynamically at runtime for immediate use.
+
+This tool loads skill content (markdown knowledge packages) that you can immediately use in your testing. Load skills RIGHT BEFORE you need them - when you encounter a new vulnerability type, technology, or framework you're not specialized in.
+
+**CRITICAL WORKFLOW**: 
+1. Use list_skills to discover available expertise
+2. Use load_skills to pull in the specialized knowledge
+3. Immediately apply the loaded knowledge to your testing
+
+The loaded skill content provides:
+- Advanced techniques and methodologies
+- Practical payloads and examples
+- Validation methods and testing approaches
+- Tool usage guidance
+- Bypass techniques and edge cases
+
+Use this tool when:
+- You're about to test a vulnerability type not in your initial skills (e.g., load sql_injection before SQLi testing)
+- You encounter an unfamiliar framework (e.g., load fastapi when testing FastAPI apps)
+- You need specialized knowledge for a technology (e.g., load firebase_firestore for Firebase testing)
+- You discover a new attack surface requiring different expertise (e.g., load graphql for GraphQL API testing)</description>
+    <details>This tool enables runtime skill adaptation - you're not limited to your initial skill set. When you load a skill, you receive its complete content (markdown) that you can immediately reference and use in your testing approach.
+
+The skill content is returned as a dictionary where keys are skill names and values are the full markdown content. You can use this content to:
+- Understand advanced testing techniques
+- Get specific payloads and examples
+- Learn validation methods
+- Discover tool usage patterns
+- Find bypass techniques
+
+Skills are loaded from the skills directory and validated before loading. Invalid skill names are reported but don't prevent valid skills from loading.</details>
+    <parameters>
+      <parameter name="skills" type="string" required="true">
+        <description>Comma-separated list of skill names to load. You can specify skills by name only (e.g., "sql_injection") or with category path (e.g., "vulnerabilities/sql_injection"). Use list_skills first to discover available skill names. Examples: "sql_injection", "xss,csrf", "fastapi", "vulnerabilities/ssrf,technologies/firebase_firestore"</description>
+      </parameter>
+    </parameters>
+    <returns type="Dict[str, Any]">
+      <description>Response containing: - success: Whether at least one skill was loaded successfully - loaded_skills: Dictionary mapping skill names to their markdown content - loaded_count: Number of skills successfully loaded - invalid_skills: List of skill names that were invalid/not found - warnings: List of warning messages (e.g., invalid skills, missing files)</description>
+    </returns>
+    <examples>
+  # Load SQL injection expertise before testing
+  <function=list_skills>
+  <parameter=category>vulnerabilities</parameter>
+  </function>
+  
+  <function=load_skills>
+  <parameter=skills>sql_injection</parameter>
+  </function>
+  
+  # Now proceed with SQL injection testing using the loaded expertise
+
+  # Load framework-specific knowledge when encountering new tech
+  <function=load_skills>
+  <parameter=skills>fastapi</parameter>
+  </function>
+  
+  # Use the FastAPI-specific testing techniques from the loaded skill
+
+  # Load multiple related skills for comprehensive testing
+  <function=load_skills>
+  <parameter=skills>authentication_jwt,business_logic</parameter>
+  </function>
+  
+  # Test authentication and business logic vulnerabilities with loaded expertise
+
+  # Load protocol-specific skills for API testing
+  <function=load_skills>
+  <parameter=skills>graphql</parameter>
+  </function>
+  
+  # Apply GraphQL-specific testing techniques
+
+  # Load technology-specific skills
+  <function=load_skills>
+  <parameter=skills>firebase_firestore</parameter>
+  </function>
+  
+  # Test Firebase Firestore security with specialized knowledge
+    </examples>
+  </tool>
+</tools>
