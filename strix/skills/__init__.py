@@ -54,6 +54,30 @@ def validate_skill_names(skill_names: list[str]) -> dict[str, list[str]]:
     return {"valid": valid_skills, "invalid": invalid_skills}
 
 
+def parse_skill_list(skills: str | None) -> list[str]:
+    if not skills:
+        return []
+    return [s.strip() for s in skills.split(",") if s.strip()]
+
+
+def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str | None:
+    if len(skill_list) > max_skills:
+        return "Cannot specify more than 5 skills for an agent (use comma-separated format)"
+
+    if not skill_list:
+        return None
+
+    validation = validate_skill_names(skill_list)
+    if validation["invalid"]:
+        available_skills = list(get_all_skill_names())
+        return (
+            f"Invalid skills: {validation['invalid']}. "
+            f"Available skills: {', '.join(available_skills)}"
+        )
+
+    return None
+
+
 def generate_skills_description() -> str:
     available_skills = get_available_skills()
 

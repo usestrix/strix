@@ -3,29 +3,12 @@ from typing import Any
 from strix.tools.registry import register_tool
 
 
-_TOOL_SKILL_PATHS: dict[str, str] = {
-    "nmap": "tooling/nmap",
-    "nuclei": "tooling/nuclei",
-    "httpx": "tooling/httpx",
-    "ffuf": "tooling/ffuf",
-    "subfinder": "tooling/subfinder",
-    "naabu": "tooling/naabu",
-    "katana": "tooling/katana",
-    "sqlmap": "tooling/sqlmap",
-}
-
-
-def _canonical_runtime_skill_name(skill_name: str) -> str:
-    normalized = skill_name.strip()
-    if not normalized:
-        return normalized
-    return _TOOL_SKILL_PATHS.get(normalized, normalized)
-
-
 @register_tool(sandbox_execution=False)
 def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
     try:
-        requested_skills = [s.strip() for s in skills.split(",") if s.strip()]
+        from strix.skills import parse_skill_list, validate_requested_skills
+
+        requested_skills = parse_skill_list(skills)
         if not requested_skills:
             return {
                 "success": False,
@@ -33,24 +16,13 @@ def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
                 "requested_skills": [],
             }
 
-        from strix.skills import load_skills
-
-        valid_skills: list[str] = []
-        invalid_skills: list[str] = []
-
-        for skill_name in requested_skills:
-            if load_skills([skill_name]):
-                valid_skills.append(skill_name)
-            else:
-                invalid_skills.append(skill_name)
-
-        if invalid_skills:
+        validation_error = validate_requested_skills(requested_skills)
+        if validation_error:
             return {
                 "success": False,
-                "error": f"Invalid skills: {invalid_skills}",
+                "error": validation_error,
                 "requested_skills": requested_skills,
                 "loaded_skills": [],
-                "invalid_skills": invalid_skills,
             }
 
         from strix.tools.agents_graph.agents_graph_actions import _agent_instances
@@ -67,16 +39,14 @@ def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
                 "loaded_skills": [],
             }
 
-        canonical_valid_skills = [_canonical_runtime_skill_name(skill) for skill in valid_skills]
-        newly_loaded = current_agent.llm.add_runtime_skills(canonical_valid_skills)
-        already_loaded = [skill for skill in canonical_valid_skills if skill not in newly_loaded]
+        newly_loaded = current_agent.llm.add_skills(requested_skills)
+        already_loaded = [skill for skill in requested_skills if skill not in newly_loaded]
 
-        prior = agent_state.context.get("runtime_skills_loaded", [])
+        prior = agent_state.context.get("loaded_skills", [])
         if not isinstance(prior, list):
             prior = []
-        canonical_prior = [_canonical_runtime_skill_name(skill) for skill in prior]
-        merged_runtime = sorted(set(canonical_prior).union(canonical_valid_skills))
-        agent_state.update_context("runtime_skills_loaded", merged_runtime)
+        merged_skills = sorted(set(prior).union(requested_skills))
+        agent_state.update_context("loaded_skills", merged_skills)
 
     except Exception as e:  # noqa: BLE001
         fallback_requested_skills = (
@@ -94,11 +64,8 @@ def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
         return {
             "success": True,
             "requested_skills": requested_skills,
-            "loaded_skills": canonical_valid_skills,
+            "loaded_skills": requested_skills,
             "newly_loaded_skills": newly_loaded,
             "already_loaded_skills": already_loaded,
-            "message": (
-                "Runtime skills loaded into this agent prompt context. "
-                "Continue with commands using the newly loaded guidance."
-            ),
+            "message": "Skills loaded into this agent prompt context.",
         }

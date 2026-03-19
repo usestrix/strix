@@ -195,33 +195,16 @@ def create_agent(
     try:
         parent_id = agent_state.agent_id
 
-        skill_list = []
-        if skills:
-            skill_list = [s.strip() for s in skills.split(",") if s.strip()]
+        from strix.skills import parse_skill_list, validate_requested_skills
 
-        if len(skill_list) > 5:
+        skill_list = parse_skill_list(skills)
+        validation_error = validate_requested_skills(skill_list)
+        if validation_error:
             return {
                 "success": False,
-                "error": (
-                    "Cannot specify more than 5 skills for an agent (use comma-separated format)"
-                ),
+                "error": validation_error,
                 "agent_id": None,
             }
-
-        if skill_list:
-            from strix.skills import get_all_skill_names, validate_skill_names
-
-            validation = validate_skill_names(skill_list)
-            if validation["invalid"]:
-                available_skills = list(get_all_skill_names())
-                return {
-                    "success": False,
-                    "error": (
-                        f"Invalid skills: {validation['invalid']}. "
-                        f"Available skills: {', '.join(available_skills)}"
-                    ),
-                    "agent_id": None,
-                }
 
         from strix.agents import StrixAgent
         from strix.agents.state import AgentState

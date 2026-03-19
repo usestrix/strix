@@ -8,7 +8,7 @@ class _DummyLLM:
     def __init__(self) -> None:
         self.loaded: set[str] = set()
 
-    def add_runtime_skills(self, skill_names: list[str]) -> list[str]:
+    def add_skills(self, skill_names: list[str]) -> list[str]:
         newly_loaded = [skill for skill in skill_names if skill not in self.loaded]
         self.loaded.update(newly_loaded)
         return newly_loaded
@@ -36,18 +36,18 @@ def test_load_skill_success_and_context_update() -> None:
         instances.clear()
         instances[state.agent_id] = _DummyAgent()
 
-        result = load_skill_actions.load_skill(state, "tooling/ffuf,xss")
+        result = load_skill_actions.load_skill(state, "ffuf,xss")
 
         assert result["success"] is True
-        assert result["loaded_skills"] == ["tooling/ffuf", "xss"]
-        assert result["newly_loaded_skills"] == ["tooling/ffuf", "xss"]
-        assert state.context["runtime_skills_loaded"] == ["tooling/ffuf", "xss"]
+        assert result["loaded_skills"] == ["ffuf", "xss"]
+        assert result["newly_loaded_skills"] == ["ffuf", "xss"]
+        assert state.context["loaded_skills"] == ["ffuf", "xss"]
     finally:
         instances.clear()
         instances.update(original_instances)
 
 
-def test_load_skill_short_tool_name_is_canonicalized_in_context() -> None:
+def test_load_skill_uses_same_plain_skill_format_as_create_agent() -> None:
     instances = agents_graph_actions.__dict__["_agent_instances"]
     original_instances = dict(instances)
     try:
@@ -58,9 +58,9 @@ def test_load_skill_short_tool_name_is_canonicalized_in_context() -> None:
         result = load_skill_actions.load_skill(state, "nmap")
 
         assert result["success"] is True
-        assert result["loaded_skills"] == ["tooling/nmap"]
-        assert result["newly_loaded_skills"] == ["tooling/nmap"]
-        assert state.context["runtime_skills_loaded"] == ["tooling/nmap"]
+        assert result["loaded_skills"] == ["nmap"]
+        assert result["newly_loaded_skills"] == ["nmap"]
+        assert state.context["loaded_skills"] == ["nmap"]
     finally:
         instances.clear()
         instances.update(original_instances)
@@ -78,6 +78,26 @@ def test_load_skill_invalid_skill_returns_error() -> None:
 
         assert result["success"] is False
         assert "Invalid skills" in result["error"]
+        assert "Available skills" in result["error"]
+    finally:
+        instances.clear()
+        instances.update(original_instances)
+
+
+def test_load_skill_rejects_more_than_five_skills() -> None:
+    instances = agents_graph_actions.__dict__["_agent_instances"]
+    original_instances = dict(instances)
+    try:
+        state = _DummyAgentState("agent_test_load_skill_too_many")
+        instances.clear()
+        instances[state.agent_id] = _DummyAgent()
+
+        result = load_skill_actions.load_skill(state, "a,b,c,d,e,f")
+
+        assert result["success"] is False
+        assert result["error"] == (
+            "Cannot specify more than 5 skills for an agent (use comma-separated format)"
+        )
     finally:
         instances.clear()
         instances.update(original_instances)
@@ -90,7 +110,7 @@ def test_load_skill_missing_agent_instance_returns_error() -> None:
         state = _DummyAgentState("agent_test_load_skill_missing_instance")
         instances.clear()
 
-        result = load_skill_actions.load_skill(state, "tooling/httpx")
+        result = load_skill_actions.load_skill(state, "httpx")
 
         assert result["success"] is False
         assert "running agent instance" in result["error"]
