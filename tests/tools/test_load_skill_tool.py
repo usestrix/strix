@@ -5,8 +5,8 @@ from strix.tools.load_skill import load_skill_actions
 
 
 class _DummyLLM:
-    def __init__(self) -> None:
-        self.loaded: set[str] = set()
+    def __init__(self, initial_skills: list[str] | None = None) -> None:
+        self.loaded: set[str] = set(initial_skills or [])
 
     def add_skills(self, skill_names: list[str]) -> list[str]:
         newly_loaded = [skill for skill in skill_names if skill not in self.loaded]
@@ -15,8 +15,8 @@ class _DummyLLM:
 
 
 class _DummyAgent:
-    def __init__(self) -> None:
-        self.llm = _DummyLLM()
+    def __init__(self, initial_skills: list[str] | None = None) -> None:
+        self.llm = _DummyLLM(initial_skills)
 
 
 class _DummyAgentState:
@@ -114,6 +114,26 @@ def test_load_skill_missing_agent_instance_returns_error() -> None:
 
         assert result["success"] is False
         assert "running agent instance" in result["error"]
+    finally:
+        instances.clear()
+        instances.update(original_instances)
+
+
+def test_load_skill_does_not_reload_skill_already_present_from_agent_creation() -> None:
+    instances = agents_graph_actions.__dict__["_agent_instances"]
+    original_instances = dict(instances)
+    try:
+        state = _DummyAgentState("agent_test_load_skill_existing_config_skill")
+        instances.clear()
+        instances[state.agent_id] = _DummyAgent(["xss"])
+
+        result = load_skill_actions.load_skill(state, "xss,sql_injection")
+
+        assert result["success"] is True
+        assert result["loaded_skills"] == ["xss", "sql_injection"]
+        assert result["newly_loaded_skills"] == ["sql_injection"]
+        assert result["already_loaded_skills"] == ["xss"]
+        assert state.context["loaded_skills"] == ["sql_injection", "xss"]
     finally:
         instances.clear()
         instances.update(original_instances)

@@ -24,6 +24,10 @@ Examples:
   <function=load_skill>
   <parameter=skills>sql_injection,business_logic</parameter>
   </function>
+
+  <function=load_skill>
+  <parameter=skills>nmap,httpx</parameter>
+  </function>
     </examples>
   </tool>
 </tools>

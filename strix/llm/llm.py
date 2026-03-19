@@ -63,7 +63,7 @@ class LLM:
         self.config = config
         self.agent_name = agent_name
         self.agent_id: str | None = None
-        self._loaded_skills: list[str] = []
+        self._active_skills: list[str] = list(config.skills or [])
         self._total_stats = RequestStats()
         self.memory_compressor = MemoryCompressor(model_name=config.litellm_model)
         self.system_prompt = self._load_system_prompt(agent_name)
@@ -103,7 +103,7 @@ class LLM:
             return ""
 
     def _get_skills_to_load(self) -> list[str]:
-        ordered_skills = [*list(self.config.skills or []), *self._loaded_skills]
+        ordered_skills = [*self._active_skills]
         ordered_skills.append(f"scan_modes/{self.config.scan_mode}")
 
         deduped: list[str] = []
@@ -118,9 +118,9 @@ class LLM:
     def add_skills(self, skill_names: list[str]) -> list[str]:
         added: list[str] = []
         for skill_name in skill_names:
-            if not skill_name or skill_name in self._loaded_skills:
+            if not skill_name or skill_name in self._active_skills:
                 continue
-            self._loaded_skills.append(skill_name)
+            self._active_skills.append(skill_name)
             added.append(skill_name)
 
         if not added:
