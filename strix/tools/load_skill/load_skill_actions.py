@@ -1,8 +1,25 @@
 from typing import Any
 
-from strix.runtime_agent_registry import get_agent_instance
-from strix.skills.runtime_tooling import canonical_runtime_skill_name
 from strix.tools.registry import register_tool
+
+
+_TOOL_SKILL_PATHS: dict[str, str] = {
+    "nmap": "tooling/nmap",
+    "nuclei": "tooling/nuclei",
+    "httpx": "tooling/httpx",
+    "ffuf": "tooling/ffuf",
+    "subfinder": "tooling/subfinder",
+    "naabu": "tooling/naabu",
+    "katana": "tooling/katana",
+    "sqlmap": "tooling/sqlmap",
+}
+
+
+def _canonical_runtime_skill_name(skill_name: str) -> str:
+    normalized = skill_name.strip()
+    if not normalized:
+        return normalized
+    return _TOOL_SKILL_PATHS.get(normalized, normalized)
 
 
 @register_tool(sandbox_execution=False)
@@ -36,7 +53,9 @@ def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
                 "invalid_skills": invalid_skills,
             }
 
-        current_agent = get_agent_instance(agent_state.agent_id)
+        from strix.tools.agents_graph.agents_graph_actions import _agent_instances
+
+        current_agent = _agent_instances.get(agent_state.agent_id)
         if current_agent is None or not hasattr(current_agent, "llm"):
             return {
                 "success": False,
@@ -48,14 +67,14 @@ def load_skill(agent_state: Any, skills: str) -> dict[str, Any]:
                 "loaded_skills": [],
             }
 
-        canonical_valid_skills = [canonical_runtime_skill_name(skill) for skill in valid_skills]
+        canonical_valid_skills = [_canonical_runtime_skill_name(skill) for skill in valid_skills]
         newly_loaded = current_agent.llm.add_runtime_skills(canonical_valid_skills)
         already_loaded = [skill for skill in canonical_valid_skills if skill not in newly_loaded]
 
         prior = agent_state.context.get("runtime_skills_loaded", [])
         if not isinstance(prior, list):
             prior = []
-        canonical_prior = [canonical_runtime_skill_name(skill) for skill in prior]
+        canonical_prior = [_canonical_runtime_skill_name(skill) for skill in prior]
         merged_runtime = sorted(set(canonical_prior).union(canonical_valid_skills))
         agent_state.update_context("runtime_skills_loaded", merged_runtime)
 

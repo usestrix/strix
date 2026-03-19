@@ -2,7 +2,6 @@ import threading
 from datetime import UTC, datetime
 from typing import Any, Literal
 
-from strix.runtime_agent_registry import unregister_agent_instance
 from strix.tools.registry import register_tool
 
 
@@ -89,7 +88,6 @@ def _run_agent_in_thread(
         _agent_graph["nodes"][state.agent_id]["result"] = {"error": str(e)}
         _running_agents.pop(state.agent_id, None)
         _agent_instances.pop(state.agent_id, None)
-        unregister_agent_instance(state.agent_id)
         raise
     else:
         if state.stop_requested:
@@ -100,7 +98,6 @@ def _run_agent_in_thread(
         _agent_graph["nodes"][state.agent_id]["result"] = result
         _running_agents.pop(state.agent_id, None)
         _agent_instances.pop(state.agent_id, None)
-        unregister_agent_instance(state.agent_id)
 
         return {"result": result}
 

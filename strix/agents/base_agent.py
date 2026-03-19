@@ -16,8 +16,6 @@ from jinja2 import (
 from strix.llm import LLM, LLMConfig, LLMRequestFailedError
 from strix.llm.utils import clean_content
 from strix.runtime import SandboxInitializationError
-from strix.runtime_agent_registry import register_agent_instance
-from strix.skills.runtime_tooling import build_tooling_preflight_message, get_tooling_preflight
 from strix.tools import process_tool_invocations
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -116,7 +114,6 @@ class BaseAgent(metaclass=AgentMeta):
                 )
                 tracer.update_tool_execution(execution_id=exec_id, status="completed", result={})
 
-        register_agent_instance(self.state.agent_id, self)
         self._add_to_agents_graph()
 
     def _add_to_agents_graph(self) -> None:
@@ -420,9 +417,6 @@ class BaseAgent(metaclass=AgentMeta):
         for action in actions:
             self.state.add_action(action)
 
-        if self._inject_runtime_tooling_context(actions, tracer):
-            return False
-
         conversation_history = self.state.get_conversation_history()
 
         tool_task = asyncio.create_task(
@@ -449,43 +443,6 @@ class BaseAgent(metaclass=AgentMeta):
             return True
 
         return False
-
-    def _inject_runtime_tooling_context(
-        self,
-        actions: list[Any],
-        tracer: Optional["Tracer"],
-    ) -> bool:
-        loaded_skills = self.state.context.get("runtime_skills_loaded", [])
-        loaded_skills_set = set(loaded_skills) if isinstance(loaded_skills, list) else set()
-
-        typed_actions = [a for a in actions if isinstance(a, dict)]
-        preflight = get_tooling_preflight(typed_actions, loaded_skills_set)
-        if not preflight.skills_to_load:
-            return False
-
-        newly_loaded_skills = self.llm.add_runtime_skills(preflight.skills_to_load)
-        if newly_loaded_skills:
-            loaded_skills_set.update(newly_loaded_skills)
-            sorted_skills = sorted(loaded_skills_set)
-            self.state.update_context("runtime_skills_loaded", sorted_skills)
-
-        if not newly_loaded_skills:
-            return False
-
-        message = build_tooling_preflight_message(
-            tools_with_new_skills=preflight.tools_with_new_skills,
-            help_requested_tools=preflight.help_requested_tools,
-        )
-        self.state.add_message("user", message)
-
-        if tracer:
-            tracer.log_chat_message(
-                content=clean_content(message),
-                role="user",
-                agent_id=self.state.agent_id,
-            )
-
-        return True
 
     def _check_agent_messages(self, state: AgentState) -> None:  # noqa: PLR0912
         try:
