@@ -18,7 +18,7 @@ from rich.align import Align
 from rich.console import Group
 from rich.panel import Panel
 from rich.style import Style
-from rich.text import Text
+from rich.text import Span, Text
 from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
@@ -1035,13 +1035,37 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if i > 0:
                 combined.append("\n")
             StrixTUIApp._append_renderable(combined, item)
-        return combined
+        return StrixTUIApp._sanitize_text(combined)
+
+    @staticmethod
+    def _sanitize_text(text: Text) -> Text:
+        """Clamp spans so Rich/Textual can't crash on malformed offsets."""
+        plain = text.plain
+        text_length = len(plain)
+        sanitized_spans: list[Span] = []
+
+        for span in text.spans:
+            start = max(0, min(span.start, text_length))
+            end = max(0, min(span.end, text_length))
+            if end > start:
+                sanitized_spans.append(Span(start, end, span.style))
+
+        return Text(
+            plain,
+            style=text.style,
+            justify=text.justify,
+            overflow=text.overflow,
+            no_wrap=text.no_wrap,
+            end=text.end,
+            tab_size=text.tab_size,
+            spans=sanitized_spans,
+        )
 
     @staticmethod
     def _append_renderable(combined: Text, item: Any) -> None:
         """Recursively append a renderable's text content to a combined Text."""
         if isinstance(item, Text):
-            combined.append_text(item)
+            combined.append_text(StrixTUIApp._sanitize_text(item))
         elif isinstance(item, Group):
             for j, sub in enumerate(item.renderables):
                 if j > 0:
@@ -1086,7 +1110,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return Text()
 
         if len(renderables) == 1 and isinstance(renderables[0], Text):
-            return renderables[0]
+            return self._sanitize_text(renderables[0])
 
         return self._merge_renderables(renderables)
 
@@ -1122,7 +1146,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if not renderables:
             result = Text()
         elif len(renderables) == 1 and isinstance(renderables[0], Text):
-            result = renderables[0]
+            result = self._sanitize_text(renderables[0])
         else:
             result = self._merge_renderables(renderables)
 
