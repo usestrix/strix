@@ -157,7 +157,7 @@ RUN echo "# Sandbox Environment" > README.md && mkdir -p strix && touch strix/__
 
 USER pentester
 RUN uv sync --frozen --no-dev --extra sandbox
-RUN .venv/bin/python -m playwright install chromium
+RUN /app/.venv/bin/python -m playwright install chromium
 
 RUN uv pip install -r /home/pentester/tools/jwt_tool/requirements.txt && \
     ln -s /home/pentester/tools/jwt_tool/jwt_tool.py /home/pentester/.local/bin/jwt_tool

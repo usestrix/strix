@@ -40,7 +40,7 @@ if ! command -v uv &> /dev/null; then
 fi
 
 echo -e "\n${BLUE}Installing dependencies...${NC}"
-uv sync
+uv sync --frozen
 
 VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 echo -e "${YELLOW}Version:${NC} $VERSION"
