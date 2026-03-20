@@ -1,11 +1,5 @@
-from __future__ import annotations
-
 from functools import cache
-from typing import TYPE_CHECKING, Any, ClassVar
-
-
-if TYPE_CHECKING:
-    from collections.abc import Callable
+from typing import Any, ClassVar
 
 from pygments.lexers import get_lexer_by_name
 from pygments.styles import get_style_by_name
@@ -27,19 +21,23 @@ class BrowserRenderer(BaseToolRenderer):
     tool_name: ClassVar[str] = "browser_action"
     css_classes: ClassVar[list[str]] = ["tool-call", "browser-tool"]
 
-    # -- palette (used only for highlights) ----------------------------
-    NAV: ClassVar[str] = "#06b6d4"  # cyan  — links / URLs
-    INTERACT: ClassVar[str] = "#3b82f6"  # blue  — targets / values
-    OBSERVE: ClassVar[str] = "#a78bfa"  # purple — data fields
-    EXEC: ClassVar[str] = "#f59e0b"  # amber — task text
-    LIFE: ClassVar[str] = "#10b981"  # teal  — lifecycle values
-    OK: ClassVar[str] = "#22c55e"  # green — success
-    ERR: ClassVar[str] = "#ef4444"  # red   — error
-    DIM: ClassVar[str] = "dim"  # gray  — prose / labels
-
-    # -----------------------------------------------------------------
-    # helpers
-    # -----------------------------------------------------------------
+    SIMPLE_ACTIONS: ClassVar[dict[str, str]] = {
+        "launch": "launching browser",
+        "go_back": "going back in browser history",
+        "close_browser": "closing browser",
+        "close_tab": "closing browser tab",
+        "screenshot": "taking screenshot of browser tab",
+        "dropdown_options": "getting dropdown options",
+        "extract": "extracting content from page",
+        "wait": "waiting...",
+    }
+    PARAM_ACTIONS: ClassVar[dict[str, str]] = {
+        "click": "clicking",
+        "find_text": "finding text ",
+        "send_keys": "pressing key ",
+        "search_page": "searching page for ",
+        "find_elements": "finding elements matching ",
+    }
 
     @classmethod
     def _get_token_color(cls, token_type: Any) -> str | None:
@@ -62,325 +60,158 @@ class BrowserRenderer(BaseToolRenderer):
         return text
 
     @classmethod
-    def _status_mark(cls, status: str) -> Text:
-        text = Text()
-        if status == "completed":
-            text.append(" ✓", style=f"dim {cls.OK}")
-        elif status in ("failed", "error"):
-            text.append(" ✗", style=f"dim {cls.ERR}")
-        return text
-
-    @classmethod
-    def _append_fields(cls, text: Text, res: dict[str, Any]) -> None:
-        """Append a dim summary of returned history fields."""
-        fields = res.get("fields")
-        if not fields or not isinstance(fields, dict):
-            return
-        names = sorted(fields)
-        text.append("\n  ")
-        text.append("fields ", style=cls.OBSERVE)
-        text.append(" ".join(names), style=cls.DIM)
-
-    # -----------------------------------------------------------------
-    # public
-    # -----------------------------------------------------------------
-
-    @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
-        result = tool_data.get("result")
 
         action = args.get("action", "")
-        content = cls._build_content(action, args, status, result)
+        content = cls._build_content(action, args)
 
         css_classes = cls.get_css_classes(status)
         return Static(content, classes=css_classes)
 
-    # -----------------------------------------------------------------
-    # content builder
-    # -----------------------------------------------------------------
-
     @classmethod
-    def _build_content(
+    def _build_url_action(
         cls,
-        action: str,
-        args: dict[str, Any],
-        status: str,
-        result: Any,
-    ) -> Text:
-        # Dispatch to action-specific builders
-        builders: dict[str, Callable[[], Text]] = {
-            "run": lambda: cls._build_run(args, status, result),
-            "launch": lambda: cls._build_launch(status, result),
-            "navigate": lambda: cls._build_navigate(args, status),
-            "click": lambda: cls._build_click(args, status),
-            "input": lambda: cls._build_input(args, status),
-            "scroll": lambda: cls._build_scroll(args, status),
-            "find_text": lambda: cls._build_find_text(args, status),
-            "send_keys": lambda: cls._build_send_keys(args, status),
-            "search_page": lambda: cls._build_search_page(args, status),
-            "find_elements": lambda: cls._build_find_elements(args, status),
-            "dropdown_options": lambda: cls._build_dropdown_options(args, status),
-            "select_dropdown": lambda: cls._build_select_dropdown(args, status),
-            "evaluate": lambda: cls._build_evaluate(args, status),
-            "wait": lambda: cls._build_wait(args, status),
-            "switch": lambda: cls._build_switch(args, status),
-        }
-
-        simple_actions = {
-            "go_back": "going back",
-            "close_browser": "closing browser",
-            "close_tab": "closing tab",
-            "screenshot": "taking screenshot",
-            "extract": "extracting content",
-        }
-
-        if action in builders:
-            return builders[action]()
-        if action in simple_actions:
-            return cls._build_simple(simple_actions[action], status)
-        return cls._build_fallback(action, status)
+        text: Text,
+        label: str,
+        url: str | None,
+        suffix: str = "",
+    ) -> None:
+        text.append(label, style="#06b6d4")
+        if url:
+            text.append(url, style="#06b6d4")
+            if suffix:
+                text.append(suffix, style="#06b6d4")
 
     @classmethod
-    def _build_simple(cls, label: str, status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append(label, style=cls.DIM)
-        text.append_text(cls._status_mark(status))
+    def _base_text(cls) -> Text:
+        text = Text()
+        text.append("🌐 ")
         return text
 
     @classmethod
-    def _build_launch(cls, status: str, result: Any) -> Text:
-        text = Text("◈ ", style=cls.LIFE)
-        text.append("launching browser", style=f"bold {cls.LIFE}")
-        text.append_text(cls._status_mark(status))
-        res = result if isinstance(result, dict) else {}
-        warning = res.get("warning")
-        if warning:
-            text.append(f"\n  ⚠ {warning}", style=f"italic {cls.DIM}")
+    def _build_simple_action(cls, action: str, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        text.append(cls.SIMPLE_ACTIONS[action], style="#06b6d4")
+        if action == "wait" and args.get("seconds") is not None:
+            text.append(f" {args['seconds']}s", style="#06b6d4")
         return text
 
     @classmethod
-    def _build_navigate(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("navigating to ", style=cls.DIM)
-        url = args.get("url", "")
-        if len(url) > 80:
-            url = url[:77] + "..."
-        text.append(url, style=f"{cls.NAV} underline")
-        if args.get("new_tab"):
-            text.append(" in new tab", style=cls.DIM)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_click(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("clicking", style=cls.DIM)
-        index = args.get("index")
-        if index is not None:
-            text.append(f" #{index}", style=f"bold {cls.INTERACT}")
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_input(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("inputting", style=cls.DIM)
-        index = args.get("index")
-        if index is not None:
-            text.append(f" #{index}", style=f"bold {cls.INTERACT}")
-        value = args.get("text")
-        if value:
-            preview = value if len(value) <= 60 else value[:57] + "..."
-            text.append(f' "{preview}"', style=cls.INTERACT)
-        if args.get("clear"):
-            text.append(" (clear)", style=cls.DIM)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_scroll(cls, args: dict[str, Any], status: str) -> Text:
-        direction = "down" if args.get("down", True) else "up"
-        text = Text("@ ", style=cls.DIM)
-        text.append("scrolling ", style=cls.DIM)
-        text.append(direction, style=cls.INTERACT)
-        pages = args.get("pages")
-        if pages is not None:
-            text.append(f" {pages} page(s)", style=cls.DIM)
-        index = args.get("index")
-        if index is not None:
-            text.append(" on ", style=cls.DIM)
-            text.append(f"#{index}", style=f"bold {cls.INTERACT}")
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_find_text(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("finding text ", style=cls.DIM)
-        value = args.get("text", "")
-        if value:
-            preview = value if len(value) <= 80 else value[:77] + "..."
-            text.append(f'"{preview}"', style=cls.OBSERVE)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_send_keys(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("pressing ", style=cls.DIM)
-        text.append(args.get("keys", ""), style=f"bold {cls.INTERACT}")
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_search_page(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("searching page for ", style=cls.DIM)
-        pattern = args.get("pattern", "")
-        if pattern:
-            preview = pattern if len(pattern) <= 80 else pattern[:77] + "..."
-            text.append(f'"{preview}"', style=cls.OBSERVE)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_find_elements(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("finding elements ", style=cls.DIM)
-        selector = args.get("selector", "")
-        if selector:
-            text.append(selector, style=cls.OBSERVE)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_dropdown_options(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("reading dropdown options", style=cls.DIM)
-        index = args.get("index")
-        if index is not None:
-            text.append(f" #{index}", style=f"bold {cls.INTERACT}")
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_select_dropdown(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("selecting dropdown value", style=cls.DIM)
-        index = args.get("index")
-        if index is not None:
-            text.append(f" #{index}", style=f"bold {cls.INTERACT}")
-        value = args.get("text", "")
-        if value:
-            text.append(f' "{value}"', style=f"bold {cls.INTERACT}")
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_evaluate(cls, args: dict[str, Any], status: str) -> Text:
-        js = args.get("code")
-        text = Text("@ ", style=cls.DIM)
-        text.append("executing javascript", style=cls.DIM)
-        text.append_text(cls._status_mark(status))
-        if js:
-            text.append("\n")
-            text.append_text(cls._highlight_js(js))
-        return text
-
-    @classmethod
-    def _build_wait(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        seconds = args.get("seconds")
-        if status == "completed":
-            text.append("waited", style=cls.DIM)
-        else:
-            text.append("waiting", style=cls.DIM)
-        if seconds is not None:
-            text.append(f" {seconds}s", style=cls.INTERACT)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_switch(cls, args: dict[str, Any], status: str) -> Text:
-        text = Text("@ ", style=cls.DIM)
-        text.append("switching to tab ", style=cls.DIM)
-        text.append(str(args.get("tab_id", "?")), style=f"bold {cls.NAV}")
-        text.append_text(cls._status_mark(status))
-        return text
-
-    @classmethod
-    def _build_fallback(cls, action: str, status: str) -> Text:
-        if not action:
-            return Text()
-        text = Text("@ ", style=cls.DIM)
-        text.append(action, style=cls.DIM)
-        text.append_text(cls._status_mark(status))
-        return text
-
-    # -----------------------------------------------------------------
-    # run task
-    # -----------------------------------------------------------------
-
-    @classmethod
-    def _build_run(
-        cls,
-        args: dict[str, Any],
-        status: str,
-        result: Any,
-    ) -> Text:
-        task = args.get("task", "")
-
-        if status == "running":
-            text = Text("@ ", style=cls.DIM)
-            text.append("running task", style=f"bold {cls.EXEC}")
-            if task:
-                text.append("\n  ")
-                text.append(task, style=cls.EXEC)
-            rf = args.get("return_fields")
-            if rf and isinstance(rf, list):
-                text.append("\n  ")
-                text.append("returning ", style=cls.OBSERVE)
-                text.append(" ".join(rf), style=cls.DIM)
-            return text
-
-        # Completed or failed — show result
-        if status in ("completed", "failed", "error"):
-            res = result if isinstance(result, dict) else {}
-            has_error = "error" in res
-
-            if has_error:
-                text = Text("@ ", style=cls.DIM)
-                text.append("task failed", style=f"bold {cls.ERR}")
-                if task:
-                    text.append("\n  ")
-                    text.append(task, style="dim strike")
-                text.append("\n  ")
-                error_msg = str(res["error"])
-                if len(error_msg) > 200:
-                    error_msg = error_msg[:197] + "..."
-                text.append(error_msg, style=cls.ERR)
-            else:
-                text = Text("@ ", style=cls.DIM)
-                text.append("browser task completed", style=f"bold {cls.OK}")
-                if task:
-                    text.append("\n  ")
-                    text.append(task, style=cls.DIM)
-                output = res.get("result", "")
-                if output:
-                    text.append("\n  ")
-                    output_str = str(output)
-                    if len(output_str) > 300:
-                        output_str = output_str[:297] + "..."
-                    text.append(output_str, style=cls.DIM)
-                cls._append_fields(text, res)
-            return text
-
-        # Unknown status
-        text = Text("@ ", style=cls.DIM)
-        text.append("running browser task", style=cls.DIM)
+    def _build_run(cls, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        text.append("running browser task", style="#06b6d4")
+        task = args.get("task")
         if task:
-            text.append("\n  ")
-            text.append(task, style=cls.DIM)
+            text.append("\n")
+            text.append(str(task), style="#06b6d4")
         return text
+
+    @classmethod
+    def _build_navigate(cls, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        suffix = " in new tab" if args.get("new_tab") else ""
+        cls._build_url_action(text, "navigating to ", args.get("url"), suffix)
+        return text
+
+    @classmethod
+    def _build_param_action(cls, action: str, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        text.append(cls.PARAM_ACTIONS[action], style="#06b6d4")
+
+        value_key = {
+            "click": "index",
+            "find_text": "text",
+            "send_keys": "keys",
+            "search_page": "pattern",
+            "find_elements": "selector",
+        }[action]
+        value = args.get(value_key)
+        if value is not None:
+            if action == "click":
+                text.append(f" element #{value}", style="#06b6d4")
+            else:
+                text.append(str(value), style="#06b6d4")
+        return text
+
+    @classmethod
+    def _build_input(cls, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        text.append("typing ", style="#06b6d4")
+        if args.get("text"):
+            text.append(str(args["text"]), style="#06b6d4")
+        index = args.get("index")
+        if index is not None:
+            text.append(f" into element #{index}", style="#06b6d4")
+        if args.get("clear"):
+            text.append(" with clear enabled", style="#06b6d4")
+        return text
+
+    @classmethod
+    def _build_scroll(cls, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        direction = "down" if args.get("down", True) else "up"
+        text.append(f"scrolling {direction}", style="#06b6d4")
+        if args.get("pages") is not None:
+            text.append(f" {args['pages']} page(s)", style="#06b6d4")
+        if args.get("index") is not None:
+            text.append(f" on element #{args['index']}", style="#06b6d4")
+        return text
+
+    @classmethod
+    def _build_select_dropdown(cls, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        text.append("selecting dropdown option ", style="#06b6d4")
+        if args.get("text"):
+            text.append(str(args["text"]), style="#06b6d4")
+        if args.get("index") is not None:
+            text.append(f" on element #{args['index']}", style="#06b6d4")
+        return text
+
+    @classmethod
+    def _build_evaluate(cls, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        text.append("executing javascript", style="#06b6d4")
+        js_code = args.get("code")
+        if js_code:
+            text.append("\n")
+            text.append_text(cls._highlight_js(str(js_code)))
+        return text
+
+    @classmethod
+    def _build_switch(cls, args: dict[str, Any]) -> Text:
+        text = cls._base_text()
+        text.append("switching browser tab", style="#06b6d4")
+        if args.get("tab_id"):
+            text.append(" to ", style="#06b6d4")
+            text.append(str(args["tab_id"]), style="#06b6d4")
+        return text
+
+    @classmethod
+    def _build_fallback(cls, action: str) -> Text:
+        text = cls._base_text()
+        if action:
+            text.append(action, style="#06b6d4")
+        return text
+
+    @classmethod
+    def _build_content(cls, action: str, args: dict[str, Any]) -> Text:
+        builders = {
+            "run": cls._build_run,
+            "navigate": cls._build_navigate,
+            "input": cls._build_input,
+            "scroll": cls._build_scroll,
+            "select_dropdown": cls._build_select_dropdown,
+            "evaluate": cls._build_evaluate,
+            "switch": cls._build_switch,
+        }
+
+        if action in cls.SIMPLE_ACTIONS:
+            return cls._build_simple_action(action, args)
+        if action in cls.PARAM_ACTIONS:
+            return cls._build_param_action(action, args)
+        if action in builders:
+            return builders[action](args)
+
+        return cls._build_fallback(action)

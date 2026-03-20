@@ -107,6 +107,9 @@ async def _run_browser_agent(
     return_fields: list[str] | None,
     metadata: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if not session.browser.is_cdp_connected:
+        await session.start()
+
     llm, vision = _build_llm(metadata=metadata)
 
     # [monkeypatch] prevent browseruse from killing the cdp connection after execution

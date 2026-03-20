@@ -46,31 +46,17 @@ from strix.telemetry import posthog  # noqa: E402
 from strix.telemetry.tracer import get_global_tracer  # noqa: E402
 
 
-_log_dir = Path("strix_runs")
-_log_dir.mkdir(exist_ok=True)
-_file_handler = logging.FileHandler(_log_dir / "strix.log")
-_file_handler.setLevel(logging.INFO)
-_file_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
+def configure_logging() -> None:
+    log_dir = Path("strix_runs")
+    log_dir.mkdir(exist_ok=True)
 
-_root = logging.getLogger()
-_root.setLevel(logging.INFO)
-_root.handlers = [_file_handler]
+    file_handler = logging.FileHandler(log_dir / "strix.log")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(name)s %(levelname)s %(message)s"))
 
-# prevent any library from adding StreamHandlers (console) to the root logger
-_orig_add_handler = logging.Logger.addHandler
-
-
-def _guarded_add_handler(self: logging.Logger, handler: logging.Handler) -> None:
-    if (
-        self is _root
-        and isinstance(handler, logging.StreamHandler)
-        and not isinstance(handler, logging.FileHandler)
-    ):
-        return
-    _orig_add_handler(self, handler)
-
-
-logging.Logger.addHandler = _guarded_add_handler  # type: ignore[assignment]
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.handlers = [file_handler]
 
 
 def validate_environment() -> None:  # noqa: PLR0912, PLR0915
@@ -564,6 +550,8 @@ def persist_config() -> None:
 def main() -> None:  # noqa: PLR0912, PLR0915
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
+    configure_logging()
 
     args = parse_arguments()
 
