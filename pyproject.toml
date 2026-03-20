@@ -33,7 +33,7 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "litellm[proxy]>=1.81.1,<1.82.0",
+  "litellm>=1.81.1",
   "tenacity>=9.0.0",
   "pydantic[email]>=2.11.3",
   "rich",
@@ -46,6 +46,7 @@ dependencies = [
   "opentelemetry-exporter-otlp-proto-http>=1.40.0",
   "scrubadub>=2.0.1",
   "defusedxml>=0.7.1",
+  "browser-use>=0.12.2",
 ]
 
 [project.scripts]

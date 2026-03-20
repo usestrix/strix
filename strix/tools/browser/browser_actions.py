@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import contextlib
 import logging
 import re
 from functools import partial
@@ -101,6 +102,28 @@ async def _execute_task(session: BrowserSession, operation: Any, desc: str) -> d
         }
 
 
+async def _on_step_start(agent: Any) -> None:
+    step = agent.state.n_steps + 1
+    url = "unknown"
+    with contextlib.suppress(Exception):
+        url = await agent.browser_session.get_current_page_url()
+    logger.info("Browser step %d starting — url=%s", step, url)
+
+
+async def _on_step_end(agent: Any) -> None:
+    step = agent.state.n_steps
+    output = agent.state.last_model_output
+    next_goal = getattr(output, "next_goal", "") or "" if output else ""
+    actions = getattr(output, "action", []) or [] if output else []
+    action_names = [next(iter(a.model_dump(exclude_unset=True)), "?") for a in actions]
+    logger.info(
+        "Browser step %d completed — actions=%s goal=%s",
+        step,
+        action_names,
+        next_goal[:120],
+    )
+
+
 async def _run_browser_agent(
     session: BrowserSession,
     task: str,
@@ -123,7 +146,10 @@ async def _run_browser_agent(
         use_vision=vision,
     )
 
-    result = await agent.run()
+    result = await agent.run(
+        on_step_start=_on_step_start,
+        on_step_end=_on_step_end,
+    )
 
     if hasattr(result, "is_successful") and not result.is_successful():
         final_result = (

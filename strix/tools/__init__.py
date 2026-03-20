@@ -1,3 +1,7 @@
+import os
+
+from strix.config import Config
+
 from .agents_graph import *  # noqa: F403
 from .browser import *  # noqa: F403
 from .executor import (
