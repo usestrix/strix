@@ -10,7 +10,7 @@ from typing import Any
 import httpx
 import uvicorn
 import websockets
-from fastapi import Depends, FastAPI, HTTPException, WebSocket, status
+from fastapi import Depends, FastAPI, HTTPException, WebSocket, WebSocketDisconnect, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, ValidationError
 
@@ -174,6 +174,7 @@ async def health_check() -> dict[str, Any]:
 # WebSocket proxy to that exact path. No catch-all proxy — avoids SSRF.
 
 _cdp_ws_internal: str | None = None
+_CDP_WS_MAX_SIZE = 16 * 1024 * 1024
 
 
 async def _resolve_cdp_ws() -> None:
@@ -214,28 +215,34 @@ async def cdp_proxy_ws(ws: WebSocket) -> None:
 
     await ws.accept()
 
-    async with websockets.connect(_cdp_ws_internal) as upstream:
+    async with websockets.connect(_cdp_ws_internal, max_size=_CDP_WS_MAX_SIZE) as upstream:
 
         async def relay_client_to_upstream() -> None:
-            async for msg in ws.iter_text():
-                await upstream.send(msg)
+            try:
+                async for msg in ws.iter_text():
+                    await upstream.send(msg)
+            except (WebSocketDisconnect, websockets.ConnectionClosed):
+                return
 
         async def relay_upstream_to_client() -> None:
-            async for msg in upstream:
-                if isinstance(msg, str):
-                    await ws.send_text(msg)
-                else:
-                    await ws.send_bytes(msg)
+            try:
+                async for msg in upstream:
+                    if isinstance(msg, str):
+                        await ws.send_text(msg)
+                    else:
+                        await ws.send_bytes(msg)
+            except (WebSocketDisconnect, websockets.ConnectionClosed):
+                return
 
-        _, pending = await asyncio.wait(
-            [
-                asyncio.create_task(relay_client_to_upstream()),
-                asyncio.create_task(relay_upstream_to_client()),
-            ],
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        tasks = [
+            asyncio.create_task(relay_client_to_upstream()),
+            asyncio.create_task(relay_upstream_to_client()),
+        ]
+        done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
         for t in pending:
             t.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        await asyncio.gather(*done, return_exceptions=True)
 
 
 def signal_handler(_signum: int, _frame: Any) -> None:
