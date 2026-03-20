@@ -195,7 +195,6 @@ def register_tool(
     requires_web_search_mode: bool = False,
 ) -> Callable[..., Any]:
     def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
-        sandbox_mode = _is_sandbox_mode()
         if not _should_register_tool(
             sandbox_execution=sandbox_execution,
             requires_browser_mode=requires_browser_mode,
@@ -203,6 +202,7 @@ def register_tool(
         ):
             return f
 
+        sandbox_mode = _is_sandbox_mode()
         func_dict = {
             "name": f.__name__,
             "function": f,

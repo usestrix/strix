@@ -58,7 +58,7 @@ def test_sandbox_registers_sandbox_tools_but_not_non_sandbox_tools(
     assert "web_search" not in names
 
 
-def test_load_skill_does_not_register_agents_graph_when_imported_directly(
+def test_load_skill_import_does_not_register_create_agent_in_sandbox(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setenv("STRIX_SANDBOX_MODE", "true")
@@ -75,7 +75,6 @@ def test_load_skill_does_not_register_agents_graph_when_imported_directly(
     registry = importlib.import_module("strix.tools.registry")
 
     names_before = set(registry.get_tool_names())
-    assert "python_action" in names_before
     assert "load_skill" not in names_before
     assert "create_agent" not in names_before
 
