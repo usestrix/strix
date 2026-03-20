@@ -156,7 +156,7 @@ COPY pyproject.toml uv.lock ./
 RUN echo "# Sandbox Environment" > README.md && mkdir -p strix && touch strix/__init__.py
 
 USER pentester
-RUN uv sync --no-dev --extra sandbox
+RUN uv sync --frozen --no-dev --extra sandbox
 RUN .venv/bin/python -m playwright install chromium
 
 RUN uv pip install -r /home/pentester/tools/jwt_tool/requirements.txt && \

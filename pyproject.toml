@@ -38,7 +38,7 @@ dependencies = [
   "pydantic[email]>=2.11.3",
   "rich",
   "docker>=7.1.0",
-  "textual>=4.0.0",
+  "textual>=6.0.0",
   "xmltodict>=0.13.0",
   "requests>=2.32.0",
   "cvss>=3.2",
