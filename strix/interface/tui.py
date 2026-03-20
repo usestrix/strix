@@ -252,10 +252,9 @@ class StopAgentScreen(ModalScreen):  # type: ignore[misc]
             event.prevent_default()
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
+        self.app.pop_screen()
         if event.button.id == "stop_agent":
             self.app.action_confirm_stop_agent(self.agent_id)
-        else:
-            self.app.pop_screen()
 
 
 class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
@@ -1912,8 +1911,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
         return agent_name, False
 
     def action_confirm_stop_agent(self, agent_id: str) -> None:
-        self.pop_screen()
-
         try:
             from strix.tools.agents_graph.agents_graph_actions import stop_agent
 
