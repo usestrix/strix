@@ -33,23 +33,23 @@ echo -e "${YELLOW}Platform:${NC} $OS_NAME-$ARCH_NAME"
 
 cd "$PROJECT_ROOT"
 
-if ! command -v poetry &> /dev/null; then
-    echo -e "${RED}Error: Poetry is not installed${NC}"
-    echo "Please install Poetry first: https://python-poetry.org/docs/#installation"
+if ! command -v uv &> /dev/null; then
+    echo -e "${RED}Error: uv is not installed${NC}"
+    echo "Please install uv first: https://docs.astral.sh/uv/getting-started/installation/"
     exit 1
 fi
 
 echo -e "\n${BLUE}Installing dependencies...${NC}"
-poetry install --with dev
+uv sync
 
-VERSION=$(poetry version -s)
+VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
 echo -e "${YELLOW}Version:${NC} $VERSION"
 
 echo -e "\n${BLUE}Cleaning previous builds...${NC}"
 rm -rf build/ dist/
 
 echo -e "\n${BLUE}Building binary with PyInstaller...${NC}"
-poetry run pyinstaller strix.spec --noconfirm
+uv run pyinstaller strix.spec --noconfirm
 
 RELEASE_DIR="dist/release"
 mkdir -p "$RELEASE_DIR"

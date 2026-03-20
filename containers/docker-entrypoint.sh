@@ -155,12 +155,11 @@ echo "Starting tool server..."
 cd /app
 export PYTHONPATH=/app
 export STRIX_SANDBOX_MODE=true
-export POETRY_VIRTUALENVS_CREATE=false
 export TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
 TOOL_SERVER_LOG="/tmp/tool_server.log"
 
 sudo -E -u pentester \
-  poetry run python -m strix.runtime.tool_server \
+  /app/.venv/bin/python -m strix.runtime.tool_server \
   --token="$TOOL_SERVER_TOKEN" \
   --host=0.0.0.0 \
   --port="$TOOL_SERVER_PORT" \

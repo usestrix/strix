@@ -9,7 +9,7 @@ description: "Contribute to Strix development"
 
 - Python 3.12+
 - Docker (running)
-- Poetry
+- [uv](https://docs.astral.sh/uv/)
 - Git
 
 ### Local Development
@@ -26,8 +26,8 @@ description: "Contribute to Strix development"
     make setup-dev
 
     # or manually:
-    poetry install --with=dev
-    poetry run pre-commit install
+    uv sync
+    uv run pre-commit install
     ```
   </Step>
   <Step title="Configure LLM">
@@ -38,7 +38,7 @@ description: "Contribute to Strix development"
   </Step>
   <Step title="Run Strix">
     ```bash
-    poetry run strix --target https://example.com
+    uv run strix --target https://example.com
     ```
   </Step>
 </Steps>

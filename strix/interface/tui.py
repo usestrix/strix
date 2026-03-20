@@ -1072,7 +1072,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                     combined.append("\n")
                 StrixTUIApp._append_renderable(combined, sub)
         else:
-            inner = getattr(item, "renderable", None)
+            inner = getattr(item, "content", None) or getattr(item, "renderable", None)
             if inner is not None:
                 StrixTUIApp._append_renderable(combined, inner)
             else:
@@ -1166,7 +1166,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         renderer = get_tool_renderer(tool_name)
         if renderer:
             widget = renderer.render(tool_data)
-            return widget.renderable
+            return widget.content
 
         return self._render_default_streaming_tool(tool_name, args, is_complete)
 
@@ -1704,7 +1704,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         if renderer:
             widget = renderer.render(tool_data)
-            return widget.renderable
+            return widget.content
 
         text = Text()
 

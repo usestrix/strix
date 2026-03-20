@@ -30,15 +30,15 @@ jobs:
         with:
           python-version: '3.12'
 
-      - uses: snok/install-poetry@v1
+      - uses: astral-sh/setup-uv@v5
 
       - name: Build
         shell: bash
         run: |
-          poetry install --with dev
-          poetry run pyinstaller strix.spec --noconfirm
+          uv sync
+          uv run pyinstaller strix.spec --noconfirm
 
-          VERSION=$(poetry version -s)
+          VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           mkdir -p dist/release
 
           if [[ "${{ runner.os }}" == "Windows" ]]; then

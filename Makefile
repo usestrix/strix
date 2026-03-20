@@ -22,38 +22,38 @@ help:
 	@echo "  clean         - Clean up cache files and artifacts"
 
 install:
-	poetry install --only=main
+	uv sync --no-dev
 
 dev-install:
-	poetry install --with=dev
+	uv sync
 
 setup-dev: dev-install
-	poetry run pre-commit install
+	uv run pre-commit install
 	@echo "✅ Development environment setup complete!"
 	@echo "Run 'make check-all' to verify everything works correctly."
 
 format:
 	@echo "🎨 Formatting code with ruff..."
-	poetry run ruff format .
+	uv run ruff format .
 	@echo "✅ Code formatting complete!"
 
 lint:
 	@echo "🔍 Linting code with ruff..."
-	poetry run ruff check . --fix
+	uv run ruff check . --fix
 	@echo "📝 Running additional linting with pylint..."
-	poetry run pylint strix/ --score=no --reports=no
+	uv run pylint strix/ --score=no --reports=no
 	@echo "✅ Linting complete!"
 
 type-check:
 	@echo "🔍 Type checking with mypy..."
-	poetry run mypy strix/
+	uv run mypy strix/
 	@echo "🔍 Type checking with pyright..."
-	poetry run pyright strix/
+	uv run pyright strix/
 	@echo "✅ Type checking complete!"
 
 security:
 	@echo "🔒 Running security checks with bandit..."
-	poetry run bandit -r strix/ -c pyproject.toml
+	uv run bandit -r strix/ -c pyproject.toml
 	@echo "✅ Security checks complete!"
 
 check-all: format lint type-check security
@@ -61,18 +61,18 @@ check-all: format lint type-check security
 
 test:
 	@echo "🧪 Running tests..."
-	poetry run pytest -v
+	uv run pytest -v
 	@echo "✅ Tests complete!"
 
 test-cov:
 	@echo "🧪 Running tests with coverage..."
-	poetry run pytest -v --cov=strix --cov-report=term-missing --cov-report=html
+	uv run pytest -v --cov=strix --cov-report=term-missing --cov-report=html
 	@echo "✅ Tests with coverage complete!"
 	@echo "📊 Coverage report generated in htmlcov/"
 
 pre-commit:
 	@echo "🔧 Running pre-commit hooks..."
-	poetry run pre-commit run --all-files
+	uv run pre-commit run --all-files
 	@echo "✅ Pre-commit hooks complete!"
 
 clean:

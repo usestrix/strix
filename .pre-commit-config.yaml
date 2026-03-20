@@ -31,6 +31,7 @@ repos:
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
+        args: ['--maxkb=1024']
       - id: debug-statements
       - id: check-case-conflict
       - id: check-docstring-first

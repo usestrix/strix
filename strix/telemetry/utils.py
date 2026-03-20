@@ -124,7 +124,6 @@ def iso_from_unix_ns(unix_ns: int | None) -> str | None:
         return None
 
 
-
 def get_events_write_lock(output_path: Path) -> threading.Lock:
     path_key = str(output_path.resolve(strict=False))
     with _EVENTS_FILE_LOCKS_LOCK:
