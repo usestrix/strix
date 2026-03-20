@@ -31,7 +31,7 @@ Structure your response to be comprehensive yet concise, emphasizing the most cr
 security implications and details."""
 
 
-@register_tool(sandbox_execution=False)
+@register_tool(sandbox_execution=False, requires_web_search_mode=True)
 def web_search(query: str) -> dict[str, Any]:
     try:
         api_key = os.getenv("PERPLEXITY_API_KEY")

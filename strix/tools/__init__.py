@@ -1,7 +1,5 @@
-import os
-
-from strix.config import Config
-
+from .agents_graph import *  # noqa: F403
+from .browser import *  # noqa: F403
 from .executor import (
     execute_tool,
     execute_tool_invocation,
@@ -11,6 +9,12 @@ from .executor import (
     remove_screenshot_from_result,
     validate_tool_availability,
 )
+from .file_edit import *  # noqa: F403
+from .finish import *  # noqa: F403
+from .load_skill import *  # noqa: F403
+from .notes import *  # noqa: F403
+from .proxy import *  # noqa: F403
+from .python import *  # noqa: F403
 from .registry import (
     ImplementedInClientSideOnlyError,
     get_tool_by_name,
@@ -20,52 +24,12 @@ from .registry import (
     register_tool,
     tools,
 )
+from .reporting import *  # noqa: F403
+from .terminal import *  # noqa: F403
+from .thinking import *  # noqa: F403
+from .todo import *  # noqa: F403
+from .web_search import *  # noqa: F403
 
-
-SANDBOX_MODE = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
-
-
-def _is_browser_disabled() -> bool:
-    if os.getenv("STRIX_DISABLE_BROWSER", "").lower() == "true":
-        return True
-    val: str = Config.load().get("env", {}).get("STRIX_DISABLE_BROWSER", "")
-    return str(val).lower() == "true"
-
-
-DISABLE_BROWSER = _is_browser_disabled()
-
-
-def _has_perplexity_api() -> bool:
-    if os.getenv("PERPLEXITY_API_KEY"):
-        return True
-    return bool(Config.load().get("env", {}).get("PERPLEXITY_API_KEY"))
-
-
-if not SANDBOX_MODE:
-    from .agents_graph import *  # noqa: F403
-
-    if not DISABLE_BROWSER:
-        from .browser import *  # noqa: F403
-    from .file_edit import *  # noqa: F403
-    from .finish import *  # noqa: F403
-    from .load_skill import *  # noqa: F403
-    from .notes import *  # noqa: F403
-    from .proxy import *  # noqa: F403
-    from .python import *  # noqa: F403
-    from .reporting import *  # noqa: F403
-    from .terminal import *  # noqa: F403
-    from .thinking import *  # noqa: F403
-    from .todo import *  # noqa: F403
-
-    if _has_perplexity_api():
-        from .web_search import *  # noqa: F403
-else:
-    if not DISABLE_BROWSER:
-        from .browser import *  # noqa: F403
-    from .file_edit import *  # noqa: F403
-    from .proxy import *  # noqa: F403
-    from .python import *  # noqa: F403
-    from .terminal import *  # noqa: F403
 
 __all__ = [
     "ImplementedInClientSideOnlyError",

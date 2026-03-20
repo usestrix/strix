@@ -149,10 +149,60 @@ def _get_schema_path(func: Callable[..., Any]) -> Path | None:
     return get_strix_resource_path("tools", folder, schema_file)
 
 
+def _is_sandbox_mode() -> bool:
+    return os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
+
+
+def _is_browser_disabled() -> bool:
+    if os.getenv("STRIX_DISABLE_BROWSER", "").lower() == "true":
+        return True
+
+    from strix.config import Config
+
+    val: str = Config.load().get("env", {}).get("STRIX_DISABLE_BROWSER", "")
+    return str(val).lower() == "true"
+
+
+def _has_perplexity_api() -> bool:
+    if os.getenv("PERPLEXITY_API_KEY"):
+        return True
+
+    from strix.config import Config
+
+    return bool(Config.load().get("env", {}).get("PERPLEXITY_API_KEY"))
+
+
+def _should_register_tool(
+    *,
+    sandbox_execution: bool,
+    requires_browser_mode: bool,
+    requires_web_search_mode: bool,
+) -> bool:
+    sandbox_mode = _is_sandbox_mode()
+
+    if sandbox_mode and not sandbox_execution:
+        return False
+    if requires_browser_mode and _is_browser_disabled():
+        return False
+    return not (requires_web_search_mode and not _has_perplexity_api())
+
+
 def register_tool(
-    func: Callable[..., Any] | None = None, *, sandbox_execution: bool = True
+    func: Callable[..., Any] | None = None,
+    *,
+    sandbox_execution: bool = True,
+    requires_browser_mode: bool = False,
+    requires_web_search_mode: bool = False,
 ) -> Callable[..., Any]:
     def decorator(f: Callable[..., Any]) -> Callable[..., Any]:
+        sandbox_mode = _is_sandbox_mode()
+        if not _should_register_tool(
+            sandbox_execution=sandbox_execution,
+            requires_browser_mode=requires_browser_mode,
+            requires_web_search_mode=requires_web_search_mode,
+        ):
+            return f
+
         func_dict = {
             "name": f.__name__,
             "function": f,
@@ -160,7 +210,6 @@ def register_tool(
             "sandbox_execution": sandbox_execution,
         }
 
-        sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
         if not sandbox_mode:
             try:
                 schema_path = _get_schema_path(f)
