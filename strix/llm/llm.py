@@ -141,12 +141,21 @@ class LLM:
     async def generate(
         self, conversation_history: list[dict[str, Any]]
     ) -> AsyncIterator[LLMResponse]:
+        from strix.telemetry.tracer import get_global_tracer
+
+        tracer = get_global_tracer()
+        if tracer and self.agent_id:
+            tracer.update_agent_system_message(self.agent_id, "Compressing memory...")
+
         messages = self._prepare_messages(conversation_history)
         max_retries = int(Config.get("strix_llm_max_retries") or "5")
 
         for attempt in range(max_retries + 1):
             try:
-                async for response in self._stream(messages):
+                if tracer and self.agent_id:
+                    tracer.update_agent_system_message(self.agent_id, "Waiting for LLM provider...")
+
+                async for response in self._stream(messages, tracer):
                     yield response
                 return  # noqa: TRY300
             except Exception as e:  # noqa: BLE001
@@ -155,15 +164,23 @@ class LLM:
                 wait = min(10, 2 * (2**attempt))
                 await asyncio.sleep(wait)
 
-    async def _stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[LLMResponse]:
+    async def _stream(
+        self, messages: list[dict[str, Any]], tracer: Any = None
+    ) -> AsyncIterator[LLMResponse]:
         accumulated = ""
         chunks: list[Any] = []
         done_streaming = 0
+        first_chunk_received = False
 
         self._total_stats.requests += 1
         response = await acompletion(**self._build_completion_args(messages), stream=True)
 
         async for chunk in response:
+            if not first_chunk_received:
+                first_chunk_received = True
+                if tracer and self.agent_id:
+                    tracer.update_agent_system_message(self.agent_id, "Generating response...")
+
             chunks.append(chunk)
             if done_streaming:
                 done_streaming += 1

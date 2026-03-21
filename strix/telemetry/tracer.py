@@ -36,6 +36,7 @@ _OTEL_BOOTSTRAP_LOCK = threading.Lock()
 _OTEL_BOOTSTRAPPED = False
 _OTEL_REMOTE_ENABLED = False
 
+
 def get_global_tracer() -> Optional["Tracer"]:
     return _global_tracer
 
@@ -437,6 +438,7 @@ class Tracer:
             "name": name,
             "task": task,
             "status": "running",
+            "system_message": "",
             "parent_id": parent_id,
             "created_at": datetime.now(UTC).isoformat(),
             "updated_at": datetime.now(UTC).isoformat(),
@@ -584,6 +586,11 @@ class Tracer:
             error=error_message,
             source="strix.agents",
         )
+
+    def update_agent_system_message(self, agent_id: str, message: str) -> None:
+        if agent_id in self.agents:
+            self.agents[agent_id]["system_message"] = message
+            self.agents[agent_id]["updated_at"] = datetime.now(UTC).isoformat()
 
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config

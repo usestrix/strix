@@ -333,6 +333,13 @@ class BaseAgent(metaclass=AgentMeta):
         sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
         if not sandbox_mode and self.state.sandbox_id is None:
             from strix.runtime import get_runtime
+            from strix.telemetry.tracer import get_global_tracer
+
+            tracer = get_global_tracer()
+            if tracer:
+                tracer.update_agent_system_message(
+                    self.state.agent_id, "Setting up sandbox environment..."
+                )
 
             try:
                 runtime = get_runtime()
@@ -366,6 +373,9 @@ class BaseAgent(metaclass=AgentMeta):
 
     async def _process_iteration(self, tracer: Optional["Tracer"]) -> bool | None:
         final_response = None
+
+        if tracer:
+            tracer.update_agent_system_message(self.state.agent_id, "Thinking...")
 
         async for response in self.llm.generate(self.state.get_conversation_history()):
             final_response = response
@@ -408,7 +418,18 @@ class BaseAgent(metaclass=AgentMeta):
         )
 
         if actions:
+            if tracer:
+                tool_names = [a.get("toolName") or a.get("tool_name") or "tool" for a in actions]
+                display_names = tool_names[:2]
+                overflow = len(tool_names) - 2
+                suffix = f" +{overflow} more" if overflow > 0 else ""
+                tracer.update_agent_system_message(
+                    self.state.agent_id, f"Executing {', '.join(display_names)}{suffix}..."
+                )
             return await self._execute_actions(actions, tracer)
+
+        if tracer:
+            tracer.update_agent_system_message(self.state.agent_id, "Processing response...")
 
         return None
 
