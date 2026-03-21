@@ -1709,7 +1709,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             interrupted_text.append("\n")
             interrupted_text.append("⚠ ", style="yellow")
             interrupted_text.append("Interrupted by user", style="yellow dim")
-            return self._merge_renderables([streaming_result, interrupted_text])
+            return self._merge_renderables([*renderables, streaming_result, interrupted_text])
 
         if content:
             msg_renderable = AgentMessageRenderer.render_simple(content)
