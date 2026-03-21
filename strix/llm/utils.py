@@ -150,6 +150,7 @@ def clean_content(content: str) -> str:
 
     hidden_xml_patterns = [
         r"<inter_agent_message>.*?</inter_agent_message>",
+        r"<agent_message\b[^>]*>.*?</agent_message>",
         r"<agent_completion_report>.*?</agent_completion_report>",
     ]
     for pattern in hidden_xml_patterns:
