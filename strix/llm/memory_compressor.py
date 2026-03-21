@@ -52,7 +52,7 @@ def _count_tokens(text: str, model: str) -> int:
         return len(text) // 4  # Rough estimate
 
 
-def _get_message_tokens(msg: dict[str, Any], model: str) -> int:
+def get_message_tokens(msg: dict[str, Any], model: str) -> int:
     content = msg.get("content", "")
     if isinstance(content, str):
         return _count_tokens(content, model)
@@ -209,7 +209,7 @@ class MemoryCompressor:
         model_name: str = self.model_name  # type: ignore[assignment]
 
         total_tokens = reserved_tokens + sum(
-            _get_message_tokens(msg, model_name) for msg in system_msgs + regular_msgs
+            get_message_tokens(msg, model_name) for msg in system_msgs + regular_msgs
         )
 
         if total_tokens <= MAX_TOTAL_TOKENS * 0.9:

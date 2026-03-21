@@ -10,7 +10,7 @@ from litellm.utils import supports_prompt_caching, supports_vision
 
 from strix.config import Config
 from strix.llm.config import LLMConfig
-from strix.llm.memory_compressor import MemoryCompressor, _get_message_tokens
+from strix.llm.memory_compressor import MemoryCompressor, get_message_tokens
 from strix.llm.utils import (
     _truncate_to_first_function,
     fix_incomplete_tool_call,
@@ -211,7 +211,7 @@ class LLM:
             )
 
         reserved_tokens = sum(
-            _get_message_tokens(msg, self.config.litellm_model) for msg in messages
+            get_message_tokens(msg, self.config.litellm_model) for msg in messages
         )
         compressed = list(
             self.memory_compressor.compress_history(conversation_history, reserved_tokens)
