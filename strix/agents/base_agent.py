@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import html
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -414,11 +415,7 @@ class BaseAgent(metaclass=AgentMeta):
         corrective_message = (
             "You responded with plain text instead of a tool call. "
             "While the agent loop is running, EVERY response MUST be a tool call. "
-            "Do NOT send plain text messages. Act via tools:\n"
-            "- Use the think tool to reason through problems\n"
-            "- Use create_agent to spawn subagents for testing\n"
-            "- Use terminal_execute to run commands\n"
-            "- Use wait_for_message ONLY when waiting for subagent results\n"
+            "Do NOT send plain text messages. Act via your available tools. "
             "Review your task and take action now."
         )
         self.state.add_message("user", corrective_message)
@@ -500,12 +497,13 @@ class BaseAgent(metaclass=AgentMeta):
                             if sender_id and sender_id in _agent_graph.get("nodes", {}):
                                 sender_name = _agent_graph["nodes"][sender_id]["name"]
 
+                            content = message.get("content", "")
                             message_content = f"""<agent_message
-from="{sender_name}"
-id="{sender_id}"
-type="{message.get("message_type", "information")}"
-priority="{message.get("priority", "normal")}">
-{message.get("content", "")}
+from="{html.escape(sender_name)}"
+id="{html.escape(str(sender_id))}"
+type="{html.escape(message.get("message_type", "information"))}"
+priority="{html.escape(message.get("priority", "normal"))}">
+<![CDATA[{content}]]>
 </agent_message>"""
                             state.add_message("user", message_content.strip())
 

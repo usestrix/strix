@@ -1,5 +1,7 @@
 from typing import Any
 
+import html
+
 from strix.agents.base_agent import BaseAgent
 from strix.llm.config import LLMConfig
 
@@ -103,24 +105,26 @@ class StrixAgent(BaseAgent):
             for repo in repositories:
                 if repo["workspace_path"]:
                     target_lines.append(
-                        f'  <target type="repository">{repo["url"]} (code at: {repo["workspace_path"]})</target>'
+                        f'  <target type="repository">{html.escape(repo["url"])} (code at: {html.escape(repo["workspace_path"])})</target>'
                     )
                 else:
-                    target_lines.append(f'  <target type="repository">{repo["url"]}</target>')
+                    target_lines.append(
+                        f'  <target type="repository">{html.escape(repo["url"])}</target>'
+                    )
 
         if local_code:
             for code in local_code:
                 target_lines.append(
-                    f'  <target type="local_code">{code["path"]} (code at: {code["workspace_path"]})</target>'
+                    f'  <target type="local_code">{html.escape(code["path"])} (code at: {html.escape(code["workspace_path"])})</target>'
                 )
 
         if urls:
             for url in urls:
-                target_lines.append(f'  <target type="url">{url}</target>')
+                target_lines.append(f'  <target type="url">{html.escape(url)}</target>')
 
         if ip_addresses:
             for ip in ip_addresses:
-                target_lines.append(f'  <target type="ip">{ip}</target>')
+                target_lines.append(f'  <target type="ip">{html.escape(ip)}</target>')
 
         targets_block = "\n".join(target_lines)
 
@@ -141,7 +145,7 @@ class StrixAgent(BaseAgent):
                 "and use other files only for context.</note>"
             )
             for repo_scope in diff_scope.get("repos", []):
-                repo_label = (
+                repo_label = html.escape(
                     repo_scope.get("workspace_subdir")
                     or repo_scope.get("source_path")
                     or "repository"
@@ -167,6 +171,6 @@ class StrixAgent(BaseAgent):
         )
 
         if user_instructions:
-            task_description += f"\n\nSpecial instructions: {user_instructions}"
+            task_description += f"\n\nSpecial instructions: {html.escape(user_instructions)}"
 
         return await self.agent_loop(task=task_description)
