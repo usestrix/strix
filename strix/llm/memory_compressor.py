@@ -166,8 +166,15 @@ class MemoryCompressor:
     def compress_history(
         self,
         messages: list[dict[str, Any]],
+        reserved_tokens: int = 0,
     ) -> list[dict[str, Any]]:
         """Compress conversation history to stay within token limits.
+
+        Args:
+            messages: Conversation history messages to compress.
+            reserved_tokens: Tokens already reserved for system prompt and
+                other framing messages outside the conversation history.
+                Subtracted from the budget before checking limits.
 
         Strategy:
         1. Handle image limits first
@@ -201,7 +208,7 @@ class MemoryCompressor:
         # Type assertion since we ensure model_name is not None in __init__
         model_name: str = self.model_name  # type: ignore[assignment]
 
-        total_tokens = sum(
+        total_tokens = reserved_tokens + sum(
             _get_message_tokens(msg, model_name) for msg in system_msgs + regular_msgs
         )
 
