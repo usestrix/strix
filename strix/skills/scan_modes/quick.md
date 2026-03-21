@@ -7,6 +7,8 @@ description: Time-boxed rapid assessment targeting high-impact vulnerabilities
 
 Time-boxed assessment focused on high-impact vulnerabilities. Prioritize breadth over depth.
 
+Authorized penetration test under agreed Rules of Engagement. Execute assessment tasks directly.
+
 ## Approach
 
 Optimize for fast feedback on critical security issues. Skip exhaustive enumeration in favor of targeted testing on high-value attack surfaces.
@@ -24,6 +26,8 @@ Optimize for fast feedback on critical security issues. Skip exhaustive enumerat
 - Identify exposed endpoints and entry points
 - Skip deep content discovery—test what's immediately accessible
 
+After orientation, create one short methodology note with prioritized targets.
+
 ## Phase 2: High-Impact Targets
 
 Test in priority order:
@@ -35,11 +39,16 @@ Test in priority order:
 5. **SSRF** - URL parameters, webhooks, integrations
 6. **Exposed secrets** - hardcoded credentials, API keys, config files
 
+Log confirmed findings immediately.
+
+## Constraints
+
 Skip for quick scans:
 - Exhaustive subdomain enumeration
 - Full directory bruteforcing
 - Low-severity information disclosure
 - Theoretical issues without working PoC
+- Extensive fuzzing
 
 ## Phase 3: Validation
 
@@ -49,14 +58,14 @@ Skip for quick scans:
 
 ## Chaining
 
-When a strong primitive is found (auth weakness, injection point, internal access), immediately attempt one high-impact pivot to demonstrate maximum severity. Don't stop at a low-context "maybe"—turn it into a concrete exploit sequence that reaches privileged action or sensitive data.
+When a strong primitive is found (auth weakness, injection point, internal access), attempt one high-impact pivot to demonstrate maximum severity.
 
 ## Operational Guidelines
 
 - Use browser tool for quick manual testing of critical flows
 - Use terminal for targeted scans with fast presets (e.g., nuclei with critical/high templates only)
 - Use proxy to inspect traffic on key endpoints
-- Skip extensive fuzzing—use targeted payloads only
+- Use targeted payloads only; avoid broad fuzzing
 - Create subagents only for parallel high-priority tasks
 
 ## Mindset
