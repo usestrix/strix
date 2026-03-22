@@ -1,0 +1,35 @@
+---
+title: "Novita AI"
+description: "Configure Strix with Novita AI models"
+---
+
+[Novita AI](https://novita.ai) provides fast, cost-efficient inference for open-source models via an OpenAI-compatible API.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/moonshotai/kimi-k2.5"
+export LLM_API_KEY="your-novita-api-key"
+export LLM_API_BASE="https://api.novita.ai/openai"
+```
+
+## Available Models
+
+| Model | Configuration |
+|-------|---------------|
+| Kimi K2.5 (recommended) | `openai/moonshotai/kimi-k2.5` |
+| GLM-5 | `openai/zai-org/glm-5` |
+| MiniMax M2.5 | `openai/minimax/minimax-m2.5` |
+
+## Get API Key
+
+1. Sign up at [novita.ai](https://novita.ai)
+2. Navigate to **API Keys** in your dashboard
+3. Create a new key and copy it
+
+## Benefits
+
+- **Cost-efficient** — Competitive pricing with per-token billing
+- **OpenAI-compatible** — Drop-in replacement using `LLM_API_BASE`
+- **Large context** — Models support up to 262k token context windows
+- **Function calling** — All listed models support tool/function calling
