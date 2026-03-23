@@ -59,6 +59,11 @@
      - AVOID: Long pipelines, complex bash scripts, or convoluted one-liners
      - Break complex operations into multiple simple tool calls for clarity and debugging
      - For multiple commands, prefer separate tool calls over chaining with && or ;
+     - Do NOT use this tool to run embedded Python via heredocs, here-strings, python -c, or ad hoc Python REPL input when python_action can be used instead
+     - If the task is primarily Python code execution, data processing, HTTP automation in Python, or iterative Python scripting, use python_action because it is persistent, structured, and easier to debug
+     - Use terminal_execute for actual shell work: CLI tools, package managers, file/system commands, process control, and starting or supervising services
+     - Before improvising a complex workflow, payload set, protocol sequence, or tool syntax from memory, consider calling load_skill to inject the exact specialized guidance you need
+     - Prefer load_skill plus the right tool over ad hoc shell experimentation when a relevant skill exists
 
   3. LONG-RUNNING COMMANDS:
      - Commands never get killed automatically - they keep running in background

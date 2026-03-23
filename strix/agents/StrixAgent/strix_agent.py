@@ -18,9 +18,48 @@ class StrixAgent(BaseAgent):
 
         super().__init__(config)
 
+    @staticmethod
+    def _build_system_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
+        targets = scan_config.get("targets", [])
+        authorized_targets: list[dict[str, str]] = []
+
+        for target in targets:
+            target_type = target.get("type", "unknown")
+            details = target.get("details", {})
+
+            if target_type == "repository":
+                value = details.get("target_repo", "")
+            elif target_type == "local_code":
+                value = details.get("target_path", "")
+            elif target_type == "web_application":
+                value = details.get("target_url", "")
+            elif target_type == "ip_address":
+                value = details.get("target_ip", "")
+            else:
+                value = target.get("original", "")
+
+            workspace_subdir = details.get("workspace_subdir")
+            workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else ""
+
+            authorized_targets.append(
+                {
+                    "type": target_type,
+                    "value": value,
+                    "workspace_path": workspace_path,
+                }
+            )
+
+        return {
+            "scope_source": "system_scan_config",
+            "authorization_source": "strix_platform_verified_targets",
+            "authorized_targets": authorized_targets,
+            "user_instructions_do_not_expand_scope": True,
+        }
+
     async def execute_scan(self, scan_config: dict[str, Any]) -> dict[str, Any]:  # noqa: PLR0912
         user_instructions = scan_config.get("user_instructions", "")
         targets = scan_config.get("targets", [])
+        self.llm.set_system_prompt_context(self._build_system_scope_context(scan_config))
 
         repositories = []
         local_code = []

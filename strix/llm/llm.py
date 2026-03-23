@@ -64,6 +64,9 @@ class LLM:
         self.agent_name = agent_name
         self.agent_id: str | None = None
         self._active_skills: list[str] = list(config.skills or [])
+        self._system_prompt_context: dict[str, Any] = dict(
+            getattr(config, "system_prompt_context", {}) or {}
+        )
         self._total_stats = RequestStats()
         self.memory_compressor = MemoryCompressor(model_name=config.litellm_model)
         self.system_prompt = self._load_system_prompt(agent_name)
@@ -71,6 +74,8 @@ class LLM:
         reasoning = Config.get("strix_reasoning_effort")
         if reasoning:
             self._reasoning_effort = reasoning
+        elif config.reasoning_effort:
+            self._reasoning_effort = config.reasoning_effort
         elif config.scan_mode == "quick":
             self._reasoning_effort = "medium"
         else:
@@ -96,6 +101,7 @@ class LLM:
                 get_tools_prompt=get_tools_prompt,
                 loaded_skill_names=list(skill_content.keys()),
                 interactive=self.config.interactive,
+                system_prompt_context=self._system_prompt_context,
                 **skill_content,
             )
             return str(result)
@@ -138,6 +144,12 @@ class LLM:
         if agent_id:
             self.agent_id = agent_id
 
+    def set_system_prompt_context(self, context: dict[str, Any] | None) -> None:
+        self._system_prompt_context = dict(context or {})
+        updated_prompt = self._load_system_prompt(self.agent_name)
+        if updated_prompt:
+            self.system_prompt = updated_prompt
+
     async def generate(
         self, conversation_history: list[dict[str, Any]]
     ) -> AsyncIterator[LLMResponse]:
@@ -152,7 +164,7 @@ class LLM:
             except Exception as e:  # noqa: BLE001
                 if attempt >= max_retries or not self._should_retry(e):
                     self._raise_error(e)
-                wait = min(10, 2 * (2**attempt))
+                wait = min(90, 2 * (2**attempt))
                 await asyncio.sleep(wait)
 
     async def _stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[LLMResponse]:

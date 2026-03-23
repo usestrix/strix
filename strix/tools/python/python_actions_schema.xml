@@ -1,6 +1,6 @@
 <tools>
   <tool name="python_action">
-    <description>Perform Python actions using persistent interpreter sessions for cybersecurity tasks.</description>
+    <description>Perform Python actions using persistent interpreter sessions for cybersecurity tasks. This is the PREFERRED tool for Python code because it provides structured execution, persistence, cleaner output, and easier debugging than embedding Python inside terminal commands.</description>
     <details>Common Use Cases:
       - Security script development and testing (payload generation, exploit scripts)
       - Data analysis of security logs, network traffic, or vulnerability scans
@@ -58,9 +58,14 @@
          - IPython magic commands are fully supported (%pip, %time, %whos, %%writefile, etc.)
          - Line magics (%) and cell magics (%%) work as expected
       6. CLOSE: Terminates the session completely and frees memory
-      7. The Python sessions can operate concurrently with other tools. You may invoke
+      7. PREFER THIS TOOL OVER TERMINAL FOR PYTHON:
+         - If you are writing or running Python code, use python_action instead of terminal_execute
+         - Do NOT wrap Python in bash heredocs, here-strings, python -c one-liners, or interactive REPL sessions when the Python tool can do the job
+         - The Python tool exists so code execution is structured, stateful, easier to continue across calls, and easier to inspect/debug
+         - Use terminal_execute for shell commands, package managers, non-Python CLIs, process control, and launching services
+      8. The Python sessions can operate concurrently with other tools. You may invoke
          terminal, browser, or other tools while maintaining active Python sessions.
-      8. Each session has its own isolated namespace - variables in one session don't
+      9. Each session has its own isolated namespace - variables in one session don't
          affect others.
     </notes>
     <examples>

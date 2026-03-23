@@ -1,3 +1,5 @@
+from typing import Any
+
 from strix.config import Config
 from strix.config.config import resolve_llm_config
 from strix.llm.utils import resolve_strix_model
@@ -12,6 +14,8 @@ class LLMConfig:
         timeout: int | None = None,
         scan_mode: str = "deep",
         interactive: bool = False,
+        reasoning_effort: str | None = None,
+        system_prompt_context: dict[str, Any] | None = None,
     ):
         resolved_model, self.api_key, self.api_base = resolve_llm_config()
         self.model_name = model_name or resolved_model
@@ -31,3 +35,5 @@ class LLMConfig:
         self.scan_mode = scan_mode if scan_mode in ["quick", "standard", "deep"] else "deep"
 
         self.interactive = interactive
+        self.reasoning_effort = reasoning_effort
+        self.system_prompt_context = system_prompt_context or {}

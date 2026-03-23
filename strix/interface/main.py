@@ -456,7 +456,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     console.print("\n")
     console.print(panel)
     console.print()
-    console.print("[#60a5fa]models.strix.ai[/]  [dim]·[/]  [#60a5fa]discord.gg/strix-ai[/]")
+    console.print("[#60a5fa]strix.ai[/]  [dim]·[/]  [#60a5fa]discord.gg/strix-ai[/]")
     console.print()
 
 
