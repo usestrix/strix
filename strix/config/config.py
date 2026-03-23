@@ -38,6 +38,7 @@ class Config:
     # Tool & Feature Configuration
     perplexity_api_key = None
     strix_disable_browser = "false"
+    strix_enable_browser_agent = "false"
 
     # Runtime Configuration
     strix_image = "ghcr.io/usestrix/strix-sandbox:0.1.13"

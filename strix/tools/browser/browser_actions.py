@@ -295,41 +295,46 @@ async def browser_action(
                     "ws_url": ws_url,
                     "is_running": True,
                 }
-
-            return result
-
-        if action == "close_browser":
+        elif action == "close_browser":
             await _close_session(agent_id)
-            return {
+            result = {
                 "message": "Browser closed",
                 "is_running": False,
             }
+        elif action == "run":
+            from strix.tools.registry import _is_browser_agent_enabled
 
-        session = _get_session(agent_id)
-
-        if action == "run":
-            if not task:
-                return {
+            if not _is_browser_agent_enabled():
+                result = {
+                    "error": "The 'run' action (browser agent mode) is not enabled. "
+                    "Set STRIX_ENABLE_BROWSER_AGENT=true to enable it. "
+                    "Use granular browser actions instead.",
+                    "is_running": False,
+                }
+            elif not task:
+                result = {
                     "error": "task required for run action",
                     "is_running": False,
                 }
-
-            runner = partial(_run_browser_agent, session, task, return_fields, metadata)
-            desc = task
+            else:
+                session = _get_session(agent_id)
+                runner = partial(_run_browser_agent, session, task, return_fields, metadata)
+                result = await _execute_task(session, runner, task)
+                if "error" not in result:
+                    result = await populate_response(session, result)
         else:
+            session = _get_session(agent_id)
             runner = partial(_run_browser_tool, session, action, kwargs, metadata)
             desc = f"{action}({list(kwargs.keys())[:3]})"
-
-        task_output = await _execute_task(session, runner, desc)
-
-        if "error" in task_output:
-            return task_output
-
-        return await populate_response(session, task_output)
+            result = await _execute_task(session, runner, desc)
+            if "error" not in result:
+                result = await populate_response(session, result)
 
     except Exception as error:
         logger.exception("browser_action error: %s", action)
-        return {
+        result = {
             "error": str(error),
             "is_running": False,
         }
+
+    return result

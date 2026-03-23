@@ -163,6 +163,16 @@ def _is_browser_disabled() -> bool:
     return str(val).lower() == "true"
 
 
+def _is_browser_agent_enabled() -> bool:
+    if os.getenv("STRIX_ENABLE_BROWSER_AGENT", "").lower() == "true":
+        return True
+
+    from strix.config import Config
+
+    val: str = Config.load().get("env", {}).get("STRIX_ENABLE_BROWSER_AGENT", "")
+    return str(val).lower() == "true"
+
+
 def _has_perplexity_api() -> bool:
     if os.getenv("PERPLEXITY_API_KEY"):
         return True
