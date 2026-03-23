@@ -230,8 +230,9 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 - [OpenAI GPT-5.4](https://openai.com/api/) — `openai/gpt-5.4`
 - [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) — `anthropic/claude-sonnet-4-6`
 - [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) — `vertex_ai/gemini-3-pro-preview`
+- [MiniMax-M2.7](https://platform.minimax.io) — `openai/MiniMax-M2.7` (set `LLM_API_BASE=https://api.minimax.io/v1`)
 
-See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, and local models.
+See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, MiniMax, and local models.
 
 ## Enterprise
 

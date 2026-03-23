@@ -1,0 +1,43 @@
+---
+title: "MiniMax"
+description: "Configure Strix with MiniMax models"
+---
+
+[MiniMax](https://www.minimax.io) provides powerful large language models with up to 1M token context windows through an OpenAI-compatible API.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/MiniMax-M2.7"
+export LLM_API_KEY="your-minimax-api-key"
+export LLM_API_BASE="https://api.minimax.io/v1"
+```
+
+Or use the shorthand with automatic base URL detection:
+
+```bash
+export STRIX_LLM="openai/MiniMax-M2.7"
+export MINIMAX_API_KEY="your-minimax-api-key"
+```
+
+## Available Models
+
+| Model | Configuration | Context Window |
+|-------|---------------|----------------|
+| MiniMax-M2.7 | `openai/MiniMax-M2.7` | 1M tokens |
+| MiniMax-M2.7-highspeed | `openai/MiniMax-M2.7-highspeed` | 1M tokens |
+
+**MiniMax-M2.7** is the latest flagship model with strong reasoning and coding capabilities.
+**MiniMax-M2.7-highspeed** offers faster inference with slightly reduced quality.
+
+## Get API Key
+
+1. Go to [platform.minimax.io](https://platform.minimax.io)
+2. Sign up or sign in
+3. Navigate to API Keys and create a new key
+
+## Notes
+
+- MiniMax API is fully OpenAI-compatible, so it works via the `openai/` LiteLLM prefix
+- Temperature range: 0.0 to 1.0 (inclusive)
+- When `MINIMAX_API_KEY` is set and the model name contains "minimax", the API key and base URL are auto-detected
