@@ -36,7 +36,7 @@ STRIX_MODEL_MAP: dict[str, str] = {
     "claude-opus-4.6": "anthropic/claude-opus-4-6",
     "gpt-5.2": "openai/gpt-5.2",
     "gpt-5.1": "openai/gpt-5.1",
-    "gpt-5": "openai/gpt-5",
+    "gpt-5.4": "openai/gpt-5.4",
     "gemini-3-pro-preview": "gemini/gemini-3-pro-preview",
     "gemini-3-flash-preview": "gemini/gemini-3-flash-preview",
     "glm-5": "openrouter/z-ai/glm-5",

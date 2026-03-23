@@ -32,7 +32,6 @@
             "group": "LLM Providers",
             "pages": [
               "llm-providers/overview",
-              "llm-providers/models",
               "llm-providers/openai",
               "llm-providers/anthropic",
               "llm-providers/openrouter",

@@ -6,7 +6,7 @@ description: "Install Strix and run your first security scan"
 ## Prerequisites
 
 - Docker (running)
-- An LLM API key — use [Strix Router](/llm-providers/models) for the easiest setup, or bring your own key from any [supported provider](/llm-providers/overview)
+- An LLM API key from any [supported provider](/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
 
 ## Installation
 
@@ -27,23 +27,13 @@ description: "Install Strix and run your first security scan"
 
 Set your LLM provider:
 
-<Tabs>
-  <Tab title="Strix Router">
-    ```bash
-    export STRIX_LLM="strix/gpt-5"
-    export LLM_API_KEY="your-strix-api-key"
-    ```
-  </Tab>
-  <Tab title="Bring Your Own Key">
-    ```bash
-    export STRIX_LLM="openai/gpt-5"
-    export LLM_API_KEY="your-api-key"
-    ```
-  </Tab>
-</Tabs>
+```bash
+export STRIX_LLM="openai/gpt-5.4"
+export LLM_API_KEY="your-api-key"
+```
 
 <Tip>
-For best results, use `strix/gpt-5`, `strix/claude-opus-4.6`, or `strix/gpt-5.2`.
+For best results, use `openai/gpt-5.4`, `anthropic/claude-opus-4-6`, or `openai/gpt-5.2`.
 </Tip>
 
 ## Run Your First Scan

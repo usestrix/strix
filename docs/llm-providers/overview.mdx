@@ -5,29 +5,18 @@ description: "Configure your AI model for Strix"
 
 Strix uses [LiteLLM](https://docs.litellm.ai/docs/providers) for model compatibility, supporting 100+ LLM providers.
 
-## Strix Router (Recommended)
+## Configuration
 
-The fastest way to get started. [Strix Router](/llm-providers/models) gives you access to tested models with the highest rate limits and zero data retention.
-
-```bash
-export STRIX_LLM="strix/gpt-5"
-export LLM_API_KEY="your-strix-api-key"
-```
-
-Get your API key at [models.strix.ai](https://models.strix.ai).
-
-## Bring Your Own Key
-
-You can also use any LiteLLM-compatible provider with your own API keys:
+Set your model and API key:
 
 | Model             | Provider      | Configuration                    |
 | ----------------- | ------------- | -------------------------------- |
-| GPT-5             | OpenAI        | `openai/gpt-5`                   |
+| GPT-5.4           | OpenAI        | `openai/gpt-5.4`                 |
 | Claude Sonnet 4.6 | Anthropic     | `anthropic/claude-sonnet-4-6`    |
 | Gemini 3 Pro      | Google Vertex | `vertex_ai/gemini-3-pro-preview` |
 
 ```bash
-export STRIX_LLM="openai/gpt-5"
+export STRIX_LLM="openai/gpt-5.4"
 export LLM_API_KEY="your-api-key"
 ```
 
@@ -45,11 +34,8 @@ See the [Local Models guide](/llm-providers/local) for setup instructions and re
 ## Provider Guides
 
 <CardGroup cols={2}>
-  <Card title="Strix Router" href="/llm-providers/models">
-    Recommended models router with high rate limits.
-  </Card>
   <Card title="OpenAI" href="/llm-providers/openai">
-    GPT-5 models.
+    GPT-5.4 models.
   </Card>
   <Card title="Anthropic" href="/llm-providers/anthropic">
     Claude Opus, Sonnet, and Haiku.
@@ -64,7 +50,7 @@ See the [Local Models guide](/llm-providers/local) for setup instructions and re
     Claude and Titan models via AWS.
   </Card>
   <Card title="Azure OpenAI" href="/llm-providers/azure">
-    GPT-5 via Azure.
+    GPT-5.4 via Azure.
   </Card>
   <Card title="Local Models" href="/llm-providers/local">
     Llama 4, Mistral, and self-hosted models.
@@ -76,7 +62,7 @@ See the [Local Models guide](/llm-providers/local) for setup instructions and re
 Use LiteLLM's `provider/model-name` format:
 
 ```
-openai/gpt-5
+openai/gpt-5.4
 anthropic/claude-sonnet-4-6
 vertex_ai/gemini-3-pro-preview
 bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0
