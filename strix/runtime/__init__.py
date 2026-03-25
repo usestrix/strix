@@ -18,7 +18,7 @@ _global_runtime: AbstractRuntime | None = None
 def get_runtime() -> AbstractRuntime:
     global _global_runtime  # noqa: PLW0603
 
-    runtime_backend = Config.get("strix_runtime_backend")
+    runtime_backend = Config.get_str("strix_runtime_backend")
 
     if runtime_backend == "docker":
         from .docker_runtime import DockerRuntime

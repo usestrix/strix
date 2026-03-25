@@ -36,6 +36,7 @@ include = [
   "LICENSE",
   "README.md",
   "strix/agents/**/*.jinja",
+  "strix/**/*.html",
   "strix/skills/**/*.md",
   "strix/**/*.xml",
   "strix/**/*.tcss"
@@ -43,6 +44,7 @@ include = [
 
 [tool.poetry.scripts]
 strix = "strix.interface.main:main"
+strix-api = "strix.api.server:main"
 
 [tool.poetry.dependencies]
 python = "^3.12"
@@ -59,13 +61,13 @@ cvss = "^3.2"
 traceloop-sdk = "^0.53.0"
 opentelemetry-exporter-otlp-proto-http = "^1.40.0"
 scrubadub = "^2.0.1"
+fastapi = "*"
+uvicorn = "*"
 
 # Optional LLM provider dependencies
 google-cloud-aiplatform = { version = ">=1.38", optional = true }
 
 # Sandbox-only dependencies (only needed inside Docker container)
-fastapi = { version = "*", optional = true }
-uvicorn = { version = "*", optional = true }
 ipython = { version = "^9.3.0", optional = true }
 openhands-aci = { version = "^0.3.0", optional = true }
 playwright = { version = "^1.48.0", optional = true }
@@ -77,7 +79,7 @@ defusedxml = "^0.7.1"
 
 [tool.poetry.extras]
 vertex = ["google-cloud-aiplatform"]
-sandbox = ["fastapi", "uvicorn", "ipython", "openhands-aci", "playwright", "gql", "pyte", "libtmux", "numpydoc"]
+sandbox = ["ipython", "openhands-aci", "playwright", "gql", "pyte", "libtmux", "numpydoc"]
 
 [tool.poetry.group.dev.dependencies]
 # Type checking and static analysis

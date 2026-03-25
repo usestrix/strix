@@ -7,7 +7,7 @@ Strix uses [LiteLLM](https://docs.litellm.ai/docs/providers) for model compatibi
 
 ## Configuration
 
-Set your model and API key:
+Set your model and API key in `~/.strix/config.json`:
 
 | Model             | Provider      | Configuration                    |
 | ----------------- | ------------- | -------------------------------- |
@@ -15,18 +15,26 @@ Set your model and API key:
 | Claude Sonnet 4.6 | Anthropic     | `anthropic/claude-sonnet-4-6`    |
 | Gemini 3 Pro      | Google Vertex | `vertex_ai/gemini-3-pro-preview` |
 
-```bash
-export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
+```json
+{
+  "llm": {
+    "model": "openai/gpt-5.4",
+    "api_key": "your-api-key"
+  }
+}
 ```
 
 ## Local Models
 
 Run models locally with [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), or any OpenAI-compatible server:
 
-```bash
-export STRIX_LLM="ollama/llama4"
-export LLM_API_BASE="http://localhost:11434"
+```json
+{
+  "llm": {
+    "model": "ollama/llama4",
+    "api_base": "http://localhost:11434"
+  }
+}
 ```
 
 See the [Local Models guide](/llm-providers/local) for setup instructions and recommended models.

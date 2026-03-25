@@ -30,10 +30,17 @@ description: "Contribute to Strix development"
     poetry run pre-commit install
     ```
   </Step>
-  <Step title="Configure LLM">
+  <Step title="Create a local config file">
     ```bash
-    export STRIX_LLM="openai/gpt-5.4"
-    export LLM_API_KEY="your-api-key"
+    mkdir -p ~/.strix
+    cat > ~/.strix/config.json <<'EOF'
+    {
+      "llm": {
+        "model": "openai/gpt-5.4",
+        "api_key": "your-api-key"
+      }
+    }
+    EOF
     ```
   </Step>
   <Step title="Run Strix">

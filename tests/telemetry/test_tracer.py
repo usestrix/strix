@@ -18,17 +18,12 @@ def _load_events(events_path: Path) -> list[dict[str, Any]]:
 
 
 @pytest.fixture(autouse=True)
-def _reset_tracer_globals(monkeypatch) -> None:
+def _reset_tracer_globals(monkeypatch, write_config) -> None:
     monkeypatch.setattr(tracer_module, "_global_tracer", None)
     monkeypatch.setattr(tracer_module, "_OTEL_BOOTSTRAPPED", False)
     monkeypatch.setattr(tracer_module, "_OTEL_REMOTE_ENABLED", False)
     telemetry_utils.reset_events_write_locks()
-    monkeypatch.delenv("STRIX_TELEMETRY", raising=False)
-    monkeypatch.delenv("STRIX_OTEL_TELEMETRY", raising=False)
-    monkeypatch.delenv("STRIX_POSTHOG_TELEMETRY", raising=False)
-    monkeypatch.delenv("TRACELOOP_BASE_URL", raising=False)
-    monkeypatch.delenv("TRACELOOP_API_KEY", raising=False)
-    monkeypatch.delenv("TRACELOOP_HEADERS", raising=False)
+    write_config({})
 
 
 def test_tracer_local_mode_writes_jsonl_with_correlation(monkeypatch, tmp_path) -> None:
@@ -88,7 +83,7 @@ def test_tracer_redacts_sensitive_payloads(monkeypatch, tmp_path) -> None:
     assert "[REDACTED]" in serialized
 
 
-def test_tracer_remote_mode_configures_traceloop_export(monkeypatch, tmp_path) -> None:
+def test_tracer_remote_mode_configures_traceloop_export(monkeypatch, tmp_path, write_config) -> None:
     monkeypatch.chdir(tmp_path)
 
     class FakeTraceloop:
@@ -103,9 +98,15 @@ def test_tracer_remote_mode_configures_traceloop_export(monkeypatch, tmp_path) -
             return None
 
     monkeypatch.setattr(tracer_module, "Traceloop", FakeTraceloop)
-    monkeypatch.setenv("TRACELOOP_BASE_URL", "https://otel.example.com")
-    monkeypatch.setenv("TRACELOOP_API_KEY", "test-api-key")
-    monkeypatch.setenv("TRACELOOP_HEADERS", '{"x-custom":"header"}')
+    write_config(
+        {
+            "telemetry": {
+                "traceloop_base_url": "https://otel.example.com",
+                "traceloop_api_key": "test-api-key",
+                "traceloop_headers": '{"x-custom":"header"}',
+            }
+        }
+    )
 
     tracer = Tracer("remote-observability")
     set_global_tracer(tracer)
@@ -156,12 +157,18 @@ def test_tracer_local_mode_avoids_traceloop_remote_endpoint(monkeypatch, tmp_pat
     assert tracer._remote_export_enabled is False
 
 
-def test_otlp_fallback_includes_auth_and_custom_headers(monkeypatch, tmp_path) -> None:
+def test_otlp_fallback_includes_auth_and_custom_headers(monkeypatch, tmp_path, write_config) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(tracer_module, "Traceloop", None)
-    monkeypatch.setenv("TRACELOOP_BASE_URL", "https://otel.example.com")
-    monkeypatch.setenv("TRACELOOP_API_KEY", "test-api-key")
-    monkeypatch.setenv("TRACELOOP_HEADERS", '{"x-custom":"header"}')
+    write_config(
+        {
+            "telemetry": {
+                "traceloop_base_url": "https://otel.example.com",
+                "traceloop_api_key": "test-api-key",
+                "traceloop_headers": '{"x-custom":"header"}',
+            }
+        }
+    )
 
     captured: dict[str, Any] = {}
 
@@ -337,9 +344,9 @@ def test_set_run_name_updates_traceloop_association_properties(monkeypatch, tmp_
     assert FakeTraceloop.associations[-1]["run_name"] == "renamed-run"
 
 
-def test_events_write_locks_are_scoped_by_events_file(monkeypatch, tmp_path) -> None:
+def test_events_write_locks_are_scoped_by_events_file(monkeypatch, tmp_path, write_config) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("STRIX_TELEMETRY", "0")
+    write_config({"telemetry": {"enabled": False}})
 
     tracer_one = Tracer("lock-run-a")
     tracer_two = Tracer("lock-run-b")
@@ -352,9 +359,9 @@ def test_events_write_locks_are_scoped_by_events_file(monkeypatch, tmp_path) -> 
     assert lock_a_from_one is not lock_b
 
 
-def test_tracer_skips_jsonl_when_telemetry_disabled(monkeypatch, tmp_path) -> None:
+def test_tracer_skips_jsonl_when_telemetry_disabled(monkeypatch, tmp_path, write_config) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("STRIX_TELEMETRY", "0")
+    write_config({"telemetry": {"enabled": False}})
 
     tracer = Tracer("telemetry-disabled")
     set_global_tracer(tracer)
@@ -365,10 +372,9 @@ def test_tracer_skips_jsonl_when_telemetry_disabled(monkeypatch, tmp_path) -> No
     assert not events_path.exists()
 
 
-def test_tracer_otel_flag_overrides_global_telemetry(monkeypatch, tmp_path) -> None:
+def test_tracer_otel_flag_overrides_global_telemetry(monkeypatch, tmp_path, write_config) -> None:
     monkeypatch.chdir(tmp_path)
-    monkeypatch.setenv("STRIX_TELEMETRY", "0")
-    monkeypatch.setenv("STRIX_OTEL_TELEMETRY", "1")
+    write_config({"telemetry": {"enabled": False, "otel_enabled": True}})
 
     tracer = Tracer("otel-enabled")
     set_global_tracer(tracer)

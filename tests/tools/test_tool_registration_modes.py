@@ -4,11 +4,16 @@ from types import ModuleType
 from typing import Any
 
 from strix.config import Config
+from strix.runtime.context import configure_runtime_context
 from strix.tools.registry import clear_registry
 
 
-def _empty_config_load(_cls: type[Config]) -> dict[str, dict[str, str]]:
-    return {"env": {}}
+def _config_without_web_search(_cls: type[Config]) -> dict[str, Any]:
+    return {
+        "features": {
+            "disable_browser": True,
+        }
+    }
 
 
 def _reload_tools_module() -> ModuleType:
@@ -24,10 +29,8 @@ def _reload_tools_module() -> ModuleType:
 def test_non_sandbox_registers_agents_graph_but_not_browser_or_web_search_when_disabled(
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setenv("STRIX_SANDBOX_MODE", "false")
-    monkeypatch.setenv("STRIX_DISABLE_BROWSER", "true")
-    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
-    monkeypatch.setattr(Config, "load", classmethod(_empty_config_load))
+    configure_runtime_context(sandbox_mode=False, caido_api_token=None)
+    monkeypatch.setattr(Config, "load", classmethod(_config_without_web_search))
 
     tools = _reload_tools_module()
     names = set(tools.get_tool_names())
@@ -40,10 +43,8 @@ def test_non_sandbox_registers_agents_graph_but_not_browser_or_web_search_when_d
 def test_sandbox_registers_sandbox_tools_but_not_non_sandbox_tools(
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setenv("STRIX_SANDBOX_MODE", "true")
-    monkeypatch.setenv("STRIX_DISABLE_BROWSER", "true")
-    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
-    monkeypatch.setattr(Config, "load", classmethod(_empty_config_load))
+    configure_runtime_context(sandbox_mode=True, caido_api_token=None)
+    monkeypatch.setattr(Config, "load", classmethod(_config_without_web_search))
 
     tools = _reload_tools_module()
     names = set(tools.get_tool_names())
@@ -61,10 +62,8 @@ def test_sandbox_registers_sandbox_tools_but_not_non_sandbox_tools(
 def test_load_skill_import_does_not_register_create_agent_in_sandbox(
     monkeypatch: Any,
 ) -> None:
-    monkeypatch.setenv("STRIX_SANDBOX_MODE", "true")
-    monkeypatch.setenv("STRIX_DISABLE_BROWSER", "true")
-    monkeypatch.delenv("PERPLEXITY_API_KEY", raising=False)
-    monkeypatch.setattr(Config, "load", classmethod(_empty_config_load))
+    configure_runtime_context(sandbox_mode=True, caido_api_token=None)
+    monkeypatch.setattr(Config, "load", classmethod(_config_without_web_search))
 
     clear_registry()
     for name in list(sys.modules):

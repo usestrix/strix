@@ -24,6 +24,7 @@
             "group": "Usage",
             "pages": [
               "usage/cli",
+              "api/web-api",
               "usage/scan-modes",
               "usage/instructions"
             ]

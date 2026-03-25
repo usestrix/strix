@@ -1,4 +1,5 @@
 from strix.config.config import (
+    AppConfig,
     Config,
     apply_saved_config,
     save_current_config,
@@ -6,6 +7,7 @@ from strix.config.config import (
 
 
 __all__ = [
+    "AppConfig",
     "Config",
     "apply_saved_config",
     "save_current_config",

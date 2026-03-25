@@ -13,11 +13,15 @@ pipx install "strix-agent[vertex]"
 
 ## Setup
 
-```bash
-export STRIX_LLM="vertex_ai/gemini-3-pro-preview"
+```json
+{
+  "llm": {
+    "model": "vertex_ai/gemini-3-pro-preview"
+  }
+}
 ```
 
-No API key required—uses Google Cloud Application Default Credentials.
+No Strix API key is required here. Model selection lives in the config file, while authentication follows Google Cloud Application Default Credentials.
 
 ## Authentication
 

@@ -1,14 +1,14 @@
 import inspect
-import os
 from typing import Any
 
 import httpx
 
 from strix.config import Config
+from strix.runtime.context import is_sandbox_mode
 from strix.telemetry import posthog
 
 
-if os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "false":
+if not is_sandbox_mode():
     from strix.runtime import get_runtime
 
 from .argument_parser import convert_arguments
@@ -21,14 +21,14 @@ from .registry import (
 )
 
 
-_SERVER_TIMEOUT = float(Config.get("strix_sandbox_execution_timeout") or "120")
+_SERVER_TIMEOUT = float(Config.get_int("strix_sandbox_execution_timeout") or 120)
 SANDBOX_EXECUTION_TIMEOUT = _SERVER_TIMEOUT + 30
-SANDBOX_CONNECT_TIMEOUT = float(Config.get("strix_sandbox_connect_timeout") or "10")
+SANDBOX_CONNECT_TIMEOUT = float(Config.get_int("strix_sandbox_connect_timeout") or 10)
 
 
 async def execute_tool(tool_name: str, agent_state: Any | None = None, **kwargs: Any) -> Any:
     execute_in_sandbox = should_execute_in_sandbox(tool_name)
-    sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
+    sandbox_mode = is_sandbox_mode()
 
     if execute_in_sandbox and not sandbox_mode:
         return await _execute_tool_in_sandbox(tool_name, agent_state, **kwargs)

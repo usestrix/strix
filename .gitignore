@@ -97,3 +97,8 @@ Thumbs.db
 schema.graphql
 
 .opencode/
+
+# Local project config and scratch artifacts
+/config.json
+/IMPLEMENTATION_PLAN.md
+/rendered_root_agent_system_prompt.txt

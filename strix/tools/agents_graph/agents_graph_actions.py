@@ -21,6 +21,18 @@ _agent_instances: dict[str, Any] = {}
 _agent_states: dict[str, Any] = {}
 
 
+def reset_agent_graph_state() -> None:
+    global _root_agent_id  # noqa: PLW0603
+
+    _agent_graph["nodes"].clear()
+    _agent_graph["edges"].clear()
+    _agent_messages.clear()
+    _running_agents.clear()
+    _agent_instances.clear()
+    _agent_states.clear()
+    _root_agent_id = None
+
+
 def _run_agent_in_thread(
     agent: Any, state: Any, inherited_messages: list[dict[str, Any]]
 ) -> dict[str, Any]:

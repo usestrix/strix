@@ -1,6 +1,6 @@
 import json
 
-from strix.config.config import Config
+from strix.config.config import Config, resolve_llm_config
 
 
 def test_traceloop_vars_are_tracked() -> None:
@@ -13,7 +13,7 @@ def test_traceloop_vars_are_tracked() -> None:
     assert "TRACELOOP_HEADERS" in tracked
 
 
-def test_apply_saved_uses_saved_traceloop_vars(monkeypatch, tmp_path) -> None:
+def test_apply_saved_uses_legacy_env_style_config(monkeypatch, tmp_path) -> None:
     config_path = tmp_path / "cli-config.json"
     config_path.write_text(
         json.dumps(
@@ -29,27 +29,60 @@ def test_apply_saved_uses_saved_traceloop_vars(monkeypatch, tmp_path) -> None:
     )
 
     monkeypatch.setattr(Config, "_config_file_override", config_path)
-    monkeypatch.delenv("TRACELOOP_BASE_URL", raising=False)
-    monkeypatch.delenv("TRACELOOP_API_KEY", raising=False)
-    monkeypatch.delenv("TRACELOOP_HEADERS", raising=False)
+    monkeypatch.setattr(Config, "_cached_config", None)
 
     applied = Config.apply_saved()
 
     assert applied["TRACELOOP_BASE_URL"] == "https://otel.example.com"
     assert applied["TRACELOOP_API_KEY"] == "api-key"
     assert applied["TRACELOOP_HEADERS"] == "x-test=value"
+    assert Config.get_str("traceloop_base_url") == "https://otel.example.com"
 
 
-def test_apply_saved_respects_existing_env_traceloop_vars(monkeypatch, tmp_path) -> None:
-    config_path = tmp_path / "cli-config.json"
+def test_config_values_ignore_process_environment(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "config.json"
     config_path.write_text(
-        json.dumps({"env": {"TRACELOOP_BASE_URL": "https://otel.example.com"}}),
+        json.dumps(
+            {
+                "telemetry": {
+                    "traceloop_base_url": "https://file.example.com",
+                }
+            }
+        ),
         encoding="utf-8",
     )
 
     monkeypatch.setattr(Config, "_config_file_override", config_path)
+    monkeypatch.setattr(Config, "_cached_config", None)
     monkeypatch.setenv("TRACELOOP_BASE_URL", "https://env.example.com")
 
-    applied = Config.apply_saved(force=False)
+    Config.reload()
 
-    assert "TRACELOOP_BASE_URL" not in applied
+    assert Config.get_str("traceloop_base_url") == "https://file.example.com"
+
+
+def test_resolve_llm_config_reads_openai_compatible_provider(monkeypatch, tmp_path) -> None:
+    config_path = tmp_path / "config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "llm": {
+                    "model": "astron-code-latest",
+                    "api_key": "test-key",
+                    "api_base": "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2",
+                    "openai_compatible_provider": "AstronCodingPlan",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    monkeypatch.setattr(Config, "_config_file_override", config_path)
+    monkeypatch.setattr(Config, "_cached_config", None)
+
+    model, api_key, api_base, provider = resolve_llm_config()
+
+    assert model == "astron-code-latest"
+    assert api_key == "test-key"
+    assert api_base == "https://maas-coding-api.cn-huabei-1.xf-yun.com/v2"
+    assert provider == "AstronCodingPlan"

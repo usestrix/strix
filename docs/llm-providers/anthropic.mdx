@@ -5,9 +5,13 @@ description: "Configure Strix with Claude models"
 
 ## Setup
 
-```bash
-export STRIX_LLM="anthropic/claude-sonnet-4-6"
-export LLM_API_KEY="sk-ant-..."
+```json
+{
+  "llm": {
+    "model": "anthropic/claude-sonnet-4-6",
+    "api_key": "sk-ant-..."
+  }
+}
 ```
 
 ## Available Models

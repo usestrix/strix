@@ -11,7 +11,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.agents.StrixAgent import StrixAgent
-from strix.llm.config import LLMConfig
+from strix.scan import PreparedScan, ScanRequest, build_agent_config, build_scan_config
 from strix.telemetry.tracer import Tracer, set_global_tracer
 
 from .utils import (
@@ -66,22 +66,19 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     console.print()
 
     scan_mode = getattr(args, "scan_mode", "deep")
-
-    scan_config = {
-        "scan_id": args.run_name,
-        "targets": args.targets_info,
-        "user_instructions": args.instruction or "",
-        "run_name": args.run_name,
-    }
-
-    llm_config = LLMConfig(scan_mode=scan_mode)
-    agent_config = {
-        "llm_config": llm_config,
-        "max_iterations": 300,
-    }
-
-    if getattr(args, "local_sources", None):
-        agent_config["local_sources"] = args.local_sources
+    prepared_scan = PreparedScan(
+        request=ScanRequest(
+            targets=[],
+            instruction=args.instruction or "",
+            scan_mode=scan_mode,
+            run_name=args.run_name,
+        ),
+        run_name=args.run_name,
+        targets_info=args.targets_info,
+        local_sources=getattr(args, "local_sources", None) or [],
+    )
+    scan_config = build_scan_config(prepared_scan)
+    agent_config = build_agent_config(prepared_scan, interactive=False)
 
     tracer = Tracer(args.run_name)
     tracer.set_scan_config(scan_config)

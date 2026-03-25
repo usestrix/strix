@@ -1,5 +1,4 @@
 import base64
-import os
 import re
 import time
 from typing import TYPE_CHECKING, Any
@@ -10,6 +9,9 @@ from gql import Client, gql
 from gql.transport.exceptions import TransportQueryError
 from gql.transport.requests import RequestsHTTPTransport
 from requests.exceptions import ProxyError, RequestException, Timeout
+
+from strix.config import Config
+from strix.runtime.context import get_caido_api_token
 
 
 if TYPE_CHECKING:
@@ -27,7 +29,7 @@ class ProxyManager:
             "http": f"http://{host}:{CAIDO_PORT}",
             "https": f"http://{host}:{CAIDO_PORT}",
         }
-        self.auth_token = auth_token or os.getenv("CAIDO_API_TOKEN")
+        self.auth_token = auth_token or get_caido_api_token() or Config.get_str("caido_api_token")
 
     def _get_client(self) -> Client:
         transport = RequestsHTTPTransport(

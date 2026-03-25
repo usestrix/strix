@@ -25,11 +25,15 @@ description: "Install Strix and run your first security scan"
 
 ## Configuration
 
-Set your LLM provider:
+Create a config file at `~/.strix/config.json`:
 
-```bash
-export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
+```json
+{
+  "llm": {
+    "model": "openai/gpt-5.4",
+    "api_key": "your-api-key"
+  }
+}
 ```
 
 <Tip>

@@ -34,7 +34,7 @@ from strix.interface.tool_components.agent_message_renderer import AgentMessageR
 from strix.interface.tool_components.registry import get_tool_renderer
 from strix.interface.tool_components.user_message_renderer import UserMessageRenderer
 from strix.interface.utils import build_tui_stats_text
-from strix.llm.config import LLMConfig
+from strix.scan import PreparedScan, ScanRequest, build_agent_config, build_scan_config
 from strix.telemetry.tracer import Tracer, set_global_tracer
 
 
@@ -737,26 +737,32 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._setup_cleanup_handlers()
 
     def _build_scan_config(self, args: argparse.Namespace) -> dict[str, Any]:
-        return {
-            "scan_id": args.run_name,
-            "targets": args.targets_info,
-            "user_instructions": args.instruction or "",
-            "run_name": args.run_name,
-        }
+        prepared_scan = PreparedScan(
+            request=ScanRequest(
+                targets=[],
+                instruction=args.instruction or "",
+                scan_mode=getattr(args, "scan_mode", "deep"),
+                run_name=args.run_name,
+            ),
+            run_name=args.run_name,
+            targets_info=args.targets_info,
+            local_sources=getattr(args, "local_sources", None) or [],
+        )
+        return build_scan_config(prepared_scan)
 
     def _build_agent_config(self, args: argparse.Namespace) -> dict[str, Any]:
-        scan_mode = getattr(args, "scan_mode", "deep")
-        llm_config = LLMConfig(scan_mode=scan_mode, interactive=True)
-
-        config = {
-            "llm_config": llm_config,
-            "max_iterations": 300,
-        }
-
-        if getattr(args, "local_sources", None):
-            config["local_sources"] = args.local_sources
-
-        return config
+        prepared_scan = PreparedScan(
+            request=ScanRequest(
+                targets=[],
+                instruction=args.instruction or "",
+                scan_mode=getattr(args, "scan_mode", "deep"),
+                run_name=args.run_name,
+            ),
+            run_name=args.run_name,
+            targets_info=args.targets_info,
+            local_sources=getattr(args, "local_sources", None) or [],
+        )
+        return build_agent_config(prepared_scan, interactive=True)
 
     def _setup_cleanup_handlers(self) -> None:
         def cleanup_on_exit() -> None:

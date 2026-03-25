@@ -17,7 +17,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import Config, apply_saved_config, save_current_config
+from strix.config import Config, apply_saved_config
 from strix.config.config import resolve_llm_config
 from strix.llm.utils import resolve_strix_model
 
@@ -40,6 +40,7 @@ from strix.interface.utils import (  # noqa: E402
     validate_config_file,
     validate_llm_response,
 )
+from strix.runtime.context import configure_runtime_context  # noqa: E402
 from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME  # noqa: E402
 from strix.telemetry import posthog  # noqa: E402
 from strix.telemetry.tracer import get_global_tracer  # noqa: E402
@@ -50,121 +51,106 @@ logging.getLogger().setLevel(logging.ERROR)
 
 def validate_environment() -> None:  # noqa: PLR0912, PLR0915
     console = Console()
-    missing_required_vars = []
-    missing_optional_vars = []
+    missing_required_fields: list[tuple[str, str]] = []
+    missing_optional_fields: list[tuple[str, str]] = []
+    config_path = Config.config_file()
 
-    strix_llm = Config.get("strix_llm")
+    strix_llm = Config.get_str("strix_llm")
     uses_strix_models = strix_llm and strix_llm.startswith("strix/")
 
     if not strix_llm:
-        missing_required_vars.append("STRIX_LLM")
+        missing_required_fields.append(
+            ("llm.model", "Model name to use with LiteLLM (for example `openai/gpt-5.4`)"),
+        )
 
     has_base_url = uses_strix_models or any(
         [
-            Config.get("llm_api_base"),
-            Config.get("openai_api_base"),
-            Config.get("litellm_base_url"),
-            Config.get("ollama_api_base"),
+            Config.get_str("llm_api_base"),
+            Config.get_str("openai_api_base"),
+            Config.get_str("litellm_base_url"),
+            Config.get_str("ollama_api_base"),
         ]
     )
 
-    if not Config.get("llm_api_key"):
-        missing_optional_vars.append("LLM_API_KEY")
+    if not Config.get_str("llm_api_key"):
+        missing_optional_fields.append(
+            (
+                "llm.api_key",
+                "API key for the LLM provider (not needed for some local or cloud providers)",
+            ),
+        )
 
     if not has_base_url:
-        missing_optional_vars.append("LLM_API_BASE")
+        missing_optional_fields.append(
+            (
+                "llm.api_base",
+                "Custom API base when using local or self-hosted providers such as Ollama",
+            ),
+        )
 
-    if not Config.get("perplexity_api_key"):
-        missing_optional_vars.append("PERPLEXITY_API_KEY")
+    if not Config.get_str("perplexity_api_key"):
+        missing_optional_fields.append(
+            (
+                "features.perplexity_api_key",
+                "Perplexity API key for live web research",
+            ),
+        )
 
-    if not Config.get("strix_reasoning_effort"):
-        missing_optional_vars.append("STRIX_REASONING_EFFORT")
+    if not Config.get_str("strix_reasoning_effort"):
+        missing_optional_fields.append(
+            (
+                "llm.reasoning_effort",
+                "Reasoning effort level: none, minimal, low, medium, high, xhigh",
+            ),
+        )
 
-    if missing_required_vars:
+    if missing_required_fields:
         error_text = Text()
-        error_text.append("MISSING REQUIRED ENVIRONMENT VARIABLES", style="bold red")
+        error_text.append("MISSING REQUIRED CONFIGURATION", style="bold red")
+        error_text.append("\n\n", style="white")
+        error_text.append("Config file", style="dim")
+        error_text.append("  ")
+        error_text.append(str(config_path), style="bold white")
         error_text.append("\n\n", style="white")
 
-        for var in missing_required_vars:
-            error_text.append(f"• {var}", style="bold yellow")
-            error_text.append(" is not set\n", style="white")
+        for field_name, _ in missing_required_fields:
+            error_text.append(f"• {field_name}", style="bold yellow")
+            error_text.append(" is missing\n", style="white")
 
-        if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="dim white")
-            for var in missing_optional_vars:
-                error_text.append(f"• {var}", style="dim yellow")
+        if missing_optional_fields:
+            error_text.append("\nOptional config fields:\n", style="dim white")
+            for field_name, _ in missing_optional_fields:
+                error_text.append(f"• {field_name}", style="dim yellow")
                 error_text.append(" is not set\n", style="dim white")
 
-        error_text.append("\nRequired environment variables:\n", style="white")
-        for var in missing_required_vars:
-            if var == "STRIX_LLM":
-                error_text.append("• ", style="white")
-                error_text.append("STRIX_LLM", style="bold cyan")
-                error_text.append(
-                    " - Model name to use with litellm (e.g., 'openai/gpt-5.4')\n",
-                    style="white",
-                )
+        error_text.append("\nRequired config fields:\n", style="white")
+        for field_name, description in missing_required_fields:
+            error_text.append("• ", style="white")
+            error_text.append(field_name, style="bold cyan")
+            error_text.append(f" - {description}\n", style="white")
 
-        if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="white")
-            for var in missing_optional_vars:
-                if var == "LLM_API_KEY":
-                    error_text.append("• ", style="white")
-                    error_text.append("LLM_API_KEY", style="bold cyan")
-                    error_text.append(
-                        " - API key for the LLM provider "
-                        "(not needed for local models, Vertex AI, AWS, etc.)\n",
-                        style="white",
-                    )
-                elif var == "LLM_API_BASE":
-                    error_text.append("• ", style="white")
-                    error_text.append("LLM_API_BASE", style="bold cyan")
-                    error_text.append(
-                        " - Custom API base URL if using local models (e.g., Ollama, LMStudio)\n",
-                        style="white",
-                    )
-                elif var == "PERPLEXITY_API_KEY":
-                    error_text.append("• ", style="white")
-                    error_text.append("PERPLEXITY_API_KEY", style="bold cyan")
-                    error_text.append(
-                        " - API key for Perplexity AI web search (enables real-time research)\n",
-                        style="white",
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append("• ", style="white")
-                    error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
-                    error_text.append(
-                        " - Reasoning effort level: none, minimal, low, medium, high, xhigh "
-                        "(default: high)\n",
-                        style="white",
-                    )
+        if missing_optional_fields:
+            error_text.append("\nOptional config fields:\n", style="white")
+            for field_name, description in missing_optional_fields:
+                error_text.append("• ", style="white")
+                error_text.append(field_name, style="bold cyan")
+                error_text.append(f" - {description}\n", style="white")
 
         error_text.append("\nExample setup:\n", style="white")
-        error_text.append("export STRIX_LLM='openai/gpt-5.4'\n", style="dim white")
-
-        if missing_optional_vars:
-            for var in missing_optional_vars:
-                if var == "LLM_API_KEY":
-                    error_text.append(
-                        "export LLM_API_KEY='your-api-key-here'  "
-                        "# not needed for local models, Vertex AI, AWS, etc.\n",
-                        style="dim white",
-                    )
-                elif var == "LLM_API_BASE":
-                    error_text.append(
-                        "export LLM_API_BASE='http://localhost:11434'  "
-                        "# needed for local models only\n",
-                        style="dim white",
-                    )
-                elif var == "PERPLEXITY_API_KEY":
-                    error_text.append(
-                        "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append(
-                        "export STRIX_REASONING_EFFORT='high'\n",
-                        style="dim white",
-                    )
+        error_text.append(
+            '{\n'
+            '  "llm": {\n'
+            '    "model": "openai/gpt-5.4",\n'
+            '    "api_key": "your-api-key-here",\n'
+            '    "api_base": "http://localhost:11434",\n'
+            '    "reasoning_effort": "high"\n'
+            '  },\n'
+            '  "features": {\n'
+            '    "perplexity_api_key": "your-perplexity-key-here"\n'
+            "  }\n"
+            "}\n",
+            style="dim white",
+        )
 
         panel = Panel(
             error_text,
@@ -206,8 +192,12 @@ async def warm_up_llm() -> None:
     console = Console()
 
     try:
-        model_name, api_key, api_base = resolve_llm_config()
-        litellm_model, _ = resolve_strix_model(model_name)
+        model_name, api_key, api_base, openai_compatible_provider = resolve_llm_config()
+        litellm_model, _ = resolve_strix_model(
+            model_name,
+            api_base=api_base,
+            openai_compatible_provider=openai_compatible_provider,
+        )
         litellm_model = litellm_model or model_name
 
         test_messages = [
@@ -215,7 +205,7 @@ async def warm_up_llm() -> None:
             {"role": "user", "content": "Reply with just 'OK'."},
         ]
 
-        llm_timeout = int(Config.get("llm_timeout") or "300")
+        llm_timeout = Config.get_int("llm_timeout") or 300
 
         completion_kwargs: dict[str, Any] = {
             "model": litellm_model,
@@ -360,7 +350,13 @@ Examples:
     parser.add_argument(
         "--config",
         type=str,
-        help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
+        help="Path to a custom config file (JSON) to use instead of ~/.strix/config.json",
+    )
+
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        help="Override the generated run name. Useful for API-triggered or externally tracked runs.",
     )
 
     args = parser.parse_args()
@@ -463,12 +459,13 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 def pull_docker_image() -> None:
     console = Console()
     client = check_docker_connection()
+    image_name = Config.get_str("strix_image")
 
-    if image_exists(client, Config.get("strix_image")):  # type: ignore[arg-type]
+    if image_exists(client, image_name):  # type: ignore[arg-type]
         return
 
     console.print()
-    console.print(f"[dim]Pulling image[/] {Config.get('strix_image')}")
+    console.print(f"[dim]Pulling image[/] {image_name}")
     console.print("[dim yellow]This only happens on first run and may take a few minutes...[/]")
     console.print()
 
@@ -477,7 +474,7 @@ def pull_docker_image() -> None:
             layers_info: dict[str, str] = {}
             last_update = ""
 
-            for line in client.api.pull(Config.get("strix_image"), stream=True, decode=True):
+            for line in client.api.pull(image_name, stream=True, decode=True):
                 last_update = process_pull_line(line, layers_info, status, last_update)
 
         except DockerException as e:
@@ -485,7 +482,7 @@ def pull_docker_image() -> None:
             error_text = Text()
             error_text.append("FAILED TO PULL IMAGE", style="bold red")
             error_text.append("\n\n", style="white")
-            error_text.append(f"Could not download: {Config.get('strix_image')}\n", style="white")
+            error_text.append(f"Could not download: {image_name}\n", style="white")
             error_text.append(str(e), style="dim red")
 
             panel = Panel(
@@ -505,13 +502,7 @@ def pull_docker_image() -> None:
 
 
 def apply_config_override(config_path: str) -> None:
-    Config._config_file_override = validate_config_file(config_path)
-    apply_saved_config(force=True)
-
-
-def persist_config() -> None:
-    if Config._config_file_override is None:
-        save_current_config()
+    Config.set_config_file(validate_config_file(config_path))
 
 
 def main() -> None:
@@ -522,6 +513,13 @@ def main() -> None:
 
     if args.config:
         apply_config_override(args.config)
+    else:
+        Config.reload()
+
+    configure_runtime_context(
+        sandbox_mode=False,
+        caido_api_token=Config.get_str("caido_api_token"),
+    )
 
     check_docker_installed()
     pull_docker_image()
@@ -529,9 +527,7 @@ def main() -> None:
     validate_environment()
     asyncio.run(warm_up_llm())
 
-    persist_config()
-
-    args.run_name = generate_run_name(args.targets_info)
+    args.run_name = args.run_name or generate_run_name(args.targets_info)
 
     for target_info in args.targets_info:
         if target_info["type"] == "repository":
@@ -545,7 +541,7 @@ def main() -> None:
     is_whitebox = bool(args.local_sources)
 
     posthog.start(
-        model=Config.get("strix_llm"),
+        model=Config.get_str("strix_llm"),
         scan_mode=args.scan_mode,
         is_whitebox=is_whitebox,
         interactive=not args.non_interactive,

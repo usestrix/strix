@@ -1,8 +1,8 @@
-# Strix Documentation
+# Strix 文档目录
 
-Documentation source files for Strix, powered by [Mintlify](https://mintlify.com).
+这里存放的是 Strix 的文档源文件，使用 [Mintlify](https://mintlify.com) 渲染。
 
-## Local Preview
+## 本地预览
 
 ```bash
 npm i -g mintlify

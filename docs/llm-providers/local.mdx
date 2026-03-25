@@ -32,9 +32,13 @@ For critical assessments, we strongly recommend using state-of-the-art cloud mod
    ollama pull qwen3-vl
    ```
 3. Configure Strix:
-   ```bash
-   export STRIX_LLM="ollama/qwen3-vl"
-   export LLM_API_BASE="http://localhost:11434"
+   ```json
+   {
+     "llm": {
+       "model": "ollama/qwen3-vl",
+       "api_base": "http://localhost:11434"
+     }
+   }
    ```
 
 ### Recommended Models
@@ -50,7 +54,11 @@ We recommend these models for the best balance of reasoning and tool use:
 
 If you use LM Studio, vLLM, or other runners:
 
-```bash
-export STRIX_LLM="openai/local-model"
-export LLM_API_BASE="http://localhost:1234/v1"  # Adjust port as needed
+```json
+{
+  "llm": {
+    "model": "openai/local-model",
+    "api_base": "http://localhost:1234/v1"
+  }
+}
 ```

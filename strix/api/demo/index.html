@@ -1,0 +1,1801 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Strix API Demo</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4efe7;
+        --surface: rgba(255, 252, 247, 0.78);
+        --surface-strong: rgba(17, 27, 39, 0.92);
+        --line: rgba(25, 39, 54, 0.12);
+        --text: #13202b;
+        --muted: #617184;
+        --accent: #cc6c2d;
+        --accent-soft: rgba(204, 108, 45, 0.14);
+        --success: #157f5c;
+        --danger: #bc3f39;
+        --shadow: 0 22px 60px rgba(16, 24, 40, 0.08);
+        --radius: 24px;
+        --mono: "IBM Plex Mono", "SFMono-Regular", "Consolas", monospace;
+        --sans: "Avenir Next", "Segoe UI", sans-serif;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-height: 100%;
+        font-family: var(--sans);
+        background:
+          radial-gradient(circle at top left, rgba(204, 108, 45, 0.12), transparent 34%),
+          radial-gradient(circle at top right, rgba(30, 111, 159, 0.14), transparent 28%),
+          linear-gradient(180deg, #f7f2ea 0%, #f0e9df 48%, #ebe2d5 100%);
+        color: var(--text);
+      }
+
+      body {
+        padding: 28px;
+      }
+
+      body::before {
+        content: "";
+        position: fixed;
+        inset: 0;
+        pointer-events: none;
+        background-image:
+          linear-gradient(rgba(19, 32, 43, 0.03) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(19, 32, 43, 0.03) 1px, transparent 1px);
+        background-size: 28px 28px;
+        mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.6), transparent 90%);
+      }
+
+      .shell {
+        display: grid;
+        gap: 18px;
+      }
+
+      .topbar,
+      .rail,
+      .workspace,
+      .telemetry {
+        backdrop-filter: blur(22px);
+        background: var(--surface);
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        box-shadow: var(--shadow);
+      }
+
+      .topbar {
+        padding: 22px 24px;
+        display: grid;
+        gap: 18px;
+        animation: rise 0.55s ease-out both;
+      }
+
+      .topbar-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        align-items: start;
+        flex-wrap: wrap;
+      }
+
+      .eyebrow {
+        font: 600 12px/1.2 var(--mono);
+        letter-spacing: 0.16em;
+        text-transform: uppercase;
+        color: var(--accent);
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin: 0;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 2.8vw, 3.2rem);
+        line-height: 0.96;
+        max-width: 12ch;
+      }
+
+      .subtitle {
+        color: var(--muted);
+        max-width: 72ch;
+        margin-top: 10px;
+      }
+
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 14px;
+        border-radius: 999px;
+        background: rgba(19, 32, 43, 0.06);
+        color: var(--muted);
+        font: 600 12px/1 var(--mono);
+      }
+
+      .status-pill::before {
+        content: "";
+        width: 9px;
+        height: 9px;
+        border-radius: 999px;
+        background: currentColor;
+        opacity: 0.82;
+      }
+
+      .status-pill[data-state="ok"] {
+        color: var(--success);
+        background: rgba(21, 127, 92, 0.1);
+      }
+
+      .status-pill[data-state="error"] {
+        color: var(--danger);
+        background: rgba(188, 63, 57, 0.1);
+      }
+
+      .connection-grid,
+      .create-grid,
+      .task-meta {
+        display: grid;
+        gap: 12px;
+      }
+
+      .connection-grid {
+        grid-template-columns: 1.4fr 0.9fr auto auto auto;
+        align-items: end;
+      }
+
+      .layout {
+        display: grid;
+        grid-template-columns: minmax(260px, 0.9fr) minmax(420px, 1.35fr) minmax(320px, 1fr);
+        gap: 18px;
+      }
+
+      .rail,
+      .workspace,
+      .telemetry {
+        padding: 20px;
+        animation: rise 0.65s ease-out both;
+      }
+
+      .workspace {
+        display: grid;
+        gap: 18px;
+      }
+
+      .panel-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        margin-bottom: 14px;
+      }
+
+      .panel-title {
+        font-size: 1.02rem;
+        font-weight: 700;
+      }
+
+      .panel-note {
+        color: var(--muted);
+        font-size: 0.95rem;
+      }
+
+      label {
+        display: grid;
+        gap: 8px;
+        font-size: 0.92rem;
+        color: var(--muted);
+      }
+
+      input,
+      select,
+      textarea,
+      button {
+        font: inherit;
+      }
+
+      input,
+      select,
+      textarea {
+        width: 100%;
+        border: 1px solid rgba(19, 32, 43, 0.12);
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.78);
+        color: var(--text);
+        padding: 13px 14px;
+        outline: none;
+        transition: border-color 160ms ease, box-shadow 160ms ease, background 160ms ease;
+      }
+
+      input:focus,
+      select:focus,
+      textarea:focus {
+        border-color: rgba(204, 108, 45, 0.55);
+        box-shadow: 0 0 0 4px rgba(204, 108, 45, 0.12);
+        background: rgba(255, 255, 255, 0.96);
+      }
+
+      textarea {
+        min-height: 132px;
+        resize: vertical;
+      }
+
+      .create-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .create-grid .span-2 {
+        grid-column: 1 / -1;
+      }
+
+      .button-row,
+      .action-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+      }
+
+      button,
+      .inline-link {
+        border: 0;
+        border-radius: 999px;
+        padding: 11px 16px;
+        cursor: pointer;
+        transition: transform 140ms ease, opacity 140ms ease, background 140ms ease;
+      }
+
+      button:hover,
+      .inline-link:hover {
+        transform: translateY(-1px);
+      }
+
+      button.primary {
+        background: var(--accent);
+        color: #fff;
+      }
+
+      button.secondary,
+      .inline-link {
+        background: rgba(19, 32, 43, 0.08);
+        color: var(--text);
+      }
+
+      button.danger {
+        background: rgba(188, 63, 57, 0.14);
+        color: var(--danger);
+      }
+
+      button.ghost {
+        background: transparent;
+        color: var(--muted);
+        padding-inline: 0;
+      }
+
+      .task-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+
+      .task-item {
+        border: 1px solid rgba(19, 32, 43, 0.08);
+        border-radius: 18px;
+        padding: 14px;
+        background: rgba(255, 255, 255, 0.68);
+        cursor: pointer;
+        transition: transform 140ms ease, border-color 140ms ease, background 140ms ease;
+      }
+
+      .task-item:hover {
+        transform: translateY(-1px);
+        border-color: rgba(204, 108, 45, 0.38);
+      }
+
+      .task-item.active {
+        border-color: rgba(204, 108, 45, 0.62);
+        background: linear-gradient(135deg, rgba(204, 108, 45, 0.12), rgba(255, 255, 255, 0.84));
+      }
+
+      .task-item-head,
+      .task-item-foot,
+      .meta-line {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+
+      .task-id {
+        font: 700 0.95rem/1.3 var(--mono);
+      }
+
+      .task-target {
+        margin-top: 8px;
+        color: var(--muted);
+        font-size: 0.93rem;
+        word-break: break-word;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 9px;
+        border-radius: 999px;
+        background: rgba(19, 32, 43, 0.08);
+        font: 600 0.74rem/1 var(--mono);
+        text-transform: uppercase;
+      }
+
+      .badge[data-status="completed"] {
+        background: rgba(21, 127, 92, 0.12);
+        color: var(--success);
+      }
+
+      .badge[data-status="failed"],
+      .badge[data-status="cancelled"] {
+        background: rgba(188, 63, 57, 0.12);
+        color: var(--danger);
+      }
+
+      .badge[data-status="running"],
+      .badge[data-status="queued"],
+      .badge[data-status="cancelling"] {
+        background: rgba(204, 108, 45, 0.12);
+        color: var(--accent);
+      }
+
+      .section-split {
+        display: grid;
+        gap: 18px;
+        border-top: 1px solid var(--line);
+        padding-top: 18px;
+      }
+
+      .task-meta {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
+      .meta-block {
+        padding: 14px 0;
+        border-bottom: 1px solid rgba(19, 32, 43, 0.08);
+      }
+
+      .meta-label {
+        font: 600 0.74rem/1 var(--mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .meta-value {
+        margin-top: 8px;
+        word-break: break-word;
+      }
+
+      .telemetry-stack {
+        display: grid;
+        gap: 18px;
+      }
+
+      .console {
+        min-height: 170px;
+        max-height: 280px;
+        overflow: auto;
+        padding: 16px;
+        border-radius: 18px;
+        background: var(--surface-strong);
+        color: #d7e0ea;
+        font: 500 0.84rem/1.58 var(--mono);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .console.streaming {
+        box-shadow: inset 0 0 0 1px rgba(204, 108, 45, 0.34);
+      }
+
+      .stream-summary {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 14px;
+        margin-bottom: 14px;
+      }
+
+      .stream-stat {
+        padding: 13px 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.7);
+        border: 1px solid rgba(19, 32, 43, 0.08);
+      }
+
+      .stream-stat-label {
+        font: 600 0.68rem/1 var(--mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .stream-stat-value {
+        margin-top: 8px;
+        font-size: 1rem;
+        font-weight: 700;
+        color: var(--text);
+      }
+
+      .stream-feed,
+      .event-feed {
+        display: grid;
+        gap: 12px;
+        max-height: 420px;
+        overflow: auto;
+        padding-right: 4px;
+      }
+
+      .stream-empty {
+        padding: 16px;
+        border-radius: 18px;
+        background: rgba(19, 32, 43, 0.05);
+        color: var(--muted);
+        font-style: italic;
+      }
+
+      .stream-row {
+        position: relative;
+        padding-left: 18px;
+      }
+
+      .stream-row::before {
+        content: "";
+        position: absolute;
+        left: 6px;
+        top: 10px;
+        bottom: -10px;
+        width: 2px;
+        border-radius: 999px;
+        background: linear-gradient(180deg, rgba(204, 108, 45, 0.3), rgba(19, 32, 43, 0.04));
+      }
+
+      .stream-row:last-child::before {
+        bottom: 22px;
+      }
+
+      .stream-card {
+        border-radius: 18px;
+        border: 1px solid rgba(19, 32, 43, 0.08);
+        background: rgba(255, 255, 255, 0.78);
+        padding: 14px 15px 15px;
+        box-shadow: 0 12px 26px rgba(16, 24, 40, 0.06);
+      }
+
+      .stream-card[data-tone="system"] {
+        background: linear-gradient(180deg, rgba(204, 108, 45, 0.08), rgba(255, 255, 255, 0.86));
+      }
+
+      .stream-card[data-tone="chat"] {
+        background: linear-gradient(180deg, rgba(30, 111, 159, 0.08), rgba(255, 255, 255, 0.88));
+      }
+
+      .stream-card[data-tone="tool"] {
+        background: linear-gradient(180deg, rgba(19, 32, 43, 0.05), rgba(255, 255, 255, 0.86));
+      }
+
+      .stream-card[data-tone="finding"] {
+        background: linear-gradient(180deg, rgba(188, 63, 57, 0.1), rgba(255, 255, 255, 0.9));
+      }
+
+      .stream-card[data-status="failed"],
+      .stream-card[data-status="cancelled"] {
+        border-color: rgba(188, 63, 57, 0.24);
+      }
+
+      .stream-card[data-status="completed"] {
+        border-color: rgba(21, 127, 92, 0.2);
+      }
+
+      .stream-card.is-live {
+        box-shadow:
+          0 16px 34px rgba(16, 24, 40, 0.08),
+          inset 0 0 0 1px rgba(204, 108, 45, 0.18);
+      }
+
+      .stream-head {
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }
+
+      .stream-kicker {
+        font: 600 0.68rem/1 var(--mono);
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+
+      .stream-title {
+        margin-top: 6px;
+        font-size: 0.98rem;
+        font-weight: 700;
+        line-height: 1.35;
+      }
+
+      .stream-time {
+        font: 500 0.75rem/1.1 var(--mono);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .stream-meta {
+        margin-top: 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+
+      .stream-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 6px 9px;
+        border-radius: 999px;
+        background: rgba(19, 32, 43, 0.07);
+        font: 600 0.72rem/1 var(--mono);
+        color: var(--muted);
+      }
+
+      .stream-body {
+        margin-top: 12px;
+        display: grid;
+        gap: 10px;
+      }
+
+      .stream-text,
+      .stream-note {
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .stream-text {
+        color: var(--text);
+        line-height: 1.6;
+      }
+
+      .stream-note {
+        color: var(--muted);
+        font-size: 0.92rem;
+        line-height: 1.55;
+      }
+
+      .stream-inline-code {
+        padding: 10px 12px;
+        border-radius: 14px;
+        background: rgba(19, 32, 43, 0.06);
+        font: 500 0.8rem/1.55 var(--mono);
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .stream-raw {
+        margin-top: 2px;
+      }
+
+      .stream-raw summary {
+        cursor: pointer;
+        color: var(--muted);
+        font: 600 0.75rem/1 var(--mono);
+      }
+
+      .stream-raw pre {
+        margin: 10px 0 0;
+        padding: 12px;
+        border-radius: 14px;
+        background: var(--surface-strong);
+        color: #d7e0ea;
+        font: 500 0.78rem/1.55 var(--mono);
+        overflow: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+
+      .empty {
+        color: var(--muted);
+        font-style: italic;
+      }
+
+      .artifact-list {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        display: grid;
+        gap: 10px;
+      }
+
+      .artifact-list li {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(19, 32, 43, 0.08);
+      }
+
+      .artifact-path {
+        font-family: var(--mono);
+        font-size: 0.83rem;
+        word-break: break-all;
+      }
+
+      .notice {
+        padding: 12px 14px;
+        border-radius: 16px;
+        background: rgba(19, 32, 43, 0.06);
+        color: var(--muted);
+      }
+
+      .notice[data-kind="error"] {
+        background: rgba(188, 63, 57, 0.1);
+        color: var(--danger);
+      }
+
+      .notice[data-kind="success"] {
+        background: rgba(21, 127, 92, 0.1);
+        color: var(--success);
+      }
+
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+
+      @keyframes rise {
+        from {
+          opacity: 0;
+          transform: translateY(14px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+
+      @media (max-width: 1180px) {
+        .layout {
+          grid-template-columns: 1fr;
+        }
+
+        .connection-grid,
+        .create-grid,
+        .task-meta {
+          grid-template-columns: 1fr;
+        }
+
+        .stream-summary {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <section class="topbar">
+        <div class="topbar-head">
+          <div>
+            <div class="eyebrow">Strix API Demo</div>
+            <h1>Operate scans, artifacts, results, and live telemetry from one page.</h1>
+            <p class="subtitle">
+              This demo targets every public API capability: create tasks, inspect queue state,
+              fetch results, pull reports and artifacts, replay event history, and stream
+              execution output in real time.
+            </p>
+          </div>
+          <div class="status-pill" id="health-pill" data-state="idle">Health unknown</div>
+        </div>
+
+        <div class="connection-grid">
+          <label>
+            API base URL
+            <input id="base-url" placeholder="http://127.0.0.1:8787" />
+          </label>
+          <label>
+            Bearer token
+            <input id="auth-token" placeholder="Optional token" />
+          </label>
+          <button class="secondary" id="check-health">Check health</button>
+          <a class="inline-link" id="open-docs" target="_blank" rel="noreferrer">Open docs</a>
+          <a class="inline-link" id="open-openapi" target="_blank" rel="noreferrer">OpenAPI</a>
+        </div>
+      </section>
+
+      <section class="layout">
+        <aside class="rail">
+          <div class="panel-head">
+            <div>
+              <h2 class="panel-title">Task directory</h2>
+              <p class="panel-note">Refresh the queue, inspect old runs, and jump between tasks.</p>
+            </div>
+            <button class="secondary" id="refresh-tasks">Refresh</button>
+          </div>
+          <div class="notice" id="task-summary">No tasks loaded yet.</div>
+          <ul class="task-list" id="task-list"></ul>
+        </aside>
+
+        <main class="workspace">
+          <section>
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">Launch a task</h2>
+                <p class="panel-note">
+                  Use one or more targets. Enter either inline instruction text or a server-side
+                  instruction file path.
+                </p>
+              </div>
+            </div>
+            <div class="create-grid">
+              <label class="span-2">
+                Targets
+                <textarea id="targets" placeholder="https://example.com&#10;./local-project&#10;https://staging.example.com"></textarea>
+              </label>
+              <label>
+                Scan mode
+                <select id="scan-mode">
+                  <option value="quick">quick</option>
+                  <option value="standard">standard</option>
+                  <option value="deep" selected>deep</option>
+                </select>
+              </label>
+              <label>
+                Task ID
+                <input id="task-id" placeholder="Optional stable task id" />
+              </label>
+              <label class="span-2">
+                Instruction
+                <textarea id="instruction" placeholder="Focus on auth flows, IDOR, file access, and any risky admin operations."></textarea>
+              </label>
+              <label>
+                Instruction file path
+                <input id="instruction-file" placeholder="/path/on/server/instruction.md" />
+              </label>
+              <label>
+                Run name
+                <input id="run-name" placeholder="Optional label" />
+              </label>
+              <label class="span-2">
+                Config path
+                <input id="config-path" placeholder="Optional task-level config override" />
+              </label>
+            </div>
+            <div class="button-row" style="margin-top: 16px">
+              <button class="primary" id="create-task">Create task</button>
+              <button class="secondary" id="reset-form">Reset form</button>
+            </div>
+          </section>
+
+          <section class="section-split">
+            <div class="panel-head">
+              <div>
+                <h2 class="panel-title">Task detail</h2>
+                <p class="panel-note" id="selected-task-note">
+                  Select a task to inspect its lifecycle and outputs.
+                </p>
+              </div>
+            </div>
+            <div class="action-row">
+              <button class="secondary" id="refresh-selected">Refresh task</button>
+              <button class="secondary" id="load-result">Fetch /result</button>
+              <button class="secondary" id="load-results-alias">Fetch /results</button>
+              <button class="secondary" id="load-events">Fetch /events</button>
+              <button class="secondary" id="load-artifacts">Fetch /artifacts</button>
+              <button class="secondary" id="load-report">Fetch /report</button>
+              <button class="danger" id="cancel-task">Cancel task</button>
+            </div>
+            <div class="task-meta" id="task-meta">
+              <div class="meta-block">
+                <div class="meta-label">Selection</div>
+                <div class="meta-value empty">Choose a task from the left rail.</div>
+              </div>
+            </div>
+            <div>
+              <div class="panel-head">
+                <div>
+                  <h3 class="panel-title">Artifacts</h3>
+                  <p class="panel-note">Files emitted into the run directory.</p>
+                </div>
+              </div>
+              <ul class="artifact-list" id="artifact-list">
+                <li class="empty">Artifacts will appear here.</li>
+              </ul>
+            </div>
+          </section>
+        </main>
+
+        <aside class="telemetry">
+          <div class="telemetry-stack">
+            <section>
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">Live stream</h2>
+                  <p class="panel-note">Consumes the SSE endpoint with authenticated fetch.</p>
+                </div>
+                <div class="action-row">
+                  <button class="secondary" id="start-stream">Start stream</button>
+                  <button class="secondary" id="stop-stream">Stop</button>
+                </div>
+              </div>
+              <div class="notice" id="stream-status">Stream is idle.</div>
+              <div class="stream-summary">
+                <div class="stream-stat">
+                  <div class="stream-stat-label">Mode</div>
+                  <div class="stream-stat-value" id="stream-metric-mode">Idle</div>
+                </div>
+                <div class="stream-stat">
+                  <div class="stream-stat-label">Visible events</div>
+                  <div class="stream-stat-value" id="stream-metric-events">0</div>
+                </div>
+                <div class="stream-stat">
+                  <div class="stream-stat-label">Last event</div>
+                  <div class="stream-stat-value" id="stream-metric-last">-</div>
+                </div>
+                <div class="stream-stat">
+                  <div class="stream-stat-label">Offset</div>
+                  <div class="stream-stat-value" id="stream-metric-offset">0</div>
+                </div>
+              </div>
+              <div class="stream-feed" id="stream-feed">
+                <div class="stream-empty">No stream output yet.</div>
+              </div>
+            </section>
+
+            <section>
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">Event history</h2>
+                  <p class="panel-note">Structured replay of recent records from <code>events.jsonl</code>.</p>
+                </div>
+              </div>
+              <div class="event-feed" id="event-list">
+                <div class="stream-empty">Event history will appear here.</div>
+              </div>
+            </section>
+
+            <section>
+              <div class="panel-head">
+                <div>
+                  <h2 class="panel-title">Response inspector</h2>
+                  <p class="panel-note">Raw JSON or text for the last API action.</p>
+                </div>
+              </div>
+              <pre class="console" id="response-console">No API response captured yet.</pre>
+            </section>
+          </div>
+        </aside>
+      </section>
+    </div>
+
+    <script>
+      const state = {
+        selectedTaskId: null,
+        streamController: null,
+        streamOffset: 0,
+        streamNodes: new Map(),
+      };
+
+      const elements = {
+        artifactList: document.getElementById("artifact-list"),
+        authToken: document.getElementById("auth-token"),
+        baseUrl: document.getElementById("base-url"),
+        cancelTask: document.getElementById("cancel-task"),
+        checkHealth: document.getElementById("check-health"),
+        configPath: document.getElementById("config-path"),
+        createTask: document.getElementById("create-task"),
+        eventList: document.getElementById("event-list"),
+        healthPill: document.getElementById("health-pill"),
+        instruction: document.getElementById("instruction"),
+        instructionFile: document.getElementById("instruction-file"),
+        loadArtifacts: document.getElementById("load-artifacts"),
+        loadEvents: document.getElementById("load-events"),
+        loadReport: document.getElementById("load-report"),
+        loadResult: document.getElementById("load-result"),
+        loadResultsAlias: document.getElementById("load-results-alias"),
+        openDocs: document.getElementById("open-docs"),
+        openOpenapi: document.getElementById("open-openapi"),
+        refreshSelected: document.getElementById("refresh-selected"),
+        refreshTasks: document.getElementById("refresh-tasks"),
+        resetForm: document.getElementById("reset-form"),
+        responseConsole: document.getElementById("response-console"),
+        runName: document.getElementById("run-name"),
+        scanMode: document.getElementById("scan-mode"),
+        selectedTaskNote: document.getElementById("selected-task-note"),
+        startStream: document.getElementById("start-stream"),
+        stopStream: document.getElementById("stop-stream"),
+        streamFeed: document.getElementById("stream-feed"),
+        streamMetricEvents: document.getElementById("stream-metric-events"),
+        streamMetricLast: document.getElementById("stream-metric-last"),
+        streamMetricMode: document.getElementById("stream-metric-mode"),
+        streamMetricOffset: document.getElementById("stream-metric-offset"),
+        streamStatus: document.getElementById("stream-status"),
+        targets: document.getElementById("targets"),
+        taskId: document.getElementById("task-id"),
+        taskList: document.getElementById("task-list"),
+        taskMeta: document.getElementById("task-meta"),
+        taskSummary: document.getElementById("task-summary"),
+      };
+
+      function defaultBaseUrl() {
+        if (window.location && window.location.origin && window.location.origin !== "null") {
+          return window.location.origin;
+        }
+        return "http://127.0.0.1:8787";
+      }
+
+      function normalizeBaseUrl(value) {
+        return (value || "").trim().replace(/\/+$/, "");
+      }
+
+      function currentBaseUrl() {
+        return normalizeBaseUrl(elements.baseUrl.value) || defaultBaseUrl();
+      }
+
+      function currentToken() {
+        return elements.authToken.value.trim();
+      }
+
+      function persistConnection() {
+        localStorage.setItem("strix-demo.baseUrl", currentBaseUrl());
+        localStorage.setItem("strix-demo.token", currentToken());
+        elements.openDocs.href = `${currentBaseUrl()}/docs`;
+        elements.openOpenapi.href = `${currentBaseUrl()}/openapi.json`;
+      }
+
+      function parseTargets(raw) {
+        return raw
+          .split(/\n|,/)
+          .map((item) => item.trim())
+          .filter(Boolean);
+      }
+
+      function authHeaders(includeJson) {
+        const headers = {};
+        const token = currentToken();
+        if (includeJson) {
+          headers["Content-Type"] = "application/json";
+        }
+        if (token) {
+          headers.Authorization = `Bearer ${token}`;
+        }
+        return headers;
+      }
+
+      async function request(path, options = {}) {
+        persistConnection();
+        const response = await fetch(`${currentBaseUrl()}${path}`, {
+          ...options,
+          headers: {
+            ...authHeaders(Boolean(options.body)),
+            ...(options.headers || {}),
+          },
+        });
+        const contentType = response.headers.get("content-type") || "";
+        const rawText = await response.text();
+        let data = rawText;
+        if (contentType.includes("application/json") && rawText) {
+          data = JSON.parse(rawText);
+        }
+        if (!response.ok) {
+          const detail =
+            typeof data === "object" && data && "detail" in data ? data.detail : rawText;
+          throw new Error(detail || `Request failed with status ${response.status}`);
+        }
+        return data;
+      }
+
+      function setNotice(element, message, kind = "info") {
+        element.textContent = message;
+        element.dataset.kind = kind;
+      }
+
+      function pretty(value) {
+        if (typeof value === "string") {
+          return value;
+        }
+        return JSON.stringify(value, null, 2);
+      }
+
+      function showResponse(title, value) {
+        elements.responseConsole.textContent = `${title}\n\n${pretty(value)}`;
+      }
+
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
+
+      function truncate(value, max = 240) {
+        const text = String(value ?? "");
+        return text.length > max ? `${text.slice(0, max - 1)}…` : text;
+      }
+
+      function compactText(value) {
+        return String(value ?? "").replace(/\s+/g, " ").trim();
+      }
+
+      function humanDateTime(value) {
+        if (!value) {
+          return "-";
+        }
+        const date = value instanceof Date ? value : new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return String(value);
+        }
+        return date.toLocaleString();
+      }
+
+      function normalizeEventRecord(eventType, data) {
+        if (data && typeof data === "object" && !Array.isArray(data)) {
+          return { ...data, event_type: data.event_type || eventType };
+        }
+        return {
+          event_type: eventType,
+          payload: typeof data === "string" ? { message: data } : data,
+        };
+      }
+
+      function resetStreamFeed(message = "No stream output yet.") {
+        state.streamNodes.clear();
+        state.streamOffset = 0;
+        elements.streamFeed.innerHTML = `<div class="stream-empty">${escapeHtml(message)}</div>`;
+        elements.streamMetricMode.textContent = "Idle";
+        elements.streamMetricEvents.textContent = "0";
+        elements.streamMetricLast.textContent = "-";
+        elements.streamMetricOffset.textContent = "0";
+      }
+
+      function ensureStreamFeedReady() {
+        if (elements.streamFeed.querySelector(".stream-empty")) {
+          elements.streamFeed.innerHTML = "";
+        }
+      }
+
+      function trimStreamFeed(maxItems = 80) {
+        const rows = Array.from(elements.streamFeed.querySelectorAll(".stream-row"));
+        if (rows.length <= maxItems) {
+          return;
+        }
+        rows.slice(0, rows.length - maxItems).forEach((row) => {
+          const key = row.dataset.liveKey;
+          if (key && state.streamNodes.get(key) === row) {
+            state.streamNodes.delete(key);
+          }
+          row.remove();
+        });
+      }
+
+      function shouldSurfaceStreamEvent(record) {
+        const type = record.event_type || "";
+        return type !== "openai.chat" && record.source !== "otel.span";
+      }
+
+      function shouldShowInEventHistory(record) {
+        const type = record.event_type || "";
+        return type !== "openai.chat" && type !== "chat.streaming" && record.source !== "otel.span";
+      }
+
+      function eventTone(eventType) {
+        if (eventType.startsWith("chat.")) return "chat";
+        if (eventType.startsWith("tool.")) return "tool";
+        if (eventType === "finding.created") return "finding";
+        return "system";
+      }
+
+      function eventLabel(eventType) {
+        const labels = {
+          "stream.connected": "Live stream",
+          "run.started": "Run lifecycle",
+          "run.configured": "Run lifecycle",
+          "run.completed": "Run lifecycle",
+          "agent.created": "Agent activity",
+          "chat.streaming": "Assistant draft",
+          "chat.message": "Assistant reply",
+          "tool.execution.started": "Tool execution",
+          "tool.execution.updated": "Tool execution",
+          "finding.created": "Validated finding",
+          "task.finished": "Task lifecycle",
+        };
+        return labels[eventType] || eventType.replace(/\./g, " ");
+      }
+
+      function summarizeTargets(targets) {
+        const values = (targets || [])
+          .map((target) => target?.original || target?.details?.target_url || target?.details?.target_path || target?.details?.target_repo || target?.details?.target_ip)
+          .filter(Boolean);
+        return values.length ? values.join("\n") : "";
+      }
+
+      function summarizeObjectFields(obj, preferredKeys = []) {
+        if (!obj || typeof obj !== "object" || Array.isArray(obj)) {
+          return "";
+        }
+
+        const picked = preferredKeys
+          .filter((key) => key in obj && obj[key] != null && obj[key] !== "")
+          .map((key) => `${key}: ${truncate(typeof obj[key] === "string" ? obj[key] : pretty(obj[key]), 180)}`);
+
+        if (picked.length) {
+          return picked.join("\n");
+        }
+
+        const fallback = Object.entries(obj)
+          .slice(0, 4)
+          .map(([key, value]) => `${key}: ${truncate(typeof value === "string" ? value : pretty(value), 140)}`);
+
+        return fallback.join("\n");
+      }
+
+      function summarizeToolArgs(args) {
+        return summarizeObjectFields(args, ["action", "url", "target", "command", "task", "name", "skills"]);
+      }
+
+      function summarizeToolResult(result) {
+        if (!result || typeof result !== "object") {
+          return compactText(result);
+        }
+        return summarizeObjectFields(result, ["message", "title", "url", "status", "tab_id", "path"]);
+      }
+
+      function extractChatParts(content) {
+        const raw = String(content || "");
+        const functionIndex = raw.indexOf("<function=");
+        const narrative = functionIndex >= 0 ? raw.slice(0, functionIndex).trim() : raw.trim();
+        const toolDraft = functionIndex >= 0 ? raw.slice(functionIndex).trim() : "";
+        const toolMatch = toolDraft.match(/<function=([^>\n]+)>/);
+        return {
+          narrative,
+          toolName: toolMatch ? toolMatch[1] : "",
+          toolDraft: toolDraft ? truncate(toolDraft, 240) : "",
+        };
+      }
+
+      function buildEventModel(rawEvent) {
+        const record = rawEvent;
+        const eventType = record.event_type || "message";
+        const actor = record.actor || {};
+        const payload =
+          record.payload && typeof record.payload === "object" && !Array.isArray(record.payload)
+            ? record.payload
+            : {};
+        const status = record.status || "-";
+        const actorName = actor.agent_name || actor.agent_id || "";
+        const time = humanDateTime(record.timestamp);
+        const chips = [];
+
+        if (actorName) chips.push(actorName);
+        if (actor.tool_name) chips.push(`tool:${actor.tool_name}`);
+        if (status && status !== "-") chips.push(`status:${status}`);
+
+        let title = eventLabel(eventType);
+        let body = "";
+        let note = "";
+        let key = "";
+        let live = false;
+        let releaseKey = "";
+
+        if (eventType === "stream.connected") {
+          title = "SSE stream connected";
+          body = `Task ${record.task_id || state.selectedTaskId || "-"}`;
+          if (typeof record.from_offset === "number") chips.push(`offset:${record.from_offset}`);
+        } else if (eventType === "run.started") {
+          title = "Run initialized";
+          body = summarizeObjectFields(payload, ["run_name", "local_jsonl_path"]);
+        } else if (eventType === "run.configured") {
+          const scanConfig = payload.scan_config || {};
+          const targetText = summarizeTargets(scanConfig.targets);
+          title = `Configured ${scanConfig.targets?.length || 0} target(s)`;
+          body = targetText || "Targets loaded and scan configuration applied.";
+          if (scanConfig.user_instructions) note = truncate(scanConfig.user_instructions, 220);
+        } else if (eventType === "agent.created") {
+          title = `${actorName || "Agent"} created`;
+          body = payload.task ? truncate(payload.task, 320) : "A new agent joined the run.";
+        } else if (eventType === "chat.streaming") {
+          const parts = extractChatParts(payload.content || "");
+          title = `${actorName || "Agent"} is drafting`;
+          body = parts.narrative || "Generating a response…";
+          note = parts.toolName
+            ? `Preparing tool call: ${parts.toolName}`
+            : parts.toolDraft
+              ? parts.toolDraft
+              : "";
+          key = `chat:${actor.agent_id || actorName || "assistant"}:draft`;
+          live = true;
+        } else if (eventType === "chat.message") {
+          const parts = extractChatParts(payload.content || "");
+          title = `${actorName || "Agent"} replied`;
+          body = parts.narrative || compactText(payload.content) || "Response captured.";
+          note = parts.toolName ? `Tool call included: ${parts.toolName}` : "";
+          key = `chat:${actor.agent_id || actorName || "assistant"}:draft`;
+          releaseKey = key;
+        } else if (eventType === "tool.execution.started") {
+          title = `Running ${actor.tool_name || "tool"}`;
+          body = summarizeToolArgs(payload.args) || "Tool execution has started.";
+          key = `tool:${actor.execution_id || `${actor.tool_name || "tool"}:${record.timestamp || ""}`}`;
+          live = true;
+        } else if (eventType === "tool.execution.updated") {
+          title =
+            status === "completed"
+              ? `${actor.tool_name || "Tool"} completed`
+              : `${actor.tool_name || "Tool"} updated`;
+          body = summarizeToolResult(payload.result) || "Tool execution produced a result.";
+          key = `tool:${actor.execution_id || `${actor.tool_name || "tool"}:${record.timestamp || ""}`}`;
+          releaseKey = key;
+        } else if (eventType === "finding.created") {
+          title = payload.title || payload.name || "Validated finding";
+          body =
+            summarizeObjectFields(payload, ["severity", "target", "endpoint", "description"]) ||
+            "A new vulnerability report was created.";
+        } else if (eventType === "run.completed") {
+          title = "Run completed";
+          body =
+            summarizeObjectFields(payload, ["status", "final_scan_result"]) ||
+            "The run finished and results were persisted.";
+        } else if (eventType === "task.finished") {
+          title = `Task ${record.task_id || state.selectedTaskId || ""} finished`;
+          body = record.error ? truncate(record.error, 280) : "Streaming endpoint reported task completion.";
+          if (record.status) note = `Final status: ${record.status}`;
+        } else {
+          body =
+            summarizeObjectFields(payload, ["message", "status", "title", "url"]) ||
+            compactText(record.error || pretty(payload || record));
+        }
+
+        return {
+          body,
+          chips,
+          eventType,
+          key,
+          kicker: eventLabel(eventType),
+          live,
+          note,
+          raw: record,
+          releaseKey,
+          status,
+          time,
+          title,
+          tone: eventTone(eventType),
+        };
+      }
+
+      function renderEventCard(model) {
+        const chips = model.chips
+          .map((chip) => `<span class="stream-chip">${escapeHtml(chip)}</span>`)
+          .join("");
+
+        const noteBlock = model.note
+          ? `<div class="stream-note">${escapeHtml(model.note)}</div>`
+          : "";
+
+        return `
+          <div class="stream-card${model.live ? " is-live" : ""}" data-tone="${escapeHtml(model.tone)}" data-status="${escapeHtml(model.status)}">
+            <div class="stream-head">
+              <div>
+                <div class="stream-kicker">${escapeHtml(model.kicker)}</div>
+                <div class="stream-title">${escapeHtml(model.title)}</div>
+              </div>
+              <div class="stream-time">${escapeHtml(model.time)}</div>
+            </div>
+            ${chips ? `<div class="stream-meta">${chips}</div>` : ""}
+            <div class="stream-body">
+              <div class="stream-text">${escapeHtml(model.body)}</div>
+              ${noteBlock}
+              <details class="stream-raw">
+                <summary>Raw event</summary>
+                <pre>${escapeHtml(pretty(model.raw))}</pre>
+              </details>
+            </div>
+          </div>
+        `;
+      }
+
+      function renderStreamEvent(rawEvent) {
+        const record = normalizeEventRecord(rawEvent.event_type || "message", rawEvent);
+        if (!shouldSurfaceStreamEvent(record)) {
+          return;
+        }
+
+        const model = buildEventModel(record);
+        ensureStreamFeedReady();
+
+        let row = model.key ? state.streamNodes.get(model.key) : null;
+        const isExisting = Boolean(row);
+
+        if (!row) {
+          row = document.createElement("article");
+          row.className = "stream-row";
+          if (model.key) {
+            state.streamNodes.set(model.key, row);
+            row.dataset.liveKey = model.key;
+          }
+          elements.streamFeed.appendChild(row);
+        }
+
+        row.innerHTML = renderEventCard(model);
+
+        if (model.releaseKey) {
+          state.streamNodes.delete(model.releaseKey);
+          delete row.dataset.liveKey;
+        }
+
+        if (!isExisting || !model.live) {
+          trimStreamFeed();
+        }
+
+        elements.streamMetricEvents.textContent = String(
+          elements.streamFeed.querySelectorAll(".stream-row").length
+        );
+        elements.streamMetricLast.textContent = truncate(model.title, 26);
+        elements.streamMetricOffset.textContent = String(state.streamOffset);
+        elements.streamFeed.scrollTop = elements.streamFeed.scrollHeight;
+      }
+
+      function renderTaskMeta(task) {
+        if (!task) {
+          elements.taskMeta.innerHTML = `
+            <div class="meta-block">
+              <div class="meta-label">Selection</div>
+              <div class="meta-value empty">Choose a task from the left rail.</div>
+            </div>
+          `;
+          return;
+        }
+
+        const pairs = [
+          ["Task ID", task.task_id],
+          ["Run name", task.run_name || task.task_id],
+          ["Status", task.status],
+          ["Created", task.created_at || "-"],
+          ["Started", task.started_at || "-"],
+          ["Finished", task.finished_at || "-"],
+          ["Scan mode", task.request?.scan_mode || "-"],
+          ["Targets", (task.request?.targets || []).join(", ") || "-"],
+          ["Error", task.error || "-"],
+          ["PID", task.pid ?? "-"],
+          ["Exit code", task.exit_code ?? "-"],
+          ["Run dir", task.run_dir || "-"],
+        ];
+
+        elements.taskMeta.innerHTML = pairs
+          .map(
+            ([label, value]) => `
+              <div class="meta-block">
+                <div class="meta-label">${label}</div>
+                <div class="meta-value">${String(value)}</div>
+              </div>
+            `
+          )
+          .join("");
+      }
+
+      function renderArtifacts(artifacts) {
+        if (!artifacts || artifacts.length === 0) {
+          elements.artifactList.innerHTML = `<li class="empty">No artifacts available yet.</li>`;
+          return;
+        }
+        elements.artifactList.innerHTML = artifacts
+          .map(
+            (artifact) => `
+              <li>
+                <div class="artifact-path">${artifact}</div>
+              </li>
+            `
+          )
+          .join("");
+      }
+
+      function renderEvents(events) {
+        if (!events || events.length === 0) {
+          elements.eventList.innerHTML = `<div class="stream-empty">No events available yet.</div>`;
+          return;
+        }
+
+        const recentEvents = events
+          .map((event) => normalizeEventRecord(event.event_type || "event", event))
+          .filter((event) => shouldShowInEventHistory(event))
+          .slice(-24)
+          .reverse();
+
+        if (!recentEvents.length) {
+          elements.eventList.innerHTML = `<div class="stream-empty">Only low-level telemetry is available for this window.</div>`;
+          return;
+        }
+
+        elements.eventList.innerHTML = recentEvents
+          .map((event) => {
+            const model = buildEventModel(event);
+            model.live = false;
+            return `<article class="stream-row">${renderEventCard(model)}</article>`;
+          })
+          .join("");
+      }
+
+      function renderTasks(tasks) {
+        elements.taskSummary.textContent = `${tasks.length} task(s) available`;
+        elements.taskSummary.dataset.kind = tasks.length ? "success" : "info";
+        if (!tasks.length) {
+          elements.taskList.innerHTML = "";
+          return;
+        }
+        elements.taskList.innerHTML = tasks
+          .map((task) => {
+            const targetPreview = (task.request?.targets || []).join(", ") || "-";
+            const activeClass = task.task_id === state.selectedTaskId ? "active" : "";
+            return `
+              <li class="task-item ${activeClass}" data-task-id="${task.task_id}">
+                <div class="task-item-head">
+                  <span class="task-id">${task.task_id}</span>
+                  <span class="badge" data-status="${task.status}">${task.status}</span>
+                </div>
+                <div class="task-target">${targetPreview}</div>
+                <div class="task-item-foot" style="margin-top: 10px;">
+                  <span>${task.request?.scan_mode || "-"}</span>
+                  <span>${task.updated_at || ""}</span>
+                </div>
+              </li>
+            `;
+          })
+          .join("");
+
+        elements.taskList.querySelectorAll("[data-task-id]").forEach((item) => {
+          item.addEventListener("click", () => selectTask(item.dataset.taskId));
+        });
+      }
+
+      async function checkHealth() {
+        try {
+          const data = await request("/health");
+          elements.healthPill.dataset.state = data.status === "ok" ? "ok" : "error";
+          elements.healthPill.textContent = `Health ${data.status}`;
+        } catch (error) {
+          elements.healthPill.dataset.state = "error";
+          elements.healthPill.textContent = "Health unreachable";
+          showResponse("Health error", String(error.message || error));
+        }
+      }
+
+      async function loadTasks() {
+        try {
+          const data = await request("/api/v1/tasks");
+          const tasks = data.tasks || [];
+          renderTasks(tasks);
+          if (state.selectedTaskId && !tasks.some((task) => task.task_id === state.selectedTaskId)) {
+            state.selectedTaskId = null;
+            renderTaskMeta(null);
+            renderArtifacts([]);
+            renderEvents([]);
+          }
+        } catch (error) {
+          setNotice(elements.taskSummary, String(error.message || error), "error");
+          showResponse("Task list error", String(error.message || error));
+        }
+      }
+
+      async function refreshSelectedTask(options = {}) {
+        if (!state.selectedTaskId) {
+          return;
+        }
+        try {
+          const taskData = await request(`/api/v1/tasks/${encodeURIComponent(state.selectedTaskId)}`);
+          renderTaskMeta(taskData.task || taskData);
+          elements.selectedTaskNote.textContent = `Selected task: ${state.selectedTaskId}`;
+          if (!options.skipArtifacts) {
+            renderArtifacts(taskData.artifacts || []);
+          }
+          if (!options.quiet) {
+            showResponse("Task detail", taskData);
+          }
+        } catch (error) {
+          showResponse("Task detail error", String(error.message || error));
+        }
+      }
+
+      async function selectTask(taskId) {
+        state.selectedTaskId = taskId;
+        await loadTasks();
+        await refreshSelectedTask();
+        await loadEvents();
+      }
+
+      async function createTask() {
+        const targets = parseTargets(elements.targets.value);
+        if (!targets.length) {
+          showResponse("Create task error", "Add at least one target before submitting.");
+          return;
+        }
+
+        const payload = {
+          targets,
+          scan_mode: elements.scanMode.value,
+        };
+        if (elements.taskId.value.trim()) payload.task_id = elements.taskId.value.trim();
+        if (elements.runName.value.trim()) payload.run_name = elements.runName.value.trim();
+        if (elements.instruction.value.trim()) payload.instruction = elements.instruction.value.trim();
+        if (elements.instructionFile.value.trim()) {
+          payload.instruction_file = elements.instructionFile.value.trim();
+        }
+        if (elements.configPath.value.trim()) payload.config_path = elements.configPath.value.trim();
+
+        try {
+          const data = await request("/api/v1/tasks", {
+            method: "POST",
+            body: JSON.stringify(payload),
+          });
+          const createdTask = data.task;
+          showResponse("Create task", data);
+          state.selectedTaskId = createdTask.task_id;
+          setNotice(elements.streamStatus, `Task ${createdTask.task_id} created.`, "success");
+          await loadTasks();
+          await refreshSelectedTask();
+          await loadArtifacts();
+        } catch (error) {
+          setNotice(elements.streamStatus, String(error.message || error), "error");
+          showResponse("Create task error", String(error.message || error));
+        }
+      }
+
+      async function cancelTask() {
+        if (!state.selectedTaskId) {
+          showResponse("Cancel task", "Select a task first.");
+          return;
+        }
+        try {
+          const data = await request(
+            `/api/v1/tasks/${encodeURIComponent(state.selectedTaskId)}/cancel`,
+            { method: "POST" }
+          );
+          showResponse("Cancel task", data);
+          await loadTasks();
+          await refreshSelectedTask();
+        } catch (error) {
+          showResponse("Cancel task error", String(error.message || error));
+        }
+      }
+
+      async function loadResult(pathSuffix = "result", title = "Task result") {
+        if (!state.selectedTaskId) {
+          showResponse(title, "Select a task first.");
+          return;
+        }
+        try {
+          const data = await request(
+            `/api/v1/tasks/${encodeURIComponent(state.selectedTaskId)}/${pathSuffix}`
+          );
+          renderArtifacts(data.artifacts || []);
+          showResponse(title, data);
+        } catch (error) {
+          showResponse(`${title} error`, String(error.message || error));
+        }
+      }
+
+      async function loadEvents() {
+        if (!state.selectedTaskId) {
+          showResponse("Events", "Select a task first.");
+          return;
+        }
+        try {
+          const data = await request(
+            `/api/v1/tasks/${encodeURIComponent(state.selectedTaskId)}/events?limit=200`
+          );
+          renderEvents(data.events || []);
+          showResponse("Events", data);
+        } catch (error) {
+          showResponse("Events error", String(error.message || error));
+        }
+      }
+
+      async function loadArtifacts() {
+        if (!state.selectedTaskId) {
+          showResponse("Artifacts", "Select a task first.");
+          return;
+        }
+        try {
+          const data = await request(
+            `/api/v1/tasks/${encodeURIComponent(state.selectedTaskId)}/artifacts`
+          );
+          renderArtifacts(data.artifacts || []);
+          showResponse("Artifacts", data);
+        } catch (error) {
+          showResponse("Artifacts error", String(error.message || error));
+        }
+      }
+
+      async function loadReport() {
+        if (!state.selectedTaskId) {
+          showResponse("Report", "Select a task first.");
+          return;
+        }
+        try {
+          const data = await request(`/api/v1/tasks/${encodeURIComponent(state.selectedTaskId)}/report`);
+          showResponse("Report", data);
+        } catch (error) {
+          showResponse("Report error", String(error.message || error));
+        }
+      }
+
+      function parseSseFrame(frame) {
+        let eventType = "message";
+        const dataLines = [];
+        frame.split("\n").forEach((line) => {
+          if (line.startsWith("event:")) {
+            eventType = line.slice(6).trim();
+          } else if (line.startsWith("data:")) {
+            dataLines.push(line.slice(5).trim());
+          }
+        });
+        if (!dataLines.length) {
+          return null;
+        }
+        const raw = dataLines.join("\n");
+        try {
+          return { eventType, data: JSON.parse(raw) };
+        } catch (_error) {
+          return { eventType, data: raw };
+        }
+      }
+
+      async function startStream() {
+        if (!state.selectedTaskId) {
+          showResponse("Stream", "Select a task first.");
+          return;
+        }
+
+        stopStream();
+        const controller = new AbortController();
+        state.streamController = controller;
+        resetStreamFeed("Connecting to SSE stream…");
+        elements.streamMetricMode.textContent = "Live";
+        setNotice(elements.streamStatus, `Streaming task ${state.selectedTaskId}...`, "success");
+
+        try {
+          const response = await fetch(
+            `${currentBaseUrl()}/api/v1/tasks/${encodeURIComponent(state.selectedTaskId)}/stream?follow=true&from_offset=0`,
+            {
+              headers: authHeaders(false),
+              signal: controller.signal,
+            }
+          );
+          if (!response.ok || !response.body) {
+            const body = await response.text();
+            throw new Error(body || `Stream failed with status ${response.status}`);
+          }
+
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            buffer += decoder.decode(value, { stream: true });
+            const frames = buffer.split("\n\n");
+            buffer = frames.pop() || "";
+
+            frames.forEach((frame) => {
+              if (!frame.trim() || frame.startsWith(":")) {
+                return;
+              }
+              const parsed = parseSseFrame(frame);
+              if (!parsed) {
+                return;
+              }
+              if (
+                parsed.data &&
+                typeof parsed.data === "object" &&
+                "offset" in parsed.data &&
+                typeof parsed.data.offset === "number"
+              ) {
+                state.streamOffset = parsed.data.offset;
+              }
+              elements.streamMetricOffset.textContent = String(state.streamOffset);
+              renderStreamEvent(
+                normalizeEventRecord(parsed.eventType, parsed.data)
+              );
+              if (parsed.eventType === "task.finished") {
+                elements.streamMetricMode.textContent = "Finished";
+                setNotice(elements.streamStatus, `Task ${state.selectedTaskId} finished.`, "success");
+              }
+            });
+          }
+
+          setNotice(elements.streamStatus, "Stream ended.", "info");
+          elements.streamMetricMode.textContent = "Ended";
+          await refreshSelectedTask({ quiet: true });
+          await loadEvents();
+        } catch (error) {
+          if (controller.signal.aborted) {
+            elements.streamMetricMode.textContent = "Stopped";
+            setNotice(elements.streamStatus, "Stream stopped.", "info");
+          } else {
+            elements.streamMetricMode.textContent = "Error";
+            setNotice(elements.streamStatus, String(error.message || error), "error");
+            renderStreamEvent({
+              event_type: "stream.error",
+              timestamp: new Date().toISOString(),
+              status: "failed",
+              payload: {
+                message: String(error.message || error),
+              },
+            });
+          }
+        } finally {
+          state.streamController = null;
+        }
+      }
+
+      function stopStream() {
+        if (state.streamController) {
+          state.streamController.abort();
+          state.streamController = null;
+        }
+        if (elements.streamMetricMode.textContent === "Live") {
+          elements.streamMetricMode.textContent = "Stopped";
+        }
+      }
+
+      function resetForm() {
+        elements.targets.value = "";
+        elements.scanMode.value = "deep";
+        elements.taskId.value = "";
+        elements.runName.value = "";
+        elements.instruction.value = "";
+        elements.instructionFile.value = "";
+        elements.configPath.value = "";
+      }
+
+      function boot() {
+        elements.baseUrl.value = localStorage.getItem("strix-demo.baseUrl") || defaultBaseUrl();
+        elements.authToken.value = localStorage.getItem("strix-demo.token") || "";
+        persistConnection();
+
+        elements.baseUrl.addEventListener("change", persistConnection);
+        elements.authToken.addEventListener("change", persistConnection);
+        elements.checkHealth.addEventListener("click", checkHealth);
+        elements.refreshTasks.addEventListener("click", loadTasks);
+        elements.createTask.addEventListener("click", createTask);
+        elements.refreshSelected.addEventListener("click", () => refreshSelectedTask());
+        elements.loadResult.addEventListener("click", () => loadResult("result", "Task result"));
+        elements.loadResultsAlias.addEventListener("click", () =>
+          loadResult("results", "Task results alias")
+        );
+        elements.loadEvents.addEventListener("click", loadEvents);
+        elements.loadArtifacts.addEventListener("click", loadArtifacts);
+        elements.loadReport.addEventListener("click", loadReport);
+        elements.cancelTask.addEventListener("click", cancelTask);
+        elements.startStream.addEventListener("click", startStream);
+        elements.stopStream.addEventListener("click", stopStream);
+        elements.resetForm.addEventListener("click", resetForm);
+
+        resetStreamFeed();
+        checkHealth();
+        loadTasks();
+        setInterval(loadTasks, 10000);
+        setInterval(() => refreshSelectedTask({ quiet: true, skipArtifacts: true }), 5000);
+      }
+
+      boot();
+    </script>
+  </body>
+</html>

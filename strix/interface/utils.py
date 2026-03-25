@@ -18,6 +18,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
+from strix.config import Config
+from strix.runtime.docker_client import create_docker_client
+
 
 # Token formatting utilities
 def format_token_count(count: float) -> str:
@@ -742,7 +745,9 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 # Docker utilities
 def check_docker_connection() -> Any:
     try:
-        return docker.from_env()
+        client = create_docker_client(timeout=60)
+        client.ping()
+        return client
     except DockerException:
         console = Console()
         error_text = Text()
@@ -834,18 +839,12 @@ def validate_config_file(config_path: str) -> Path:
         sys.exit(1)
 
     try:
-        with path.open("r", encoding="utf-8") as f:
-            data = json.load(f)
+        Config.validate_file(path)
     except json.JSONDecodeError as e:
         console.print(f"[bold red]Error:[/] Invalid JSON in config file: {e}")
         sys.exit(1)
-
-    if not isinstance(data, dict):
-        console.print("[bold red]Error:[/] Config file must contain a JSON object")
-        sys.exit(1)
-
-    if "env" not in data or not isinstance(data.get("env"), dict):
-        console.print("[bold red]Error:[/] Config file must have an 'env' object")
+    except ValueError as e:
+        console.print(f"[bold red]Error:[/] {e}")
         sys.exit(1)
 
     return path

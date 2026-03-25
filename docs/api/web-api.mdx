@@ -1,0 +1,692 @@
+---
+title: "Web API"
+description: "Strix Web API 中文参考文档"
+---
+
+## 概览
+
+Strix Web API 用于把扫描能力以服务形式暴露给外部系统。它支持：
+
+- 创建扫描任务
+- 查询任务状态与结果
+- 获取事件历史
+- 通过 SSE 流式订阅任务执行过程
+- 获取最终 Markdown 报告和全部产物文件路径
+- 取消仍在运行中的任务
+
+服务入口默认是：
+
+```text
+http://127.0.0.1:8787
+```
+
+公开接口：
+
+- `GET /health`
+- `GET /demo`
+
+任务接口统一位于：
+
+```text
+/api/v1/tasks
+```
+
+## 启动方式
+
+```bash
+strix-api
+```
+
+覆盖配置文件或监听地址：
+
+```bash
+strix-api --config ~/.strix/config.json --host 0.0.0.0 --port 8787
+```
+
+## 鉴权
+
+如果配置文件中设置了 `api.auth_token`，所有 `/api/v1/tasks*` 接口都需要 Bearer Token：
+
+```text
+Authorization: Bearer <your-token>
+```
+
+未配置 `api.auth_token` 时，这些接口默认不鉴权。
+
+典型未授权响应：
+
+```json
+{
+  "detail": "Invalid or missing API token"
+}
+```
+
+## 任务状态
+
+| 状态值 | 含义 |
+| --- | --- |
+| `queued` | 任务已创建，worker 已启动或等待执行 |
+| `running` | worker 已进入实际扫描阶段 |
+| `cancelling` | 已收到取消请求，正在结束执行 |
+| `completed` | 已正常完成 |
+| `failed` | 执行失败 |
+| `cancelled` | 已取消 |
+
+## 核心数据结构
+
+### 1. 创建任务请求体 `ScanTaskRequest`
+
+| 字段 | 类型 | 必填 | 说明 | 约束 |
+| --- | --- | --- | --- | --- |
+| `targets` | `string[]` | 是 | 扫描目标列表。支持本地目录、仓库 URL、在线应用 URL、域名或 IP | 至少 1 项 |
+| `instruction` | `string \| null` | 否 | 直接内联传入的附加扫描说明 | 不能与 `instruction_file` 同时传入 |
+| `instruction_file` | `string \| null` | 否 | 服务端本地文件路径，读取文件内容作为扫描说明 | 不能与 `instruction` 同时传入；文件必须存在且非空 |
+| `scan_mode` | `quick \| standard \| deep` | 否 | 扫描深度 | 默认 `deep` |
+| `task_id` | `string \| null` | 否 | 外部系统自定义任务 ID | 必须唯一；若重复会返回 `400` |
+| `run_name` | `string \| null` | 否 | 运行目录名称 | 未传时默认等于任务 ID |
+| `config_path` | `string \| null` | 否 | 当前任务单独使用的配置文件路径 | 文件必须可读且通过校验 |
+
+请求示例：
+
+```json
+{
+  "targets": [
+    "https://example.com",
+    "https://github.com/org/repo"
+  ],
+  "instruction": "重点验证认证、IDOR、业务逻辑和高危注入问题",
+  "scan_mode": "deep",
+  "task_id": "example-deep-scan",
+  "run_name": "example-20260325"
+}
+```
+
+### 2. 任务记录对象 `ScanTaskRecord`
+
+`POST /api/v1/tasks`、`GET /api/v1/tasks` 和取消接口都会返回这个对象或包含这个对象。
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务唯一标识 |
+| `run_name` | `string \| null` | 运行目录名，默认与 `task_id` 相同 |
+| `status` | `string` | 任务状态，取值见上文 |
+| `created_at` | `string` | 任务创建时间，ISO 8601 |
+| `updated_at` | `string` | 最近更新时间，ISO 8601 |
+| `started_at` | `string \| null` | worker 进入执行阶段的时间 |
+| `finished_at` | `string \| null` | 任务结束时间 |
+| `completed_at` | `string \| null` | 与 `finished_at` 兼容的结束时间字段 |
+| `pid` | `integer \| null` | worker 进程 ID |
+| `exit_code` | `integer \| null` | worker 退出码 |
+| `error` | `string \| null` | 失败原因或取消说明 |
+| `request` | `object` | 原始请求体，包含标准化后的参数 |
+| `run_dir` | `string` | 任务输出目录绝对路径 |
+| `worker_log_path` | `string` | worker 日志文件绝对路径 |
+| `scan_state_path` | `string` | `scan_state.json` 绝对路径 |
+| `events_path` | `string` | `events.jsonl` 绝对路径 |
+
+### 3. 结构化结果对象 `ScanTaskResult`
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `task` | `ScanTaskRecord` | 当前任务记录 |
+| `scan_state` | `object \| null` | 结构化扫描状态；未生成时为 `null` |
+| `artifacts` | `string[]` | 运行目录下所有文件的绝对路径列表 |
+
+### 4. `scan_state` 常见字段
+
+`scan_state` 的具体内容会随扫描结果变化，但通常包含：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `run_metadata` | `object` | 任务运行元信息，例如运行名、开始/结束时间、目标、状态 |
+| `scan_config` | `object` | 本次实际使用的扫描配置 |
+| `scan_results` | `object` | 汇总分析结果，例如摘要、方法论、建议 |
+| `final_scan_result` | `string` | 最终 Markdown 报告正文 |
+| `vulnerability_reports` | `object[]` | 漏洞明细列表 |
+| `agents` | `object` | 代理执行信息 |
+| `tool_executions` | `object[]` | 工具调用历史 |
+| `chat_messages` | `object[]` | 聊天消息历史 |
+
+### 5. 事件对象
+
+`/events` 和 `/stream` 都围绕同一套事件结构工作。单条事件常见字段如下：
+
+| 字段 | 类型 | 说明 |
+| --- | --- | --- |
+| `timestamp` | `string` | 事件时间 |
+| `event_type` | `string` | 事件类型 |
+| `run_id` | `string` | 当前任务 ID |
+| `trace_id` | `string \| null` | 链路追踪 ID |
+| `span_id` | `string \| null` | 当前 span ID |
+| `parent_span_id` | `string \| null` | 父 span ID |
+| `actor` | `object \| null` | 产生事件的 agent、tool 或角色信息 |
+| `payload` | `object \| null` | 事件主体内容 |
+| `status` | `string \| null` | 事件状态 |
+| `error` | `object \| string \| null` | 错误信息 |
+| `source` | `string \| null` | 事件来源 |
+
+常见 `event_type` 示例：
+
+- `run.started`
+- `run.configured`
+- `agent.created`
+- `chat.streaming`
+- `chat.message`
+- `tool.execution.started`
+- `tool.execution.updated`
+- `finding.created`
+- `run.completed`
+- `task.finished`
+
+## 接口明细
+
+### GET `/health`
+
+用途：健康检查。
+
+鉴权：否。
+
+响应：
+
+```json
+{
+  "status": "ok"
+}
+```
+
+状态码：
+
+- `200`：服务可用
+
+### GET `/demo`
+
+用途：返回内置 Web Demo 页面。
+
+鉴权：否。
+
+响应类型：`text/html`
+
+状态码：
+
+- `200`：返回页面内容
+
+### POST `/api/v1/tasks`
+
+用途：创建扫描任务并异步拉起 worker。
+
+鉴权：是，除非未配置 `api.auth_token`。
+
+请求头：
+
+- `Content-Type: application/json`
+- `Authorization: Bearer <token>`（如果启用了鉴权）
+
+请求体：见上文 `ScanTaskRequest`。
+
+成功响应：
+
+```json
+{
+  "task": {
+    "task_id": "example-deep-scan",
+    "run_name": "example-20260325",
+    "status": "queued",
+    "created_at": "2026-03-25T06:00:00+00:00",
+    "updated_at": "2026-03-25T06:00:00+00:00",
+    "started_at": null,
+    "finished_at": null,
+    "completed_at": null,
+    "pid": 12345,
+    "exit_code": null,
+    "error": null,
+    "request": {
+      "targets": ["https://example.com"],
+      "instruction": "重点看认证和 IDOR",
+      "instruction_file": null,
+      "scan_mode": "deep",
+      "task_id": "example-deep-scan",
+      "run_name": "example-20260325",
+      "config_path": "/Users/example/.strix/config.json"
+    },
+    "run_dir": "/path/to/strix_runs/example-deep-scan",
+    "worker_log_path": "/path/to/strix_runs/example-deep-scan/worker.log",
+    "scan_state_path": "/path/to/strix_runs/example-deep-scan/scan_state.json",
+    "events_path": "/path/to/strix_runs/example-deep-scan/events.jsonl"
+  }
+}
+```
+
+状态码：
+
+- `201`：创建成功
+- `400`：业务校验失败
+- `401`：鉴权失败
+- `422`：请求体验证失败
+
+典型 `400` 场景：
+
+- 超过 `api.max_concurrent_tasks`
+- `task_id` 已存在
+- `instruction_file` 不存在、不可读或为空
+- `targets` 无法通过目标校验
+- `config_path` 指向的配置文件无效
+
+### GET `/api/v1/tasks`
+
+用途：列出所有任务。
+
+鉴权：是。
+
+请求参数：无。
+
+响应：
+
+```json
+{
+  "tasks": [
+    {
+      "task_id": "example-deep-scan",
+      "run_name": "example-20260325",
+      "status": "running",
+      "created_at": "2026-03-25T06:00:00+00:00",
+      "updated_at": "2026-03-25T06:01:00+00:00",
+      "started_at": "2026-03-25T06:00:10+00:00",
+      "finished_at": null,
+      "completed_at": null,
+      "pid": 12345,
+      "exit_code": null,
+      "error": null,
+      "request": {
+        "targets": ["https://example.com"],
+        "instruction": null,
+        "instruction_file": null,
+        "scan_mode": "deep",
+        "task_id": "example-deep-scan",
+        "run_name": "example-20260325",
+        "config_path": "/Users/example/.strix/config.json"
+      },
+      "run_dir": "/path/to/strix_runs/example-deep-scan",
+      "worker_log_path": "/path/to/strix_runs/example-deep-scan/worker.log",
+      "scan_state_path": "/path/to/strix_runs/example-deep-scan/scan_state.json",
+      "events_path": "/path/to/strix_runs/example-deep-scan/events.jsonl"
+    }
+  ]
+}
+```
+
+补充说明：
+
+- 返回顺序按 `created_at` 倒序排列
+- 服务端在读取时会刷新任务状态
+
+状态码：
+
+- `200`
+- `401`
+
+### GET `/api/v1/tasks/{task_id}`
+
+用途：获取任务详情。
+
+鉴权：是。
+
+路径参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务 ID |
+
+响应结构：
+
+```json
+{
+  "task": {},
+  "scan_state": {},
+  "artifacts": []
+}
+```
+
+注意：这个接口当前返回的是完整结果对象，而不只是 `task` 元数据。
+
+状态码：
+
+- `200`
+- `401`
+- `404`
+
+### GET `/api/v1/tasks/{task_id}/result`
+
+用途：获取结构化结果。
+
+鉴权：是。
+
+路径参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务 ID |
+
+响应：
+
+```json
+{
+  "task": {},
+  "scan_state": {},
+  "artifacts": []
+}
+```
+
+状态码：
+
+- `200`
+- `401`
+- `404`
+
+### GET `/api/v1/tasks/{task_id}/results`
+
+用途：`/result` 的别名。
+
+鉴权：是。
+
+路径参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务 ID |
+
+响应与状态码：同 `/result`。
+
+### POST `/api/v1/tasks/{task_id}/cancel`
+
+用途：请求取消任务。
+
+鉴权：是。
+
+路径参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务 ID |
+
+请求体：无。
+
+响应：
+
+```json
+{
+  "task": {
+    "task_id": "example-deep-scan",
+    "status": "cancelling"
+  }
+}
+```
+
+补充说明：
+
+- 如果任务仍在执行，通常会先进入 `cancelling`
+- 最终状态会由 worker 或存储刷新为 `cancelled`
+- 如果任务本身已经结束，这个接口会直接返回当前最终状态，具备幂等特征
+
+状态码：
+
+- `200`
+- `401`
+- `404`
+
+### GET `/api/v1/tasks/{task_id}/events`
+
+用途：读取事件历史。
+
+鉴权：是。
+
+路径参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务 ID |
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 | 约束 |
+| --- | --- | --- | --- | --- |
+| `limit` | `integer` | `200` | 返回最近多少条事件 | 范围 `1..5000` |
+
+响应：
+
+```json
+{
+  "task_id": "example-deep-scan",
+  "events": [
+    {
+      "timestamp": "2026-03-25T06:00:12+00:00",
+      "event_type": "run.started",
+      "run_id": "example-deep-scan",
+      "payload": {
+        "run_name": "example-20260325"
+      },
+      "status": "running",
+      "source": "strix.tracer"
+    }
+  ]
+}
+```
+
+状态码：
+
+- `200`
+- `401`
+- `404`
+- `422`
+
+### GET `/api/v1/tasks/{task_id}/stream`
+
+用途：以 SSE 方式流式订阅任务事件。
+
+鉴权：是。
+
+路径参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务 ID |
+
+查询参数：
+
+| 参数 | 类型 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `follow` | `boolean` | `true` | 是否持续跟随任务直到结束 |
+| `from_offset` | `integer` | `0` | 从 `events.jsonl` 的哪个字节偏移继续读取 |
+
+响应类型：
+
+```text
+text/event-stream
+```
+
+流式行为：
+
+1. 首先发送 `stream.connected`
+2. 然后把 `events.jsonl` 中新增事件逐条转发为 SSE
+3. 任务运行中会定时发送 `: keep-alive` 注释行保持连接
+4. 任务进入终态后，服务端额外补发 `task.finished`
+
+首条事件示例：
+
+```text
+event: stream.connected
+data: {"task_id":"example-deep-scan","offset":0}
+```
+
+普通事件示例：
+
+```text
+event: chat.message
+data: {"offset":1234,"payload":{"timestamp":"2026-03-25T06:00:15+00:00","event_type":"chat.message","payload":{"message_id":1,"content":"开始执行 reconnaissance"}}}
+```
+
+结束事件示例：
+
+```text
+event: task.finished
+data: {"task_id":"example-deep-scan","status":"completed", ...}
+```
+
+补充说明：
+
+- `from_offset` 是文件字节偏移，不是事件序号
+- `follow=false` 更适合“回放模式”
+- 如果在连接建立后任务很快结束，仍会收到 `task.finished`
+
+状态码：
+
+- `200`
+- `401`
+- `404`
+- `422`
+
+### GET `/api/v1/tasks/{task_id}/artifacts`
+
+用途：获取运行目录中的全部文件路径。
+
+鉴权：是。
+
+路径参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务 ID |
+
+响应：
+
+```json
+{
+  "task_id": "example-deep-scan",
+  "artifacts": [
+    "/path/to/strix_runs/example-deep-scan/task_state.json",
+    "/path/to/strix_runs/example-deep-scan/events.jsonl",
+    "/path/to/strix_runs/example-deep-scan/scan_state.json",
+    "/path/to/strix_runs/example-deep-scan/penetration_test_report.md"
+  ]
+}
+```
+
+补充说明：
+
+- 返回的是服务器文件绝对路径，不是下载 URL
+- 常见文件包括 `task_state.json`、`events.jsonl`、`scan_state.json`、`worker.log`、`penetration_test_report.md`、`vulnerabilities/*.md`、`vulnerabilities.csv`
+
+状态码：
+
+- `200`
+- `401`
+- `404`
+
+### GET `/api/v1/tasks/{task_id}/report`
+
+用途：获取最终 Markdown 报告正文。
+
+鉴权：是。
+
+路径参数：
+
+| 参数 | 类型 | 说明 |
+| --- | --- | --- |
+| `task_id` | `string` | 任务 ID |
+
+响应类型：
+
+```text
+text/plain
+```
+
+返回内容是 Markdown 文本，不是 JSON。
+
+状态码：
+
+- `200`
+- `401`
+- `404`
+
+`404` 有两种常见情况：
+
+- 任务不存在
+- 任务存在，但报告文件尚未生成
+
+## 错误与约束
+
+### 401 未授权
+
+仅当配置了 `api.auth_token` 时会出现。
+
+```json
+{
+  "detail": "Invalid or missing API token"
+}
+```
+
+### 404 资源不存在
+
+典型返回：
+
+```json
+{
+  "detail": "Task 'example-deep-scan' not found"
+}
+```
+
+报告接口的典型返回：
+
+```json
+{
+  "detail": "Task 'example-deep-scan' report not found"
+}
+```
+
+### 422 请求参数校验失败
+
+典型场景：
+
+- `targets` 为空
+- 出现额外未定义字段
+- `instruction` 与 `instruction_file` 同时传入
+- `scan_mode` 不在允许枚举中
+- `limit` 或 `from_offset` 越界
+
+### 400 业务校验失败
+
+目前主要出现在 `POST /api/v1/tasks`：
+
+- 任务并发数超过 `api.max_concurrent_tasks`
+- 任务 ID 已存在
+- 指令文件读取失败
+- 指令文件为空
+- 配置文件无效
+- 目标校验失败
+
+## 运行目录与文件说明
+
+每个任务默认写入：
+
+```text
+strix_runs/<task-id>/
+```
+
+目录下常见文件：
+
+| 文件 | 说明 |
+| --- | --- |
+| `task_state.json` | API 任务元数据 |
+| `events.jsonl` | 事件历史，SSE 也基于它进行转发 |
+| `scan_state.json` | 结构化扫描状态和最终结果 |
+| `penetration_test_report.md` | 最终报告 |
+| `worker.log` | worker 进程日志 |
+| `vulnerabilities/` | 单个漏洞报告目录 |
+| `vulnerabilities.csv` | 漏洞索引 |
+
+## 调用建议
+
+- 如果你只需要“是否完成”和最终结果，用 `/result` 即可
+- 如果你要做任务面板，建议同时使用 `/tasks`、`/events` 和 `/stream`
+- 如果你要做断点续传式消费，请记录 SSE 返回的 `offset`
+- 如果你要接入企业网关，请优先配置 `api.auth_token`
+- 如果你要把任务结果保存到外部系统，请同时归档 `scan_state.json` 和 `penetration_test_report.md`

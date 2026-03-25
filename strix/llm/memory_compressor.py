@@ -104,7 +104,7 @@ def _summarize_messages(
     conversation = "\n".join(formatted)
     prompt = SUMMARY_PROMPT_TEMPLATE.format(conversation=conversation)
 
-    _, api_key, api_base = resolve_llm_config()
+    _, api_key, api_base, _ = resolve_llm_config()
 
     try:
         completion_args: dict[str, Any] = {
@@ -157,11 +157,11 @@ class MemoryCompressor:
         timeout: int | None = None,
     ):
         self.max_images = max_images
-        self.model_name = model_name or Config.get("strix_llm")
-        self.timeout = timeout or int(Config.get("strix_memory_compressor_timeout") or "120")
+        self.model_name = model_name or Config.get_str("strix_llm")
+        self.timeout = timeout or (Config.get_int("strix_memory_compressor_timeout") or 120)
 
         if not self.model_name:
-            raise ValueError("STRIX_LLM environment variable must be set and not empty")
+            raise ValueError("LLM model must be configured in the Strix config file")
 
     def compress_history(
         self,

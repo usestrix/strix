@@ -154,17 +154,30 @@ echo "✅ CA added to browser trust store"
 echo "Starting tool server..."
 cd /app
 export PYTHONPATH=/app
-export STRIX_SANDBOX_MODE=true
 export POETRY_VIRTUALENVS_CREATE=false
 export TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
 TOOL_SERVER_LOG="/tmp/tool_server.log"
+RUNTIME_CONFIG="/tmp/strix-runtime-config.json"
+
+jq -n \
+  --arg caido_api_token "$CAIDO_API_TOKEN" \
+  --argjson sandbox_execution_timeout "$TOOL_SERVER_TIMEOUT" \
+  '{
+    runtime: {
+      sandbox_mode: true,
+      caido_api_token: $caido_api_token,
+      sandbox_execution_timeout: $sandbox_execution_timeout
+    }
+  }' > "$RUNTIME_CONFIG"
 
 sudo -E -u pentester \
   poetry run python -m strix.runtime.tool_server \
   --token="$TOOL_SERVER_TOKEN" \
   --host=0.0.0.0 \
   --port="$TOOL_SERVER_PORT" \
-  --timeout="$TOOL_SERVER_TIMEOUT" > "$TOOL_SERVER_LOG" 2>&1 &
+  --timeout="$TOOL_SERVER_TIMEOUT" \
+  --config="$RUNTIME_CONFIG" \
+  --sandbox-mode > "$TOOL_SERVER_LOG" 2>&1 &
 
 for i in {1..10}; do
   if curl -s "http://127.0.0.1:$TOOL_SERVER_PORT/health" | grep -q '"status":"healthy"'; then

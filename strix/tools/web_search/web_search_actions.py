@@ -1,8 +1,8 @@
-import os
 from typing import Any
 
 import requests
 
+from strix.config import Config
 from strix.tools.registry import register_tool
 
 
@@ -34,11 +34,11 @@ security implications and details."""
 @register_tool(sandbox_execution=False, requires_web_search_mode=True)
 def web_search(query: str) -> dict[str, Any]:
     try:
-        api_key = os.getenv("PERPLEXITY_API_KEY")
+        api_key = Config.get_str("perplexity_api_key")
         if not api_key:
             return {
                 "success": False,
-                "message": "PERPLEXITY_API_KEY environment variable not set",
+                "message": "Perplexity API key is not configured in the config file",
                 "results": [],
             }
 

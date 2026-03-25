@@ -22,10 +22,19 @@ jobs:
       - name: Install Strix
         run: curl -sSL https://strix.ai/install | bash
 
+      - name: Write Strix Config
+        run: |
+          mkdir -p ~/.strix
+          cat > ~/.strix/config.json <<'EOF'
+          {
+            "llm": {
+              "model": "${{ secrets.STRIX_MODEL }}",
+              "api_key": "${{ secrets.LLM_API_KEY }}"
+            }
+          }
+          EOF
+
       - name: Run Security Scan
-        env:
-          STRIX_LLM: ${{ secrets.STRIX_LLM }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: strix -n -t ./ --scan-mode quick
 ```
 
@@ -35,8 +44,12 @@ Add these secrets to your repository:
 
 | Secret | Description |
 |--------|-------------|
-| `STRIX_LLM` | Model name (e.g., `openai/gpt-5.4`) |
+| `STRIX_MODEL` | Model name (e.g., `openai/gpt-5.4`) |
 | `LLM_API_KEY` | API key for your LLM provider |
+
+<Note>
+The CI platform can still use secrets or environment variables to template the file, but Strix itself reads `~/.strix/config.json` at runtime.
+</Note>
 
 ## Exit Codes
 

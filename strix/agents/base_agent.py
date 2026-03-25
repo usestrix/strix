@@ -15,6 +15,7 @@ from jinja2 import (
 
 from strix.llm import LLM, LLMConfig, LLMRequestFailedError
 from strix.llm.utils import clean_content
+from strix.runtime.context import is_sandbox_mode
 from strix.runtime import SandboxInitializationError
 from strix.tools import process_tool_invocations
 from strix.utils.resource_paths import get_strix_resource_path
@@ -328,9 +329,7 @@ class BaseAgent(metaclass=AgentMeta):
             )
 
     async def _initialize_sandbox_and_state(self, task: str) -> None:
-        import os
-
-        sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
+        sandbox_mode = is_sandbox_mode()
         if not sandbox_mode and self.state.sandbox_id is None:
             from strix.runtime import get_runtime
 

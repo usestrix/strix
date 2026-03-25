@@ -43,8 +43,40 @@ STRIX_MODEL_MAP: dict[str, str] = {
     "glm-4.7": "openrouter/z-ai/glm-4.7",
 }
 
+KNOWN_PROVIDER_PREFIXES: set[str] = {
+    "anthropic",
+    "azure",
+    "azure_ai",
+    "bedrock",
+    "cerebras",
+    "claude",
+    "cohere",
+    "deepseek",
+    "fireworks_ai",
+    "gemini",
+    "github",
+    "google",
+    "groq",
+    "huggingface",
+    "mistral",
+    "ollama",
+    "openai",
+    "openrouter",
+    "perplexity",
+    "replicate",
+    "sambanova",
+    "vertex_ai",
+    "voyage",
+    "watsonx",
+    "xai",
+}
 
-def resolve_strix_model(model_name: str | None) -> tuple[str | None, str | None]:
+
+def resolve_strix_model(
+    model_name: str | None,
+    api_base: str | None = None,
+    openai_compatible_provider: str | None = None,
+) -> tuple[str | None, str | None]:
     """Resolve a strix/ model into names for API calls and capability lookups.
 
     Returns (api_model, canonical_model):
@@ -52,13 +84,91 @@ def resolve_strix_model(model_name: str | None) -> tuple[str | None, str | None]
     - canonical_model: actual provider model name for litellm capability lookups
     Non-strix models return the same name for both.
     """
-    if not model_name or not model_name.startswith("strix/"):
+    if not model_name:
+        return None, None
+
+    if not model_name.startswith("strix/"):
+        if api_base and openai_compatible_provider:
+            provider_model = _apply_openai_compatible_provider(
+                model_name,
+                openai_compatible_provider,
+            )
+            if _register_openai_compatible_provider(provider_model, api_base):
+                return provider_model, provider_model
+            return f"openai/{provider_model}", provider_model
+
+        if api_base and _looks_like_openai_compatible_model(model_name):
+            inferred_provider_model = model_name
+            if _register_openai_compatible_provider(inferred_provider_model, api_base):
+                return inferred_provider_model, inferred_provider_model
+            return f"openai/{model_name}", model_name
         return model_name, model_name
 
     base_model = model_name[6:]
     api_model = f"openai/{base_model}"
     canonical_model = STRIX_MODEL_MAP.get(base_model, api_model)
     return api_model, canonical_model
+
+
+def _looks_like_openai_compatible_model(model_name: str) -> bool:
+    if "/" not in model_name or model_name.startswith("openai/"):
+        return False
+
+    provider_prefix = model_name.split("/", 1)[0].lower()
+    return provider_prefix not in KNOWN_PROVIDER_PREFIXES
+
+
+def _apply_openai_compatible_provider(model_name: str, provider_name: str) -> str:
+    normalized_provider = provider_name.strip()
+    normalized_model = model_name.strip()
+    if not normalized_provider or not normalized_model:
+        return model_name
+
+    if "/" not in normalized_model:
+        return f"{normalized_provider}/{normalized_model}"
+
+    existing_provider, provider_model = normalized_model.split("/", 1)
+    if existing_provider.lower() == normalized_provider.lower():
+        return f"{normalized_provider}/{provider_model}"
+
+    if existing_provider.lower() in KNOWN_PROVIDER_PREFIXES:
+        return normalized_model
+
+    return f"{normalized_provider}/{normalized_model}"
+
+
+def _register_openai_compatible_provider(model_name: str, api_base: str) -> bool:
+    provider_slug = model_name.split("/", 1)[0].strip()
+    normalized_base = api_base.strip()
+    if not provider_slug or not normalized_base:
+        return False
+
+    try:
+        from litellm.llms.openai_like.json_loader import JSONProviderRegistry, SimpleProviderConfig
+    except Exception:  # noqa: BLE001
+        return False
+
+    provider_data = {
+        "base_url": normalized_base,
+        # LiteLLM requires this field for JSON providers, but Strix passes api_key directly.
+        "api_key_env": _provider_api_key_env(provider_slug),
+        "base_class": "openai_gpt",
+    }
+
+    aliases = {provider_slug, provider_slug.lower()}
+    for alias in aliases:
+        existing = JSONProviderRegistry.get(alias)
+        if existing and existing.base_url == normalized_base:
+            continue
+        JSONProviderRegistry._providers[alias] = SimpleProviderConfig(alias, provider_data)
+
+    JSONProviderRegistry._loaded = True
+    return True
+
+
+def _provider_api_key_env(provider_slug: str) -> str:
+    sanitized = re.sub(r"[^A-Za-z0-9]+", "_", provider_slug).strip("_")
+    return f"{sanitized.upper()}_API_KEY" if sanitized else "STRIX_OPENAI_COMPATIBLE_API_KEY"
 
 
 def _truncate_to_first_function(content: str) -> str:

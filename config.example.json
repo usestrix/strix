@@ -1,0 +1,38 @@
+{
+  "llm": {
+    "model": "openai/gpt-5.4",
+    "api_key": "your-api-key-here",
+    "api_base": null,
+    "openai_compatible_provider": null,
+    "reasoning_effort": "high",
+    "timeout": 300
+  },
+  "features": {
+    "perplexity_api_key": null,
+    "disable_browser": false
+  },
+  "runtime": {
+    "backend": "docker",
+    "image": "ghcr.io/usestrix/strix-sandbox:0.1.13",
+    "sandbox_execution_timeout": 120,
+    "sandbox_connect_timeout": 10,
+    "docker_host": null,
+    "caido_api_token": null
+  },
+  "telemetry": {
+    "enabled": true,
+    "otel_enabled": null,
+    "posthog_enabled": null,
+    "traceloop_base_url": null,
+    "traceloop_api_key": null,
+    "traceloop_headers": null
+  },
+  "api": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "auth_token": null,
+    "max_concurrent_tasks": 1,
+    "enable_docs": true,
+    "stream_poll_interval_ms": 500
+  }
+}

@@ -156,8 +156,12 @@ def check_duplicate(
 
         comparison_data = {"candidate": candidate_cleaned, "existing_reports": existing_cleaned}
 
-        model_name, api_key, api_base = resolve_llm_config()
-        litellm_model, _ = resolve_strix_model(model_name)
+        model_name, api_key, api_base, openai_compatible_provider = resolve_llm_config()
+        litellm_model, _ = resolve_strix_model(
+            model_name,
+            api_base=api_base,
+            openai_compatible_provider=openai_compatible_provider,
+        )
         litellm_model = litellm_model or model_name
 
         messages = [

@@ -71,7 +71,7 @@ class LLM:
         self.memory_compressor = MemoryCompressor(model_name=config.litellm_model)
         self.system_prompt = self._load_system_prompt(agent_name)
 
-        reasoning = Config.get("strix_reasoning_effort")
+        reasoning = Config.get_str("strix_reasoning_effort")
         if reasoning:
             self._reasoning_effort = reasoning
         elif config.reasoning_effort:
@@ -154,7 +154,7 @@ class LLM:
         self, conversation_history: list[dict[str, Any]]
     ) -> AsyncIterator[LLMResponse]:
         messages = self._prepare_messages(conversation_history)
-        max_retries = int(Config.get("strix_llm_max_retries") or "5")
+        max_retries = Config.get_int("strix_llm_max_retries") or 5
 
         for attempt in range(max_retries + 1):
             try:

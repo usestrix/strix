@@ -20,7 +20,7 @@ strix --target <target> [options]
 </ParamField>
 
 <ParamField path="--instruction-file" type="string">
-  Path to a file containing detailed instructions.
+  Path to a file containing detailed instructions. Mutually exclusive with `--instruction`.
 </ParamField>
 
 <ParamField path="--scan-mode, -m" type="string" default="deep">
@@ -32,7 +32,11 @@ strix --target <target> [options]
 </ParamField>
 
 <ParamField path="--config" type="string">
-  Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
+  Path to a custom config file (JSON) to use instead of `~/.strix/config.json`.
+</ParamField>
+
+<ParamField path="--run-name" type="string">
+  Override the output directory name under `strix_runs/`.
 </ParamField>
 
 ## Examples
@@ -52,6 +56,9 @@ strix -n --target ./ --scan-mode quick
 
 # Multi-target white-box testing
 strix -t https://github.com/org/app -t https://staging.example.com
+
+# Custom output directory name
+strix --target https://example.com --run-name example-20260325
 ```
 
 ## Exit Codes

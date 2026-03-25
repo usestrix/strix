@@ -28,11 +28,18 @@ security-scan:
   image: docker:latest
   services:
     - docker:dind
-  variables:
-    STRIX_LLM: $STRIX_LLM
-    LLM_API_KEY: $LLM_API_KEY
   script:
     - curl -sSL https://strix.ai/install | bash
+    - mkdir -p ~/.strix
+    - |
+      cat > ~/.strix/config.json <<EOF
+      {
+        "llm": {
+          "model": "${STRIX_MODEL}",
+          "api_key": "${LLM_API_KEY}"
+        }
+      }
+      EOF
     - strix -n -t ./ --scan-mode quick
 ```
 
@@ -42,13 +49,24 @@ security-scan:
 pipeline {
     agent any
     environment {
-        STRIX_LLM = credentials('strix-llm')
+        STRIX_MODEL = credentials('strix-model')
         LLM_API_KEY = credentials('llm-api-key')
     }
     stages {
         stage('Security Scan') {
             steps {
                 sh 'curl -sSL https://strix.ai/install | bash'
+                sh '''
+                  mkdir -p ~/.strix
+                  cat > ~/.strix/config.json <<EOF
+                  {
+                    "llm": {
+                      "model": "${STRIX_MODEL}",
+                      "api_key": "${LLM_API_KEY}"
+                    }
+                  }
+                  EOF
+                '''
                 sh 'strix -n -t ./ --scan-mode quick'
             }
         }
@@ -72,9 +90,19 @@ jobs:
           command: curl -sSL https://strix.ai/install | bash
       - run:
           name: Run Scan
-          command: strix -n -t ./ --scan-mode quick
+          command: |
+            mkdir -p ~/.strix
+            cat > ~/.strix/config.json <<EOF
+            {
+              "llm": {
+                "model": "${STRIX_MODEL}",
+                "api_key": "${LLM_API_KEY}"
+              }
+            }
+            EOF
+            strix -n -t ./ --scan-mode quick
 ```
 
 <Note>
-All CI platforms require Docker access. Ensure your runner has Docker available.
+All CI platforms require Docker access. Ensure your runner has Docker available. Secrets can be injected by the CI platform, but Strix itself should still be configured through `~/.strix/config.json`.
 </Note>

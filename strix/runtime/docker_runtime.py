@@ -1,5 +1,4 @@
 import contextlib
-import os
 import secrets
 import socket
 import time
@@ -16,6 +15,7 @@ from requests.exceptions import Timeout as RequestsTimeout
 from strix.config import Config
 
 from . import SandboxInitializationError
+from .docker_client import create_docker_client
 from .runtime import AbstractRuntime, SandboxInfo
 
 
@@ -28,7 +28,7 @@ CONTAINER_CAIDO_PORT = 48080
 class DockerRuntime(AbstractRuntime):
     def __init__(self) -> None:
         try:
-            self.client = docker.from_env(timeout=DOCKER_TIMEOUT)
+            self.client = create_docker_client(timeout=DOCKER_TIMEOUT)
         except (DockerException, RequestsConnectionError, RequestsTimeout) as e:
             raise SandboxInitializationError(
                 "Docker is not available",
@@ -110,9 +110,9 @@ class DockerRuntime(AbstractRuntime):
 
     def _create_container(self, scan_id: str, max_retries: int = 2) -> Container:
         container_name = f"strix-scan-{scan_id}"
-        image_name = Config.get("strix_image")
+        image_name = Config.get_str("strix_image")
         if not image_name:
-            raise ValueError("STRIX_IMAGE must be configured")
+            raise ValueError("runtime.image must be configured in the config file")
 
         self._verify_image_available(image_name)
 
@@ -129,7 +129,9 @@ class DockerRuntime(AbstractRuntime):
                 self._tool_server_port = self._find_available_port()
                 self._caido_port = self._find_available_port()
                 self._tool_server_token = secrets.token_urlsafe(32)
-                execution_timeout = Config.get("strix_sandbox_execution_timeout") or "120"
+                execution_timeout = str(
+                    Config.get_int("strix_sandbox_execution_timeout") or 120
+                )
 
                 container = self.client.containers.run(
                     image_name,
@@ -310,7 +312,7 @@ class DockerRuntime(AbstractRuntime):
             raise ValueError(f"Container {container_id} not found.") from None
 
     def _resolve_docker_host(self) -> str:
-        docker_host = os.getenv("DOCKER_HOST", "")
+        docker_host = Config.get_str("docker_host") or ""
         if docker_host:
             from urllib.parse import urlparse
 

@@ -1,6 +1,5 @@
 import inspect
 import logging
-import os
 from collections.abc import Callable
 from functools import wraps
 from inspect import signature
@@ -9,6 +8,8 @@ from typing import Any
 
 import defusedxml.ElementTree as DefusedET
 
+from strix.config import Config
+from strix.runtime.context import is_sandbox_mode
 from strix.utils.resource_paths import get_strix_resource_path
 
 
@@ -150,26 +151,15 @@ def _get_schema_path(func: Callable[..., Any]) -> Path | None:
 
 
 def _is_sandbox_mode() -> bool:
-    return os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
+    return is_sandbox_mode()
 
 
 def _is_browser_disabled() -> bool:
-    if os.getenv("STRIX_DISABLE_BROWSER", "").lower() == "true":
-        return True
-
-    from strix.config import Config
-
-    val: str = Config.load().get("env", {}).get("STRIX_DISABLE_BROWSER", "")
-    return str(val).lower() == "true"
+    return Config.get_bool("strix_disable_browser") is True
 
 
 def _has_perplexity_api() -> bool:
-    if os.getenv("PERPLEXITY_API_KEY"):
-        return True
-
-    from strix.config import Config
-
-    return bool(Config.load().get("env", {}).get("PERPLEXITY_API_KEY"))
+    return bool(Config.get_str("perplexity_api_key"))
 
 
 def _should_register_tool(

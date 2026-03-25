@@ -1,138 +1,147 @@
 ---
 title: "Configuration"
-description: "Environment variables for Strix"
+description: "Configure Strix with JSON files"
 ---
 
-Configure Strix using environment variables or a config file.
+Strix runtime configuration is file-based. The default path is:
 
-## LLM Configuration
-
-<ParamField path="STRIX_LLM" type="string" required>
-  Model name in LiteLLM format (e.g., `openai/gpt-5.4`, `anthropic/claude-sonnet-4-6`).
-</ParamField>
-
-<ParamField path="LLM_API_KEY" type="string">
-  API key for your LLM provider. Not required for local models or cloud provider auth (Vertex AI, AWS Bedrock).
-</ParamField>
-
-<ParamField path="LLM_API_BASE" type="string">
-  Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
-</ParamField>
-
-<ParamField path="LLM_TIMEOUT" default="300" type="integer">
-  Request timeout in seconds for LLM calls.
-</ParamField>
-
-<ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
-  Maximum number of retries for LLM API calls on transient failures.
-</ParamField>
-
-<ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
-  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults to `medium` for quick scan mode.
-</ParamField>
-
-<ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
-  Timeout in seconds for memory compression operations (context summarization).
-</ParamField>
-
-## Optional Features
-
-<ParamField path="PERPLEXITY_API_KEY" type="string">
-  API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
-</ParamField>
-
-<ParamField path="STRIX_DISABLE_BROWSER" default="false" type="boolean">
-  Disable browser automation tools.
-</ParamField>
-
-<ParamField path="STRIX_TELEMETRY" default="1" type="string">
-  Global telemetry default toggle. Set to `0`, `false`, `no`, or `off` to disable both PostHog and OTEL unless overridden by per-channel flags below.
-</ParamField>
-
-<ParamField path="STRIX_OTEL_TELEMETRY" type="string">
-  Enable/disable OpenTelemetry run observability independently. When unset, falls back to `STRIX_TELEMETRY`.
-</ParamField>
-
-<ParamField path="STRIX_POSTHOG_TELEMETRY" type="string">
-  Enable/disable PostHog product telemetry independently. When unset, falls back to `STRIX_TELEMETRY`.
-</ParamField>
-
-<ParamField path="TRACELOOP_BASE_URL" type="string">
-  OTLP/Traceloop base URL for remote OpenTelemetry export. If unset, Strix keeps traces local only.
-</ParamField>
-
-<ParamField path="TRACELOOP_API_KEY" type="string">
-  API key used for remote trace export. Remote export is enabled only when both `TRACELOOP_BASE_URL` and `TRACELOOP_API_KEY` are set.
-</ParamField>
-
-<ParamField path="TRACELOOP_HEADERS" type="string">
-  Optional custom OTEL headers (JSON object or `key=value,key2=value2`). Useful for Langfuse or custom/self-hosted OTLP gateways.
-</ParamField>
-
-When remote OTEL vars are not set, Strix still writes complete run telemetry locally to:
-
-```bash
-strix_runs/<run_name>/events.jsonl
+```text
+~/.strix/config.json
 ```
 
-When remote vars are set, Strix dual-writes telemetry to both local JSONL and the remote OTEL endpoint.
-
-## Docker Configuration
-
-<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:0.1.13" type="string">
-  Docker image to use for the sandbox container.
-</ParamField>
-
-<ParamField path="DOCKER_HOST" type="string">
-  Docker daemon socket path. Use for remote Docker hosts or custom configurations.
-</ParamField>
-
-<ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">
-  Runtime backend for the sandbox environment.
-</ParamField>
-
-## Sandbox Configuration
-
-<ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">
-  Maximum execution time in seconds for sandbox operations.
-</ParamField>
-
-<ParamField path="STRIX_SANDBOX_CONNECT_TIMEOUT" default="10" type="integer">
-  Timeout in seconds for connecting to the sandbox container.
-</ParamField>
-
-## Config File
-
-Strix stores configuration in `~/.strix/cli-config.json`. You can also specify a custom config file:
+You can also point Strix or `strix-api` at a custom file:
 
 ```bash
 strix --target ./app --config /path/to/config.json
+strix-api --config /path/to/config.json
 ```
 
-**Config file format:**
+## Minimal Example
 
 ```json
 {
-  "env": {
-    "STRIX_LLM": "openai/gpt-5.4",
-    "LLM_API_KEY": "sk-...",
-    "STRIX_REASONING_EFFORT": "high"
+  "llm": {
+    "model": "openai/gpt-5.4",
+    "api_key": "your-api-key"
   }
 }
 ```
 
-## Example Setup
+## Full Example
 
-```bash
-# Required
-export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="sk-..."
-
-# Optional: Enable web search
-export PERPLEXITY_API_KEY="pplx-..."
-
-# Optional: Custom timeouts
-export LLM_TIMEOUT="600"
-export STRIX_SANDBOX_EXECUTION_TIMEOUT="300"
-
+```json
+{
+  "llm": {
+    "model": "openai/gpt-5.4",
+    "api_key": "your-api-key",
+    "api_base": null,
+    "openai_compatible_provider": null,
+    "reasoning_effort": "high",
+    "max_retries": 5,
+    "memory_compressor_timeout": 30,
+    "timeout": 300
+  },
+  "features": {
+    "perplexity_api_key": null,
+    "disable_browser": false
+  },
+  "runtime": {
+    "backend": "docker",
+    "image": "ghcr.io/usestrix/strix-sandbox:0.1.13",
+    "sandbox_execution_timeout": 120,
+    "sandbox_connect_timeout": 10,
+    "docker_host": null,
+    "caido_api_token": null
+  },
+  "telemetry": {
+    "enabled": true,
+    "otel_enabled": null,
+    "posthog_enabled": null,
+    "traceloop_base_url": null,
+    "traceloop_api_key": null,
+    "traceloop_headers": null
+  },
+  "api": {
+    "host": "127.0.0.1",
+    "port": 8787,
+    "auth_token": null,
+    "max_concurrent_tasks": 1,
+    "enable_docs": true,
+    "stream_poll_interval_ms": 500
+  }
+}
 ```
+
+## `llm`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `model` | `string` | LiteLLM model identifier such as `openai/gpt-5.4` |
+| `api_key` | `string \| null` | Provider API key |
+| `api_base` | `string \| null` | Custom gateway or self-hosted endpoint |
+| `openai_compatible_provider` | `string \| null` | Explicit provider name for OpenAI-compatible gateways not built into LiteLLM |
+| `reasoning_effort` | `string` | Reasoning level, typically `none`, `minimal`, `low`, `medium`, `high`, or `xhigh` |
+| `max_retries` | `integer` | Retry count for transient LLM failures |
+| `memory_compressor_timeout` | `integer` | Timeout for memory compression operations |
+| `timeout` | `integer` | Request timeout in seconds |
+
+## `features`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `perplexity_api_key` | `string \| null` | Optional key for live web research |
+| `disable_browser` | `boolean` | Disable browser automation tools |
+
+## `runtime`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `backend` | `string` | Sandbox backend, default `docker` |
+| `image` | `string` | Sandbox image name |
+| `sandbox_execution_timeout` | `integer` | Sandbox execution timeout in seconds |
+| `sandbox_connect_timeout` | `integer` | Sandbox connection timeout in seconds |
+| `docker_host` | `string \| null` | Custom Docker daemon endpoint |
+| `caido_api_token` | `string \| null` | Optional Caido token |
+
+## `telemetry`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `enabled` | `boolean` | Global telemetry switch |
+| `otel_enabled` | `boolean \| null` | Override OTEL telemetry separately |
+| `posthog_enabled` | `boolean \| null` | Override PostHog telemetry separately |
+| `traceloop_base_url` | `string \| null` | Remote OTEL endpoint |
+| `traceloop_api_key` | `string \| null` | Remote OTEL API key |
+| `traceloop_headers` | `string \| null` | Custom OTEL headers |
+
+## `api`
+
+| Key | Type | Description |
+| --- | --- | --- |
+| `host` | `string` | API bind host |
+| `port` | `integer` | API bind port |
+| `auth_token` | `string \| null` | Optional Bearer token for `/api/v1/tasks*` |
+| `max_concurrent_tasks` | `integer` | Maximum number of active tasks |
+| `enable_docs` | `boolean` | Enable `/docs`, `/redoc`, and `/openapi.json` |
+| `stream_poll_interval_ms` | `integer` | SSE polling interval in milliseconds |
+
+## OpenAI-Compatible Providers
+
+If you are using an OpenAI-compatible gateway that LiteLLM does not recognize out of the box, configure both `api_base` and `openai_compatible_provider`:
+
+```json
+{
+  "llm": {
+    "model": "astron-code-latest",
+    "api_key": "your-api-key",
+    "api_base": "https://maas-coding-api.example.com/v2",
+    "openai_compatible_provider": "AstronCodingPlan"
+  }
+}
+```
+
+## Notes
+
+- Normal Strix runtime configuration no longer depends on environment variables.
+- If you use cloud providers such as Vertex AI or Bedrock, their SDK-level credentials may still follow the provider's own authentication mechanism.
+- Older `cli-config.json` or `env`-style configuration layouts are legacy compatibility paths and are not recommended for new setups.

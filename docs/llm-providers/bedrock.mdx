@@ -5,11 +5,15 @@ description: "Configure Strix with models via AWS Bedrock"
 
 ## Setup
 
-```bash
-export STRIX_LLM="bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0"
+```json
+{
+  "llm": {
+    "model": "bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0"
+  }
+}
 ```
 
-No API key required—uses AWS credentials from environment.
+No Strix API key is required here. Model selection lives in the config file, while authentication follows the standard AWS credential chain.
 
 ## Authentication
 

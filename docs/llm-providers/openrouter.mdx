@@ -7,9 +7,13 @@ description: "Configure Strix with models via OpenRouter"
 
 ## Setup
 
-```bash
-export STRIX_LLM="openrouter/openai/gpt-5.4"
-export LLM_API_KEY="sk-or-..."
+```json
+{
+  "llm": {
+    "model": "openrouter/openai/gpt-5.4",
+    "api_key": "sk-or-..."
+  }
+}
 ```
 
 ## Available Models

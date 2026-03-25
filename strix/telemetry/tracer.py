@@ -40,7 +40,7 @@ def get_global_tracer() -> Optional["Tracer"]:
     return _global_tracer
 
 
-def set_global_tracer(tracer: "Tracer") -> None:
+def set_global_tracer(tracer: Optional["Tracer"]) -> None:
     global _global_tracer  # noqa: PLW0603
     _global_tracer = tracer
 
@@ -57,6 +57,7 @@ class Tracer:
         self.chat_messages: list[dict[str, Any]] = []
         self.streaming_content: dict[str, str] = {}
         self.interrupted_content: dict[str, str] = {}
+        self._last_emitted_streaming_content: dict[str, str] = {}
 
         self.vulnerability_reports: list[dict[str, Any]] = []
         self.final_scan_result: str | None = None
@@ -114,16 +115,17 @@ class Tracer:
     def _setup_telemetry(self) -> None:
         global _OTEL_BOOTSTRAPPED, _OTEL_REMOTE_ENABLED
 
+        run_dir = self.get_run_dir()
+        self._events_file_path = run_dir / "events.jsonl"
+
         if not self._telemetry_enabled:
             self._otel_tracer = None
             self._remote_export_enabled = False
             return
 
-        run_dir = self.get_run_dir()
-        self._events_file_path = run_dir / "events.jsonl"
-        base_url = (Config.get("traceloop_base_url") or "").strip()
-        api_key = (Config.get("traceloop_api_key") or "").strip()
-        headers_raw = Config.get("traceloop_headers") or ""
+        base_url = (Config.get_str("traceloop_base_url") or "").strip()
+        api_key = (Config.get_str("traceloop_api_key") or "").strip()
+        headers_raw = Config.get_str("traceloop_headers") or ""
 
         (
             self._otel_tracer,
@@ -192,9 +194,6 @@ class Tracer:
         source: str = "strix.tracer",
         include_run_metadata: bool = False,
     ) -> None:
-        if not self._telemetry_enabled:
-            return
-
         enriched_actor = self._enrich_actor(actor)
         sanitized_actor = self._sanitize_data(enriched_actor) if enriched_actor else None
         sanitized_payload = self._sanitize_data(payload) if payload is not None else None
@@ -208,7 +207,7 @@ class Tracer:
         if isinstance(current_context, SpanContext) and current_context.is_valid:
             parent_span_id = format_span_id(current_context.span_id)
 
-        if self._otel_tracer is not None:
+        if self._telemetry_enabled and self._otel_tracer is not None:
             try:
                 with self._otel_tracer.start_as_current_span(
                     f"strix.{event_type}",
@@ -277,9 +276,6 @@ class Tracer:
         self._emit_run_started_event()
 
     def _emit_run_started_event(self) -> None:
-        if not self._telemetry_enabled:
-            return
-
         self._emit_event(
             "run.started",
             payload={
@@ -618,6 +614,24 @@ class Tracer:
                 self.run_metadata["end_time"] = self.end_time
                 self.run_metadata["status"] = "completed"
 
+            scan_state_file = run_dir / "scan_state.json"
+            with scan_state_file.open("w", encoding="utf-8") as f:
+                json.dump(
+                    {
+                        "run_metadata": self.run_metadata,
+                        "scan_config": self.scan_config,
+                        "scan_results": self.scan_results,
+                        "final_scan_result": self.final_scan_result,
+                        "vulnerability_reports": self.vulnerability_reports,
+                        "agents": self.agents,
+                        "tool_executions": self.tool_executions,
+                        "chat_messages": self.chat_messages,
+                    },
+                    f,
+                    indent=2,
+                    ensure_ascii=False,
+                )
+
             if self.final_scan_result:
                 penetration_test_report_file = run_dir / "penetration_test_report.md"
                 with penetration_test_report_file.open("w", encoding="utf-8") as f:
@@ -825,9 +839,24 @@ class Tracer:
 
     def update_streaming_content(self, agent_id: str, content: str) -> None:
         self.streaming_content[agent_id] = content
+        if not content:
+            return
+
+        if self._last_emitted_streaming_content.get(agent_id) == content:
+            return
+
+        self._last_emitted_streaming_content[agent_id] = content
+        self._emit_event(
+            "chat.streaming",
+            actor={"agent_id": agent_id, "role": "assistant"},
+            payload={"content": content},
+            status="streaming",
+            source="strix.chat",
+        )
 
     def clear_streaming_content(self, agent_id: str) -> None:
         self.streaming_content.pop(agent_id, None)
+        self._last_emitted_streaming_content.pop(agent_id, None)
 
     def get_streaming_content(self, agent_id: str) -> str | None:
         return self.streaming_content.get(agent_id)
