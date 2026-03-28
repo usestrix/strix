@@ -2,21 +2,16 @@ import base64
 import os
 import re
 import time
-import urllib3
+import warnings
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+import urllib3
 import requests
 from gql import Client, gql
 from gql.transport.exceptions import TransportQueryError
 from gql.transport.requests import RequestsHTTPTransport
 from requests.exceptions import ProxyError, RequestException, Timeout
-
-# TLS certificate verification is intentionally disabled for proxy-intercepted
-# requests: the Caido proxy terminates TLS and re-signs traffic, so target
-# certificates are never presented to this client.  Suppress the urllib3
-# warning that would otherwise appear on every request and obscure real output.
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 if TYPE_CHECKING:
@@ -27,7 +22,7 @@ CAIDO_PORT = 48080  # Fixed port inside container
 
 
 class ProxyManager:
-    def __init__(self, auth_token: str | None = None, verify_ssl: bool = False):
+    def __init__(self, auth_token: str | None = None, verify_ssl: bool | str = False):
         host = "127.0.0.1"
         self.base_url = f"http://{host}:{CAIDO_PORT}/graphql"
         self.proxies = {
@@ -256,15 +251,22 @@ class ProxyManager:
             headers = {}
         try:
             start_time = time.time()
-            response = requests.request(
-                method=method,
-                url=url,
-                headers=headers,
-                data=body or None,
-                proxies=self.proxies,
-                timeout=timeout,
-                verify=self.verify_ssl,
-            )
+            # Suppress InsecureRequestWarning only for this call-site.  verify=False
+            # is intentional when self.verify_ssl is False: the Caido proxy terminates
+            # TLS and re-signs traffic, so the target certificate is never presented
+            # to this client.  Scoping the suppression here avoids silencing the
+            # warning for unrelated requests elsewhere in the process.
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+                response = requests.request(
+                    method=method,
+                    url=url,
+                    headers=headers,
+                    data=body or None,
+                    proxies=self.proxies,
+                    timeout=timeout,
+                    verify=self.verify_ssl,
+                )
             response_time = int((time.time() - start_time) * 1000)
 
             body_content = response.text
@@ -393,15 +395,17 @@ class ProxyManager:
     ) -> dict[str, Any]:
         try:
             start_time = time.time()
-            response = requests.request(
-                method=request_data["method"],
-                url=request_data["url"],
-                headers=request_data["headers"],
-                data=request_data["body"] or None,
-                proxies=self.proxies,
-                timeout=30,
-                verify=self.verify_ssl,
-            )
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", urllib3.exceptions.InsecureRequestWarning)
+                response = requests.request(
+                    method=request_data["method"],
+                    url=request_data["url"],
+                    headers=request_data["headers"],
+                    data=request_data["body"] or None,
+                    proxies=self.proxies,
+                    timeout=30,
+                    verify=self.verify_ssl,
+                )
             response_time = int((time.time() - start_time) * 1000)
 
             response_body = response.text
