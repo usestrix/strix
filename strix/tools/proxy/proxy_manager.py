@@ -2,6 +2,7 @@ import base64
 import os
 import re
 import time
+import urllib3
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -10,6 +11,12 @@ from gql import Client, gql
 from gql.transport.exceptions import TransportQueryError
 from gql.transport.requests import RequestsHTTPTransport
 from requests.exceptions import ProxyError, RequestException, Timeout
+
+# TLS certificate verification is intentionally disabled for proxy-intercepted
+# requests: the Caido proxy terminates TLS and re-signs traffic, so target
+# certificates are never presented to this client.  Suppress the urllib3
+# warning that would otherwise appear on every request and obscure real output.
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 
 if TYPE_CHECKING:
@@ -20,7 +27,7 @@ CAIDO_PORT = 48080  # Fixed port inside container
 
 
 class ProxyManager:
-    def __init__(self, auth_token: str | None = None):
+    def __init__(self, auth_token: str | None = None, verify_ssl: bool = False):
         host = "127.0.0.1"
         self.base_url = f"http://{host}:{CAIDO_PORT}/graphql"
         self.proxies = {
@@ -28,6 +35,7 @@ class ProxyManager:
             "https": f"http://{host}:{CAIDO_PORT}",
         }
         self.auth_token = auth_token or os.getenv("CAIDO_API_TOKEN")
+        self.verify_ssl = verify_ssl
 
     def _get_client(self) -> Client:
         transport = RequestsHTTPTransport(
@@ -255,7 +263,7 @@ class ProxyManager:
                 data=body or None,
                 proxies=self.proxies,
                 timeout=timeout,
-                verify=False,
+                verify=self.verify_ssl,
             )
             response_time = int((time.time() - start_time) * 1000)
 
@@ -392,7 +400,7 @@ class ProxyManager:
                 data=request_data["body"] or None,
                 proxies=self.proxies,
                 timeout=30,
-                verify=False,
+                verify=self.verify_ssl,
             )
             response_time = int((time.time() - start_time) * 1000)
 
