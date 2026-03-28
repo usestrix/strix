@@ -16,7 +16,7 @@ Configure Strix using environment variables or a config file.
 </ParamField>
 
 <ParamField path="LLM_API_BASE" type="string">
-  Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
+  Custom API base URL for hosted or local OpenAI-compatible providers. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
 </ParamField>
 
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
@@ -124,9 +124,15 @@ strix --target ./app --config /path/to/config.json
 ## Example Setup
 
 ```bash
-# Required
+# Choose one model configuration
+# OpenAI
 export STRIX_LLM="openai/gpt-5.4"
 export LLM_API_KEY="sk-..."
+
+# Moonshot / Kimi K2.5
+export STRIX_LLM="openai/kimi-k2.5"
+export LLM_API_KEY="your-moonshot-key"
+export LLM_API_BASE="https://api.moonshot.ai/v1"
 
 # Optional: Enable web search
 export PERPLEXITY_API_KEY="pplx-..."

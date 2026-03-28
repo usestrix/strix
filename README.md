@@ -73,7 +73,7 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 
 **Prerequisites:**
 - Docker (running)
-- An LLM API key from any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+- An LLM API key from any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Moonshot, Anthropic, Google, etc.)
 
 ### Installation & First Scan
 
@@ -81,9 +81,15 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 # Install Strix
 curl -sSL https://strix.ai/install | bash
 
-# Configure your AI provider
+# Configure your AI provider (choose one)
+# OpenAI
 export STRIX_LLM="openai/gpt-5.4"
 export LLM_API_KEY="your-api-key"
+
+# Moonshot / Kimi K2.5
+export STRIX_LLM="openai/kimi-k2.5"
+export LLM_API_KEY="your-moonshot-key"
+export LLM_API_BASE="https://api.moonshot.ai/v1"
 
 # Run your first security assessment
 strix --target ./app-directory
@@ -217,7 +223,7 @@ export STRIX_LLM="openai/gpt-5.4"
 export LLM_API_KEY="your-api-key"
 
 # Optional
-export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
+export LLM_API_BASE="your-api-base-url"  # for OpenAI-compatible hosted or local APIs
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
@@ -228,6 +234,7 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 **Recommended models for best results:**
 
 - [OpenAI GPT-5.4](https://openai.com/api/) — `openai/gpt-5.4`
+- [Moonshot Kimi K2.5](https://platform.moonshot.ai/docs/overview) — `openai/kimi-k2.5` with `LLM_API_BASE=https://api.moonshot.ai/v1`
 - [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) — `anthropic/claude-sonnet-4-6`
 - [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) — `vertex_ai/gemini-3-pro-preview`
 

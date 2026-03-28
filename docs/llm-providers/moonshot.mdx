@@ -1,0 +1,35 @@
+---
+title: "Moonshot AI"
+description: "Configure Strix with Kimi K2.5 via Moonshot's OpenAI-compatible API"
+---
+
+[Moonshot AI](https://platform.moonshot.ai/docs/overview) provides the Kimi API through an OpenAI-compatible interface.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/kimi-k2.5"
+export LLM_API_KEY="your-moonshot-key"
+export LLM_API_BASE="https://api.moonshot.ai/v1"
+```
+
+## Available Models
+
+| Model | Configuration |
+|-------|---------------|
+| Kimi K2.5 | `openai/kimi-k2.5` |
+
+## Get API Key
+
+1. Go to [platform.moonshot.ai](https://platform.moonshot.ai)
+2. Sign in and open API Keys
+3. Create a new API key
+
+## Why This Works
+
+Moonshot documents the Kimi API as OpenAI-compatible, so Strix can use the standard OpenAI provider path with a custom base URL:
+
+```bash
+export STRIX_LLM="openai/kimi-k2.5"
+export LLM_API_BASE="https://api.moonshot.ai/v1"
+```

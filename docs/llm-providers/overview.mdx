@@ -12,12 +12,21 @@ Set your model and API key:
 | Model             | Provider      | Configuration                    |
 | ----------------- | ------------- | -------------------------------- |
 | GPT-5.4           | OpenAI        | `openai/gpt-5.4`                 |
+| Kimi K2.5         | Moonshot AI   | `openai/kimi-k2.5`               |
 | Claude Sonnet 4.6 | Anthropic     | `anthropic/claude-sonnet-4-6`    |
 | Gemini 3 Pro      | Google Vertex | `vertex_ai/gemini-3-pro-preview` |
 
 ```bash
 export STRIX_LLM="openai/gpt-5.4"
 export LLM_API_KEY="your-api-key"
+```
+
+For OpenAI-compatible hosted providers like Moonshot:
+
+```bash
+export STRIX_LLM="openai/kimi-k2.5"
+export LLM_API_KEY="your-moonshot-key"
+export LLM_API_BASE="https://api.moonshot.ai/v1"
 ```
 
 ## Local Models
@@ -36,6 +45,9 @@ See the [Local Models guide](/llm-providers/local) for setup instructions and re
 <CardGroup cols={2}>
   <Card title="OpenAI" href="/llm-providers/openai">
     GPT-5.4 models.
+  </Card>
+  <Card title="Moonshot AI" href="/llm-providers/moonshot">
+    Kimi K2.5 via Moonshot's OpenAI-compatible API.
   </Card>
   <Card title="Anthropic" href="/llm-providers/anthropic">
     Claude Opus, Sonnet, and Haiku.
@@ -63,6 +75,7 @@ Use LiteLLM's `provider/model-name` format:
 
 ```
 openai/gpt-5.4
+openai/kimi-k2.5
 anthropic/claude-sonnet-4-6
 vertex_ai/gemini-3-pro-preview
 bedrock/anthropic.claude-4-5-sonnet-20251022-v1:0

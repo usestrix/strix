@@ -120,7 +120,8 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                     error_text.append("• ", style="white")
                     error_text.append("LLM_API_BASE", style="bold cyan")
                     error_text.append(
-                        " - Custom API base URL if using local models (e.g., Ollama, LMStudio)\n",
+                        " - Custom API base URL for OpenAI-compatible providers or local models "
+                        "(e.g., Moonshot, Ollama, LM Studio)\n",
                         style="white",
                     )
                 elif var == "PERPLEXITY_API_KEY":
@@ -152,8 +153,8 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                     )
                 elif var == "LLM_API_BASE":
                     error_text.append(
-                        "export LLM_API_BASE='http://localhost:11434'  "
-                        "# needed for local models only\n",
+                        "export LLM_API_BASE='https://api.moonshot.ai/v1'  "
+                        "# needed for hosted or local OpenAI-compatible APIs\n",
                         style="dim white",
                     )
                 elif var == "PERPLEXITY_API_KEY":

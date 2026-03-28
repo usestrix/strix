@@ -33,6 +33,7 @@
             "pages": [
               "llm-providers/overview",
               "llm-providers/openai",
+              "llm-providers/moonshot",
               "llm-providers/anthropic",
               "llm-providers/openrouter",
               "llm-providers/vertex",
