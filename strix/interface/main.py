@@ -153,8 +153,8 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
                     )
                 elif var == "LLM_API_BASE":
                     error_text.append(
-                        "export LLM_API_BASE='https://api.moonshot.ai/v1'  "
-                        "# needed for hosted or local OpenAI-compatible APIs\n",
+                        "export LLM_API_BASE='https://your-provider.com/v1'  "
+                        "# for hosted or local OpenAI-compatible APIs\n",
                         style="dim white",
                     )
                 elif var == "PERPLEXITY_API_KEY":
