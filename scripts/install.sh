@@ -150,12 +150,41 @@ download_and_install() {
     local tmp_dir=$(mktemp -d)
     cd "$tmp_dir"
 
+    local checksum_file="${filename}.sha256"
+    local checksum_url="https://github.com/$REPO/releases/download/v${specific_version}/$checksum_file"
+
     echo -e "${MUTED}Downloading...${NC}"
     curl -# -L -o "$filename" "$url"
 
     if [ ! -f "$filename" ]; then
         echo -e "${RED}Download failed${NC}"
         exit 1
+    fi
+
+    echo -e "${MUTED}Verifying checksum...${NC}"
+    if curl -sSL -o "$checksum_file" "$checksum_url" 2>/dev/null && [ -s "$checksum_file" ]; then
+        if command -v sha256sum >/dev/null 2>&1; then
+            if ! sha256sum --check "$checksum_file" --status 2>/dev/null; then
+                echo -e "${RED}Checksum verification failed – the downloaded file may be corrupted or tampered with.${NC}"
+                cd - > /dev/null
+                rm -rf "$tmp_dir"
+                exit 1
+            fi
+        elif command -v shasum >/dev/null 2>&1; then
+            expected_hash=$(awk '{print $1}' "$checksum_file")
+            actual_hash=$(shasum -a 256 "$filename" | awk '{print $1}')
+            if [ "$expected_hash" != "$actual_hash" ]; then
+                echo -e "${RED}Checksum verification failed – the downloaded file may be corrupted or tampered with.${NC}"
+                cd - > /dev/null
+                rm -rf "$tmp_dir"
+                exit 1
+            fi
+        else
+            echo -e "${YELLOW}⚠ sha256sum / shasum not found – skipping checksum verification${NC}"
+        fi
+        echo -e "${GREEN}✓ Checksum verified${NC}"
+    else
+        echo -e "${YELLOW}⚠ Checksum file not available for this release – skipping verification${NC}"
     fi
 
     echo -e "${MUTED}Extracting...${NC}"

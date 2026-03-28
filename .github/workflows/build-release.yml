@@ -44,10 +44,12 @@ jobs:
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             cp dist/strix.exe "dist/release/strix-${VERSION}-${{ matrix.target }}.exe"
             (cd dist/release && 7z a "strix-${VERSION}-${{ matrix.target }}.zip" "strix-${VERSION}-${{ matrix.target }}.exe")
+            (cd dist/release && sha256sum "strix-${VERSION}-${{ matrix.target }}.zip" > "strix-${VERSION}-${{ matrix.target }}.zip.sha256")
           else
             cp dist/strix "dist/release/strix-${VERSION}-${{ matrix.target }}"
             chmod +x "dist/release/strix-${VERSION}-${{ matrix.target }}"
             tar -C dist/release -czvf "dist/release/strix-${VERSION}-${{ matrix.target }}.tar.gz" "strix-${VERSION}-${{ matrix.target }}"
+            (cd dist/release && sha256sum "strix-${VERSION}-${{ matrix.target }}.tar.gz" > "strix-${VERSION}-${{ matrix.target }}.tar.gz.sha256")
           fi
 
       - uses: actions/upload-artifact@v4
@@ -56,6 +58,7 @@ jobs:
           path: |
             dist/release/*.tar.gz
             dist/release/*.zip
+            dist/release/*.sha256
           if-no-files-found: error
 
   release:
