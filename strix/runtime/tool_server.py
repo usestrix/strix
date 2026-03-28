@@ -137,13 +137,15 @@ async def register_agent(
 
 @app.get("/health")
 async def health_check() -> dict[str, Any]:
+    # NOTE: this endpoint is intentionally unauthenticated so that the host
+    # process can poll readiness without a token.  Do NOT add internal state
+    # (agent IDs, token presence, etc.) here; any process that can reach the
+    # container's bound port would be able to enumerate that information.
     return {
         "status": "healthy",
         "sandbox_mode": str(SANDBOX_MODE),
         "environment": "sandbox" if SANDBOX_MODE else "main",
-        "auth_configured": "true" if EXPECTED_TOKEN else "false",
         "active_agents": len(agent_tasks),
-        "agents": list(agent_tasks.keys()),
     }
 
 
