@@ -1,5 +1,6 @@
 import json
 import re
+import shlex
 from pathlib import Path
 from typing import Any, cast
 
@@ -77,7 +78,7 @@ def list_files(
         if not path_obj.is_dir():
             return {"error": f"Path is not a directory: {path}"}
 
-        cmd = f"find '{path}' -type f -o -type d | head -500" if recursive else f"ls -1a '{path}'"
+        cmd = f"find {shlex.quote(path)} -type f -o -type d | head -500" if recursive else f"ls -1a {shlex.quote(path)}"
 
         exit_code, stdout, stderr = run_shell_cmd(cmd)
 
@@ -127,9 +128,7 @@ def search_files(
         if not Path(path).exists():
             return {"error": f"Directory not found: {path}"}
 
-        escaped_regex = regex.replace("'", "'\"'\"'")
-
-        cmd = f"rg --line-number --glob '{file_pattern}' '{escaped_regex}' '{path}'"
+        cmd = f"rg --line-number --glob {shlex.quote(file_pattern)} {shlex.quote(regex)} {shlex.quote(path)}"
 
         exit_code, stdout, stderr = run_shell_cmd(cmd)
 
