@@ -72,7 +72,7 @@ SMUGGLED
 
 ### H2.CL — HTTP/2 Front-end Downgrades to HTTP/1.1, Injects Content-Length
 
-HTTP/2 has no `Content-Length` vs `TE` ambiguity in its own framing. But when the front-end downgrades to HTTP/1.1 for the back-end, an attacker can inject a `Content-Length` header in the HTTP/2 request pseudo-headers that conflicts with the actual body length:
+HTTP/2 has no `Content-Length` vs `TE` ambiguity in its own framing. But when the front-end downgrades to HTTP/1.1 for the back-end, an attacker can inject a `content-length` header in the HTTP/2 request that conflicts with the actual body length. Note: `content-length` is a regular HTTP/2 header — pseudo-headers are exclusively `:method`, `:path`, `:authority`, and `:scheme`:
 ```
 :method POST
 :path /
@@ -107,7 +107,7 @@ A front-end proxy enforces authentication or IP restriction by checking request 
 ```http
 POST /not-restricted HTTP/1.1
 Host: target.com
-Content-Length: 116
+Content-Length: 100
 Transfer-Encoding: chunked
 
 0
@@ -129,7 +129,7 @@ Poison the back-end socket with a partial request prefix that captures the next 
 ```http
 POST /search HTTP/1.1
 Host: target.com
-Content-Length: 129
+Content-Length: 120
 Transfer-Encoding: chunked
 
 0
@@ -173,7 +173,7 @@ X
 ```
 If response is delayed 10–30 seconds, CL.TE desync likely.
 
-**TE.CL:** Send a request with `Transfer-Encoding` present but `Content-Length` set to fewer bytes than the chunk content. TE.CL back-end waits for more bytes per Content-Length.
+**TE.CL:** Send a request with a complete chunked body (including the `0\r\n\r\n` terminator so the front-end is satisfied) but with `Content-Length` set to **more** bytes than the body actually provides. The back-end, using Content-Length, waits for the remaining bytes that never arrive — producing a 10–30 second timeout. Setting Content-Length *less* than the body causes socket poisoning (differential-response detection), not a timeout.
 
 ### Differential Response Detection
 
@@ -183,8 +183,8 @@ Send two requests in sequence. If the second request receives an unexpected resp
 
 ```http
 Transfer-Encoding: xchunked        # non-standard value, some FE ignore, BE accept
-Transfer-Encoding:\x20chunked      # leading space
-Transfer-Encoding: chunked         # tab before value
+Transfer-Encoding: chunked         # leading space before value (0x20 byte after colon+space)
+Transfer-Encoding:	chunked        # tab character before value
 Transfer-Encoding: x
 Transfer-Encoding: chunked         # duplicate TE headers, BE uses last
 ```
@@ -201,7 +201,7 @@ Transfer-Encoding: chunked\r\nTransfer-Encoding: x  # TE twice
 
 ## HTTP/2-Specific Detection
 
-- Send HTTP/2 requests with injected `content-length` pseudo-headers that differ from the actual body length
+- Send HTTP/2 requests with an injected `content-length` regular header that differs from the actual body length
 - Inject `transfer-encoding: chunked` in HTTP/2 headers (spec-forbidden but sometimes passed through)
 - Use HTTP/2 header injection: inject newlines in header values if the front-end passes them to HTTP/1.1 back-end unescaped
 - Observe whether the HTTP/2 connection ID corresponds to a persistent HTTP/1.1 connection to the back-end (connection reuse amplifies impact)
@@ -210,7 +210,7 @@ Transfer-Encoding: chunked\r\nTransfer-Encoding: x  # TE twice
 
 1. **Map the proxy chain** — identify front-end (CDN, load balancer, WAF) and back-end (app server)
 2. **Probe CL.TE** — send a timing probe with mismatched chunked terminator; observe delay
-3. **Probe TE.CL** — send a timing probe with Content-Length shorter than chunked content
+3. **Probe TE.CL** — send a timing probe with complete chunked body but Content-Length larger than the actual body; observe back-end timeout
 4. **Obfuscate TE header** — try each obfuscation variant (tab, extra space, duplicate, non-standard value)
 5. **Confirm with differential response** — send two rapid identical requests; if second gets an unexpected response, socket is poisoned
 6. **Attempt bypass exploit** — craft a smuggled `GET /admin` or restricted endpoint and observe if back-end accepts it
@@ -245,7 +245,7 @@ Transfer-Encoding: chunked\r\nTransfer-Encoding: x  # TE twice
 1. Use Burp Suite's HTTP Request Smuggler extension as a rapid scanner, but always confirm manually — false positives are common
 2. TE obfuscation is the most reliable path; `Transfer-Encoding: xchunked` works on many Apache/IIS back-ends
 3. Keep smuggled prefixes short during detection; use the minimal body to confirm desync before attempting capture attacks
-4. H2.CL is the most impactful modern variant — many CDNs translate HTTP/2 to HTTP/1.1 and inject `Content-Length` from the `:content-length` pseudo-header
+4. H2.CL is the most impactful modern variant — many CDNs translate HTTP/2 to HTTP/1.1 and derive `Content-Length` from the `content-length` regular header sent in the HTTP/2 request (not a pseudo-header — inject it as a normal header field)
 5. In capture attacks, set `Content-Length` in the smuggled prefix larger than your partial body by 50–100 bytes to catch a full auth header from the next user
 6. Test during low-traffic periods first to avoid affecting real users; always get explicit authorization for capture attempts
 7. If timing probes are inconsistent, pipeline two requests over the same connection and look for unexpected response swapping
