@@ -30,9 +30,16 @@ def _load_streaming_parser():
     fake_llm_utils.normalize_tool_format = lambda s: s  # type: ignore[attr-defined]
     sys.modules.setdefault("strix", types.ModuleType("strix"))
     sys.modules.setdefault("strix.llm", types.ModuleType("strix.llm"))
+    _original_llm_utils = sys.modules.get("strix.llm.utils")
     sys.modules["strix.llm.utils"] = fake_llm_utils
 
-    spec.loader.exec_module(module)
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        if _original_llm_utils is None:
+            sys.modules.pop("strix.llm.utils", None)
+        else:
+            sys.modules["strix.llm.utils"] = _original_llm_utils
     return module
 
 
