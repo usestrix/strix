@@ -77,6 +77,9 @@ class TerminalSession:
         self.pane = self.window.active_pane
         _initial_window.kill()
 
+        # Source proxy config so sub-agent terminals inherit Caido proxy + CA certs
+        self.pane.send_keys('source /etc/profile.d/proxy.sh 2>/dev/null; source ~/.bashrc 2>/dev/null; true')
+        time.sleep(0.3)
         self.pane.send_keys(f'export PROMPT_COMMAND=\'export PS1="{self.PS1}"\'; export PS2=""')
         time.sleep(0.1)
         self._clear_screen()
