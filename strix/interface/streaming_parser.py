@@ -25,7 +25,15 @@ def _get_safe_content(content: str) -> tuple[str, str]:
 
     suffix = content[last_lt:]
 
-    if _FUNCTION_TAG_PREFIX.startswith(suffix) or _INVOKE_TAG_PREFIX.startswith(suffix):
+    if ">" in suffix:
+        return content, ""
+
+    if (
+        _FUNCTION_TAG_PREFIX.startswith(suffix)
+        or _INVOKE_TAG_PREFIX.startswith(suffix)
+        or suffix.startswith(_FUNCTION_TAG_PREFIX)
+        or suffix.startswith(_INVOKE_TAG_PREFIX)
+    ):
         return content[:last_lt], suffix
 
     return content, ""
