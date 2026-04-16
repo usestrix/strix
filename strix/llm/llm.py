@@ -360,11 +360,18 @@ class LLM:
         return result
 
     def _add_cache_control(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Add cache_control breakpoints to stable message segments.
+
+        Caches the system prompt and the agent identity message since these
+        are identical across every iteration within an agent's lifetime.
+        Cache hits cost ~90% less than re-processing on Anthropic models.
+        """
         if not messages or not supports_prompt_caching(self.config.canonical_model):
             return messages
 
         result = list(messages)
 
+        # Cache breakpoint 1: system prompt (unchanged across all iterations)
         if result[0].get("role") == "system":
             content = result[0]["content"]
             result[0] = {
@@ -375,4 +382,16 @@ class LLM:
                 if isinstance(content, str)
                 else content,
             }
+
+        # Cache breakpoint 2: agent identity message (stable per-agent)
+        if len(result) > 1 and "<agent_identity>" in str(result[1].get("content", "")):
+            content = result[1]["content"]
+            if isinstance(content, str):
+                result[1] = {
+                    **result[1],
+                    "content": [
+                        {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                    ],
+                }
+
         return result

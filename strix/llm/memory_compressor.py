@@ -9,8 +9,14 @@ from strix.config.config import Config, resolve_llm_config
 logger = logging.getLogger(__name__)
 
 
-MAX_TOTAL_TOKENS = 100_000
-MIN_RECENT_MESSAGES = 15
+DEFAULT_MAX_TOTAL_TOKENS = 100_000
+DEFAULT_MIN_RECENT_MESSAGES = 15
+DEFAULT_MAX_TOOL_OUTPUT_CHARS = 0  # 0 = no truncation (backwards compatible)
+
+TOOL_TRUNCATION_NOTICE = (
+    "\n\n[Output truncated from {original_len} to {max_len} characters. "
+    "Full output was captured but condensed to reduce context size.]"
+)
 
 SUMMARY_PROMPT_TEMPLATE = """You are an agent performing context
 condensation for a security agent. Your job is to compress scan data while preserving
@@ -131,6 +137,22 @@ def _summarize_messages(
         return messages[0]
 
 
+def _truncate_tool_output(text: str, max_chars: int) -> str:
+    """Truncate large tool outputs while preserving the beginning and end.
+
+    Keeps the first 60% and last 40% of the allowed length so that both
+    the command/header and the tail of the output (often containing summaries
+    or error messages) are preserved.
+    """
+    if max_chars <= 0 or len(text) <= max_chars:
+        return text
+
+    head_len = int(max_chars * 0.6)
+    tail_len = max_chars - head_len
+    notice = TOOL_TRUNCATION_NOTICE.format(original_len=len(text), max_len=max_chars)
+    return text[:head_len] + notice + text[-tail_len:]
+
+
 def _handle_images(messages: list[dict[str, Any]], max_images: int) -> None:
     image_count = 0
     for msg in reversed(messages):
@@ -160,8 +182,43 @@ class MemoryCompressor:
         self.model_name = model_name or Config.get("strix_llm")
         self.timeout = timeout or int(Config.get("strix_memory_compressor_timeout") or "120")
 
+        self.max_total_tokens = int(
+            Config.get("strix_max_context_tokens") or str(DEFAULT_MAX_TOTAL_TOKENS)
+        )
+        self.min_recent_messages = int(
+            Config.get("strix_min_recent_messages") or str(DEFAULT_MIN_RECENT_MESSAGES)
+        )
+        self.max_tool_output_chars = int(
+            Config.get("strix_max_tool_output_chars") or str(DEFAULT_MAX_TOOL_OUTPUT_CHARS)
+        )
+
         if not self.model_name:
             raise ValueError("STRIX_LLM environment variable must be set and not empty")
+
+    def truncate_tool_outputs(self, messages: list[dict[str, Any]]) -> None:
+        """Truncate large tool output messages in-place.
+
+        This prevents oversized tool results (nmap scans, file contents, etc.)
+        from accumulating in the conversation history and being resent on every
+        subsequent LLM call. Applied at ingestion time before the history grows.
+        """
+        if self.max_tool_output_chars <= 0:
+            return
+
+        for msg in messages:
+            content = msg.get("content", "")
+            if isinstance(content, str) and len(content) > self.max_tool_output_chars:
+                msg["content"] = _truncate_tool_output(content, self.max_tool_output_chars)
+            elif isinstance(content, list):
+                for item in content:
+                    if (
+                        isinstance(item, dict)
+                        and item.get("type") == "text"
+                        and len(item.get("text", "")) > self.max_tool_output_chars
+                    ):
+                        item["text"] = _truncate_tool_output(
+                            item["text"], self.max_tool_output_chars
+                        )
 
     def compress_history(
         self,
@@ -170,10 +227,11 @@ class MemoryCompressor:
         """Compress conversation history to stay within token limits.
 
         Strategy:
-        1. Handle image limits first
-        2. Keep all system messages
-        3. Keep minimum recent messages
-        4. Summarize older messages when total tokens exceed limit
+        1. Truncate oversized tool outputs first
+        2. Handle image limits
+        3. Keep all system messages
+        4. Keep minimum recent messages
+        5. Summarize older messages when total tokens exceed limit
 
         The compression preserves:
         - All system messages unchanged
@@ -185,6 +243,7 @@ class MemoryCompressor:
         if not messages:
             return messages
 
+        self.truncate_tool_outputs(messages)
         _handle_images(messages, self.max_images)
 
         system_msgs = []
@@ -195,8 +254,8 @@ class MemoryCompressor:
             else:
                 regular_msgs.append(msg)
 
-        recent_msgs = regular_msgs[-MIN_RECENT_MESSAGES:]
-        old_msgs = regular_msgs[:-MIN_RECENT_MESSAGES]
+        recent_msgs = regular_msgs[-self.min_recent_messages:]
+        old_msgs = regular_msgs[:-self.min_recent_messages]
 
         # Type assertion since we ensure model_name is not None in __init__
         model_name: str = self.model_name  # type: ignore[assignment]
@@ -205,7 +264,7 @@ class MemoryCompressor:
             _get_message_tokens(msg, model_name) for msg in system_msgs + regular_msgs
         )
 
-        if total_tokens <= MAX_TOTAL_TOKENS * 0.9:
+        if total_tokens <= self.max_total_tokens * 0.9:
             return messages
 
         compressed = []
