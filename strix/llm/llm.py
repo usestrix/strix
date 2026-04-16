@@ -393,5 +393,10 @@ class LLM:
                         {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
                     ],
                 }
+            elif isinstance(content, list) and content:
+                # Content is already a list — add cache_control to the last item
+                last = content[-1]
+                if isinstance(last, dict):
+                    last["cache_control"] = {"type": "ephemeral"}
 
         return result

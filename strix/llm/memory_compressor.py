@@ -14,8 +14,9 @@ DEFAULT_MIN_RECENT_MESSAGES = 15
 DEFAULT_MAX_TOOL_OUTPUT_CHARS = 0  # 0 = no truncation (backwards compatible)
 
 TOOL_TRUNCATION_NOTICE = (
-    "\n\n[Output truncated from {original_len} to {max_len} characters. "
-    "Full output was captured but condensed to reduce context size.]"
+    "\n\n[Output truncated: showing first {head_len} and last {tail_len} characters "
+    "of {original_len}-character output (limit: {max_len}). "
+    "The middle portion has been permanently removed.]"
 )
 
 SUMMARY_PROMPT_TEMPLATE = """You are an agent performing context
@@ -149,7 +150,9 @@ def _truncate_tool_output(text: str, max_chars: int) -> str:
 
     head_len = int(max_chars * 0.6)
     tail_len = max_chars - head_len
-    notice = TOOL_TRUNCATION_NOTICE.format(original_len=len(text), max_len=max_chars)
+    notice = TOOL_TRUNCATION_NOTICE.format(
+        original_len=len(text), max_len=max_chars, head_len=head_len, tail_len=tail_len
+    )
     return text[:head_len] + notice + text[-tail_len:]
 
 
@@ -201,24 +204,46 @@ class MemoryCompressor:
         This prevents oversized tool results (nmap scans, file contents, etc.)
         from accumulating in the conversation history and being resent on every
         subsequent LLM call. Applied at ingestion time before the history grows.
+
+        Only truncates tool-role messages and tool_result content blocks to
+        avoid corrupting system prompts or user/assistant messages.
         """
         if self.max_tool_output_chars <= 0:
             return
 
         for msg in messages:
+            role = msg.get("role", "")
             content = msg.get("content", "")
-            if isinstance(content, str) and len(content) > self.max_tool_output_chars:
+
+            # Direct tool-role messages (string content)
+            if role == "tool" and isinstance(content, str) and len(content) > self.max_tool_output_chars:
                 msg["content"] = _truncate_tool_output(content, self.max_tool_output_chars)
+            # Anthropic-style: tool_result blocks embedded in user messages
             elif isinstance(content, list):
                 for item in content:
+                    if not isinstance(item, dict):
+                        continue
                     if (
-                        isinstance(item, dict)
-                        and item.get("type") == "text"
-                        and len(item.get("text", "")) > self.max_tool_output_chars
+                        item.get("type") == "tool_result"
+                        and isinstance(item.get("content"), str)
+                        and len(item["content"]) > self.max_tool_output_chars
                     ):
-                        item["text"] = _truncate_tool_output(
-                            item["text"], self.max_tool_output_chars
+                        item["content"] = _truncate_tool_output(
+                            item["content"], self.max_tool_output_chars
                         )
+                    elif (
+                        item.get("type") == "tool_result"
+                        and isinstance(item.get("content"), list)
+                    ):
+                        for sub in item["content"]:
+                            if (
+                                isinstance(sub, dict)
+                                and sub.get("type") == "text"
+                                and len(sub.get("text", "")) > self.max_tool_output_chars
+                            ):
+                                sub["text"] = _truncate_tool_output(
+                                    sub["text"], self.max_tool_output_chars
+                                )
 
     def compress_history(
         self,
