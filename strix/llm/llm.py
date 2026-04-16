@@ -176,7 +176,11 @@ class LLM:
         done_streaming = 0
 
         self._total_stats.requests += 1
-        response = await acompletion(**self._build_completion_args(messages), stream=True)
+        timeout = self.config.timeout
+        response = await asyncio.wait_for(
+            acompletion(**self._build_completion_args(messages), stream=True),
+            timeout=timeout,
+        )
 
         async for chunk in response:
             chunks.append(chunk)
