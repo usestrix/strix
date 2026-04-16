@@ -182,7 +182,12 @@ class LLM:
             timeout=timeout,
         )
 
-        async for chunk in response:
+        async_iter = response.__aiter__()
+        while True:
+            try:
+                chunk = await asyncio.wait_for(async_iter.__anext__(), timeout=timeout)
+            except StopAsyncIteration:
+                break
             chunks.append(chunk)
             if done_streaming:
                 done_streaming += 1
