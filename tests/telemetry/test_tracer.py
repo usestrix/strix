@@ -10,6 +10,7 @@ from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExportResult
 from strix.telemetry import tracer as tracer_module
 from strix.telemetry import utils as telemetry_utils
 from strix.telemetry.tracer import Tracer, set_global_tracer
+from strix.tools.agents_graph import agents_graph_actions
 
 
 def _load_events(events_path: Path) -> list[dict[str, Any]]:
@@ -253,6 +254,75 @@ def test_events_with_agent_id_include_agent_name(monkeypatch, tmp_path) -> None:
 
     assert chat_event["actor"]["agent_id"] == "agent-1"
     assert chat_event["actor"]["agent_name"] == "Root Agent"
+
+
+def test_get_total_llm_stats_includes_completed_subagents(monkeypatch, tmp_path) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    class DummyStats:
+        def __init__(
+            self,
+            *,
+            input_tokens: int,
+            output_tokens: int,
+            cached_tokens: int,
+            cost: float,
+            requests: int,
+        ) -> None:
+            self.input_tokens = input_tokens
+            self.output_tokens = output_tokens
+            self.cached_tokens = cached_tokens
+            self.cost = cost
+            self.requests = requests
+
+    class DummyLLM:
+        def __init__(self, stats: DummyStats) -> None:
+            self._total_stats = stats
+
+    class DummyAgent:
+        def __init__(self, stats: DummyStats) -> None:
+            self.llm = DummyLLM(stats)
+
+    tracer = Tracer("cost-rollup")
+    set_global_tracer(tracer)
+
+    monkeypatch.setattr(
+        agents_graph_actions,
+        "_agent_instances",
+        {
+            "root-agent": DummyAgent(
+                DummyStats(
+                    input_tokens=1_000,
+                    output_tokens=250,
+                    cached_tokens=100,
+                    cost=0.12345,
+                    requests=2,
+                )
+            )
+        },
+    )
+    monkeypatch.setattr(
+        agents_graph_actions,
+        "_completed_agent_llm_totals",
+        {
+            "input_tokens": 2_000,
+            "output_tokens": 500,
+            "cached_tokens": 400,
+            "cost": 0.54321,
+            "requests": 3,
+        },
+    )
+
+    stats = tracer.get_total_llm_stats()
+
+    assert stats["total"] == {
+        "input_tokens": 3_000,
+        "output_tokens": 750,
+        "cached_tokens": 500,
+        "cost": 0.6667,
+        "requests": 5,
+    }
+    assert stats["total_tokens"] == 3_750
 
 
 def test_run_metadata_is_only_on_run_lifecycle_events(monkeypatch, tmp_path) -> None:

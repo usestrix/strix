@@ -19,7 +19,53 @@ _running_agents: dict[str, threading.Thread] = {}
 
 _agent_instances: dict[str, Any] = {}
 
+_agent_llm_stats_lock = threading.Lock()
+
+
+def _empty_llm_stats_totals() -> dict[str, int | float]:
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cached_tokens": 0,
+        "cost": 0.0,
+        "requests": 0,
+    }
+
+
+_completed_agent_llm_totals: dict[str, int | float] = _empty_llm_stats_totals()
+
 _agent_states: dict[str, Any] = {}
+
+
+def _snapshot_agent_llm_stats(agent: Any) -> dict[str, int | float] | None:
+    if not hasattr(agent, "llm") or not hasattr(agent.llm, "_total_stats"):
+        return None
+
+    stats = agent.llm._total_stats
+    return {
+        "input_tokens": stats.input_tokens,
+        "output_tokens": stats.output_tokens,
+        "cached_tokens": stats.cached_tokens,
+        "cost": stats.cost,
+        "requests": stats.requests,
+    }
+
+
+def _finalize_agent_llm_stats(agent_id: str, agent: Any) -> None:
+    stats = _snapshot_agent_llm_stats(agent)
+    with _agent_llm_stats_lock:
+        if stats is not None:
+            _completed_agent_llm_totals["input_tokens"] += int(stats["input_tokens"])
+            _completed_agent_llm_totals["output_tokens"] += int(stats["output_tokens"])
+            _completed_agent_llm_totals["cached_tokens"] += int(stats["cached_tokens"])
+            _completed_agent_llm_totals["cost"] += float(stats["cost"])
+            _completed_agent_llm_totals["requests"] += int(stats["requests"])
+
+            node = _agent_graph["nodes"].get(agent_id)
+            if node is not None:
+                node["llm_stats"] = stats
+
+        _agent_instances.pop(agent_id, None)
 
 
 def _is_whitebox_agent(agent_id: str) -> bool:
@@ -237,7 +283,7 @@ def _run_agent_in_thread(
         _agent_graph["nodes"][state.agent_id]["finished_at"] = datetime.now(UTC).isoformat()
         _agent_graph["nodes"][state.agent_id]["result"] = {"error": str(e)}
         _running_agents.pop(state.agent_id, None)
-        _agent_instances.pop(state.agent_id, None)
+        _finalize_agent_llm_stats(state.agent_id, agent)
         raise
     else:
         if state.stop_requested:
@@ -247,7 +293,7 @@ def _run_agent_in_thread(
         _agent_graph["nodes"][state.agent_id]["finished_at"] = datetime.now(UTC).isoformat()
         _agent_graph["nodes"][state.agent_id]["result"] = result
         _running_agents.pop(state.agent_id, None)
-        _agent_instances.pop(state.agent_id, None)
+        _finalize_agent_llm_stats(state.agent_id, agent)
 
         return {"result": result}
 
@@ -418,7 +464,8 @@ def create_agent(
         if inherit_context:
             inherited_messages = agent_state.get_conversation_history()
 
-        _agent_instances[state.agent_id] = agent
+        with _agent_llm_stats_lock:
+            _agent_instances[state.agent_id] = agent
 
         thread = threading.Thread(
             target=_run_agent_in_thread,

@@ -5,15 +5,23 @@ from strix.llm.config import LLMConfig
 from strix.tools.agents_graph import agents_graph_actions
 
 
-def test_create_agent_inherits_parent_whitebox_flag(monkeypatch) -> None:
-    monkeypatch.setenv("STRIX_LLM", "openai/gpt-5")
-
+def _reset_agent_graph_state() -> None:
     agents_graph_actions._agent_graph["nodes"].clear()
     agents_graph_actions._agent_graph["edges"].clear()
     agents_graph_actions._agent_messages.clear()
     agents_graph_actions._running_agents.clear()
     agents_graph_actions._agent_instances.clear()
+    agents_graph_actions._completed_agent_llm_totals.clear()
+    agents_graph_actions._completed_agent_llm_totals.update(
+        agents_graph_actions._empty_llm_stats_totals()
+    )
     agents_graph_actions._agent_states.clear()
+
+
+def test_create_agent_inherits_parent_whitebox_flag(monkeypatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "openai/gpt-5")
+
+    _reset_agent_graph_state()
 
     parent_id = "parent-agent"
     parent_llm = LLMConfig(timeout=123, scan_mode="standard", is_whitebox=True)
@@ -66,12 +74,7 @@ def test_create_agent_inherits_parent_whitebox_flag(monkeypatch) -> None:
 def test_delegation_prompt_includes_wiki_memory_instruction_in_whitebox(monkeypatch) -> None:
     monkeypatch.setenv("STRIX_LLM", "openai/gpt-5")
 
-    agents_graph_actions._agent_graph["nodes"].clear()
-    agents_graph_actions._agent_graph["edges"].clear()
-    agents_graph_actions._agent_messages.clear()
-    agents_graph_actions._running_agents.clear()
-    agents_graph_actions._agent_instances.clear()
-    agents_graph_actions._agent_states.clear()
+    _reset_agent_graph_state()
 
     parent_id = "parent-1"
     child_id = "child-1"
@@ -116,12 +119,7 @@ def test_delegation_prompt_includes_wiki_memory_instruction_in_whitebox(monkeypa
 def test_agent_finish_appends_wiki_update_for_whitebox(monkeypatch) -> None:
     monkeypatch.setenv("STRIX_LLM", "openai/gpt-5")
 
-    agents_graph_actions._agent_graph["nodes"].clear()
-    agents_graph_actions._agent_graph["edges"].clear()
-    agents_graph_actions._agent_messages.clear()
-    agents_graph_actions._running_agents.clear()
-    agents_graph_actions._agent_instances.clear()
-    agents_graph_actions._agent_states.clear()
+    _reset_agent_graph_state()
 
     parent_id = "parent-2"
     child_id = "child-2"
@@ -192,12 +190,7 @@ def test_agent_finish_appends_wiki_update_for_whitebox(monkeypatch) -> None:
 def test_run_agent_in_thread_injects_shared_wiki_context_in_whitebox(monkeypatch) -> None:
     monkeypatch.setenv("STRIX_LLM", "openai/gpt-5")
 
-    agents_graph_actions._agent_graph["nodes"].clear()
-    agents_graph_actions._agent_graph["edges"].clear()
-    agents_graph_actions._agent_messages.clear()
-    agents_graph_actions._running_agents.clear()
-    agents_graph_actions._agent_instances.clear()
-    agents_graph_actions._agent_states.clear()
+    _reset_agent_graph_state()
 
     parent_id = "parent-3"
     child_id = "child-3"
