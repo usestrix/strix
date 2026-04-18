@@ -6,6 +6,7 @@ Strix Agent Interface
 import argparse
 import asyncio
 import logging
+import os
 import shutil
 import sys
 from pathlib import Path
@@ -528,6 +529,12 @@ def pull_docker_image() -> None:
 
 
 def apply_config_override(config_path: str) -> None:
+    # Clear env vars that were automatically applied from the default config file
+    # so they don't leak into the custom config context.
+    for var_name in Config._applied_from_default:
+        os.environ.pop(var_name, None)
+    Config._applied_from_default = {}
+
     Config._config_file_override = validate_config_file(config_path)
     apply_saved_config(force=True)
 
