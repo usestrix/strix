@@ -20,7 +20,7 @@ def normalize_tool_format(content: str) -> str:
       <function="X">                        → <function=X>
       <parameter="X">                       → <parameter=X>
     """
-    if "<invoke" in content or "<function_calls" in content:
+    if "<invoke" in content or "<function_calls" in content or '<parameter name="' in content:
         content = _FUNCTION_CALLS_TAG.sub("", content)
         content = _INVOKE_OPEN.sub(r"<function=\1>", content)
         content = _PARAM_NAME_ATTR.sub(r"<parameter=\1>", content)

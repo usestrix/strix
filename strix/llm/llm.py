@@ -202,6 +202,13 @@ class LLM:
 
         accumulated = normalize_tool_format(accumulated)
         accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
+
+        thinking_content = ""
+        for match in re.finditer(r"<thinking[^>]*>(.*?)</thinking>", accumulated, re.DOTALL):
+            thinking_content += match.group(1) + "\n"
+        if thinking_content:
+            accumulated = accumulated.replace(thinking_content, "")
+
         yield LLMResponse(
             content=accumulated,
             tool_invocations=parse_tool_invocations(accumulated),
