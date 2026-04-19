@@ -1,4 +1,5 @@
 import asyncio
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -188,7 +189,10 @@ class LLM:
             delta = self._get_chunk_content(chunk)
             if delta:
                 accumulated += delta
-                if "</function>" in accumulated or "</invoke>" in accumulated:
+                check_content = re.sub(
+                    r"<thinking[^>]*>.*?</thinking>", "", accumulated, flags=re.DOTALL
+                )
+                if "</function>" in check_content or "</invoke>" in check_content:
                     end_tag = "</function>" if "</function>" in accumulated else "</invoke>"
                     pos = accumulated.find(end_tag)
                     accumulated = accumulated[: pos + len(end_tag)]
@@ -203,11 +207,7 @@ class LLM:
         accumulated = normalize_tool_format(accumulated)
         accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
 
-        thinking_content = ""
-        for match in re.finditer(r"<thinking[^>]*>(.*?)</thinking>", accumulated, re.DOTALL):
-            thinking_content += match.group(1) + "\n"
-        if thinking_content:
-            accumulated = accumulated.replace(thinking_content, "")
+        accumulated = re.sub(r"<thinking[^>]*>.*?</thinking>", "", accumulated, flags=re.DOTALL)
 
         yield LLMResponse(
             content=accumulated,
