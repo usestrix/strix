@@ -1,4 +1,5 @@
 import asyncio
+import re
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -171,6 +172,8 @@ class LLM:
                 if self._is_bad_request(e):
                     if not bad_request_retried:
                         bad_request_retried = True
+                        if attempt >= max_retries:
+                            self._raise_error(e)
                         await asyncio.sleep(2)
                         continue
                     truncate_enabled = Config.get("strix_truncate_on_oversize") or ""
@@ -180,6 +183,8 @@ class LLM:
                         and self._truncate_large_tool_results(messages)
                     ):
                         bad_request_truncated = True
+                        if attempt >= max_retries:
+                            self._raise_error(e)
                         continue
                 if attempt >= max_retries or not self._should_retry(e):
                     self._raise_error(e)
@@ -339,31 +344,32 @@ class LLM:
         Scans messages in reverse for tool_result XML blocks that exceed max_chars and
         replaces their content with a truncated version plus a skip notice. Returns True
         if any truncation was performed (caller should retry the request).
-        """
-        import re
 
+        Note: All oversized tool_result blocks within a single message are truncated
+        in one pass — this is intentional to maximise payload size reduction per retry.
+        """
         truncated_any = False
         pattern = re.compile(
             r"(<tool_result>\s*<tool_name>[^<]*</tool_name>\s*<result>)(.*?)(</result>\s*</tool_result>)",
             re.DOTALL,
         )
 
+        def _truncate_match(m: re.Match) -> str:
+            nonlocal truncated_any
+            prefix, body, suffix = m.group(1), m.group(2), m.group(3)
+            if len(body) <= max_chars:
+                return m.group(0)
+            truncated_any = True
+            kept = body[:1000]
+            return (
+                f"{prefix}{kept}\n\n... [content truncated from {len(body)} to {len(kept)} chars "
+                f"due to request size limit — file requires manual review] ...{suffix}"
+            )
+
         for msg in reversed(messages):
             content = msg.get("content")
             if not isinstance(content, str) or "<tool_result>" not in content:
                 continue
-
-            def _truncate_match(m: re.Match) -> str:
-                prefix, body, suffix = m.group(1), m.group(2), m.group(3)
-                if len(body) <= max_chars:
-                    return m.group(0)
-                nonlocal truncated_any
-                truncated_any = True
-                kept = body[:1000]
-                return (
-                    f"{prefix}{kept}\n\n... [content truncated from {len(body)} to {len(kept)} chars "
-                    f"due to request size limit — file requires manual review] ...{suffix}"
-                )
 
             msg["content"] = pattern.sub(_truncate_match, content)
             if truncated_any:
