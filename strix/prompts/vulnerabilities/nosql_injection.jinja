@@ -29,28 +29,10 @@
 </injection_surfaces>
 
 <detection_channels>
-<operator_based>
-- Inject query operators to modify predicate logic: {% raw %}{"username": {"$ne": null}}{% endraw %} always matches
-- Test comparison operators: $gt, $gte, $lt, $lte, $ne, $eq, $in, $nin
-- Logical operators: $or, $and, $nor to combine conditions
-</operator_based>
-
-<boolean_based>
-- Compare responses with true/false predicates; diff status codes, body length, specific content
-- Use $regex for character-by-character extraction: {% raw %}{"password": {"$regex": "^a"}}{% endraw %}
-- Binary search on character space using regex anchors
-</boolean_based>
-
-<timing_based>
-- MongoDB $where with sleep: {% raw %}{"$where": "sleep(5000)"}{% endraw %} or function-based delays
-- Heavy regex operations causing ReDoS: {% raw %}{"field": {"$regex": "^(a+)+$"}}{% endraw %} with pathological input
-- Measure response time differences to infer query results
-</timing_based>
-
-<error_based>
-- Provoke type errors, invalid operator errors, or JavaScript runtime exceptions
-- Extract information from verbose error messages (stack traces, field names, versions)
-</error_based>
+- Operator-based: inject query operators to modify predicate logic; test $gt/$gte/$lt/$lte/$ne/$eq/$in/$nin and $or/$and/$nor
+- Boolean-based: compare true/false predicates; diff status codes, body length, specific content; use $regex for extraction
+- Timing-based: use $where sleep payloads when server-side JavaScript is enabled; use heavy regex operations for ReDoS-style delays
+- Error-based: provoke type errors, invalid operator errors, or JavaScript runtime exceptions; inspect verbose errors
 </detection_channels>
 
 <dbms_primitives>
@@ -138,7 +120,7 @@
 
 <javascript_injection>
 <where_clause>
-- MongoDB $where executes JavaScript on the server
+- MongoDB $where executes JavaScript on the server; requires server-side JavaScript enabled (often disabled via --noscripting/security.javascriptEnabled)
 - Basic: {% raw %}{"$where": "1==1"}{% endraw %} or {% raw %}{"$where": "true"}{% endraw %}
 - Sleep for timing: {% raw %}{"$where": "sleep(5000) || true"}{% endraw %}
 - Data access: {% raw %}{"$where": "this.password.length > 5"}{% endraw %}
