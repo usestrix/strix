@@ -1,11 +1,12 @@
 import json
 import os
-import sys
 
-from strix.config.config import Config
+from strix.config.config import Config, apply_saved_config
 
 
 def test_apply_config_override_clears_default_only_vars(monkeypatch, tmp_path) -> None:
+    from strix.interface.main import apply_config_override
+
     default_cfg = tmp_path / "cli-config.json"
     default_cfg.write_text(
         json.dumps({"env": {"LLM_API_BASE": "https://default.api", "STRIX_LLM": "default-model"}}),
@@ -19,9 +20,8 @@ def test_apply_config_override_clears_default_only_vars(monkeypatch, tmp_path) -
     monkeypatch.setattr(Config, "config_dir", classmethod(lambda cls: tmp_path))
     for var_name in Config._llm_env_vars():
         monkeypatch.delenv(var_name, raising=False)
-    sys.modules.pop("strix.interface.main", None)
 
-    from strix.interface.main import apply_config_override
+    apply_saved_config()
 
     assert os.environ.get("LLM_API_BASE") == "https://default.api"
 
