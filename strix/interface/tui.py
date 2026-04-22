@@ -1243,14 +1243,19 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return (Text(" "), keymap, False)
 
         if status == "running":
+            sys_msg = agent_data.get("system_message", "")
             if self._agent_has_real_activity(agent_id):
                 animated_text = Text()
                 animated_text.append_text(self._get_sweep_animation(self._sweep_colors))
+                if sys_msg:
+                    animated_text.append(sys_msg, style="dim italic")
+                    animated_text.append("  ", style="dim")
                 animated_text.append("esc", style="white")
                 animated_text.append(" ", style="dim")
                 animated_text.append("stop", style="dim")
                 return (animated_text, keymap_styled([("ctrl-q", "quit")]), True)
-            animated_text = self._get_animated_verb_text(agent_id, "Initializing")
+            msg = sys_msg or "Initializing..."
+            animated_text = self._get_animated_verb_text(agent_id, msg)
             return (animated_text, keymap_styled([("ctrl-q", "quit")]), True)
 
         return (None, Text(), False)
@@ -1683,11 +1688,25 @@ class StrixTUIApp(App):  # type: ignore[misc]
         content = msg_data.get("content", "")
         metadata = msg_data.get("metadata", {})
 
-        if not content:
-            return None
-
         if role == "user":
+            if not content:
+                return None
             return UserMessageRenderer.render_simple(content)
+
+        renderables = []
+
+        if "thinking_blocks" in metadata and metadata["thinking_blocks"]:
+            from strix.interface.tool_components.thinking_renderer import ThinkRenderer
+
+            for block in metadata["thinking_blocks"]:
+                thought = block.get("thinking", "")
+                if thought:
+                    renderables.append(
+                        ThinkRenderer.render({"args": {"thought": thought}}).renderable
+                    )
+
+        if not content and not renderables:
+            return None
 
         if metadata.get("interrupted"):
             streaming_result = self._render_streaming_content(content)
@@ -1695,9 +1714,20 @@ class StrixTUIApp(App):  # type: ignore[misc]
             interrupted_text.append("\n")
             interrupted_text.append("⚠ ", style="yellow")
             interrupted_text.append("Interrupted by user", style="yellow dim")
-            return self._merge_renderables([streaming_result, interrupted_text])
+            return self._merge_renderables([*renderables, streaming_result, interrupted_text])
 
-        return AgentMessageRenderer.render_simple(content)
+        if content:
+            msg_renderable = AgentMessageRenderer.render_simple(content)
+            renderables.append(msg_renderable)
+
+        if not renderables:
+            return None
+
+        if len(renderables) == 1:
+            r = renderables[0]
+            return self._sanitize_text(r) if isinstance(r, Text) else r
+
+        return self._merge_renderables(renderables)
 
     def _render_tool_content_simple(self, tool_data: dict[str, Any]) -> Any:
         tool_name = tool_data.get("tool_name", "Unknown Tool")

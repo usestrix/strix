@@ -23,7 +23,8 @@ class ThinkRenderer(BaseToolRenderer):
         text.append("\n  ")
 
         if thought:
-            text.append(thought, style="italic dim")
+            indented_thought = "\n  ".join(thought.split("\n"))
+            text.append(indented_thought, style="italic dim")
         else:
             text.append("Thinking...", style="italic dim")
 
