@@ -213,7 +213,7 @@ kubectl get pods -o json | jq '.items[].spec.containers[].image' | grep ':latest
 3. Test metadata endpoint access early - cloud credentials from pods are the fastest path to cluster-admin
 4. Check for `kube-system` namespace access - controllers there often have cluster-admin equivalent permissions
 5. `kube-bench` output is noisy but highlights the CIS benchmark failures that matter most
-6. Container escapes via cgroup release_agent require both `privileged` and `CAP_SYS_ADMIN` - check both
+6. Container escapes via cgroup release_agent require `CAP_SYS_ADMIN` (via `privileged: true` or an explicit capability grant) plus permissive AppArmor/seccomp confinement
 7. Helm release secrets (`sh.helm.release.v1.*`) in `kube-system` often contain credentials from chart values
 8. DNS from inside a pod reveals service names: `dig +short SRV *.*.svc.cluster.local`
 9. When testing RBAC, try `--as=` impersonation to check what other service accounts can do
