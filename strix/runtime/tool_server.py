@@ -68,6 +68,29 @@ class ToolExecutionResponse(BaseModel):
     error: str | None = None
 
 
+# Extra seconds granted on top of an explicit tool-level ``timeout`` kwarg so
+# the sandbox wait_for envelope does not race the tool's own internal timer.
+_TOOL_TIMEOUT_BUFFER_SECONDS = 30
+
+
+def _resolve_request_timeout(default_timeout: int, tool_kwargs: dict[str, Any]) -> int:
+    """Return the wait_for envelope to apply to a single tool request.
+
+    When a tool call passes an explicit ``timeout`` kwarg that exceeds the
+    sandbox default (``--timeout`` / ``STRIX_SANDBOX_EXECUTION_TIMEOUT``),
+    grow the outer ``asyncio.wait_for`` so the tool's own timer runs to
+    completion plus a small buffer for tool setup/teardown. Otherwise keep
+    the sandbox default as the hard cap — it still protects against runaway
+    tools that do not honour their own ``timeout`` contract.
+    """
+    tool_timeout = tool_kwargs.get("timeout")
+    if isinstance(tool_timeout, bool):
+        return default_timeout
+    if isinstance(tool_timeout, (int, float)) and tool_timeout > 0:
+        return max(default_timeout, int(tool_timeout) + _TOOL_TIMEOUT_BUFFER_SECONDS)
+    return default_timeout
+
+
 async def _run_tool(agent_id: str, tool_name: str, kwargs: dict[str, Any]) -> Any:
     from strix.tools.argument_parser import convert_arguments
     from strix.tools.context import set_current_agent_id
@@ -96,9 +119,11 @@ async def execute_tool(
         if not old_task.done():
             old_task.cancel()
 
+    effective_timeout = _resolve_request_timeout(REQUEST_TIMEOUT, request.kwargs)
     task = asyncio.create_task(
         asyncio.wait_for(
-            _run_tool(agent_id, request.tool_name, request.kwargs), timeout=REQUEST_TIMEOUT
+            _run_tool(agent_id, request.tool_name, request.kwargs),
+            timeout=effective_timeout,
         )
     )
     agent_tasks[agent_id] = task
@@ -111,7 +136,13 @@ async def execute_tool(
         return ToolExecutionResponse(error="Cancelled by newer request")
 
     except TimeoutError:
-        return ToolExecutionResponse(error=f"Tool timed out after {REQUEST_TIMEOUT}s")
+        return ToolExecutionResponse(
+            error=(
+                f"Tool timed out after {effective_timeout}s. "
+                "Raise STRIX_SANDBOX_EXECUTION_TIMEOUT (default 120) for longer scans, "
+                "or pass a larger `timeout` kwarg on the tool call."
+            )
+        )
 
     except ValidationError as e:
         return ToolExecutionResponse(error=f"Invalid arguments: {e}")
