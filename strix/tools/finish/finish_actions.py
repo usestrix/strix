@@ -99,19 +99,11 @@ def finish_scan(
     if active_agents_error:
         return active_agents_error
 
-    validation_errors = []
-
-    if not executive_summary or not executive_summary.strip():
-        validation_errors.append("Executive summary cannot be empty")
-    if not methodology or not methodology.strip():
-        validation_errors.append("Methodology cannot be empty")
-    if not technical_analysis or not technical_analysis.strip():
-        validation_errors.append("Technical analysis cannot be empty")
-    if not recommendations or not recommendations.strip():
-        validation_errors.append("Recommendations cannot be empty")
-
-    if validation_errors:
-        return {"success": False, "message": "Validation failed", "errors": validation_errors}
+    _NOT_PROVIDED = "[Not provided by model]"
+    executive_summary = (executive_summary or "").strip() or _NOT_PROVIDED
+    methodology = (methodology or "").strip() or _NOT_PROVIDED
+    technical_analysis = (technical_analysis or "").strip() or _NOT_PROVIDED
+    recommendations = (recommendations or "").strip() or _NOT_PROVIDED
 
     try:
         from strix.telemetry.tracer import get_global_tracer
