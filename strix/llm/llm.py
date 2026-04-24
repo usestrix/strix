@@ -161,7 +161,6 @@ class LLM:
         max_retries = int(Config.get("strix_llm_max_retries") or "5")
 
         bad_request_retried = False
-        bad_request_truncated = False
 
         for attempt in range(max_retries + 1):
             try:
@@ -178,11 +177,9 @@ class LLM:
                         continue
                     truncate_enabled = Config.get("strix_truncate_on_oversize") or ""
                     if (
-                        not bad_request_truncated
-                        and truncate_enabled.lower() in ("1", "true", "yes")
+                        truncate_enabled.lower() in ("1", "true", "yes")
                         and self._truncate_large_tool_results(messages)
                     ):
-                        bad_request_truncated = True
                         if attempt >= max_retries:
                             self._raise_error(e)
                         continue
@@ -339,14 +336,10 @@ class LLM:
     def _truncate_large_tool_results(
         messages: list[dict[str, Any]], max_chars: int = 2000
     ) -> bool:
-        """Aggressively truncate large tool results in messages to recover from BadRequestError.
+        """Truncate large tool_result XML blocks to recover from BadRequestError.
 
-        Scans messages in reverse for tool_result XML blocks that exceed max_chars and
-        replaces their content with a truncated version plus a skip notice. Returns True
-        if any truncation was performed (caller should retry the request).
-
-        Note: All oversized tool_result blocks within a single message are truncated
-        in one pass — this is intentional to maximise payload size reduction per retry.
+        Scans all messages for tool_result blocks exceeding max_chars and truncates them.
+        Called repeatedly on each 400 until it returns False (nothing left to truncate).
         """
         truncated_any = False
         pattern = re.compile(
@@ -370,10 +363,7 @@ class LLM:
             content = msg.get("content")
             if not isinstance(content, str) or "<tool_result>" not in content:
                 continue
-
             msg["content"] = pattern.sub(_truncate_match, content)
-            if truncated_any:
-                break
 
         return truncated_any
 
