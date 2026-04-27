@@ -182,6 +182,10 @@ class LLM:
                     ):
                         if attempt >= max_retries:
                             self._raise_error(e)
+                        # Pace the provider — matches the 2s sleep on the bare-retry
+                        # path so a throttled provider isn't hit back-to-back after the
+                        # original 400.
+                        await asyncio.sleep(2)
                         continue
                 if attempt >= max_retries or not self._should_retry(e):
                     self._raise_error(e)
@@ -334,12 +338,21 @@ class LLM:
 
     @staticmethod
     def _truncate_large_tool_results(
-        messages: list[dict[str, Any]], max_chars: int = 2000
+        messages: list[dict[str, Any]],
+        threshold_chars: int = 2000,
+        truncate_to_chars: int = 1000,
     ) -> bool:
         """Truncate large tool_result XML blocks to recover from BadRequestError.
 
-        Scans all messages for tool_result blocks exceeding max_chars and truncates them.
-        Called repeatedly on each 400 until it returns False (nothing left to truncate).
+        Scans all messages for tool_result blocks whose body exceeds threshold_chars
+        and shrinks them to truncate_to_chars. Called repeatedly on each 400 until it
+        returns False (nothing left to truncate).
+
+        threshold_chars and truncate_to_chars are independent: the threshold decides
+        which blocks qualify for truncation, and truncate_to_chars is the size of the
+        retained prefix. They are not the same value to allow aggressive shrinking of
+        blocks that are well over the threshold without re-processing blocks that are
+        already acceptable.
         """
         truncated_any = False
         pattern = re.compile(
@@ -350,10 +363,10 @@ class LLM:
         def _truncate_match(m: re.Match) -> str:
             nonlocal truncated_any
             prefix, body, suffix = m.group(1), m.group(2), m.group(3)
-            if len(body) <= max_chars:
+            if len(body) <= threshold_chars:
                 return m.group(0)
             truncated_any = True
-            kept = body[:1000]
+            kept = body[:truncate_to_chars]
             return (
                 f"{prefix}{kept}\n\n... [content truncated from {len(body)} to {len(kept)} chars "
                 f"due to request size limit — file requires manual review] ...{suffix}"
