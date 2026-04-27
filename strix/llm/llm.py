@@ -159,12 +159,26 @@ class LLM:
         messages = self._prepare_messages(conversation_history)
         max_retries = int(Config.get("strix_llm_max_retries") or "5")
 
+        transient_thinking_retries = 0
+
         for attempt in range(max_retries + 1):
             try:
                 async for response in self._stream(messages):
                     yield response
                 return  # noqa: TRY300
             except Exception as e:  # noqa: BLE001
+                # Bedrock occasionally returns a 400 claiming the assistant's thinking
+                # blocks have been modified — even when the payload is structurally
+                # valid and the same payload succeeds on replay. Observed on
+                # claude-sonnet-4-6 with adaptive thinking. Retry with exponential
+                # backoff (5s, 10s, 20s, 40s, 80s, 160s — ~5 min total budget) before
+                # falling through to the generic retry path.
+                if self._is_transient_thinking_error(e) and transient_thinking_retries < 6:
+                    transient_thinking_retries += 1
+                    if attempt >= max_retries:
+                        self._raise_error(e)
+                    await asyncio.sleep(min(240, 5 * (2 ** (transient_thinking_retries - 1))))
+                    continue
                 if attempt >= max_retries or not self._should_retry(e):
                     self._raise_error(e)
                 wait = min(90, 2 * (2**attempt))
@@ -322,6 +336,22 @@ class LLM:
             return completion_cost(response, model=self.config.canonical_model) or 0.0
         except Exception:  # noqa: BLE001
             return 0.0
+
+    @staticmethod
+    def _is_transient_thinking_error(e: Exception) -> bool:
+        """Detect Bedrock's transient 'thinking blocks cannot be modified' 400.
+
+        Observed on claude-sonnet-4-6 with adaptive thinking: Bedrock occasionally
+        rejects a well-formed payload with this error, and the identical payload
+        succeeds on replay. Treat it as transient rather than a structural issue.
+        """
+        code = getattr(e, "status_code", None) or getattr(
+            getattr(e, "response", None), "status_code", None
+        )
+        if code != 400:
+            return False
+        message = str(e).lower()
+        return "thinking" in message and "cannot be modified" in message
 
     def _should_retry(self, e: Exception) -> bool:
         code = getattr(e, "status_code", None) or getattr(
