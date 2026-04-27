@@ -27,6 +27,12 @@ litellm.drop_params = True
 litellm.modify_params = True
 
 
+_TOOL_RESULT_PATTERN = re.compile(
+    r"(<tool_result>\s*<tool_name>[^<]*</tool_name>\s*<result>)(.*?)(</result>\s*</tool_result>)",
+    re.DOTALL,
+)
+
+
 class LLMRequestFailedError(Exception):
     def __init__(self, message: str, details: str | None = None):
         super().__init__(message)
@@ -355,10 +361,6 @@ class LLM:
         already acceptable.
         """
         truncated_any = False
-        pattern = re.compile(
-            r"(<tool_result>\s*<tool_name>[^<]*</tool_name>\s*<result>)(.*?)(</result>\s*</tool_result>)",
-            re.DOTALL,
-        )
 
         def _truncate_match(m: re.Match) -> str:
             nonlocal truncated_any
@@ -374,9 +376,17 @@ class LLM:
 
         for msg in reversed(messages):
             content = msg.get("content")
-            if not isinstance(content, str) or "<tool_result>" not in content:
-                continue
-            msg["content"] = pattern.sub(_truncate_match, content)
+
+            if isinstance(content, list):
+                for block in content:
+                    if (
+                        block.get("type") == "text"
+                        and isinstance(block.get("text"), str)
+                        and "<tool_result>" in block["text"]
+                    ):
+                        block["text"] = _TOOL_RESULT_PATTERN.sub(_truncate_match, block["text"])
+            elif isinstance(content, str) and "<tool_result>" in content:
+                msg["content"] = _TOOL_RESULT_PATTERN.sub(_truncate_match, content)
 
         return truncated_any
 
