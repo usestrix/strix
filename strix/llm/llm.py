@@ -160,6 +160,7 @@ class LLM:
         max_retries = int(Config.get("strix_llm_max_retries") or "5")
 
         transient_thinking_retries = 0
+        max_transient_thinking_retries = 6
 
         for attempt in range(max_retries + 1):
             try:
@@ -171,14 +172,23 @@ class LLM:
                 # blocks have been modified — even when the payload is structurally
                 # valid and the same payload succeeds on replay. Observed on
                 # claude-sonnet-4-6 with adaptive thinking. Retry with exponential
-                # backoff (5s, 10s, 20s, 40s, 80s, 160s — ~5 min total budget) before
-                # falling through to the generic retry path.
-                if self._is_transient_thinking_error(e) and transient_thinking_retries < 6:
+                # backoff (5s, 10s, 20s, 40s, 80s, 160s — ~5 min total budget), using
+                # an inner loop so the transient retry counter does not share slots
+                # with the outer max_retries budget. Once the inner budget is
+                # exhausted (or a non-transient error is raised), fall through to the
+                # generic retry path below.
+                while (
+                    self._is_transient_thinking_error(e)
+                    and transient_thinking_retries < max_transient_thinking_retries
+                ):
                     transient_thinking_retries += 1
-                    if attempt >= max_retries:
-                        self._raise_error(e)
                     await asyncio.sleep(min(240, 5 * (2 ** (transient_thinking_retries - 1))))
-                    continue
+                    try:
+                        async for response in self._stream(messages):
+                            yield response
+                        return  # noqa: TRY300
+                    except Exception as e2:  # noqa: BLE001
+                        e = e2
                 if attempt >= max_retries or not self._should_retry(e):
                     self._raise_error(e)
                 wait = min(90, 2 * (2**attempt))
