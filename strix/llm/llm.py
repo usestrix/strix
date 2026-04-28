@@ -239,7 +239,9 @@ class LLM:
         conversation_history.extend(compressed)
         messages.extend(compressed)
 
-        if messages[-1].get("role") == "assistant" and not self.config.interactive:
+        if messages[-1].get("role") == "assistant" and (
+            not self.config.interactive or self._is_anthropic()
+        ):
             messages.append({"role": "user", "content": "<meta>Continue the task.</meta>"})
 
         if self._is_anthropic() and self.config.enable_prompt_caching:
