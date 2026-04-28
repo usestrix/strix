@@ -100,10 +100,29 @@ def finish_scan(
         return active_agents_error
 
     _NOT_PROVIDED = "[Not provided by model]"
+    placeholder_fields = []
+    if not (executive_summary or "").strip():
+        placeholder_fields.append("executive_summary")
+    if not (methodology or "").strip():
+        placeholder_fields.append("methodology")
+    if not (technical_analysis or "").strip():
+        placeholder_fields.append("technical_analysis")
+    if not (recommendations or "").strip():
+        placeholder_fields.append("recommendations")
+
     executive_summary = (executive_summary or "").strip() or _NOT_PROVIDED
     methodology = (methodology or "").strip() or _NOT_PROVIDED
     technical_analysis = (technical_analysis or "").strip() or _NOT_PROVIDED
     recommendations = (recommendations or "").strip() or _NOT_PROVIDED
+
+    if placeholder_fields:
+        import logging
+
+        logging.warning(
+            "finish_scan: model omitted required field(s) %s; "
+            "saving partial report with placeholder text",
+            placeholder_fields,
+        )
 
     try:
         from strix.telemetry.tracer import get_global_tracer
