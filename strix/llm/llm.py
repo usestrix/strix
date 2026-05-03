@@ -27,6 +27,17 @@ litellm.drop_params = True
 litellm.modify_params = True
 
 _THINKING_BLOCK_RE = re.compile(r"<thinking[^>]*>.*?</thinking>", re.DOTALL)
+_THINKING_BLOCK_OR_OPEN_RE = re.compile(r"<thinking[^>]*>.*?(?:</thinking>|\Z)", re.DOTALL)
+
+
+def _find_end_tag_outside_thinking(content: str, end_tag: str) -> int:
+    thinking_spans = [(m.start(), m.end()) for m in _THINKING_BLOCK_OR_OPEN_RE.finditer(content)]
+    start = 0
+    while (idx := content.find(end_tag, start)) != -1:
+        if not any(s <= idx < e for s, e in thinking_spans):
+            return idx
+        start = idx + 1
+    return -1
 
 
 class LLMRequestFailedError(Exception):
@@ -190,10 +201,11 @@ class LLM:
                 continue
             delta = self._get_chunk_content(chunk)
             if delta:
-                accumulated = _THINKING_BLOCK_RE.sub("", accumulated + delta)
-                if "</function>" in accumulated or "</invoke>" in accumulated:
-                    end_tag = "</function>" if "</function>" in accumulated else "</invoke>"
-                    pos = accumulated.find(end_tag)
+                accumulated += delta
+                check_content = _THINKING_BLOCK_OR_OPEN_RE.sub("", accumulated)
+                if "</function>" in check_content or "</invoke>" in check_content:
+                    end_tag = "</function>" if "</function>" in check_content else "</invoke>"
+                    pos = _find_end_tag_outside_thinking(accumulated, end_tag)
                     accumulated = accumulated[: pos + len(end_tag)]
                     yield LLMResponse(content=accumulated)
                     done_streaming = 1
@@ -203,6 +215,7 @@ class LLM:
         if chunks:
             self._update_usage_stats(stream_chunk_builder(chunks))
 
+        accumulated = _THINKING_BLOCK_RE.sub("", accumulated)
         accumulated = normalize_tool_format(accumulated)
         accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
 
