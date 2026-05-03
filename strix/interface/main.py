@@ -42,6 +42,7 @@ from strix.interface.utils import (  # noqa: E402
     validate_config_file,
     validate_llm_response,
 )
+from strix.interface.webhooks import send_completion_webhook  # noqa: E402
 from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME  # noqa: E402
 from strix.telemetry import posthog  # noqa: E402
 from strix.telemetry.tracer import get_global_tracer  # noqa: E402
@@ -387,6 +388,23 @@ Examples:
         help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
     )
 
+    parser.add_argument(
+        "--webhook-url",
+        type=str,
+        default=None,
+        help="URL to send scan results to on completion. "
+        "Supports generic JSON endpoints, Slack incoming webhooks, and Discord webhooks.",
+    )
+
+    parser.add_argument(
+        "--webhook-format",
+        type=str,
+        choices=["generic", "slack", "discord"],
+        default="generic",
+        help="Webhook payload format (default: generic). "
+        "Auto-detected from the URL when set to 'generic'.",
+    )
+
     args = parser.parse_args()
 
     if args.instruction and args.instruction_file:
@@ -633,6 +651,16 @@ def main() -> None:  # noqa: PLR0912, PLR0915
 
     results_path = Path("strix_runs") / args.run_name
     display_completion_message(args, results_path)
+
+    webhook_url = args.webhook_url or Config.get("strix_webhook_url")
+    if webhook_url:
+        webhook_format = args.webhook_format or Config.get("strix_webhook_format") or "generic"
+        send_completion_webhook(
+            webhook_url=webhook_url,
+            webhook_format=webhook_format,
+            tracer=tracer,
+            args=args,
+        )
 
     if args.non_interactive:
         tracer = get_global_tracer()
