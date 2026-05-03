@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import html
 import logging
 from typing import TYPE_CHECKING, Any, Optional
 
@@ -411,6 +412,13 @@ class BaseAgent(metaclass=AgentMeta):
         if actions:
             return await self._execute_actions(actions, tracer)
 
+        corrective_message = (
+            "You responded with plain text instead of a tool call. "
+            "While the agent loop is running, EVERY response MUST be a tool call. "
+            "Do NOT send plain text messages. Act via your available tools. "
+            "Review your task and take action now."
+        )
+        self.state.add_message("user", corrective_message)
         return None
 
     async def _execute_actions(self, actions: list[Any], tracer: Optional["Tracer"]) -> bool:
@@ -485,33 +493,18 @@ class BaseAgent(metaclass=AgentMeta):
                             sender_name = "User"
                             state.add_message("user", message.get("content", ""))
                         else:
+                            sender_name = sender_id or "Unknown"
                             if sender_id and sender_id in _agent_graph.get("nodes", {}):
                                 sender_name = _agent_graph["nodes"][sender_id]["name"]
 
-                            message_content = f"""<inter_agent_message>
-    <delivery_notice>
-        <important>You have received a message from another agent. You should acknowledge
-        this message and respond appropriately based on its content. However, DO NOT echo
-        back or repeat the entire message structure in your response. Simply process the
-        content and respond naturally as/if needed.</important>
-    </delivery_notice>
-    <sender>
-        <agent_name>{sender_name}</agent_name>
-        <agent_id>{sender_id}</agent_id>
-    </sender>
-    <message_metadata>
-        <type>{message.get("message_type", "information")}</type>
-        <priority>{message.get("priority", "normal")}</priority>
-        <timestamp>{message.get("timestamp", "")}</timestamp>
-    </message_metadata>
-    <content>
-{message.get("content", "")}
-    </content>
-    <delivery_info>
-        <note>This message was delivered during your task execution.
-        Please acknowledge and respond if needed.</note>
-    </delivery_info>
-</inter_agent_message>"""
+                            content = message.get("content", "")
+                            message_content = f"""<agent_message
+from="{html.escape(sender_name)}"
+id="{html.escape(str(sender_id))}"
+type="{html.escape(message.get("message_type", "information"))}"
+priority="{html.escape(message.get("priority", "normal"))}">
+<![CDATA[{content}]]>
+</agent_message>"""
                             state.add_message("user", message_content.strip())
 
                         message["read"] = True
