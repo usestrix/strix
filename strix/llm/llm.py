@@ -26,6 +26,8 @@ from strix.utils.resource_paths import get_strix_resource_path
 litellm.drop_params = True
 litellm.modify_params = True
 
+_THINKING_BLOCK_RE = re.compile(r"<thinking[^>]*>.*?</thinking>", re.DOTALL)
+
 
 class LLMRequestFailedError(Exception):
     def __init__(self, message: str, details: str | None = None):
@@ -188,11 +190,8 @@ class LLM:
                 continue
             delta = self._get_chunk_content(chunk)
             if delta:
-                accumulated += delta
-                check_content = re.sub(
-                    r"<thinking[^>]*>.*?</thinking>", "", accumulated, flags=re.DOTALL
-                )
-                if "</function>" in check_content or "</invoke>" in check_content:
+                accumulated = _THINKING_BLOCK_RE.sub("", accumulated + delta)
+                if "</function>" in accumulated or "</invoke>" in accumulated:
                     end_tag = "</function>" if "</function>" in accumulated else "</invoke>"
                     pos = accumulated.find(end_tag)
                     accumulated = accumulated[: pos + len(end_tag)]
@@ -206,8 +205,6 @@ class LLM:
 
         accumulated = normalize_tool_format(accumulated)
         accumulated = fix_incomplete_tool_call(_truncate_to_first_function(accumulated))
-
-        accumulated = re.sub(r"<thinking[^>]*>.*?</thinking>", "", accumulated, flags=re.DOTALL)
 
         yield LLMResponse(
             content=accumulated,
