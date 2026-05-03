@@ -36,10 +36,10 @@
               "llm-providers/openai",
               "llm-providers/anthropic",
               "llm-providers/openrouter",
-              "llm-providers/novita",
               "llm-providers/vertex",
               "llm-providers/bedrock",
               "llm-providers/azure",
+              "llm-providers/novita",
               "llm-providers/local"
             ]
           },
