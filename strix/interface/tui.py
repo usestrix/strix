@@ -198,7 +198,8 @@ class HelpScreen(ModalScreen):  # type: ignore[misc]
         yield Grid(
             Label("Strix Help", id="help_title"),
             Label(
-                "F1        Help\nCtrl+Q/C  Quit\nESC       Stop Agent\n"
+                "F1        Help\nCtrl+Q/C  Quit\nESC       Stop Agent (hard stop)\n"
+                "W         Wrap Up Agent (graceful)\n"
                 "Enter     Send message to agent\nTab       Switch panels\n↑/↓       Navigate tree",
                 id="help_content",
             ),
@@ -638,6 +639,59 @@ class VulnerabilitiesPanel(VerticalScroll):  # type: ignore[misc]
             self.mount(item)
 
 
+class WrapUpAgentScreen(ModalScreen):  # type: ignore[misc]
+    def __init__(self, agent_name: str, agent_id: str):
+        super().__init__()
+        self.agent_name = agent_name
+        self.agent_id = agent_id
+
+    def compose(self) -> ComposeResult:
+        yield Grid(
+            Label(f"📝 Wrap up '{self.agent_name}'?", id="wrap_up_agent_title"),
+            Label(
+                "Agent will finish current work and report findings.",
+                id="wrap_up_agent_description",
+            ),
+            Grid(
+                Button("Yes", variant="warning", id="wrap_up_agent"),
+                Button("No", variant="default", id="cancel_wrap_up"),
+                id="wrap_up_agent_buttons",
+            ),
+            id="wrap_up_agent_dialog",
+        )
+
+    def on_mount(self) -> None:
+        cancel_button = self.query_one("#cancel_wrap_up", Button)
+        cancel_button.focus()
+
+    def on_key(self, event: events.Key) -> None:
+        if event.key in ("left", "right", "up", "down"):
+            focused = self.focused
+
+            if focused and focused.id == "wrap_up_agent":
+                cancel_button = self.query_one("#cancel_wrap_up", Button)
+                cancel_button.focus()
+            else:
+                wrap_up_button = self.query_one("#wrap_up_agent", Button)
+                wrap_up_button.focus()
+
+            event.prevent_default()
+        elif event.key == "enter":
+            focused = self.focused
+            if focused and isinstance(focused, Button):
+                focused.press()
+            event.prevent_default()
+        elif event.key == "escape":
+            self.app.pop_screen()
+            event.prevent_default()
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "wrap_up_agent":
+            self.app.action_confirm_wrap_up_agent(self.agent_id)
+        else:
+            self.app.pop_screen()
+
+
 class QuitScreen(ModalScreen):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Grid(
@@ -696,6 +750,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         Binding("ctrl+q", "request_quit", "Quit", priority=True),
         Binding("ctrl+c", "request_quit", "Quit", priority=True),
         Binding("escape", "stop_selected_agent", "Stop Agent", priority=True),
+        Binding("w", "wrap_up_selected_agent", "Wrap Up Agent", priority=True),
     ]
 
     def __init__(self, args: argparse.Namespace):
@@ -1956,6 +2011,69 @@ class StrixTUIApp(App):  # type: ignore[misc]
             import logging
 
             logging.exception(f"Failed to stop agent {agent_id}")
+
+    def action_wrap_up_selected_agent(self) -> None:
+        if (
+            self.show_splash
+            or not self.is_mounted
+            or len(self.screen_stack) > 1
+            or not self.selected_agent_id
+        ):
+            return
+
+        agent_name, should_wrap_up = self._validate_agent_for_wrap_up()
+        if not should_wrap_up:
+            return
+
+        try:
+            self.query_one("#main_container")
+        except (ValueError, Exception):
+            return
+
+        self.push_screen(WrapUpAgentScreen(agent_name, self.selected_agent_id))
+
+    def _validate_agent_for_wrap_up(self) -> tuple[str, bool]:
+        agent_name = "Unknown Agent"
+
+        try:
+            if self.tracer and self.selected_agent_id in self.tracer.agents:
+                agent_data = self.tracer.agents[self.selected_agent_id]
+                agent_name = agent_data.get("name", "Unknown Agent")
+
+                agent_status = agent_data.get("status", "running")
+                if agent_status not in ["running", "waiting"]:
+                    return agent_name, False
+
+                return agent_name, True
+
+        except (KeyError, AttributeError, ValueError) as e:
+            import logging
+
+            logging.warning(f"Failed to validate agent for wrap-up: {e}")
+
+        return agent_name, False
+
+    def action_confirm_wrap_up_agent(self, agent_id: str) -> None:
+        self.pop_screen()
+
+        try:
+            from strix.tools.agents_graph.agents_graph_actions import wrap_up_agent
+
+            result = wrap_up_agent(agent_id)
+
+            import logging
+
+            if result.get("success"):
+                logging.info(f"Wrap-up request sent to agent: {result.get('message', 'Unknown')}")
+            else:
+                logging.warning(
+                    f"Failed to send wrap-up request: {result.get('error', 'Unknown error')}"
+                )
+
+        except Exception:
+            import logging
+
+            logging.exception(f"Failed to wrap up agent {agent_id}")
 
     def action_custom_quit(self) -> None:
         if self._scan_thread and self._scan_thread.is_alive():

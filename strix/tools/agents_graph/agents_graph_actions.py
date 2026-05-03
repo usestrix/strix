@@ -748,6 +748,82 @@ def stop_agent(agent_id: str) -> dict[str, Any]:
         }
 
 
+def wrap_up_agent(agent_id: str) -> dict[str, Any]:
+    """Request an agent to gracefully wrap up its work and report findings."""
+    try:
+        if agent_id not in _agent_graph["nodes"]:
+            return {
+                "success": False,
+                "error": f"Agent '{agent_id}' not found in graph",
+                "agent_id": agent_id,
+            }
+
+        agent_node = _agent_graph["nodes"][agent_id]
+
+        if agent_node["status"] in ["completed", "error", "failed", "stopped"]:
+            return {
+                "success": True,
+                "message": f"Agent '{agent_node['name']}' has already finished",
+                "agent_id": agent_id,
+                "previous_status": agent_node["status"],
+            }
+
+        # Send a wrap-up message to the agent
+        wrap_up_message = """<wrap_up_request>
+    <priority>URGENT</priority>
+    <instruction>
+        The user has requested that you wrap up your current work.
+        You have approximately 3-5 iterations to:
+        1. Complete or pause any critical in-progress work
+        2. Summarize your findings and progress so far
+        3. Call agent_finish (if you are a subagent) or finish_scan (if you are the root agent)
+           to properly report your results
+
+        Do NOT start any new major tasks. Focus on concluding your work gracefully.
+    </instruction>
+</wrap_up_request>"""
+
+        if agent_id not in _agent_messages:
+            _agent_messages[agent_id] = []
+
+        from uuid import uuid4
+
+        _agent_messages[agent_id].append(
+            {
+                "id": f"wrapup_{uuid4().hex[:8]}",
+                "from": "user",
+                "to": agent_id,
+                "content": wrap_up_message,
+                "message_type": "instruction",
+                "priority": "urgent",
+                "timestamp": datetime.now(UTC).isoformat(),
+                "delivered": True,
+                "read": False,
+            }
+        )
+
+        # If agent is waiting, resume it so it can process the wrap-up request
+        if agent_id in _agent_states:
+            agent_state = _agent_states[agent_id]
+            if agent_state.is_waiting_for_input():
+                agent_state.resume_from_waiting()
+
+        return {
+            "success": True,
+            "message": f"Wrap-up request sent to agent '{agent_node['name']}'",
+            "agent_id": agent_id,
+            "agent_name": agent_node["name"],
+            "note": "Agent will gracefully finish and report its findings",
+        }
+
+    except Exception as e:  # noqa: BLE001
+        return {
+            "success": False,
+            "error": f"Failed to send wrap-up request: {e}",
+            "agent_id": agent_id,
+        }
+
+
 def send_user_message_to_agent(agent_id: str, message: str) -> dict[str, Any]:
     try:
         if agent_id not in _agent_graph["nodes"]:

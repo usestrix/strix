@@ -592,6 +592,76 @@ StopAgentScreen {
     border: none;
 }
 
+WrapUpAgentScreen {
+    align: center middle;
+    background: $background 0%;
+}
+
+#wrap_up_agent_dialog {
+    grid-size: 1;
+    grid-gutter: 1;
+    grid-rows: auto auto auto;
+    padding: 1;
+    width: 40;
+    height: auto;
+    border: round #f59e0b;
+    background: #1a1a1a 98%;
+}
+
+#wrap_up_agent_title {
+    color: #f59e0b;
+    text-style: bold;
+    text-align: center;
+    width: 100%;
+    margin-bottom: 0;
+}
+
+#wrap_up_agent_description {
+    color: #a3a3a3;
+    text-align: center;
+    width: 100%;
+    margin-bottom: 0;
+}
+
+#wrap_up_agent_buttons {
+    grid-size: 2;
+    grid-gutter: 1;
+    grid-columns: 1fr 1fr;
+    width: 100%;
+    height: 1;
+}
+
+#wrap_up_agent_buttons Button {
+    height: 1;
+    min-height: 1;
+    border: none;
+    text-style: bold;
+}
+
+#wrap_up_agent {
+    background: transparent;
+    color: #f59e0b;
+    border: none;
+}
+
+#wrap_up_agent:hover, #wrap_up_agent:focus {
+    background: #f59e0b;
+    color: #1a1a1a;
+    border: none;
+}
+
+#cancel_wrap_up {
+    background: transparent;
+    color: #737373;
+    border: none;
+}
+
+#cancel_wrap_up:hover, #cancel_wrap_up:focus {
+    background: rgb(54, 54, 54);
+    color: #ffffff;
+    border: none;
+}
+
 QuitScreen {
     align: center middle;
     background: $background 0%;
