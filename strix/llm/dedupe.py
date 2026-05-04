@@ -1,7 +1,6 @@
 import json
 import logging
 import re
-from difflib import SequenceMatcher
 from typing import Any
 
 import litellm
@@ -10,8 +9,6 @@ from strix.config import Config
 
 
 logger = logging.getLogger(__name__)
-
-MAX_COMPARISON_CANDIDATES = 10
 
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.
 Your task is to determine if a candidate vulnerability report describes the SAME vulnerability
@@ -141,59 +138,6 @@ def _parse_dedupe_response(content: str) -> dict[str, Any]:
     }
 
 
-def _compute_similarity(report_a: dict[str, Any], report_b: dict[str, Any]) -> float:
-    """Compute lightweight string similarity between two reports for pre-filtering."""
-    fields = ["title", "endpoint", "method", "target", "description"]
-
-    total_score = 0.0
-    weights_sum = 0.0
-
-    # Weighted fields: title and endpoint matter most for duplicate detection
-    field_weights = {
-        "title": 3.0,
-        "endpoint": 3.0,
-        "method": 1.5,
-        "target": 2.0,
-        "description": 1.0,
-    }
-
-    for field in fields:
-        val_a = str(report_a.get(field, "")).lower().strip()
-        val_b = str(report_b.get(field, "")).lower().strip()
-        weight = field_weights.get(field, 1.0)
-
-        if not val_a or not val_b:
-            continue
-
-        ratio = SequenceMatcher(None, val_a, val_b).ratio()
-        total_score += ratio * weight
-        weights_sum += weight
-
-    return total_score / weights_sum if weights_sum > 0 else 0.0
-
-
-def _prefilter_candidates(
-    candidate: dict[str, Any],
-    existing_reports: list[dict[str, Any]],
-    max_candidates: int = MAX_COMPARISON_CANDIDATES,
-) -> list[dict[str, Any]]:
-    """Pre-filter existing reports using string similarity to reduce LLM calls.
-
-    Only the top-N most similar reports are sent to the LLM for detailed comparison,
-    avoiding sending hundreds of reports in a single prompt.
-    """
-    if len(existing_reports) <= max_candidates:
-        return existing_reports
-
-    scored = []
-    for report in existing_reports:
-        score = _compute_similarity(candidate, report)
-        scored.append((score, report))
-
-    scored.sort(key=lambda x: x[0], reverse=True)
-    return [report for _, report in scored[:max_candidates]]
-
-
 def check_duplicate(
     candidate: dict[str, Any], existing_reports: list[dict[str, Any]]
 ) -> dict[str, Any]:
@@ -206,11 +150,8 @@ def check_duplicate(
         }
 
     try:
-        # Pre-filter to only compare against the most similar existing reports
-        filtered_reports = _prefilter_candidates(candidate, existing_reports)
-
         candidate_cleaned = _prepare_report_for_comparison(candidate)
-        existing_cleaned = [_prepare_report_for_comparison(r) for r in filtered_reports]
+        existing_cleaned = [_prepare_report_for_comparison(r) for r in existing_reports]
 
         comparison_data = {"candidate": candidate_cleaned, "existing_reports": existing_cleaned}
 
