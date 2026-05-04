@@ -1,4 +1,3 @@
-import asyncio
 import inspect
 import os
 from typing import Any
@@ -25,31 +24,6 @@ from .registry import (
 _SERVER_TIMEOUT = float(Config.get("strix_sandbox_execution_timeout") or "120")
 SANDBOX_EXECUTION_TIMEOUT = _SERVER_TIMEOUT + 30
 SANDBOX_CONNECT_TIMEOUT = float(Config.get("strix_sandbox_connect_timeout") or "10")
-
-# Connection pool: reuse HTTP clients per sandbox instead of creating one per call
-_sandbox_clients: dict[str, httpx.AsyncClient] = {}
-
-
-def _get_sandbox_client(sandbox_id: str) -> httpx.AsyncClient:
-    """Get or create a persistent HTTP client for a sandbox, enabling connection reuse."""
-    if sandbox_id not in _sandbox_clients:
-        timeout = httpx.Timeout(
-            timeout=SANDBOX_EXECUTION_TIMEOUT,
-            connect=SANDBOX_CONNECT_TIMEOUT,
-        )
-        _sandbox_clients[sandbox_id] = httpx.AsyncClient(
-            trust_env=False,
-            timeout=timeout,
-            limits=httpx.Limits(max_connections=10, max_keepalive_connections=5),
-        )
-    return _sandbox_clients[sandbox_id]
-
-
-async def close_sandbox_client(sandbox_id: str) -> None:
-    """Close and remove the HTTP client for a sandbox when it's torn down."""
-    client = _sandbox_clients.pop(sandbox_id, None)
-    if client:
-        await client.aclose()
 
 
 async def execute_tool(tool_name: str, agent_state: Any | None = None, **kwargs: Any) -> Any:
@@ -97,27 +71,31 @@ async def _execute_tool_in_sandbox(tool_name: str, agent_state: Any, **kwargs: A
         "Content-Type": "application/json",
     }
 
-    client = _get_sandbox_client(agent_state.sandbox_id)
+    timeout = httpx.Timeout(
+        timeout=SANDBOX_EXECUTION_TIMEOUT,
+        connect=SANDBOX_CONNECT_TIMEOUT,
+    )
 
-    try:
-        response = await client.post(
-            request_url, json=request_data, headers=headers
-        )
-        response.raise_for_status()
-        response_data = response.json()
-        if response_data.get("error"):
-            posthog.error("tool_execution_error", f"{tool_name}: {response_data['error']}")
-            raise RuntimeError(f"Sandbox execution error: {response_data['error']}")
-        return response_data.get("result")
-    except httpx.HTTPStatusError as e:
-        posthog.error("tool_http_error", f"{tool_name}: HTTP {e.response.status_code}")
-        if e.response.status_code == 401:
-            raise RuntimeError("Authentication failed: Invalid or missing sandbox token") from e
-        raise RuntimeError(f"HTTP error calling tool server: {e.response.status_code}") from e
-    except httpx.RequestError as e:
-        error_type = type(e).__name__
-        posthog.error("tool_request_error", f"{tool_name}: {error_type}")
-        raise RuntimeError(f"Request error calling tool server: {error_type}") from e
+    async with httpx.AsyncClient(trust_env=False) as client:
+        try:
+            response = await client.post(
+                request_url, json=request_data, headers=headers, timeout=timeout
+            )
+            response.raise_for_status()
+            response_data = response.json()
+            if response_data.get("error"):
+                posthog.error("tool_execution_error", f"{tool_name}: {response_data['error']}")
+                raise RuntimeError(f"Sandbox execution error: {response_data['error']}")
+            return response_data.get("result")
+        except httpx.HTTPStatusError as e:
+            posthog.error("tool_http_error", f"{tool_name}: HTTP {e.response.status_code}")
+            if e.response.status_code == 401:
+                raise RuntimeError("Authentication failed: Invalid or missing sandbox token") from e
+            raise RuntimeError(f"HTTP error calling tool server: {e.response.status_code}") from e
+        except httpx.RequestError as e:
+            error_type = type(e).__name__
+            posthog.error("tool_request_error", f"{tool_name}: {error_type}")
+            raise RuntimeError(f"Request error calling tool server: {error_type}") from e
 
 
 async def _execute_tool_locally(tool_name: str, agent_state: Any | None, **kwargs: Any) -> Any:
@@ -332,13 +310,6 @@ def _get_tracer_and_agent_id(agent_state: Any | None) -> tuple[Any | None, str]:
     return tracer, agent_id
 
 
-# Tools that modify shared state and must run sequentially
-_SEQUENTIAL_TOOLS = frozenset({
-    "finish_scan", "agent_finish", "delegate_task", "send_message",
-    "wait_for_message", "create_agent",
-})
-
-
 async def process_tool_invocations(
     tool_invocations: list[dict[str, Any]],
     conversation_history: list[dict[str, Any]],
@@ -350,42 +321,7 @@ async def process_tool_invocations(
 
     tracer, agent_id = _get_tracer_and_agent_id(agent_state)
 
-    # Partition into parallelizable and sequential tools
-    parallel_batch: list[dict[str, Any]] = []
-    sequential_queue: list[dict[str, Any]] = []
-
     for tool_inv in tool_invocations:
-        tool_name = tool_inv.get("toolName", "unknown")
-        if tool_name in _SEQUENTIAL_TOOLS:
-            sequential_queue.append(tool_inv)
-        else:
-            parallel_batch.append(tool_inv)
-
-    # Execute parallelizable tools concurrently
-    if parallel_batch:
-        tasks = [
-            _execute_single_tool(tool_inv, agent_state, tracer, agent_id)
-            for tool_inv in parallel_batch
-        ]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for i, result in enumerate(results):
-            if isinstance(result, Exception):
-                tool_name = parallel_batch[i].get("toolName", "unknown")
-                error_xml = (
-                    f"<tool_result>\n<tool_name>{tool_name}</tool_name>\n"
-                    f"<result>Error executing {tool_name}: {result!s}</result>\n</tool_result>"
-                )
-                observation_parts.append(error_xml)
-            else:
-                observation_xml, images, tool_should_finish = result
-                observation_parts.append(observation_xml)
-                all_images.extend(images)
-                if tool_should_finish:
-                    should_agent_finish = True
-
-    # Execute sequential tools one at a time (order matters)
-    for tool_inv in sequential_queue:
         observation_xml, images, tool_should_finish = await _execute_single_tool(
             tool_inv, agent_state, tracer, agent_id
         )

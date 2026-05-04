@@ -9,9 +9,8 @@ from strix.config import Config
 logger = logging.getLogger(__name__)
 
 
-MAX_TOTAL_TOKENS = 60_000
+MAX_TOTAL_TOKENS = 100_000
 MIN_RECENT_MESSAGES = 15
-COMPRESSION_CHUNK_SIZE = 20
 
 SUMMARY_PROMPT_TEMPLATE = """You are an agent performing context
 condensation for a security agent. Your job is to compress scan data while preserving
@@ -44,22 +43,13 @@ Provide a technically precise summary that preserves all operational security co
 keeping the summary concise and to the point."""
 
 
-_token_cache: dict[int, int] = {}
-
-
 def _count_tokens(text: str, model: str) -> int:
-    cache_key = hash(text)
-    if cache_key in _token_cache:
-        return _token_cache[cache_key]
-
     try:
-        count = int(litellm.token_counter(model=model, text=text))
+        count = litellm.token_counter(model=model, text=text)
+        return int(count)
     except Exception:
         logger.exception("Failed to count tokens")
-        count = len(text) // 4  # Rough estimate
-
-    _token_cache[cache_key] = count
-    return count
+        return len(text) // 4  # Rough estimate
 
 
 def _get_message_tokens(msg: dict[str, Any], model: str) -> int:
@@ -225,7 +215,7 @@ class MemoryCompressor:
             return messages
 
         compressed = []
-        chunk_size = COMPRESSION_CHUNK_SIZE
+        chunk_size = 10
         for i in range(0, len(old_msgs), chunk_size):
             chunk = old_msgs[i : i + chunk_size]
             summary = _summarize_messages(chunk, model_name, self.timeout)

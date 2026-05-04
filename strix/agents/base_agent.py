@@ -275,7 +275,7 @@ class BaseAgent(metaclass=AgentMeta):
 
             return
 
-        await self.state.wait_for_wake(timeout=0.5)
+        await asyncio.sleep(0.5)
 
     async def _enter_waiting_state(
         self,
