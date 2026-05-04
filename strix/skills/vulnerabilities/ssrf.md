@@ -157,6 +157,7 @@ Server-Side Request Forgery enables the server to reach networks and services th
 - Strict allowlists with DNS pinning and no redirect following
 - SSRF simulators/mocks returning canned responses without real egress
 - Blocked egress confirmed by uniform errors across all targets and protocols
+- OAST callbacks where the source IP matches the tester's machine, not the server — the browser or a client-side fetch made the request, not the backend
 
 ## Impact
 
