@@ -26,7 +26,7 @@ RUN apt-get update && \
     net-tools dnsutils whois \
     file xxd \
     jq parallel ripgrep grep \
-    less man-db procps htop \
+    less procps htop \
     iproute2 iputils-ping netcat-traditional \
     nmap ncat ndiff \
     sqlmap nuclei subfinder naabu ffuf \
