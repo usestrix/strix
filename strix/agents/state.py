@@ -42,7 +42,6 @@ class AgentState(BaseModel):
 
     errors: list[str] = Field(default_factory=list)
 
-    # Event for signaling state changes (excluded from serialization)
     _wake_event: asyncio.Event = Field(default_factory=asyncio.Event, exclude=True)
 
     def increment_iteration(self) -> None:
@@ -116,18 +115,12 @@ class AgentState(BaseModel):
         self.last_updated = datetime.now(UTC).isoformat()
         self._wake_event.set()
 
-    def signal_wake(self) -> None:
-        """Signal the agent to wake up from waiting."""
-        self._wake_event.set()
-
-    async def wait_for_wake(self, timeout: float = 0.5) -> bool:
-        """Wait for a wake signal with timeout. Returns True if signaled, False on timeout."""
+    async def wait_for_wake(self, timeout: float = 0.5) -> None:
         try:
             await asyncio.wait_for(self._wake_event.wait(), timeout=timeout)
             self._wake_event.clear()
-            return True
         except TimeoutError:
-            return False
+            pass
 
     def has_reached_max_iterations(self) -> bool:
         return self.iteration >= self.max_iterations
