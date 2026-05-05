@@ -198,6 +198,11 @@ name: strix-penetration-test
 on:
   pull_request:
 
+permissions:
+  security-events: write
+  actions: read
+  contents: read
+
 jobs:
   security-scan:
     runs-on: ubuntu-latest
@@ -214,13 +219,23 @@ jobs:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 
-        run: strix -n -t ./ --scan-mode quick
+        run: strix -n -t ./ --scan-mode quick --sarif-output results.sarif
+
+      - name: Upload SARIF to GitHub code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: results.sarif
 ```
 
 > [!TIP]
 > In CI pull request runs, Strix automatically scopes quick reviews to changed files.
 > If diff-scope cannot resolve, ensure checkout uses full history (`fetch-depth: 0`) or pass
 > `--diff-base` explicitly.
+> `--sarif-output` writes GitHub-compatible SARIF before Strix exits with code `2` for
+> confirmed vulnerabilities, so `if: always()` preserves code scanning upload on findings.
+> Use `--sarif` to write `strix_runs/<run-name>/results.sarif`, or
+> `--sarif-output <path>` to choose the upload path.
 
 ### Configuration
 

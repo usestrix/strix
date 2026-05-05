@@ -9,11 +9,12 @@ import logging
 import os
 import shutil
 import sys
+from importlib.metadata import version
 from pathlib import Path
 from typing import Any
 
 import litellm
-from docker.errors import DockerException
+from docker.errors import DockerException  # type: ignore[import-untyped]
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -44,6 +45,7 @@ from strix.interface.utils import (  # noqa: E402
 )
 from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME  # noqa: E402
 from strix.telemetry import posthog  # noqa: E402
+from strix.telemetry.sarif import write_sarif_report  # noqa: E402
 from strix.telemetry.tracer import get_global_tracer  # noqa: E402
 
 
@@ -257,8 +259,6 @@ async def warm_up_llm() -> None:
 
 def get_version() -> str:
     try:
-        from importlib.metadata import version
-
         return version("strix-agent")
     except Exception:  # noqa: BLE001
         return "unknown"
@@ -387,6 +387,21 @@ Examples:
         help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
     )
 
+    parser.add_argument(
+        "--sarif",
+        action="store_true",
+        help="Write GitHub code scanning SARIF results after the scan completes.",
+    )
+
+    parser.add_argument(
+        "--sarif-output",
+        type=str,
+        help=(
+            "Path for SARIF output. Defaults to strix_runs/<run-name>/results.sarif "
+            "when --sarif is enabled."
+        ),
+    )
+
     args = parser.parse_args()
 
     if args.instruction and args.instruction_file:
@@ -453,7 +468,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     stats_text = build_final_stats_text(tracer)
 
-    panel_parts = [completion_text, "\n\n", target_text]
+    panel_parts: list[str | Text] = [completion_text, "\n\n", target_text]
 
     if stats_text.plain:
         panel_parts.extend(["\n", stats_text])
@@ -482,6 +497,17 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     console.print()
     console.print("[#60a5fa]strix.ai[/]  [dim]·[/]  [#60a5fa]discord.gg/strix-ai[/]")
     console.print()
+
+
+def write_requested_sarif_output(args: argparse.Namespace, results_path: Path) -> Path | None:
+    if not args.sarif and not args.sarif_output:
+        return None
+
+    output_path = Path(args.sarif_output) if args.sarif_output else results_path / "results.sarif"
+    tracer = get_global_tracer()
+    vulnerability_reports = tracer.vulnerability_reports if tracer else []
+    write_sarif_report(output_path, vulnerability_reports, tool_version=get_version())
+    return output_path
 
 
 def pull_docker_image() -> None:
@@ -632,6 +658,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             posthog.end(tracer, exit_reason=exit_reason)
 
     results_path = Path("strix_runs") / args.run_name
+    write_requested_sarif_output(args, results_path)
     display_completion_message(args, results_path)
 
     if args.non_interactive:
