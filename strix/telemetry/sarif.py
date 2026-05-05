@@ -1,3 +1,5 @@
+"""Build GitHub-compatible SARIF output from Strix vulnerability reports."""
+
 from __future__ import annotations
 
 import json
@@ -20,6 +22,7 @@ def build_sarif_report(
     *,
     tool_version: str | None = None,
 ) -> dict[str, Any]:
+    """Return a SARIF 2.1.0 document for findings with safe source locations."""
     rules_by_id: dict[str, dict[str, Any]] = {}
     results: list[dict[str, Any]] = []
     locationless_findings: list[dict[str, Any]] = []
@@ -27,13 +30,13 @@ def build_sarif_report(
 
     for report in vulnerability_reports:
         locations, dropped_location_count = _build_locations(report.get("code_locations"))
+        if not locations:
+            locationless_findings.append(_locationless_summary(report))
+            continue
         if dropped_location_count:
             dropped_unsafe_location_findings.append(
                 _dropped_location_summary(report, dropped_location_count)
             )
-        if not locations:
-            locationless_findings.append(_locationless_summary(report))
-            continue
 
         rule_id = _rule_id(report)
         rules_by_id.setdefault(rule_id, _build_rule(rule_id, report))
@@ -76,6 +79,7 @@ def write_sarif_report(
     *,
     tool_version: str | None = None,
 ) -> None:
+    """Write a SARIF report to disk, creating parent directories first."""
     output_path.parent.mkdir(parents=True, exist_ok=True)
     sarif = build_sarif_report(vulnerability_reports, tool_version=tool_version)
     with output_path.open("w", encoding="utf-8") as sarif_file:
@@ -84,6 +88,7 @@ def write_sarif_report(
 
 
 def _build_rule(rule_id: str, report: dict[str, Any]) -> dict[str, Any]:
+    """Build a SARIF rule descriptor from a Strix finding."""
     title = _string_value(report.get("title")) or rule_id
     full_description = _string_value(report.get("description")) or title
     rule: dict[str, Any] = {
@@ -107,6 +112,7 @@ def _build_result(
     report: dict[str, Any],
     locations: list[dict[str, Any]],
 ) -> dict[str, Any]:
+    """Build one SARIF result using validated physical locations."""
     title = _string_value(report.get("title")) or rule_id
     return {
         "ruleId": rule_id,
@@ -118,6 +124,7 @@ def _build_result(
 
 
 def _result_properties(report: dict[str, Any]) -> dict[str, Any]:
+    """Return non-empty Strix finding metadata for SARIF properties."""
     properties: dict[str, Any] = {}
     for key in (
         "id",
@@ -138,6 +145,7 @@ def _result_properties(report: dict[str, Any]) -> dict[str, Any]:
 
 
 def _build_locations(raw_locations: Any) -> tuple[list[dict[str, Any]], int]:
+    """Return SARIF locations and a count of dropped unsafe locations."""
     if not isinstance(raw_locations, list):
         return [], 0
 
@@ -162,10 +170,8 @@ def _build_locations(raw_locations: Any) -> tuple[list[dict[str, Any]], int]:
             continue
 
         region: dict[str, Any] = {"startLine": start_line}
-        if type(end_line) is not int or end_line < start_line:
-            dropped_location_count += 1
-            continue
-        region["endLine"] = end_line
+        if type(end_line) is int and end_line >= start_line:
+            region["endLine"] = end_line
 
         snippet = _string_value(location.get("snippet"))
         if snippet:
@@ -184,6 +190,7 @@ def _build_locations(raw_locations: Any) -> tuple[list[dict[str, Any]], int]:
 
 
 def _rule_id(report: dict[str, Any]) -> str:
+    """Choose a stable SARIF rule id from CWE, CVE, id, or title."""
     for key in ("cwe", "cve", "id"):
         value = _string_value(report.get(key))
         if value:
@@ -194,6 +201,7 @@ def _rule_id(report: dict[str, Any]) -> str:
 
 
 def _sarif_level(severity: Any) -> str:
+    """Map Strix severity labels to SARIF result levels."""
     normalized = (_string_value(severity) or "").lower()
     if normalized in {"critical", "high"}:
         return "error"
@@ -203,6 +211,7 @@ def _sarif_level(severity: Any) -> str:
 
 
 def _sarif_uri(file_path: str) -> str | None:
+    """Return a safe repo-relative SARIF URI, or None for unsafe paths."""
     uri = PurePosixPath(file_path.replace("\\", "/")).as_posix()
     parts = PurePosixPath(uri).parts
     if not uri or uri.startswith("/") or not parts:
@@ -213,6 +222,7 @@ def _sarif_uri(file_path: str) -> str | None:
 
 
 def _string_value(value: Any) -> str | None:
+    """Return a stripped non-empty string value, or None."""
     if isinstance(value, str):
         stripped = value.strip()
         return stripped or None
@@ -220,12 +230,14 @@ def _string_value(value: Any) -> str | None:
 
 
 def _slugify(value: str) -> str:
+    """Convert arbitrary finding text into a stable lowercase slug."""
     chars = [char.lower() if char.isalnum() else "-" for char in value]
     slug = "-".join(part for part in "".join(chars).split("-") if part)
     return slug or "strix-finding"
 
 
 def _help_text(report: dict[str, Any], fallback: str) -> str:
+    """Assemble SARIF help text from finding details and remediation."""
     sections = [
         _string_value(report.get("description")),
         _string_value(report.get("impact")),
@@ -236,6 +248,7 @@ def _help_text(report: dict[str, Any], fallback: str) -> str:
 
 
 def _locationless_summary(report: dict[str, Any]) -> dict[str, Any]:
+    """Summarize findings that cannot be emitted as code-scanning alerts."""
     summary: dict[str, Any] = {}
     for key in ("id", "title", "severity", "cwe", "cve", "target", "endpoint", "method"):
         value = report.get(key)
@@ -248,6 +261,7 @@ def _dropped_location_summary(
     report: dict[str, Any],
     dropped_location_count: int,
 ) -> dict[str, Any]:
+    """Summarize unsafe locations dropped from a partially emitted finding."""
     summary: dict[str, Any] = {"droppedLocationCount": dropped_location_count}
     for key in ("id", "title"):
         value = report.get(key)

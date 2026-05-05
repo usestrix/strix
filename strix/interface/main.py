@@ -500,13 +500,18 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
 
 def write_requested_sarif_output(args: argparse.Namespace, results_path: Path) -> Path | None:
+    """Write SARIF output when requested and report write failures without crashing."""
     if not args.sarif and not args.sarif_output:
         return None
 
     output_path = Path(args.sarif_output) if args.sarif_output else results_path / "results.sarif"
     tracer = get_global_tracer()
     vulnerability_reports = tracer.vulnerability_reports if tracer else []
-    write_sarif_report(output_path, vulnerability_reports, tool_version=get_version())
+    try:
+        write_sarif_report(output_path, vulnerability_reports, tool_version=get_version())
+    except OSError as error:
+        Console().print(f"[yellow]Failed to write SARIF:[/] {error}")
+        return None
     return output_path
 
 

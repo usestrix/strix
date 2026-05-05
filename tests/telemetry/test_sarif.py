@@ -102,7 +102,6 @@ def test_build_sarif_drops_unsafe_code_locations() -> None:
                     {"file": "foo:bar.py", "start_line": 5, "end_line": 5},
                     {"file": "src/app.py", "start_line": 0, "end_line": 1},
                     {"file": "src/other.py", "start_line": True, "end_line": True},
-                    {"file": "src/reversed.py", "start_line": 5, "end_line": 4},
                 ]
             )
         ]
@@ -111,6 +110,27 @@ def test_build_sarif_drops_unsafe_code_locations() -> None:
     run = sarif["runs"][0]
     assert run["results"] == []
     assert run["properties"]["locationlessFindingCount"] == 1
+    assert "droppedUnsafeLocationCount" not in run["properties"]
+    assert "droppedUnsafeLocationFindings" not in run["properties"]
+
+
+def test_build_sarif_keeps_locations_without_valid_end_line() -> None:
+    sarif = build_sarif_report(
+        [
+            _finding(
+                code_locations=[
+                    {"file": "src/app.py", "start_line": 10},
+                    {"file": "src/reversed.py", "start_line": 20, "end_line": 19},
+                ]
+            )
+        ]
+    )
+
+    regions = [
+        location["physicalLocation"]["region"]
+        for location in sarif["runs"][0]["results"][0]["locations"]
+    ]
+    assert regions == [{"startLine": 10}, {"startLine": 20}]
 
 
 def test_build_sarif_summarizes_dropped_unsafe_locations_when_safe_locations_remain() -> None:

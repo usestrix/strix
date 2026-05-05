@@ -58,3 +58,21 @@ def test_write_requested_sarif_output_writes_before_non_interactive_exit(
 
     assert written_path == output_path
     assert output_path.exists()
+
+
+def test_write_requested_sarif_output_reports_write_errors(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    args = Namespace(sarif=True, sarif_output=str(tmp_path / "results.sarif"))
+
+    def raise_write_error(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(main_module, "write_sarif_report", raise_write_error)
+
+    written_path = write_requested_sarif_output(args, tmp_path / "strix_runs" / "demo")
+
+    assert written_path is None
+    assert "Failed to write SARIF" in capsys.readouterr().out
