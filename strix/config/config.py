@@ -18,6 +18,7 @@ class Config:
     openai_api_base = None
     litellm_base_url = None
     ollama_api_base = None
+    llm_extra_headers = None
     strix_reasoning_effort = "high"
     strix_llm_max_retries = "5"
     strix_memory_compressor_timeout = "30"
@@ -29,6 +30,7 @@ class Config:
         "openai_api_base",
         "litellm_base_url",
         "ollama_api_base",
+        "llm_extra_headers",
         "strix_reasoning_effort",
         "strix_llm_max_retries",
         "strix_memory_compressor_timeout",
@@ -196,18 +198,20 @@ def save_current_config() -> bool:
     return Config.save_current()
 
 
-def resolve_llm_config() -> tuple[str | None, str | None, str | None]:
-    """Resolve LLM model, api_key, and api_base based on STRIX_LLM prefix.
+def resolve_llm_config() -> tuple[str | None, str | None, str | None, dict[str, str] | None]:
+    """Resolve LLM model, api_key, api_base based on STRIX_LLM prefix
+        and extra_headers for LiteLLM calls.
 
     Returns:
-        tuple: (model_name, api_key, api_base)
+        tuple: (model_name, api_key, api_base, extra_headers)
         - model_name: Original model name (strix/ prefix preserved for display)
         - api_key: LLM API key
         - api_base: API base URL (auto-set to STRIX_API_BASE for strix/ models)
+        - extra_headers : Custom headers
     """
     model = Config.get("strix_llm")
     if not model:
-        return None, None, None
+        return None, None, None, None
 
     api_key = Config.get("llm_api_key")
 
@@ -221,4 +225,16 @@ def resolve_llm_config() -> tuple[str | None, str | None, str | None]:
             or Config.get("ollama_api_base")
         )
 
-    return model, api_key, api_base
+    extra_headers: dict[str, str] = {}
+    raw_headers = Config.get("llm_extra_headers") or ""
+    if raw_headers.strip():
+        try:
+            parsed = json.loads(raw_headers)
+            if isinstance(parsed, dict):
+                extra_headers = {str(k): str(v) for k, v in parsed.items() if v is not None}
+            else:
+                raise TypeError("LLM_EXTRA_HEADERS must be a JSON object")
+        except json.JSONDecodeError as e:
+            raise ValueError(f"Invalid LLM_EXTRA_HEADERS JSON: {e}") from e
+
+    return model, api_key, api_base, extra_headers

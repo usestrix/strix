@@ -104,7 +104,7 @@ def _summarize_messages(
     conversation = "\n".join(formatted)
     prompt = SUMMARY_PROMPT_TEMPLATE.format(conversation=conversation)
 
-    _, api_key, api_base = resolve_llm_config()
+    _, api_key, api_base, extra_headers = resolve_llm_config()
 
     try:
         completion_args: dict[str, Any] = {
@@ -116,6 +116,8 @@ def _summarize_messages(
             completion_args["api_key"] = api_key
         if api_base:
             completion_args["api_base"] = api_base
+        if extra_headers:
+            completion_args["extra_headers"] = extra_headers
 
         response = litellm.completion(**completion_args)
         summary = response.choices[0].message.content or ""

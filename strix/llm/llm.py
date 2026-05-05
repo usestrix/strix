@@ -286,6 +286,8 @@ class LLM:
             args["api_key"] = self.config.api_key
         if self.config.api_base:
             args["api_base"] = self.config.api_base
+        if self.config.extra_headers:
+            args["extra_headers"] = self.config.extra_headers
         if self._supports_reasoning():
             args["reasoning_effort"] = self._reasoning_effort
 

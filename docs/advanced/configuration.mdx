@@ -35,6 +35,11 @@ Configure Strix using environment variables or a config file.
   Timeout in seconds for memory compression operations (context summarization).
 </ParamField>
 
+<ParamField path="LLM_EXTRA_HEADERS" type="string">
+  Custom HTTP headers to include in every LiteLLM request. Accepts a JSON object,
+  e.g. `{"x-my-header": "value"}`.
+</ParamField>
+
 ## Optional Features
 
 <ParamField path="PERPLEXITY_API_KEY" type="string">

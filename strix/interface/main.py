@@ -5,6 +5,7 @@ Strix Agent Interface
 
 import argparse
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -81,6 +82,36 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
 
     if not Config.get("strix_reasoning_effort"):
         missing_optional_vars.append("STRIX_REASONING_EFFORT")
+
+    raw_headers = Config.get("llm_extra_headers") or ""
+    if raw_headers.strip():
+        try:
+            parsed = json.loads(raw_headers)
+            if not isinstance(parsed, dict):
+                raise TypeError("LLM_EXTRA_HEADERS must be a JSON object, got a non-dict value")
+        except (json.JSONDecodeError, ValueError) as e:
+            error_text = Text()
+            error_text.append("INVALID LLM_EXTRA_HEADERS", style="bold red")
+            error_text.append("\n\n", style="white")
+            error_text.append("LLM_EXTRA_HEADERS must be a valid JSON object.\n", style="white")
+            error_text.append(f"Error: {e}\n", style="white")
+            error_text.append("\nExample:\n", style="white")
+            error_text.append(
+                'export LLM_EXTRA_HEADERS={"x-my-header": "value"}\n',
+                style="dim white",
+            )
+
+            panel = Panel(
+                error_text,
+                title="[bold white]STRIX",
+                title_align="left",
+                border_style="red",
+                padding=(1, 2),
+            )
+            console.print("\n")
+            console.print(panel)
+            console.print()
+            sys.exit(1)
 
     if missing_required_vars:
         error_text = Text()
@@ -208,7 +239,7 @@ async def warm_up_llm() -> None:
     console = Console()
 
     try:
-        model_name, api_key, api_base = resolve_llm_config()
+        model_name, api_key, api_base, extra_headers = resolve_llm_config()
         litellm_model, _ = resolve_strix_model(model_name)
         litellm_model = litellm_model or model_name
 
@@ -228,6 +259,8 @@ async def warm_up_llm() -> None:
             completion_kwargs["api_key"] = api_key
         if api_base:
             completion_kwargs["api_base"] = api_base
+        if extra_headers:
+            completion_kwargs["extra_headers"] = extra_headers
 
         response = litellm.completion(**completion_kwargs)
 

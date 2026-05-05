@@ -18,7 +18,7 @@ class LLMConfig:
         reasoning_effort: str | None = None,
         system_prompt_context: dict[str, Any] | None = None,
     ):
-        resolved_model, self.api_key, self.api_base = resolve_llm_config()
+        resolved_model, self.api_key, self.api_base, self.extra_headers = resolve_llm_config()
         self.model_name = model_name or resolved_model
 
         if not self.model_name:
