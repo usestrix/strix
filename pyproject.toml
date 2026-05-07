@@ -54,8 +54,8 @@ strix = "strix.interface.main:main"
 [project.optional-dependencies]
 vertex = ["google-cloud-aiplatform>=1.38"]
 sandbox = [
-  "fastapi",
-  "uvicorn",
+  "fastapi>=0.135.1",
+  "uvicorn>=0.42.0",
   "ipython>=9.3.0",
   "openhands-aci>=0.3.0",
   "playwright>=1.48.0",
