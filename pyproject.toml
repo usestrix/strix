@@ -84,14 +84,18 @@ dev = [
 
 [tool.uv]
 override-dependencies = [
-  "azure-identity>=1.25.3,<1.26.0",
-  "fastapi>=0.135.1,<0.136.0",
-  "jsonschema>=4.26.0,<4.27.0",
-  "openai>=2.29.0,<2.30.0",
-  "orjson>=3.11.7,<3.12.0",
-  "starlette>=0.52.1,<0.53.0",
-  "python-multipart>=0.0.27,<0.1.0",
-  "uvicorn>=0.42.0,<0.43.0",
+  "azure-identity>=1.25.3",
+  "fastapi>=0.135.1",
+  "huggingface-hub>=1.7.2",
+  "importlib-metadata>=8.7.1",
+  "jsonschema>=4.26.0",
+  "openai>=2.29.0",
+  "orjson>=3.11.7",
+  "polars[rtcompat]>=1.39.3",
+  "pyjwt[crypto]>=2.12.1",
+  "python-multipart>=0.0.27",
+  "starlette>=0.52.1",
+  "uvicorn>=0.42.0",
 ]
 
 [build-system]
