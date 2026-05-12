@@ -206,7 +206,7 @@ def _post_codex_responses(
         "Authorization": f"Bearer {credentials.access_token}",
         "Accept": "text/event-stream",
         "Content-Type": "application/json",
-        "version": "strix-codex-oauth",
+        "User-Agent": "strix-codex-oauth",
     }
     if credentials.account_id:
         headers["ChatGPT-Account-ID"] = credentials.account_id

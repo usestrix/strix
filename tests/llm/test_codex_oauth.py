@@ -4,13 +4,16 @@ from pathlib import Path
 import pytest
 
 from strix.llm.codex_oauth import (
+    CodexOAuthCredentials,
     CodexOAuthError,
+    _post_codex_responses,
     build_codex_responses_payload,
     load_codex_oauth_credentials,
     parse_responses_sse_events,
     refresh_codex_oauth_credentials,
 )
 from strix.llm.config import LLMConfig
+from strix.llm.llm import LLM
 
 
 def test_llm_config_detects_codex_oauth_provider(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -20,6 +23,41 @@ def test_llm_config_detects_codex_oauth_provider(monkeypatch: pytest.MonkeyPatch
 
     assert config.uses_codex_oauth is True
     assert config.codex_model == "gpt-5.5"
+
+
+def test_llm_does_not_retry_codex_oauth_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "codex/gpt-5.5")
+
+    llm = LLM(LLMConfig())
+
+    assert llm._should_retry(CodexOAuthError("Run `codex login` first.")) is False
+
+
+@pytest.mark.asyncio
+async def test_codex_oauth_stream_yields_single_processed_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "codex/gpt-5.5")
+
+    def fake_complete_codex_oauth(*args, **kwargs):
+        return (
+            "<thinking>hidden</thinking><function=finish><parameter=summary>done</parameter></function>",
+            {"input_tokens": 1, "output_tokens": 2},
+        )
+
+    monkeypatch.setattr("strix.llm.llm.complete_codex_oauth", fake_complete_codex_oauth)
+
+    llm = LLM(LLMConfig())
+    responses = [
+        response
+        async for response in llm._stream_codex_oauth([{"role": "user", "content": "Hi"}])
+    ]
+
+    assert len(responses) == 1
+    assert "<thinking>" not in responses[0].content
+    assert responses[0].tool_invocations
+    assert llm._total_stats.input_tokens == 1
+    assert llm._total_stats.output_tokens == 2
 
 
 def test_load_codex_oauth_credentials_reads_codex_auth_json(tmp_path: Path) -> None:
@@ -93,6 +131,33 @@ def test_refresh_codex_oauth_credentials_persists_new_tokens(tmp_path: Path) -> 
     assert updated["tokens"]["account_id"] == "account-id"
     assert calls[0][0] == "https://auth.openai.com/oauth/token"
     assert calls[0][1]["json"]["grant_type"] == "refresh_token"
+
+
+def test_post_codex_responses_uses_user_agent_header(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    class FakeResponse:
+        pass
+
+    def fake_post(url: str, **kwargs):
+        calls.append((url, kwargs))
+        return FakeResponse()
+
+    monkeypatch.setattr("strix.llm.codex_oauth.requests.post", fake_post)
+
+    response = _post_codex_responses(
+        "https://example.test/codex",
+        CodexOAuthCredentials(access_token="access-token", account_id="account-id"),
+        {"model": "gpt-5.5"},
+        60,
+    )
+
+    assert isinstance(response, FakeResponse)
+    headers = calls[0][1]["headers"]
+    assert headers["User-Agent"] == "strix-codex-oauth"
+    assert "version" not in headers
 
 
 def test_build_codex_responses_payload_converts_chat_messages() -> None:

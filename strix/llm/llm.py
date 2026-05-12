@@ -10,7 +10,7 @@ from litellm import acompletion, completion_cost, stream_chunk_builder, supports
 from litellm.utils import supports_prompt_caching, supports_vision
 
 from strix.config import Config
-from strix.llm.codex_oauth import complete_codex_oauth
+from strix.llm.codex_oauth import CodexOAuthError, complete_codex_oauth
 from strix.llm.config import LLMConfig
 from strix.llm.memory_compressor import MemoryCompressor, get_message_tokens
 from strix.llm.utils import (
@@ -314,9 +314,6 @@ class LLM:
             self._total_stats.input_tokens += usage.get("input_tokens", 0)
             self._total_stats.output_tokens += usage.get("output_tokens", 0)
 
-        if content:
-            yield LLMResponse(content=content)
-
         content = _THINKING_BLOCK_RE.sub("", content)
         content = normalize_tool_format(content)
         content = fix_incomplete_tool_call(_truncate_to_first_function(content))
@@ -384,6 +381,8 @@ class LLM:
             return 0.0
 
     def _should_retry(self, e: Exception) -> bool:
+        if isinstance(e, CodexOAuthError):
+            return False
         code = getattr(e, "status_code", None) or getattr(
             getattr(e, "response", None), "status_code", None
         )
