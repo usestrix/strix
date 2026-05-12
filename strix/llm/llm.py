@@ -10,6 +10,7 @@ from litellm import acompletion, completion_cost, stream_chunk_builder, supports
 from litellm.utils import supports_prompt_caching, supports_vision
 
 from strix.config import Config
+from strix.llm.codex_oauth import complete_codex_oauth
 from strix.llm.config import LLMConfig
 from strix.llm.memory_compressor import MemoryCompressor, get_message_tokens
 from strix.llm.utils import (
@@ -187,6 +188,11 @@ class LLM:
                 await asyncio.sleep(wait)
 
     async def _stream(self, messages: list[dict[str, Any]]) -> AsyncIterator[LLMResponse]:
+        if self.config.uses_codex_oauth:
+            async for response in self._stream_codex_oauth(messages):
+                yield response
+            return
+
         accumulated = ""
         chunks: list[Any] = []
         done_streaming = 0
@@ -290,6 +296,36 @@ class LLM:
             args["reasoning_effort"] = self._reasoning_effort
 
         return args
+
+    async def _stream_codex_oauth(
+        self, messages: list[dict[str, Any]]
+    ) -> AsyncIterator[LLMResponse]:
+        self._total_stats.requests += 1
+        model = self.config.codex_model or self.config.model_name
+        content, usage = await asyncio.to_thread(
+            complete_codex_oauth,
+            model,
+            messages,
+            self._reasoning_effort,
+            self.config.timeout,
+        )
+
+        if usage:
+            self._total_stats.input_tokens += usage.get("input_tokens", 0)
+            self._total_stats.output_tokens += usage.get("output_tokens", 0)
+
+        if content:
+            yield LLMResponse(content=content)
+
+        content = _THINKING_BLOCK_RE.sub("", content)
+        content = normalize_tool_format(content)
+        content = fix_incomplete_tool_call(_truncate_to_first_function(content))
+
+        yield LLMResponse(
+            content=content,
+            tool_invocations=parse_tool_invocations(content),
+            thinking_blocks=None,
+        )
 
     def _get_chunk_content(self, chunk: Any) -> str:
         if chunk.choices and hasattr(chunk.choices[0], "delta"):

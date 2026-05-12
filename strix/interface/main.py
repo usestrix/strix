@@ -20,6 +20,7 @@ from rich.text import Text
 
 from strix.config import Config, apply_saved_config, save_current_config
 from strix.config.config import resolve_llm_config
+from strix.llm.codex_oauth import codex_model_name, complete_codex_oauth
 from strix.llm.utils import resolve_strix_model
 
 
@@ -57,11 +58,12 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
 
     strix_llm = Config.get("strix_llm")
     uses_strix_models = strix_llm and strix_llm.startswith("strix/")
+    uses_codex_oauth = strix_llm and strix_llm.startswith("codex/")
 
     if not strix_llm:
         missing_required_vars.append("STRIX_LLM")
 
-    has_base_url = uses_strix_models or any(
+    has_base_url = uses_strix_models or uses_codex_oauth or any(
         [
             Config.get("llm_api_base"),
             Config.get("openai_api_base"),
@@ -70,7 +72,7 @@ def validate_environment() -> None:  # noqa: PLR0912, PLR0915
         ]
     )
 
-    if not Config.get("llm_api_key"):
+    if not Config.get("llm_api_key") and not uses_codex_oauth:
         missing_optional_vars.append("LLM_API_KEY")
 
     if not has_base_url:
@@ -209,6 +211,21 @@ async def warm_up_llm() -> None:
 
     try:
         model_name, api_key, api_base = resolve_llm_config()
+
+        if model_name and model_name.startswith("codex/"):
+            test_messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": "Reply with just 'OK'."},
+            ]
+            llm_timeout = int(Config.get("llm_timeout") or "300")
+            complete_codex_oauth(
+                codex_model_name(model_name),
+                test_messages,
+                Config.get("strix_reasoning_effort"),
+                llm_timeout,
+            )
+            return
+
         litellm_model, _ = resolve_strix_model(model_name)
         litellm_model = litellm_model or model_name
 

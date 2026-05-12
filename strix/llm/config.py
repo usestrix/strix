@@ -2,6 +2,7 @@ from typing import Any
 
 from strix.config import Config
 from strix.config.config import resolve_llm_config
+from strix.llm.codex_oauth import codex_model_name
 from strix.llm.utils import resolve_strix_model
 
 
@@ -23,6 +24,9 @@ class LLMConfig:
 
         if not self.model_name:
             raise ValueError("STRIX_LLM environment variable must be set and not empty")
+
+        self.uses_codex_oauth = self.model_name.startswith("codex/")
+        self.codex_model = codex_model_name(self.model_name) if self.uses_codex_oauth else None
 
         api_model, canonical = resolve_strix_model(self.model_name)
         self.litellm_model: str = api_model or self.model_name

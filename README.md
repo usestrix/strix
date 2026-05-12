@@ -72,7 +72,7 @@ Strix are autonomous AI agents that act just like real hackers - they run your c
 
 **Prerequisites:**
 - Docker (running)
-- An LLM API key from any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+- An LLM API key from any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Anthropic, Google, etc.), or a Codex CLI ChatGPT login
 
 ### Installation & First Scan
 
@@ -232,6 +232,14 @@ export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
+```
+
+To use Codex OAuth instead of an API key, log in with the Codex CLI and select a
+`codex/` model:
+
+```bash
+codex login
+export STRIX_LLM="codex/gpt-5.5"
 ```
 
 > [!NOTE]
