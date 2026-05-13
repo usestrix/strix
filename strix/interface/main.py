@@ -42,6 +42,7 @@ from strix.interface.utils import (  # noqa: E402
     validate_config_file,
     validate_llm_response,
 )
+from strix.interface.previous_scan import build_previous_scan_context  # noqa: E402
 from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME  # noqa: E402
 from strix.telemetry import posthog  # noqa: E402
 from strix.telemetry.tracer import get_global_tracer  # noqa: E402
@@ -373,6 +374,15 @@ Examples:
     )
 
     parser.add_argument(
+        "--continue-from",
+        type=str,
+        help=(
+            "Continue from a previous scan by injecting saved context from a run directory. "
+            "Accepts either a run name under strix_runs/ or a path to a previous run folder."
+        ),
+    )
+
+    parser.add_argument(
         "--diff-base",
         type=str,
         help=(
@@ -603,6 +613,35 @@ def main() -> None:  # noqa: PLR0912, PLR0915
             args.instruction = f"{diff_scope.instruction_block}\n\n{args.instruction}"
         else:
             args.instruction = diff_scope.instruction_block
+
+    args.continue_from_resolved = None
+    if args.continue_from:
+        try:
+            previous_scan_context = build_previous_scan_context(args.continue_from)
+        except ValueError as e:
+            console = Console()
+            error_text = Text()
+            error_text.append("PREVIOUS SCAN NOT FOUND", style="bold red")
+            error_text.append("\n\n", style="white")
+            error_text.append(str(e), style="white")
+
+            panel = Panel(
+                error_text,
+                title="[bold white]STRIX",
+                title_align="left",
+                border_style="red",
+                padding=(1, 2),
+            )
+            console.print("\n")
+            console.print(panel)
+            console.print()
+            sys.exit(1)
+
+        args.continue_from_resolved = args.continue_from
+        if args.instruction:
+            args.instruction = f"{previous_scan_context}\n\n{args.instruction}"
+        else:
+            args.instruction = previous_scan_context
 
     is_whitebox = bool(args.local_sources)
 

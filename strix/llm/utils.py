@@ -4,11 +4,28 @@ import re
 from typing import Any
 
 
-_INVOKE_OPEN = re.compile(r'<invoke\s+name=["\']([^"\']+)["\']>')
-_PARAM_NAME_ATTR = re.compile(r'<parameter\s+name=["\']([^"\']+)["\']>')
-_FUNCTION_CALLS_TAG = re.compile(r"</?function_calls>")
-_MINIMAX_TOOL_CALL_TAG = re.compile(r"</?minimax:tool_call>")
-_STRIP_TAG_QUOTES = re.compile(r"<(function|parameter)\s*=\s*([^>]*?)>")
+_INVOKE_OPEN = re.compile(
+    r'<(?:invoke|function|tool_call|tool)\s+name=["\']([^"\']+)["\'][^>]*>',
+    re.IGNORECASE,
+)
+_PARAM_NAME_ATTR = re.compile(r'<parameter\s+name=["\']([^"\']+)["\'][^>]*>', re.IGNORECASE)
+_WRAPPER_TAG = re.compile(r"</?(?:function_calls|tool_calls)(?:\s[^>]*)?>", re.IGNORECASE)
+_MINIMAX_TOOL_CALL_TAG = re.compile(r"</?minimax:tool_call(?:\s[^>]*)?>", re.IGNORECASE)
+_STRIP_TAG_QUOTES = re.compile(r"<(function|parameter)\s*=\s*([^>]*?)>", re.IGNORECASE)
+_JSON_TOOL_CALL_BLOCK = re.compile(
+    r"<tool_call(?:\s[^>]*)?>(.*?)</tool_call>",
+    re.DOTALL | re.IGNORECASE,
+)
+_STRUCTURED_TOOL_CALL_BLOCK = re.compile(
+    r"<tool_call(?:\s[^>]*)?>(.*?)</tool_call>",
+    re.DOTALL | re.IGNORECASE,
+)
+_TOOL_NAME_TAG = re.compile(
+    r"<(?:tool_name|name|function)>(.*?)</(?:tool_name|name|function)>",
+    re.DOTALL | re.IGNORECASE,
+)
+_PARAMETERS_TAG = re.compile(r"<parameters(?:\s[^>]*)?>(.*?)</parameters>", re.DOTALL | re.IGNORECASE)
+_SIMPLE_XML_FIELD = re.compile(r"<([A-Za-z_][\w.-]*)>(.*?)</\1>", re.DOTALL)
 
 
 def normalize_tool_format(content: str) -> str:
@@ -17,24 +34,23 @@ def normalize_tool_format(content: str) -> str:
     Handles:
       <minimax:tool_call>...</minimax:tool_call>  → stripped
       <function_calls>...</function_calls>  → stripped
+      <tool_calls>...</tool_calls>          → stripped
       <invoke name="X">                     → <function=X>
+      <function name="X">                   → <function=X>
+      <tool_call name="X">                  → <function=X>
       <parameter name="X">                  → <parameter=X>
-      </invoke>                             → </function>
+      </invoke> / </tool_call>              → </function>
       <function="X">                        → <function=X>
       <parameter="X">                       → <parameter=X>
     """
+    named_tool_call = bool(re.search(r"<tool_call\s+name=", content, re.IGNORECASE))
     content = _MINIMAX_TOOL_CALL_TAG.sub("", content)
-
-    if (
-        "<invoke" in content
-        or "<function_calls" in content
-        or '<parameter name="' in content
-        or "<parameter name='" in content
-    ):
-        content = _FUNCTION_CALLS_TAG.sub("", content)
-        content = _INVOKE_OPEN.sub(r"<function=\1>", content)
-        content = _PARAM_NAME_ATTR.sub(r"<parameter=\1>", content)
-        content = content.replace("</invoke>", "</function>")
+    content = _WRAPPER_TAG.sub("", content)
+    content = _INVOKE_OPEN.sub(r"<function=\1>", content)
+    content = _PARAM_NAME_ATTR.sub(r"<parameter=\1>", content)
+    content = re.sub(r"</(?:invoke|tool)>", "</function>", content, flags=re.IGNORECASE)
+    if named_tool_call:
+        content = re.sub(r"</tool_call>", "</function>", content, flags=re.IGNORECASE)
 
     return _STRIP_TAG_QUOTES.sub(
         lambda m: f"<{m.group(1)}={m.group(2).strip().strip(chr(34) + chr(39))}>", content
@@ -76,7 +92,10 @@ def _truncate_to_first_function(content: str) -> str:
         return content
 
     function_starts = [
-        match.start() for match in re.finditer(r"<function=|<invoke\s+name=", content)
+        match.start()
+        for match in re.finditer(
+            r"<function=|<invoke\s+name=|<tool_call\s+name=", content, re.IGNORECASE
+        )
     ]
 
     if len(function_starts) >= 2:
@@ -127,7 +146,85 @@ def parse_tool_invocations(content: str) -> list[dict[str, Any]] | None:
 
         tool_invocations.append({"toolName": fn_name, "args": args})
 
+    if tool_invocations:
+        return tool_invocations
+
+    tool_invocations = _parse_json_tool_call_blocks(content)
+    if tool_invocations:
+        return tool_invocations
+
+    tool_invocations = _parse_structured_tool_call_blocks(content)
     return tool_invocations if tool_invocations else None
+
+
+def _json_to_args(arguments: Any) -> dict[str, Any]:
+    if isinstance(arguments, str):
+        try:
+            arguments = json.loads(arguments)
+        except (json.JSONDecodeError, ValueError):
+            return {}
+
+    if not isinstance(arguments, dict):
+        return {}
+
+    return {k: v if isinstance(v, str) else json.dumps(v) for k, v in arguments.items()}
+
+
+def _parse_json_tool_call_blocks(content: str) -> list[dict[str, Any]]:
+    tool_invocations: list[dict[str, Any]] = []
+
+    for block_match in _JSON_TOOL_CALL_BLOCK.finditer(content):
+        body = html.unescape(block_match.group(1).strip())
+        if not body.startswith("{"):
+            continue
+
+        try:
+            parsed = json.loads(body)
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+        if not isinstance(parsed, dict):
+            continue
+
+        fn_name = parsed.get("name") or parsed.get("toolName") or parsed.get("tool_name")
+        if not isinstance(fn_name, str) or not fn_name.strip():
+            continue
+
+        arguments = parsed.get("arguments", parsed.get("args", {}))
+        tool_invocations.append({"toolName": fn_name.strip(), "args": _json_to_args(arguments)})
+
+    return tool_invocations
+
+
+def _parse_structured_tool_call_blocks(content: str) -> list[dict[str, Any]]:
+    tool_invocations: list[dict[str, Any]] = []
+
+    for block_match in _STRUCTURED_TOOL_CALL_BLOCK.finditer(content):
+        body = block_match.group(1)
+        name_match = _TOOL_NAME_TAG.search(body)
+        if not name_match:
+            continue
+
+        fn_name = html.unescape(name_match.group(1).strip())
+        if not fn_name:
+            continue
+
+        params_body_match = _PARAMETERS_TAG.search(body)
+        params_body = params_body_match.group(1) if params_body_match else body
+        excluded_fields = {"tool_name", "function", "parameters"}
+        if params_body_match is None:
+            excluded_fields.add("name")
+
+        args = {}
+        for param_match in _SIMPLE_XML_FIELD.finditer(params_body):
+            param_name = param_match.group(1)
+            if param_name.lower() in excluded_fields:
+                continue
+            args[param_name] = html.unescape(param_match.group(2).strip())
+
+        tool_invocations.append({"toolName": fn_name, "args": args})
+
+    return tool_invocations
 
 
 def fix_incomplete_tool_call(content: str) -> str:
@@ -135,9 +232,9 @@ def fix_incomplete_tool_call(content: str) -> str:
 
     Handles both ``<function=…>`` and ``<invoke name="…">`` formats.
     """
-    has_open = "<function=" in content or "<invoke " in content
-    count_open = content.count("<function=") + content.count("<invoke ")
-    has_close = "</function>" in content or "</invoke>" in content
+    has_open = bool(re.search(r"<(?:function=|invoke |tool_call )", content, re.IGNORECASE))
+    count_open = len(re.findall(r"<(?:function=|invoke |tool_call )", content, re.IGNORECASE))
+    has_close = bool(re.search(r"</(?:function|invoke|tool_call)>", content, re.IGNORECASE))
     if has_open and count_open == 1 and not has_close:
         content = content.rstrip()
         content = content + "function>" if content.endswith("</") else content + "\n</function>"

@@ -743,6 +743,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "user_instructions": args.instruction or "",
             "run_name": args.run_name,
             "diff_scope": getattr(args, "diff_scope", {"active": False}),
+            "continue_from": getattr(args, "continue_from_resolved", None),
         }
 
     def _build_agent_config(self, args: argparse.Namespace) -> dict[str, Any]:
@@ -1214,6 +1215,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return t
 
         simple_statuses: dict[str, tuple[str, str]] = {
+            "initializing_sandbox": ("Starting sandbox...", ""),
             "stopping": ("Agent stopping...", ""),
             "stopped": ("Agent stopped", ""),
             "completed": ("Agent completed", ""),
@@ -1439,7 +1441,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
                     return True
 
         streaming = self.tracer.get_streaming_content(agent_id)
-        return bool(streaming and streaming.strip())
+        if streaming and streaming.strip():
+            return True
+
+        return any(msg.get("agent_id") == agent_id for msg in self.tracer.chat_messages)
 
     def _agent_vulnerability_count(self, agent_id: str) -> int:
         count = 0

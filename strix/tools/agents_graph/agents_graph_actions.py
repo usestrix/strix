@@ -37,6 +37,10 @@ _completed_agent_llm_totals: dict[str, int | float] = _empty_llm_stats_totals()
 _agent_states: dict[str, Any] = {}
 
 
+def _is_failed_agent_result(result: Any) -> bool:
+    return isinstance(result, dict) and result.get("success") is False
+
+
 def _snapshot_agent_llm_stats(agent: Any) -> dict[str, int | float] | None:
     if not hasattr(agent, "llm") or not hasattr(agent.llm, "_total_stats"):
         return None
@@ -286,8 +290,11 @@ def _run_agent_in_thread(
         _finalize_agent_llm_stats(state.agent_id, agent)
         raise
     else:
+        current_status = _agent_graph["nodes"][state.agent_id].get("status")
         if state.stop_requested:
             _agent_graph["nodes"][state.agent_id]["status"] = "stopped"
+        elif current_status == "failed" or _is_failed_agent_result(result):
+            _agent_graph["nodes"][state.agent_id]["status"] = "failed"
         else:
             _agent_graph["nodes"][state.agent_id]["status"] = "completed"
         _agent_graph["nodes"][state.agent_id]["finished_at"] = datetime.now(UTC).isoformat()

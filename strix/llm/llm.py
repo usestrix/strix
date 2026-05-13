@@ -214,8 +214,9 @@ class LLM:
             if delta:
                 accumulated += delta
                 check_content = _THINKING_BLOCK_OR_OPEN_RE.sub("", accumulated)
-                if "</function>" in check_content or "</invoke>" in check_content:
-                    end_tag = "</function>" if "</function>" in check_content else "</invoke>"
+                tool_end_tags = ("</function>", "</invoke>", "</tool_call>")
+                if any(tag in check_content for tag in tool_end_tags):
+                    end_tag = next(tag for tag in tool_end_tags if tag in check_content)
                     pos = _find_end_tag_outside_thinking(accumulated, end_tag)
                     accumulated = accumulated[: pos + len(end_tag)]
                     yield LLMResponse(content=accumulated)

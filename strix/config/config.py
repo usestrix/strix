@@ -22,6 +22,7 @@ class Config:
     strix_llm_max_retries = "5"
     strix_memory_compressor_timeout = "30"
     llm_timeout = "300"
+    strix_agent_no_tool_max_retries = "3"
     _LLM_CANONICAL_NAMES = (
         "strix_llm",
         "llm_api_key",

@@ -176,9 +176,18 @@ strix --target api.your-app.com --instruction "Focus on business logic flaws and
 # Provide detailed instructions through file (e.g., rules of engagement, scope, exclusions)
 strix --target api.your-app.com --instruction-file ./instruction.md
 
+# Continue a fresh scan with context from a previous run
+strix --target api.your-app.com --continue-from previous-run-name
+
 # Force PR diff-scope against a specific base branch
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 ```
+
+`--continue-from` accepts either a run name under `strix_runs/` or a path to a previous
+run directory. Strix injects the previous final report, vulnerability markdown files,
+and wiki notes into the next scan as bounded context so the agent can focus on unresolved
+leads and follow-up validation. It starts a new scan; it does not restore old terminal
+sessions or live sub-agent threads.
 
 ### Headless Mode
 
@@ -232,10 +241,17 @@ export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
+export STRIX_AGENT_NO_TOOL_MAX_RETRIES="3"  # stop non-interactive agents after repeated no-tool responses
 ```
 
 > [!NOTE]
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
+
+> [!TIP]
+> When using smaller local models, keep `STRIX_AGENT_NO_TOOL_MAX_RETRIES` low enough to
+> prevent malformed tool-call loops from stalling a scan. Strix will also retry sandbox
+> tool execution after restarting an unhealthy tool server, but it avoids blind retries
+> when a terminal command may already have run.
 
 **Recommended models for best results:**
 

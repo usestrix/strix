@@ -2,6 +2,7 @@ import asyncio
 import contextlib
 import logging
 from typing import TYPE_CHECKING, Any, Optional
+from uuid import uuid4
 
 
 if TYPE_CHECKING:
@@ -13,6 +14,7 @@ from jinja2 import (
     select_autoescape,
 )
 
+from strix.config import Config
 from strix.llm import LLM, LLMConfig, LLMRequestFailedError
 from strix.llm.utils import clean_content
 from strix.runtime import SandboxInitializationError
@@ -159,6 +161,8 @@ class BaseAgent(metaclass=AgentMeta):
         except SandboxInitializationError as e:
             return self._handle_sandbox_error(e, tracer)
 
+        no_tool_iterations = 0
+
         while True:
             if self._force_stop:
                 self._force_stop = False
@@ -211,14 +215,29 @@ class BaseAgent(metaclass=AgentMeta):
                 self.state.add_message("user", final_warning_msg)
 
             try:
+                actions_before = len(self.state.actions_taken)
                 iteration_task = asyncio.create_task(self._process_iteration(tracer))
                 self._current_task = iteration_task
                 should_finish = await iteration_task
                 self._current_task = None
 
-                if should_finish is None and self.interactive:
-                    await self._enter_waiting_state(tracer, text_response=True)
+                made_no_tool_progress = should_finish is None or (
+                    should_finish is False and len(self.state.actions_taken) == actions_before
+                )
+                if made_no_tool_progress:
+                    if self.interactive:
+                        await self._enter_waiting_state(tracer, text_response=True)
+                        continue
+                    no_tool_iterations += 1
+                    if no_tool_iterations >= self._max_no_tool_iterations():
+                        return self._handle_no_tool_progress(no_tool_iterations, tracer)
+                    self.state.add_message(
+                        "user",
+                        self._no_tool_corrective_message(no_tool_iterations),
+                    )
                     continue
+
+                no_tool_iterations = 0
 
                 if should_finish:
                     if not self.interactive:
@@ -257,6 +276,79 @@ class BaseAgent(metaclass=AgentMeta):
                         raise
                     await self._enter_waiting_state(tracer, error_occurred=True)
                     continue
+
+    def _max_no_tool_iterations(self) -> int:
+        raw_value = Config.get("strix_agent_no_tool_max_retries") or "3"
+        try:
+            return max(1, int(raw_value))
+        except ValueError:
+            return 3
+
+    def _no_tool_corrective_message(self, iteration_count: int) -> str:
+        max_retries = self._max_no_tool_iterations()
+        return (
+            "Your previous response did not contain an executable tool call. "
+            "This non-interactive agent can only make progress by using valid XML tool calls. "
+            "Use exactly one tool call, for example:\n"
+            "<function=agent_finish>\n"
+            "<parameter=result_summary>What you found or why you cannot continue</parameter>\n"
+            "<parameter=success>false</parameter>\n"
+            "</function>\n"
+            f"Retry {iteration_count}/{max_retries} before this agent is stopped."
+        )
+
+    def _handle_no_tool_progress(
+        self,
+        iteration_count: int,
+        tracer: Optional["Tracer"],
+    ) -> dict[str, Any]:
+        error_msg = (
+            f"Agent produced no executable tool calls for {iteration_count} consecutive "
+            "iterations; stopping to avoid an infinite loop. This usually means the model "
+            "emitted plain text or malformed tool-call XML."
+        )
+        self.state.add_error(error_msg)
+        self.state.set_completed({"success": False, "error": error_msg})
+        self._notify_parent_of_failure(error_msg)
+        if tracer:
+            tracer.update_agent_status(self.state.agent_id, "failed", error_msg)
+        return self.state.final_result or {"success": False, "error": error_msg}
+
+    def _notify_parent_of_failure(self, error_msg: str) -> None:
+        if not self.state.parent_id:
+            return
+
+        try:
+            from strix.tools.agents_graph.agents_graph_actions import _agent_messages
+
+            parent_id = self.state.parent_id
+            _agent_messages.setdefault(parent_id, []).append(
+                {
+                    "id": f"report_{uuid4().hex[:8]}",
+                    "from": self.state.agent_id,
+                    "to": parent_id,
+                    "content": (
+                        "<agent_completion_report>\n"
+                        "    <agent_info>\n"
+                        f"        <agent_name>{self.state.agent_name}</agent_name>\n"
+                        f"        <agent_id>{self.state.agent_id}</agent_id>\n"
+                        f"        <task>{self.state.task}</task>\n"
+                        "        <status>FAILED</status>\n"
+                        "    </agent_info>\n"
+                        "    <results>\n"
+                        f"        <summary>{error_msg}</summary>\n"
+                        "    </results>\n"
+                        "</agent_completion_report>"
+                    ),
+                    "message_type": "information",
+                    "priority": "high",
+                    "timestamp": self.state.last_updated,
+                    "delivered": True,
+                    "read": False,
+                }
+            )
+        except (ImportError, AttributeError, KeyError, TypeError):
+            logger.debug("Failed to notify parent agent about no-tool failure")
 
     async def _wait_for_input(self) -> None:
         if self._force_stop:
@@ -334,8 +426,12 @@ class BaseAgent(metaclass=AgentMeta):
         sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
         if not sandbox_mode and self.state.sandbox_id is None:
             from strix.runtime import get_runtime
+            from strix.telemetry.tracer import get_global_tracer
 
             try:
+                tracer = get_global_tracer()
+                if tracer:
+                    tracer.update_agent_status(self.state.agent_id, "initializing_sandbox")
                 runtime = get_runtime()
                 sandbox_info = await runtime.create_sandbox(
                     self.state.agent_id, self.state.sandbox_token, self.local_sources
@@ -349,11 +445,10 @@ class BaseAgent(metaclass=AgentMeta):
 
                 caido_port = sandbox_info.get("caido_port")
                 if caido_port:
-                    from strix.telemetry.tracer import get_global_tracer
-
-                    tracer = get_global_tracer()
                     if tracer:
                         tracer.caido_url = f"localhost:{caido_port}"
+                if tracer:
+                    tracer.update_agent_status(self.state.agent_id, "running")
             except Exception as e:
                 from strix.telemetry import posthog
 

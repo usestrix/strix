@@ -26,6 +26,44 @@ SANDBOX_EXECUTION_TIMEOUT = _SERVER_TIMEOUT + 30
 SANDBOX_CONNECT_TIMEOUT = float(Config.get("strix_sandbox_connect_timeout") or "10")
 
 
+async def _post_tool_request(
+    request_url: str,
+    request_data: dict[str, Any],
+    headers: dict[str, str],
+    timeout: httpx.Timeout,
+) -> Any:
+    async with httpx.AsyncClient(trust_env=False) as client:
+        response = await client.post(
+            request_url, json=request_data, headers=headers, timeout=timeout
+        )
+        response.raise_for_status()
+        return response.json()
+
+
+def _is_transient_sandbox_request_error(error: httpx.RequestError) -> bool:
+    return isinstance(
+        error,
+        (
+            httpx.ConnectError,
+            httpx.ConnectTimeout,
+            httpx.ReadError,
+            httpx.ReadTimeout,
+            httpx.RemoteProtocolError,
+        ),
+    )
+
+
+def _try_restart_tool_server(runtime: Any, agent_state: Any, tool_server_port: int) -> bool:
+    ensure_tool_server = getattr(runtime, "ensure_tool_server", None)
+    if not callable(ensure_tool_server):
+        return False
+
+    try:
+        return bool(ensure_tool_server(agent_state.sandbox_id, tool_server_port))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def execute_tool(tool_name: str, agent_state: Any | None = None, **kwargs: Any) -> Any:
     execute_in_sandbox = should_execute_in_sandbox(tool_name)
     sandbox_mode = os.getenv("STRIX_SANDBOX_MODE", "false").lower() == "true"
@@ -76,26 +114,32 @@ async def _execute_tool_in_sandbox(tool_name: str, agent_state: Any, **kwargs: A
         connect=SANDBOX_CONNECT_TIMEOUT,
     )
 
-    async with httpx.AsyncClient(trust_env=False) as client:
-        try:
-            response = await client.post(
-                request_url, json=request_data, headers=headers, timeout=timeout
-            )
-            response.raise_for_status()
-            response_data = response.json()
-            if response_data.get("error"):
-                posthog.error("tool_execution_error", f"{tool_name}: {response_data['error']}")
-                raise RuntimeError(f"Sandbox execution error: {response_data['error']}")
-            return response_data.get("result")
-        except httpx.HTTPStatusError as e:
-            posthog.error("tool_http_error", f"{tool_name}: HTTP {e.response.status_code}")
-            if e.response.status_code == 401:
-                raise RuntimeError("Authentication failed: Invalid or missing sandbox token") from e
-            raise RuntimeError(f"HTTP error calling tool server: {e.response.status_code}") from e
-        except httpx.RequestError as e:
-            error_type = type(e).__name__
-            posthog.error("tool_request_error", f"{tool_name}: {error_type}")
+    try:
+        response_data = await _post_tool_request(request_url, request_data, headers, timeout)
+    except httpx.HTTPStatusError as e:
+        posthog.error("tool_http_error", f"{tool_name}: HTTP {e.response.status_code}")
+        if e.response.status_code == 401:
+            raise RuntimeError("Authentication failed: Invalid or missing sandbox token") from e
+        raise RuntimeError(f"HTTP error calling tool server: {e.response.status_code}") from e
+    except httpx.RequestError as e:
+        error_type = type(e).__name__
+        posthog.error("tool_request_error", f"{tool_name}: {error_type}")
+
+        restarted = False
+        if _is_transient_sandbox_request_error(e):
+            restarted = _try_restart_tool_server(runtime, agent_state, tool_server_port)
+
+        if restarted:
+            server_url = await runtime.get_sandbox_url(agent_state.sandbox_id, tool_server_port)
+            request_url = f"{server_url}/execute"
+            response_data = await _post_tool_request(request_url, request_data, headers, timeout)
+        else:
             raise RuntimeError(f"Request error calling tool server: {error_type}") from e
+
+    if response_data.get("error"):
+        posthog.error("tool_execution_error", f"{tool_name}: {response_data['error']}")
+        raise RuntimeError(f"Sandbox execution error: {response_data['error']}")
+    return response_data.get("result")
 
 
 async def _execute_tool_locally(tool_name: str, agent_state: Any | None, **kwargs: Any) -> Any:

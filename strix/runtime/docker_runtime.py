@@ -2,6 +2,7 @@ import contextlib
 import os
 import secrets
 import socket
+import threading
 import time
 from pathlib import Path
 from typing import cast
@@ -39,6 +40,7 @@ class DockerRuntime(AbstractRuntime):
         self._tool_server_port: int | None = None
         self._tool_server_token: str | None = None
         self._caido_port: int | None = None
+        self._lock = threading.RLock()
 
     def _find_available_port(self) -> int:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -84,22 +86,30 @@ class DockerRuntime(AbstractRuntime):
         if port_bindings.get(caido_port_key):
             self._caido_port = int(port_bindings[caido_port_key][0]["HostPort"])
 
-    def _wait_for_tool_server(self, max_retries: int = 30, timeout: int = 5) -> None:
+    def _tool_server_health_url(self) -> str:
         host = self._resolve_docker_host()
-        health_url = f"http://{host}:{self._tool_server_port}/health"
+        return f"http://{host}:{self._tool_server_port}/health"
 
+    def _is_tool_server_healthy(self, timeout: float = 2) -> bool:
+        if self._tool_server_port is None:
+            return False
+
+        try:
+            with httpx.Client(trust_env=False, timeout=timeout) as client:
+                response = client.get(self._tool_server_health_url())
+                if response.status_code != 200:
+                    return False
+                data = response.json()
+                return bool(data.get("status") == "healthy")
+        except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError, ValueError):
+            return False
+
+    def _wait_for_tool_server(self, max_retries: int = 30, timeout: int = 5) -> None:
         time.sleep(5)
 
         for attempt in range(max_retries):
-            try:
-                with httpx.Client(trust_env=False, timeout=timeout) as client:
-                    response = client.get(health_url)
-                    if response.status_code == 200:
-                        data = response.json()
-                        if data.get("status") == "healthy":
-                            return
-            except (httpx.ConnectError, httpx.TimeoutException, httpx.RequestError):
-                pass
+            if self._is_tool_server_healthy(timeout=timeout):
+                return
 
             time.sleep(min(2**attempt * 0.5, 5))
 
@@ -107,6 +117,61 @@ class DockerRuntime(AbstractRuntime):
             "Tool server failed to start",
             "Container initialization timed out. Please try again.",
         )
+
+    def _restart_tool_server(self, container: Container) -> None:
+        if self._tool_server_port is None or self._tool_server_token is None:
+            self._recover_container_state(container)
+
+        if self._tool_server_port is None or self._tool_server_token is None:
+            raise SandboxInitializationError(
+                "Tool server state unavailable",
+                "Could not recover tool server port/token from the running container.",
+            )
+
+        execution_timeout = Config.get("strix_sandbox_execution_timeout") or "120"
+        command = (
+            "sh -lc '"
+            "pkill -f strix.runtime.tool_server || true; "
+            "cd /app; "
+            "export PYTHONPATH=/app STRIX_SANDBOX_MODE=true "
+            f"TOOL_SERVER_PORT={CONTAINER_TOOL_SERVER_PORT} "
+            f"TOOL_SERVER_TOKEN={self._tool_server_token} "
+            f"STRIX_SANDBOX_EXECUTION_TIMEOUT={execution_timeout}; "
+            "sudo -E -u pentester /app/.venv/bin/python -m strix.runtime.tool_server "
+            "--token=\"$TOOL_SERVER_TOKEN\" "
+            "--host=0.0.0.0 "
+            "--port=\"$TOOL_SERVER_PORT\" "
+            "--timeout=\"$STRIX_SANDBOX_EXECUTION_TIMEOUT\" "
+            ">/tmp/tool_server.log 2>&1 &'"
+        )
+        container.exec_run(command, detach=True)
+        self._wait_for_tool_server(max_retries=10, timeout=3)
+
+    def ensure_tool_server(self, container_id: str, port: int) -> bool:
+        """Restart the sandbox tool server if it is unhealthy.
+
+        Returns True only when a restart was performed successfully.
+        """
+        with self._lock:
+            self._tool_server_port = port
+            try:
+                container = self.client.containers.get(container_id)
+                container.reload()
+                if container.status != "running":
+                    container.start()
+                    time.sleep(2)
+
+                self._scan_container = container
+                self._recover_container_state(container)
+
+                if self._is_tool_server_healthy():
+                    return False
+
+                self._restart_tool_server(container)
+            except (DockerException, NotFound, SandboxInitializationError):
+                return False
+            else:
+                return True
 
     def _create_container(self, scan_id: str, max_retries: int = 2) -> Container:
         container_name = f"strix-scan-{scan_id}"
@@ -179,6 +244,9 @@ class DockerRuntime(AbstractRuntime):
             try:
                 self._scan_container.reload()
                 if self._scan_container.status == "running":
+                    self._recover_container_state(self._scan_container)
+                    if not self._is_tool_server_healthy():
+                        self._restart_tool_server(self._scan_container)
                     return self._scan_container
             except NotFound:
                 self._scan_container = None
@@ -196,6 +264,8 @@ class DockerRuntime(AbstractRuntime):
 
             self._scan_container = container
             self._recover_container_state(container)
+            if not self._is_tool_server_healthy():
+                self._restart_tool_server(container)
         except NotFound:
             pass
         else:
@@ -213,6 +283,8 @@ class DockerRuntime(AbstractRuntime):
 
                 self._scan_container = container
                 self._recover_container_state(container)
+                if not self._is_tool_server_healthy():
+                    self._restart_tool_server(container)
                 return container
         except DockerException:
             pass
@@ -254,40 +326,44 @@ class DockerRuntime(AbstractRuntime):
         local_sources: list[dict[str, str]] | None = None,
     ) -> SandboxInfo:
         scan_id = self._get_scan_id(agent_id)
-        container = self._get_or_create_container(scan_id)
+        with self._lock:
+            container = self._get_or_create_container(scan_id)
 
-        source_copied_key = f"_source_copied_{scan_id}"
-        if local_sources and not hasattr(self, source_copied_key):
-            for index, source in enumerate(local_sources, start=1):
-                source_path = source.get("source_path")
-                if not source_path:
-                    continue
-                target_name = (
-                    source.get("workspace_subdir") or Path(source_path).name or f"target_{index}"
-                )
-                self._copy_local_directory_to_container(container, source_path, target_name)
-            setattr(self, source_copied_key, True)
+            source_copied_key = f"_source_copied_{scan_id}"
+            if local_sources and not hasattr(self, source_copied_key):
+                for index, source in enumerate(local_sources, start=1):
+                    source_path = source.get("source_path")
+                    if not source_path:
+                        continue
+                    target_name = (
+                        source.get("workspace_subdir")
+                        or Path(source_path).name
+                        or f"target_{index}"
+                    )
+                    self._copy_local_directory_to_container(container, source_path, target_name)
+                setattr(self, source_copied_key, True)
 
-        if container.id is None:
-            raise RuntimeError("Docker container ID is unexpectedly None")
+            if container.id is None:
+                raise RuntimeError("Docker container ID is unexpectedly None")
 
-        token = existing_token or self._tool_server_token
-        if self._tool_server_port is None or self._caido_port is None or token is None:
-            raise RuntimeError("Tool server not initialized")
+            token = existing_token or self._tool_server_token
+            if self._tool_server_port is None or self._caido_port is None or token is None:
+                raise RuntimeError("Tool server not initialized")
 
-        host = self._resolve_docker_host()
-        api_url = f"http://{host}:{self._tool_server_port}"
+            host = self._resolve_docker_host()
+            api_url = f"http://{host}:{self._tool_server_port}"
+            sandbox_info: SandboxInfo = {
+                "workspace_id": container.id,
+                "api_url": api_url,
+                "auth_token": token,
+                "tool_server_port": self._tool_server_port,
+                "caido_port": self._caido_port,
+                "agent_id": agent_id,
+            }
 
         await self._register_agent(api_url, agent_id, token)
 
-        return {
-            "workspace_id": container.id,
-            "api_url": api_url,
-            "auth_token": token,
-            "tool_server_port": self._tool_server_port,
-            "caido_port": self._caido_port,
-            "agent_id": agent_id,
-        }
+        return sandbox_info
 
     async def _register_agent(self, api_url: str, agent_id: str, token: str) -> None:
         try:
