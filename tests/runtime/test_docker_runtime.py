@@ -4,6 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 from docker.errors import NotFound
 
+from strix.runtime import SandboxInitializationError
 from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME, DockerRuntime
 
 
@@ -39,6 +40,15 @@ def test_get_extra_hosts_rejects_invalid_entries(monkeypatch: pytest.MonkeyPatch
         runtime._get_extra_hosts()
 
 
+def test_get_extra_hosts_rejects_multiple_equals(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_SANDBOX_EXTRA_HOSTS", "test.internal.lan==host-gateway")
+
+    runtime = DockerRuntime.__new__(DockerRuntime)
+
+    with pytest.raises(ValueError, match="hostname=address"):
+        runtime._get_extra_hosts()
+
+
 def test_create_container_passes_configured_extra_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_SANDBOX_EXTRA_HOSTS", "test.internal.lan=host-gateway")
 
@@ -57,3 +67,21 @@ def test_create_container_passes_configured_extra_hosts(monkeypatch: pytest.Monk
         HOST_GATEWAY_HOSTNAME: "host-gateway",
         "test.internal.lan": "host-gateway",
     }
+
+
+def test_create_container_wraps_invalid_extra_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_SANDBOX_EXTRA_HOSTS", "test.internal.lan")
+
+    run = MagicMock()
+    containers = SimpleNamespace(get=MagicMock(side_effect=NotFound("missing")), run=run)
+    runtime = DockerRuntime.__new__(DockerRuntime)
+    runtime.client = SimpleNamespace(containers=containers)
+    runtime._verify_image_available = MagicMock()
+    runtime._find_available_port = MagicMock(side_effect=[12345, 12346])
+    runtime._wait_for_tool_server = MagicMock()
+    runtime._scan_container = None
+
+    with pytest.raises(SandboxInitializationError, match="Invalid Docker sandbox host mapping"):
+        runtime._create_container("scan-id")
+
+    run.assert_not_called()

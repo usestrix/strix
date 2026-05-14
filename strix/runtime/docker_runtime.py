@@ -18,7 +18,6 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout as RequestsTimeout
 
 from strix.config import Config
-from strix.telemetry.tracer import get_global_tracer
 
 from . import SandboxInitializationError
 from .runtime import AbstractRuntime, SandboxInfo
@@ -52,6 +51,8 @@ class DockerRuntime(AbstractRuntime):
 
     def _get_scan_id(self, agent_id: str) -> str:
         try:
+            from strix.telemetry.tracer import get_global_tracer  # noqa: PLC0415
+
             tracer = get_global_tracer()
             if tracer and tracer.scan_config:
                 return str(tracer.scan_config.get("scan_id", "default-scan"))
@@ -122,12 +123,13 @@ class DockerRuntime(AbstractRuntime):
             if not host_entry:
                 continue
 
-            if "=" not in host_entry:
+            parts = [part.strip() for part in host_entry.split("=")]
+            if len(parts) != 2:
                 raise ValueError(
                     "STRIX_SANDBOX_EXTRA_HOSTS entries must use hostname=address format"
                 )
 
-            hostname, address = (part.strip() for part in host_entry.split("=", 1))
+            hostname, address = parts
             if not hostname or not address:
                 raise ValueError(
                     "STRIX_SANDBOX_EXTRA_HOSTS entries must include both hostname and address"
@@ -193,6 +195,11 @@ class DockerRuntime(AbstractRuntime):
                     self._tool_server_token = None
                     self._caido_port = None
                     time.sleep(2**attempt)
+            except ValueError as e:
+                raise SandboxInitializationError(
+                    "Invalid Docker sandbox host mapping",
+                    str(e),
+                ) from e
             else:
                 return container
 
