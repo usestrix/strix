@@ -2,9 +2,13 @@ import contextlib
 import os
 import secrets
 import socket
+import subprocess
+import tarfile
 import time
+from io import BytesIO
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 import docker
 import httpx
@@ -14,6 +18,7 @@ from requests.exceptions import ConnectionError as RequestsConnectionError
 from requests.exceptions import Timeout as RequestsTimeout
 
 from strix.config import Config
+from strix.telemetry.tracer import get_global_tracer
 
 from . import SandboxInitializationError
 from .runtime import AbstractRuntime, SandboxInfo
@@ -47,14 +52,12 @@ class DockerRuntime(AbstractRuntime):
 
     def _get_scan_id(self, agent_id: str) -> str:
         try:
-            from strix.telemetry.tracer import get_global_tracer
-
             tracer = get_global_tracer()
             if tracer and tracer.scan_config:
                 return str(tracer.scan_config.get("scan_id", "default-scan"))
         except (ImportError, AttributeError):
             pass
-        return f"scan-{agent_id.split('-')[0]}"
+        return f"scan-{agent_id.split('-', maxsplit=1)[0]}"
 
     def _verify_image_available(self, image_name: str, max_retries: int = 3) -> None:
         for attempt in range(max_retries):
@@ -108,6 +111,32 @@ class DockerRuntime(AbstractRuntime):
             "Container initialization timed out. Please try again.",
         )
 
+    def _get_extra_hosts(self) -> dict[str, str]:
+        extra_hosts = {HOST_GATEWAY_HOSTNAME: "host-gateway"}
+        configured_hosts = Config.get("strix_sandbox_extra_hosts")
+        if not configured_hosts:
+            return extra_hosts
+
+        for raw_host_entry in configured_hosts.split(","):
+            host_entry = raw_host_entry.strip()
+            if not host_entry:
+                continue
+
+            if "=" not in host_entry:
+                raise ValueError(
+                    "STRIX_SANDBOX_EXTRA_HOSTS entries must use hostname=address format"
+                )
+
+            hostname, address = (part.strip() for part in host_entry.split("=", 1))
+            if not hostname or not address:
+                raise ValueError(
+                    "STRIX_SANDBOX_EXTRA_HOSTS entries must include both hostname and address"
+                )
+
+            extra_hosts[hostname] = address
+
+        return extra_hosts
+
     def _create_container(self, scan_id: str, max_retries: int = 2) -> Container:
         container_name = f"strix-scan-{scan_id}"
         image_name = Config.get("strix_image")
@@ -150,7 +179,7 @@ class DockerRuntime(AbstractRuntime):
                         "STRIX_SANDBOX_EXECUTION_TIMEOUT": str(execution_timeout),
                         "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
                     },
-                    extra_hosts={HOST_GATEWAY_HOSTNAME: "host-gateway"},
+                    extra_hosts=self._get_extra_hosts(),
                     tty=True,
                 )
 
@@ -222,9 +251,6 @@ class DockerRuntime(AbstractRuntime):
     def _copy_local_directory_to_container(
         self, container: Container, local_path: str, target_name: str | None = None
     ) -> None:
-        import tarfile
-        from io import BytesIO
-
         try:
             local_path_obj = Path(local_path).resolve()
             if not local_path_obj.exists() or not local_path_obj.is_dir():
@@ -312,8 +338,6 @@ class DockerRuntime(AbstractRuntime):
     def _resolve_docker_host(self) -> str:
         docker_host = os.getenv("DOCKER_HOST", "")
         if docker_host:
-            from urllib.parse import urlparse
-
             parsed = urlparse(docker_host)
             if parsed.scheme in ("tcp", "http", "https") and parsed.hostname:
                 return parsed.hostname
@@ -341,8 +365,6 @@ class DockerRuntime(AbstractRuntime):
 
             if container_name is None:
                 return
-
-            import subprocess
 
             subprocess.Popen(  # noqa: S603
                 ["docker", "rm", "-f", container_name],  # noqa: S607
