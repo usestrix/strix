@@ -195,8 +195,8 @@ To force TE disagreement:
 ```
 Transfer-Encoding: xchunked
 Transfer-Encoding : chunked       # space before colon
-X: X\r\nTransfer-Encoding: chunked # header injection into existing header value
-Transfer-Encoding: chunked\r\nTransfer-Encoding: x  # TE twice
+X: X<CRLF>Transfer-Encoding: chunked # header injection — inject actual CRLF bytes at <CRLF>, not the literal string \r\n
+Transfer-Encoding: chunked<CRLF>Transfer-Encoding: x  # TE twice — inject actual CRLF bytes at <CRLF>
 ```
 
 ## HTTP/2-Specific Detection
