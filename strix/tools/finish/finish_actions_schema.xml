@@ -13,6 +13,7 @@ This tool directly updates the scan report data:
 - methodology
 - technical_analysis
 - recommendations
+- cleanup_summary
 
 All fields are REQUIRED and map directly to the final report.
 
@@ -40,6 +41,11 @@ If agents are still running, the tool will:
 NOTE: Make sure the vulnerabilities found were reported with create_vulnerability_report tool, otherwise they will not be tracked and you will not be rewarded.
 But make sure to not report the same vulnerability multiple times.
 
+Cleanup requirement:
+- Before calling finish_scan, attempt to remove or revert every test artifact created during the investigation, including dummy accounts, uploads, API tokens, webhooks, subscriptions, records, and background jobs.
+- The cleanup_summary parameter must state what was cleaned up and list any residual artifacts that could not be removed.
+- If no artifacts were created, explicitly state that no cleanup was required.
+
 Professional, customer-facing penetration test report rules (PDF-ready):
 - Do NOT include internal or system details: never mention local/absolute paths (e.g., "/workspace"), internal tools, agents, orchestrators, sandboxes, models, system prompts/instructions, connection/tooling issues, or tester environment details.
 - Tone and style: formal, objective, third-person, concise. No internal checklists or engineering runbooks. Content must read as a polished client deliverable.
@@ -61,6 +67,9 @@ Professional, customer-facing penetration test report rules (PDF-ready):
       </parameter>
       <parameter name="recommendations" type="string" required="true">
         <description>Prioritized, actionable remediation guidance organized by urgency (Immediate, Short-term, Medium-term). Each recommendation should provide specific technical remediation steps. Conclude with retest and validation guidance.</description>
+      </parameter>
+      <parameter name="cleanup_summary" type="string" required="true">
+        <description>Summary of test artifact cleanup. Include dummy accounts, created records, uploads, tokens, webhooks, subscriptions, state changes, or jobs that were removed or reverted. If cleanup was impossible, identify the residual artifact and the required owner action. If no artifacts were created, state that no cleanup was required.</description>
       </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
@@ -161,6 +170,7 @@ Implement alerting for high-risk events: repeated authorization failures, anomal
 
 Retest and validation
 Conduct a focused retest after remediation of immediate-priority items to verify the effectiveness of SSRF controls, tenant isolation enforcement, and session hardening. Validate that no bypasses exist through redirect chains, DNS rebinding, or encoding edge cases. Repeat authorization regression tests to confirm consistent enforcement across all endpoints.</parameter>
+  <parameter=cleanup_summary>Temporary test data created during validation was removed where supported by the application workflows. The assessment used disposable test accounts and temporary uploaded files; those accounts and files were deleted after validation. No known residual test artifacts remain. If application logs retain historical entries for these test actions, they may be kept according to the target owner's normal retention policy.</parameter>
 </function>
     </examples>
   </tool>

@@ -89,6 +89,7 @@ def finish_scan(
     methodology: str,
     technical_analysis: str,
     recommendations: str,
+    cleanup_summary: str,
     agent_state: Any = None,
 ) -> dict[str, Any]:
     validation_error = _validate_root_agent(agent_state)
@@ -109,6 +110,8 @@ def finish_scan(
         validation_errors.append("Technical analysis cannot be empty")
     if not recommendations or not recommendations.strip():
         validation_errors.append("Recommendations cannot be empty")
+    if not cleanup_summary or not cleanup_summary.strip():
+        validation_errors.append("Cleanup summary cannot be empty")
 
     if validation_errors:
         return {"success": False, "message": "Validation failed", "errors": validation_errors}
@@ -123,6 +126,7 @@ def finish_scan(
                 methodology=methodology.strip(),
                 technical_analysis=technical_analysis.strip(),
                 recommendations=recommendations.strip(),
+                cleanup_summary=cleanup_summary.strip(),
             )
 
             vulnerability_count = len(tracer.vulnerability_reports)
@@ -132,6 +136,7 @@ def finish_scan(
                 "scan_completed": True,
                 "message": "Scan completed successfully",
                 "vulnerabilities_found": vulnerability_count,
+                "cleanup_summary": cleanup_summary.strip(),
             }
 
         import logging

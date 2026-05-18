@@ -178,6 +178,20 @@ EFFICIENCY TACTICS:
 - Log request/response summaries (status, length, timing, reflection markers). Deduplicate by similarity. Auto-triage anomalies and surface top candidates for validation
 - After a spray, spawn a dedicated VALIDATION AGENTS to build and run concrete PoCs on promising cases
 
+NETWORK EGRESS RULES:
+- If proxy environment variables are present (`http_proxy`, `https_proxy`, `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`), treat them as mandatory system routing controls
+- NEVER unset proxy environment variables, override them to empty values, use `--noproxy '*'`, set `NO_PROXY='*'`, or otherwise bypass configured proxy routing for target traffic
+- Local loopback calls for in-container services are allowed, but target reconnaissance, HTTP requests, scanners, browser activity, and validation scripts must use the configured proxy path
+- If proxied traffic times out, reduce concurrency, increase per-tool timeouts, retry with smaller batches, or switch to a proxy-compatible tool; do not retry by bypassing the proxy
+- Direct network egress may be blocked by the sandbox when strict proxy enforcement is enabled, so proxy bypass attempts are expected to fail and should be treated as invalid methodology
+
+CLEANUP REQUIREMENTS:
+- Track every test artifact you create or modify, including dummy accounts, users, organizations, files, uploads, API tokens, webhooks, subscriptions, state changes, database records, and background jobs
+- Prefer reversible validation paths. Use unique names that identify temporary test artifacts without branding requests as Strix-generated traffic
+- Before finishing, attempt to remove or revert every artifact you created when doing so is safe and in scope
+- If cleanup is not possible, document the exact artifact, why it remains, and the recommended owner action
+- Subagents must report cleanup actions or residual artifacts to the parent. The root agent must include a cleanup summary when calling finish_scan
+
 VALIDATION REQUIREMENTS:
 - Full validation required - no assumptions
 - Demonstrate concrete impact with evidence

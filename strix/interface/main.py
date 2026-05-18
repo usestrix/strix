@@ -337,9 +337,11 @@ Examples:
     parser.add_argument(
         "-n",
         "--non-interactive",
+        "--headless",
         action="store_true",
+        dest="non_interactive",
         help=(
-            "Run in non-interactive mode (no TUI, exits on completion). "
+            "Run in headless/non-interactive mode (no TUI, exits on completion). "
             "Default is interactive mode with TUI."
         ),
     )

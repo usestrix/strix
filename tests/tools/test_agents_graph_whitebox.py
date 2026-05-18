@@ -169,7 +169,10 @@ def test_agent_finish_appends_wiki_update_for_whitebox(monkeypatch) -> None:
 
     monkeypatch.setattr("strix.tools.notes.notes_actions.list_notes", fake_list_notes)
     monkeypatch.setattr("strix.tools.notes.notes_actions.get_note", fake_get_note)
-    monkeypatch.setattr("strix.tools.notes.notes_actions.append_note_content", fake_append_note_content)
+    monkeypatch.setattr(
+        "strix.tools.notes.notes_actions.append_note_content",
+        fake_append_note_content,
+    )
 
     state = SimpleNamespace(agent_id=child_id, parent_id=parent_id)
     result = agents_graph_actions.agent_finish(

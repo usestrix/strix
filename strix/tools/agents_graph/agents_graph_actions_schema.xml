@@ -8,6 +8,7 @@ Root/main agents must use finish_scan instead.
 This tool should be called when a subagent completes its assigned subtask to:
 - Mark the subagent's task as completed
 - Report findings back to the parent agent
+- Report cleanup actions or residual test artifacts to the parent agent
 
 Use this tool when:
 - You are a subagent working on a specific subtask
@@ -33,6 +34,9 @@ Use this tool when:
       <parameter name="final_recommendations" type="string" required="false">
         <description>Recommendations for next steps or follow-up actions</description>
       </parameter>
+      <parameter name="cleanup_actions" type="string" required="false">
+        <description>List of temporary artifacts cleaned up or residual artifacts that need owner action. Include dummy accounts, files, records, tokens, webhooks, jobs, or other state created during testing.</description>
+      </parameter>
     </parameters>
     <returns type="Dict[str, Any]">
       <description>Response containing: - agent_completed: Whether the agent was marked as completed - parent_notified: Whether parent was notified (if applicable) - completion_summary: Summary of completion status</description>
@@ -53,11 +57,15 @@ Use this tool when:
   <parameter=final_recommendations>["Prioritize testing admin.target.com for default creds",
                              "Enumerate dev-api.target.com API endpoints",
                              "Check staging.target.com for sensitive files"]</parameter>
+  <parameter=cleanup_actions>["Deleted temporary account test-user-4721",
+                       "Removed uploaded proof-of-concept file poc-4721.txt"]</parameter>
   </function>
     </examples>
   </tool>
   <tool name="create_agent">
     <description>Create and spawn a new agent to handle a specific subtask.
+
+CRITICAL: You MUST provide BOTH 'name' AND 'task' parameters in every call. Do NOT omit either one.
 
 Only create a new agent if no existing agent is handling the specific task.</description>
     <details>The new agent inherits the parent's conversation history and context up to the point
@@ -68,13 +76,15 @@ Only create a new agent if no existing agent is handling the specific task.</des
   immediately while the new agent executes its task in the background.
 
   If you as a parent agent don't absolutely have anything to do while your subagents are running, you can use wait_for_message tool. The subagent will continue to run in the background, and update you when it's done.
+
+  REMINDER: Both 'name' and 'task' are REQUIRED. Always include both parameters.
   </details>
     <parameters>
-      <parameter name="task" type="string" required="true">
-        <description>The specific task/objective for the new agent to accomplish</description>
-      </parameter>
       <parameter name="name" type="string" required="true">
-        <description>Human-readable name for the agent (for tracking purposes)</description>
+        <description>REQUIRED: Human-readable name for the agent (e.g., "SQLi Validator", "Auth Tester")</description>
+      </parameter>
+      <parameter name="task" type="string" required="true">
+        <description>REQUIRED: The specific task/objective for the new agent to accomplish</description>
       </parameter>
       <parameter name="inherit_context" type="boolean" required="false">
         <description>Whether the new agent should inherit parent's conversation history and context</description>
@@ -87,34 +97,40 @@ Only create a new agent if no existing agent is handling the specific task.</des
       <description>Response containing: - agent_id: Unique identifier for the created agent - success: Whether the agent was created successfully - message: Status message - agent_info: Details about the created agent</description>
     </returns>
     <examples>
-  # After confirming no SQL testing agent exists, create agent for vulnerability validation
+  # CORRECT: Always provide BOTH name AND task parameters
   <function=create_agent>
+  <parameter=name>SQLi Validator</parameter>
   <parameter=task>Validate and exploit the suspected SQL injection vulnerability found in
               the login form. Confirm exploitability and document proof of concept.</parameter>
-  <parameter=name>SQLi Validator</parameter>
   <parameter=skills>sql_injection</parameter>
   </function>
 
   <function=create_agent>
+  <parameter=name>Auth Specialist</parameter>
   <parameter=task>Test authentication mechanisms, JWT implementation, and session management
               for security vulnerabilities and bypass techniques.</parameter>
-  <parameter=name>Auth Specialist</parameter>
   <parameter=skills>authentication_jwt, business_logic</parameter>
   </function>
 
   # Example of single-skill specialization (most focused)
   <function=create_agent>
+  <parameter=name>XSS Specialist</parameter>
   <parameter=task>Perform comprehensive XSS testing including reflected, stored, and DOM-based
               variants across all identified input points.</parameter>
-  <parameter=name>XSS Specialist</parameter>
   <parameter=skills>xss</parameter>
   </function>
 
-  # Example of up to 5 related skills (borderline acceptable)
+  # WRONG - DO NOT do this (missing name):
+  # <function=create_agent>
+  # <parameter=task>Test for vulnerabilities</parameter>
+  # </function>
+  # This will FAIL because 'name' is missing!
+
+  # Example of up to 5 related skills
   <function=create_agent>
+  <parameter=name>Server-Side Attack Specialist</parameter>
   <parameter=task>Test for server-side vulnerabilities including SSRF, XXE, and potential
               RCE vectors in file upload and XML processing endpoints.</parameter>
-  <parameter=name>Server-Side Attack Specialist</parameter>
   <parameter=skills>ssrf, xxe, rce</parameter>
   </function>
     </examples>

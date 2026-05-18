@@ -1,6 +1,6 @@
+import re
 import threading
 from datetime import UTC, datetime
-import re
 from typing import Any, Literal
 
 from strix.tools.registry import register_tool
@@ -109,7 +109,9 @@ def _load_primary_wiki_note(agent_state: Any | None = None) -> dict[str, Any] | 
                 note_tags = note.get("tags") or []
                 if not isinstance(note_tags, list):
                     continue
-                normalized_note_tags = {str(tag).strip().lower() for tag in note_tags if str(tag).strip()}
+                normalized_note_tags = {
+                    str(tag).strip().lower() for tag in note_tags if str(tag).strip()
+                }
                 if normalized_note_tags.intersection(repo_tags):
                     selected_note_id = note.get("note_id")
                     break
@@ -151,7 +153,7 @@ def _inject_wiki_context_for_whitebox(agent_state: Any) -> None:
     agent_state.add_message(
         "user",
         (
-            f"<shared_repo_wiki title=\"{title}\">\n"
+            f'<shared_repo_wiki title="{title}">\n'
             f"{truncated_content}{suffix}\n"
             "</shared_repo_wiki>"
         ),
@@ -164,6 +166,7 @@ def _append_wiki_update_on_finish(
     result_summary: str,
     findings: list[str] | None,
     final_recommendations: list[str] | None,
+    cleanup_actions: list[str] | None,
 ) -> None:
     if not _is_whitebox_agent(agent_state.agent_id):
         return
@@ -187,6 +190,7 @@ def _append_wiki_update_on_finish(
         recommendation_lines = (
             "\n".join(f"- {item}" for item in (final_recommendations or [])) or "- none"
         )
+        cleanup_lines = "\n".join(f"- {item}" for item in (cleanup_actions or [])) or "- none"
 
         delta = (
             f"\n\n## Agent Update: {agent_name} ({timestamp})\n"
@@ -194,7 +198,9 @@ def _append_wiki_update_on_finish(
             "Findings:\n"
             f"{findings_lines}\n\n"
             "Recommendations:\n"
-            f"{recommendation_lines}\n"
+            f"{recommendation_lines}\n\n"
+            "Cleanup:\n"
+            f"{cleanup_lines}\n"
         )
         append_note_content(note_id=note_id, delta=delta)
     except Exception:
@@ -225,14 +231,23 @@ def _run_agent_in_thread(
         wiki_memory_instruction = ""
         if getattr(getattr(agent, "llm_config", None), "is_whitebox", False):
             wiki_memory_instruction = (
-                '\n        - White-box memory (recommended): call list_notes(category="wiki") and then '
+                "\n        - White-box memory (recommended): call "
+                'list_notes(category="wiki") and then '
                 "get_note(note_id=...) before substantive work (including terminal scans)"
                 "\n        - Reuse one repo wiki note where possible and avoid duplicates"
-                "\n        - Before agent_finish, call list_notes(category=\"wiki\") + get_note(note_id=...) again, then append a short scope delta via update_note (new routes/sinks, scanner results, dynamic follow-ups)"
-                "\n        - If terminal output contains `command not found` or shell parse errors, correct and rerun before using the result"
-                "\n        - Use ASCII-only shell commands; if a command includes unexpected non-ASCII characters, rerun with a clean ASCII command"
-                "\n        - Keep AST artifacts bounded: target relevant paths and avoid whole-repo generic function dumps"
-                "\n        - Source-aware tooling is advisory: choose semgrep/AST/tree-sitter/gitleaks/trivy when relevant, do not force static steps for purely dynamic validation tasks"
+                "\n        - Before agent_finish, call "
+                'list_notes(category="wiki") + get_note(note_id=...) again, then append '
+                "a short scope delta via update_note (new routes/sinks, scanner results, "
+                "dynamic follow-ups)"
+                "\n        - If terminal output contains `command not found` or shell parse "
+                "errors, correct and rerun before using the result"
+                "\n        - Use ASCII-only shell commands; if a command includes unexpected "
+                "non-ASCII characters, rerun with a clean ASCII command"
+                "\n        - Keep AST artifacts bounded: target relevant paths and avoid "
+                "whole-repo generic function dumps"
+                "\n        - Source-aware tooling is advisory: choose "
+                "semgrep/AST/tree-sitter/gitleaks/trivy when relevant, do not force "
+                "static steps for purely dynamic validation tasks"
             )
 
         task_xml = f"""<agent_delegation>
@@ -383,8 +398,8 @@ def view_agent_graph(agent_state: Any) -> dict[str, Any]:
 @register_tool(sandbox_execution=False)
 def create_agent(
     agent_state: Any,
-    task: str,
     name: str,
+    task: str,
     inherit_context: bool = True,
     skills: str | None = None,
 ) -> dict[str, Any]:
@@ -424,8 +439,9 @@ def create_agent(
         if is_whitebox:
             whitebox_guidance = (
                 "\n\nWhite-box execution guidance (recommended when source is available):\n"
-                "- Use structural AST mapping (`sg` or `tree-sitter`) where it helps source analysis; "
-                "keep artifacts bounded and skip forced AST steps for purely dynamic validation tasks.\n"
+                "- Use structural AST mapping (`sg` or `tree-sitter`) where it helps "
+                "source analysis; keep artifacts bounded and skip forced AST steps for "
+                "purely dynamic validation tasks.\n"
                 "- Keep AST output bounded: scope to relevant paths/files, avoid whole-repo "
                 "generic function patterns, and cap artifact size.\n"
                 '- Use shared wiki memory by calling list_notes(category="wiki") then '
@@ -571,6 +587,7 @@ def agent_finish(
     success: bool = True,
     report_to_parent: bool = True,
     final_recommendations: list[str] | None = None,
+    cleanup_actions: list[str] | None = None,
 ) -> dict[str, Any]:
     try:
         if not hasattr(agent_state, "parent_id") or agent_state.parent_id is None:
@@ -597,6 +614,7 @@ def agent_finish(
             "findings": findings or [],
             "success": success,
             "recommendations": final_recommendations or [],
+            "cleanup_actions": cleanup_actions or [],
         }
 
         _append_wiki_update_on_finish(
@@ -605,6 +623,7 @@ def agent_finish(
             result_summary=result_summary,
             findings=findings,
             final_recommendations=final_recommendations,
+            cleanup_actions=cleanup_actions,
         )
 
         parent_notified = False
@@ -619,6 +638,10 @@ def agent_finish(
                 recommendations_xml = "\n".join(
                     f"        <recommendation>{rec}</recommendation>"
                     for rec in (final_recommendations or [])
+                )
+                cleanup_xml = "\n".join(
+                    f"        <cleanup_action>{action}</cleanup_action>"
+                    for action in (cleanup_actions or [])
                 )
 
                 report_message = f"""<agent_completion_report>
@@ -637,6 +660,9 @@ def agent_finish(
         <recommendations>
 {recommendations_xml}
         </recommendations>
+        <cleanup_actions>
+{cleanup_xml}
+        </cleanup_actions>
     </results>
 </agent_completion_report>"""
 
@@ -673,6 +699,7 @@ def agent_finish(
                 "success": success,
                 "findings_count": len(findings or []),
                 "has_recommendations": bool(final_recommendations),
+                "has_cleanup_actions": bool(cleanup_actions),
                 "finished_at": agent_node["finished_at"],
             },
         }

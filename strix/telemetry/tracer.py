@@ -387,6 +387,7 @@ class Tracer:
         methodology: str,
         technical_analysis: str,
         recommendations: str,
+        cleanup_summary: str,
     ) -> None:
         self.scan_results = {
             "scan_completed": True,
@@ -394,6 +395,7 @@ class Tracer:
             "methodology": methodology.strip(),
             "technical_analysis": technical_analysis.strip(),
             "recommendations": recommendations.strip(),
+            "cleanup_summary": cleanup_summary.strip(),
             "success": True,
         }
 
@@ -412,6 +414,10 @@ class Tracer:
 # Recommendations
 
 {recommendations.strip()}
+
+# Cleanup Summary
+
+{cleanup_summary.strip()}
 """
 
         logger.info("Updated scan final fields")
@@ -801,8 +807,8 @@ class Tracer:
     def get_total_llm_stats(self) -> dict[str, Any]:
         from strix.tools.agents_graph.agents_graph_actions import (
             _agent_instances,
-            _completed_agent_llm_totals,
             _agent_llm_stats_lock,
+            _completed_agent_llm_totals,
         )
 
         with _agent_llm_stats_lock:
