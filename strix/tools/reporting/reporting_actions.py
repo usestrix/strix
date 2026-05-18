@@ -251,7 +251,7 @@ def create_vulnerability_report(  # noqa: PLR0912
         return {"success": False, "message": "Validation failed", "errors": validation_errors}
 
     assert parsed_cvss is not None
-    cvss_score, severity, cvss_vector = calculate_cvss_and_severity(**parsed_cvss)
+    cvss_score, severity, _cvss_vector = calculate_cvss_and_severity(**parsed_cvss)
 
     try:
         from strix.telemetry.tracer import get_global_tracer

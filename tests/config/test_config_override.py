@@ -17,7 +17,7 @@ def test_apply_config_override_clears_default_only_vars(monkeypatch, tmp_path) -
 
     monkeypatch.setattr(Config, "_config_file_override", None)
     monkeypatch.setattr(Config, "_applied_from_default", {})
-    monkeypatch.setattr(Config, "config_dir", classmethod(lambda cls: tmp_path))
+    monkeypatch.setattr(Config, "config_dir", classmethod(lambda _cls: tmp_path))
     for var_name in Config._llm_env_vars():
         monkeypatch.delenv(var_name, raising=False)
 

@@ -44,6 +44,9 @@ class Config:
     strix_runtime_backend = "docker"
     strix_sandbox_execution_timeout = "120"
     strix_sandbox_connect_timeout = "10"
+    strix_tool_proxy = None
+    strix_sandbox_proxy = None
+    strix_enforce_tool_proxy = "false"
 
     # Telemetry
     strix_telemetry = "1"

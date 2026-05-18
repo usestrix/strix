@@ -148,7 +148,26 @@ def _validate_tool_arguments(tool_name: str, kwargs: dict[str, Any]) -> str | No
     ]
     if missing_required:
         missing_list = ", ".join(sorted(missing_required))
-        return f"Tool '{tool_name}' missing required parameter(s): {missing_list}\n{schema_hint}"
+        provided_list = ", ".join(sorted(kwargs.keys())) if kwargs else "none"
+
+        # Add tool-specific retry hints for common errors
+        retry_hint = ""
+        if tool_name == "create_agent":
+            retry_hint = (
+                "\n\nIMPORTANT: You must provide BOTH 'name' AND 'task' parameters "
+                "together in a single call. "
+                "Example:\n"
+                "<function=create_agent>\n"
+                "<parameter=name>My Agent Name</parameter>\n"
+                "<parameter=task>Description of what the agent should do</parameter>\n"
+                "</function>"
+            )
+
+        return (
+            f"Tool '{tool_name}' missing required parameter(s): {missing_list}\n"
+            f"You provided: {provided_list}\n"
+            f"{schema_hint}{retry_hint}"
+        )
 
     return None
 

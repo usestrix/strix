@@ -5,6 +5,7 @@ import socket
 import time
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlsplit, urlunsplit
 
 import docker
 import httpx
@@ -23,6 +24,27 @@ HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 DOCKER_TIMEOUT = 60
 CONTAINER_TOOL_SERVER_PORT = 48081
 CONTAINER_CAIDO_PORT = 48080
+
+
+def _as_bool(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _host_reachable_proxy_url(proxy_url: str) -> str:
+    parsed = urlsplit(proxy_url)
+    if parsed.hostname not in {"127.0.0.1", "localhost"}:
+        return proxy_url
+
+    auth = ""
+    if parsed.username:
+        auth = parsed.username
+        if parsed.password:
+            auth = f"{auth}:{parsed.password}"
+        auth = f"{auth}@"
+
+    port = f":{parsed.port}" if parsed.port else ""
+    netloc = f"{auth}{HOST_GATEWAY_HOSTNAME}{port}"
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
 
 
 class DockerRuntime(AbstractRuntime):
@@ -54,7 +76,7 @@ class DockerRuntime(AbstractRuntime):
                 return str(tracer.scan_config.get("scan_id", "default-scan"))
         except (ImportError, AttributeError):
             pass
-        return f"scan-{agent_id.split('-')[0]}"
+        return f"scan-{agent_id.split('-', maxsplit=1)[0]}"
 
     def _verify_image_available(self, image_name: str, max_retries: int = 3) -> None:
         for attempt in range(max_retries):
@@ -131,6 +153,25 @@ class DockerRuntime(AbstractRuntime):
                 self._tool_server_token = secrets.token_urlsafe(32)
                 execution_timeout = Config.get("strix_sandbox_execution_timeout") or "120"
 
+                tool_proxy = Config.get("strix_tool_proxy") or Config.get("strix_sandbox_proxy")
+                enforce_tool_proxy = _as_bool(Config.get("strix_enforce_tool_proxy"))
+                if enforce_tool_proxy and not tool_proxy:
+                    raise SandboxInitializationError(
+                        "Strict tool proxy enforcement requested without a proxy",
+                        "Set STRIX_TOOL_PROXY or STRIX_SANDBOX_PROXY before starting the scan.",
+                    )
+                env_vars = {
+                    "PYTHONUNBUFFERED": "1",
+                    "TOOL_SERVER_PORT": str(CONTAINER_TOOL_SERVER_PORT),
+                    "TOOL_SERVER_TOKEN": self._tool_server_token,
+                    "STRIX_SANDBOX_EXECUTION_TIMEOUT": str(execution_timeout),
+                    "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
+                }
+
+                if tool_proxy:
+                    env_vars["STRIX_EXTERNAL_PROXY"] = _host_reachable_proxy_url(tool_proxy)
+                    env_vars["STRIX_ENFORCE_PROXY"] = str(enforce_tool_proxy).lower()
+
                 container = self.client.containers.run(
                     image_name,
                     command="sleep infinity",
@@ -143,13 +184,7 @@ class DockerRuntime(AbstractRuntime):
                     },
                     cap_add=["NET_ADMIN", "NET_RAW"],
                     labels={"strix-scan-id": scan_id},
-                    environment={
-                        "PYTHONUNBUFFERED": "1",
-                        "TOOL_SERVER_PORT": str(CONTAINER_TOOL_SERVER_PORT),
-                        "TOOL_SERVER_TOKEN": self._tool_server_token,
-                        "STRIX_SANDBOX_EXECUTION_TIMEOUT": str(execution_timeout),
-                        "HOST_GATEWAY": HOST_GATEWAY_HOSTNAME,
-                    },
+                    environment=env_vars,
                     extra_hosts={HOST_GATEWAY_HOSTNAME: "host-gateway"},
                     tty=True,
                 )

@@ -40,7 +40,9 @@ dependencies = [
   "docker>=7.1.0",
   "textual>=6.0.0",
   "xmltodict>=0.13.0",
-  "requests>=2.32.0",
+  "requests[socks]>=2.32.0",
+  "httpx[socks]>=0.27.0",
+  "pysocks>=1.7.1",
   "cvss>=3.2",
   "traceloop-sdk>=0.53.0",
   "opentelemetry-exporter-otlp-proto-http>=1.40.0",
@@ -221,12 +223,19 @@ ignore = [
     "ISC001", # Single line implicit string concatenation (handled by formatter)
     "PLR0913", # Too many arguments to function call
     "TRY003",  # Avoid specifying long messages outside the exception class
+    "TC003",   # Keep standard-library typing imports straightforward
     "EM101",   # Exception must not use a string literal
     "EM102",   # Exception must not use an f-string literal
     "FBT001",  # Boolean positional arg in function definition
     "FBT002",  # Boolean default positional argument in function definition
+    "BLE001",  # Broad catches are used around optional UI/runtime integrations
     "G004",    # Logging statement uses f-string
+    "PLC0415", # Local imports avoid expensive optional dependency imports/cycles
+    "PLR0911", # Tool handlers often use explicit early returns for clear errors
+    "PLR0912", # Agent/runtime orchestration functions are necessarily branch-heavy
+    "PLR0915", # Agent/runtime orchestration functions are necessarily statement-heavy
     "PLR2004", # Magic value used in comparison
+    "RUF100",  # Existing noqa markers may target rules disabled in local profiles
     "SLF001",  # Private member accessed
 ]
 
@@ -239,6 +248,9 @@ ignore = [
 ]
 "strix/tools/**/*.py" = [
     "ARG001", # Unused function argument (tools may have unused args for interface consistency)
+]
+"strix/tools/proxy/proxy_manager.py" = [
+    "S501", # The local interception proxy intentionally disables upstream TLS verification.
 ]
 
 [tool.ruff.lint.isort]

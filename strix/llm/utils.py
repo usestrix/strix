@@ -51,6 +51,12 @@ STRIX_MODEL_MAP: dict[str, str] = {
     "gemini-3-flash-preview": "gemini/gemini-3-flash-preview",
     "glm-5": "openrouter/z-ai/glm-5",
     "glm-4.7": "openrouter/z-ai/glm-4.7",
+    # DeepSeek models
+    "deepseek-chat": "deepseek/deepseek-chat",
+    "deepseek-reasoner": "deepseek/deepseek-reasoner",
+    "deepseek-r1": "openrouter/deepseek/deepseek-r1",
+    "deepseek-v4-flash": "deepseek/deepseek-v4-flash",
+    "deepseek-v4-pro": "deepseek/deepseek-v4-pro",
 }
 
 

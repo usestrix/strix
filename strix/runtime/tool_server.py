@@ -111,7 +111,13 @@ async def execute_tool(
         return ToolExecutionResponse(error="Cancelled by newer request")
 
     except TimeoutError:
-        return ToolExecutionResponse(error=f"Tool timed out after {REQUEST_TIMEOUT}s")
+        return ToolExecutionResponse(
+            error=(
+                f"Tool timed out after {REQUEST_TIMEOUT}s. Retry with a smaller batch, "
+                "a tool-specific timeout, or a longer STRIX_SANDBOX_EXECUTION_TIMEOUT; "
+                "do not bypass configured proxy routing to work around timeouts."
+            )
+        )
 
     except ValidationError as e:
         return ToolExecutionResponse(error=f"Invalid arguments: {e}")
