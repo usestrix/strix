@@ -232,7 +232,6 @@ export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
-export STRIX_SANDBOX_EXTRA_HOSTS="test.internal.lan=host-gateway"  # optional Docker hosts entries
 ```
 
 > [!NOTE]
