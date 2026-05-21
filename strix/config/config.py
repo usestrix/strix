@@ -222,4 +222,17 @@ def resolve_llm_config() -> tuple[str | None, str | None, str | None]:
             or Config.get("ollama_api_base")
         )
 
+    # Auto-detect MiniMax provider: use MINIMAX_API_KEY and set base URL
+    if _is_minimax_model(model):
+        if not api_key:
+            api_key = os.getenv("MINIMAX_API_KEY")
+        if not api_base:
+            api_base = "https://api.minimax.io/v1"
+
     return model, api_key, api_base
+
+
+def _is_minimax_model(model: str) -> bool:
+    """Check if the model name refers to a MiniMax model."""
+    lower = model.lower()
+    return "minimax" in lower
