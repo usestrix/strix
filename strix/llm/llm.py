@@ -319,6 +319,14 @@ class LLM:
                     prompt_details = response.usage.prompt_tokens_details
                     if hasattr(prompt_details, "cached_tokens"):
                         cached_tokens = prompt_details.cached_tokens or 0
+                # [TOKEN-OPT] Some providers (OpenRouter) report cache fields
+                # at top-level of usage instead of prompt_tokens_details.
+                if not cached_tokens:
+                    cached_tokens = (
+                        getattr(response.usage, "cache_read_input_tokens", 0)
+                        or getattr(response.usage, "cached_tokens", 0)
+                        or 0
+                    )
 
                 cost = self._extract_cost(response)
             else:
@@ -331,6 +339,25 @@ class LLM:
             self._total_stats.output_tokens += output_tokens
             self._total_stats.cached_tokens += cached_tokens
             self._total_stats.cost += cost
+
+            # [TOKEN-OPT] Per-request cache visibility. Emits one compact line
+            # per LLM call so the operator can verify caching is actually
+            # taking effect during a scan. Controlled via STRIX_DEBUG_CACHE=1.
+            try:
+                import os
+                import sys
+
+                if os.environ.get("STRIX_DEBUG_CACHE") == "1" and input_tokens:
+                    hit_pct = (cached_tokens / input_tokens * 100.0) if input_tokens else 0.0
+                    agent_tag = self.agent_name or "agent"
+                    sys.stderr.write(
+                        f"[cache] {agent_tag} in={input_tokens} cached={cached_tokens} "
+                        f"({hit_pct:.0f}%) out={output_tokens} cost=${cost:.4f} "
+                        f"total=${self._total_stats.cost:.4f}\n"
+                    )
+                    sys.stderr.flush()
+            except Exception:  # noqa: BLE001, S110  # nosec B110
+                pass
 
         except Exception:  # noqa: BLE001, S110  # nosec B110
             pass
@@ -393,11 +420,22 @@ class LLM:
         return result
 
     def _add_cache_control(self, messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if not messages or not supports_prompt_caching(self.config.canonical_model):
+        # [TOKEN-OPT] Removed strict supports_prompt_caching() gate. litellm's
+        # registry does not always recognize openrouter/anthropic/* variants
+        # which silently disabled caching. Outer _is_anthropic() check is
+        # sufficient to know the upstream provider supports cache_control.
+        if not messages:
+            return messages
+        try:
+            supported = bool(supports_prompt_caching(self.config.canonical_model))
+        except Exception:  # noqa: BLE001
+            supported = False
+        if not supported and not self._is_anthropic():
             return messages
 
         result = list(messages)
 
+        # Breakpoint #1: system prompt (largest stable block - tools + skills)
         if result[0].get("role") == "system":
             content = result[0]["content"]
             result[0] = {
@@ -408,4 +446,22 @@ class LLM:
                 if isinstance(content, str)
                 else content,
             }
+
+        # [TOKEN-OPT] Breakpoint #2: agent_identity header (stable per agent).
+        # Caching here lets the prefix [system + identity] be reused across
+        # every turn within the same agent. Anthropic allows up to 4 breakpoints.
+        if (
+            len(result) > 1
+            and result[1].get("role") == "user"
+            and isinstance(result[1].get("content"), str)
+            and "<agent_identity>" in result[1]["content"]
+        ):
+            content = result[1]["content"]
+            result[1] = {
+                **result[1],
+                "content": [
+                    {"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}
+                ],
+            }
+
         return result

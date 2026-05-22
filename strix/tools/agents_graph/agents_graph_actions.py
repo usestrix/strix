@@ -385,9 +385,12 @@ def create_agent(
     agent_state: Any,
     task: str,
     name: str,
-    inherit_context: bool = True,
+    inherit_context: bool = False,
     skills: str | None = None,
 ) -> dict[str, Any]:
+    # [TOKEN-OPT] Default changed True -> False to prevent parent's full
+    # conversation history being copied into every sub-agent. Sub-agents now
+    # start fresh; shared knowledge flows via wiki notes / explicit task text.
     try:
         parent_id = agent_state.agent_id
 
