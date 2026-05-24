@@ -629,6 +629,7 @@ def main() -> None:  # noqa: PLR0912, PLR0915
     finally:
         tracer = get_global_tracer()
         if tracer:
+            tracer.cleanup()
             posthog.end(tracer, exit_reason=exit_reason)
 
     results_path = Path("strix_runs") / args.run_name
