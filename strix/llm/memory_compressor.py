@@ -11,6 +11,8 @@ logger = logging.getLogger(__name__)
 
 MAX_TOTAL_TOKENS = 100_000
 MIN_RECENT_MESSAGES = 15
+FALLBACK_MESSAGE_PREVIEW_CHARS = 1_500
+FALLBACK_SUMMARY_MAX_MESSAGES = 12
 
 SUMMARY_PROMPT_TEMPLATE = """You are an agent performing context
 condensation for a security agent. Your job is to compress scan data while preserving
@@ -83,6 +85,58 @@ def _extract_message_text(msg: dict[str, Any]) -> str:
     return str(content)
 
 
+def _truncate(text: str, limit: int) -> str:
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    return f"{text[:limit].rstrip()}\n[...truncated...]"
+
+
+def _build_fallback_summary(messages: list[dict[str, Any]]) -> dict[str, Any]:
+    """Create a local, extractive summary when the compressor LLM is unavailable.
+
+    The compressor runs while the main agent is already close to the context limit.
+    If the summarization LLM times out, retrying more model calls can trap long
+    scans in a failure loop. This fallback keeps the scan moving by retaining
+    role/order, the beginning of the chunk, and the most recent messages where
+    operational state is usually concentrated.
+    """
+    if not messages:
+        return {
+            "role": "user",
+            "content": "<context_summary message_count='0'>No messages to summarize</context_summary>",
+        }
+
+    if len(messages) <= FALLBACK_SUMMARY_MAX_MESSAGES:
+        selected = list(enumerate(messages, start=1))
+    else:
+        head_count = FALLBACK_SUMMARY_MAX_MESSAGES // 2
+        tail_count = FALLBACK_SUMMARY_MAX_MESSAGES - head_count
+        selected = [
+            *list(enumerate(messages[:head_count], start=1)),
+            *list(enumerate(messages[-tail_count:], start=len(messages) - tail_count + 1)),
+        ]
+
+    lines = [
+        "LLM summarization failed; using local extractive fallback.",
+        "Preserved message previews follow in original order.",
+    ]
+    for idx, msg in selected:
+        role = msg.get("role", "unknown")
+        text = _truncate(_extract_message_text(msg), FALLBACK_MESSAGE_PREVIEW_CHARS)
+        lines.append(f"\n[{idx}/{len(messages)}] {role}:\n{text}")
+
+    skipped = len(messages) - len(selected)
+    if skipped > 0:
+        lines.insert(2, f"{skipped} middle message(s) omitted by fallback compression.")
+
+    summary_msg = "<context_summary message_count='{count}' fallback='true'>{text}</context_summary>"
+    return {
+        "role": "user",
+        "content": summary_msg.format(count=len(messages), text="\n".join(lines)),
+    }
+
+
 def _summarize_messages(
     messages: list[dict[str, Any]],
     model: str,
@@ -111,6 +165,7 @@ def _summarize_messages(
             "model": model,
             "messages": [{"role": "user", "content": prompt}],
             "timeout": timeout,
+            "num_retries": 0,
         }
         if api_key:
             completion_args["api_key"] = api_key
@@ -128,7 +183,7 @@ def _summarize_messages(
         }
     except Exception:
         logger.exception("Failed to summarize messages")
-        return messages[0]
+        return _build_fallback_summary(messages)
 
 
 def _handle_images(messages: list[dict[str, Any]], max_images: int) -> None:
