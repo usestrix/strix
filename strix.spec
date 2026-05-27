@@ -32,6 +32,8 @@ datas += collect_data_files('tiktoken_ext')
 
 datas += collect_data_files('litellm')
 
+datas += collect_data_files('agents', includes=['**/*.md', '**/*.jinja', '**/*.json'])
+
 hiddenimports = [
     # Core dependencies
     'litellm',
@@ -188,9 +190,6 @@ excludes = [
     'pyte',
     'openhands_aci',
     'openhands-aci',
-    'gql',
-    'fastapi',
-    'uvicorn',
     'numpydoc',
 
     # Google Cloud / Vertex AI
