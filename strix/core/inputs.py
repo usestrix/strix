@@ -109,13 +109,19 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
 def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
 ) -> ModelSettings:
+    # Anthropic + DeepSeek thinking reject ``tool_choice="required"`` outright
+    # when reasoning is enabled; OpenAI o-series accepts both but doesn't need
+    # the safety net. When reasoning is on we let the model self-select tools
+    # and rely on the system prompt + the ``_finish_tool_use_behavior`` callback
+    # to keep the loop converging on a lifecycle tool.
+    use_reasoning = reasoning_effort is not None and reasoning_effort != "none"
     model_settings = ModelSettings(
         parallel_tool_calls=False,
-        tool_choice="required",
+        tool_choice=None if use_reasoning else "required",
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
     )
-    if reasoning_effort is not None:
+    if use_reasoning:
         model_settings = model_settings.resolve(
             ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
         )

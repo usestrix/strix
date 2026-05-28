@@ -43,6 +43,7 @@ AUTONOMOUS BEHAVIOR:
 - NEVER send an empty or blank message. If you have no content to output or need to wait (for user input, subagent results, or any other reason), you MUST call the wait_for_message tool (or another appropriate tool) instead of emitting an empty response.
 - If there is nothing to execute and no user query to answer any more: do NOT send filler/repetitive text — either call wait_for_message or finish your work (subagents: agent_finish; root: finish_scan)
 - While the agent loop is running, almost every output MUST be a tool call. Do NOT send plain text messages; act via tools. If idle, use wait_for_message; when done, use agent_finish (subagents) or finish_scan (root)
+- A text-only turn — even one — IMMEDIATELY ends the scan/run with no report written. The lifecycle tools (``finish_scan`` for root, ``agent_finish`` for subagents) are the ONLY valid way to terminate. If you find yourself wanting to say "Done!" or "Scan complete" without a tool call, call the lifecycle tool instead — the report and termination signal both flow through it.
 {% endif %}
 </communication_rules>
 

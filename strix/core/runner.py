@@ -261,7 +261,7 @@ async def run_strix_scan(
         async with coordinator._lock:
             root_status = coordinator.statuses.get(root_id)
 
-        return await run_agent_loop(
+        result = await run_agent_loop(
             agent=root_agent,
             initial_input=initial_input,
             run_config=run_config,
@@ -275,6 +275,25 @@ async def run_strix_scan(
             event_sink=event_sink,
             hooks=hooks,
         )
+        if not interactive and result is not None:
+            final = getattr(result, "final_output", None)
+            scan_completed = False
+            if isinstance(final, str):
+                try:
+                    parsed = json.loads(final)
+                    scan_completed = bool(isinstance(parsed, dict) and parsed.get("scan_completed"))
+                except (ValueError, TypeError):
+                    scan_completed = False
+            if not scan_completed:
+                logger.error(
+                    "Scan %s ended without calling finish_scan. The agent "
+                    "emitted a text-only turn instead of a lifecycle tool call, "
+                    "so no executive report was written. Final output (first "
+                    "300 chars): %r",
+                    scan_id,
+                    str(final)[:300],
+                )
+        return result  # noqa: TRY300
     except BaseException:
         logger.exception("Strix scan %s failed", scan_id)
         if root_id is not None:
