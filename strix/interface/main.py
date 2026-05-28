@@ -48,11 +48,9 @@ from strix.telemetry import posthog, scarf
 from strix.telemetry.logging import configure_dependency_logging
 
 
-HOST_GATEWAY_HOSTNAME = "host.docker.internal"
-
+from strix.runtime.backends import get_host_gateway
 
 import logging  # noqa: E402
-
 
 logger = logging.getLogger(__name__)
 
@@ -183,6 +181,33 @@ def validate_environment() -> None:
 
 
 def check_docker_installed() -> None:
+    settings = load_settings()
+    backend = settings.runtime.backend
+
+    if backend == "podman":
+        if shutil.which("podman") is None:
+            logger.error("Podman CLI not found in PATH")
+            console = Console()
+            error_text = Text()
+            error_text.append("PODMAN NOT INSTALLED", style="bold red")
+            error_text.append("\n\n", style="white")
+            error_text.append("The 'podman' CLI was not found in your PATH.\n", style="white")
+            error_text.append(
+                "Please install Podman and ensure the 'podman' command is available.\n\n",
+                style="white",
+            )
+            panel = Panel(
+                error_text,
+                title="[bold white]STRIX",
+                title_align="left",
+                border_style="red",
+                padding=(1, 2),
+            )
+            console.print("\n", panel, "\n")
+            sys.exit(1)
+        logger.debug("Podman CLI present")
+        return
+
     if shutil.which("docker") is None:
         logger.error("Docker CLI not found in PATH")
         console = Console()
@@ -456,7 +481,8 @@ Examples:
                 parser.error(f"Invalid target '{target}'")
 
         assign_workspace_subdirs(args.targets_info)
-        rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+        host_gateway = get_host_gateway(load_settings().runtime.backend)
+        rewrite_localhost_targets(args.targets_info, host_gateway)
 
     return args
 

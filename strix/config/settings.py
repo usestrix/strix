@@ -47,6 +47,7 @@ class RuntimeSettings(BaseSettings):
         alias="STRIX_IMAGE",
     )
     backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
+    socket_path: str | None = Field(default=None, alias="STRIX_RUNTIME_SOCKET")
 
 
 class TelemetrySettings(BaseSettings):

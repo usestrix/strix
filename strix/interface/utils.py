@@ -1329,18 +1329,38 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
 
 def check_docker_connection() -> Any:
+    from strix.config import load_settings
+    from strix.runtime.backends import create_docker_client
+
+    settings = load_settings()
+    backend = settings.runtime.backend
+
     try:
-        return docker.from_env()
+        return create_docker_client(backend)
     except DockerException:
         console = Console()
         error_text = Text()
-        error_text.append("DOCKER NOT AVAILABLE", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
-        error_text.append(
-            "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
-            style="white",
-        )
+
+        if backend == "podman":
+            error_text.append("PODMAN NOT AVAILABLE", style="bold red")
+            error_text.append("\n\n", style="white")
+            error_text.append("Cannot connect to Podman daemon.\n", style="white")
+            error_text.append(
+                "Please ensure Podman is installed and running, and try running strix again.\n\n",
+                style="white",
+            )
+            error_text.append(
+                "Tip: set STRIX_RUNTIME_SOCKET to your Podman socket path if auto-detection fails.\n",
+                style="dim",
+            )
+        else:
+            error_text.append("DOCKER NOT AVAILABLE", style="bold red")
+            error_text.append("\n\n", style="white")
+            error_text.append("Cannot connect to Docker daemon.\n", style="white")
+            error_text.append(
+                "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
+                style="white",
+            )
 
         panel = Panel(
             error_text,

@@ -42,6 +42,15 @@ logger = logging.getLogger(__name__)
 
 
 class StrixDockerSandboxClient(DockerSandboxClient):
+    def __init__(
+        self,
+        docker_client: Any,
+        *,
+        host_gateway_hostname: str = "host.docker.internal",
+    ) -> None:
+        super().__init__(docker_client)
+        self._host_gateway_hostname = host_gateway_hostname
+
     async def _create_container(
         self,
         image: str,
@@ -106,7 +115,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
                 cap_add.append(cap)
 
         extra_hosts = create_kwargs.setdefault("extra_hosts", {})
-        extra_hosts["host.docker.internal"] = "host-gateway"
+        extra_hosts[self._host_gateway_hostname] = "host-gateway"
 
         logger.debug(
             "Creating sandbox container: image=%s caps=%s exposed_ports=%s",

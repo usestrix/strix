@@ -10,7 +10,7 @@ from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
-from strix.runtime.backends import get_backend
+from strix.runtime.backends import get_backend, get_host_gateway
 from strix.runtime.caido_bootstrap import bootstrap_caido
 
 
@@ -48,6 +48,9 @@ async def create_or_reuse(
             continue
         entries[ws_subdir] = LocalDir(src=Path(host_path).expanduser().resolve())
 
+    backend_name = load_settings().runtime.backend
+    host_gateway = get_host_gateway(backend_name)
+
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
     # picks up these env vars automatically. ``NO_PROXY`` keeps the
@@ -59,7 +62,7 @@ async def create_or_reuse(
         environment=Environment(
             value={
                 "PYTHONUNBUFFERED": "1",
-                "HOST_GATEWAY": "host.docker.internal",
+                "HOST_GATEWAY": host_gateway,
                 "http_proxy": container_caido_url,
                 "https_proxy": container_caido_url,
                 "ALL_PROXY": container_caido_url,
@@ -68,7 +71,6 @@ async def create_or_reuse(
         ),
     )
 
-    backend_name = load_settings().runtime.backend
     backend = get_backend(backend_name)
 
     logger.info(
