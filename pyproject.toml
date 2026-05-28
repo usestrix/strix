@@ -55,6 +55,8 @@ dev = [
   "bandit>=1.8.3",
   "pre-commit>=4.2.0",
   "pyinstaller>=6.17.0; python_version >= '3.12' and python_version < '3.15'",
+  "pytest>=9.0.3",
+  "pytest-mock>=3.15.1",
 ]
 
 [build-system]
@@ -100,6 +102,7 @@ module = [
     "docker.*",
     "caido_sdk_client.*",
     "pydantic_settings.*",
+    "pygments.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
@@ -197,7 +200,7 @@ ignore = [
 # Custom Docker subclass duplicates parent body; some imports are for annotations.
 # Backend factories import their backend's deps lazily so deployments
 # that pick a different backend don't need every backend's libs installed.
-"strix/runtime/backends.py" = ["PLC0415"]
+"strix/runtime/backends.py" = ["PLC0415", "BLE001", "SIM105", "S607"]
 "strix/runtime/docker_client.py" = [
     "TC002",  # Manifest, Container imported for annotations
     "TC003",  # uuid imported for annotation
@@ -228,6 +231,13 @@ ignore = [
 "strix/interface/tui/app.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915", "SIM105"]
 "strix/interface/main.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
 "strix/interface/tui/renderers/agent_message_renderer.py" = ["PLC0415"]
+# Lazy litellm imports avoid startup penalty and circular imports.
+"strix/config/models.py" = ["PLC0415"]
+"strix/report/usage.py" = ["PLC0415"]
+"strix/telemetry/logging.py" = ["PLC0415"]
+# Test files: unused fixture args are intentional (side-effect fixtures like
+# clean_env), and stubs have unused params for interface compatibility.
+"tests/**/*.py" = ["ARG002", "S108", "PLC0415", "ARG001", "TC003"]
 
 [tool.ruff.lint.isort]
 force-single-line = false
@@ -273,6 +283,20 @@ reportUnusedClass = true
 reportUnusedFunction = true
 reportUnusedVariable = true
 reportDuplicateImport = true
+
+# ============================================================================
+# Black Configuration (Code Formatter)
+# ============================================================================
+
+# ============================================================================
+# Pytest Configuration
+# ============================================================================
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
 
 # ============================================================================
 # Black Configuration (Code Formatter)

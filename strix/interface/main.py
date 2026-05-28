@@ -5,6 +5,7 @@ Strix Agent Interface
 
 import argparse
 import asyncio
+import logging
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -44,13 +45,10 @@ from strix.interface.utils import (
 )
 from strix.report.state import get_global_report_state
 from strix.report.writer import read_run_record, write_run_record
+from strix.runtime.backends import get_host_gateway
 from strix.telemetry import posthog, scarf
 from strix.telemetry.logging import configure_dependency_logging
 
-
-from strix.runtime.backends import get_host_gateway
-
-import logging  # noqa: E402
 
 logger = logging.getLogger(__name__)
 

@@ -1,4 +1,4 @@
-.PHONY: help install dev-install format lint type-check security check-all clean pre-commit setup-dev dev
+.PHONY: help install dev-install format lint type-check security test check-all clean pre-commit setup-dev dev
 
 help:
 	@echo "Available commands:"
@@ -11,7 +11,8 @@ help:
 	@echo "  lint          - Lint code with ruff"
 	@echo "  type-check    - Run type checking with mypy and pyright"
 	@echo "  security      - Run security checks with bandit"
-	@echo "  check-all     - Run all code quality checks"
+	@echo "  test          - Run test suite"
+	@echo "  check-all     - Run all code quality checks + tests"
 	@echo ""
 	@echo "Development:"
 	@echo "  pre-commit    - Run pre-commit hooks on all files"
@@ -50,7 +51,12 @@ security:
 	uv run bandit -r strix/ -c pyproject.toml
 	@echo "✅ Security checks complete!"
 
-check-all: format lint type-check security
+test:
+	@echo "🧪 Running tests with pytest..."
+	uv run pytest tests/ -v
+	@echo "✅ All tests passed!"
+
+check-all: format lint security test
 	@echo "✅ All code quality checks passed!"
 
 pre-commit:

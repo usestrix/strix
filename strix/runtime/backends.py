@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
@@ -62,7 +63,7 @@ def create_docker_client(backend_name: str) -> Any:
     if backend_name == "podman":
         for candidate in _podman_socket_candidates():
             path = candidate.replace("unix://", "")
-            if os.path.exists(path):
+            if Path(path).exists():
                 try:
                     logger.debug("Trying podman socket: %s", candidate)
                     return docker.DockerClient(base_url=candidate)
@@ -81,8 +82,7 @@ def _podman_socket_candidates() -> list[str]:
     candidates: list[str] = []
 
     # -- macOS podman machine (applehv / libkrun) --
-    for entry in _macos_podman_machine_sockets():
-        candidates.append(entry)
+    candidates.extend(_macos_podman_machine_sockets())
 
     # -- Linux rootless --
     xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
@@ -115,6 +115,7 @@ def _macos_podman_machine_sockets() -> list[str]:
             capture_output=True,
             text=True,
             timeout=5,
+            check=False,
         )
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return []
@@ -154,9 +155,7 @@ async def _create_sandbox(
 
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
-    client = StrixDockerSandboxClient(
-        docker_client, host_gateway_hostname=host_gateway_hostname
-    )
+    client = StrixDockerSandboxClient(docker_client, host_gateway_hostname=host_gateway_hostname)
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)
     await session.start()

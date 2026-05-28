@@ -14,7 +14,6 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
 from urllib.request import Request, urlopen
 
-import docker
 from docker.errors import DockerException, ImageNotFound
 from rich.console import Console
 from rich.panel import Panel
@@ -1351,7 +1350,8 @@ def check_docker_connection() -> Any:
             )
             error_text.append(f"Reason: {exc}\n\n", style="dim")
             error_text.append(
-                "Tip: set STRIX_RUNTIME_SOCKET to your Podman socket path if auto-detection fails.\n",
+                "Tip: set STRIX_RUNTIME_SOCKET to your Podman socket path "
+                "if auto-detection fails.\n",
                 style="dim",
             )
         else:
@@ -1359,7 +1359,8 @@ def check_docker_connection() -> Any:
             error_text.append("\n\n", style="white")
             error_text.append("Cannot connect to Docker daemon.\n", style="white")
             error_text.append(
-                "Please ensure Docker Desktop is installed and running, and try running strix again.\n\n",
+                "Please ensure Docker Desktop is installed and running, "
+                "and try running strix again.\n\n",
                 style="white",
             )
             error_text.append(f"Reason: {exc}\n", style="dim")
