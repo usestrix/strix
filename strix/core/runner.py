@@ -284,6 +284,8 @@ async def run_strix_scan(
                     scan_completed = bool(isinstance(parsed, dict) and parsed.get("scan_completed"))
                 except (ValueError, TypeError):
                     scan_completed = False
+            elif isinstance(final, dict):
+                scan_completed = bool(final.get("scan_completed"))
             if not scan_completed:
                 logger.error(
                     "Scan %s ended without calling finish_scan. The agent "
