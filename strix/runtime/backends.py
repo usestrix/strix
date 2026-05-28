@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -82,7 +83,8 @@ def _podman_socket_candidates() -> list[str]:
     candidates: list[str] = []
 
     # -- macOS podman machine (applehv / libkrun) --
-    candidates.extend(_macos_podman_machine_sockets())
+    if sys.platform == "darwin":
+        candidates.extend(_macos_podman_machine_sockets())
 
     # -- Linux rootless --
     xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
@@ -100,7 +102,7 @@ def _podman_socket_candidates() -> list[str]:
     # -- macOS podman machine temp-dir fallback --
     tmpdir = os.environ.get("TMPDIR")
     if tmpdir:
-        candidates.append(f"unix://{tmpdir}podman/podman-machine-default-api.sock")
+        candidates.append(f"unix://{tmpdir.rstrip('/')}/podman/podman-machine-default-api.sock")
 
     return candidates
 

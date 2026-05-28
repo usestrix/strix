@@ -135,8 +135,13 @@ class TestPodmanSocketCandidates:
         uid = os.getuid()
         assert f"unix:///run/user/{uid}/podman/podman.sock" in candidates
 
-    def test_includes_tmpdir_when_set(self) -> None:
+    def test_includes_tmpdir_when_set_with_trailing_slash(self) -> None:
         os.environ["TMPDIR"] = "/tmp/"
+        candidates = _podman_socket_candidates()
+        assert "unix:///tmp/podman/podman-machine-default-api.sock" in candidates
+
+    def test_includes_tmpdir_when_set_without_trailing_slash(self) -> None:
+        os.environ["TMPDIR"] = "/tmp"
         candidates = _podman_socket_candidates()
         assert "unix:///tmp/podman/podman-machine-default-api.sock" in candidates
 

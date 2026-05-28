@@ -114,8 +114,13 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             if cap not in cap_add:
                 cap_add.append(cap)
 
-        extra_hosts = create_kwargs.setdefault("extra_hosts", {})
-        extra_hosts[self._host_gateway_hostname] = "host-gateway"
+        # Docker requires an explicit host-gateway mapping for
+        # host.docker.internal. Podman resolves host.containers.internal
+        # via its built-in DNS and the compat API's host-gateway support
+        # only arrived in v4.7, so skip extra_hosts for Podman.
+        if self._host_gateway_hostname == "host.docker.internal":
+            extra_hosts = create_kwargs.setdefault("extra_hosts", {})
+            extra_hosts[self._host_gateway_hostname] = "host-gateway"
 
         logger.debug(
             "Creating sandbox container: image=%s caps=%s exposed_ports=%s",

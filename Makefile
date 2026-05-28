@@ -56,7 +56,7 @@ test:
 	uv run pytest tests/ -v
 	@echo "✅ All tests passed!"
 
-check-all: format lint security test
+check-all: format lint type-check security test
 	@echo "✅ All code quality checks passed!"
 
 pre-commit:
