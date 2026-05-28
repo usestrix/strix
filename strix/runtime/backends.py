@@ -35,7 +35,7 @@ def get_host_gateway(backend_name: str) -> str:
 def create_docker_client(backend_name: str) -> Any:
     """Create a ``docker.DockerClient`` pointed at the right daemon.
 
-    Resolution order:
+    Resolution order (each step falls through on failure):
     1. ``STRIX_RUNTIME_SOCKET`` env var / config (explicit)
     2. ``DOCKER_HOST`` env var (standard docker-py mechanism)
     3. Per-backend auto-detection (e.g. Podman socket probing)
@@ -45,26 +45,46 @@ def create_docker_client(backend_name: str) -> Any:
 
     settings = load_settings()
     socket_path = settings.runtime.socket_path
+
     if socket_path:
-        logger.debug("Using explicit runtime socket: %s", socket_path)
-        return docker.DockerClient(base_url=socket_path)
+        try:
+            logger.debug("Trying STRIX_RUNTIME_SOCKET: %s", socket_path)
+            return docker.DockerClient(base_url=socket_path)
+        except Exception as exc:
+            logger.debug("STRIX_RUNTIME_SOCKET failed: %s", exc)
 
     if os.environ.get("DOCKER_HOST"):
-        return docker.from_env()
+        try:
+            return docker.from_env()
+        except Exception as exc:
+            logger.debug("DOCKER_HOST connection failed: %s", exc)
 
     if backend_name == "podman":
         for candidate in _podman_socket_candidates():
             path = candidate.replace("unix://", "")
             if os.path.exists(path):
-                logger.debug("Auto-detected podman socket: %s", candidate)
-                return docker.DockerClient(base_url=candidate)
+                try:
+                    logger.debug("Trying podman socket: %s", candidate)
+                    return docker.DockerClient(base_url=candidate)
+                except Exception as exc:
+                    logger.debug("Podman socket %s failed: %s", candidate, exc)
 
     return docker.from_env()
 
 
 def _podman_socket_candidates() -> list[str]:
-    """Return Podman socket URI candidates (rootless first, then rootful)."""
+    """Return Podman socket URI candidates ordered by likelihood.
+
+    Covers Linux rootless, Linux rootful, and macOS ``podman machine``
+    (both applehv and libkrun).
+    """
     candidates: list[str] = []
+
+    # -- macOS podman machine (applehv / libkrun) --
+    for entry in _macos_podman_machine_sockets():
+        candidates.append(entry)
+
+    # -- Linux rootless --
     xdg_runtime = os.environ.get("XDG_RUNTIME_DIR")
     if xdg_runtime:
         candidates.append(f"unix://{xdg_runtime}/podman/podman.sock")
@@ -73,8 +93,50 @@ def _podman_socket_candidates() -> list[str]:
             candidates.append(f"unix:///run/user/{os.getuid()}/podman/podman.sock")
         except (AttributeError, OSError):
             pass
+
+    # -- Linux rootful --
     candidates.append("unix:///run/podman/podman.sock")
+
+    # -- macOS podman machine temp-dir fallback --
+    tmpdir = os.environ.get("TMPDIR")
+    if tmpdir:
+        candidates.append(f"unix://{tmpdir}podman/podman-machine-default-api.sock")
+
     return candidates
+
+
+def _macos_podman_machine_sockets() -> list[str]:
+    """Query ``podman machine inspect`` for the exact socket path (macOS)."""
+    import subprocess
+
+    try:
+        proc = subprocess.run(
+            ["podman", "machine", "inspect"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return []
+
+    if proc.returncode != 0:
+        return []
+
+    try:
+        import json
+
+        machines = json.loads(proc.stdout)
+    except json.JSONDecodeError:
+        return []
+
+    sockets: list[str] = []
+    for m in machines:
+        conn = m.get("ConnectionInfo", {})
+        sock = conn.get("PodmanSocket", {})
+        path = sock.get("Path")
+        if path:
+            sockets.append(f"unix://{path}")
+    return sockets
 
 
 # -- backend factories --------------------------------------------------
