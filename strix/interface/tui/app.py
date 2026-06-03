@@ -3,7 +3,9 @@ import asyncio
 import atexit
 import contextlib
 import logging
+import platform
 import signal
+import subprocess
 import sys
 import threading
 from collections.abc import Callable
@@ -43,6 +45,32 @@ from strix.runtime import session_manager
 
 
 logger = logging.getLogger(__name__)
+
+
+def _native_clipboard_copy(text: str) -> bool:
+    system = platform.system()
+    if system == "Darwin":
+        cmd = ["pbcopy"]
+    elif system == "Windows":
+        cmd = ["clip"]
+    else:
+        import shutil as _shutil
+
+        if _shutil.which("wl-copy"):
+            cmd = ["wl-copy"]
+        elif _shutil.which("xclip"):
+            cmd = ["xclip", "-selection", "clipboard"]
+        elif _shutil.which("xsel"):
+            cmd = ["xsel", "--clipboard", "--input"]
+        else:
+            return False
+    try:
+        proc = subprocess.run(
+            cmd, input=text.encode("utf-8"), check=False, timeout=2
+        )
+        return proc.returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
 
 
 def get_package_version() -> str:
@@ -562,7 +590,8 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "copy_vuln_detail":
             markdown_text = self._get_markdown_report()
-            self.app.copy_to_clipboard(markdown_text)
+            if not _native_clipboard_copy(markdown_text):
+                self.app.copy_to_clipboard(markdown_text)
 
             copy_button = self.query_one("#copy_vuln_detail", Button)
             copy_button.label = "Copied!"
@@ -1815,7 +1844,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 self.screen.clear_selection()
                 if selected and selected.strip():
                     cleaned = self._clean_copied_text(selected)
-                    self.copy_to_clipboard(cleaned if cleaned.strip() else selected)
+                    final_text = cleaned if cleaned.strip() else selected
+                    if not _native_clipboard_copy(final_text):
+                        self.copy_to_clipboard(final_text)
                     copied = True
         except Exception:
             logger.debug("Failed to copy screen selection", exc_info=True)
@@ -1825,7 +1856,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 chat_input = self.query_one("#chat_input", ChatTextArea)
                 selected = chat_input.selected_text
                 if selected and selected.strip():
-                    self.copy_to_clipboard(selected)
+                    if not _native_clipboard_copy(selected):
+                        self.copy_to_clipboard(selected)
                     chat_input.move_cursor(chat_input.cursor_location)
                     copied = True
             except Exception:
