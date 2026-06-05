@@ -3,12 +3,12 @@ title: "MiniMax"
 description: "Configure Strix with MiniMax models"
 ---
 
-[MiniMax](https://www.minimax.io) provides powerful large language models with up to 1M token context windows through an OpenAI-compatible API.
+[MiniMax](https://www.minimax.io) provides powerful large language models with large context windows through an OpenAI-compatible API.
 
 ## Setup
 
 ```bash
-export STRIX_LLM="openai/MiniMax-M2.7"
+export STRIX_LLM="openai/MiniMax-M3"
 export LLM_API_KEY="your-minimax-api-key"
 export LLM_API_BASE="https://api.minimax.io/v1"
 ```
@@ -16,18 +16,20 @@ export LLM_API_BASE="https://api.minimax.io/v1"
 Or use the shorthand with automatic base URL detection:
 
 ```bash
-export STRIX_LLM="openai/MiniMax-M2.7"
+export STRIX_LLM="openai/MiniMax-M3"
 export MINIMAX_API_KEY="your-minimax-api-key"
 ```
 
 ## Available Models
 
-| Model | Configuration | Context Window |
-|-------|---------------|----------------|
-| MiniMax-M2.7 | `openai/MiniMax-M2.7` | 1M tokens |
-| MiniMax-M2.7-highspeed | `openai/MiniMax-M2.7-highspeed` | 1M tokens |
+| Model | Configuration | Context Window | Max Output |
+|-------|---------------|----------------|------------|
+| MiniMax-M3 (default) | `openai/MiniMax-M3` | 512K tokens | 128K tokens |
+| MiniMax-M2.7 | `openai/MiniMax-M2.7` | 192K tokens | — |
+| MiniMax-M2.7-highspeed | `openai/MiniMax-M2.7-highspeed` | 192K tokens | — |
 
-**MiniMax-M2.7** is the latest flagship model with strong reasoning and coding capabilities.
+**MiniMax-M3** is the latest flagship model with a 512K context window, up to 128K output, and image input support.
+**MiniMax-M2.7** is the previous generation flagship with strong reasoning and coding capabilities.
 **MiniMax-M2.7-highspeed** offers faster inference with slightly reduced quality.
 
 ## Get API Key

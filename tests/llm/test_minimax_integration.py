@@ -21,7 +21,7 @@ pytestmark = pytest.mark.skipif(
 @pytest.fixture()
 def minimax_llm(monkeypatch: pytest.MonkeyPatch) -> LLM:
     """Create an LLM instance configured for MiniMax."""
-    monkeypatch.setenv("STRIX_LLM", "openai/MiniMax-M2.7")
+    monkeypatch.setenv("STRIX_LLM", "openai/MiniMax-M3")
     monkeypatch.setenv("LLM_API_KEY", os.environ.get("MINIMAX_API_KEY", ""))
     monkeypatch.setenv("LLM_API_BASE", "https://api.minimax.io/v1")
     monkeypatch.setenv("STRIX_TELEMETRY", "0")
@@ -65,7 +65,7 @@ async def test_minimax_config_auto_detection():
     api_key = os.environ.get("MINIMAX_API_KEY", "")
     orig_llm_key = os.environ.pop("LLM_API_KEY", None)
     orig_llm_base = os.environ.pop("LLM_API_BASE", None)
-    os.environ["STRIX_LLM"] = "openai/MiniMax-M2.7"
+    os.environ["STRIX_LLM"] = "openai/MiniMax-M3"
 
     try:
         config = LLMConfig()
