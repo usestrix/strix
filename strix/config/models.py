@@ -22,7 +22,7 @@ _SDK_PREFIXES = {"any-llm", "litellm", "openai"}
 _ROUTING_PREFIXES = ("litellm/", "any-llm/", "openrouter/", "openai/")
 _REASONING_MODEL_RE = re.compile(
     r"(?:^|/)"
-    r"(?:anthropic/|claude|o[134][-\w.]*|gpt-5|deepseek-reasoner|deepseek-r1|gemini-.*-thinking)",
+    r"(?:anthropic/|claude|o\d+[-\w.]*|gpt-5|deepseek-reasoner|deepseek-r1|gemini-.*-thinking)",
     re.IGNORECASE,
 )
 
@@ -139,4 +139,8 @@ def effective_reasoning_effort(
         return None
     if scan_mode == "quick" and effort in ("high", "xhigh"):
         return "medium"
+    if effort == "xhigh":
+        return "high"
+    if effort == "minimal":
+        return "low"
     return effort
