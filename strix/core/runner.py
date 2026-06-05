@@ -153,7 +153,11 @@ async def run_strix_scan(
         is_whitebox = any(t.get("type") == "local_code" for t in targets)
         skills = list(scan_config.get("skills") or [])
         root_task = build_root_task(scan_config)
-        model_settings = make_model_settings(settings.llm.reasoning_effort)
+        model_settings = make_model_settings(
+            settings.llm.reasoning_effort,
+            model_name=resolved_model,
+            scan_mode=scan_mode,
+        )
         run_config = RunConfig(
             model=resolved_model,
             model_settings=model_settings,

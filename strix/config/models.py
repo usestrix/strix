@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from typing import TYPE_CHECKING
 
 from agents import set_default_openai_api, set_default_openai_key
@@ -14,10 +15,16 @@ from agents.retry import (
 
 
 if TYPE_CHECKING:
-    from strix.config.settings import Settings
+    from strix.config.settings import ReasoningEffort, Settings
 
 
 _SDK_PREFIXES = {"any-llm", "litellm", "openai"}
+_ROUTING_PREFIXES = ("litellm/", "any-llm/", "openrouter/", "openai/")
+_REASONING_MODEL_RE = re.compile(
+    r"(?:^|/)"
+    r"(?:anthropic/|claude|o[134][-\w.]*|gpt-5|deepseek-reasoner|deepseek-r1|gemini-.*-thinking)",
+    re.IGNORECASE,
+)
 
 
 DEFAULT_MODEL_RETRY = ModelRetrySettings(
@@ -98,3 +105,38 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     if model.startswith(("litellm/", "any-llm/")):
         return True
     return bool(settings.llm.api_base)
+
+
+def _model_slug(model_name: str) -> str:
+    slug = model_name.strip().lower()
+    for _ in range(len(_ROUTING_PREFIXES)):
+        stripped = False
+        for prefix in _ROUTING_PREFIXES:
+            if slug.startswith(prefix):
+                slug = slug[len(prefix) :]
+                stripped = True
+                break
+        if not stripped:
+            break
+    return slug
+
+
+def model_supports_reasoning(model_name: str) -> bool:
+    """Return whether the resolved model accepts OpenAI-style reasoning params."""
+    return bool(_REASONING_MODEL_RE.search(_model_slug(model_name)))
+
+
+def effective_reasoning_effort(
+    effort: ReasoningEffort,
+    *,
+    model_name: str,
+    scan_mode: str = "deep",
+) -> ReasoningEffort | None:
+    """Resolve configured reasoning effort for a concrete model + scan mode."""
+    if effort == "none":
+        return None
+    if not model_supports_reasoning(model_name):
+        return None
+    if scan_mode == "quick" and effort in ("high", "xhigh"):
+        return "medium"
+    return effort
