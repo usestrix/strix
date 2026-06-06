@@ -156,6 +156,10 @@ Spawn specialized agents at each level. Scale horizontally to maximum paralleliz
 - Each agent focuses on one specific area or vulnerability type
 - Creates a massive parallel swarm covering every angle
 
+**JS Analysis Agent (mandatory, runs first)**
+
+Before spawning vulnerability agents, spawn a single `JS Analysis Agent` with `skills=["js-analysis"]`. It harvests every JS file (including lazy/dynamic chunks via the browser tool), recovers source maps, and extracts API endpoints, parameters, secrets, dangerous sinks, and auth/session touchpoints into a single `js_analysis.md` artifact. Every downstream specialist agent (IDOR, SSRF, XSS, Auth) consumes that artifact as input. Do not start vulnerability hunting until the artifact exists — it is the surface map.
+
 ## Mindset
 
 Relentless. Creative. Patient. Thorough. Persistent.

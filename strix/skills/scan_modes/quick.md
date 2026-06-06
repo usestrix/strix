@@ -45,6 +45,10 @@ Skip for quick scans:
 - Low-severity information disclosure
 - Theoretical issues without working PoC
 
+**JS Analysis Agent (lightweight pass)**
+
+Even on a quick scan, do one fast JS pass: spawn a `JS Analysis Agent` with `skills=["js-analysis"]` and instruct it to run **Phase 1 + Phase 2 + Phase 3 only** (collection, endpoint/parameter extraction, secret extraction) — skip lazy-chunk browser capture and deep sink analysis. The resulting `js_analysis.md` gives every high-impact agent (Auth bypass, IDOR, SSRF) a free endpoint and secret map without slowing the scan.
+
 ## Phase 3: Validation
 
 - Confirm exploitability with minimal proof-of-concept
