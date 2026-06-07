@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-from agents import set_default_openai_api, set_default_openai_key
+from agents import set_default_openai_api, set_default_openai_key, set_tracing_disabled
 from agents.retry import (
     ModelRetryBackoffSettings,
     ModelRetrySettings,
@@ -44,6 +44,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     ``any-llm/`` routing, produced by :func:`normalize_model_name`.
     """
     llm = settings.llm
+    set_tracing_disabled(True)
     _configure_litellm_compatibility()
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)

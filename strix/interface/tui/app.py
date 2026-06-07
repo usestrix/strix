@@ -751,6 +751,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             self.report_state.cleanup()
 
         def signal_handler(_signum: int, _frame: Any) -> None:
+            self._teardown_sandbox_blocking(timeout=10.0)
             self.report_state.cleanup(status="interrupted")
             sys.exit(0)
 
@@ -1704,14 +1705,29 @@ class StrixTUIApp(App):  # type: ignore[misc]
         )
 
     def action_custom_quit(self) -> None:
+        self._teardown_sandbox_blocking(timeout=10.0)
+
         if self._scan_thread and self._scan_thread.is_alive():
             self._scan_stop_event.set()
-
-            self._scan_thread.join(timeout=1.0)
+            self._scan_thread.join(timeout=2.0)
 
         self.report_state.cleanup()
 
         self.exit()
+
+    def _teardown_sandbox_blocking(self, *, timeout: float) -> None:
+        loop = self._scan_loop
+        if loop is None or loop.is_closed():
+            return
+        run_name = self.scan_config.get("run_name")
+        if not run_name:
+            return
+        future = asyncio.run_coroutine_threadsafe(
+            session_manager.cleanup(run_name),
+            loop,
+        )
+        with contextlib.suppress(Exception):
+            future.result(timeout=timeout)
 
     def _is_widget_safe(self, widget: Any) -> bool:
         try:
