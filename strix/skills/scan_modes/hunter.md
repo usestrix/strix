@@ -197,3 +197,4 @@ Before spawning vulnerability agents, spawn a single `JS Analysis Agent` with `s
 - Never test targets not explicitly authorized
 - Never stop mid-scan without a summary of findings
 - Zero hallucination: never write a response you didn't receive
+- **Test memory is mandatory**: call `query_tests` before testing any endpoint and `record_test` after every attempt. On `--resume`, this lets agents skip ground already covered.

@@ -70,3 +70,7 @@ When a strong primitive is found (auth weakness, injection point, internal acces
 ## Mindset
 
 Think like a time-boxed bug bounty hunter going for quick wins. Prioritize breadth over depth on critical areas. If something looks exploitable, validate quickly and move on. Don't get stuck—if an attack vector isn't yielding results quickly, pivot.
+
+## Test Memory
+
+Even in quick mode, call `query_tests` before testing an endpoint and `record_test` after — this is the cheapest possible deduplication. On `--resume` it lets you skip directly to surface you haven't touched yet.

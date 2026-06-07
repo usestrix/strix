@@ -205,12 +205,72 @@ VulnerabilityDetailScreen {
 }
 
 #chat_area_container {
-    width: 80%;
+    width: 44%;
     background: transparent;
 }
 
 #chat_area_container.-full-width {
     width: 100%;
+}
+
+#activity_panel {
+    width: 18%;
+    background: transparent;
+    margin-right: 1;
+}
+
+#activity_panel.-hidden {
+    display: none;
+}
+
+#activity_scroll {
+    height: 1fr;
+    background: transparent;
+    border: round #333333;
+    border-title-color: #a8a29e;
+    border-title-style: bold;
+    padding: 0 1;
+    scrollbar-background: #000000;
+    scrollbar-color: #1a1a1a;
+    scrollbar-corner-color: #000000;
+    scrollbar-size: 1 1;
+}
+
+#activity_display {
+    height: auto;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+}
+
+#plan_panel {
+    width: 18%;
+    background: transparent;
+    margin-left: 1;
+}
+
+#plan_panel.-hidden {
+    display: none;
+}
+
+#plan_scroll {
+    height: 1fr;
+    background: transparent;
+    border: round #333333;
+    border-title-color: #a8a29e;
+    border-title-style: bold;
+    padding: 0 1;
+    scrollbar-background: #000000;
+    scrollbar-color: #1a1a1a;
+    scrollbar-corner-color: #000000;
+    scrollbar-size: 1 1;
+}
+
+#plan_display {
+    height: auto;
+    background: transparent;
+    padding: 0;
+    margin: 0;
 }
 
 #chat_history {

@@ -165,3 +165,7 @@ Before spawning vulnerability agents, spawn a single `JS Analysis Agent` with `s
 Relentless. Creative. Patient. Thorough. Persistent.
 
 This is about finding what others miss. Test every parameter, every endpoint, every edge case. If one approach fails, try ten more. Understand how components interact to find systemic issues.
+
+## Test Memory
+
+Every endpoint test must be recorded via `record_test` and every endpoint must be checked via `query_tests` before testing — this is how deep mode avoids burning iterations on already-covered ground, especially after `--resume`. The root agent uses `test_log_summary` to spot coverage gaps.

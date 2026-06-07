@@ -101,3 +101,7 @@ When you discover a useful pivot (info leak, weak boundary, partial access), imm
 ## Mindset
 
 Methodical and systematic. Document as you go. Validate everything—no assumptions about exploitability. Think about business impact, not just technical severity.
+
+## Test Memory
+
+Before testing an endpoint, call `query_tests(endpoint=..., vuln_class=...)`. After every test attempt — including negatives — call `record_test(...)`. Other agents (and the resumed session) read this log to skip duplicate work.

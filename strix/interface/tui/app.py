@@ -846,9 +846,19 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
             vulnerabilities_panel = VulnerabilitiesPanel(id="vulnerabilities_panel")
 
+            activity_display = Static("", id="activity_display")
+            activity_scroll = VerticalScroll(activity_display, id="activity_scroll")
+            activity_panel = Vertical(activity_scroll, id="activity_panel")
+
+            plan_display = Static("", id="plan_display")
+            plan_scroll = VerticalScroll(plan_display, id="plan_scroll")
+            plan_panel = Vertical(plan_scroll, id="plan_panel")
+
             sidebar = Vertical(agents_tree, vulnerabilities_panel, stats_scroll, id="sidebar")
 
+            content_container.mount(activity_panel)
             content_container.mount(chat_area_container)
+            content_container.mount(plan_panel)
             content_container.mount(sidebar)
 
             chat_area_container.mount(chat_history)
@@ -936,6 +946,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._update_stats_display()
 
         self._update_vulnerabilities_panel()
+
+        self._update_activity_panel()
+
+        self._update_plan_panel()
 
     def _sync_agent_graph(self) -> None:
         future = self._agent_graph_sync_future
@@ -1277,6 +1291,157 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._safe_widget_operation(vuln_panel.remove_class, "hidden")
         vuln_panel.update_vulnerabilities(enriched_vulns)
 
+    def _update_activity_panel(self) -> None:
+        try:
+            display = self.query_one("#activity_display", Static)
+        except (ValueError, Exception):
+            return
+        if not self._is_widget_safe(display):
+            return
+
+        agent_id = self.selected_agent_id
+        if not agent_id or agent_id not in self.live_view.agents:
+            agent_id = next(iter(self.live_view.agents), None)
+
+        text = Text()
+        agent_name = ""
+        if agent_id:
+            agent_name = self.live_view.agents.get(agent_id, {}).get("name", agent_id)
+        text.append("Activity", style="bold #a8a29e")
+        if agent_name:
+            text.append("  ")
+            text.append(agent_name, style="dim")
+        text.append("\n")
+
+        events = self._gather_agent_events(agent_id) if agent_id else []
+        tool_events = [e for e in events if e.get("type") == "tool"]
+
+        if not tool_events:
+            text.append("\n")
+            text.append("no tool calls yet", style="dim")
+            self._safe_widget_operation(display.update, text)
+            return
+
+        recent = tool_events[-200:]
+        status_color = {
+            "completed": "#22c55e",
+            "running": "#eab308",
+            "error": "#ef4444",
+            "failed": "#ef4444",
+        }
+        for event in recent:
+            data = event.get("data") or {}
+            tool_name = str(data.get("tool_name") or "?")
+            status = str(data.get("status") or "running").lower()
+            color = status_color.get(status, "#a8a29e")
+            timestamp = event.get("timestamp", "")
+            ts_suffix = timestamp[11:19] if len(timestamp) >= 19 else ""
+
+            marker = "●" if status == "running" else "✓" if status == "completed" else "✗"
+            text.append(f"{marker} ", style=color)
+            text.append(tool_name, style="white")
+            args = data.get("args")
+            if isinstance(args, dict) and args:
+                summary = self._summarize_tool_args(tool_name, args)
+                if summary:
+                    text.append("  ")
+                    text.append(summary, style="dim")
+            if ts_suffix:
+                text.append(f"  {ts_suffix}", style="#6b7280")
+            text.append("\n")
+
+        self._safe_widget_operation(display.update, text)
+
+    @staticmethod
+    def _summarize_tool_args(tool_name: str, args: dict[str, Any]) -> str:
+        priority_keys = (
+            "endpoint",
+            "url",
+            "path",
+            "target",
+            "command",
+            "vuln_class",
+            "skill",
+            "title",
+            "name",
+            "query",
+        )
+        for key in priority_keys:
+            value = args.get(key)
+            if isinstance(value, str) and value:
+                trimmed = value.strip().replace("\n", " ")
+                if len(trimmed) > 60:
+                    trimmed = trimmed[:57] + "..."
+                return trimmed
+        for value in args.values():
+            if isinstance(value, str) and value:
+                trimmed = value.strip().replace("\n", " ")
+                if len(trimmed) > 60:
+                    trimmed = trimmed[:57] + "..."
+                return trimmed
+        return ""
+
+    def _update_plan_panel(self) -> None:
+        try:
+            display = self.query_one("#plan_display", Static)
+        except (ValueError, Exception):
+            return
+        if not self._is_widget_safe(display):
+            return
+
+        from strix.tools.todo.tools import _sorted_todos, _todos_storage
+
+        agent_id = self.selected_agent_id
+        if not agent_id or agent_id not in self.live_view.agents:
+            agent_id = next(iter(self.live_view.agents), None)
+
+        text = Text()
+        text.append("Plan / Todos", style="bold #a8a29e")
+        if agent_id:
+            agent_name = self.live_view.agents.get(agent_id, {}).get("name", agent_id)
+            text.append("  ")
+            text.append(agent_name, style="dim")
+        text.append("\n")
+
+        if not agent_id:
+            text.append("\nno agent selected", style="dim")
+            self._safe_widget_operation(display.update, text)
+            return
+
+        todos = _sorted_todos(agent_id) if agent_id in _todos_storage else []
+        if not todos:
+            text.append("\nno todos yet", style="dim")
+            self._safe_widget_operation(display.update, text)
+            return
+
+        status_marker = {"done": "[x]", "in_progress": "[~]", "pending": "[ ]"}
+        status_color = {
+            "done": "#22c55e",
+            "in_progress": "#eab308",
+            "pending": "#a8a29e",
+        }
+        priority_color = {
+            "critical": "#ef4444",
+            "high": "#f97316",
+            "normal": "#a8a29e",
+            "low": "#6b7280",
+        }
+        for todo in todos:
+            status = str(todo.get("status") or "pending")
+            priority = str(todo.get("priority") or "normal")
+            marker = status_marker.get(status, "[?]")
+            text.append(marker, style=status_color.get(status, "#a8a29e"))
+            text.append(" ")
+            if priority in ("critical", "high"):
+                text.append(f"({priority[0].upper()}) ", style=priority_color.get(priority))
+            content = str(todo.get("content") or todo.get("title") or "")
+            if len(content) > 200:
+                content = content[:197] + "..."
+            text.append(content, style="white" if status != "done" else "dim")
+            text.append("\n")
+
+        self._safe_widget_operation(display.update, text)
+
     def _get_sweep_animation(self, color_palette: list[str]) -> Text:
         text = Text()
         num_squares = self._sweep_num_squares
@@ -1377,6 +1542,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._displayed_events.clear()
 
         self.call_later(self._update_chat_view)
+        self.call_later(self._update_activity_panel)
+        self.call_later(self._update_plan_panel)
         self._update_agent_status_display()
 
     def _start_scan_thread(self) -> None:
