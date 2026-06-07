@@ -99,3 +99,25 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     if model.startswith(("litellm/", "any-llm/")):
         return True
     return bool(settings.llm.api_base)
+
+
+def model_supports_reasoning(model_name: str) -> bool:
+    import litellm
+
+    name = model_name.strip()
+    for prefix in ("litellm/", "any-llm/"):
+        if name.lower().startswith(prefix):
+            name = name[len(prefix) :]
+            break
+
+    candidates = [name]
+    if "/" not in name:
+        candidates.extend(f"{p}/{name}" for p in ("openai", "anthropic", "deepseek", "gemini"))
+
+    for candidate in candidates:
+        try:
+            if litellm.supports_reasoning(candidate):
+                return True
+        except Exception:  # noqa: BLE001, S112
+            continue  # nosec B112
+    return False

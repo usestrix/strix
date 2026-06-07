@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY
+from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
 
 
 if TYPE_CHECKING:
@@ -108,13 +108,19 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
 
 def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
+    *,
+    model_name: str,
 ) -> ModelSettings:
     # Anthropic + DeepSeek thinking reject ``tool_choice="required"`` outright
     # when reasoning is enabled; OpenAI o-series accepts both but doesn't need
     # the safety net. When reasoning is on we let the model self-select tools
     # and rely on the system prompt + the ``_finish_tool_use_behavior`` callback
     # to keep the loop converging on a lifecycle tool.
-    use_reasoning = reasoning_effort is not None and reasoning_effort != "none"
+    use_reasoning = (
+        reasoning_effort is not None
+        and reasoning_effort != "none"
+        and model_supports_reasoning(model_name)
+    )
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         tool_choice=None if use_reasoning else "required",
