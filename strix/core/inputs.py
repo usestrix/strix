@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
+from strix.config.models import (
+    DEFAULT_MODEL_RETRY,
+    model_known_to_registry,
+    model_supports_reasoning,
+)
 
 
 if TYPE_CHECKING:
@@ -111,23 +115,25 @@ def make_model_settings(
     *,
     model_name: str,
 ) -> ModelSettings:
-    # Anthropic + DeepSeek thinking reject ``tool_choice="required"`` outright
-    # when reasoning is enabled; OpenAI o-series accepts both but doesn't need
-    # the safety net. When reasoning is on we let the model self-select tools
-    # and rely on the system prompt + the ``_finish_tool_use_behavior`` callback
-    # to keep the loop converging on a lifecycle tool.
-    use_reasoning = (
-        reasoning_effort is not None
-        and reasoning_effort != "none"
-        and model_supports_reasoning(model_name)
+    # Anthropic + DeepSeek thinking reject ``tool_choice="required"`` outright;
+    # when reasoning is enabled we let the model self-select tools and rely on
+    # the system prompt + the ``_finish_tool_use_behavior`` callback to keep
+    # the loop converging. When the user opted into reasoning but the model
+    # is unknown to LiteLLM's registry (e.g. a private DeepSeek SKU, a fresh
+    # release the registry hasn't picked up), drop ``tool_choice`` too —
+    # server-side thinking-mode endpoints reject it and we can't confirm.
+    user_wants_reasoning = reasoning_effort is not None and reasoning_effort != "none"
+    confirmed_reasoning = model_supports_reasoning(model_name)
+    drop_tool_choice = user_wants_reasoning and (
+        confirmed_reasoning or not model_known_to_registry(model_name)
     )
     model_settings = ModelSettings(
         parallel_tool_calls=False,
-        tool_choice=None if use_reasoning else "required",
+        tool_choice=None if drop_tool_choice else "required",
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
     )
-    if use_reasoning:
+    if user_wants_reasoning and confirmed_reasoning:
         model_settings = model_settings.resolve(
             ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
         )

@@ -121,7 +121,7 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     return bool(settings.llm.api_base)
 
 
-def model_supports_reasoning(model_name: str) -> bool:
+def _model_cost_entry(model_name: str) -> dict[str, object] | None:
     import litellm
 
     name = model_name.strip().lower()
@@ -132,4 +132,13 @@ def model_supports_reasoning(model_name: str) -> bool:
     entry = litellm.model_cost.get(name)
     if entry is None and "/" in name:
         entry = litellm.model_cost.get(name.rsplit("/", 1)[1])
+    return entry
+
+
+def model_supports_reasoning(model_name: str) -> bool:
+    entry = _model_cost_entry(model_name)
     return bool(entry and entry.get("supports_reasoning"))
+
+
+def model_known_to_registry(model_name: str) -> bool:
+    return _model_cost_entry(model_name) is not None
