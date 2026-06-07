@@ -663,9 +663,9 @@ class QuitScreen(ModalScreen):  # type: ignore[misc]
             self.app.pop_screen()
             event.prevent_default()
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
+    async def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id == "quit":
-            self.app.action_custom_quit()
+            await self.app.action_custom_quit()
         else:
             self.app.pop_screen()
 
