@@ -22,7 +22,11 @@ from strix.config import (
     load_settings,
     persist_current,
 )
-from strix.config.models import StrixProvider, configure_sdk_model_defaults
+from strix.config.models import (
+    StrixProvider,
+    configure_sdk_model_defaults,
+    is_known_openai_bare_model,
+)
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
@@ -215,7 +219,39 @@ async def warm_up_llm() -> None:
         configure_sdk_model_defaults(settings)
         llm = settings.llm
 
-        model = StrixProvider().get_model((llm.model or "").strip())
+        raw_model = (llm.model or "").strip()
+        if (
+            raw_model
+            and "/" not in raw_model
+            and not is_known_openai_bare_model(raw_model)
+            and not llm.api_base
+        ):
+            warn_text = Text()
+            warn_text.append("UNKNOWN MODEL NAME", style="bold yellow")
+            warn_text.append("\n\n", style="white")
+            warn_text.append(f"'{raw_model}'", style="bold cyan")
+            warn_text.append(
+                " is not a known OpenAI model. Bare names route to OpenAI by default.\n"
+                "If you meant a non-OpenAI provider, use the '",
+                style="white",
+            )
+            warn_text.append("<provider>/<model>", style="bold cyan")
+            warn_text.append(
+                "' form, e.g. 'anthropic/claude-opus-4-7', 'deepseek/deepseek-v4-pro'.",
+                style="white",
+            )
+            console.print(
+                Panel(
+                    warn_text,
+                    title="[bold white]STRIX",
+                    title_align="left",
+                    border_style="yellow",
+                    padding=(1, 2),
+                ),
+            )
+            sys.exit(1)
+
+        model = StrixProvider().get_model(raw_model)
         await asyncio.wait_for(
             model.get_response(
                 system_instructions="You are a helpful assistant.",

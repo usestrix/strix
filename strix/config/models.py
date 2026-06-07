@@ -95,11 +95,13 @@ def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> Non
 
 
 def _configure_litellm_compatibility() -> None:
-    """Enable LiteLLM's permissive param-handling mode."""
+    """Enable LiteLLM's permissive param handling and disable its callbacks."""
     import litellm
 
     litellm.drop_params = True
     litellm.modify_params = True
+    litellm.turn_off_message_logging = True
+    litellm.disable_streaming_logging = True
 
 
 def _configure_litellm_default(name: str, value: str) -> None:
@@ -115,3 +117,13 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     if "/" in model and not model.startswith("openai/"):
         return True
     return bool(settings.llm.api_base)
+
+
+def is_known_openai_bare_model(model_name: str) -> bool:
+    import litellm
+
+    name = model_name.strip().lower()
+    if not name or "/" in name:
+        return False
+    entry = litellm.model_cost.get(name)
+    return bool(entry and entry.get("litellm_provider") == "openai")

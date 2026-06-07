@@ -349,12 +349,20 @@ async def _run_cycle(  # noqa: PLR0912
             )
             await coordinator.attach_stream(agent_id, stream)
             try:
-                async for event in stream.stream_events():
-                    if event_sink is not None:
-                        try:
-                            event_sink(agent_id, event)
-                        except Exception:
-                            logger.exception("stream event sink failed for %s", agent_id)
+                try:
+                    async for event in stream.stream_events():
+                        if event_sink is not None:
+                            try:
+                                event_sink(agent_id, event)
+                            except Exception:
+                                logger.exception("stream event sink failed for %s", agent_id)
+                except RuntimeError as stream_exc:
+                    if "after shutdown" not in str(stream_exc):
+                        raise
+                    logger.warning(
+                        "Ignoring LiteLLM end-of-stream shutdown race for %s",
+                        agent_id,
+                    )
                 if stream.run_loop_exception is not None:
                     raise stream.run_loop_exception
             finally:
