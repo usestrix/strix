@@ -102,6 +102,7 @@ def _configure_litellm_compatibility() -> None:
     litellm.modify_params = True
     litellm.turn_off_message_logging = True
     litellm.disable_streaming_logging = True
+    litellm.suppress_debug_info = True
 
 
 def _configure_litellm_default(name: str, value: str) -> None:
