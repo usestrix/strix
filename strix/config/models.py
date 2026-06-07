@@ -109,15 +109,7 @@ def model_supports_reasoning(model_name: str) -> bool:
         if name.lower().startswith(prefix):
             name = name[len(prefix) :]
             break
-
-    candidates = [name]
-    if "/" not in name:
-        candidates.extend(f"{p}/{name}" for p in ("openai", "anthropic", "deepseek", "gemini"))
-
-    for candidate in candidates:
-        try:
-            if litellm.supports_reasoning(candidate):
-                return True
-        except Exception:  # noqa: BLE001, S112
-            continue  # nosec B112
-    return False
+    entry = litellm.model_cost.get(name)
+    if entry is None and "/" in name:
+        entry = litellm.model_cost.get(name.rsplit("/", 1)[1])
+    return bool(entry and entry.get("supports_reasoning"))
