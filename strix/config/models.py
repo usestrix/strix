@@ -61,7 +61,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:
     if not model_name:
         return
-    name = model_name.strip()
+    name = normalize_model_name(model_name)
     for prefix in ("litellm/", "any-llm/"):
         if name.lower().startswith(prefix):
             name = name[len(prefix) :]
