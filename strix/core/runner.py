@@ -15,6 +15,7 @@ from agents.sandbox import SandboxRunConfig
 from strix.agents.factory import build_strix_agent, make_child_factory
 from strix.config import load_settings
 from strix.config.models import (
+    StrixProvider,
     configure_sdk_model_defaults,
     normalize_model_name,
     uses_chat_completions_tool_schema,
@@ -159,6 +160,7 @@ async def run_strix_scan(
         )
         run_config = RunConfig(
             model=resolved_model,
+            model_provider=StrixProvider(),
             model_settings=model_settings,
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,

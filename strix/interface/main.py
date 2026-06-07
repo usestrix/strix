@@ -13,7 +13,6 @@ from pathlib import Path
 
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
-from agents.models.multi_provider import MultiProvider
 from docker.errors import DockerException
 from rich.console import Console
 from rich.panel import Panel
@@ -24,7 +23,7 @@ from strix.config import (
     load_settings,
     persist_current,
 )
-from strix.config.models import configure_sdk_model_defaults, normalize_model_name
+from strix.config.models import StrixProvider, configure_sdk_model_defaults, normalize_model_name
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
@@ -99,7 +98,8 @@ def validate_environment() -> None:
                 error_text.append("• ", style="white")
                 error_text.append("STRIX_LLM", style="bold cyan")
                 error_text.append(
-                    " - Model name to use (e.g., 'gpt-5.4' or 'claude-sonnet-4-6')\n",
+                    " - Model name to use (e.g., 'openai/gpt-5.4' or "
+                    "'anthropic/claude-opus-4-7')\n",
                     style="white",
                 )
 
@@ -138,7 +138,7 @@ def validate_environment() -> None:
                     )
 
         error_text.append("\nExample setup:\n", style="white")
-        error_text.append("export STRIX_LLM='gpt-5.4'\n", style="dim white")
+        error_text.append("export STRIX_LLM='openai/gpt-5.4'\n", style="dim white")
 
         if missing_optional_vars:
             for var in missing_optional_vars:
@@ -216,7 +216,7 @@ async def warm_up_llm() -> None:
         configure_sdk_model_defaults(settings)
         llm = settings.llm
 
-        model = MultiProvider().get_model(normalize_model_name(llm.model or ""))
+        model = StrixProvider().get_model(normalize_model_name(llm.model or ""))
         await asyncio.wait_for(
             model.get_response(
                 system_instructions="You are a helpful assistant.",
@@ -256,8 +256,8 @@ async def warm_up_llm() -> None:
                 f"\n\nHint: '{raw_model}' has no provider prefix, so the SDK "
                 f"routed it through OpenAI by default. For non-OpenAI providers "
                 f"use the '<provider>/<model>' form, e.g. "
-                f"'deepseek/deepseek-chat', 'groq/llama-3.1-70b', "
-                f"'anthropic/claude-3-5-sonnet'.",
+                f"'anthropic/claude-opus-4-7', 'deepseek/deepseek-reasoner', "
+                f"'openai/gpt-5.4'.",
                 style="yellow",
             )
 

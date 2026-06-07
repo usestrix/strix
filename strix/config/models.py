@@ -6,6 +6,7 @@ import os
 from typing import TYPE_CHECKING
 
 from agents import set_default_openai_api, set_default_openai_key, set_tracing_disabled
+from agents.models.multi_provider import MultiProvider
 from agents.retry import (
     ModelRetryBackoffSettings,
     ModelRetrySettings,
@@ -14,10 +15,31 @@ from agents.retry import (
 
 
 if TYPE_CHECKING:
+    from agents.models.interface import ModelProvider
+
     from strix.config.settings import Settings
 
 
-_SDK_PREFIXES = {"any-llm", "litellm", "openai"}
+class StrixProvider(MultiProvider):
+    """Route any non-OpenAI prefix through LiteLLM with the prefix preserved,
+    so users type ``deepseek/deepseek-chat`` rather than
+    ``litellm/deepseek/deepseek-chat``.
+    """
+
+    def _resolve_prefixed_model(
+        self,
+        *,
+        original_model_name: str,
+        prefix: str,
+        stripped_model_name: str | None,
+    ) -> tuple[ModelProvider, str | None]:
+        if prefix in {"openai", "litellm", "any-llm"}:
+            return super()._resolve_prefixed_model(
+                original_model_name=original_model_name,
+                prefix=prefix,
+                stripped_model_name=stripped_model_name,
+            )
+        return self._get_fallback_provider("litellm"), original_model_name
 
 
 DEFAULT_MODEL_RETRY = ModelRetrySettings(
@@ -99,16 +121,13 @@ def normalize_model_name(model_name: str) -> str:
         return model
 
     if "/" in model:
-        prefix = model.split("/", 1)[0].lower()
-        if prefix in _SDK_PREFIXES:
-            return model
-        return f"litellm/{model}"
+        return model
 
     lower = model.lower()
     if lower.startswith("claude"):
-        return f"litellm/anthropic/{model}"
+        return f"anthropic/{model}"
     if lower.startswith("gemini"):
-        return f"litellm/gemini/{model}"
+        return f"gemini/{model}"
 
     return model
 
@@ -116,7 +135,7 @@ def normalize_model_name(model_name: str) -> str:
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
     model = model_name.strip().lower()
-    if model.startswith(("litellm/", "any-llm/")):
+    if "/" in model and not model.startswith("openai/"):
         return True
     return bool(settings.llm.api_base)
 
