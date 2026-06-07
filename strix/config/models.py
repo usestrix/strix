@@ -61,17 +61,20 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:
     if not model_name:
         return
+    import litellm
+
     name = normalize_model_name(model_name)
     for prefix in ("litellm/", "any-llm/"):
         if name.lower().startswith(prefix):
             name = name[len(prefix) :]
             break
-    if "/" not in name:
+    try:
+        report = litellm.validate_environment(model=name.lower())
+    except Exception:  # noqa: BLE001
         return
-    provider = name.split("/", 1)[0].strip().upper()
-    if not provider:
-        return
-    os.environ.setdefault(f"{provider}_API_KEY", api_key)
+    for env_key in report.get("missing_keys") or []:
+        if env_key.endswith("_API_KEY"):
+            os.environ.setdefault(env_key, api_key)
 
 
 def _configure_litellm_compatibility() -> None:
