@@ -395,7 +395,6 @@ def build_strix_agent(
         instructions=instructions,
         tools=tools,
         tool_use_behavior=_finish_tool_use_behavior,
-        reset_tool_choice=interactive,
         model=None,
         capabilities=[
             Filesystem(

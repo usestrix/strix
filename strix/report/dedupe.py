@@ -8,14 +8,13 @@ from typing import TYPE_CHECKING, Any
 
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
-from agents.models.multi_provider import MultiProvider
 from openai.types.responses import ResponseOutputMessage
 
 from strix.config import load_settings
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
+    StrixProvider,
     configure_sdk_model_defaults,
-    normalize_model_name,
 )
 from strix.report.state import get_global_report_state
 
@@ -188,8 +187,8 @@ async def check_duplicate(
         )
 
         configure_sdk_model_defaults(settings)
-        resolved_model = normalize_model_name(model_name)
-        model = MultiProvider().get_model(resolved_model)
+        resolved_model = model_name.strip()
+        model = StrixProvider().get_model(resolved_model)
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,

@@ -59,12 +59,7 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
 
 
 def configure_sdk_model_defaults(settings: Settings) -> None:
-    """Apply Strix config to SDK-native defaults.
-
-    OpenAI-compatible base URLs are handled by the SDK OpenAI provider.
-    Non-OpenAI providers should use the SDK's native ``litellm/`` or
-    ``any-llm/`` routing, produced by :func:`normalize_model_name`.
-    """
+    """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
     set_tracing_disabled(True)
     _configure_litellm_compatibility()
@@ -85,7 +80,7 @@ def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> Non
         return
     import litellm
 
-    name = normalize_model_name(model_name)
+    name = model_name.strip()
     for prefix in ("litellm/", "any-llm/"):
         if name.lower().startswith(prefix):
             name = name[len(prefix) :]
@@ -114,50 +109,9 @@ def _configure_litellm_default(name: str, value: str) -> None:
     setattr(litellm, name, value)
 
 
-def normalize_model_name(model_name: str) -> str:
-    """Normalize friendly Strix model names to SDK-native model ids."""
-    model = model_name.strip()
-    if not model:
-        return model
-
-    if "/" in model:
-        return model
-
-    lower = model.lower()
-    if lower.startswith("claude"):
-        return f"anthropic/{model}"
-    if lower.startswith("gemini"):
-        return f"gemini/{model}"
-
-    return model
-
-
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
         return True
     return bool(settings.llm.api_base)
-
-
-def _model_cost_entry(model_name: str) -> dict[str, object] | None:
-    import litellm
-
-    name = model_name.strip().lower()
-    for prefix in ("litellm/", "any-llm/"):
-        if name.startswith(prefix):
-            name = name[len(prefix) :]
-            break
-    entry = litellm.model_cost.get(name)
-    if entry is None and "/" in name:
-        entry = litellm.model_cost.get(name.rsplit("/", 1)[1])
-    return entry
-
-
-def model_supports_reasoning(model_name: str) -> bool:
-    entry = _model_cost_entry(model_name)
-    return bool(entry and entry.get("supports_reasoning"))
-
-
-def model_known_to_registry(model_name: str) -> bool:
-    return _model_cost_entry(model_name) is not None

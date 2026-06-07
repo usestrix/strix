@@ -5,7 +5,6 @@ Strix Agent Interface
 
 import argparse
 import asyncio
-import contextlib
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -23,7 +22,7 @@ from strix.config import (
     load_settings,
     persist_current,
 )
-from strix.config.models import StrixProvider, configure_sdk_model_defaults, normalize_model_name
+from strix.config.models import StrixProvider, configure_sdk_model_defaults
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
@@ -216,7 +215,7 @@ async def warm_up_llm() -> None:
         configure_sdk_model_defaults(settings)
         llm = settings.llm
 
-        model = StrixProvider().get_model(normalize_model_name(llm.model or ""))
+        model = StrixProvider().get_model((llm.model or "").strip())
         await asyncio.wait_for(
             model.get_response(
                 system_instructions="You are a helpful assistant.",
@@ -232,7 +231,7 @@ async def warm_up_llm() -> None:
             ),
             timeout=llm.timeout,
         )
-        logger.info("LLM warm-up succeeded for model %s", normalize_model_name(llm.model or ""))
+        logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
     except Exception as e:
         logger.exception("LLM warm-up failed")
@@ -242,24 +241,6 @@ async def warm_up_llm() -> None:
         error_text.append("Could not establish connection to the language model.\n", style="white")
         error_text.append("Please check your configuration and try again.\n", style="white")
         error_text.append(f"\nError: {e}", style="dim white")
-
-        raw_model = ""
-        resolved = ""
-        with contextlib.suppress(Exception):
-            raw_model = (load_settings().llm.model or "").strip()
-            resolved = normalize_model_name(raw_model)
-        err_lc = str(e).lower()
-        unprefixed = bool(resolved) and "/" not in resolved
-        looks_openai = "platform.openai.com" in err_lc or "openai" in err_lc
-        if unprefixed and looks_openai:
-            error_text.append(
-                f"\n\nHint: '{raw_model}' has no provider prefix, so the SDK "
-                f"routed it through OpenAI by default. For non-OpenAI providers "
-                f"use the '<provider>/<model>' form, e.g. "
-                f"'anthropic/claude-opus-4-7', 'deepseek/deepseek-reasoner', "
-                f"'openai/gpt-5.4'.",
-                style="yellow",
-            )
 
         panel = Panel(
             error_text,
