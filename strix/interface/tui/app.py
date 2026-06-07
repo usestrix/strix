@@ -1633,9 +1633,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self.push_screen(HelpScreen())
 
-    def action_request_quit(self) -> None:
+    async def action_request_quit(self) -> None:
         if self.show_splash or not self.is_mounted:
-            self.action_custom_quit()
+            await self.action_custom_quit()
             return
 
         if len(self.screen_stack) > 1:
@@ -1644,7 +1644,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         try:
             self.query_one("#main_container")
         except (ValueError, Exception):
-            self.action_custom_quit()
+            await self.action_custom_quit()
             return
 
         self.push_screen(QuitScreen())
@@ -1704,8 +1704,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
             self._scan_loop,
         )
 
-    def action_custom_quit(self) -> None:
-        self._teardown_sandbox_blocking(timeout=10.0)
+    async def action_custom_quit(self) -> None:
+        await asyncio.to_thread(self._teardown_sandbox_blocking, timeout=10.0)
 
         if self._scan_thread and self._scan_thread.is_alive():
             self._scan_stop_event.set()
@@ -1726,8 +1726,15 @@ class StrixTUIApp(App):  # type: ignore[misc]
             session_manager.cleanup(run_name),
             loop,
         )
-        with contextlib.suppress(Exception):
+        try:
             future.result(timeout=timeout)
+        except TimeoutError:
+            logger.warning(
+                "Sandbox cleanup timed out after %.1fs; container may still be running",
+                timeout,
+            )
+        except Exception:
+            logger.exception("Sandbox cleanup failed")
 
     def _is_widget_safe(self, widget: Any) -> bool:
         try:
