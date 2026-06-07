@@ -104,9 +104,9 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
 def model_supports_reasoning(model_name: str) -> bool:
     import litellm
 
-    name = model_name.strip()
+    name = model_name.strip().lower()
     for prefix in ("litellm/", "any-llm/"):
-        if name.lower().startswith(prefix):
+        if name.startswith(prefix):
             name = name[len(prefix) :]
             break
     entry = litellm.model_cost.get(name)
