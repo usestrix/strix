@@ -18,8 +18,9 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage: dict[str, Usage] = {}
         self._agent_metadata: dict[str, dict[str, str]] = {}
-        self._total_cost = 0.0
-        self._agent_cost: dict[str, float] = {}
+        self._estimated_cost = 0.0
+        self._agent_estimated_cost: dict[str, float] = {}
+        self._observed_cost = 0.0
 
     def record(
         self,
@@ -33,8 +34,6 @@ class LLMUsageLedger:
             return False
 
         normalized_agent_id = str(agent_id or "unknown")
-        estimated_cost = _estimate_litellm_cost(usage, model)
-
         self._total_usage.add(usage)
         self._agent_usage.setdefault(normalized_agent_id, Usage()).add(usage)
 
@@ -44,31 +43,49 @@ class LLMUsageLedger:
         if model:
             metadata["model"] = model
 
-        if estimated_cost is not None:
-            self._total_cost += estimated_cost
-            self._agent_cost[normalized_agent_id] = (
-                self._agent_cost.get(normalized_agent_id, 0.0) + estimated_cost
-            )
+        if not _is_litellm_routed(model):
+            estimated_cost = _estimate_litellm_cost(usage, model)
+            if estimated_cost is not None:
+                self._estimated_cost += estimated_cost
+                self._agent_estimated_cost[normalized_agent_id] = (
+                    self._agent_estimated_cost.get(normalized_agent_id, 0.0) + estimated_cost
+                )
 
         return True
 
+    def record_observed_cost(self, cost: float) -> None:
+        if isinstance(cost, int | float) and cost > 0:
+            self._observed_cost += float(cost)
+
     def to_record(self) -> dict[str, Any]:
         record = serialize_usage(self._total_usage)
-        record["cost"] = _round_cost(self._total_cost)
-        record["cost_source"] = "litellm_estimate"
+        grand_total = self._estimated_cost + self._observed_cost
+        record["cost"] = _round_cost(grand_total)
+        record["cost_source"] = _cost_source_label(self._estimated_cost, self._observed_cost)
         record["agents"] = []
+
+        total_tokens = max(0, int(self._total_usage.total_tokens or 0))
 
         for agent_id in sorted(self._agent_usage):
             usage = self._agent_usage[agent_id]
             metadata = self._agent_metadata.get(agent_id, {})
+            agent_tokens = max(0, int(usage.total_tokens or 0))
+            observed_share = (
+                self._observed_cost * (agent_tokens / total_tokens) if total_tokens else 0.0
+            )
+            agent_total = self._agent_estimated_cost.get(agent_id, 0.0) + observed_share
+
             agent_record = serialize_usage(usage)
             agent_record.update(
                 {
                     "agent_id": agent_id,
                     "agent_name": metadata.get("agent_name") or agent_id,
                     "model": metadata.get("model"),
-                    "cost": _round_cost(self._agent_cost.get(agent_id, 0.0)),
-                    "cost_source": "litellm_estimate",
+                    "cost": _round_cost(agent_total),
+                    "cost_source": _cost_source_label(
+                        self._agent_estimated_cost.get(agent_id, 0.0),
+                        observed_share,
+                    ),
                 }
             )
             record["agents"].append(agent_record)
@@ -79,8 +96,9 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage.clear()
         self._agent_metadata.clear()
-        self._total_cost = 0.0
-        self._agent_cost.clear()
+        self._estimated_cost = 0.0
+        self._agent_estimated_cost.clear()
+        self._observed_cost = 0.0
 
         if not isinstance(raw_usage, dict):
             return
@@ -91,7 +109,9 @@ class LLMUsageLedger:
             logger.exception("Failed to hydrate aggregate llm_usage from run.json")
             self._total_usage = Usage()
 
-        self._total_cost = _float_or_zero(raw_usage.get("cost"))
+        # Resumed runs have already-aggregated cost; treat as estimated. New calls
+        # in this resume add observed cost on top.
+        self._estimated_cost = _float_or_zero(raw_usage.get("cost"))
         agents = raw_usage.get("agents") or []
         if not isinstance(agents, list):
             return
@@ -116,7 +136,24 @@ class LLMUsageLedger:
             if isinstance(model, str) and model:
                 metadata["model"] = model
             self._agent_metadata[agent_id] = metadata
-            self._agent_cost[agent_id] = _float_or_zero(raw_agent.get("cost"))
+            self._agent_estimated_cost[agent_id] = _float_or_zero(raw_agent.get("cost"))
+
+
+def _is_litellm_routed(model: str | None) -> bool:
+    if not model:
+        return False
+    name = model.strip().lower()
+    if "/" not in name:
+        return False
+    return not name.startswith("openai/")
+
+
+def _cost_source_label(estimated: float, observed: float) -> str:
+    if observed > 0 and estimated > 0:
+        return "mixed"
+    if observed > 0:
+        return "litellm_observed"
+    return "litellm_estimate"
 
 
 def _usage_has_activity(usage: Usage) -> bool:
@@ -171,18 +208,25 @@ def _estimate_litellm_entry_cost(entry: Any, model: str) -> float | None:
     if completion_details:
         usage_payload["completion_tokens_details"] = completion_details
 
-    try:
-        from litellm import completion_cost
+    from litellm import completion_cost
 
-        cost = completion_cost(
-            completion_response={
-                "model": model.split("/", 1)[-1],
-                "usage": usage_payload,
-            },
-            model=model,
-        )
-    except Exception:  # noqa: BLE001 - LiteLLM raises plain Exception for unknown model prices.
-        logger.debug("LiteLLM cost estimate unavailable for model %s", model, exc_info=True)
+    candidates = [model]
+    if "/" in model:
+        candidates.append(model.split("/", 1)[-1])
+
+    cost: Any = None
+    for candidate in candidates:
+        try:
+            cost = completion_cost(
+                completion_response={"model": candidate, "usage": usage_payload},
+                model=model,
+            )
+            break
+        except Exception:  # nosec B112  # noqa: BLE001, S112
+            continue
+
+    if cost is None:
+        logger.debug("LiteLLM cost estimate unavailable for model %s", model)
         return None
 
     return cost if isinstance(cost, int | float) and cost >= 0 else None

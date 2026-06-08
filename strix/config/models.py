@@ -104,6 +104,22 @@ def _configure_litellm_compatibility() -> None:
     litellm.disable_streaming_logging = True
     litellm.suppress_debug_info = True
 
+    _register_litellm_cost_callback()
+
+
+def _register_litellm_cost_callback() -> None:
+    import litellm
+
+    from strix.report.cost_capture import litellm_cost_callback
+
+    for bucket_name in ("success_callback", "_async_success_callback"):
+        bucket = getattr(litellm, bucket_name, None)
+        if not isinstance(bucket, list):
+            continue
+        if litellm_cost_callback in bucket:
+            continue
+        bucket.append(litellm_cost_callback)
+
 
 def _configure_litellm_default(name: str, value: str) -> None:
     """Set LiteLLM's module-level defaults without adding a provider wrapper."""
