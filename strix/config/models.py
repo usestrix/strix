@@ -117,7 +117,17 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
         return True
-    return bool(settings.llm.api_base)
+    if settings.llm.api_base:
+        return True
+    return not _supports_responses_custom_tools(model_name)
+
+
+def _supports_responses_custom_tools(model_name: str) -> bool:
+    import litellm
+
+    name = model_name.strip().lower().removeprefix("openai/")
+    entry = litellm.model_cost.get(name) or {}
+    return bool(entry.get("supports_reasoning"))
 
 
 def is_known_openai_bare_model(model_name: str) -> bool:
