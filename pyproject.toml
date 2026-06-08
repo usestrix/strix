@@ -220,7 +220,6 @@ ignore = [
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
 "strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401"]
 "strix/report/usage.py" = ["PLC0415"]
-"strix/report/cost_capture.py" = ["PLC0415"]
 "strix/config/models.py" = ["PLC0415"]
 # Interface utility branches per scope-mode / target-type combination;
 # splitting would obscure the decision tree without simplifying it.

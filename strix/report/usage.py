@@ -18,9 +18,7 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage: dict[str, Usage] = {}
         self._agent_metadata: dict[str, dict[str, str]] = {}
-        self._estimated_cost = 0.0
-        self._agent_estimated_cost: dict[str, float] = {}
-        self._observed_cost = 0.0
+        self._total_cost = 0.0
 
     def record(
         self,
@@ -44,36 +42,29 @@ class LLMUsageLedger:
             metadata["model"] = model
 
         if not _is_litellm_routed(model):
-            estimated_cost = _estimate_litellm_cost(usage, model)
-            if estimated_cost is not None:
-                self._estimated_cost += estimated_cost
-                self._agent_estimated_cost[normalized_agent_id] = (
-                    self._agent_estimated_cost.get(normalized_agent_id, 0.0) + estimated_cost
-                )
+            estimated = _estimate_litellm_cost(usage, model)
+            if estimated:
+                self._total_cost += estimated
 
         return True
 
     def record_observed_cost(self, cost: float) -> None:
         if isinstance(cost, int | float) and cost > 0:
-            self._observed_cost += float(cost)
+            self._total_cost += float(cost)
 
     def to_record(self) -> dict[str, Any]:
         record = serialize_usage(self._total_usage)
-        grand_total = self._estimated_cost + self._observed_cost
-        record["cost"] = _round_cost(grand_total)
-        record["cost_source"] = _cost_source_label(self._estimated_cost, self._observed_cost)
+        record["cost"] = _round_cost(self._total_cost)
         record["agents"] = []
 
-        total_tokens = max(0, int(self._total_usage.total_tokens or 0))
-
+        agent_tokens = {aid: _resolve_total_tokens(u) for aid, u in self._agent_usage.items()}
+        total_tokens = sum(agent_tokens.values())
         for agent_id in sorted(self._agent_usage):
             usage = self._agent_usage[agent_id]
             metadata = self._agent_metadata.get(agent_id, {})
-            agent_tokens = max(0, int(usage.total_tokens or 0))
-            observed_share = (
-                self._observed_cost * (agent_tokens / total_tokens) if total_tokens else 0.0
+            agent_cost = (
+                self._total_cost * (agent_tokens[agent_id] / total_tokens) if total_tokens else 0.0
             )
-            agent_total = self._agent_estimated_cost.get(agent_id, 0.0) + observed_share
 
             agent_record = serialize_usage(usage)
             agent_record.update(
@@ -81,11 +72,7 @@ class LLMUsageLedger:
                     "agent_id": agent_id,
                     "agent_name": metadata.get("agent_name") or agent_id,
                     "model": metadata.get("model"),
-                    "cost": _round_cost(agent_total),
-                    "cost_source": _cost_source_label(
-                        self._agent_estimated_cost.get(agent_id, 0.0),
-                        observed_share,
-                    ),
+                    "cost": _round_cost(agent_cost),
                 }
             )
             record["agents"].append(agent_record)
@@ -96,9 +83,7 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage.clear()
         self._agent_metadata.clear()
-        self._estimated_cost = 0.0
-        self._agent_estimated_cost.clear()
-        self._observed_cost = 0.0
+        self._total_cost = 0.0
 
         if not isinstance(raw_usage, dict):
             return
@@ -109,14 +94,9 @@ class LLMUsageLedger:
             logger.exception("Failed to hydrate aggregate llm_usage from run.json")
             self._total_usage = Usage()
 
-        # Resumed runs have already-aggregated cost; treat as estimated. New calls
-        # in this resume add observed cost on top.
-        self._estimated_cost = _float_or_zero(raw_usage.get("cost"))
-        agents = raw_usage.get("agents") or []
-        if not isinstance(agents, list):
-            return
+        self._total_cost = _float_or_zero(raw_usage.get("cost"))
 
-        for raw_agent in agents:
+        for raw_agent in raw_usage.get("agents") or []:
             if not isinstance(raw_agent, dict):
                 continue
             agent_id = str(raw_agent.get("agent_id") or "").strip()
@@ -136,7 +116,15 @@ class LLMUsageLedger:
             if isinstance(model, str) and model:
                 metadata["model"] = model
             self._agent_metadata[agent_id] = metadata
-            self._agent_estimated_cost[agent_id] = _float_or_zero(raw_agent.get("cost"))
+
+
+def _resolve_total_tokens(usage: Usage) -> int:
+    total = max(0, int(usage.total_tokens or 0))
+    if total > 0:
+        return total
+    prompt = _int_or_zero(getattr(usage, "input_tokens", 0))
+    completion = _int_or_zero(getattr(usage, "output_tokens", 0))
+    return prompt + completion
 
 
 def _is_litellm_routed(model: str | None) -> bool:
@@ -146,14 +134,6 @@ def _is_litellm_routed(model: str | None) -> bool:
     if "/" not in name:
         return False
     return not name.startswith("openai/")
-
-
-def _cost_source_label(estimated: float, observed: float) -> str:
-    if observed > 0 and estimated > 0:
-        return "mixed"
-    if observed > 0:
-        return "litellm_observed"
-    return "litellm_estimate"
 
 
 def _usage_has_activity(usage: Usage) -> bool:

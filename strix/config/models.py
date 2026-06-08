@@ -110,7 +110,7 @@ def _configure_litellm_compatibility() -> None:
 def _register_litellm_cost_callback() -> None:
     import litellm
 
-    from strix.report.cost_capture import litellm_cost_callback
+    from strix.report.state import litellm_cost_callback
 
     for bucket_name in ("success_callback", "_async_success_callback"):
         bucket = getattr(litellm, bucket_name, None)

@@ -230,6 +230,9 @@ class ReportState:
         ):
             self.save_run_data()
 
+    def record_observed_llm_cost(self, cost: float) -> None:
+        self._llm_usage.record_observed_cost(cost)
+
     def get_total_llm_usage(self) -> dict[str, Any]:
         return dict(self.run_record.get("llm_usage") or self._build_llm_usage_record())
 
@@ -343,3 +346,45 @@ class ReportState:
     def _hydrate_llm_usage(self, raw_usage: Any) -> None:
         self._llm_usage.hydrate(raw_usage)
         self._sync_llm_usage_record()
+
+
+def litellm_cost_callback(
+    kwargs: Any,
+    completion_response: Any,
+    _start_time: Any = None,
+    _end_time: Any = None,
+) -> None:
+    """LiteLLM ``success_callback`` adapter; forwards observed cost to the active scan."""
+    cost: float | None = None
+    raw = kwargs.get("response_cost") if isinstance(kwargs, dict) else None
+    if isinstance(raw, int | float) and raw > 0:
+        cost = float(raw)
+
+    if cost is None:
+        hidden = getattr(completion_response, "_hidden_params", None) or {}
+        candidate = hidden.get("response_cost") if isinstance(hidden, dict) else None
+        if isinstance(candidate, int | float) and candidate > 0:
+            cost = float(candidate)
+        else:
+            headers = hidden.get("additional_headers") or {} if isinstance(hidden, dict) else {}
+            raw = (
+                headers.get("llm_provider-x-litellm-response-cost")
+                if isinstance(headers, dict)
+                else None
+            )
+            try:
+                value = float(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                value = None
+            if value is not None and value > 0:
+                cost = value
+
+    if cost is None or cost <= 0:
+        return
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    try:
+        report_state.record_observed_llm_cost(cost)
+    except Exception:
+        logger.exception("Failed to record observed LiteLLM cost")
