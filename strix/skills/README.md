@@ -35,6 +35,10 @@ The skills are dynamically injected into the agent's system prompt, allowing it 
 | **`/protocols`** | Protocol-specific testing patterns for GraphQL, WebSocket, OAuth, and other communication standards |
 | **`/tooling`** | Command-line playbooks for core sandbox tools (nmap, nuclei, httpx, ffuf, subfinder, naabu, katana, sqlmap) |
 | **`/cloud`** | Cloud provider security testing for AWS, Azure, GCP, and Kubernetes environments |
+| **`/api`** | REST / HTTP API testing aligned to the OWASP API Security Top 10 (BOLA, broken auth, mass assignment, SSRF, misconfiguration) |
+| **`/web3`** | Web3 / blockchain testing for EVM smart contracts and exposed JSON-RPC nodes / dApp signing flows |
+| **`/mobile`** | Mobile application testing for Android (APK) and iOS (IPA), covering static and dynamic analysis |
+| **`/binary`** | Native executable analysis for ELF, PE, and Mach-O binaries (memory safety, reverse engineering, fuzzing) |
 | **`/reconnaissance`** | Advanced information gathering and enumeration techniques for comprehensive attack surface mapping |
 | **`/custom`** | Community-contributed skills for specialized or industry-specific testing scenarios |
 
