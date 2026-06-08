@@ -14,6 +14,8 @@ from strix.core.agents import coordinator_from_context
 
 logger = logging.getLogger(__name__)
 
+_NOT_PROVIDED = "[Not provided by model]"
+
 
 def _do_finish(
     *,
@@ -32,17 +34,17 @@ def _do_finish(
             ),
         }
 
-    errors: list[str] = []
-    if not executive_summary.strip():
-        errors.append("Executive summary cannot be empty")
-    if not methodology.strip():
-        errors.append("Methodology cannot be empty")
-    if not technical_analysis.strip():
-        errors.append("Technical analysis cannot be empty")
-    if not recommendations.strip():
-        errors.append("Recommendations cannot be empty")
-    if errors:
-        return {"success": False, "error": "Validation failed", "errors": errors}
+    # Save a partial report instead of rejecting it: vulnerabilities are persisted
+    # incrementally as they are found, so refusing the whole report over one empty
+    # narrative field silently discards the executive summary when the model leaves
+    # a section blank (issue #294).
+    sections = {
+        "executive_summary": executive_summary.strip() or _NOT_PROVIDED,
+        "methodology": methodology.strip() or _NOT_PROVIDED,
+        "technical_analysis": technical_analysis.strip() or _NOT_PROVIDED,
+        "recommendations": recommendations.strip() or _NOT_PROVIDED,
+    }
+    missing = [name for name, value in sections.items() if value is _NOT_PROVIDED]
 
     try:
         from strix.report.state import get_global_report_state
@@ -57,10 +59,10 @@ def _do_finish(
                 "warning": "Results could not be persisted - report state unavailable",
             }
         report_state.update_scan_final_fields(
-            executive_summary=executive_summary.strip(),
-            methodology=methodology.strip(),
-            technical_analysis=technical_analysis.strip(),
-            recommendations=recommendations.strip(),
+            executive_summary=sections["executive_summary"],
+            methodology=sections["methodology"],
+            technical_analysis=sections["technical_analysis"],
+            recommendations=sections["recommendations"],
         )
         vuln_count = len(report_state.vulnerability_reports)
     except (ImportError, AttributeError) as e:
@@ -71,12 +73,17 @@ def _do_finish(
             "finish_scan: completed scan with %d vulnerability report(s)",
             vuln_count,
         )
-        return {
+        result: dict[str, Any] = {
             "success": True,
             "scan_completed": True,
             "message": "Scan completed successfully",
             "vulnerabilities_found": vuln_count,
         }
+        if missing:
+            result["warning"] = (
+                "Saved report with placeholder text for empty section(s): " + ", ".join(missing)
+            )
+        return result
 
 
 @function_tool(timeout=60)
