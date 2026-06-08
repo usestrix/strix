@@ -1143,9 +1143,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return (text, Text(), False)
 
         if status == "waiting":
-            keymap = Text()
-            keymap.append("Send message to resume", style="dim")
-            return (Text(" "), keymap, False)
+            text = Text()
+            text.append("Send message to resume", style="dim")
+            return (text, Text(), False)
 
         if status == "running":
             if self._agent_has_real_activity(agent_id):
