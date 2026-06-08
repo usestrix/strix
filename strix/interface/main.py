@@ -349,6 +349,9 @@ Examples:
         type=str,
         action="append",
         help="Target to test (URL, repository, local directory path, domain name, or IP address). "
+        "Also accepts a CIDR range, ASN, or an explicit asset type via a "
+        "``type:value`` prefix or known scheme/extension "
+        "(e.g. cidr:10.0.0.0/8, apk:./app.apk, s3://bucket, AS13335). "
         "Can be specified multiple times for multi-target scans. "
         "Required for fresh runs; loaded from disk when ``--resume`` is set.",
     )

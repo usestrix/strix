@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from agents.sandbox.entries import BaseEntry, LocalDir
+from agents.sandbox.entries import BaseEntry, LocalDir, LocalFile
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
@@ -46,7 +46,11 @@ async def create_or_reuse(
         host_path = src.get("source_path") or ""
         if not ws_subdir or not host_path:
             continue
-        entries[ws_subdir] = LocalDir(src=Path(host_path).expanduser().resolve())
+        resolved = Path(host_path).expanduser().resolve()
+        if src.get("is_dir") == "false":
+            entries[ws_subdir] = LocalFile(src=resolved)
+        else:
+            entries[ws_subdir] = LocalDir(src=resolved)
 
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)

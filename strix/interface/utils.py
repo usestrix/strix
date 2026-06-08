@@ -20,6 +20,14 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
+from strix.assets import (
+    PASSTHROUGH_KEYS,
+    by_key,
+    match_extension,
+    match_pattern,
+    match_prefix,
+    match_scheme,
+)
 from strix.config import load_settings
 
 
@@ -1059,6 +1067,10 @@ def _is_http_git_repo(url: str) -> bool:
         return False
 
 
+def _asset_target(asset_type: str, value: str) -> tuple[str, dict[str, str]]:
+    return "asset", {"asset_type": asset_type, "value": value}
+
+
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
     if not target or not isinstance(target, str):
         raise ValueError("Target must be a non-empty string")
@@ -1070,6 +1082,18 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
 
     if target.startswith("git://"):
         return "repository", {"target_repo": target}
+
+    prefixed = match_prefix(target)
+    if prefixed is not None:
+        asset, value = prefixed
+        if asset.key in PASSTHROUGH_KEYS:
+            return infer_target_type(value)
+        return _asset_target(asset.key, value)
+
+    schemed = match_scheme(target)
+    if schemed is not None:
+        asset, value = schemed
+        return _asset_target(asset.key, value)
 
     parsed = urlparse(target)
     if parsed.scheme in ("http", "https"):
@@ -1091,12 +1115,19 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
     else:
         return "ip_address", {"target_ip": str(ip_obj)}
 
+    patterned = match_pattern(target)
+    if patterned is not None:
+        asset, value = patterned
+        return _asset_target(asset.key, value)
+
     path = Path(target).expanduser()
     try:
         if path.exists():
             if path.is_dir():
                 return "local_code", {"target_path": str(path.resolve())}
-            raise ValueError(f"Path exists but is not a directory: {target}")
+            file_asset = match_extension(path.name) or by_key("other_asset")
+            asset_key = file_asset.key if file_asset else "other_asset"
+            return _asset_target(asset_key, str(path.resolve()))
     except (OSError, RuntimeError) as e:
         raise ValueError(f"Invalid path: {target} - {e!s}") from e
 
@@ -1123,7 +1154,9 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         "- A Git repository URL (https://host/org/repo or git@host:org/repo.git)\n"
         "- A local directory path\n"
         "- A domain name (e.g., example.com)\n"
-        "- An IP address (e.g., 192.168.1.10)"
+        "- An IP address (e.g., 192.168.1.10)\n"
+        "- A CIDR range, ASN, or an explicit asset type "
+        "(e.g., cidr:10.0.0.0/8, apk:./app.apk, s3://bucket, AS13335)"
     )
 
 
@@ -1156,6 +1189,15 @@ def derive_local_base_name(path_str: str) -> str:
     return sanitize_name(base or "workspace")
 
 
+def _asset_file_base_name(details: dict[str, Any]) -> str | None:
+    """Workspace subdir name for a local file artifact, or None if not one."""
+    asset = by_key(details.get("asset_type", ""))
+    value = details.get("value", "")
+    if asset is None or asset.kind != "file" or not Path(value).is_file():
+        return None
+    return derive_local_base_name(value)
+
+
 def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
     name_counts: dict[str, int] = {}
 
@@ -1168,6 +1210,8 @@ def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
             base_name = derive_repo_base_name(details["target_repo"])
         elif target_type == "local_code":
             base_name = derive_local_base_name(details.get("target_path", "local"))
+        elif target_type == "asset":
+            base_name = _asset_file_base_name(details)
 
         if base_name is None:
             continue
@@ -1205,6 +1249,15 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["cloned_repo_path"],
                     "workspace_subdir": workspace_subdir,
+                }
+            )
+
+        elif target_info["type"] == "asset" and _asset_file_base_name(details) and workspace_subdir:
+            local_sources.append(
+                {
+                    "source_path": details["value"],
+                    "workspace_subdir": workspace_subdir,
+                    "is_dir": "false",
                 }
             )
 

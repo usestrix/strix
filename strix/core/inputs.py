@@ -8,7 +8,9 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
+from strix.assets import by_key
 from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
+from strix.skills import get_all_skill_names
 
 
 if TYPE_CHECKING:
@@ -16,6 +18,19 @@ if TYPE_CHECKING:
 
 
 DEFAULT_MAX_TURNS = 500
+
+
+def _asset_line(details: dict[str, Any], workspace_path: str, available_skills: set[str]) -> str:
+    asset = by_key(details.get("asset_type", ""))
+    label = asset.name if asset else details.get("asset_type", "Asset")
+    line = f"- {label}: {details.get('value', '')}"
+    if details.get("workspace_subdir"):
+        line += f" (available at: {workspace_path})"
+    if asset is not None:
+        line += f" — {asset.brief}"
+        if asset.skill in available_skills:
+            line += f" Load the `{asset.skill}` skill for methodology."
+    return line
 
 
 def build_root_task(scan_config: dict[str, Any]) -> str:
@@ -28,7 +43,10 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         "Local Codebases": [],
         "URLs": [],
         "IP Addresses": [],
+        "Assets": [],
     }
+
+    available_skills = get_all_skill_names()
 
     for target in targets:
         ttype = target.get("type")
@@ -49,6 +67,8 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             sections["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":
             sections["IP Addresses"].append(f"- {details.get('target_ip', '')}")
+        elif ttype == "asset":
+            sections["Assets"].append(_asset_line(details, workspace_path, available_skills))
 
     parts: list[str] = []
     for label, items in sections.items():
@@ -85,17 +105,19 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "local_code": "target_path",
         "web_application": "target_url",
         "ip_address": "target_ip",
+        "asset": "value",
     }
     for target in scan_config.get("targets", []) or []:
         ttype = target.get("type", "unknown")
         details = target.get("details") or {}
         key = value_keys.get(ttype)
         value = details.get(key, "") if key is not None else target.get("original", "")
+        display_type = details.get("asset_type", ttype) if ttype == "asset" else ttype
 
         workspace_subdir = details.get("workspace_subdir")
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else ""
         authorized.append(
-            {"type": ttype, "value": value, "workspace_path": workspace_path},
+            {"type": display_type, "value": value, "workspace_path": workspace_path},
         )
 
     return {

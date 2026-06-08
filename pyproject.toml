@@ -54,8 +54,12 @@ dev = [
   "pyright>=1.1.401",
   "bandit>=1.8.3",
   "pre-commit>=4.2.0",
+  "pytest>=8.0.0",
   "pyinstaller>=6.17.0; python_version >= '3.12' and python_version < '3.15'",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [build-system]
 requires = ["hatchling"]
@@ -186,6 +190,8 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+# Tests: pytest namespace package, asserts, fixture args, top-level typing imports.
+"tests/**/*.py" = ["INP001", "S101", "PLR2004", "ARG001", "TC001", "TC002", "TC003"]
 # Lazy imports inside functions to avoid circular dependency with
 # strix.telemetry / strix.report.dedupe / cvss.
 "strix/tools/notes/tools.py" = ["PLC0415", "TC002"]
