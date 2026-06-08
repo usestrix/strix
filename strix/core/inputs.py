@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY
+from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
 
 
 if TYPE_CHECKING:
@@ -106,13 +106,21 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def make_model_settings(reasoning_effort: ReasoningEffort | None) -> ModelSettings:
+def make_model_settings(
+    reasoning_effort: ReasoningEffort | None,
+    *,
+    model_name: str,
+) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
     )
-    if reasoning_effort is not None and reasoning_effort != "none":
+    if (
+        reasoning_effort is not None
+        and reasoning_effort != "none"
+        and model_supports_reasoning(model_name)
+    ):
         model_settings = model_settings.resolve(
             ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
         )
