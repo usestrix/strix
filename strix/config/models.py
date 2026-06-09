@@ -138,7 +138,7 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     return not model_supports_reasoning(model_name)
 
 
-def model_supports_reasoning(model_name: str) -> bool:
+def _model_cost_entry(model_name: str) -> dict[str, object] | None:
     import litellm
 
     name = model_name.strip().lower()
@@ -149,7 +149,23 @@ def model_supports_reasoning(model_name: str) -> bool:
     entry = litellm.model_cost.get(name)
     if entry is None and "/" in name:
         entry = litellm.model_cost.get(name.rsplit("/", 1)[1])
+    return entry
+
+
+def model_supports_reasoning(model_name: str) -> bool:
+    entry = _model_cost_entry(model_name)
     return bool(entry and entry.get("supports_reasoning"))
+
+
+def model_supports_adaptive_thinking(model_name: str) -> bool:
+    """Whether the model uses Anthropic's newer adaptive-thinking API.
+
+    Models like Claude Opus 4.8 reject the legacy ``thinking.type=enabled`` shape
+    that LiteLLM emits when it converts ``reasoning_effort``. They require
+    ``thinking.type=adaptive`` plus ``output_config.effort`` instead.
+    """
+    entry = _model_cost_entry(model_name)
+    return bool(entry and entry.get("supports_adaptive_thinking"))
 
 
 def is_known_openai_bare_model(model_name: str) -> bool:

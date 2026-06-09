@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
+from strix.config.models import (
+    DEFAULT_MODEL_RETRY,
+    model_supports_adaptive_thinking,
+    model_supports_reasoning,
+)
 
 
 if TYPE_CHECKING:
@@ -121,9 +125,22 @@ def make_model_settings(
         and reasoning_effort != "none"
         and model_supports_reasoning(model_name)
     ):
-        model_settings = model_settings.resolve(
-            ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
-        )
+        if model_supports_adaptive_thinking(model_name):
+            # Newer Anthropic models (e.g. Claude Opus 4.8) reject the legacy
+            # ``thinking.type=enabled`` shape that LiteLLM emits from
+            # ``reasoning_effort``. Send the adaptive-thinking API instead.
+            model_settings = model_settings.resolve(
+                ModelSettings(
+                    extra_args={
+                        "thinking": {"type": "adaptive"},
+                        "output_config": {"effort": reasoning_effort},
+                    },
+                ),
+            )
+        else:
+            model_settings = model_settings.resolve(
+                ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
+            )
     return model_settings
 
 
