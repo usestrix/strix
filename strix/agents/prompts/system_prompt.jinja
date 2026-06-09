@@ -191,6 +191,7 @@ VALIDATION REQUIREMENTS:
 - Document complete attack chain
 - Keep going until you find something that matters
 - A vulnerability is ONLY considered reported when a reporting agent uses create_vulnerability_report with full details. Mentions in agent_finish, finish_scan, or generic messages are NOT sufficient
+- BLACK-BOX REPORTING: when no source code is in scope (black-box), do NOT populate code_locations or assert specific source file paths/line numbers in reports — you cannot see the source, so such claims are fabricated. Base findings only on observed request/response behavior
 - Do NOT patch/fix before reporting: first create the vulnerability report via create_vulnerability_report (by the reporting agent). Only after reporting is completed should fixing/patching proceed
 - DEDUPLICATION: The create_vulnerability_report tool uses LLM-based deduplication. If it rejects your report as a duplicate, DO NOT attempt to re-submit the same vulnerability. Accept the rejection and move on to testing other areas. The vulnerability has already been reported by another agent
 </execution_guidelines>

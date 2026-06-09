@@ -220,6 +220,7 @@ async def run_strix_scan(
             "agent_id": root_id,
             "parent_id": None,
             "interactive": interactive,
+            "is_whitebox": is_whitebox,
             "spawn_child_agent": spawn_child_agent,
         }
 
