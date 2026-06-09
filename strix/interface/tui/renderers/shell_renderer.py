@@ -26,6 +26,11 @@ _EXIT_RE = re.compile(r"Process exited with code (-?\d+)")
 _SESSION_RE = re.compile(r"Process running with session ID (\d+)")
 _OUTPUT_HEADER = "\nOutput:\n"
 
+_CONTROL_BYTES_TO_DROP = dict.fromkeys(
+    [b for b in range(0x20) if b not in (0x09, 0x0A)] + [0x7F],
+    None,
+)
+
 
 @cache
 def _get_style_colors() -> dict[Any, str]:
@@ -60,14 +65,13 @@ def _parse_sdk_shell_result(result: Any) -> dict[str, Any]:
 
 
 def _truncate_line(line: str) -> str:
-    clean_line = re.sub(r"\x1b\[[0-9;]*m", "", line)
-    if len(clean_line) > MAX_LINE_LENGTH:
+    if len(line) > MAX_LINE_LENGTH:
         return line[: MAX_LINE_LENGTH - 3] + "..."
     return line
 
 
 def _clean_output(output: str) -> str:
-    cleaned = output
+    cleaned = Text.from_ansi(output).plain.translate(_CONTROL_BYTES_TO_DROP)
     for pattern in STRIP_PATTERNS:
         cleaned = re.sub(pattern, "", cleaned, flags=re.MULTILINE)
 
