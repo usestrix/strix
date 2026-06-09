@@ -47,7 +47,7 @@ async def create_or_reuse(
         if not ws_subdir or not host_path:
             continue
         resolved = Path(host_path).expanduser().resolve()
-        if src.get("is_dir") == "false":
+        if src.get("is_dir") is False:
             entries[ws_subdir] = LocalFile(src=resolved)
         else:
             entries[ws_subdir] = LocalDir(src=resolved)
