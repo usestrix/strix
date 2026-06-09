@@ -419,8 +419,7 @@ Examples:
         help="Custom instructions for the penetration test. This can be "
         "specific vulnerability types to focus on (e.g., 'Focus on IDOR and XSS'), "
         "testing approaches (e.g., 'Perform thorough authentication testing'), "
-        "test credentials (e.g., 'Use the following credentials to access the app: "
-        "admin:password123'), "
+        "or testing credentials (use --credentials or --credentials-file for secrets), "
         "or areas of interest (e.g., 'Check login API endpoint for security issues').",
     )
 
