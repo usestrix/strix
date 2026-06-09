@@ -42,9 +42,13 @@ class AgentCoordinator:
         self.runtimes: dict[str, AgentRuntime] = {}
         self._lock = asyncio.Lock()
         self._snapshot_path: Path | None = None
+        self.is_shutting_down = False
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
+
+    def mark_shutting_down(self) -> None:
+        self.is_shutting_down = True
 
     async def register(
         self,

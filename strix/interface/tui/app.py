@@ -1715,6 +1715,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.exit()
 
     def _fire_sandbox_cleanup(self) -> None:
+        self.coordinator.mark_shutting_down()
         loop = self._scan_loop
         if loop is None or loop.is_closed():
             return

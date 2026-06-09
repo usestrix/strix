@@ -368,7 +368,13 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                         agent_id,
                     )
                 except (ExecTransportError, docker_errors.NotFound):
-                    logger.warning("Ignoring sandbox container error for %s", agent_id)
+                    if not coordinator.is_shutting_down:
+                        raise
+                    logger.warning(
+                        "Ignoring sandbox container error during teardown for %s",
+                        agent_id,
+                        exc_info=True,
+                    )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
         except Exception as exc:
