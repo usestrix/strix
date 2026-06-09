@@ -1257,7 +1257,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["value"],
                     "workspace_subdir": workspace_subdir,
-                    "is_dir": "false",
+                    "is_dir": False,
                 }
             )
 
