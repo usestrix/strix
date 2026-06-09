@@ -44,7 +44,7 @@ def test_file_asset_collected_as_local_file_source(tmp_path: Path) -> None:
     assign_workspace_subdirs(targets)
     assert targets[0]["details"]["workspace_subdir"] == "app.apk"
     assert collect_local_sources(targets) == [
-        {"source_path": str(apk), "workspace_subdir": "app.apk", "is_dir": "false"},
+        {"source_path": str(apk), "workspace_subdir": "app.apk", "is_dir": False},
     ]
 
 

@@ -1229,8 +1229,8 @@ def is_whitebox_scan(targets_info: list[dict[str, Any]]) -> bool:
     return any(t.get("type") == "local_code" for t in targets_info or [])
 
 
-def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, str]]:
-    local_sources: list[dict[str, str]] = []
+def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, str | bool]]:
+    local_sources: list[dict[str, str | bool]] = []
 
     for target_info in targets_info:
         details = target_info["details"]
