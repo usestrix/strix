@@ -64,6 +64,14 @@ AUTHORIZED TARGETS:
 - {{ target.type }}: {{ target.value }}{% if target.workspace_path %} (workspace: {{ target.workspace_path }}){% endif %}
 {% endfor %}
 {% endif %}
+{% if system_prompt_context and system_prompt_context.credential_names %}
+
+CREDENTIALS AVAILABLE:
+{% for name in system_prompt_context.credential_names %}
+- {{ name }}
+{% endfor %}
+Use get_credential(name) to retrieve a credential value. Never assume a value — always call get_credential before passing a credential to any tool.
+{% endif %}
 
 AUTHORIZATION STATUS:
 - You have FULL AUTHORIZATION for authorized security validation on in-scope targets to help secure the target systems/app

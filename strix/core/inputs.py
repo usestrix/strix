@@ -98,11 +98,14 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
             {"type": ttype, "value": value, "workspace_path": workspace_path},
         )
 
+    credentials: dict[str, str] = scan_config.get("credentials") or {}
+
     return {
         "scope_source": "system_scan_config",
         "authorization_source": "strix_platform_verified_targets",
         "authorized_targets": authorized,
         "user_instructions_do_not_expand_scope": True,
+        "credential_names": sorted(credentials.keys()),
     }
 
 

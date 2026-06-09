@@ -218,6 +218,7 @@ async def run_strix_scan(
             "parent_id": None,
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
+            "credentials": scan_config.get("credentials") or {},
         }
 
         root_session = open_agent_session(root_id, agents_db)
