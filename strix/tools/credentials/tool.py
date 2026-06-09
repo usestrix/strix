@@ -1,31 +1,39 @@
-"""Credential access tool for Strix agents."""
+"""Credential placeholder substitution utilities for Strix agents."""
 
 from __future__ import annotations
 
-import json
-from typing import Any
+import re
 
-from agents import RunContextWrapper, function_tool
+_PLACEHOLDER_RE = re.compile(r"\{\{([A-Za-z0-9_]+)\}\}")
 
 
-async def _get_credential_impl(ctx: RunContextWrapper, name: str) -> str:
-    """Retrieve a named credential value supplied via --credentials or --credentials-file.
+def substitute_credentials(text: str, credentials: dict[str, str]) -> str:
+    """Replace ``{{NAME}}`` tokens in *text* with matching credential values.
 
-    Credential values are never stored in conversation history — call this tool each time
-    you need a value (e.g., to fill a login form or set an auth header).
-    Pass the exact key name shown in the CREDENTIALS AVAILABLE system prompt block.
+    Tokens whose names are not in *credentials* are left unchanged.
+    Empty-string credential values substitute to an empty string.
     """
-    context: dict[str, Any] = ctx.context if isinstance(ctx.context, dict) else {}
-    credentials: dict[str, str] = context.get("credentials") or {}
-    value = credentials.get(name)
-    if value is None:
-        return json.dumps(
-            {
-                "error": f"Credential '{name}' not found.",
-                "available": sorted(credentials.keys()),
-            }
-        )
-    return json.dumps({"value": value})
+    if not credentials:
+        return text
+
+    def _replace(m: re.Match[str]) -> str:
+        name = m.group(1)
+        return credentials[name] if name in credentials else m.group(0)
+
+    return _PLACEHOLDER_RE.sub(_replace, text)
 
 
-get_credential = function_tool(name_override="get_credential", timeout=10)(_get_credential_impl)
+def scrub_credentials(text: str, credentials: dict[str, str]) -> str:
+    """Replace literal credential values in *text* with ``[CREDENTIAL:NAME]``.
+
+    Values shorter than 4 characters are not scrubbed to avoid false-positive
+    replacement of common substrings.  Longer values are replaced first so that
+    a longer secret that contains a shorter one is handled correctly.
+    """
+    pairs = sorted(
+        ((v, k) for k, v in credentials.items() if len(v) >= 4),
+        key=lambda x: -len(x[0]),
+    )
+    for value, name in pairs:
+        text = text.replace(value, f"[CREDENTIAL:{name}]")
+    return text

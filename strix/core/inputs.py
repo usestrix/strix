@@ -113,9 +113,15 @@ def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,
     model_name: str,
+    via_proxy: bool = False,
 ) -> ModelSettings:
+    # Sending parallel_tool_calls=False through a LiteLLM proxy causes some proxy
+    # versions to emit tool_choice: {"disable_parallel_tool_use": true} without the
+    # required "type" field, which Bedrock's Anthropic Messages API rejects.
+    # Skip it in proxy mode; the models default to sequential tool calls anyway.
+    parallel_tool_calls: bool | None = None if via_proxy else False
     model_settings = ModelSettings(
-        parallel_tool_calls=False,
+        parallel_tool_calls=parallel_tool_calls,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
     )

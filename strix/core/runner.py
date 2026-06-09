@@ -156,6 +156,7 @@ async def run_strix_scan(
         model_settings = make_model_settings(
             settings.llm.reasoning_effort,
             model_name=resolved_model,
+            via_proxy=bool(settings.llm.api_base),
         )
         run_config = RunConfig(
             model=resolved_model,

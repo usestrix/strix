@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 import logging
@@ -24,7 +25,6 @@ from strix.tools.agents_graph.tools import (
     view_agent_graph,
     wait_for_message,
 )
-from strix.tools.credentials.tool import get_credential
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
@@ -163,9 +163,11 @@ def _custom_tool_as_function_tool(tool: CustomTool) -> FunctionTool:
 def _configure_chat_completions_filesystem_tools(toolset: Any) -> None:
     for name, tool in vars(toolset).items():
         if isinstance(tool, CustomTool):
-            setattr(toolset, name, _custom_tool_as_function_tool(tool))
+            ft = _custom_tool_as_function_tool(tool)
+            setattr(toolset, name, _wrap_credential_substitution(ft))
         elif isinstance(tool, FunctionTool):
-            setattr(toolset, name, _function_tool_with_error_result(tool))
+            wrapped = _function_tool_with_error_result(tool)
+            setattr(toolset, name, _wrap_credential_substitution(wrapped))
 
 
 _CHARS_ESCAPE_RE = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[0abtnvfr\\])")
@@ -246,6 +248,35 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
+def _wrap_credential_substitution(tool: FunctionTool) -> FunctionTool:
+    """Wrap a FunctionTool so credentials are substituted in inputs and scrubbed from outputs.
+
+    Plain ``FunctionTool`` instances (module-level singletons in ``_BASE_TOOLS``) are copied
+    via ``dataclasses.replace`` so the originals are not mutated.  Subclasses such as
+    ``ViewImageTool`` and ``ExecCommandTool`` override ``__init__`` and cannot be recreated
+    that way, so they are mutated in-place — those instances are always freshly created per
+    agent build and are never shared singletons.
+    """
+    from strix.tools.credentials.tool import scrub_credentials, substitute_credentials
+
+    invoke_tool = tool.on_invoke_tool
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        credentials: dict[str, str] = (
+            ctx.context.get("credentials") or {} if isinstance(ctx.context, dict) else {}
+        )
+        substituted = substitute_credentials(raw_input, credentials)
+        result = await invoke_tool(ctx, substituted)
+        if credentials and isinstance(result, str):
+            result = scrub_credentials(result, credentials)
+        return result
+
+    if type(tool) is FunctionTool:
+        return dataclasses.replace(tool, on_invoke_tool=invoke)
+    tool.on_invoke_tool = invoke
+    return tool
+
+
 def _configure_shell_tools(toolset: Any, *, chat_completions: bool) -> None:
     for name, tool in vars(toolset).items():
         if not isinstance(tool, FunctionTool):
@@ -257,6 +288,7 @@ def _configure_shell_tools(toolset: Any, *, chat_completions: bool) -> None:
             wrapped = _wrap_write_stdin(wrapped)
         if chat_completions:
             wrapped = _function_tool_with_error_result(wrapped)
+        wrapped = _wrap_credential_substitution(wrapped)  # outermost: runs first on input, last on output
         setattr(toolset, name, wrapped)
 
 
@@ -335,7 +367,6 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     update_note,
     delete_note,
     web_search,
-    get_credential,
     create_vulnerability_report,
     list_requests,
     view_request,
@@ -381,6 +412,10 @@ def build_strix_agent(
         tools: list[Tool] = [*_BASE_TOOLS, finish_scan]
     else:
         tools = [*_BASE_TOOLS, agent_finish]
+    tools = [
+        _wrap_credential_substitution(t) if isinstance(t, FunctionTool) else t
+        for t in tools
+    ]
 
     logger.info(
         "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",
