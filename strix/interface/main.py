@@ -5,6 +5,7 @@ Strix Agent Interface
 
 import argparse
 import asyncio
+import json
 import shutil
 import sys
 from datetime import UTC, datetime
@@ -301,6 +302,51 @@ def get_version() -> str:
         return "unknown"
 
 
+def _parse_credentials(
+    credentials_str: str | None,
+    credentials_file: str | None,
+    parser: argparse.ArgumentParser,
+) -> dict[str, str]:
+    """Parse --credentials and --credentials-file into a merged dict.
+
+    File is loaded first; inline values override on key collision.
+    Calls parser.error() (which raises SystemExit) on any validation failure.
+    """
+    result: dict[str, str] = {}
+
+    if credentials_file:
+        cred_path = Path(credentials_file)
+        try:
+            with cred_path.open(encoding="utf-8") as f:
+                loaded = json.load(f)
+        except FileNotFoundError:
+            parser.error(f"Credentials file not found: '{credentials_file}'")
+            return result  # unreachable; parser.error() raises SystemExit
+        except json.JSONDecodeError as exc:
+            parser.error(f"Credentials file is not valid JSON '{credentials_file}': {exc}")
+            return result  # unreachable
+        if not isinstance(loaded, dict):
+            parser.error(
+                f"Credentials file must contain a JSON object, got {type(loaded).__name__}: "
+                f"'{credentials_file}'"
+            )
+            return result  # unreachable
+        result.update({str(k): str(v) for k, v in loaded.items()})
+
+    if credentials_str:
+        for pair in credentials_str.split(","):
+            if "=" not in pair:
+                parser.error(
+                    f"Invalid --credentials value '{pair}'. "
+                    "Each entry must be KEY=VALUE (comma-separated)."
+                )
+                return result  # unreachable
+            key, _, value = pair.partition("=")
+            result[key.strip()] = value
+
+    return result
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
@@ -369,6 +415,26 @@ Examples:
         help="Path to a file containing detailed custom instructions for the penetration test. "
         "Use this option when you have lengthy or complex instructions saved in a file "
         "(e.g., '--instruction-file ./detailed_instructions.txt').",
+    )
+
+    parser.add_argument(
+        "--credentials",
+        type=str,
+        help="Comma-separated KEY=VALUE credential pairs kept out of the LLM conversation. "
+        "Reference credentials by name in instructions "
+        "(e.g., '--instruction \"Log in using USERNAME and PASSWORD\"'). "
+        "Example: '--credentials USERNAME=admin,PASSWORD=secret'. "
+        "Keys from --credentials-file are loaded first; inline values override on collision.",
+    )
+
+    parser.add_argument(
+        "--credentials-file",
+        type=str,
+        help="Path to a JSON file of credential key-value pairs "
+        "(e.g., '{\"USERNAME\": \"admin\", \"PASSWORD\": \"secret\"}'). "
+        "Values are kept out of the LLM conversation; "
+        "use get_credential(name) in instructions to reference them. "
+        "Inline --credentials values override file values on key collision.",
     )
 
     parser.add_argument(
@@ -451,6 +517,12 @@ Examples:
                     parser.error(f"Instruction file '{instruction_path}' is empty")
         except Exception as e:
             parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
+
+    args.credentials = _parse_credentials(
+        args.credentials,
+        args.credentials_file,
+        parser,
+    )
 
     args.user_explicit_instruction = args.instruction if args.resume else None
 
