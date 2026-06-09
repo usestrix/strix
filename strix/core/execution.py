@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any, cast
 
 from agents import RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
+from agents.sandbox.errors import ExecTransportError
+from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import APIError
 
 from strix.core.inputs import child_initial_input
@@ -320,7 +322,7 @@ async def _run_noninteractive_until_lifecycle(
         )
 
 
-async def _run_cycle(  # noqa: PLR0912
+async def _run_cycle(  # noqa: PLR0912, PLR0915
     agent: Any,
     coordinator: AgentCoordinator,
     agent_id: str,
@@ -356,6 +358,8 @@ async def _run_cycle(  # noqa: PLR0912
                                 event_sink(agent_id, event)
                             except Exception:
                                 logger.exception("stream event sink failed for %s", agent_id)
+                    if stream.run_loop_exception is not None:
+                        raise stream.run_loop_exception
                 except RuntimeError as stream_exc:
                     if "after shutdown" not in str(stream_exc):
                         raise
@@ -363,8 +367,8 @@ async def _run_cycle(  # noqa: PLR0912
                         "Ignoring LiteLLM end-of-stream shutdown race for %s",
                         agent_id,
                     )
-                if stream.run_loop_exception is not None:
-                    raise stream.run_loop_exception
+                except (ExecTransportError, docker_errors.NotFound):
+                    logger.warning("Ignoring sandbox container error for %s", agent_id)
             finally:
                 await coordinator.detach_stream(agent_id, stream)
         except Exception as exc:
