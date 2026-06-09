@@ -751,7 +751,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             self.report_state.cleanup()
 
         def signal_handler(_signum: int, _frame: Any) -> None:
-            self._teardown_sandbox_blocking(timeout=10.0)
+            self._fire_sandbox_cleanup()
             self.report_state.cleanup(status="interrupted")
             sys.exit(0)
 
@@ -1705,36 +1705,24 @@ class StrixTUIApp(App):  # type: ignore[misc]
         )
 
     async def action_custom_quit(self) -> None:
-        await asyncio.to_thread(self._teardown_sandbox_blocking, timeout=10.0)
+        self._fire_sandbox_cleanup()
 
         if self._scan_thread and self._scan_thread.is_alive():
             self._scan_stop_event.set()
-            self._scan_thread.join(timeout=2.0)
 
         self.report_state.cleanup()
 
         self.exit()
 
-    def _teardown_sandbox_blocking(self, *, timeout: float) -> None:
+    def _fire_sandbox_cleanup(self) -> None:
         loop = self._scan_loop
         if loop is None or loop.is_closed():
             return
         run_name = self.scan_config.get("run_name")
         if not run_name:
             return
-        future = asyncio.run_coroutine_threadsafe(
-            session_manager.cleanup(run_name),
-            loop,
-        )
-        try:
-            future.result(timeout=timeout)
-        except TimeoutError:
-            logger.warning(
-                "Sandbox cleanup timed out after %.1fs; container may still be running",
-                timeout,
-            )
-        except Exception:
-            logger.exception("Sandbox cleanup failed")
+        with contextlib.suppress(Exception):
+            asyncio.run_coroutine_threadsafe(session_manager.cleanup(run_name), loop)
 
     def _is_widget_safe(self, widget: Any) -> bool:
         try:

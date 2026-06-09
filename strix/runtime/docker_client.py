@@ -22,6 +22,7 @@ re-merging the parent body. Track upstream for an injection hook.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from typing import Any
@@ -34,6 +35,8 @@ from agents.sandbox.sandboxes.docker import (
     _manifest_requires_fuse,
     _manifest_requires_sys_admin,
 )
+from agents.sandbox.session.sandbox_session import SandboxSession
+from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from docker.models.containers import Container  # type: ignore[import-untyped, unused-ignore]
 from docker.utils import parse_repository_tag  # type: ignore[import-untyped, unused-ignore]
 
@@ -121,3 +124,10 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             image,
         )
         return container
+
+    async def delete(self, session: SandboxSession) -> SandboxSession:
+        container_id = getattr(getattr(session._inner, "state", None), "container_id", None)
+        if container_id:
+            with contextlib.suppress(docker_errors.NotFound, docker_errors.APIError):
+                self.docker_client.containers.get(container_id).kill()
+        return await super().delete(session)
