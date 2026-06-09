@@ -207,6 +207,7 @@ ignore = [
 # time to derive the JSON schema, which evaluates annotations at runtime —
 # so RunContextWrapper / Tool / TResponseInputItem must be imported eagerly,
 # not under TYPE_CHECKING.
+"strix/tools/credentials/tool.py" = ["TC002"]
 "strix/tools/todo/tools.py" = ["TC002"]
 "strix/tools/thinking/tool.py" = ["TC002"]
 "strix/tools/web_search/tool.py" = ["TC002"]

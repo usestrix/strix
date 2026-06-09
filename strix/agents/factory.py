@@ -51,6 +51,7 @@ from strix.tools.todo.tools import (
     mark_todo_pending,
     update_todo,
 )
+from strix.tools.credentials.tool import get_credential
 from strix.tools.web_search.tool import web_search
 
 
@@ -334,6 +335,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     update_note,
     delete_note,
     web_search,
+    get_credential,
     create_vulnerability_report,
     list_requests,
     view_request,
