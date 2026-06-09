@@ -110,11 +110,17 @@ def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,
     model_name: str,
+    temperature: float | None = None,
+    top_p: float | None = None,
+    max_tokens: int | None = None,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
+        temperature=temperature,
+        top_p=top_p,
+        max_tokens=max_tokens,
     )
     if (
         reasoning_effort is not None
