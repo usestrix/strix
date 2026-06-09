@@ -49,6 +49,7 @@ strix = "strix.interface.main:main"
 
 [dependency-groups]
 dev = [
+  "pytest>=8.0.0",
   "mypy>=1.16.0",
   "ruff>=0.11.13",
   "pyright>=1.1.401",
@@ -321,3 +322,10 @@ known_third_party = ["pydantic", "litellm"]
 exclude_dirs = ["docs", "build", "dist"]
 skips = ["B101", "B601", "B404", "B603", "B607"]  # Skip assert, shell injection, subprocess import and partial path checks
 severity = "medium"
+
+# ============================================================================
+# Pytest Configuration
+# ============================================================================
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
