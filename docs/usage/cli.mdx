@@ -16,11 +16,19 @@ strix --target <target> [options]
 </ParamField>
 
 <ParamField path="--instruction" type="string">
-  Custom instructions for the scan. Use for credentials, focus areas, or specific testing approaches.
+  Custom instructions for the scan. Use for focus areas or specific testing approaches (e.g., "Focus on IDOR and auth bypass"). For credentials, use `--credentials` or `--credentials-file` instead.
 </ParamField>
 
 <ParamField path="--instruction-file" type="string">
   Path to a file containing detailed instructions.
+</ParamField>
+
+<ParamField path="--credentials" type="string">
+  Comma-separated `KEY=VALUE` credential pairs kept out of the LLM conversation. Reference credentials by name in `--instruction` (e.g., `"Log in using USERNAME and PASSWORD"`). Example: `--credentials USERNAME=admin,PASSWORD=secret`. File values from `--credentials-file` load first; inline values override on key collision.
+</ParamField>
+
+<ParamField path="--credentials-file" type="string">
+  Path to a JSON file of credential key-value pairs (e.g., `{"USERNAME": "admin"}`). Values are kept out of the LLM conversation. Inline `--credentials` values override file values on key collision.
 </ParamField>
 
 <ParamField path="--scan-mode, -m" type="string" default="deep">
@@ -50,7 +58,9 @@ strix --target <target> [options]
 strix --target https://example.com
 
 # Authenticated testing
-strix --target https://app.com --instruction "Use credentials: user:pass"
+strix --target https://app.com \
+  --credentials USERNAME=user,PASSWORD=pass \
+  --instruction "Log in using USERNAME and PASSWORD, then test authenticated endpoints"
 
 # Focused testing
 strix --target api.example.com --instruction "Focus on IDOR and auth bypass"

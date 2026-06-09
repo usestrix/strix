@@ -162,7 +162,9 @@ strix --target https://your-app.com
 
 ```bash
 # Grey-box authenticated testing
-strix --target https://your-app.com --instruction "Perform authenticated testing using credentials: user:pass"
+strix --target https://your-app.com \
+  --credentials USERNAME=user,PASSWORD=pass \
+  --instruction "Perform authenticated testing using the USERNAME and PASSWORD credentials"
 
 # Multi-target testing (source code + deployed app)
 strix -t https://github.com/org/app -t https://your-app.com

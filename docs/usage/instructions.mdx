@@ -3,7 +3,7 @@ title: "Custom Instructions"
 description: "Guide Strix with custom testing instructions"
 ---
 
-Use instructions to provide context, credentials, or focus areas for your scan.
+Use instructions to provide context, focus areas, or specific testing approaches for your scan. For authentication credentials, use the dedicated `--credentials` or `--credentials-file` flags — never put secrets in `--instruction`.
 
 ## Inline Instructions
 
@@ -23,10 +23,29 @@ strix --target https://app.com --instruction-file ./pentest-instructions.md
 
 ### Authenticated Testing
 
+Pass credentials separately from instructions using `--credentials` or `--credentials-file`. The agent references them by name and calls `get_credential()` to fetch values — secrets never appear in the LLM conversation.
+
 ```bash
+# Inline credentials
 strix --target https://app.com \
-  --instruction "Login with email: test@example.com, password: TestPass123"
+  --credentials USERNAME=test@example.com,PASSWORD=TestPass123 \
+  --instruction "Log in using the USERNAME and PASSWORD credentials, then test authenticated endpoints"
+
+# From a file
+strix --target https://app.com \
+  --credentials-file ./creds.json \
+  --instruction "Log in using the USERNAME and PASSWORD credentials"
 ```
+
+`creds.json` format:
+```json
+{
+  "USERNAME": "test@example.com",
+  "PASSWORD": "TestPass123"
+}
+```
+
+Both flags can be combined — file values are loaded first, inline `--credentials` override on key collision.
 
 ### Focused Scope
 
@@ -45,18 +64,16 @@ strix --target https://app.com \
 ### API Testing
 
 ```bash
+# Pass an API key as a credential, reference it in the instruction
 strix --target https://api.example.com \
-  --instruction "Use API key header: X-API-Key: abc123. Focus on rate limiting bypass."
+  --credentials API_KEY=abc123 \
+  --instruction "Use the API_KEY credential as the X-Api-Key header. Focus on rate limiting bypass."
 ```
 
 ## Instruction File Example
 
 ```markdown instructions.md
 # Penetration Test Instructions
-
-## Credentials
-- Admin: admin@example.com / AdminPass123
-- User: user@example.com / UserPass123
 
 ## Focus Areas
 1. IDOR in user profile endpoints
@@ -69,5 +86,5 @@ strix --target https://api.example.com \
 ```
 
 <Tip>
-Be specific. Good instructions help Strix prioritize the most valuable attack paths.
+Be specific. Good instructions help Strix prioritize the most valuable attack paths. Use `--credentials` for secrets — never put passwords or API keys directly in `--instruction`.
 </Tip>
