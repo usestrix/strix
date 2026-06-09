@@ -1,14 +1,4 @@
-"""Asset-type taxonomy for Strix targets.
-
-Single source of truth for the asset/target types Strix can test: how each is
-recognized on the command line and which methodology skill covers it.
-``strix.interface.utils.infer_target_type`` consults the detection helpers
-here, and the input builders surface the recommended skill to the agent.
-
-The four core target types (``repository``, ``local_code``, ``web_application``,
-``ip_address``) keep their existing clone/mount/proxy handling. Everything else
-resolves to the generic ``asset`` target type carrying an ``asset_type`` key.
-"""
+"""Asset-type taxonomy: how each target type is recognized and which skill covers it."""
 
 from __future__ import annotations
 
@@ -21,15 +11,8 @@ from urllib.parse import urlparse
 
 @dataclass(frozen=True)
 class AssetType:
-    """One testable asset/target class.
-
-    ``kind`` tells the runtime how to treat the value:
-    ``code`` | ``file`` | ``url`` | ``network`` | ``identifier`` | ``account``.
-    ``skill`` is the methodology skill stem recommended to the agent (only
-    surfaced once that skill file exists). ``prefixes`` are the explicit
-    ``prefix:value`` aliases a user may pass; ``exts`` are file extensions
-    that auto-classify a local artifact.
-    """
+    """``kind`` is one of code|file|url|network|identifier|account; ``skill`` is the
+    recommended methodology skill stem; ``prefixes``/``exts`` drive detection."""
 
     key: str
     name: str
@@ -680,8 +663,7 @@ def by_key(key: str) -> AssetType | None:
 
 
 def match_prefix(target: str) -> tuple[AssetType, str] | None:
-    """Resolve an explicit ``prefix:value`` form. Returns ``None`` if the head
-    is not a known prefix or the value looks like a ``scheme://`` URL."""
+    """Resolve an explicit ``prefix:value`` form; None if prefix unknown or value is a URL."""
     head, sep, rest = target.partition(":")
     rest = rest.strip()
     if not sep or not rest or rest.startswith("//"):
