@@ -331,7 +331,16 @@ def _parse_credentials(
                 f"'{credentials_file}'"
             )
             return result  # unreachable
-        result.update({str(k): str(v) for k, v in loaded.items()})
+        str_values: dict[str, str] = {}
+        for k, v in loaded.items():
+            if not isinstance(v, str):
+                parser.error(
+                    f"Credentials file values must be strings, "
+                    f"got {type(v).__name__} for key '{k}': '{credentials_file}'"
+                )
+                break  # unreachable; satisfies type checker
+            str_values[str(k)] = v
+        result.update(str_values)
 
     if credentials_str:
         for pair in credentials_str.split(","):
@@ -342,7 +351,13 @@ def _parse_credentials(
                 )
                 return result  # unreachable
             key, _, value = pair.partition("=")
-            result[key.strip()] = value
+            key = key.strip()
+            if not key:
+                parser.error(
+                    f"Invalid --credentials value '{pair}': key must not be empty."
+                )
+                return result  # unreachable; satisfies type checker
+            result[key] = value
 
     return result
 

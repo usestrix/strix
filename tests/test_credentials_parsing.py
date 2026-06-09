@@ -72,3 +72,15 @@ def test_non_object_json_raises_system_exit(tmp_path):
 def test_invalid_inline_format_raises_system_exit():
     with pytest.raises(SystemExit):
         _parse_credentials("NOEQUALS", None, _parser())
+
+
+def test_empty_key_raises_system_exit():
+    with pytest.raises(SystemExit):
+        _parse_credentials("=value", None, _parser())
+
+
+def test_non_string_json_values_raise_system_exit(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"KEY": {"nested": "object"}}))
+    with pytest.raises(SystemExit):
+        _parse_credentials(None, str(bad), _parser())
