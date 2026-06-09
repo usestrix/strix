@@ -32,11 +32,11 @@ Configure Strix using environment variables or a config file.
 </ParamField>
 
 <ParamField path="STRIX_LLM_TEMPERATURE" type="number">
-  Sampling temperature passed to the model. Unset by default (uses the provider default). Useful for steadier tool use on local/OpenAI-compatible models. Parameters unsupported by a given model are dropped automatically.
+  Sampling temperature (`0.0`–`2.0`) passed to the model. Unset by default (uses the provider default). Useful for steadier tool use on local/OpenAI-compatible models. Parameters unsupported by a given model are dropped automatically.
 </ParamField>
 
 <ParamField path="STRIX_LLM_TOP_P" type="number">
-  Nucleus sampling `top_p` passed to the model. Unset by default.
+  Nucleus sampling `top_p` (`0.0`–`1.0`) passed to the model. Unset by default.
 </ParamField>
 
 <ParamField path="STRIX_LLM_MAX_TOKENS" type="integer">

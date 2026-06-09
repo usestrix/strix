@@ -63,7 +63,8 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     llm = settings.llm
     set_tracing_disabled(True)
     _configure_litellm_compatibility()
-    _configure_litellm_request_timeout(llm.timeout)
+    if "timeout" in llm.model_fields_set:
+        _configure_litellm_request_timeout(llm.timeout)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
         _configure_litellm_default("api_key", llm.api_key)
@@ -133,11 +134,11 @@ def _configure_litellm_request_timeout(timeout: int) -> None:
     """Apply the configured ``LLM_TIMEOUT`` to LiteLLM-routed scan calls.
 
     The SDK's LiteLLM model invokes ``litellm.acompletion`` without an explicit
-    per-request timeout, so without this it falls back to LiteLLM's module
-    default and the documented ``LLM_TIMEOUT`` only affected the warm-up call
-    (``strix/interface/main.py``). Setting the module-level default makes
-    ``export LLM_TIMEOUT=600`` take effect for the actual scan, restoring the
-    documented behavior for slow local / self-hosted models.
+    per-request timeout, so before this the documented ``LLM_TIMEOUT`` only
+    affected the warm-up call (``strix/interface/main.py``) and scan calls fell
+    back to LiteLLM's ~6000s module default. The caller applies this only when
+    ``LLM_TIMEOUT`` is explicitly set, so users who never set it keep LiteLLM's
+    default instead of being silently capped at the 300s ``LLM_TIMEOUT`` default.
     """
     import litellm
 

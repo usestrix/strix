@@ -489,12 +489,13 @@ async def create_vulnerability_report(
             - Duplicating the same change across multiple locations.
     """
     inner = ctx.context if isinstance(ctx.context, dict) else {}
-    if not inner.get("is_whitebox") and code_locations:
-        # Black-box scan: no source tree is available, so any file paths /
-        # line numbers / snippets in code_locations can only be fabricated.
-        # Drop them so a hallucinated "Code Analysis" section can never reach
-        # the customer-facing report (#321).
-        logger.info("Black-box scan: dropping code_locations from report %r", title)
+    if not inner.get("source_in_scope") and code_locations:
+        # No source tree is in scope (e.g. a URL/IP/domain black-box scan), so any
+        # file paths / line numbers / snippets in code_locations can only be
+        # fabricated. Drop them so a hallucinated "Code Analysis" section can never
+        # reach the customer-facing report (#321). Repository and local-code scans
+        # keep code_locations because the agent can actually read the source.
+        logger.info("No source in scope: dropping code_locations from report %r", title)
         code_locations = None
 
     raw_agent_id = inner.get("agent_id")
