@@ -62,3 +62,9 @@ def test_get_credential_is_registered_as_function_tool():
 
     assert isinstance(get_credential, FunctionTool)
     assert get_credential.name == "get_credential"
+
+
+def test_get_credential_has_description():
+    from strix.tools.credentials.tool import get_credential
+
+    assert get_credential.description, "Tool description must not be empty"

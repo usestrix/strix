@@ -24,6 +24,7 @@ from strix.tools.agents_graph.tools import (
     view_agent_graph,
     wait_for_message,
 )
+from strix.tools.credentials.tool import get_credential
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
@@ -51,7 +52,6 @@ from strix.tools.todo.tools import (
     mark_todo_pending,
     update_todo,
 )
-from strix.tools.credentials.tool import get_credential
 from strix.tools.web_search.tool import web_search
 
 
