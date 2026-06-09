@@ -120,6 +120,8 @@ extend-exclude = [
     "build",
     "dist",
     "migrations",
+    "target",
+    "docs/superpowers",
 ]
 
 [tool.ruff.lint]

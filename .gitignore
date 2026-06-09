@@ -70,6 +70,12 @@ tensorboard/
 strix_runs/
 agent_runs/
 
+# Scan targets (cloned repos for local testing)
+target/
+
+# AI-generated planning and design files
+docs/superpowers/
+
 # Misc
 *.log
 *.sqlite

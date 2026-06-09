@@ -3,12 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import dataclasses
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
+from agents.tool import FunctionTool
 
+from strix.agents.factory import _wrap_credential_substitution
 from strix.tools.credentials.tool import scrub_credentials, substitute_credentials
 
 
@@ -102,10 +102,6 @@ def test_scrub_value_exactly_4_chars() -> None:
 
 
 def test_wrap_substitutes_input_and_scrubs_output() -> None:
-    from agents.tool import FunctionTool
-
-    from strix.agents.factory import _wrap_credential_substitution
-
     received_inputs: list[str] = []
 
     async def inner(_ctx: Any, raw_input: str) -> str:
@@ -134,10 +130,6 @@ def test_wrap_substitutes_input_and_scrubs_output() -> None:
 
 
 def test_wrap_does_not_mutate_original_tool() -> None:
-    from agents.tool import FunctionTool
-
-    from strix.agents.factory import _wrap_credential_substitution
-
     async def inner(_ctx: Any, raw_input: str) -> str:
         return raw_input
 
@@ -156,11 +148,7 @@ def test_wrap_does_not_mutate_original_tool() -> None:
 
 
 def test_wrap_passthrough_when_no_credentials() -> None:
-    from agents.tool import FunctionTool
-
-    from strix.agents.factory import _wrap_credential_substitution
-
-    async def inner(_ctx: Any, raw_input: str) -> str:
+    async def inner(_ctx: Any, _raw_input: str) -> str:
         return "result with {{PASSWORD}}"
 
     original = FunctionTool(
