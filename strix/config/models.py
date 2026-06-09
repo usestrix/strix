@@ -168,6 +168,12 @@ def model_supports_adaptive_thinking(model_name: str) -> bool:
     return bool(entry and entry.get("supports_adaptive_thinking"))
 
 
+def model_supports_xhigh_effort(model_name: str) -> bool:
+    """Whether the model accepts the ``xhigh`` effort tier."""
+    entry = _model_cost_entry(model_name)
+    return bool(entry and entry.get("supports_xhigh_reasoning_effort"))
+
+
 def is_known_openai_bare_model(model_name: str) -> bool:
     import litellm
 

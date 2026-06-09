@@ -12,6 +12,7 @@ from strix.config.models import (
     DEFAULT_MODEL_RETRY,
     model_supports_adaptive_thinking,
     model_supports_reasoning,
+    model_supports_xhigh_effort,
 )
 
 
@@ -129,11 +130,19 @@ def make_model_settings(
             # Newer Anthropic models (e.g. Claude Opus 4.8) reject the legacy
             # ``thinking.type=enabled`` shape that LiteLLM emits from
             # ``reasoning_effort``. Send the adaptive-thinking API instead.
+            # Bedrock's ``output_config.effort`` only accepts low/medium/high
+            # (plus xhigh on models that advertise it), so normalize the wider
+            # ReasoningEffort range onto that set.
+            effort = reasoning_effort
+            if effort == "minimal":
+                effort = "low"
+            elif effort == "xhigh" and not model_supports_xhigh_effort(model_name):
+                effort = "high"
             model_settings = model_settings.resolve(
                 ModelSettings(
                     extra_args={
                         "thinking": {"type": "adaptive"},
-                        "output_config": {"effort": reasoning_effort},
+                        "output_config": {"effort": effort},
                     },
                 ),
             )
