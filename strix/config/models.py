@@ -39,6 +39,14 @@ class StrixProvider(MultiProvider):
                 prefix=prefix,
                 stripped_model_name=stripped_model_name,
             )
+        if prefix == "ollama" and stripped_model_name:
+            # Route Ollama through LiteLLM's chat endpoint. The bare ``ollama/``
+            # provider hits ``/api/generate``, which has no function-calling
+            # support, so with ``litellm.drop_params=True`` Strix's tools are
+            # dropped silently and the agent stops after one toolless turn.
+            # ``ollama_chat/`` uses ``/api/chat``, where tool-capable models can
+            # actually drive the agent loop.
+            return self._get_fallback_provider("litellm"), f"ollama_chat/{stripped_model_name}"
         return self._get_fallback_provider("litellm"), original_model_name
 
 
