@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from strix.core.paths import RUNS_DIR_NAME, run_dir_for, validate_run_name
@@ -56,17 +57,19 @@ class TestCloneRepositoryHardening(unittest.TestCase):
     """Verify clone_repository preserves argument and path boundaries."""
 
     def test_clone_repository_uses_end_of_options_separator(self) -> None:
-        with (
-            patch.object(_UTILS_MODULE.shutil, "which", return_value="/usr/bin/git"),
-            patch.object(_UTILS_MODULE.tempfile, "gettempdir", return_value="/tmp"),
-            patch.object(_UTILS_MODULE.subprocess, "run") as mock_run,
-        ):
-            result = clone_repository("-c core.sshCommand=evil", "scan-123")
+        with TemporaryDirectory() as tmp_dir:
+            with (
+                patch.object(_UTILS_MODULE.shutil, "which", return_value="/usr/bin/git"),
+                patch.object(_UTILS_MODULE.tempfile, "gettempdir", return_value=tmp_dir),
+                patch.object(_UTILS_MODULE.subprocess, "run") as mock_run,
+            ):
+                result = clone_repository("-c core.sshCommand=evil", "scan-123")
 
-        self.assertEqual(result, "/tmp/strix_repos/scan-123/-c core.sshCommand=evil")
-        args = mock_run.call_args.args[0]
-        self.assertEqual(args[:3], ["/usr/bin/git", "clone", "--"])
-        self.assertEqual(args[3], "-c core.sshCommand=evil")
+            expected = f"{tmp_dir}/strix_repos/scan-123/-c core.sshCommand=evil"
+            self.assertEqual(result, expected)
+            args = mock_run.call_args.args[0]
+            self.assertEqual(args[:3], ["/usr/bin/git", "clone", "--"])
+            self.assertEqual(args[3], "-c core.sshCommand=evil")
 
     def test_clone_repository_rejects_invalid_run_name(self) -> None:
         with self.assertRaises(ValueError):

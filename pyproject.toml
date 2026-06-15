@@ -300,6 +300,23 @@ reportUnknownArgumentType = false
 reportPrivateUsage = false
 
 [[tool.pyright.executionEnvironments]]
+root = "strix/agents/factory.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_inventory_tool_registration.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+reportAttributeAccessIssue = false
+
+[[tool.pyright.executionEnvironments]]
 root = "tests/test_inventory_tools.py"
 reportUnknownVariableType = false
 reportUnknownMemberType = false

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 from hypothesis import given
 from hypothesis import strategies as st
@@ -112,25 +113,25 @@ class TestStore(unittest.TestCase):
     """Ranked map persists and reloads."""
 
     def test_save_and_load_roundtrip(self) -> None:
-        run_dir = Path("/tmp/strix_test_scoring")
-        run_dir.mkdir(parents=True, exist_ok=True)
-        endpoint = Endpoint(key="k", method="GET", url="https://api.example.com/users")
-        score_endpoint(endpoint)
-        ranked = build_ranked_map("target-1", {"k": endpoint})
+        with TemporaryDirectory() as run_dir:
+            run_dir_path = Path(run_dir)
+            endpoint = Endpoint(key="k", method="GET", url="https://api.example.com/users")
+            score_endpoint(endpoint)
+            ranked = build_ranked_map("target-1", {"k": endpoint})
 
-        path = save_ranked_map(run_dir, ranked)
-        loaded = load_ranked_map(run_dir, "target-1")
+            path = save_ranked_map(run_dir_path, ranked)
+            loaded = load_ranked_map(run_dir_path, "target-1")
 
-        self.assertEqual(loaded.target_id, "target-1")
-        self.assertEqual(set(loaded.endpoints), {"k"})
-        self.assertEqual(loaded.endpoints["k"].score, endpoint.score)
-        self.assertTrue(path.exists())
+            self.assertEqual(loaded.target_id, "target-1")
+            self.assertEqual(set(loaded.endpoints), {"k"})
+            self.assertEqual(loaded.endpoints["k"].score, endpoint.score)
+            self.assertTrue(path.exists())
 
     def test_load_missing_returns_empty_map(self) -> None:
-        run_dir = Path("/tmp/strix_test_scoring_missing")
-        loaded = load_ranked_map(run_dir, "target-x")
-        self.assertEqual(loaded.target_id, "target-x")
-        self.assertEqual(loaded.endpoints, {})
+        with TemporaryDirectory() as run_dir:
+            loaded = load_ranked_map(Path(run_dir), "target-x")
+            self.assertEqual(loaded.target_id, "target-x")
+            self.assertEqual(loaded.endpoints, {})
 
 
 class TestScoringPBT(unittest.TestCase):

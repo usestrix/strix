@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import unittest
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 
 from strix.core.inventory.collectors import (
@@ -155,6 +156,10 @@ def update_user(user_id: int):
     return {}
 """
 
+    def setUp(self) -> None:
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+
     def test_fastapi_fixture_yields_routes(self) -> None:
         src = self._temp_fastapi_file()
         observations = collect_code(src, base_url="https://api.example.com")
@@ -174,12 +179,12 @@ def update_user(user_id: int):
 
     def _temp_fastapi_file(self) -> Path:
         """Return a temporary file path with the FastAPI fixture written."""
-        path = Path("/tmp/strix_inventory_fastapi_fixture.py")
+        path = Path(self._tmp.name) / "strix_inventory_fastapi_fixture.py"
         path.write_text(self.FASTAPI_SOURCE)
         return path
 
     def tearDown(self) -> None:
-        Path("/tmp/strix_inventory_fastapi_fixture.py").unlink(missing_ok=True)
+        pass
 
 
 class TestScopeBounding(unittest.TestCase):

@@ -5,6 +5,10 @@ from __future__ import annotations
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from typing import ClassVar
+
+from hypothesis import given
+from hypothesis import strategies as st
 
 from strix.core.inventory.collectors.code import collect_code
 from strix.core.inventory.parsers.fastapi import collect_routes
@@ -156,3 +160,27 @@ def delete_item(item_id: int, user=Depends(get_current_user)):
         root_obs = by_url["https://api.example.com/"]
         self.assertIsNotNone(root_obs.reachability)
         self.assertEqual(root_obs.reachability.status, "unreachable")  # type: ignore[union-attr]
+
+
+class TestReachabilitySoundnessPBT(unittest.TestCase):
+    """7.6: reachable status must carry a concrete sink path."""
+
+    _SINK_SNIPPETS: ClassVar[list[str]] = [
+        "cursor.execute(q)",
+        "os.system(cmd)",
+        "open(p)",
+        "requests.get(u)",
+    ]
+    _SAFE_SNIPPETS: ClassVar[list[str]] = [
+        "return 1",
+        "x = a + b",
+        "logger.info(msg)",
+    ]
+
+    @given(st.lists(st.sampled_from(_SINK_SNIPPETS + _SAFE_SNIPPETS), max_size=6))
+    def test_reachable_always_carries_a_path(self, lines: list[str]) -> None:
+        body = "\n".join(lines)
+        result = analyze_handler(body, 0)
+        self.assertIn(result.status, {"reachable", "unreachable", "unknown"})
+        if result.status == "reachable":
+            self.assertTrue(result.sinks, "reachable status with empty path violates 7.6")

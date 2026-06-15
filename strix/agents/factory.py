@@ -25,6 +25,17 @@ from strix.tools.agents_graph.tools import (
     wait_for_message,
 )
 from strix.tools.finish.tool import finish_scan
+from strix.tools.inventory.tools import (
+    build_ranked_surface_map,
+    classify_inventory_params,
+    collect_inventory_from_code,
+    collect_inventory_from_proxy,
+    enrich_inventory_from_forms,
+    enrich_inventory_from_js,
+    enrich_inventory_from_openapi,
+    load_ranked_surface_map,
+    spray_inventory_params,
+)
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
     create_note,
@@ -32,6 +43,12 @@ from strix.tools.notes.tools import (
     get_note,
     list_notes,
     update_note,
+)
+from strix.tools.oob.tools import (
+    confirm_oob_callback,
+    mint_oob_token,
+    poll_oob_callbacks,
+    report_oob_confirmed_candidate,
 )
 from strix.tools.proxy.tools import (
     list_requests,
@@ -346,6 +363,20 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     wait_for_message,
     create_agent,
     stop_agent,
+    # Phase 2 — OOB oracle (deterministic disposer for SSRF/XXE/etc.)
+    mint_oob_token,
+    poll_oob_callbacks,
+    confirm_oob_callback,
+    report_oob_confirmed_candidate,
+    # Phase 3 — attack-surface inventory (black-box safe)
+    collect_inventory_from_proxy,
+    build_ranked_surface_map,
+    load_ranked_surface_map,
+    classify_inventory_params,
+    spray_inventory_params,
+    enrich_inventory_from_openapi,
+    enrich_inventory_from_js,
+    enrich_inventory_from_forms,
 )
 
 
@@ -379,6 +410,10 @@ def build_strix_agent(
         tools: list[Tool] = [*_BASE_TOOLS, finish_scan]
     else:
         tools = [*_BASE_TOOLS, agent_finish]
+
+    # White-box-only tools: code collection + reachability annotation.
+    if is_whitebox:
+        tools.append(collect_inventory_from_code)
 
     logger.info(
         "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",
