@@ -20,6 +20,12 @@ from strix.core.inventory.models import (
     RankedSurfaceMap,
     ReachabilityAnnotation,
 )
+from strix.core.inventory.normalizer import (
+    dedup_endpoints,
+    dedup_observations,
+    endpoint_key,
+    normalize_observation,
+)
 
 
 __all__ = [
@@ -37,4 +43,8 @@ __all__ = [
     "collect_js",
     "collect_katana",
     "collect_sitemap",
+    "dedup_endpoints",
+    "dedup_observations",
+    "endpoint_key",
+    "normalize_observation",
 ]
