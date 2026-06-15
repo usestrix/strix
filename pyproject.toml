@@ -289,6 +289,27 @@ reportUnusedVariable = true
 reportDuplicateImport = true
 
 [[tool.pyright.executionEnvironments]]
+root = "strix/core/inventory/extractors.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_inventory_extractors.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/inventory/classify.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
 root = "strix/core/inventory/collectors"
 reportUnknownVariableType = false
 reportUnknownMemberType = false

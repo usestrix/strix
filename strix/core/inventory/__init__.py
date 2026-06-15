@@ -2,6 +2,11 @@
 
 from __future__ import annotations
 
+from strix.core.inventory.classify import (
+    agent_classify_param,
+    classify_endpoint,
+    classify_param,
+)
 from strix.core.inventory.collectors import (
     collect_arjun,
     collect_code,
@@ -10,6 +15,13 @@ from strix.core.inventory.collectors import (
     collect_js,
     collect_katana,
     collect_sitemap,
+)
+from strix.core.inventory.extractors import (
+    extract_form_params,
+    extract_js_params,
+    extract_openapi_params,
+    extract_proxy_params,
+    merge_extracted_params,
 )
 from strix.core.inventory.models import (
     Endpoint,
@@ -38,7 +50,10 @@ __all__ = [
     "ParamObservation",
     "RankedSurfaceMap",
     "ReachabilityAnnotation",
+    "agent_classify_param",
     "build_ranked_map",
+    "classify_endpoint",
+    "classify_param",
     "collect_arjun",
     "collect_code",
     "collect_ffuf",
@@ -49,7 +64,12 @@ __all__ = [
     "dedup_endpoints",
     "dedup_observations",
     "endpoint_key",
+    "extract_form_params",
+    "extract_js_params",
+    "extract_openapi_params",
+    "extract_proxy_params",
     "load_ranked_map",
+    "merge_extracted_params",
     "normalize_observation",
     "save_ranked_map",
     "score_endpoint",
