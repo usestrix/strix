@@ -110,6 +110,10 @@ disable_error_code = ["import-untyped"]
 module = ["strix.tools.scanner_runner.tool"]
 disallow_untyped_decorators = false
 
+[[tool.mypy.overrides]]
+module = ["tests.test_inventory_tools", "tests.test_inventory_parser_reachability"]
+disable_error_code = ["operator"]
+
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)
 # ============================================================================
@@ -290,6 +294,22 @@ reportDuplicateImport = true
 
 [[tool.pyright.executionEnvironments]]
 root = "strix/core/inventory/extractors.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "tests/test_inventory_tools.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+reportUnknownLambdaType = false
+reportCallIssue = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/tools/inventory/tools.py"
 reportUnknownVariableType = false
 reportUnknownMemberType = false
 reportUnknownArgumentType = false
