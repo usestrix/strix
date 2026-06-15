@@ -296,6 +296,13 @@ reportUnknownArgumentType = false
 reportPrivateUsage = false
 
 [[tool.pyright.executionEnvironments]]
+root = "tests/test_inventory_parser_reachability.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
 root = "tests/test_inventory_spray.py"
 reportUnknownVariableType = false
 reportUnknownMemberType = false
@@ -318,6 +325,13 @@ reportPrivateUsage = false
 
 [[tool.pyright.executionEnvironments]]
 root = "strix/core/inventory/collectors"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/inventory/parsers/reachability.py"
 reportUnknownVariableType = false
 reportUnknownMemberType = false
 reportUnknownArgumentType = false

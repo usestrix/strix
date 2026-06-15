@@ -96,6 +96,8 @@ def normalize_observation(obs: EndpointObservation) -> Endpoint:
         sources={obs.source},
         normalization_rules=rules,
     )
+    if obs.reachability is not None:
+        endpoint.reachability = obs.reachability
 
     params: dict[str, Param] = {}
     for name, param_obs in obs.params.items():

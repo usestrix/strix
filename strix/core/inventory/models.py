@@ -89,6 +89,7 @@ class EndpointObservation(BaseModel):
     source: SourceTag
     raw_evidence: dict[str, Any] = Field(default_factory=dict)
     scope_rules: list[str] | None = None
+    reachability: ReachabilityAnnotation | None = None
 
     @field_validator("method", mode="after")
     @classmethod

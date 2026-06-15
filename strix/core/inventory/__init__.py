@@ -38,6 +38,12 @@ from strix.core.inventory.normalizer import (
     endpoint_key,
     normalize_observation,
 )
+from strix.core.inventory.parsers.reachability import (
+    ReachabilityResult,
+    analyze_handler,
+    analyze_source_tree,
+    annotate_reachability,
+)
 from strix.core.inventory.scoring import build_ranked_map, score_endpoint, score_signals
 from strix.core.inventory.spray import (
     all_classes,
@@ -55,8 +61,12 @@ __all__ = [
     "ParamObservation",
     "RankedSurfaceMap",
     "ReachabilityAnnotation",
+    "ReachabilityResult",
     "agent_classify_param",
     "all_classes",
+    "analyze_handler",
+    "analyze_source_tree",
+    "annotate_reachability",
     "build_ranked_map",
     "classify_endpoint",
     "classify_param",
