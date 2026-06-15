@@ -26,6 +26,8 @@ from strix.core.inventory.normalizer import (
     endpoint_key,
     normalize_observation,
 )
+from strix.core.inventory.scoring import build_ranked_map, score_endpoint, score_signals
+from strix.core.inventory.store import load_ranked_map, save_ranked_map
 
 
 __all__ = [
@@ -36,6 +38,7 @@ __all__ = [
     "ParamObservation",
     "RankedSurfaceMap",
     "ReachabilityAnnotation",
+    "build_ranked_map",
     "collect_arjun",
     "collect_code",
     "collect_ffuf",
@@ -46,5 +49,9 @@ __all__ = [
     "dedup_endpoints",
     "dedup_observations",
     "endpoint_key",
+    "load_ranked_map",
     "normalize_observation",
+    "save_ranked_map",
+    "score_endpoint",
+    "score_signals",
 ]
