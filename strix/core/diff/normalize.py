@@ -19,28 +19,28 @@ _VOLATILE_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     (
         "csrf_token",
         re.compile(
-            r'(?i)(csrf[_-]?token|csrfmiddlewaretoken)'
+            r"(?i)(csrf[_-]?token|csrfmiddlewaretoken)"
             r'["\']?\s*[:=]\s*["\']?[a-zA-Z0-9+/=]{8,}'
         ),
     ),
     (
         "nonce",
         re.compile(
-            r'(?i)(nonce|state|code_challenge|code_verifier)'
+            r"(?i)(nonce|state|code_challenge|code_verifier)"
             r'["\']?\s*[:=]\s*["\']?[a-zA-Z0-9+/=]{8,}'
         ),
     ),
     (
         "request_id",
         re.compile(
-            r'(?i)(request[_-]?id|x-request-id|trace[_-]?id|correlation[_-]?id)'
+            r"(?i)(request[_-]?id|x-request-id|trace[_-]?id|correlation[_-]?id)"
             r'["\']?\s*[:=]\s*["\']?[a-zA-Z0-9-]{8,}'
         ),
     ),
     (
         "session_id",
         re.compile(
-            r'(?i)(sessionid|session[_-]?id|sid|jsessionid)'
+            r"(?i)(sessionid|session[_-]?id|sid|jsessionid)"
             r'["\']?\s*[:=]\s*["\']?[a-zA-Z0-9-]{8,}'
         ),
     ),

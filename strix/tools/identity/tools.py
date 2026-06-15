@@ -236,8 +236,7 @@ async def _run_auth_matrix(
         store.close()
 
     ladder_identities = [
-        identities.get(role) or _make_ladder_identity(target_key, role)
-        for role in LADDER_ROLES
+        identities.get(role) or _make_ladder_identity(target_key, role) for role in LADDER_ROLES
     ]
 
     ladder_result = await replay_ladder(request_id, ladder_identities)

@@ -123,8 +123,7 @@ def _flag_candidates(
                     kind="BFLA",
                     pair=(lower, higher),
                     rationale=(
-                        f"{lower} gained access to an admin-gated endpoint "
-                        f"relative to {higher}."
+                        f"{lower} gained access to an admin-gated endpoint relative to {higher}."
                     ),
                     evidence_class="diff",
                 )

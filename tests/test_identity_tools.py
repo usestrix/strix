@@ -34,8 +34,10 @@ class _RunContextWrapper:
 
 def _function_tool(*, timeout: int = 60, strict_mode: bool = False) -> Any:
     _ = timeout, strict_mode
+
     def decorator(func: Any) -> Any:
         return func
+
     return decorator
 
 

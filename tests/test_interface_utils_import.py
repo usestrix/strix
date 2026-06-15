@@ -31,7 +31,9 @@ class TestInterfaceUtilsImportHygiene:
                 "web_application",
                 {"target_url": "https://example.com"},
             )
-            targets = [{"type": "web_application", "details": {"target_url": "http://localhost:8080"}}]
+            targets = [
+                {"type": "web_application", "details": {"target_url": "http://localhost:8080"}}
+            ]
             rewrite_localhost_targets(targets, "host-gateway")
             assert targets[0]["details"]["target_url"] == "http://host-gateway:8080"
         finally:
@@ -51,9 +53,10 @@ class TestInterfaceUtilsImportHygiene:
         assert "docker" not in getattr(interface_utils, "__dict__", {})
         # The function is still callable; force a deterministic failure so
         # the test does not depend on whether a Docker daemon is running.
-        with patch(
-            "docker.from_env", side_effect=DockerException("mock")
-        ), pytest.raises(RuntimeError, match="Docker not available"):
+        with (
+            patch("docker.from_env", side_effect=DockerException("mock")),
+            pytest.raises(RuntimeError, match="Docker not available"),
+        ):
             interface_utils.check_docker_connection()
 
     def test_net_package_imports_without_docker(self) -> None:

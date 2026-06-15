@@ -48,13 +48,16 @@ class TestInteractshProviderTier1(IsolatedAsyncioTestCase):
     async def _start_with_fake_process(self, provider: InteractshProvider) -> _FakeProcess:
         """Start provider with a fake subprocess and a fixed hostname."""
         fake_proc = _FakeProcess()
-        with patch(
-            "asyncio.create_subprocess_exec",
-            new=AsyncMock(return_value=fake_proc),
-        ), patch.object(
-            provider,
-            "_wait_for_hostname",
-            new=AsyncMock(return_value="abc123.oast.pro"),
+        with (
+            patch(
+                "asyncio.create_subprocess_exec",
+                new=AsyncMock(return_value=fake_proc),
+            ),
+            patch.object(
+                provider,
+                "_wait_for_hostname",
+                new=AsyncMock(return_value="abc123.oast.pro"),
+            ),
         ):
             await provider.start(self.run_dir)
         return fake_proc

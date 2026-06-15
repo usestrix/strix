@@ -292,9 +292,7 @@ class TestReplayEngineTier2PBT(TestCase):
             tokens={"authorization": f"Bearer {token}"},
             headers={header_name: header_value},
             provenance="proxy_capture",
-            freshness=Freshness(
-                captured_at=datetime.now(UTC).isoformat(), status="fresh"
-            ),
+            freshness=Freshness(captured_at=datetime.now(UTC).isoformat(), status="fresh"),
         )
         original_headers = {
             "Host": "example.com",

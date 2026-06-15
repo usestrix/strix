@@ -83,22 +83,29 @@ def test_run_scanner_unsupported_tool() -> None:
 
 def test_run_scanner_timeout() -> None:
     """A subprocess timeout is surfaced as ScannerTimeoutError."""
-    with patch("shutil.which", return_value="/usr/bin/gitleaks"), patch(
-        "subprocess.run",
-        side_effect=subprocess.TimeoutExpired(cmd=["gitleaks"], timeout=300),
-    ), pytest.raises(ScannerTimeoutError, match="Scanner gitleaks timed out"):
+    with (
+        patch("shutil.which", return_value="/usr/bin/gitleaks"),
+        patch(
+            "subprocess.run",
+            side_effect=subprocess.TimeoutExpired(cmd=["gitleaks"], timeout=300),
+        ),
+        pytest.raises(ScannerTimeoutError, match="Scanner gitleaks timed out"),
+    ):
         run_scanner("gitleaks", ".")
 
 
 def test_run_scanner_gitleaks_success(tmp_path: Path) -> None:
     """Gitleaks output is parsed into a stably sorted finding list."""
     raw = f"{_GITLEAKS_LINE}\n{_GITLEAKS_LINE.replace('src/config.py', 'src/other.py')}\n"
-    with patch("shutil.which", return_value="/usr/bin/gitleaks"), patch(
-        "subprocess.run",
-        side_effect=[
-            _fake_completed("gitleaks 8.30.1", 0),
-            _fake_completed(raw, 0),
-        ],
+    with (
+        patch("shutil.which", return_value="/usr/bin/gitleaks"),
+        patch(
+            "subprocess.run",
+            side_effect=[
+                _fake_completed("gitleaks 8.30.1", 0),
+                _fake_completed(raw, 0),
+            ],
+        ),
     ):
         result = run_scanner("gitleaks", "src/", output_dir=tmp_path)
 
@@ -115,12 +122,15 @@ def test_run_scanner_gitleaks_success(tmp_path: Path) -> None:
 def test_run_scanner_trufflehog_success() -> None:
     """Trufflehog output is parsed and findings are sorted."""
     raw = f"{_TRUFFLEHOG_LINE}\n"
-    with patch("shutil.which", return_value="/usr/bin/trufflehog"), patch(
-        "subprocess.run",
-        side_effect=[
-            _fake_completed("3.95.5", 0),
-            _fake_completed(raw, 0),
-        ],
+    with (
+        patch("shutil.which", return_value="/usr/bin/trufflehog"),
+        patch(
+            "subprocess.run",
+            side_effect=[
+                _fake_completed("3.95.5", 0),
+                _fake_completed(raw, 0),
+            ],
+        ),
     ):
         result = run_scanner("trufflehog", "git+https://example.com/repo")
 
@@ -132,12 +142,15 @@ def test_run_scanner_trufflehog_success() -> None:
 
 def test_run_scanner_trivy_success() -> None:
     """Trivy JSON output is parsed into a sorted finding list."""
-    with patch("shutil.which", return_value="/usr/bin/trivy"), patch(
-        "subprocess.run",
-        side_effect=[
-            _fake_completed("0.71.0", 0),
-            _fake_completed(_TRIVY_OUTPUT, 1),
-        ],
+    with (
+        patch("shutil.which", return_value="/usr/bin/trivy"),
+        patch(
+            "subprocess.run",
+            side_effect=[
+                _fake_completed("0.71.0", 0),
+                _fake_completed(_TRIVY_OUTPUT, 1),
+            ],
+        ),
     ):
         result = run_scanner("trivy", "fs", extra_args=["--scanners", "vuln"])
 

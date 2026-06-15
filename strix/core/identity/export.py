@@ -37,9 +37,11 @@ def _record_to_identity(record: dict[str, Any]) -> Identity:
     status_raw: str = freshness_record.get("status", "fresh")
     status: str = status_raw if status_raw in _FRESHNESS_STATUS else "fresh"
     provenance_raw: str = record.get("provenance", "imported")
-    provenance: str = provenance_raw if provenance_raw in {
-        "proxy_capture", "login_flow", "imported", "reserved"
-    } else "imported"
+    provenance: str = (
+        provenance_raw
+        if provenance_raw in {"proxy_capture", "login_flow", "imported", "reserved"}
+        else "imported"
+    )
     return Identity(
         target_key=str(record.get("target_key", "")),
         role=str(record.get("role", "")),
@@ -90,8 +92,7 @@ def import_identities(
     target_key: str | None = artifact.get("target_key")
     if expected_target_key is not None and target_key != expected_target_key:
         raise ValueError(
-            f"Artifact target_key {target_key!r} does not match "
-            f"expected {expected_target_key!r}"
+            f"Artifact target_key {target_key!r} does not match expected {expected_target_key!r}"
         )
     if not isinstance(target_key, str) or not target_key:
         raise ValueError("Artifact missing target_key")

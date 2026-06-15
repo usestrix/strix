@@ -43,9 +43,7 @@ class IdentityStore:
     def __init__(self, db_path: Path) -> None:
         self.db_path = db_path
         db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn: sqlite3.Connection = sqlite3.connect(
-            str(db_path), check_same_thread=False
-        )
+        self._conn: sqlite3.Connection = sqlite3.connect(str(db_path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA_SQL)
         self._conn.commit()
@@ -197,8 +195,7 @@ def identity_store_path(run_dir: Path | None = None) -> Path:
     report_state = get_global_report_state()
     if report_state is None:
         raise RuntimeError(
-            "No active report state and no run_dir provided; "
-            "cannot resolve identity store path"
+            "No active report state and no run_dir provided; cannot resolve identity store path"
         )
     return runtime_state_dir(report_state.get_run_dir()) / "identities.db"
 

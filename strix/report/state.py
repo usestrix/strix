@@ -44,6 +44,7 @@ def _apply_impact_gate(
         return "info", "downgraded_to_unconfirmed", original_severity
     return original_severity, "kept_from_cvss", original_severity
 
+
 _global_report_state: ReportState | None = None
 
 

@@ -54,7 +54,6 @@ async def create_or_reuse(
         logger.info("Reusing existing OOB session for scan %s", scan_id)
         return cached
 
-
     entries: dict[str | Path, BaseEntry] = {}
     for src in local_sources:
         ws_subdir = src.get("workspace_subdir") or ""
