@@ -39,6 +39,11 @@ from strix.core.inventory.normalizer import (
     normalize_observation,
 )
 from strix.core.inventory.scoring import build_ranked_map, score_endpoint, score_signals
+from strix.core.inventory.spray import (
+    all_classes,
+    spray_values_for,
+    spray_values_for_param,
+)
 from strix.core.inventory.store import load_ranked_map, save_ranked_map
 
 
@@ -51,6 +56,7 @@ __all__ = [
     "RankedSurfaceMap",
     "ReachabilityAnnotation",
     "agent_classify_param",
+    "all_classes",
     "build_ranked_map",
     "classify_endpoint",
     "classify_param",
@@ -74,4 +80,6 @@ __all__ = [
     "save_ranked_map",
     "score_endpoint",
     "score_signals",
+    "spray_values_for",
+    "spray_values_for_param",
 ]

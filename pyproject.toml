@@ -296,6 +296,13 @@ reportUnknownArgumentType = false
 reportPrivateUsage = false
 
 [[tool.pyright.executionEnvironments]]
+root = "tests/test_inventory_spray.py"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
 root = "tests/test_inventory_extractors.py"
 reportUnknownVariableType = false
 reportUnknownMemberType = false
