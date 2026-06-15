@@ -288,6 +288,27 @@ reportUnusedFunction = true
 reportUnusedVariable = true
 reportDuplicateImport = true
 
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/inventory/collectors"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/core/inventory/parsers"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
+[[tool.pyright.executionEnvironments]]
+root = "strix/tools/inventory"
+reportUnknownVariableType = false
+reportUnknownMemberType = false
+reportUnknownArgumentType = false
+reportPrivateUsage = false
+
 # ============================================================================
 # Black Configuration (Code Formatter)
 # ============================================================================

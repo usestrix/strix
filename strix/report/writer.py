@@ -8,7 +8,7 @@ import logging
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from strix.core.paths import run_record_path
 
@@ -28,7 +28,7 @@ def read_run_record(run_dir: Path) -> dict[str, Any]:
         raise RuntimeError(f"run.json at {path} is unreadable: {exc}") from exc
     if not isinstance(data, dict):
         raise TypeError(f"run.json at {path} is not an object")
-    return data
+    return cast("dict[str, Any]", data)
 
 
 def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:

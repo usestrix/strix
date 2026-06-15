@@ -49,3 +49,9 @@ def run_record_path(run_dir: Path) -> Path:
 def oob_registry_path(run_dir: Path) -> Path:
     """Return the durable SQLite path for the OOB token registry."""
     return runtime_state_dir(run_dir) / "oob_registry.sqlite"
+
+
+def inventory_path(run_dir: Path, target_id: str) -> Path:
+    """Return the durable per-target inventory store path."""
+    safe_target_id = target_id.replace("/", "_").replace("\\", "_")
+    return run_dir / RUNTIME_STATE_DIR_NAME / f"inventory_{safe_target_id}.json"
