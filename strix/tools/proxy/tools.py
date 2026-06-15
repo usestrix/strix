@@ -207,6 +207,22 @@ async def list_requests(
             default=str,
         )
     except Exception as exc:  # noqa: BLE001
+        if "HTTPQL" in str(exc):
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": (
+                        f"Invalid httpql_filter: {httpql_filter!r}. The Caido HTTPQL "
+                        "parser rejected it. Fixes: omit httpql_filter entirely to list "
+                        "all captured requests, or use valid HTTPQL — e.g. "
+                        'req.path.cont:"/api", resp.code.eq:200 (ints unquoted, strings '
+                        'quoted), or a bare quoted term like "password" to search both '
+                        "req.raw and resp.raw. There is no NOT operator (use ne/ncont/"
+                        "nlike/nregex)."
+                    ),
+                },
+                ensure_ascii=False,
+            )
         return _err("list_requests", exc)
 
 
@@ -440,6 +456,24 @@ async def list_sitemap(
     client = _ctx_client(ctx)
     if client is None:
         return _no_client()
+    # Caido sitemap/scope IDs are i32 integers, not URLs/hosts/UUIDs. Reject
+    # non-numeric ids up front with actionable guidance so the model corrects
+    # itself instead of repeating an opaque "Invalid ID format" GraphQL error.
+    for _arg_name, _arg_val in (("parent_id", parent_id), ("scope_id", scope_id)):
+        if _arg_val is not None and not str(_arg_val).strip().lstrip("-").isdigit():
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": (
+                        f"Invalid {_arg_name}: {_arg_val!r}. {_arg_name} must be a "
+                        "numeric Caido entry id (i32) taken from a prior list_sitemap "
+                        "response's `id` field — not a URL, host, or UUID. Call "
+                        "list_sitemap with no parent_id first to get root entries, then "
+                        "pass an entry's numeric `id`."
+                    ),
+                },
+                ensure_ascii=False,
+            )
     try:
         payload = await caido_api.list_sitemap_with_client(
             client,
