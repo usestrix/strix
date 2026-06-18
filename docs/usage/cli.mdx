@@ -43,6 +43,24 @@ strix --target <target> [options]
   Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
 </ParamField>
 
+<ParamField path="--max-budget-usd" type="number">
+  Maximum LLM spend in USD for the whole scan, counted cumulatively across the
+  root agent and every child agent. The budget is checked after each model
+  response; once the running cost reaches the threshold, the scan stops cleanly
+  with a `stopped` status (not a failure) and the sandbox is torn down.
+
+  Must be greater than `0`. Omit the flag for no limit.
+
+  **Limitations**
+
+  - The check fires *after* a response is returned, so the final spend can
+    slightly overshoot the limit by any calls already in flight when the
+    threshold is crossed (most relevant with several child agents running
+    concurrently).
+  - Cost is a best-effort estimate derived from token usage and model pricing;
+    providers that do not expose priced usage may under-count.
+</ParamField>
+
 ## Examples
 
 ```bash
