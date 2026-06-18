@@ -52,6 +52,10 @@ class LLMUsageLedger:
         if isinstance(cost, int | float) and cost > 0:
             self._total_cost += float(cost)
 
+    @property
+    def total_cost(self) -> float:
+        return _round_cost(self._total_cost)
+
     def to_record(self) -> dict[str, Any]:
         record = serialize_usage(self._total_usage)
         record["cost"] = _round_cost(self._total_cost)

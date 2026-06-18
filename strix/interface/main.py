@@ -301,6 +301,16 @@ def get_version() -> str:
         return "unknown"
 
 
+def _positive_budget(value: str) -> float:
+    try:
+        budget = float(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid float value: {value!r}") from exc
+    if budget <= 0:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return budget
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
@@ -426,9 +436,9 @@ Examples:
 
     parser.add_argument(
         "--max-budget-usd",
-        type=float,
+        type=_positive_budget,
         default=None,
-        help="Maximum LLM cost in USD. The scan stops cleanly when this threshold is reached.",
+        help="Maximum LLM cost in USD (> 0). The scan stops cleanly when this limit is reached.",
     )
 
     parser.add_argument(

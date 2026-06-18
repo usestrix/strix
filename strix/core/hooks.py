@@ -27,6 +27,8 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
     """Persist SDK-native usage after every model response."""
 
     def __init__(self, *, model: str, max_budget_usd: float | None = None) -> None:
+        if max_budget_usd is not None and max_budget_usd <= 0:
+            raise ValueError("max_budget_usd must be greater than 0")
         self._model = model
         self._max_budget_usd = max_budget_usd
 
@@ -59,7 +61,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             logger.exception("failed to record SDK usage for agent %s", agent_id)
 
         if self._max_budget_usd is not None:
-            cost = (report_state.get_total_llm_usage() or {}).get("cost", 0.0)
+            cost = report_state.get_total_llm_cost()
             if cost >= self._max_budget_usd:
                 raise BudgetExceededError(
                     f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"

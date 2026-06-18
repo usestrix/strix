@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -15,8 +15,8 @@ def _make_hooks(max_budget: float | None) -> ReportUsageHooks:
 
 def _make_report_state(cost: float) -> MagicMock:
     state = MagicMock()
-    state.get_total_llm_usage.return_value = {"cost": cost}
-    state.record_sdk_usage = AsyncMock() if False else MagicMock()
+    state.get_total_llm_cost.return_value = cost
+    state.record_sdk_usage = MagicMock()
     return state
 
 
@@ -65,6 +65,21 @@ async def test_over_budget_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_budget_check_uses_live_cost_accessor() -> None:
+    # The check must read the live ledger, not the persisted run-record snapshot,
+    # so it stays accurate even when a save fails after a usage record.
+    hooks = _make_hooks(5.0)
+    state = _make_report_state(6.0)
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=state),
+        pytest.raises(BudgetExceededError),
+    ):
+        await hooks.on_llm_end(_make_context(), MagicMock(), MagicMock())
+    state.get_total_llm_cost.assert_called_once()
+    state.get_total_llm_usage.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_error_message_includes_amounts() -> None:
     hooks = _make_hooks(5.0)
     state = _make_report_state(7.1234)
@@ -80,6 +95,12 @@ async def test_no_raise_when_report_state_none() -> None:
     with patch("strix.core.hooks.get_global_report_state", return_value=None):
         # Should return early without raising, even with budget set
         await hooks.on_llm_end(_make_context(), MagicMock(), MagicMock())
+
+
+@pytest.mark.parametrize("bad_budget", [0.0, -0.01, -5.0])
+def test_non_positive_budget_rejected(bad_budget: float) -> None:
+    with pytest.raises(ValueError, match="greater than 0"):
+        ReportUsageHooks(model="test-model", max_budget_usd=bad_budget)
 
 
 def test_budget_exceeded_error_is_runtime_error() -> None:

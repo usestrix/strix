@@ -236,6 +236,10 @@ class ReportState:
     def get_total_llm_usage(self) -> dict[str, Any]:
         return dict(self.run_record.get("llm_usage") or self._build_llm_usage_record())
 
+    def get_total_llm_cost(self) -> float:
+        """Live accumulated LLM cost, independent of the persisted run-record snapshot."""
+        return self._llm_usage.total_cost
+
     def update_scan_final_fields(
         self,
         executive_summary: str,
