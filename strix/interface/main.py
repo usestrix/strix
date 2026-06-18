@@ -306,8 +306,9 @@ def _positive_budget(value: str) -> float:
         budget = float(value)
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"invalid float value: {value!r}") from exc
-    if budget <= 0:
-        raise argparse.ArgumentTypeError("must be greater than 0")
+    import math
+    if not math.isfinite(budget) or budget <= 0:
+        raise argparse.ArgumentTypeError("must be a finite number greater than 0")
     return budget
 
 
