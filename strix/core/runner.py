@@ -27,7 +27,7 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import ReportUsageHooks
+from strix.core.hooks import BudgetExceededError, ReportUsageHooks
 from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
     build_root_task,
@@ -59,6 +59,7 @@ async def run_strix_scan(
     coordinator: AgentCoordinator | None = None,
     interactive: bool = False,
     max_turns: int = DEFAULT_MAX_TURNS,
+    max_budget_usd: float | None = None,
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
@@ -164,7 +165,7 @@ async def run_strix_scan(
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,
         )
-        hooks = ReportUsageHooks(model=resolved_model)
+        hooks = ReportUsageHooks(model=resolved_model, max_budget_usd=max_budget_usd)
 
         scope_context = build_scope_context(scan_config)
 
@@ -300,6 +301,13 @@ async def run_strix_scan(
                     str(final)[:300],
                 )
         return result  # noqa: TRY300
+    except BudgetExceededError as exc:
+        logger.info("Scan %s stopped: %s", scan_id, exc)
+        if root_id is not None:
+            await coordinator.cancel_descendants(root_id)
+            with contextlib.suppress(Exception):
+                await coordinator.set_status(root_id, "stopped")
+        return None
     except BaseException:
         logger.exception("Strix scan %s failed", scan_id)
         if root_id is not None:

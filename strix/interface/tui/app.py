@@ -1369,6 +1369,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                                 local_sources=getattr(self.args, "local_sources", None) or [],
                                 coordinator=self.coordinator,
                                 interactive=True,
+                                max_budget_usd=getattr(self.args, "max_budget_usd", None),
                                 event_sink=self._capture_sdk_event,
                             ),
                         )

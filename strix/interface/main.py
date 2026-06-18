@@ -425,6 +425,13 @@ Examples:
     )
 
     parser.add_argument(
+        "--max-budget-usd",
+        type=float,
+        default=None,
+        help="Maximum LLM cost in USD. The scan stops cleanly when this threshold is reached.",
+    )
+
+    parser.add_argument(
         "--resume",
         type=str,
         metavar="RUN_NAME",

@@ -15,6 +15,7 @@ from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import APIError
 
+from strix.core.hooks import BudgetExceededError
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import open_agent_session, strip_all_images_from_session
 
@@ -399,7 +400,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     continue
             if not interactive:
                 raise
-            if isinstance(exc, MaxTurnsExceeded):
+            if isinstance(exc, MaxTurnsExceeded | BudgetExceededError):
                 status: Status = "stopped"
             elif isinstance(exc, UserError | AgentsException | APIError):
                 status = "failed"
