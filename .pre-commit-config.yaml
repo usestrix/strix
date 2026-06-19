@@ -19,6 +19,7 @@ repos:
           types-python-dateutil,
           pydantic,
           fastapi,
+          pytest,
           "openai-agents[litellm]==0.14.6",
         ]
         args: [--install-types, --non-interactive]
