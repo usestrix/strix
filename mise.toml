@@ -50,7 +50,7 @@ run = [
 
 [tasks.pre-commit]
 description = "Run pre-commit hooks on all files"
-run = "uv run pre-commit run --all-files"
+run = "pre-commit run --all-files"
 
 [tasks.clean]
 description = "Clean up cache files and artifacts"
