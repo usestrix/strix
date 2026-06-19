@@ -1290,6 +1290,31 @@ def build_mount_targets_info(mount_paths: list[str]) -> list[dict[str, Any]]:
     return targets_info
 
 
+def dedupe_local_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse local_code targets that resolve to the same path.
+
+    When a directory is supplied both as a copied ``--target`` and via
+    ``--mount`` (or as duplicate values of either), keep one entry and prefer
+    the bind-mounted one — so the same tree is never both streamed in and
+    mounted. Order is preserved; non-local targets pass through untouched.
+    """
+    result: list[dict[str, Any]] = []
+    index_by_path: dict[str, int] = {}
+    for target in targets_info:
+        details = target.get("details") or {}
+        path = details.get("target_path")
+        if target.get("type") != "local_code" or not path:
+            result.append(target)
+            continue
+        existing = index_by_path.get(path)
+        if existing is None:
+            index_by_path[path] = len(result)
+            result.append(target)
+        elif details.get("mount") and not (result[existing].get("details") or {}).get("mount"):
+            result[existing] = target  # bind mount supersedes the copied entry
+    return result
+
+
 def _is_localhost_host(host: str) -> bool:
     host_lower = host.lower().strip("[]")
 

@@ -37,6 +37,7 @@ from strix.interface.utils import (
     check_docker_connection,
     clone_repository,
     collect_local_sources,
+    dedupe_local_targets,
     find_oversized_local_targets,
     generate_run_name,
     image_exists,
@@ -506,6 +507,8 @@ Examples:
             args.targets_info.extend(build_mount_targets_info(args.mount or []))
         except ValueError as e:
             parser.error(str(e))
+
+        args.targets_info = dedupe_local_targets(args.targets_info)
 
         assign_workspace_subdirs(args.targets_info)
         rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)

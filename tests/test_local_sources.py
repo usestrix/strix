@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 from strix.interface.utils import (
     build_mount_targets_info,
     collect_local_sources,
+    dedupe_local_targets,
     directory_size_bytes,
     find_oversized_local_targets,
 )
@@ -122,3 +123,34 @@ def test_build_mount_targets_info_rejects_empty_path(empty: str) -> None:
     # and silently bind-mount it into the sandbox.
     with pytest.raises(ValueError, match="must not be empty"):
         build_mount_targets_info([empty])
+
+
+def test_dedupe_keeps_distinct_targets_in_order() -> None:
+    targets = [
+        _local_target("/a"),
+        {"type": "web_application", "details": {"target_url": "https://x"}},
+        _local_target("/b", mount=True),
+    ]
+    assert dedupe_local_targets(targets) == targets
+
+
+def test_dedupe_mount_supersedes_copied_same_path() -> None:
+    copied = _local_target("/repo")
+    mounted = _local_target("/repo", mount=True)
+
+    # Copied first, then mounted: the single surviving entry is the mount.
+    result = dedupe_local_targets([copied, mounted])
+    assert len(result) == 1
+    assert result[0]["details"]["mount"] is True
+
+    # Order-independent: mounted first, copied second also yields the mount.
+    result_rev = dedupe_local_targets([mounted, copied])
+    assert len(result_rev) == 1
+    assert result_rev[0]["details"]["mount"] is True
+
+
+def test_dedupe_collapses_duplicate_mounts() -> None:
+    result = dedupe_local_targets(
+        [_local_target("/repo", mount=True), _local_target("/repo", mount=True)]
+    )
+    assert len(result) == 1
