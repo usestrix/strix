@@ -79,6 +79,10 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Runtime backend for the sandbox environment.
 </ParamField>
 
+<ParamField path="STRIX_MAX_LOCAL_COPY_MB" default="1024" type="integer">
+  Maximum size (in MB) of a local directory target that Strix will copy into the sandbox file-by-file. Larger targets exit early with a suggestion to use `--mount` instead. Set to `0` to disable the check.
+</ParamField>
+
 ## Sandbox Configuration
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">

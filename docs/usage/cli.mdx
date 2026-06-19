@@ -15,6 +15,20 @@ strix --target <target> [options]
   Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times.
 </ParamField>
 
+<ParamField path="--mount" type="string">
+  Bind-mount a local directory into the sandbox (read-only) instead of copying it in file-by-file. Use this for large repositories that are too big to stream into the container. Can be specified multiple times.
+
+  Strix copies local `--target` directories into the sandbox one file at a time, which stalls on very large trees. When a local target exceeds the copy limit (see `STRIX_MAX_LOCAL_COPY_MB`, default 1024 MB) Strix exits early and asks you to re-run with `--mount`.
+
+  <Note>
+    The mount is read-only to protect your source from accidental modification. This is not a hard security boundary: a root process inside the container can remount it writable, so treat `--mount` as "scan my own code", not as isolation from untrusted code.
+  </Note>
+
+  <Note>
+    The size pre-flight only covers local directory targets. Remote repositories (cloned at scan time) are not size-checked.
+  </Note>
+</ParamField>
+
 <ParamField path="--instruction" type="string">
   Custom instructions for the scan. Use for credentials, focus areas, or specific testing approaches.
 </ParamField>
@@ -63,6 +77,9 @@ strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 # Multi-target white-box testing
 strix -t https://github.com/org/app -t https://staging.example.com
+
+# Large local repository — bind-mount instead of copying it in
+strix --mount ./huge-monorepo
 ```
 
 ## Exit Codes

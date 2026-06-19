@@ -320,6 +320,9 @@ Examples:
   # Local code analysis
   strix --target ./my-project
 
+  # Large local repository (bind-mounted read-only instead of copied)
+  strix --mount ./huge-monorepo
+
   # Domain penetration test
   strix --target example.com
 
