@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import os
+import sys
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -47,6 +50,28 @@ def test_directory_size_skips_symlinks(tmp_path: Path) -> None:
     (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
     # The symlink target is counted once via the real file, not doubled.
     assert directory_size_bytes(tmp_path) == 100
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="relies on POSIX permissions")
+def test_directory_size_logs_and_skips_unreadable_subdir(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    if hasattr(os, "geteuid") and os.geteuid() == 0:
+        pytest.skip("root bypasses directory permissions")
+    _write_file(tmp_path / "top.txt", 100)
+    locked = tmp_path / "locked"
+    locked.mkdir()
+    _write_file(locked / "secret.bin", 9999)
+    locked.chmod(0o000)
+    try:
+        with caplog.at_level(logging.WARNING):
+            size = directory_size_bytes(tmp_path)
+    finally:
+        locked.chmod(0o755)
+    # The unreadable subtree is excluded (not silently treated as readable) and
+    # the omission is logged rather than vanishing without a trace.
+    assert size == 100
+    assert any("Could not read" in record.message for record in caplog.records)
 
 
 def test_find_oversized_returns_nothing_under_limit(tmp_path: Path) -> None:

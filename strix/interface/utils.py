@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -21,6 +22,9 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_severity_color(severity: str) -> str:
@@ -1219,9 +1223,17 @@ def directory_size_bytes(path: Path) -> int:
     Best-effort: files that disappear or can't be stat'd mid-walk are skipped.
     Used as a cheap (stat-only) pre-flight to estimate the cost of streaming a
     local target into the sandbox before we actually try to copy it.
+
+    Directories that can't be listed (e.g. permission denied) are logged and
+    skipped rather than silently dropped — so an under-count is at least
+    visible — but the returned total then excludes their contents.
     """
+
+    def _on_walk_error(error: OSError) -> None:
+        logger.warning("Could not read %s while measuring size: %s", error.filename, error)
+
     total = 0
-    for root, _dirs, files in os.walk(path, followlinks=False):
+    for root, _dirs, files in os.walk(path, followlinks=False, onerror=_on_walk_error):
         for name in files:
             file_path = os.path.join(root, name)  # noqa: PTH118
             try:
