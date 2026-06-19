@@ -13,6 +13,7 @@ from agents import RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
+from litellm.exceptions import ContextWindowExceededError
 from openai import APIError
 
 from strix.core.inputs import child_initial_input
@@ -378,6 +379,19 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             finally:
                 await coordinator.detach_stream(agent_id, stream)
         except Exception as exc:
+            # ContextWindowExceededError carries status_code=400, which would otherwise
+            # match _INPUT_REJECTION_CODES and trigger image-strip recovery — a path
+            # that cannot help with token-count overflow. Handle it directly.
+            if isinstance(exc, ContextWindowExceededError):
+                logger.exception("agent %s exceeded context window; parking as failed", agent_id)
+                if not interactive:
+                    raise
+                await coordinator.set_status(agent_id, "failed")
+                await _notify_parent_on_crash(coordinator, agent_id, "failed")
+                if context.get("parent_id") is None:
+                    raise
+                return None
+
             if (
                 image_strips < 3
                 and session is not None
