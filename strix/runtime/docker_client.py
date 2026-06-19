@@ -38,6 +38,7 @@ from agents.sandbox.sandboxes.docker import (
 from agents.sandbox.session.sandbox_session import SandboxSession
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from docker.models.containers import Container  # type: ignore[import-untyped, unused-ignore]
+from docker.types import Mount as DockerSDKMount  # type: ignore[import-untyped, unused-ignore]
 from docker.utils import parse_repository_tag  # type: ignore[import-untyped, unused-ignore]
 
 
@@ -45,6 +46,10 @@ logger = logging.getLogger(__name__)
 
 
 class StrixDockerSandboxClient(DockerSandboxClient):
+    # Host directories to bind-mount into the container, set by the docker
+    # backend before ``create()``. Each item is ``{source, target, read_only}``.
+    strix_bind_mounts: list[dict[str, Any]]
+
     async def _create_container(
         self,
         image: str,
@@ -110,6 +115,21 @@ class StrixDockerSandboxClient(DockerSandboxClient):
 
         extra_hosts = create_kwargs.setdefault("extra_hosts", {})
         extra_hosts["host.docker.internal"] = "host-gateway"
+
+        # Strix injection: host bind mounts (e.g. large repos passed via --mount)
+        # that bypass the SDK's file-by-file LocalDir copy.
+        bind_mounts = getattr(self, "strix_bind_mounts", ())
+        if bind_mounts:
+            mounts = create_kwargs.setdefault("mounts", [])
+            for spec in bind_mounts:
+                mounts.append(
+                    DockerSDKMount(
+                        target=spec["target"],
+                        source=spec["source"],
+                        type="bind",
+                        read_only=spec.get("read_only", True),
+                    )
+                )
 
         logger.debug(
             "Creating sandbox container: image=%s caps=%s exposed_ports=%s",

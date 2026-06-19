@@ -23,30 +23,59 @@ _CONTAINER_CAIDO_PORT = 48080
 
 _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 
+# Manifest root inside the container; entry keys hang off this path.
+_WORKSPACE_ROOT = "/workspace"
+
+
+def build_session_entries(
+    local_sources: list[dict[str, Any]],
+) -> tuple[dict[str | Path, BaseEntry], list[dict[str, Any]]]:
+    """Split local sources into copied manifest entries and host bind mounts.
+
+    Sources flagged ``mount`` are bind-mounted read-only at
+    ``/workspace/<workspace_subdir>`` (not added to the manifest, so the SDK
+    does not stream them in file-by-file). Every other source becomes a
+    ``LocalDir`` entry copied into the container as before.
+    """
+    entries: dict[str | Path, BaseEntry] = {}
+    bind_mounts: list[dict[str, Any]] = []
+    for src in local_sources:
+        ws_subdir = src.get("workspace_subdir") or ""
+        host_path = src.get("source_path") or ""
+        if not ws_subdir or not host_path:
+            continue
+        resolved = Path(host_path).expanduser().resolve()
+        if src.get("mount"):
+            bind_mounts.append(
+                {
+                    "source": str(resolved),
+                    "target": f"{_WORKSPACE_ROOT}/{ws_subdir}",
+                    "read_only": True,
+                }
+            )
+        else:
+            entries[ws_subdir] = LocalDir(src=resolved)
+    return entries, bind_mounts
+
 
 async def create_or_reuse(
     scan_id: str,
     *,
     image: str,
-    local_sources: list[dict[str, str]],
+    local_sources: list[dict[str, Any]],
 ) -> dict[str, Any]:
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
-    Each ``local_sources`` entry mounts its host ``source_path`` at
-    ``/workspace/<workspace_subdir>`` inside the container.
+    Each ``local_sources`` entry exposes its host ``source_path`` at
+    ``/workspace/<workspace_subdir>`` inside the container — copied in, or
+    bind-mounted read-only when the entry is flagged ``mount``.
     """
     cached = _SESSION_CACHE.get(scan_id)
     if cached is not None:
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
-    entries: dict[str | Path, BaseEntry] = {}
-    for src in local_sources:
-        ws_subdir = src.get("workspace_subdir") or ""
-        host_path = src.get("source_path") or ""
-        if not ws_subdir or not host_path:
-            continue
-        entries[ws_subdir] = LocalDir(src=Path(host_path).expanduser().resolve())
+    entries, bind_mounts = build_session_entries(local_sources)
 
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
@@ -81,6 +110,7 @@ async def create_or_reuse(
         image=image,
         manifest=manifest,
         exposed_ports=(_CONTAINER_CAIDO_PORT,),
+        bind_mounts=bind_mounts,
     )
 
     caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)

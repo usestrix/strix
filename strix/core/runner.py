@@ -55,7 +55,7 @@ async def run_strix_scan(
     scan_config: dict[str, Any],
     scan_id: str | None = None,
     image: str,
-    local_sources: list[dict[str, str]] | None = None,
+    local_sources: list[dict[str, Any]] | None = None,
     coordinator: AgentCoordinator | None = None,
     interactive: bool = False,
     max_turns: int = DEFAULT_MAX_TURNS,

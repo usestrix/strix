@@ -44,7 +44,8 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
-            sections["Local Codebases"].append(f"- {path} (available at: {workspace_path})")
+            suffix = ", read-only mount" if details.get("mount") else ""
+            sections["Local Codebases"].append(f"- {path} (available at: {workspace_path}{suffix})")
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":

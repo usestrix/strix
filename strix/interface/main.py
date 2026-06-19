@@ -33,9 +33,11 @@ from strix.interface.tui import run_tui
 from strix.interface.utils import (
     assign_workspace_subdirs,
     build_final_stats_text,
+    build_mount_targets_info,
     check_docker_connection,
     clone_repository,
     collect_local_sources,
+    find_oversized_local_targets,
     generate_run_name,
     image_exists,
     infer_target_type,
@@ -353,6 +355,15 @@ Examples:
         "Required for fresh runs; loaded from disk when ``--resume`` is set.",
     )
     parser.add_argument(
+        "--mount",
+        type=str,
+        action="append",
+        metavar="PATH",
+        help="Bind-mount a local directory into the sandbox (read-only) instead of "
+        "copying it file-by-file. Use this for large repositories that are too big to "
+        "stream into the container. Can be specified multiple times.",
+    )
+    parser.add_argument(
         "--instruction",
         type=str,
         help="Custom instructions for the penetration test. This can be "
@@ -455,9 +466,9 @@ Examples:
     args.user_explicit_instruction = args.instruction if args.resume else None
 
     if args.resume:
-        if args.target:
+        if args.target or args.mount:
             parser.error(
-                "Cannot combine --resume with --target. --resume picks up where "
+                "Cannot combine --resume with --target/--mount. --resume picks up where "
                 "the prior run left off, including the original target list."
             )
         _load_resume_state(args, parser)
@@ -470,13 +481,13 @@ Examples:
                 f"or remove --resume to start over with the same targets."
             )
     else:
-        if not args.target:
+        if not args.target and not args.mount:
             parser.error(
-                "the following arguments are required: -t/--target "
+                "the following arguments are required: -t/--target or --mount "
                 "(or use --resume <run_name> to continue a prior scan)"
             )
         args.targets_info = []
-        for target in args.target:
+        for target in args.target or []:
             try:
                 target_type, target_dict = infer_target_type(target)
 
@@ -491,8 +502,26 @@ Examples:
             except ValueError:
                 parser.error(f"Invalid target '{target}'")
 
+        try:
+            args.targets_info.extend(build_mount_targets_info(args.mount or []))
+        except ValueError as e:
+            parser.error(str(e))
+
         assign_workspace_subdirs(args.targets_info)
         rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+
+        max_copy_bytes = load_settings().runtime.max_local_copy_mb * 1024 * 1024
+        oversized = find_oversized_local_targets(args.targets_info, max_copy_bytes)
+        if oversized:
+            details = "; ".join(
+                f"{path} ({size / (1024 * 1024):.0f} MB)" for path, size in oversized
+            )
+            parser.error(
+                f"Local target too large to stream into the sandbox: {details}. "
+                f"The limit is {load_settings().runtime.max_local_copy_mb} MB "
+                "(set STRIX_MAX_LOCAL_COPY_MB to change it). Re-run with "
+                "--mount <path> to bind-mount the directory instead of copying it."
+            )
 
     return args
 

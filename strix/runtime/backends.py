@@ -22,6 +22,7 @@ async def _docker_backend(
     image: str,
     manifest: Manifest,
     exposed_ports: tuple[int, ...],
+    bind_mounts: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, Any]:
     """Bring up a session backed by the local Docker daemon.
 
@@ -43,6 +44,7 @@ async def _docker_backend(
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
     client = StrixDockerSandboxClient(docker.from_env())
+    client.strix_bind_mounts = bind_mounts or []
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)
     await session.start()
