@@ -1239,8 +1239,11 @@ def find_oversized_local_targets(
     """Return ``(path, size_bytes)`` for non-mounted local targets over ``max_bytes``.
 
     Mounted targets are bind-mounted rather than copied, so their size is
-    irrelevant and they are excluded.
+    irrelevant and they are excluded. A ``max_bytes`` of zero or less disables
+    the check entirely (returns no targets).
     """
+    if max_bytes <= 0:
+        return []
     oversized: list[tuple[str, int]] = []
     for target in targets_info:
         if target.get("type") != "local_code":

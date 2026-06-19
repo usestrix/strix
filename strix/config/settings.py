@@ -50,6 +50,7 @@ class RuntimeSettings(BaseSettings):
     # Hard cap on a local target's size before we refuse to stream it into the
     # sandbox file-by-file (the SDK copies every file individually, which stalls
     # on large repos). Above this, the user must bind-mount via ``--mount``.
+    # Set to 0 (or less) to disable the pre-flight check entirely.
     max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
 
 

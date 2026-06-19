@@ -70,7 +70,14 @@ def test_find_oversized_ignores_mounted_targets(tmp_path: Path) -> None:
 
 def test_find_oversized_ignores_non_local_targets() -> None:
     targets = [{"type": "web_application", "details": {"target_url": "https://x"}}]
-    assert find_oversized_local_targets(targets, max_bytes=0) == []
+    assert find_oversized_local_targets(targets, max_bytes=1) == []
+
+
+@pytest.mark.parametrize("disabled", [0, -1])
+def test_find_oversized_disabled_for_non_positive_limit(tmp_path: Path, disabled: int) -> None:
+    _write_file(tmp_path / "big.bin", 500)
+    targets = [_local_target(str(tmp_path))]
+    assert find_oversized_local_targets(targets, max_bytes=disabled) == []
 
 
 def test_collect_local_sources_propagates_mount_flag() -> None:
