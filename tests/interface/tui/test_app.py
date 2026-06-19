@@ -22,7 +22,6 @@ def test_notify_scan_error_dispatches_toast() -> None:
         app.notify,
         "Scan failed: RuntimeError: something went wrong",
         severity="error",
-        timeout=0,
     )
 
 

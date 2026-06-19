@@ -1403,13 +1403,12 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._scan_thread.start()
 
     def _notify_scan_error(self, exc: Exception) -> None:
-        """Dispatch a persistent error toast from any thread."""
+        """Dispatch an error toast from any thread."""
         with contextlib.suppress(Exception):
             self.call_from_thread(
                 self.notify,
                 f"Scan failed: {type(exc).__name__}: {exc}",
                 severity="error",
-                timeout=0,
             )
 
     def _capture_sdk_event(self, agent_id: str, event: Any) -> None:
