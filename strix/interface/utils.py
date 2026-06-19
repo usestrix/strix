@@ -1262,10 +1262,13 @@ def build_mount_targets_info(mount_paths: list[str]) -> list[dict[str, Any]]:
 
     Each path must be an existing local directory; it is bind-mounted into the
     sandbox (read-only) instead of being copied file-by-file. Raises
-    ``ValueError`` for a path that does not exist or is not a directory.
+    ``ValueError`` for an empty path, or one that does not exist or is not a
+    directory.
     """
     targets_info: list[dict[str, Any]] = []
     for raw in mount_paths:
+        if not raw or not raw.strip():
+            raise ValueError("--mount path must not be empty.")
         path = Path(raw).expanduser()
         try:
             resolved = path.resolve()

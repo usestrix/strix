@@ -114,3 +114,11 @@ def test_build_mount_targets_info_rejects_file(tmp_path: Path) -> None:
     _write_file(file_path, 10)
     with pytest.raises(ValueError, match="not an existing directory"):
         build_mount_targets_info([str(file_path)])
+
+
+@pytest.mark.parametrize("empty", ["", "   "])
+def test_build_mount_targets_info_rejects_empty_path(empty: str) -> None:
+    # An empty path would otherwise resolve to the current working directory
+    # and silently bind-mount it into the sandbox.
+    with pytest.raises(ValueError, match="must not be empty"):
+        build_mount_targets_info([empty])
