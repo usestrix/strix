@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
 from strix.core.large_output import truncate_exec_result
+from strix.core.mapreduce_output import compress_exec_result
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -207,6 +208,38 @@ def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
     return f"{tool_name}: invalid arguments — " + "; ".join(parts)
 
 
+def _resolve_model(ctx: Any) -> str:
+    """Return the active LLM model string for MapReduce summarisation.
+
+    Prefers the run-context model (set per-agent); falls back to the global
+    STRIX_LLM setting.  Raises ``RuntimeError`` when neither is configured.
+    """
+    run_config = getattr(ctx, "run_config", None)
+    if run_config is not None:
+        m = getattr(run_config, "model", None)
+        if isinstance(m, str) and m.strip():
+            return m.strip()
+    settings_model = load_settings().llm.model
+    if settings_model and settings_model.strip():
+        return settings_model.strip()
+    raise RuntimeError(
+        "No LLM model configured for MapReduce compression. "
+        "Set STRIX_LLM or pass a model to the agent factory."
+    )
+
+
+def _extract_task_hint(raw_input: str) -> str:
+    """Extract the command string from the exec_command JSON payload as a task hint."""
+    try:
+        parsed = json.loads(raw_input)
+    except (json.JSONDecodeError, TypeError):
+        return ""
+    if isinstance(parsed, dict):
+        cmd = parsed.get("cmd")
+        return cmd if isinstance(cmd, str) else ""
+    return ""
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
@@ -224,7 +257,17 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             )
         if isinstance(result, str):
             threshold = load_settings().runtime.max_tool_output_chars
-            result = truncate_exec_result(result, threshold=threshold)
+            if threshold > 0 and len(result) > threshold:
+                try:
+                    model = _resolve_model(ctx)
+                    task_hint = _extract_task_hint(raw_input)
+                    result = await compress_exec_result(result, model=model, task_hint=task_hint)
+                except Exception:  # noqa: BLE001
+                    logger.warning(
+                        "MapReduce compression failed; falling back to truncation",
+                        exc_info=True,
+                    )
+                    result = truncate_exec_result(result, threshold=threshold)
         return result
 
     tool.on_invoke_tool = invoke
