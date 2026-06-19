@@ -1,0 +1,77 @@
+[tools]
+"npm:mintlify" = "latest"
+node = "lts"
+pre-commit = "latest"
+python = "3.12"
+uv = "latest"
+
+[tasks.prod-install]
+description = "Install production dependencies"
+run = "uv sync --no-dev"
+
+[tasks.dev-install]
+description = "Install development dependencies"
+run = "uv sync"
+
+[tasks.setup-dev]
+description = "Install all dev dependencies and set up pre-commit hooks"
+depends = ["dev-install"]
+run = [
+  "pre-commit install",
+  "echo '✅ Development environment setup complete!'",
+  "echo \"Run 'mise check-all' to verify everything works correctly.\"",
+]
+
+[tasks.format]
+description = "Format code with ruff"
+run = "uv run ruff format ."
+
+[tasks.lint]
+description = "Lint code with ruff"
+run = "uv run ruff check . --fix"
+
+[tasks.type-check]
+description = "Run type checking with mypy and pyright"
+run = ["uv run mypy strix/", "uv run pyright strix/"]
+
+[tasks.security]
+description = "Run security checks with bandit"
+run = "uv run bandit -r strix/ -c pyproject.toml"
+
+[tasks.check-all]
+description = "Run all code quality checks (format, lint, type-check, security)"
+run = [
+  "mise format",
+  "mise lint",
+  "mise type-check",
+  "mise security",
+  "echo '✅ All code quality checks passed!'",
+]
+
+[tasks.pre-commit]
+description = "Run pre-commit hooks on all files"
+run = "uv run pre-commit run --all-files"
+
+[tasks.clean]
+description = "Clean up cache files and artifacts"
+run = """
+find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
+find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
+find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
+find . -name "*.pyc" -delete 2>/dev/null || true
+echo '✅ Cleanup complete!'
+"""
+
+[tasks.dev]
+description = "Quick dev loop: format, lint, type-check"
+run = [
+  "mise format",
+  "mise lint",
+  "mise type-check",
+  "echo '✅ Development cycle complete!'",
+]
+
+[tasks.docs]
+description = "Preview the documentation site locally (Mintlify)"
+dir = "docs"
+run = "mintlify dev"

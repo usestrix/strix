@@ -6,9 +6,9 @@ Thank you for your interest in contributing to Strix! This guide will help you g
 
 ### Prerequisites
 
-- Python 3.12+
-- Docker (running)
-- [uv](https://docs.astral.sh/uv/) (for dependency management)
+- [mise](https://mise.jdx.dev/getting-started.html) — provisions the toolchain (Python 3.12,
+  [uv](https://docs.astral.sh/uv/), Node + the docs CLI) and runs project tasks
+- Docker (running) — install separately; mise manages CLIs/runtimes, not the Docker daemon
 - Git
 
 ### Local Development
@@ -19,22 +19,29 @@ Thank you for your interest in contributing to Strix! This guide will help you g
    cd strix
    ```
 
-2. **Install development dependencies**
+2. **Install the toolchain** (Python + uv, as pinned in `mise.toml`)
    ```bash
-   make setup-dev
+   # The first time you use mise in this repo, trust the config first:
+   mise trust
+   mise install
+   ```
+
+3. **Install development dependencies**
+   ```bash
+   mise setup-dev
 
    # or manually:
    uv sync
    uv run pre-commit install
    ```
 
-3. **Configure your LLM provider**
+4. **Configure your LLM provider**
    ```bash
    export STRIX_LLM="openai/gpt-5.4"
    export LLM_API_KEY="your-api-key"
    ```
 
-4. **Run Strix in development mode**
+5. **Run Strix in development mode**
    ```bash
    uv run strix --target https://example.com
    ```
@@ -59,7 +66,7 @@ Skills are specialized knowledge packages that enhance agent capabilities. See [
 2. **Fork and branch** - Work from the `main` branch
 3. **Make your changes** - Follow existing code style
 4. **Write/update tests** - Ensure coverage for new features
-5. **Run quality checks** - `make check-all` should pass
+5. **Run quality checks** - `mise check-all` should pass
 6. **Submit PR** - Link to issue and provide context
 
 ### PR Guidelines
