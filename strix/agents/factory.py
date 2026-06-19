@@ -16,6 +16,8 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
+from strix.config import load_settings
+from strix.core.large_output import truncate_exec_result
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -210,7 +212,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
-            return await invoke_tool(ctx, raw_input)
+            result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
         except InvalidManifestPathError as exc:
@@ -220,6 +222,10 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        if isinstance(result, str):
+            threshold = load_settings().runtime.max_tool_output_chars
+            result = truncate_exec_result(result, threshold=threshold)
+        return result
 
     tool.on_invoke_tool = invoke
     return tool

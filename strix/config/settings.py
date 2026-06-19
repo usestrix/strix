@@ -52,6 +52,11 @@ class RuntimeSettings(BaseSettings):
     # on large repos). Above this, the user must bind-mount via ``--mount``.
     # Set to 0 (or less) to disable the pre-flight check entirely.
     max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
+    # Hard cap on a single exec_command output stored in the agent session.
+    # JSON arrays are trimmed to their first records; plain text to first lines.
+    # Both cases preserve the total count so the agent knows what was omitted.
+    # Set to 0 to disable.
+    max_tool_output_chars: int = Field(default=65536, alias="STRIX_MAX_TOOL_OUTPUT_CHARS")
 
 
 class TelemetrySettings(BaseSettings):
