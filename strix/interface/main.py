@@ -516,7 +516,8 @@ Examples:
         assign_workspace_subdirs(args.targets_info)
         rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
 
-        max_copy_bytes = load_settings().runtime.max_local_copy_mb * 1024 * 1024
+        max_local_copy_mb = load_settings().runtime.max_local_copy_mb
+        max_copy_bytes = max_local_copy_mb * 1024 * 1024
         oversized = find_oversized_local_targets(args.targets_info, max_copy_bytes)
         if oversized:
             details = "; ".join(
@@ -524,7 +525,7 @@ Examples:
             )
             parser.error(
                 f"Local target too large to stream into the sandbox: {details}. "
-                f"The limit is {load_settings().runtime.max_local_copy_mb} MB "
+                f"The limit is {max_local_copy_mb} MB "
                 "(set STRIX_MAX_LOCAL_COPY_MB to change it). Re-run with "
                 "--mount <path> to bind-mount the directory instead of copying it."
             )
