@@ -143,7 +143,11 @@ async def test_summarise_returns_placeholder_on_timeout() -> None:
 
 
 async def test_compress_single_chunk_returns_output_unchanged() -> None:
-    """≤ CHUNK_SIZE_RECORDS records → 1 chunk → returned unchanged, no LLM call."""
+    """≤ CHUNK_SIZE_RECORDS records → 1 chunk → returned unchanged, no LLM call.
+
+    The caller (factory._wrap_exec_command) owns the post-compression backstop
+    for the single-oversized-chunk case; compress_large_output itself is a no-op.
+    """
     records = [{"id": i} for i in range(50)]
     output = json.dumps(records)
     with patch(

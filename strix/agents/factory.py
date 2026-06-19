@@ -268,6 +268,10 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                         exc_info=True,
                     )
                     result = truncate_exec_result(result, threshold=threshold)
+                # Backstop: a single oversized chunk returns unchanged from
+                # compress_large_output; truncate it so the session stays safe.
+                if len(result) > threshold:
+                    result = truncate_exec_result(result, threshold=threshold)
         return result
 
     tool.on_invoke_tool = invoke
