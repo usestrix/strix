@@ -1378,12 +1378,15 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 except (ConnectionError, TimeoutError) as e:
                     logging.exception("Network error during scan")
                     self._scan_error = e
+                    self._notify_scan_error(e)
                 except RuntimeError as e:
                     logging.exception("Runtime error during scan")
                     self._scan_error = e
+                    self._notify_scan_error(e)
                 except Exception as e:
                     logging.exception("Unexpected error during scan")
                     self._scan_error = e
+                    self._notify_scan_error(e)
                 finally:
                     with contextlib.suppress(Exception):
                         loop.run_until_complete(
@@ -1398,6 +1401,16 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._scan_thread = threading.Thread(target=scan_target, daemon=True)
         self._scan_thread.start()
+
+    def _notify_scan_error(self, exc: Exception) -> None:
+        """Dispatch a persistent error toast from any thread."""
+        with contextlib.suppress(Exception):
+            self.call_from_thread(
+                self.notify,
+                f"Scan failed: {type(exc).__name__}: {exc}",
+                severity="error",
+                timeout=0,
+            )
 
     def _capture_sdk_event(self, agent_id: str, event: Any) -> None:
         try:
