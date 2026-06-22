@@ -30,10 +30,10 @@ from typing import Any
 from agents.sandbox.manifest import Manifest
 from agents.sandbox.sandboxes.docker import (
     DockerSandboxClient,
-    _build_docker_volume_mounts,
-    _docker_port_key,
-    _manifest_requires_fuse,
-    _manifest_requires_sys_admin,
+    _build_docker_volume_mounts,  # pyright: ignore[reportPrivateUsage]
+    _docker_port_key,  # pyright: ignore[reportPrivateUsage]
+    _manifest_requires_fuse,  # pyright: ignore[reportPrivateUsage]
+    _manifest_requires_sys_admin,  # pyright: ignore[reportPrivateUsage]
 )
 from agents.sandbox.session.sandbox_session import SandboxSession
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
@@ -48,7 +48,7 @@ logger = logging.getLogger(__name__)
 class StrixDockerSandboxClient(DockerSandboxClient):
     # Host directories to bind-mount into the container, set by the docker
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
-    strix_bind_mounts: list[dict[str, Any]] = []  # overridden per-instance in backends.py
+    strix_bind_mounts: list[dict[str, Any]] | None = None  # overridden per-instance in backends.py
 
     async def _create_container(
         self,
@@ -118,7 +118,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
 
         # Strix injection: host bind mounts (e.g. large repos passed via --mount)
         # that bypass the SDK's file-by-file LocalDir copy.
-        bind_mounts = getattr(self, "strix_bind_mounts", ())
+        bind_mounts = self.strix_bind_mounts or []
         if bind_mounts:
             mounts = create_kwargs.setdefault("mounts", [])
             for spec in bind_mounts:
