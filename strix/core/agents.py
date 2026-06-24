@@ -43,12 +43,24 @@ class AgentCoordinator:
         self._lock = asyncio.Lock()
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
+        self._budget_stopped = False
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
 
     def mark_shutting_down(self) -> None:
         self.is_shutting_down = True
+
+    @property
+    def budget_stopped(self) -> bool:
+        return self._budget_stopped
+
+    async def trigger_budget_stop(self) -> None:
+        """Signal a scan-wide budget stop and wake every parked agent so it exits."""
+        async with self._lock:
+            self._budget_stopped = True
+            for runtime in self.runtimes.values():
+                runtime.wake.set()
 
     async def register(
         self,
@@ -143,7 +155,7 @@ class AgentCoordinator:
     async def wait_for_message(self, agent_id: str) -> None:
         while True:
             async with self._lock:
-                if self.pending_counts.get(agent_id, 0) > 0:
+                if self._budget_stopped or self.pending_counts.get(agent_id, 0) > 0:
                     return
                 wake = self.runtimes.setdefault(agent_id, AgentRuntime()).wake
                 wake.clear()

@@ -16,6 +16,7 @@ from docker import errors as docker_errors  # type: ignore[import-untyped, unuse
 from litellm.exceptions import ContextWindowExceededError
 from openai import APIError
 
+from strix.core.hooks import BudgetExceededError
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import open_agent_session, strip_all_images_from_session
 
@@ -97,6 +98,10 @@ async def run_agent_loop(
             await coordinator.wait_for_message(agent_id)
         except asyncio.CancelledError:
             return result
+
+        if coordinator.budget_stopped:
+            await coordinator.set_status(agent_id, "stopped")
+            raise BudgetExceededError("scan budget reached")
 
         await coordinator.consume_pending(agent_id)
         result = await _run_cycle(
@@ -279,6 +284,10 @@ async def _run_noninteractive_until_lifecycle(
     invalid_final_output_limit = max(1, max_turns)
 
     while True:
+        if coordinator.budget_stopped:
+            await coordinator.set_status(agent_id, "stopped")
+            raise BudgetExceededError("scan budget reached")
+
         result = await _run_cycle(
             agent,
             coordinator,
@@ -361,6 +370,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                                 logger.exception("stream event sink failed for %s", agent_id)
                     if stream.run_loop_exception is not None:
                         raise stream.run_loop_exception
+                except BudgetExceededError:
+                    # A RuntimeError subclass: re-raise explicitly so it is never
+                    # mistaken for the LiteLLM "after shutdown" race below.
+                    raise
                 except RuntimeError as stream_exc:
                     if "after shutdown" not in str(stream_exc):
                         raise
@@ -378,6 +391,13 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
+        except BudgetExceededError as exc:
+            logger.info(
+                "agent %s reached the scan budget limit; stopping the scan: %s", agent_id, exc
+            )
+            await coordinator.set_status(agent_id, "stopped")
+            await coordinator.trigger_budget_stop()
+            raise
         except Exception as exc:
             # ContextWindowExceededError carries status_code=400, which would otherwise
             # match _INPUT_REJECTION_CODES and trigger image-strip recovery — a path
@@ -541,21 +561,29 @@ async def _start_child_runner(
     child_ctx["parent_id"] = parent_id
     child_ctx["task"] = task
 
-    task_handle = asyncio.create_task(
-        run_agent_loop(
-            agent=child_agent,
-            initial_input=initial_input,
-            run_config=run_config,
-            context=child_ctx,
-            max_turns=max_turns,
-            coordinator=coordinator,
-            agent_id=child_id,
-            interactive=interactive,
-            session=session,
-            start_parked=start_parked,
-            event_sink=event_sink,
-            hooks=hooks,
-        ),
-        name=f"agent-{name}-{child_id}",
-    )
+    async def _child_loop() -> None:
+        # A budget stop is a clean scan-wide shutdown, not a child failure: the
+        # child's status and parent notification are already settled in
+        # ``_run_cycle``. Swallow it here so the detached task does not surface a
+        # spurious "Task exception was never retrieved" warning. The root agent
+        # hits the same limit on its next call and tears the scan down.
+        try:
+            await run_agent_loop(
+                agent=child_agent,
+                initial_input=initial_input,
+                run_config=run_config,
+                context=child_ctx,
+                max_turns=max_turns,
+                coordinator=coordinator,
+                agent_id=child_id,
+                interactive=interactive,
+                session=session,
+                start_parked=start_parked,
+                event_sink=event_sink,
+                hooks=hooks,
+            )
+        except BudgetExceededError:
+            logger.info("child %s stopped after reaching the scan budget limit", child_id)
+
+    task_handle = asyncio.create_task(_child_loop(), name=f"agent-{name}-{child_id}")
     await coordinator.attach_runtime(child_id, task=task_handle)

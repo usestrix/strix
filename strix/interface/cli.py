@@ -183,6 +183,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     image=_resolve_sandbox_image(),
                     local_sources=getattr(args, "local_sources", None) or [],
                     interactive=bool(getattr(args, "interactive", False)),
+                    max_budget_usd=getattr(args, "max_budget_usd", None),
                 )
             finally:
                 stop_updates.set()

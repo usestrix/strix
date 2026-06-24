@@ -19,11 +19,19 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class BudgetExceededError(RuntimeError):
+    """Raised when the accumulated LLM cost reaches the configured budget."""
+
+
 class ReportUsageHooks(RunHooks[dict[str, Any]]):
     """Persist SDK-native usage after every model response."""
 
-    def __init__(self, *, model: str) -> None:
+    def __init__(self, *, model: str, max_budget_usd: float | None = None) -> None:
+        import math
+        if max_budget_usd is not None and (not math.isfinite(max_budget_usd) or max_budget_usd <= 0):
+            raise ValueError("max_budget_usd must be a finite number greater than 0")
         self._model = model
+        self._max_budget_usd = max_budget_usd
 
     async def on_llm_end(
         self,
@@ -52,3 +60,10 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             )
         except Exception:
             logger.exception("failed to record SDK usage for agent %s", agent_id)
+
+        if self._max_budget_usd is not None:
+            cost = report_state.get_total_llm_cost()
+            if cost >= self._max_budget_usd:
+                raise BudgetExceededError(
+                    f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"
+                )
