@@ -28,6 +28,12 @@ _LLM_ENV_KEYS = [
     "STRIX_REASONING_EFFORT",
     "LLM_TIMEOUT",
     "PERPLEXITY_API_KEY",
+    # RuntimeSettings
+    "STRIX_IMAGE",
+    "STRIX_RUNTIME_BACKEND",
+    "STRIX_MAX_LOCAL_COPY_MB",
+    # TelemetrySettings
+    "STRIX_TELEMETRY",
 ]
 
 
