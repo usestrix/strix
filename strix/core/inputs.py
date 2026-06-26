@@ -136,30 +136,27 @@ def child_initial_input(
     task: str,
     parent_history: list[Any],
 ) -> list[dict[str, Any]]:
-    initial_input: list[dict[str, Any]] = []
+    """Build the initial input for a child agent as a single user message.
+
+    Collapsing the inherited-context block, the identity line, and the task into
+    one ``{"role": "user"}`` message keeps providers that require strictly
+    alternating roles (e.g. Perplexity, llama.cpp) from rejecting consecutive
+    user messages.
+    """
+    parts: list[str] = []
     if parent_history:
         rendered = json.dumps(parent_history, ensure_ascii=False, default=str)
-        initial_input.append(
-            {
-                "role": "user",
-                "content": (
-                    "== Inherited context from parent (background only) ==\n"
-                    f"{rendered}\n"
-                    "== End of inherited context ==\n"
-                    "Use the above as background only; do not continue the "
-                    "parent's work. Your task follows."
-                ),
-            },
+        parts.append(
+            "== Inherited context from parent (background only) ==\n"
+            f"{rendered}\n"
+            "== End of inherited context ==\n"
+            "Use the above as background only; do not continue the "
+            "parent's work. Your task follows.",
         )
-    initial_input.append(
-        {
-            "role": "user",
-            "content": (
-                f"You are agent {name} ({child_id}); your parent is {parent_id}. "
-                "Maintain your own identity. Call agent_finish when your task "
-                "is complete."
-            ),
-        }
+    parts.append(
+        f"You are agent {name} ({child_id}); your parent is {parent_id}. "
+        "Maintain your own identity. Call agent_finish when your task "
+        "is complete.",
     )
-    initial_input.append({"role": "user", "content": task})
-    return initial_input
+    parts.append(task)
+    return [{"role": "user", "content": "\n\n".join(parts)}]
