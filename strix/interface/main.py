@@ -213,10 +213,31 @@ def check_docker_installed() -> None:
     logger.debug("Docker CLI present")
 
 
+def _provider_import_hint(exc: BaseException, model: str) -> str | None:
+    """Return a pip-install hint when *exc* is a missing provider dependency.
+
+    Bedrock and Vertex AI ship as optional extras: Bedrock needs ``boto3`` and
+    Vertex AI needs ``google-auth``. When either is absent, litellm raises an
+    ``ImportError``/``ModuleNotFoundError`` naming the missing package. Map that
+    back to the matching extra so the user knows what to install. Returns
+    ``None`` for any unrelated error.
+    """
+    if not isinstance(exc, ImportError):
+        return None
+    message = str(exc)
+    model_name = model.lower()
+    if "boto3" in message and model_name.startswith("bedrock/"):
+        return 'Bedrock support is optional. Install it with: pip install "strix-agent[bedrock]"'
+    if "google" in message and "vertex" in model_name:
+        return 'Vertex AI support is optional. Install it with: pip install "strix-agent[vertex]"'
+    return None
+
+
 async def warm_up_llm() -> None:
     console = Console()
     logger.info("Warming up LLM connection")
 
+    raw_model = ""
     try:
         settings = load_settings()
         configure_sdk_model_defaults(settings)
@@ -279,6 +300,9 @@ async def warm_up_llm() -> None:
         error_text.append("\n\n", style="white")
         error_text.append("Could not establish connection to the language model.\n", style="white")
         error_text.append("Please check your configuration and try again.\n", style="white")
+        hint = _provider_import_hint(e, raw_model)
+        if hint is not None:
+            error_text.append(f"\n{hint}\n", style="bold yellow")
         error_text.append(f"\nError: {e}", style="dim white")
 
         panel = Panel(
@@ -310,6 +334,7 @@ def _positive_budget(value: str) -> float:
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"invalid float value: {value!r}") from exc
     import math
+
     if not math.isfinite(budget) or budget <= 0:
         raise argparse.ArgumentTypeError("must be a finite number greater than 0")
     return budget
