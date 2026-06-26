@@ -310,6 +310,7 @@ def _positive_budget(value: str) -> float:
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"invalid float value: {value!r}") from exc
     import math
+
     if not math.isfinite(budget) or budget <= 0:
         raise argparse.ArgumentTypeError("must be a finite number greater than 0")
     return budget
@@ -824,7 +825,11 @@ def main() -> None:
         exit_reason = "error"
         posthog.error("unhandled_exception", str(e))
         scarf.error("unhandled_exception", str(e))
-        raise
+        # The CLI/TUI layer already rendered a user-friendly error panel for
+        # unhandled provider errors (e.g. openai.BadRequestError). Re-raising
+        # here surfaces a raw traceback (and a PyInstaller crash dump in the
+        # binary release), so exit cleanly with a non-zero status instead.
+        sys.exit(1)
     finally:
         report_state = get_global_report_state()
         if report_state:
