@@ -10,9 +10,10 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
 from agents import RunConfig, Runner
-from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
+from agents.exceptions import AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError
 from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
+from litellm.exceptions import BadRequestError, MidStreamFallbackError
 from openai import APIError
 
 from strix.core.hooks import BudgetExceededError
@@ -36,6 +37,12 @@ logger = logging.getLogger(__name__)
 StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
+_STREAM_RESTART_LIMIT = 3
+_STREAM_RESTARTABLE_EXCEPTIONS = (
+    ModelBehaviorError,
+    MidStreamFallbackError,
+    BadRequestError,
+)
 
 
 async def run_agent_loop(
@@ -346,7 +353,9 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     hooks: RunHooks[dict[str, Any]] | None,
 ) -> RunResultBase | None:
     image_strips = 0
+    stream_restarts = 0
     while True:
+        restart_stream = False
         try:
             await coordinator.mark_running(agent_id)
             stream = Runner.run_streamed(
@@ -388,8 +397,27 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                         agent_id,
                         exc_info=True,
                     )
+                except _STREAM_RESTARTABLE_EXCEPTIONS as exc:
+                    if stream_restarts >= _STREAM_RESTART_LIMIT:
+                        raise
+                    stream_restarts += 1
+                    restart_stream = True
+                    logger.warning(
+                        "Restartable stream exception for %s",
+                        agent_id,
+                        exc_info=True,
+                    )
+                    logger.warning(
+                        "Restarting stream for %s after %s (%d/%d)",
+                        agent_id,
+                        type(exc).__name__,
+                        stream_restarts,
+                        _STREAM_RESTART_LIMIT,
+                    )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
+            if restart_stream:
+                continue
         except BudgetExceededError as exc:
             logger.info(
                 "agent %s reached the scan budget limit; stopping the scan: %s", agent_id, exc
