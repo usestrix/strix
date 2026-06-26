@@ -30,7 +30,8 @@ def _resolve_sandbox_image() -> str:
     image = load_settings().runtime.image
     if not image:
         raise RuntimeError(
-            "strix_image is not configured. Set it in ~/.strix/cli-config.json.",
+            "STRIX_IMAGE is not configured. Set it via export STRIX_IMAGE=<image> "
+            "or in ~/.strix/cli-config.json.",
         )
     return image
 
