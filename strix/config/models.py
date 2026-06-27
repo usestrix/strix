@@ -71,9 +71,15 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
         set_tracing_disabled(True)
     except ImportError as exc:
         # Disabling tracing eagerly initializes an httpx client that may need an
-        # optional transport (e.g. socksio for SOCKS proxies). Tracing is already
-        # being turned off, so a failure here is non-fatal — log and continue.
-        logger.warning("Could not disable SDK tracing: %s", exc)
+        # optional transport (e.g. socksio for SOCKS proxies). A failure here is
+        # non-fatal for startup, but tracing then stays at the SDK default
+        # (enabled), so make the consequence explicit rather than silent.
+        logger.warning(
+            "Could not disable SDK tracing (%s); tracing may remain enabled and "
+            "spans could be sent to the provider. Install the missing transport "
+            "(e.g. 'socksio') to resolve.",
+            exc,
+        )
     _configure_litellm_compatibility()
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)

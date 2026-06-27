@@ -38,6 +38,9 @@ def test_configure_tolerates_tracing_import_error(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(models, "set_tracing_disabled", _raise)
     monkeypatch.setattr(models, "_configure_litellm_compatibility", lambda: None)
+    # With api_base=None the function reaches the real set_default_openai_api;
+    # stub it so the test stays isolated from SDK-side effects.
+    monkeypatch.setattr(models, "set_default_openai_api", lambda _mode: None)
 
     # Should not raise despite set_tracing_disabled blowing up.
     models.configure_sdk_model_defaults(_make_settings())
