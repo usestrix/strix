@@ -1163,6 +1163,7 @@ def derive_local_base_name(path_str: str) -> str:
 
 def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
     name_counts: dict[str, int] = {}
+    allocated_subdirs: set[str] = set()
 
     for target in targets_info:
         target_type = target["type"]
@@ -1182,15 +1183,17 @@ def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
 
         # Avoid colliding with a subdir already allocated to another target
         # (e.g. base names ["api-2", "api", "api"] would otherwise both map to "api-2").
+        # Track allocated subdirs separately from base-name counts so a derived
+        # suffix never poisons the count of a later target sharing that name.
         max_attempts = len(targets_info) + 1
         attempts = 0
-        while workspace_subdir in name_counts and attempts < max_attempts:
+        while workspace_subdir in allocated_subdirs and attempts < max_attempts:
             count += 1
             workspace_subdir = f"{base_name}-{count}"
             attempts += 1
 
         name_counts[base_name] = count
-        name_counts[workspace_subdir] = count
+        allocated_subdirs.add(workspace_subdir)
 
         details["workspace_subdir"] = workspace_subdir
 
