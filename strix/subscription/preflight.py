@@ -2,13 +2,9 @@
 
 from __future__ import annotations
 
-import json
-import logging
 import os
 import shutil
 import subprocess
-from datetime import UTC, datetime
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from strix.subscription._ui import fail
@@ -21,8 +17,6 @@ from strix.subscription.codex.auth import borrow_codex_key
 if TYPE_CHECKING:
     from rich.console import Console
 
-
-logger = logging.getLogger(__name__)
 
 _CLAUDE_WAKE_TIMEOUT_SECONDS = 60
 
@@ -39,9 +33,6 @@ def claude_preflight(console: Console) -> None:
             "Claude subscription auth failed",
             f"{exc}\n\nLog in with the `claude` CLI, or set CLAUDE_CODE_OAUTH_TOKEN.",
         )
-    status = _claude_token_expiry_status()
-    if status:
-        logger.info("%s", status)
 
 
 def codex_preflight(console: Console) -> None:
@@ -85,38 +76,3 @@ def _wake_claude_cli(console: Console) -> None:
             "Claude CLI preflight failed",
             f"`claude` exited with code {result.returncode}.",
         )
-
-
-def _claude_token_expiry_status() -> str | None:
-    expires_at_ms = _read_claude_expires_at()
-    if expires_at_ms is None:
-        return None
-    expiry = datetime.fromtimestamp(expires_at_ms / 1000, tz=UTC).astimezone()
-    remaining = max(0, int((expiry - datetime.now(tz=UTC)).total_seconds()))
-    return f"Claude token expires in {_format_duration(remaining)} at {expiry:%Y-%m-%d %H:%M:%S}"
-
-
-def _read_claude_expires_at() -> int | None:
-    config_dir = Path(os.environ.get("CLAUDE_CONFIG_DIR", "~/.claude")).expanduser()
-    try:
-        data = json.loads((config_dir / ".credentials.json").read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return None
-    oauth = data.get("claudeAiOauth")
-    if not isinstance(oauth, dict):
-        return None
-    expires_at = oauth.get("expiresAt")
-    return expires_at if isinstance(expires_at, int) else None
-
-
-def _format_duration(total_seconds: int) -> str:
-    minutes, _ = divmod(total_seconds, 60)
-    hours, minutes = divmod(minutes, 60)
-    days, hours = divmod(hours, 24)
-    parts: list[str] = []
-    if days:
-        parts.append(f"{days}d")
-    if hours or days:
-        parts.append(f"{hours}h")
-    parts.append(f"{minutes}m")
-    return " ".join(parts)
