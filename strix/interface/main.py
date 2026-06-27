@@ -214,7 +214,7 @@ def check_docker_installed() -> None:
 
 
 def _provider_import_hint(exc: BaseException, model: str) -> str | None:
-    """Return a pip-install hint when *exc* is a missing provider dependency.
+    """Return an install hint when *exc* is a missing provider dependency.
 
     Bedrock and Vertex AI ship as optional extras: Bedrock needs ``boto3`` and
     Vertex AI needs ``google-auth``. When either is absent, litellm raises an
@@ -227,9 +227,9 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     message = str(exc)
     model_name = model.lower()
     if "boto3" in message and model_name.startswith("bedrock/"):
-        return 'Bedrock support is optional. Install it with: pip install "strix-agent[bedrock]"'
+        return 'Bedrock support is optional. Install it with: pipx install "strix-agent[bedrock]"'
     if "google" in message and "vertex" in model_name:
-        return 'Vertex AI support is optional. Install it with: pip install "strix-agent[vertex]"'
+        return 'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
     return None
 
 
