@@ -68,7 +68,7 @@ def _read_auth(path: str) -> dict:
 
 def _write_auth(path: str, data: dict) -> None:
     tmp = path + ".tmp"
-    with open(tmp, "w") as f:
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as f:
         json.dump(data, f, indent=2)
     os.replace(tmp, path)
     os.chmod(path, 0o600)
