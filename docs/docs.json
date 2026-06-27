@@ -39,7 +39,8 @@
               "llm-providers/bedrock",
               "llm-providers/azure",
               "llm-providers/novita",
-              "llm-providers/local"
+              "llm-providers/local",
+              "llm-providers/subscription"
             ]
           },
           {

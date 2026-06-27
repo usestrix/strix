@@ -1,0 +1,19 @@
+---
+title: "Subscription (experimental)"
+description: "Run Strix on a Claude Code or ChatGPT Codex subscription instead of an API key"
+---
+
+`--sub` runs Strix on your logged-in Claude Code or ChatGPT Codex subscription instead of an API key. Strix starts a bundled local proxy and configures itself.
+
+## Setup
+
+```bash
+strix --sub claude --target https://example.com
+strix --sub codex --target https://example.com
+```
+
+Set `STRIX_LLM` to override the model (defaults: `anthropic/claude-sonnet-4-6`, `openai/gpt-5.4`).
+
+<Warning>
+This borrows your CLI's OAuth token and presents requests as the official CLI, which may conflict with the provider's terms of service. Verify before use.
+</Warning>

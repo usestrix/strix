@@ -310,6 +310,7 @@ def _positive_budget(value: str) -> float:
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"invalid float value: {value!r}") from exc
     import math
+
     if not math.isfinite(budget) or budget <= 0:
         raise argparse.ArgumentTypeError("must be a finite number greater than 0")
     return budget
@@ -465,6 +466,21 @@ Examples:
             "Resume a prior scan by its run name (the dir under ./strix_runs/). "
             "Picks up the root + every non-terminal subagent's full LLM history "
             "and agent topology. Skips fresh run-name generation."
+        ),
+    )
+
+    parser.add_argument(
+        "--sub",
+        type=str,
+        choices=["claude", "codex"],
+        metavar="BACKEND",
+        help=(
+            "Use a local subscription LLM backend instead of a pay-per-use API key. "
+            "Strix auto-starts a bundled loopback proxy and wires STRIX_LLM / "
+            "LLM_API_BASE / LLM_API_KEY for you. 'claude' borrows your Claude Code "
+            "OAuth token (~/.claude); 'codex' borrows your ChatGPT Codex token "
+            "(~/.codex). Experimental: ensure this complies with the provider's "
+            "terms of service."
         ),
     )
 
@@ -749,12 +765,19 @@ def main() -> None:
         apply_config_override(validate_config_file(args.config))
 
     check_docker_installed()
+
+    if args.sub:
+        from strix.subscription import maybe_start_subscription_proxy
+
+        maybe_start_subscription_proxy(args.sub)
+
     pull_docker_image()
 
     validate_environment()
     asyncio.run(warm_up_llm())
 
-    persist_current()
+    if not args.sub:
+        persist_current()
 
     args.run_name = args.resume or generate_run_name(args.targets_info)
 

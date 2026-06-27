@@ -42,6 +42,9 @@ dependencies = [
   "requests>=2.32.0",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
+  "fastapi>=0.115",
+  "uvicorn>=0.32",
+  "httpx>=0.27",
 ]
 
 [project.scripts]
@@ -105,6 +108,7 @@ module = [
     "docker.*",
     "caido_sdk_client.*",
     "pydantic_settings.*",
+    "uvicorn.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
@@ -112,6 +116,13 @@ disable_error_code = ["import-untyped"]
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = [
+    "strix.subscription.claude.*",
+    "strix.subscription.codex.*",
+]
+ignore_errors = true
 
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)
@@ -128,6 +139,8 @@ extend-exclude = [
     "build",
     "dist",
     "migrations",
+    "strix/subscription/claude",
+    "strix/subscription/codex",
 ]
 
 [tool.ruff.lint]
@@ -239,6 +252,8 @@ ignore = [
 "strix/interface/tui/app.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915", "SIM105"]
 "strix/interface/main.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
 "strix/interface/tui/renderers/agent_message_renderer.py" = ["PLC0415"]
+"strix/subscription/registry.py" = ["PLC0415"]
+"strix/subscription/preflight.py" = ["S603", "S607"]
 
 [tool.ruff.lint.isort]
 force-single-line = false
@@ -261,7 +276,13 @@ line-ending = "auto"
 
 [tool.pyright]
 include = ["strix"]
-exclude = ["**/__pycache__", "build", "dist"]
+exclude = [
+    "**/__pycache__",
+    "build",
+    "dist",
+    "strix/subscription/claude",
+    "strix/subscription/codex",
+]
 pythonVersion = "3.12"
 pythonPlatform = "Linux"
 
@@ -327,6 +348,6 @@ known_third_party = ["pydantic", "litellm"]
 # ============================================================================
 
 [tool.bandit]
-exclude_dirs = ["docs", "build", "dist"]
+exclude_dirs = ["docs", "build", "dist", "strix/subscription/claude", "strix/subscription/codex"]
 skips = ["B101", "B601", "B404", "B603", "B607"]  # Skip assert, shell injection, subprocess import and partial path checks
 severity = "medium"

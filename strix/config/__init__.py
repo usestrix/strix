@@ -8,11 +8,13 @@ Public surface:
   ``Settings``.
 - :func:`load_settings` — memoized resolve (env > JSON file > defaults).
 - :func:`apply_config_override` — switch the JSON source to a custom path.
+- :func:`invalidate_settings_cache` — drop the memoized settings.
 - :func:`persist_current` — write currently-set env vars to the active file.
 """
 
 from strix.config.loader import (
     apply_config_override,
+    invalidate_settings_cache,
     load_settings,
     persist_current,
 )
@@ -32,6 +34,7 @@ __all__ = [
     "Settings",
     "TelemetrySettings",
     "apply_config_override",
+    "invalidate_settings_cache",
     "load_settings",
     "persist_current",
 ]

@@ -53,6 +53,12 @@ def apply_config_override(path: Path) -> None:
     logger.info("config override applied: %s", path)
 
 
+def invalidate_settings_cache() -> None:
+    """Drop the memoized settings so the next load re-reads env + config file."""
+    global _cached  # noqa: PLW0603
+    _cached = None
+
+
 def persist_current() -> None:
     """Write currently-set env vars to the active config file (0o600)."""
     s = load_settings()
