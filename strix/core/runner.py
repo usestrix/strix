@@ -312,9 +312,10 @@ async def run_strix_scan(
     except RateLimitError as exc:
         logger.warning(
             "Scan %s stopped: persistent rate limit from the LLM provider (%s). "
-            "Resume with 'strix --resume <run_name>' once the limit clears.",
+            "Resume with 'strix --resume %s' once the limit clears.",
             scan_id,
             exc,
+            scan_id,
         )
         if root_id is not None:
             await coordinator.cancel_descendants(root_id)

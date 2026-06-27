@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import types
 from typing import Any
 
@@ -23,7 +24,7 @@ def _make_rate_limit_error() -> RateLimitError:
 
 @pytest.mark.asyncio
 async def test_persistent_rate_limit_stops_gracefully(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, caplog: pytest.LogCaptureFixture
 ) -> None:
     """A persistent RateLimitError stops the scan (root -> 'stopped') without raising."""
     monkeypatch.setattr(runner, "run_dir_for", lambda _scan_id: tmp_path)
@@ -66,14 +67,18 @@ async def test_persistent_rate_limit_stops_gracefully(
 
     coordinator = AgentCoordinator()
 
-    result = await runner.run_strix_scan(
-        scan_config={"targets": [], "scan_mode": "deep"},
-        scan_id="scan-test",
-        image="img",
-        coordinator=coordinator,
-    )
+    with caplog.at_level(logging.WARNING):
+        result = await runner.run_strix_scan(
+            scan_config={"targets": [], "scan_mode": "deep"},
+            scan_id="scan-test",
+            image="img",
+            coordinator=coordinator,
+        )
 
     assert result is None
     root_ids = [aid for aid, parent in coordinator.parent_of.items() if parent is None]
     assert len(root_ids) == 1
     assert coordinator.statuses[root_ids[0]] == "stopped"
+    # the resume hint must carry the real scan id, not a literal placeholder
+    assert "strix --resume scan-test" in caplog.text
+    assert "<run_name>" not in caplog.text
