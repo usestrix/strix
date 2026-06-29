@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from agents import set_default_openai_api, set_default_openai_key, set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
@@ -75,6 +75,37 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
         set_default_openai_api("chat_completions")
     else:
         set_default_openai_api("responses")
+    _configure_openai_client_timeout(llm)
+
+
+def _configure_openai_client_timeout(llm: Any) -> None:
+    """Install a default AsyncOpenAI client whose read timeout is bounded.
+
+    Models on the ``openai/`` prefix (e.g. ``openai/gpt-5.5`` against a
+    custom ``api_base``) go through the SDK's OpenAI provider, NOT
+    litellm — so ``litellm.request_timeout`` does not apply to them. The
+    OpenAI SDK's default timeout is 600s, and as a *read* timeout that
+    means a stalled stream (server stops sending bytes without closing
+    the socket) parks the agent for 10 minutes — surfaced in the TUI as
+    an agent stuck at "Starting agent...".
+
+    Passing a float ``timeout`` makes the underlying httpx read timeout an
+    *idle* timeout: it resets on every received chunk, so a healthy long
+    generation is never cut off, but a truly stalled stream raises after
+    ``LLM_TIMEOUT`` seconds and the SDK retry policy recovers the agent.
+
+    The client carries the key/base_url because ``set_default_openai_client``
+    takes precedence over ``set_default_openai_key``.
+    """
+    if not llm.api_key or llm.timeout <= 0:
+        return
+    from agents import set_default_openai_client
+    from openai import AsyncOpenAI
+
+    client_kwargs: dict[str, Any] = {"api_key": llm.api_key, "timeout": float(llm.timeout)}
+    if llm.api_base:
+        client_kwargs["base_url"] = llm.api_base
+    set_default_openai_client(AsyncOpenAI(**client_kwargs), use_for_tracing=False)
 
 
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:
