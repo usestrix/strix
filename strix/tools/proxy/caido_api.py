@@ -261,6 +261,14 @@ def apply_modifications(
         headers.update(modifications["headers"])
     if "body" in modifications:
         body = modifications["body"]
+        # Replacing the body invalidates any carried-over Content-Length.
+        # Drop it (case-insensitively) so build_raw_request recomputes the
+        # correct length for the new body — unless the caller deliberately
+        # set Content-Length in this call's header modifications.
+        explicit_cl = {k.title() for k in modifications.get("headers", {})}
+        if "Content-Length" not in explicit_cl:
+            for key in [k for k in headers if k.title() == "Content-Length"]:
+                del headers[key]
     if "cookies" in modifications:
         cookies: dict[str, str] = {}
         if headers.get("Cookie"):
