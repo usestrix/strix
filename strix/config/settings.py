@@ -54,6 +54,15 @@ class RuntimeSettings(BaseSettings):
     max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
 
 
+class AgentSettings(BaseSettings):
+    model_config = _BASE_CONFIG
+
+    # When true, the root coordinator is instructed not to spawn dedicated
+    # fix/remediation subagents; remediation still lands in each report's
+    # ``remediation_steps``. Off by default (no behavior change for others).
+    disable_fix_agents: bool = Field(default=False, alias="STRIX_DISABLE_FIX_AGENTS")
+
+
 class TelemetrySettings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -71,5 +80,6 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    agents: AgentSettings = Field(default_factory=AgentSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
