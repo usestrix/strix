@@ -57,3 +57,19 @@ def test_no_body_modification_keeps_content_length() -> None:
     }
     result = apply_modifications(components, {"headers": {"X-Test": "1"}}, "http://x.test/")
     assert result["headers"].get("Content-Length") == "3"
+
+
+def test_empty_body_replacement_sets_content_length_zero() -> None:
+    components = {
+        "method": "POST",
+        "headers": {"Host": "x.test", "Content-Length": "3"},
+        "body": "old",
+    }
+    result = apply_modifications(components, {"body": ""}, "http://x.test/")
+    _conn, raw = build_raw_request(
+        method=result["method"],
+        url=result["url"],
+        headers=result["headers"],
+        body=result["body"],
+    )
+    assert _content_length(raw) == "0"

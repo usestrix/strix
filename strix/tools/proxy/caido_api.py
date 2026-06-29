@@ -269,6 +269,10 @@ def apply_modifications(
         if "Content-Length" not in explicit_cl:
             for key in [k for k in headers if k.title() == "Content-Length"]:
                 del headers[key]
+            # build_raw_request only auto-adds Content-Length for a non-empty
+            # body, so an empty replacement body needs it set explicitly.
+            if body == "":
+                headers["Content-Length"] = "0"
     if "cookies" in modifications:
         cookies: dict[str, str] = {}
         if headers.get("Cookie"):
