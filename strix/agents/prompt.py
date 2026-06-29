@@ -7,6 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from strix.config import load_settings
 from strix.skills import get_available_skills, load_skills
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -15,6 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 _PROMPT_DIRNAME = "prompts"
+
+# Appended to the root coordinator's skill when STRIX_DISABLE_FIX_AGENTS is
+# set, overriding the "Fix agent provides remediation" delegation step.
+_DISABLE_FIX_AGENTS_DIRECTIVE = (
+    "\n\n## Fix Agents Disabled\n\n"
+    "Do NOT spawn dedicated fix or remediation subagents. Remediation is "
+    "captured inline in each report's `remediation_steps` field, which is "
+    "sufficient. A separate agent that only writes fixes wastes tokens and "
+    "concurrency, so skip that delegation step entirely."
+)
 
 
 def _resolve_skills(
@@ -85,6 +96,12 @@ def render_system_prompt(
             is_root=is_root,
         )
         skill_content = load_skills(skills_to_load)
+        if (
+            is_root
+            and "root_agent" in skill_content
+            and load_settings().agents.disable_fix_agents
+        ):
+            skill_content["root_agent"] += _DISABLE_FIX_AGENTS_DIRECTIVE
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
         rendered = env.get_template("system_prompt.jinja").render(
