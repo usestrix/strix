@@ -183,7 +183,7 @@ strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 ### Headless Mode
 
-Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag-perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
+Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag - perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
 
 ```bash
 strix -n --target https://your-app.com
