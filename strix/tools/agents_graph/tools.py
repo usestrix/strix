@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
@@ -12,14 +13,29 @@ from typing import Any, Literal, get_args
 
 from agents import RunContextWrapper, function_tool
 
+from strix.config import load_settings
 from strix.core.agents import Status, coordinator_from_context
 from strix.skills import validate_requested_skills
 
 
 _ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting"})
 
+# Matches the names the coordinator gives dedicated fix/remediation agents
+# ("… Fixing Agent", "… Fix Retry", "… Remediation Agent"). The leading word
+# boundary keeps it from firing on substrings like "prefix"/"suffix".
+_FIX_AGENT_NAME_RE = re.compile(r"\b(?:fix\w*|remediat\w*)\b", re.IGNORECASE)
+
 
 logger = logging.getLogger(__name__)
+
+
+def _looks_like_fix_agent(name: str) -> bool:
+    """Heuristic: does this child name describe a fix/remediation agent?
+
+    Name-only by design — matching the task text too would false-positive on
+    legitimate discovery agents whose objective merely mentions fixes/patches.
+    """
+    return bool(_FIX_AGENT_NAME_RE.search(name or ""))
 
 
 def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
@@ -414,6 +430,23 @@ async def create_agent(
             {
                 "success": False,
                 "error": "Scan runner did not provide a child-agent spawner in context",
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
+    if load_settings().agents.disable_fix_agents and _looks_like_fix_agent(name):
+        logger.info("create_agent: blocked fix agent %r (STRIX_DISABLE_FIX_AGENTS)", name)
+        return json.dumps(
+            {
+                "success": False,
+                "error": (
+                    "Fix/remediation agents are disabled (STRIX_DISABLE_FIX_AGENTS). "
+                    "Do not spawn a child to write, apply, or validate code fixes. "
+                    "Record remediation inline in the vulnerability report's "
+                    "remediation_steps field via the reporting agent instead."
+                ),
+                "agent_id": None,
             },
             ensure_ascii=False,
             default=str,
