@@ -138,15 +138,22 @@ lighter syntax/anti-pattern check when ESLint is over-eager. The
 `JS-Snooper` / `jsniper.sh` tools (in `katana.md`) are the right next
 step to mine those bundles for endpoint candidates.
 
-## Converting Static Signals Into Exploits
+## Converting Static Signals Into Findings
 
 1. Rank candidates by impact and exploitability.
-2. Trace source-to-sink flow for top candidates.
-3. Build dynamic PoCs that reproduce the suspected issue.
-4. Report only after dynamic validation succeeds.
+2. Trace the full source-to-sink data flow for top candidates and capture the
+   exact code locations.
+3. Construct a concrete PoC — the request/input/payload that reaches the sink.
+   Execute it dynamically when the environment is available.
+4. Report a candidate once the source-to-sink flow is clearly established and a
+   concrete PoC payload is provided. Dynamic execution strengthens a finding
+   but is NOT a precondition — do not drop a well-evidenced source-level finding
+   just because the app could not be run. State in the analysis whether it is
+   source-confirmed or dynamically-confirmed.
 
 ## Anti-Patterns
 
 - Do not treat scanner output as final truth.
 - Do not spend full cycles on low-signal pattern matches.
-- Do not report source-only findings without validation evidence.
+- Do not report low-confidence guesses: require a clear, traceable source-to-sink
+  flow (or equivalent strong source evidence) plus a concrete PoC payload.

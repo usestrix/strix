@@ -53,6 +53,13 @@ class RuntimeSettings(BaseSettings):
     # Set to 0 (or less) to disable the pre-flight check entirely.
     max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
 
+    # Shell snippet run once per scan inside the sandbox, after the target is
+    # mounted and Caido is up, before any agent starts — typically a dependency
+    # install (e.g. ``uv sync``) so agents don't burn turns provisioning. Runs
+    # via ``bash -lc`` from the workspace root. Empty = skip.
+    setup_cmd: str | None = Field(default=None, alias="STRIX_SETUP_CMD")
+    setup_timeout: int = Field(default=600, alias="STRIX_SETUP_TIMEOUT")
+
 
 class AgentSettings(BaseSettings):
     model_config = _BASE_CONFIG

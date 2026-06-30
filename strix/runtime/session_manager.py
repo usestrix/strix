@@ -123,6 +123,8 @@ async def create_or_reuse(
         container_url=container_caido_url,
     )
 
+    await _run_setup_command(session)
+
     bundle = {
         "client": client,
         "session": session,
@@ -131,6 +133,41 @@ async def create_or_reuse(
     _SESSION_CACHE[scan_id] = bundle
     logger.info("Sandbox session for scan %s ready and cached", scan_id)
     return bundle
+
+
+async def _run_setup_command(session: Any) -> None:
+    """Run ``STRIX_SETUP_CMD`` once in the sandbox before agents start.
+
+    Best-effort: a non-zero exit is logged loudly but does not abort the scan.
+    The command runs through ``bash -lc`` from the workspace root, so it inherits
+    the manifest env (incl. the Caido proxy) exactly like agent shells do.
+    """
+    settings = load_settings()
+    cmd = (settings.runtime.setup_cmd or "").strip()
+    if not cmd:
+        return
+
+    logger.info(
+        "Running STRIX_SETUP_CMD in sandbox (timeout=%ss): %s",
+        settings.runtime.setup_timeout,
+        cmd,
+    )
+    try:
+        result = await session.exec(
+            "bash",
+            "-lc",
+            f"cd {_WORKSPACE_ROOT} && {cmd}",
+            timeout=settings.runtime.setup_timeout,
+        )
+    except Exception:
+        logger.exception("STRIX_SETUP_CMD raised; continuing without setup")
+        return
+
+    if result.ok():
+        logger.info("STRIX_SETUP_CMD completed (exit 0)")
+    else:
+        stderr = result.stderr.decode("utf-8", errors="replace")[-2000:]
+        logger.error("STRIX_SETUP_CMD failed (exit %s):\n%s", result.exit_code, stderr)
 
 
 async def cleanup(scan_id: str) -> None:

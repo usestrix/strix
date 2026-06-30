@@ -18,7 +18,9 @@ Increase white-box coverage by combining source-aware triage with dynamic valida
    - Only fall back to path heuristics when semgrep scope is unavailable.
 2. Run first-pass static triage to rank high-risk paths.
 3. Use triage outputs to prioritize dynamic PoC validation.
-4. Keep findings evidence-driven: no report without validation.
+4. Keep findings evidence-driven: report on a clear, traceable source-to-sink
+   flow with a concrete PoC payload; add dynamic validation when the environment
+   allows, but do not gate reporting on it.
 
 ## Source-Aware Triage Stack
 
@@ -42,6 +44,11 @@ Coverage target per repository:
 
 ## Validation Guardrails
 
-- Static findings are hypotheses until validated.
-- Dynamic exploitation evidence is still required before vulnerability reporting.
+- A finding is reportable on strong, traceable source evidence (a clear
+  source-to-sink data flow, or a missing/incorrect authorization check) plus a
+  concrete PoC payload in the report.
+- Dynamic exploitation evidence strengthens a finding and is preferred when the
+  environment is available — but do NOT withhold a well-evidenced source-level
+  finding solely because dynamic execution was not possible.
+- State confidence explicitly: source-confirmed vs dynamically-confirmed.
 - Keep scanner output concise, deduplicated, and mapped to concrete code locations.
