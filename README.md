@@ -44,11 +44,11 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 
 **Key Capabilities:**
 
-- **Full pentesting toolkit** — reconnaissance, exploitation, and validation out of the box
-- **Multi-agent orchestration** — teams of AI pentesters that collaborate and scale
+- **Full pentesting toolkit** - reconnaissance, exploitation, and validation out of the box
+- **Multi-agent orchestration** - teams of AI pentesters that collaborate and scale
 - **Real exploit validation** - working PoCs, not false positives like legacy vulnerability scanners
-- **Developer‑first CLI** — actionable findings with remediation guidance
-- **Auto‑fix & reporting** — generate patches and compliance-ready pentest reports
+- **Developer‑first CLI** - actionable findings with remediation guidance
+- **Auto‑fix & reporting** - generate patches and compliance-ready pentest reports
 
 
 <br>
@@ -95,13 +95,13 @@ strix --target ./app-directory
 
 ## ☁️ Strix Platform
 
-Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai)** — sign up for free, connect your repos and domains, and launch a pentest in minutes.
+Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai)** - sign up for free, connect your repos and domains, and launch a pentest in minutes.
 
-- **Validated findings with PoCs** — every vulnerability includes a working proof-of-concept exploit and reproduction steps
-- **One-click autofix** — AI-generated security patches as ready-to-merge pull requests
-- **Continuous pentesting** — always-on vulnerability scanning that keeps pace with your deployments
-- **DevSecOps integrations** — GitHub, GitLab, Bitbucket, Slack, Jira, Linear, and CI/CD pipelines
-- **Continuous learning** — AI that builds on past findings, adapts to your codebase, and reduces false positives over time
+- **Validated findings with PoCs** - every vulnerability includes a working proof-of-concept exploit and reproduction steps
+- **One-click autofix** - AI-generated security patches as ready-to-merge pull requests
+- **Continuous pentesting** - always-on vulnerability scanning that keeps pace with your deployments
+- **DevSecOps integrations** - GitHub, GitLab, Bitbucket, Slack, Jira, Linear, and CI/CD pipelines
+- **Continuous learning** - AI that builds on past findings, adapts to your codebase, and reduces false positives over time
 
 [**Start your first pentest →**](https://app.strix.ai)
 
@@ -111,36 +111,36 @@ Try the Strix full-stack penetration testing platform at **[app.strix.ai](https:
 
 ### Agentic Pentesting Tools
 
-Strix agents come equipped with a comprehensive offensive security toolkit — the same tools used by professional penetration testers and ethical hackers:
+Strix agents come equipped with a comprehensive offensive security toolkit - the same tools used by professional penetration testers and ethical hackers:
 
-- **HTTP Interception Proxy** — Full request/response manipulation and analysis with Caido
-- **Browser Exploitation** — Automated browser for testing XSS, CSRF, clickjacking, and auth bypass flows
-- **Shell & Command Execution** — Interactive terminal for exploit development and post-exploitation
-- **Custom Exploit Runtime** — Python sandbox for writing and validating proof-of-concept exploits
-- **Reconnaissance & OSINT** — Automated attack surface mapping, subdomain enumeration, and fingerprinting
-- **Static & Dynamic Code Analysis** — SAST + DAST capabilities for comprehensive application security testing
-- **Vulnerability Knowledge Base** — Structured findings with CVSS scoring and OWASP classification
+- **HTTP Interception Proxy** - Full request/response manipulation and analysis with Caido
+- **Browser Exploitation** - Automated browser for testing XSS, CSRF, clickjacking, and auth bypass flows
+- **Shell & Command Execution** - Interactive terminal for exploit development and post-exploitation
+- **Custom Exploit Runtime** - Python sandbox for writing and validating proof-of-concept exploits
+- **Reconnaissance & OSINT** - Automated attack surface mapping, subdomain enumeration, and fingerprinting
+- **Static & Dynamic Code Analysis** - SAST + DAST capabilities for comprehensive application security testing
+- **Vulnerability Knowledge Base** - Structured findings with CVSS scoring and OWASP classification
 
 ### Comprehensive Vulnerability Scanner
 
 Strix identifies, validates, and exploits a wide range of security vulnerabilities across the OWASP Top 10 and beyond:
 
-- **Broken Access Control** — IDOR, privilege escalation, auth bypass
-- **Injection Attacks** — SQL injection, NoSQL injection, OS command injection, SSTI
-- **Server-Side Vulnerabilities** — SSRF, XXE, insecure deserialization, RCE
-- **Client-Side Attacks** — XSS (stored/reflected/DOM), prototype pollution, CSRF
-- **Business Logic Flaws** — Race conditions, payment manipulation, workflow bypass
-- **Authentication & Session** — JWT attacks, session fixation, credential stuffing vectors
-- **Infrastructure & Cloud** — Misconfigurations, exposed services, cloud security issues
-- **API Security** — Broken authentication, mass assignment, rate limiting bypass
+- **Broken Access Control** - IDOR, privilege escalation, auth bypass
+- **Injection Attacks** - SQL injection, NoSQL injection, OS command injection, SSTI
+- **Server-Side Vulnerabilities** - SSRF, XXE, insecure deserialization, RCE
+- **Client-Side Attacks** - XSS (stored/reflected/DOM), prototype pollution, CSRF
+- **Business Logic Flaws** - Race conditions, payment manipulation, workflow bypass
+- **Authentication & Session** - JWT attacks, session fixation, credential stuffing vectors
+- **Infrastructure & Cloud** - Misconfigurations, exposed services, cloud security issues
+- **API Security** - Broken authentication, mass assignment, rate limiting bypass
 
 ### Graph of Agents (Multi-Agent Pentesting)
 
 Advanced multi-agent orchestration for comprehensive automated penetration testing:
 
-- **Distributed Pentesting** — Specialized AI agents for recon, exploitation, and post-exploitation
-- **Scalable Security Testing** — Parallel execution across multiple targets for fast, comprehensive coverage
-- **Dynamic Coordination** — Agents share discoveries, chain vulnerabilities, and collaborate like a red team
+- **Distributed Pentesting** - Specialized AI agents for recon, exploitation, and post-exploitation
+- **Scalable Security Testing** - Parallel execution across multiple targets for fast, comprehensive coverage
+- **Dynamic Coordination** - Agents share discoveries, chain vulnerabilities, and collaborate like a red team
 
 ---
 
@@ -183,7 +183,7 @@ strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 ### Headless Mode
 
-Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag—perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
+Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag-perfect for servers and automated jobs. The CLI prints real-time vulnerability findings, and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
 
 ```bash
 strix -n --target https://your-app.com
@@ -240,9 +240,9 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 
 **Recommended models for best results:**
 
-- [OpenAI GPT-5.4](https://openai.com/api/) — `openai/gpt-5.4`
-- [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) — `anthropic/claude-sonnet-4-6`
-- [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) — `vertex_ai/gemini-3-pro-preview`
+- [OpenAI GPT-5.4](https://openai.com/api/) - `openai/gpt-5.4`
+- [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) - `anthropic/claude-sonnet-4-6`
+- [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) - `vertex_ai/gemini-3-pro-preview`
 
 See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, and local models.
 
@@ -252,7 +252,7 @@ Get the same Strix experience with [enterprise-grade](https://strix.ai/demo) con
 
 ## Documentation
 
-Full documentation is available at **[docs.strix.ai](https://docs.strix.ai)** — including detailed guides for usage, CI/CD integrations, skills, and advanced configuration.
+Full documentation is available at **[docs.strix.ai](https://docs.strix.ai)** - including detailed guides for usage, CI/CD integrations, skills, and advanced configuration.
 
 ## Contributing
 
