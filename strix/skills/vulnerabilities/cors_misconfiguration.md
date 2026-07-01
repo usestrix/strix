@@ -43,6 +43,7 @@ Cross-Origin Resource Sharing misconfigurations let a malicious site read authen
 - `ACAO: null` is returned
 - `ACAC: true` present alongside a reflected or wildcard-ish ACAO
 - ACAO derived from `Origin` via substring/regex rather than an exact allowlist
+- `Vary: Origin` is missing from a response that reflects the `Origin` (the CORS-permissive response is cacheable and can be served to other origins)
 
 ## Key Vulnerabilities
 
@@ -72,6 +73,13 @@ Cross-Origin Resource Sharing misconfigurations let a malicious site read authen
 
 - `ACAO: *` blocks credentialed reads in browsers, **but** still exposes any data returned without cookies (e.g., token echoed in the body or a header) to every origin
 - `ACAO: *` with `Expose-Headers` leaking sensitive headers
+
+### Missing `Vary: Origin` (Cross-Origin Cache Poisoning)
+
+- Server reflects the request `Origin` into ACAO but omits `Vary: Origin` from the response
+- A CDN or reverse-proxy cache stores the CORS-permissive response *without* keying on `Origin`, then serves it to **other** origins — granting arbitrary-origin reads even where the server would reject that `Origin` directly
+- Distinct from raw reflection: the permissive `ACAO` is replayed from cache to an origin the server never approved; impact does not require the victim to control the reflected request
+- Exploit: warm the cache from an allowed origin, then trigger a cached hit from an attacker origin and read the `ACAO`-bearing response
 
 ### Trusted-Origin Compromise
 
@@ -109,7 +117,8 @@ Cross-Origin Resource Sharing misconfigurations let a malicious site read authen
 3. **Null probe** - send `Origin: null`; check ACAO/ACAC
 4. **Validation-bypass matrix** - prefix, suffix, substring, unanchored regex, trailing dot, `%60`/`_` variants, sibling subdomains
 5. **Wildcard review** - for `ACAO: *`, confirm whether the body/headers leak secrets even without cookies
-6. **Prove readability** - build a real cross-origin PoC and read the response body
+6. **Cache-poisoning probe** - when reflection is confirmed, check for `Vary: Origin`; if absent and the response is cacheable, warm the cache from an allowed origin and replay from a second origin to confirm the permissive `ACAO` is served cross-origin
+7. **Prove readability** - build a real cross-origin PoC and read the response body
 
 ## Validation
 
@@ -122,7 +131,7 @@ Cross-Origin Resource Sharing misconfigurations let a malicious site read authen
 
 - `ACAO: *` on endpoints returning only public, non-authenticated data with no secrets in body/headers
 - Static exact allowlist of known origins with no reflection and no credentials
-- Reflection present but `ACAC` absent **and** the endpoint exposes nothing sensitive without cookies
+- Reflection present but `ACAC` absent **and** the endpoint exposes nothing sensitive without cookies — but note that reflection without `Vary: Origin` is **not** automatically safe: a shared cache can replay the permissive `ACAO` to other origins (cache poisoning), so verify caching behavior before dismissing it
 - Preflight allowed but the actual response body carries no session-scoped data
 
 ## Impact
