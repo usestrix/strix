@@ -1,0 +1,28 @@
+name: "🚀 Feature Request"
+description: "Suggest an improvement, new agent capability, or pentesting skill"
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We are happy to receive suggestions to make Strix a more powerful pentesting tool.
+  - type: textarea
+    id: context
+    attributes:
+      label: "Problem / Context"
+      description: "Is your suggestion related to a gap in existing penetration testing capabilities?"
+      placeholder: "e.g., Strix struggles to analyze and attack GraphQL endpoints..."
+  - type: textarea
+    id: feature_details
+    attributes:
+      label: "Describe the Proposed Feature"
+      description: "What capability, tool integrations, or agent logic should be added?"
+      placeholder: "Add a new GraphQL schema auditor tool to Strix's agent toolkit..."
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Describe alternatives you've considered"
+      description: "Any alternative solutions or features you've considered."
