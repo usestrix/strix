@@ -82,6 +82,36 @@ Applications that pass untrusted input into an LLM prompt are vulnerable to prom
 - Role-play, hypothetical framing, "for a security test", instruction laundering across turns
 - Splitting a blocked request across multiple messages or encodings
 
+## Framework-Specific
+
+### LangChain / LangGraph
+
+- `AgentExecutor` and tool-calling agents parse model output into tool calls — injected content can steer **which** tool runs and **what arguments** it receives
+- Sinks to grep: custom `Tool`/`@tool` functions (shell, SQL, HTTP, file), `initialize_agent`, `create_react_agent`, output parsers
+- Untrusted documents flowing through chains (retrieval → prompt) are a prime indirect-injection path
+
+### OpenAI Assistants / Function Calling
+
+- The model chooses the function and its arguments from untrusted text — validate arguments server-side; never treat them as sanitized
+- Assistants `file_search`/retrieval ingests uploaded files → indirect injection via document content
+- Code Interpreter is a code-execution sink reachable from model output
+- `tool_choice`/forced tools do not prevent argument injection
+
+### Anthropic Tool Use
+
+- `tool_use` blocks carry model-chosen input; schema and result handling differ from OpenAI
+- Check how `tool_result` is fed back and whether untrusted tool output re-enters the prompt unbounded
+
+### LlamaIndex / RAG Pipelines
+
+- Injection rides inside indexed documents; retrieval hooks (node post-processors, query engines, `response_synthesizer`) and agent tools change the surface
+- Grep: data loaders ingesting untrusted sources, `QueryEngineTool`, sub-question/agent query engines
+
+### Guardrail Layers (NeMo Guardrails, LLM Guard, etc.)
+
+- If the guard is the same model or otherwise in-band, it is bypassable by the same injection
+- Confirm the guard inspects the **final merged prompt** (including retrieved/ingested content), not just the user message
+
 ## Exploitation Scenarios
 
 ### Indirect Injection → Data Exfiltration
