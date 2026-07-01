@@ -157,7 +157,7 @@ def build_raw_request(
     final_headers = {**headers}
     final_headers.setdefault("Host", parsed.netloc)
     final_headers.setdefault("User-Agent", "strix")
-    if body and "Content-Length" not in {k.title() for k in final_headers}:
+    if body is not None and "Content-Length" not in {k.title() for k in final_headers}:
         final_headers["Content-Length"] = str(len(body.encode("utf-8")))
 
     lines = [f"{method.upper()} {path} HTTP/1.1"]

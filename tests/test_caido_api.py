@@ -60,3 +60,20 @@ def test_build_raw_request_recomputes_content_length_after_replacement() -> None
     )
     head = raw.decode("utf-8").split("\r\n\r\n", 1)[0]
     assert f"Content-Length: {len(new_body.encode('utf-8'))}" in head
+
+
+def test_build_raw_request_sets_content_length_zero_for_empty_body() -> None:
+    components = _components(body="old")
+    modified = apply_modifications(
+        components,
+        {"body": ""},
+        "http://example.com/submit",
+    )
+    _, raw = build_raw_request(
+        method=modified["method"],
+        url=modified["url"],
+        headers=modified["headers"],
+        body=modified["body"],
+    )
+    head = raw.decode("utf-8").split("\r\n\r\n", 1)[0]
+    assert "Content-Length: 0" in head
