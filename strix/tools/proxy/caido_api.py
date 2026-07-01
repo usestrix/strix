@@ -261,6 +261,12 @@ def apply_modifications(
         headers.update(modifications["headers"])
     if "body" in modifications:
         body = modifications["body"]
+        explicit_content_length = "Content-Length" in {
+            k.title() for k in modifications.get("headers", {})
+        }
+        if not explicit_content_length:
+            for key in [k for k in headers if k.title() == "Content-Length"]:
+                del headers[key]
     if "cookies" in modifications:
         cookies: dict[str, str] = {}
         if headers.get("Cookie"):
