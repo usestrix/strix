@@ -129,12 +129,10 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
     )
 
 
-def error(error_type: str, error_msg: str | None = None) -> None:
+def error(error_type: str) -> None:
     props: dict[str, Any] = {
         **base_props(),
         "session": SESSION_ID,
         "error_type": error_type,
     }
-    if error_msg:
-        props["error_msg"] = error_msg
     _send("error", props)

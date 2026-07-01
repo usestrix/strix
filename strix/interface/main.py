@@ -820,10 +820,10 @@ def main() -> None:
             asyncio.run(run_tui(args))
     except KeyboardInterrupt:
         exit_reason = "interrupted"
-    except Exception as e:
+    except Exception:
         exit_reason = "error"
-        posthog.error("unhandled_exception", str(e))
-        scarf.error("unhandled_exception", str(e))
+        posthog.error("unhandled_exception")
+        scarf.error("unhandled_exception")
         raise
     finally:
         report_state = get_global_report_state()

@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunConfig
 from agents.sandbox import SandboxRunConfig
+from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
 from strix.config import load_settings
@@ -303,6 +304,19 @@ async def run_strix_scan(
         return result  # noqa: TRY300
     except BudgetExceededError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
+        if root_id is not None:
+            await coordinator.cancel_descendants(root_id)
+            with contextlib.suppress(Exception):
+                await coordinator.set_status(root_id, "stopped")
+        return None
+    except RateLimitError as exc:
+        logger.warning(
+            "Scan %s stopped: persistent rate limit from the LLM provider (%s). "
+            "Resume with 'strix --resume %s' once the limit clears.",
+            scan_id,
+            exc,
+            scan_id,
+        )
         if root_id is not None:
             await coordinator.cancel_descendants(root_id)
             with contextlib.suppress(Exception):
