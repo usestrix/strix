@@ -97,13 +97,15 @@ def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> Non
 
 
 def _configure_litellm_compatibility() -> None:
-    """Enable LiteLLM's permissive param handling and disable its callbacks."""
+    """Apply LiteLLM compatibility, privacy, and callback settings."""
     import litellm
 
     litellm.drop_params = True
     litellm.modify_params = True
     litellm.turn_off_message_logging = True
-    litellm.disable_streaming_logging = True
+    # Strix uses LiteLLM's success callback to capture provider-reported cost.
+    # Disabling streaming logging also disables that callback for streamed calls.
+    litellm.disable_streaming_logging = False
     litellm.suppress_debug_info = True
 
     _register_litellm_cost_callback()

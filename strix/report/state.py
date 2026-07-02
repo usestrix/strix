@@ -3,7 +3,7 @@ import logging
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, cast
 from uuid import uuid4
 
 from agents.usage import Usage
@@ -382,6 +382,18 @@ def litellm_cost_callback(
                 value = None
             if value is not None and value > 0:
                 cost = value
+
+    if cost is None:
+        usage: Any = getattr(completion_response, "usage", None)
+        if usage is None and isinstance(completion_response, dict):
+            usage = cast("dict[str, Any]", completion_response).get("usage")
+        usage_cost: Any
+        if isinstance(usage, dict):
+            usage_cost = cast("dict[str, Any]", usage).get("cost")
+        else:
+            usage_cost = getattr(usage, "cost", None)
+        if isinstance(usage_cost, int | float) and usage_cost > 0:
+            cost = float(usage_cost)
 
     if cost is None or cost <= 0:
         return
