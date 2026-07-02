@@ -227,57 +227,62 @@ async def _do_create(  # noqa: PLR0912
 
         from strix.report.dedupe import check_duplicate
 
-        existing = report_state.get_existing_vulnerabilities()
-        candidate = {
-            "title": title,
-            "description": description,
-            "impact": impact,
-            "target": target,
-            "technical_analysis": technical_analysis,
-            "poc_description": poc_description,
-            "poc_script_code": poc_script_code,
-            "endpoint": endpoint,
-            "method": method,
-        }
-        dedupe = await check_duplicate(candidate, existing)
-        if dedupe.get("is_duplicate"):
-            duplicate_id = dedupe.get("duplicate_id", "")
-            duplicate_title = next(
-                (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
-                "",
-            )
-            return {
-                "success": False,
-                "error": (
-                    f"Potential duplicate of '{duplicate_title}' "
-                    f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
-                ),
-                "duplicate_of": duplicate_id,
-                "duplicate_title": duplicate_title,
-                "confidence": dedupe.get("confidence", 0.0),
-                "reason": dedupe.get("reason", ""),
+        # Concurrent child agents can each read `existing`, await the (slow,
+        # LLM-backed) duplicate check, and only then write — without a lock,
+        # two agents racing on the same vulnerability can both pass the check
+        # against the same stale snapshot and both write a report for it.
+        async with report_state.dedupe_lock:
+            existing = report_state.get_existing_vulnerabilities()
+            candidate = {
+                "title": title,
+                "description": description,
+                "impact": impact,
+                "target": target,
+                "technical_analysis": technical_analysis,
+                "poc_description": poc_description,
+                "poc_script_code": poc_script_code,
+                "endpoint": endpoint,
+                "method": method,
             }
+            dedupe = await check_duplicate(candidate, existing)
+            if dedupe.get("is_duplicate"):
+                duplicate_id = dedupe.get("duplicate_id", "")
+                duplicate_title = next(
+                    (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
+                    "",
+                )
+                return {
+                    "success": False,
+                    "error": (
+                        f"Potential duplicate of '{duplicate_title}' "
+                        f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
+                    ),
+                    "duplicate_of": duplicate_id,
+                    "duplicate_title": duplicate_title,
+                    "confidence": dedupe.get("confidence", 0.0),
+                    "reason": dedupe.get("reason", ""),
+                }
 
-        report_id = report_state.add_vulnerability_report(
-            title=title,
-            description=description,
-            severity=severity,
-            impact=impact,
-            target=target,
-            technical_analysis=technical_analysis,
-            poc_description=poc_description,
-            poc_script_code=poc_script_code,
-            remediation_steps=remediation_steps,
-            cvss=cvss_score,
-            cvss_breakdown=cvss_breakdown,
-            endpoint=endpoint,
-            method=method,
-            cve=cve,
-            cwe=cwe,
-            code_locations=parsed_locations,
-            agent_id=agent_id if isinstance(agent_id, str) else None,
-            agent_name=agent_name if isinstance(agent_name, str) else None,
-        )
+            report_id = report_state.add_vulnerability_report(
+                title=title,
+                description=description,
+                severity=severity,
+                impact=impact,
+                target=target,
+                technical_analysis=technical_analysis,
+                poc_description=poc_description,
+                poc_script_code=poc_script_code,
+                remediation_steps=remediation_steps,
+                cvss=cvss_score,
+                cvss_breakdown=cvss_breakdown,
+                endpoint=endpoint,
+                method=method,
+                cve=cve,
+                cwe=cwe,
+                code_locations=parsed_locations,
+                agent_id=agent_id if isinstance(agent_id, str) else None,
+                agent_name=agent_name if isinstance(agent_name, str) else None,
+            )
     except (ImportError, AttributeError) as e:
         logger.exception("create_vulnerability_report persistence failed")
         return {"success": False, "error": f"Failed to create vulnerability report: {e!s}"}
