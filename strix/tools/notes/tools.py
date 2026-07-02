@@ -153,7 +153,10 @@ def _create_note_impl(
                     "note_id": None,
                 }
 
-            note_id = str(uuid.uuid4())[:6]
+            while True:
+                note_id = str(uuid.uuid4())[:6]
+                if note_id not in _notes_storage:
+                    break
 
             timestamp = datetime.now(UTC).isoformat()
             note = {
