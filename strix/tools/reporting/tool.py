@@ -151,6 +151,27 @@ _REQUIRED_FIELDS = {
 }
 
 
+def _duplicate_response(
+    dedupe_result: dict[str, Any], checked_against: list[dict[str, Any]]
+) -> dict[str, Any]:
+    duplicate_id = dedupe_result.get("duplicate_id", "")
+    duplicate_title = next(
+        (r.get("title", "Unknown") for r in checked_against if r.get("id") == duplicate_id),
+        "",
+    )
+    return {
+        "success": False,
+        "error": (
+            f"Potential duplicate of '{duplicate_title}' "
+            f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
+        ),
+        "duplicate_of": duplicate_id,
+        "duplicate_title": duplicate_title,
+        "confidence": dedupe_result.get("confidence", 0.0),
+        "reason": dedupe_result.get("reason", ""),
+    }
+
+
 async def _do_create(  # noqa: PLR0912
     *,
     title: str,
@@ -227,41 +248,60 @@ async def _do_create(  # noqa: PLR0912
 
         from strix.report.dedupe import check_duplicate
 
-        # Concurrent child agents can each read `existing`, await the (slow,
-        # LLM-backed) duplicate check, and only then write — without a lock,
-        # two agents racing on the same vulnerability can both pass the check
-        # against the same stale snapshot and both write a report for it.
+        candidate = {
+            "title": title,
+            "description": description,
+            "impact": impact,
+            "target": target,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "endpoint": endpoint,
+            "method": method,
+        }
+
+        # Snapshot under the lock, then release it before the slow LLM-backed
+        # duplicate check so concurrent agents aren't serialized on each
+        # other's LLM round-trips (only on the cheap read/write below).
         async with report_state.dedupe_lock:
             existing = report_state.get_existing_vulnerabilities()
-            candidate = {
-                "title": title,
-                "description": description,
-                "impact": impact,
-                "target": target,
-                "technical_analysis": technical_analysis,
-                "poc_description": poc_description,
-                "poc_script_code": poc_script_code,
-                "endpoint": endpoint,
-                "method": method,
-            }
-            dedupe = await check_duplicate(candidate, existing)
-            if dedupe.get("is_duplicate"):
-                duplicate_id = dedupe.get("duplicate_id", "")
-                duplicate_title = next(
-                    (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
-                    "",
+
+        dedupe = await check_duplicate(candidate, existing)
+        if dedupe.get("is_duplicate"):
+            return _duplicate_response(dedupe, existing)
+
+        # Re-acquire to write. Another agent may have written new report(s)
+        # while we were awaiting the check above; re-validate against just
+        # those new entries before writing. This is an exact-title match, not
+        # another LLM call — cheap enough to run under the lock and it's
+        # exactly the pattern the original race produces: two agents finding
+        # the same vulnerability report it with the same (or near-identical)
+        # title around the same time. It won't catch a differently-worded
+        # semantic duplicate slipping in during this narrow window, but that
+        # combination (semantic-only match *and* a same-instant write) is far
+        # rarer than the literal same-title race this fix targets, and isn't
+        # worth another full LLM round-trip held under the lock.
+        candidate_title = title.strip().lower()
+        async with report_state.dedupe_lock:
+            existing_now = report_state.get_existing_vulnerabilities()
+            new_entries = existing_now[len(existing) :]
+            title_collision = next(
+                (
+                    r
+                    for r in new_entries
+                    if str(r.get("title", "")).strip().lower() == candidate_title
+                ),
+                None,
+            )
+            if title_collision is not None:
+                return _duplicate_response(
+                    {
+                        "is_duplicate": True,
+                        "duplicate_id": title_collision.get("id", ""),
+                        "reason": "exact title match against a report written concurrently",
+                    },
+                    new_entries,
                 )
-                return {
-                    "success": False,
-                    "error": (
-                        f"Potential duplicate of '{duplicate_title}' "
-                        f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
-                    ),
-                    "duplicate_of": duplicate_id,
-                    "duplicate_title": duplicate_title,
-                    "confidence": dedupe.get("confidence", 0.0),
-                    "reason": dedupe.get("reason", ""),
-                }
 
             report_id = report_state.add_vulnerability_report(
                 title=title,
