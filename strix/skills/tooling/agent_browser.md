@@ -61,14 +61,25 @@ session. Use `agent-browser close` (or `close --all`) when you're done.
 ## Reading a page
 
 ```bash
-agent-browser snapshot                    # full tree (verbose)
-agent-browser snapshot -i                 # interactive elements only (preferred)
+agent-browser snapshot                    # full tree — includes body/result TEXT
+agent-browser snapshot -i                 # interactive elements only — omits page text
 agent-browser snapshot -i -u              # include href urls on links
 agent-browser snapshot -i -c              # compact (no empty structural nodes)
 agent-browser snapshot -i -d 3            # cap depth at 3 levels
 agent-browser snapshot -s "#main"         # scope to a CSS selector
 agent-browser snapshot -i --json          # machine-readable output
 ```
+
+`-i` is compact for locating controls, but it shows interactive elements
+(plus some landmarks like headings) and **not** the page's body/paragraph
+text. Results,
+error/success messages, and any output rendered into the page live in
+non-interactive nodes, so to read *what a page says* use the full
+`snapshot` (no `-i`), `get text @ref`, or `eval`. After a navigation or
+form submit, read the resulting page's content — don't rely on `-i` alone.
+The snapshot is an accessibility view, so HTML attributes like a form's
+`action` URL and its inputs' `name`s are not shown — read them with
+`get html @ref` or `eval` when you need the underlying request details.
 
 Snapshot output looks like:
 
@@ -386,7 +397,10 @@ Destructive actions require `--fix`. Exit code is `0` if all checks pass
 
 **"Ref not found" / "Element not found: @eN"**
 Page changed since the snapshot. Run `agent-browser snapshot -i` again,
-then use the new refs.
+then use the new refs. If the control you need is gone because the page
+navigated (e.g., a form submitted to a results view), re-snapshotting the
+new page won't bring the old refs back — re-`open` the original URL (or
+`agent-browser back`) to return to it, and don't fill a non-input element.
 
 **Element exists in the DOM but not in the snapshot**
 It's probably off-screen or not yet rendered. Try:
