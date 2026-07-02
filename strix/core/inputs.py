@@ -122,18 +122,103 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Output ceiling for Claude models when the user hasn't set one. Adaptive-thinking
+# Claude on Bedrock Converse otherwise sends no maxTokens and truncates long tool
+# calls mid-JSON (the arguments blob is cut a brace short → next-turn history replay
+# 400s in litellm's openai→bedrock converter). Every current Claude tier accepts at
+# least this much output; the value is clamped to the model's own ceiling below, so
+# it is safe even on older Claude with a smaller limit.
+_CLAUDE_DEFAULT_MAX_TOKENS = 32000
+
+
+def resolve_max_tokens(model_name: str, configured: int | None) -> int | None:
+    """Decide the output ceiling for a model.
+
+    - Non-Claude models: return ``configured`` untouched (``None`` → provider
+      default). We do not impose a ceiling on gpt/ollama/gemini/etc. — a local
+      user on a small-context model must not be forced past its limit.
+    - Claude models: use ``configured`` or a family default, then clamp to the
+      model's known output ceiling so the value can never exceed what the
+      provider accepts (older Claude tops out at 4096-8192).
+
+    Gated on the Claude family rather than a version/tier list: the bug this
+    guards (adaptive-thinking truncation) spans opus-4-6/4-8 and sonnet-4-6 today
+    and will grow, while opus-4-1 is not adaptive — so tier is the wrong axis.
+    """
+    if not _is_claude_model(model_name):
+        return configured
+
+    ceiling = _model_output_ceiling(model_name)
+    if configured is not None:
+        # Respect an explicit user value; clamp only if we know the ceiling.
+        return min(configured, ceiling) if ceiling else configured
+    # No explicit value: only inject the family default when we know it fits the
+    # model. If the ceiling is unknown (model missing from litellm's cost map),
+    # fall back to None (provider default) rather than guess a value that could
+    # exceed the true limit — the adaptive models that need the fix all have a
+    # known ceiling, so nothing is lost.
+    if ceiling is None:
+        return None
+    return min(_CLAUDE_DEFAULT_MAX_TOKENS, ceiling)
+
+
+def _is_claude_model(model_name: str) -> bool:
+    return "claude" in model_name.strip().lower()
+
+
+def _model_output_ceiling(model_name: str) -> int | None:
+    """Look up a model's max output tokens in litellm's cost map.
+
+    litellm keys the same model under several names (``global.anthropic.claude-
+    opus-4-8``, ``anthropic.claude-opus-4-8``, ``claude-opus-4-8``), and not every
+    region/provider-prefixed variant is present for every model. Try the name as
+    given, then progressively strip the SDK route prefix, an ``owner/`` segment,
+    and leading dotted segments (region like ``global.``/``us.``, then provider
+    like ``anthropic.``) so a prefixed name still resolves to the bare key.
+    """
+    import litellm
+
+    name = model_name.strip().lower()
+    for prefix in ("litellm/", "any-llm/", "openai/", "bedrock/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+
+    candidates = [name]
+    if "/" in name:
+        candidates.append(name.rsplit("/", 1)[1])
+    # Strip leading dotted segments one at a time: global.anthropic.claude-x
+    # -> anthropic.claude-x -> claude-x. Each intermediate form is a real key
+    # for some models, so try them all.
+    for cand in list(candidates):
+        rest = cand
+        while "." in rest:
+            rest = rest.split(".", 1)[1]
+            candidates.append(rest)
+
+    for cand in candidates:
+        entry = litellm.model_cost.get(cand)
+        if entry:
+            ceiling = entry.get("max_output_tokens") or entry.get("max_tokens")
+            if isinstance(ceiling, int):
+                return ceiling
+    return None
+
+
 def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,
     model_name: str,
     force_required_tool_choice: bool = False,
     request_timeout: float | None = None,
+    max_tokens: int | None = None,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),
+        max_tokens=resolve_max_tokens(model_name, max_tokens),
     )
     if (
         reasoning_effort is not None
