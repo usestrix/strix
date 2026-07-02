@@ -9,6 +9,7 @@ from uuid import uuid4
 from agents.usage import Usage
 
 from strix.core.paths import run_dir_for
+from strix.report.sarif import write_sarif
 from strix.report.usage import LLMUsageLedger
 from strix.report.writer import (
     read_run_record,
@@ -22,6 +23,16 @@ from strix.telemetry import posthog, scarf
 logger = logging.getLogger(__name__)
 
 _global_report_state: Optional["ReportState"] = None
+
+
+def _strix_version() -> str | None:
+    """Best-effort package version for the SARIF tool.driver.version field."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    try:
+        return version("strix-agent")
+    except PackageNotFoundError:
+        return None
 
 
 def get_global_report_state() -> Optional["ReportState"]:
@@ -334,6 +345,21 @@ class ReportState:
 
             if self.vulnerability_reports:
                 write_vulnerabilities(run_dir, self.vulnerability_reports, self._saved_vuln_ids)
+
+            # SARIF 2.1.0 emitter for CI / ASPM integration. Always emit (even
+            # empty) so a clean run overwrites a prior findings.sarif rather than
+            # leaving a stale one — codeql-action's "absent from new submission →
+            # fixed" needs the fresh empty doc to auto-resolve alerts. Isolated
+            # in its own try: a SARIF-build error must NEVER break the CSV/MD/
+            # run-record path (the emitter's own contract).
+            try:
+                write_sarif(
+                    run_dir,
+                    self.vulnerability_reports,
+                    tool_version=_strix_version(),
+                )
+            except Exception:
+                logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")
 
             write_run_record(run_dir, self.run_record)
 
