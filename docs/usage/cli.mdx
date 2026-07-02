@@ -73,6 +73,11 @@ strix --target <target> [options]
     concurrently).
   - Cost is a best-effort estimate derived from token usage and model pricing;
     providers that do not expose priced usage may under-count.
+  - For LiteLLM-routed models, Strix enables streaming success callbacks to
+    capture provider-reported cost. Message content remains excluded, but
+    third-party LiteLLM callbacks configured in the same process can receive
+    other streaming metadata such as model names, request IDs, and token
+    counts.
 </ParamField>
 
 ## Examples
