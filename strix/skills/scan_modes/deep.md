@@ -14,6 +14,7 @@ Thorough understanding before exploitation. Test every parameter, every endpoint
 ## Phase 1: Exhaustive Reconnaissance
 
 **Whitebox (source available)**
+- Load and maintain shared `wiki` notes from the start (`list_notes(category="wiki")`, then `get_note(note_id=...)` for `wiki:overview` and `wiki:security`), then continuously update `wiki:security`
 - Map every file, module, and code path in the repository
 - Start with broad source-aware triage (`semgrep`, `ast-grep`, `gitleaks`, `trufflehog`, `trivy fs`) and use outputs to drive deep review
 - Execute at least one structural AST pass (`sg` and/or Tree-sitter) per repository and store artifacts for reuse

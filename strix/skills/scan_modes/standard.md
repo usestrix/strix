@@ -14,6 +14,7 @@ Systematic testing across the full attack surface. Understand the application be
 ## Phase 1: Reconnaissance
 
 **Whitebox (source available)**
+- Start by loading existing `wiki` notes (`list_notes(category="wiki")`, then `get_note(note_id=...)` for `wiki:overview` and `wiki:security`) and update `wiki:security` as mapping evolves
 - Map codebase structure: modules, entry points, routing
 - Run `semgrep` first-pass triage to prioritize risky flows before deep manual review
 - Run at least one AST-structural mapping pass (`sg` and/or Tree-sitter), then use outputs for route, sink, and trust-boundary mapping

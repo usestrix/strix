@@ -14,6 +14,7 @@ Optimize for fast feedback on critical security issues. Skip exhaustive enumerat
 ## Phase 1: Rapid Orientation
 
 **Whitebox (source available)**
+- Read existing `wiki` notes first (`list_notes(category="wiki")`, then `get_note(note_id=...)` for `wiki:overview` and `wiki:security`) to avoid remapping from scratch
 - Focus on recent changes: git diffs, new commits, modified files—these are most likely to contain fresh bugs
 - Run a fast static triage on changed files first (`semgrep`, then targeted `sg` queries)
 - Run at least one lightweight AST pass (`sg` or Tree-sitter) so structural mapping is not skipped
