@@ -69,10 +69,10 @@ def write_vulnerabilities(
         vulnerability_reports,
         key=lambda r: (_SEVERITY_ORDER.get(r["severity"], 5), r["timestamp"]),
     )
-    csv_path = run_dir / "vulnerabilities.csv"
+      csv_path = run_dir / "vulnerabilities.csv"
     csv_buf = io.StringIO()
     fieldnames = ["id", "title", "severity", "timestamp", "file"]
-    csv_writer = csv.DictWriter(csv_buf, fieldnames=fieldnames, lineterminator="\n")
+    csv_writer = csv.DictWriter(csv_buf, fieldnames=fieldnames, lineterminator="\r\n")
     csv_writer.writeheader()
     for report in sorted_reports:
         csv_writer.writerow(
