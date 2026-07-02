@@ -1,6 +1,6 @@
 import re
 from functools import cache
-from typing import Any
+from typing import Any, ClassVar
 
 from pygments.lexers import get_lexer_by_name, guess_lexer
 from pygments.styles import get_style_by_name
@@ -161,6 +161,8 @@ def _process_inline_formatting(line: str) -> Text:
 
 
 class AgentMessageRenderer:
+    _cache: ClassVar[dict[int, Text]] = {}
+
     @classmethod
     def render_simple(cls, content: str) -> Text:
         if not content:
@@ -168,4 +170,12 @@ class AgentMessageRenderer:
         cleaned = _BLANK_LINE_RUNS.sub("\n\n", content).strip()
         if not cleaned:
             return Text()
-        return _apply_markdown_styles(cleaned)
+        cache_key = hash(cleaned)
+        cached = cls._cache.get(cache_key)
+        if cached is not None:
+            return cached.copy()
+        rendered = _apply_markdown_styles(cleaned)
+        if len(cls._cache) > 100:
+            cls._cache.clear()
+        cls._cache[cache_key] = rendered
+        return rendered

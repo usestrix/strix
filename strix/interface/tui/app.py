@@ -128,7 +128,7 @@ class SplashScreen(Static):  # type: ignore[misc]
         yield panel_static
 
     def on_mount(self) -> None:
-        self._animation_timer = self.set_interval(0.05, self._animate_start_line)
+        self._animation_timer = self.set_interval(0.1, self._animate_start_line)
 
     def on_unmount(self) -> None:
         if self._animation_timer is not None:
@@ -729,6 +729,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "#86efac",  # Brightest
         ]
         self._dot_animation_timer: Any | None = None
+        self._pending_scroll_end = False
 
         self._setup_cleanup_handlers()
 
@@ -872,7 +873,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._start_scan_thread()
 
-        self.set_interval(0.35, self._update_ui)
+        self.set_interval(0.5, self._update_ui)
 
     def _update_ui(self) -> None:
         if self.show_splash:
@@ -1018,8 +1019,16 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._safe_widget_operation(chat_display.update, content)
         chat_display.set_classes(css_class)
 
-        if is_at_bottom:
-            self.call_later(chat_history.scroll_end, animate=False)
+        if is_at_bottom and not self._pending_scroll_end:
+            self._pending_scroll_end = True
+            self.call_later(self._do_scroll_end, chat_history)
+
+    def _do_scroll_end(self, chat_history: VerticalScroll) -> None:
+        self._pending_scroll_end = False
+        try:
+            chat_history.scroll_end(animate=False)
+        except Exception:
+            logger.debug("Failed to scroll chat to end", exc_info=True)
 
     def _get_chat_placeholder_content(
         self, message: str, placeholder_class: str
@@ -1292,7 +1301,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _start_dot_animation(self) -> None:
         if self._dot_animation_timer is None:
-            self._dot_animation_timer = self.set_interval(0.06, self._animate_dots)
+            self._dot_animation_timer = self.set_interval(0.25, self._animate_dots)
 
     def _stop_dot_animation(self) -> None:
         if self._dot_animation_timer is not None:
