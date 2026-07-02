@@ -153,10 +153,16 @@ def _create_note_impl(
                     "note_id": None,
                 }
 
-            while True:
+            for _ in range(100):
                 note_id = str(uuid.uuid4())[:6]
                 if note_id not in _notes_storage:
                     break
+            else:
+                return {
+                    "success": False,
+                    "error": "Failed to generate a unique note ID after 100 attempts",
+                    "note_id": None,
+                }
 
             timestamp = datetime.now(UTC).isoformat()
             note = {
