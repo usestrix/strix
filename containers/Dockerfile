@@ -1,4 +1,4 @@
-FROM kalilinux/kali-rolling:latest
+FROM kalilinux/kali-rolling:latest  
 
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
 
