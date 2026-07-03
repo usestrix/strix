@@ -152,19 +152,26 @@ def test_apply_config_override_invalidates_cache(tmp_path: Path) -> None:
 
 
 # --------------------------------------------------------------------------- #
-# LLM key aliases
+# LLM provider keys
 # --------------------------------------------------------------------------- #
 
 
-def test_groq_api_key_alias_populates_llm_key(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_groq_api_key_populates_dedicated_field(monkeypatch: pytest.MonkeyPatch) -> None:
+    # GROQ_API_KEY must land on its own field, never the generic api_key, so it
+    # can't be mirrored into another provider's credential.
     monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
-    assert loader.load_settings().llm.api_key == "gsk-test"
+    llm = loader.load_settings().llm
+    assert llm.groq_api_key == "gsk-test"
+    assert llm.api_key is None
 
 
-def test_llm_api_key_takes_precedence_over_groq(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("LLM_API_KEY", "primary")
+def test_groq_and_openai_keys_do_not_collide(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Both set: each key stays on its own field instead of one overriding the other.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
     monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
-    assert loader.load_settings().llm.api_key == "primary"
+    llm = loader.load_settings().llm
+    assert llm.api_key == "sk-openai"
+    assert llm.groq_api_key == "gsk-test"
 
 
 # --------------------------------------------------------------------------- #

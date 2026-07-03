@@ -65,6 +65,10 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     llm = settings.llm
     set_tracing_disabled(True)
     _configure_litellm_compatibility()
+    if llm.groq_api_key:
+        # LiteLLM reads GROQ_API_KEY natively; export it (without touching the
+        # generic api_key) so persisted config reaches the provider too.
+        os.environ.setdefault("GROQ_API_KEY", llm.groq_api_key)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
         _configure_litellm_default("api_key", llm.api_key)
