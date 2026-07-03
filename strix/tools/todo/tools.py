@@ -131,13 +131,20 @@ def _normalize_todo_ids(raw_ids: Any) -> list[str]:
         stripped = raw_ids.strip()
         if not stripped:
             return []
+        # json.loads is used only to unpack the JSON *array* form, e.g.
+        # '["a", "b"]'. A bare string is a literal id (optionally
+        # comma-separated) and must NOT be routed through the parsed
+        # scalar value: ids are 6-char uuid slugs, and ones like "1e5230"
+        # or "2363e0" are valid JSON numbers that json.loads would mangle
+        # (-> inf / "2363.0"), silently targeting a non-existent todo.
         try:
-            data = json.loads(stripped)
+            parsed = json.loads(stripped)
         except json.JSONDecodeError:
-            data = stripped.split(",") if "," in stripped else [stripped]
-        if isinstance(data, list):
-            return [str(item).strip() for item in data if str(item).strip()]
-        return [str(data).strip()]
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+        parts = stripped.split(",") if "," in stripped else [stripped]
+        return [part.strip() for part in parts if part.strip()]
     if isinstance(raw_ids, list):
         return [str(item).strip() for item in raw_ids if str(item).strip()]
     return [str(raw_ids).strip()]
