@@ -7,7 +7,6 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agents import RunConfig
@@ -300,7 +299,7 @@ async def run_strix_scan(
                     scan_id,
                 )
                 # Automatically save the data into a fallback markdown report using Path
-                reports_dir = Path("reports")
+                reports_dir = run_dir / "reports"
                 reports_dir.mkdir(parents=True, exist_ok=True)
 
                 report_file = reports_dir / f"report_{scan_id}_fallback.md"
