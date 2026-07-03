@@ -7,6 +7,7 @@ import json
 import logging
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agents import RunConfig
@@ -293,14 +294,23 @@ async def run_strix_scan(
             elif isinstance(final, dict):
                 scan_completed = bool(final.get("scan_completed"))
             if not scan_completed:
-                logger.error(
-                    "Scan %s ended without calling finish_scan. The agent "
-                    "emitted a text-only turn instead of a lifecycle tool call, "
-                    "so no executive report was written. Final output (first "
-                    "300 chars): %r",
+                logger.warning(
+                    "Scan %s ended without a formal lifecycle tool call. "
+                    "Compiling a fallback report from final output text.",
                     scan_id,
-                    str(final)[:300],
                 )
+                # Automatically save the data into a fallback markdown report using Path
+                reports_dir = Path("reports")
+                reports_dir.mkdir(parents=True, exist_ok=True)
+
+                report_file = reports_dir / f"report_{scan_id}_fallback.md"
+                with report_file.open("w", encoding="utf-8") as f:
+                    f.write("# Strix Scan Report (Text Turn Fallback)\n\n")
+                    f.write(f"**Scan ID:** {scan_id}\n\n")
+                    f.write("## Final Agent Output\n")
+                    f.write(str(final))
+
+                logger.info("Fallback report written successfully to %s", report_file)
         return result  # noqa: TRY300
     except BudgetExceededError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
