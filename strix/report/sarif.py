@@ -716,8 +716,12 @@ _VULN_CLASS_KEYWORDS = (
     "insecure random",
     "tls verification",
     "certificate verification",
-    "denial of service",
+    # "regex denial of service" MUST precede "denial of service": it is the
+    # more specific class and "denial of service" is a substring of it, so
+    # (first-match-wins) the generic entry would otherwise shadow it and
+    # collapse ReDoS findings into the generic DoS class hash.
     "regex denial of service",
+    "denial of service",
     "redos",
     "supply chain",
 )
