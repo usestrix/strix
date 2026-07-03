@@ -20,6 +20,7 @@ _LLM_ENV_KEYS = [
     "STRIX_LLM",
     "LLM_API_KEY",
     "OPENAI_API_KEY",
+    "GROQ_API_KEY",
     "LLM_API_BASE",
     "OPENAI_API_BASE",
     "OPENAI_BASE_URL",
@@ -148,6 +149,22 @@ def test_apply_config_override_invalidates_cache(tmp_path: Path) -> None:
 
     loader.apply_config_override(second)
     assert loader.load_settings().llm.model == "second-model"
+
+
+# --------------------------------------------------------------------------- #
+# LLM key aliases
+# --------------------------------------------------------------------------- #
+
+
+def test_groq_api_key_alias_populates_llm_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+    assert loader.load_settings().llm.api_key == "gsk-test"
+
+
+def test_llm_api_key_takes_precedence_over_groq(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_API_KEY", "primary")
+    monkeypatch.setenv("GROQ_API_KEY", "gsk-test")
+    assert loader.load_settings().llm.api_key == "primary"
 
 
 # --------------------------------------------------------------------------- #

@@ -23,7 +23,7 @@ class LlmSettings(BaseSettings):
     model: str | None = Field(default=None, alias="STRIX_LLM")
     api_key: str | None = Field(
         default=None,
-        validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
+        validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY", "GROQ_API_KEY"),
     )
     api_base: str | None = Field(
         default=None,

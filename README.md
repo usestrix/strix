@@ -235,6 +235,15 @@ export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
 
+Provider-native keys are also picked up automatically. For example, to use
+[Groq's](https://console.groq.com/) fast inference you can set `GROQ_API_KEY`
+directly instead of `LLM_API_KEY`:
+
+```bash
+export STRIX_LLM="groq/llama-3.3-70b-versatile"
+export GROQ_API_KEY="your-api-key"
+```
+
 > [!NOTE]
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
 
