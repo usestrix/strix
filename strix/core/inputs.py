@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
+from strix.config.models import (
+    DEFAULT_MODEL_RETRY,
+    is_bedrock_anthropic_model,
+    model_supports_reasoning,
+)
 
 
 if TYPE_CHECKING:
@@ -112,8 +116,14 @@ def make_model_settings(
     *,
     model_name: str,
 ) -> ModelSettings:
+    # Claude on Bedrock rejects a forced ``parallel_tool_calls=False`` because
+    # LiteLLM turns it into a ``tool_choice`` without the required ``type`` field
+    # ("tool_choice.type: Field required"), so the agent never starts (#644).
+    # Omit the flag on that route; every other provider keeps single-tool-call
+    # behavior.
+    parallel_tool_calls = None if is_bedrock_anthropic_model(model_name) else False
     model_settings = ModelSettings(
-        parallel_tool_calls=False,
+        parallel_tool_calls=parallel_tool_calls,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
     )
