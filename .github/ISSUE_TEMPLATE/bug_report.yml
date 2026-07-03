@@ -1,0 +1,42 @@
+name: "🐛 Bug Report"
+description: "Report a bug or unexpected behavior in Strix"
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please fill out this form to help us diagnose and resolve the issue.
+  - type: textarea
+    id: description
+    attributes:
+      label: "Vulnerability / Bug Description"
+      description: "A clear and concise description of what is happening."
+      placeholder: "e.g., Strix CLI crashes during local scan on port 8080..."
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: "Reproduction Steps"
+      description: "How can we reproduce the bug?"
+      placeholder: |
+        1. Run 'uv run strix --target https://example.com'
+        2. Set environment variable STRIX_LLM = ...
+        3. See error stack trace...
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: "Logs and Stack Traces"
+      description: "Copy-paste relevant terminal error logs here."
+      render: shell
+  - type: input
+    id: environment
+    attributes:
+      label: "System & LLM Environment"
+      description: "Python version, OS, target server model, LLM provider, etc."
+      placeholder: "e.g. Python 3.12, macOS Sonoma, OpenAI GPT-4o"
+    validations:
+      required: true
