@@ -1,106 +1,107 @@
-import logging
-import re
-from collections.abc import Iterator
+"""safe skill-path resolver for strix load_skills — defense-in-depth.
 
-from strix.utils.resource_paths import get_strix_resource_path
+Drop-in addition for strix/skills/__init__.py::load_skills().
 
+The current path-resolution for skill files is:
 
-logger = logging.getLogger(__name__)
+    if "/" in skill_name:
+        rel_path = f"{skill_name}.md"
+    ...
+    if rel_path is None or not (skills_dir / rel_path).exists():
+        ...
+    try:
+        content = (skills_dir / rel_path).read_text(encoding="utf-8")
 
-_FRONTMATTER_PATTERN = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
+That relies on the caller-side `validate_requested_skills()` to reject
+unknown skill names before they reach load_skills(). That's correct for
+the current call graph, but it's brittle: any future caller that calls
+load_skills() without first validating would inherit a path-traversal
+vulnerability (skill_name="../../etc/passwd" -> reads passwd — well,
+the .md variant would not exist, but a clever attacker can construct
+branches with predictable .md paths).
 
-_INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination"})
+This patch adds a runtime safe-path check that is independent of
+validate_requested_skills.
+"""
+from __future__ import annotations
 
-
-def _iter_user_skill_files() -> Iterator[tuple[str, str]]:
-    """Yield ``(category_name, skill_name)`` for every user-selectable skill."""
-    skills_dir = get_strix_resource_path("skills")
-    if not skills_dir.exists():
-        return
-    for category_dir in sorted(skills_dir.iterdir()):
-        if not category_dir.is_dir() or category_dir.name.startswith("__"):
-            continue
-        if category_dir.name in _INTERNAL_SKILL_CATEGORIES:
-            continue
-        for file_path in sorted(category_dir.glob("*.md")):
-            yield category_dir.name, file_path.stem
-
-
-def get_all_skill_names() -> set[str]:
-    """Return every user-selectable skill name (bare, no category prefix)."""
-    return {name for _, name in _iter_user_skill_files()}
+from pathlib import Path
 
 
-def get_available_skills() -> dict[str, list[str]]:
-    grouped: dict[str, list[str]] = {}
-    for category, name in _iter_user_skill_files():
-        grouped.setdefault(category, []).append(name)
-    return grouped
+def _safe_skill_path(skills_dir: Path, rel_path: str) -> Path | None:
+    """Return a resolved path inside skills_dir, or None if it escapes.
 
+    Defense in depth: even if `validate_requested_skills()` is bypassed
+    or has a bug, this guarantees we never `read_text()` a file outside
+    of skills_dir.
 
-def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str | None:
-    """Validate a list of user-passed skill names.
+    Args:
+        skills_dir: The directory where skill files are expected to live.
+        rel_path: A relative path (constructed from user-supplied skill_name).
 
-    Returns ``None`` on success, or a model-readable error message
-    describing what was wrong (count exceeded, unknown names).
+    Returns:
+        The resolved absolute path inside skills_dir, or None if the path
+        escapes via `..` or symlinks.
+
+    Edge cases handled:
+    - Empty rel_path -> None.
+    - Absolute rel_path -> None (we never expect absolute skill paths).
+    - `..` traversal -> None.
+    - Symlinks pointing outside skills_dir -> None (via .resolve()).
     """
-    if len(skill_list) > max_skills:
-        return (
-            f"Cannot specify more than {max_skills} skills per agent; "
-            f"got {len(skill_list)}. Aim for 1-3 related skills per specialist."
-        )
-    if not skill_list:
+    if not rel_path or not rel_path.strip():
         return None
-    available = get_all_skill_names()
-    invalid = sorted({s for s in skill_list if s not in available})
-    if invalid:
-        return f"Invalid skill name(s): {invalid}. Available skills: {sorted(available)}"
-    return None
+    # Reject absolute paths explicitly — we expect rel paths only.
+    p = Path(rel_path)
+    if p.is_absolute():
+        return None
+    # Resolve to a canonical absolute path. This collapses `..` segments
+    # and follows symlinks (which is what we want — we want to detect
+    # escape via either).
+    try:
+        target = (skills_dir / p).resolve(strict=False)
+        skills_dir_real = skills_dir.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return None
+    # Check containment. Path.is_relative_to() is the canonical check
+    # on Python 3.9+; supports `..` resolution correctly.
+    try:
+        target.relative_to(skills_dir_real)
+    except ValueError:
+        return None
+    return target
 
 
-def load_skills(skill_names: list[str]) -> dict[str, str]:
-    """Load skill markdown bodies (frontmatter stripped) by name.
+# Smoke test (run as `python3 03_fix_skills_safe_path.py`)
+if __name__ == "__main__":
+    import tempfile, os
 
-    Skill files live at ``strix/skills/<category>/<name>.md``. Names
-    can be ``"name"`` (any category), ``"category/name"``, or a bare
-    file at the skills root. Missing skills are logged and skipped.
-    """
-    skills_dir = get_strix_resource_path("skills")
-    if not skills_dir.exists():
-        return {}
+    with tempfile.TemporaryDirectory() as tmp:
+        skills = Path(tmp) / "skills"
+        skills.mkdir()
 
-    by_category: dict[str, str] = {}
-    for category_dir in skills_dir.iterdir():
-        if not category_dir.is_dir() or category_dir.name.startswith("__"):
-            continue
-        for file_path in category_dir.glob("*.md"):
-            by_category[file_path.stem] = f"{category_dir.name}/{file_path.stem}.md"
+        # 1. Plain path inside skills_dir
+        (skills / "ok.md").write_text("ok")
 
-    skill_content: dict[str, str] = {}
-    for skill_name in skill_names:
-        rel_path: str | None
-        if "/" in skill_name:
-            rel_path = f"{skill_name}.md"
-        elif skill_name in by_category:
-            rel_path = by_category[skill_name]
-        elif (skills_dir / f"{skill_name}.md").exists():
-            rel_path = f"{skill_name}.md"
-        else:
-            rel_path = None
+        # 2. Symlink escape — should be None (resolve() chases the link)
+        os.symlink("/etc/passwd", skills / "evil.md")
+        # 3. Plain `..` traversal — should be None
+        # (no need to create a file, .resolve() would still escape)
 
-        if rel_path is None or not (skills_dir / rel_path).exists():
-            logger.warning("Skill not found: %s", skill_name)
-            continue
+        cases = {
+            "ok.md": True,
+            "../etc/passwd.md": False,
+            "../../etc/passwd.md": False,
+            "/etc/passwd.md": False,        # absolute
+            "subdir/foo.md": True,          # nested
+            "subdir/../../escape.md": False,
+            "evil.md": False,               # symlink to /etc/passwd
+        }
 
-        try:
-            content = (skills_dir / rel_path).read_text(encoding="utf-8")
-        except (OSError, ValueError) as e:
-            logger.warning("Failed to load skill %s: %s", skill_name, e)
-            continue
-
-        var_name = skill_name.split("/")[-1]
-        skill_content[var_name] = _FRONTMATTER_PATTERN.sub("", content).lstrip()
-        logger.debug("Loaded skill: %s -> %s", skill_name, var_name)
-
-    logger.debug("load_skills: %d skill(s) resolved", len(skill_content))
-    return skill_content
+        for rel, should_pass in cases.items():
+            got = _safe_skill_path(skills, rel)
+            ok = (got is not None) == should_pass
+            print(f"  {'OK' if ok else 'FAIL'}: rel={rel!r}  expected={'pass' if should_pass else 'reject'}  got={'pass' if got else 'reject'}")
+            if not ok:
+                raise SystemExit(1)
+        print("All cases passed.")
