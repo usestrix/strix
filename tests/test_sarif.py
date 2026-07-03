@@ -129,6 +129,108 @@ def test_write_sarif_never_embeds_poc_script(tmp_path: Path) -> None:
     assert poc["description"] == "Send a crafted request to trigger the sink."
 
 
+def test_write_sarif_builds_fixes_from_code_location_fix_pairs(tmp_path: Path) -> None:
+    # A code location carrying fix_before/fix_after must surface as a SARIF
+    # fix (artifactChange/replacement) so consumers can offer a one-click fix.
+    write_sarif(
+        tmp_path,
+        [
+            _finding(
+                remediation_steps="Use a parameterized query.",
+                code_locations=[
+                    {
+                        "file": "app.py",
+                        "start_line": 4,
+                        "end_line": 4,
+                        "fix_before": 'query = "SELECT * FROM u WHERE id=" + uid',
+                        "fix_after": 'query = "SELECT * FROM u WHERE id=%s"',
+                    }
+                ],
+            )
+        ],
+    )
+    result = _read(tmp_path)["runs"][0]["results"][0]
+    fixes = result["fixes"]
+    assert len(fixes) == 1
+    change = fixes[0]["artifactChanges"][0]
+    assert change["artifactLocation"]["uri"] == "app.py"
+    replacement = change["replacements"][0]
+    assert replacement["deletedRegion"]["startLine"] == 4
+    assert replacement["insertedContent"]["text"] == 'query = "SELECT * FROM u WHERE id=%s"'
+
+
+def test_write_sarif_omits_fixes_without_fix_pairs(tmp_path: Path) -> None:
+    write_sarif(tmp_path, [_finding()])
+    assert "fixes" not in _read(tmp_path)["runs"][0]["results"][0]
+
+
+def test_write_sarif_adds_logical_location_for_endpoint(tmp_path: Path) -> None:
+    # DAST findings hang off an endpoint; it must be preserved as a logical
+    # location so the finding keeps an addressable anchor.
+    write_sarif(tmp_path, [_finding(endpoint="GET /api/users/{id}")])
+    locations = _read(tmp_path)["runs"][0]["results"][0]["locations"]
+    logical = [
+        entry
+        for loc in locations
+        for entry in loc.get("logicalLocations", [])
+        if entry.get("kind") == "endpoint"
+    ]
+    assert logical == [{"fullyQualifiedName": "GET /api/users/{id}", "kind": "endpoint"}]
+
+
+def test_write_sarif_synthetic_finding_falls_back_to_resource_logical_location(
+    tmp_path: Path,
+) -> None:
+    # No code location and no endpoint: the target becomes a resource logical
+    # location so a locationless finding still carries a meaningful anchor.
+    write_sarif(
+        tmp_path,
+        [_finding(code_locations=None, endpoint=None, target="https://api.example.com")],
+    )
+    result = _read(tmp_path)["runs"][0]["results"][0]
+    assert result["properties"]["synthetic_location"] is True
+    logical = [
+        entry
+        for loc in result["locations"]
+        for entry in loc.get("logicalLocations", [])
+        if entry.get("kind") == "resource"
+    ]
+    assert logical == [{"fullyQualifiedName": "https://api.example.com", "kind": "resource"}]
+
+
+def test_write_sarif_emits_version_control_provenance(tmp_path: Path) -> None:
+    write_sarif(
+        tmp_path,
+        [_finding()],
+        repository_context={
+            "repositoryUri": "https://github.com/acme/widget",
+            "repositoryFullName": "acme/widget",
+            "commitSha": "abc123def456",
+            "branch": "main",
+            "ref": "refs/heads/main",
+        },
+    )
+    run = _read(tmp_path)["runs"][0]
+    assert run["automationDetails"] == {"id": "strix/acme/widget"}
+    provenance = run["versionControlProvenance"][0]
+    assert provenance == {
+        "repositoryUri": "https://github.com/acme/widget",
+        "revisionId": "abc123def456",
+        "branch": "main",
+    }
+    assert run["properties"]["repository"] == "acme/widget"
+    assert run["properties"]["commit_sha"] == "abc123def456"
+    assert run["properties"]["ref"] == "refs/heads/main"
+
+
+def test_write_sarif_omits_provenance_when_no_repository_context(tmp_path: Path) -> None:
+    # DAST / URL scans have no VCS; provenance fields must be absent, not empty.
+    write_sarif(tmp_path, [_finding()])
+    run = _read(tmp_path)["runs"][0]
+    assert "versionControlProvenance" not in run
+    assert "automationDetails" not in run
+
+
 def test_write_sarif_replaces_atomically_no_partial_on_reemit(tmp_path: Path) -> None:
     # A re-emit must land a complete document, never leave a stray temp file
     # or a truncated target alongside it.

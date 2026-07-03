@@ -7,12 +7,11 @@ ingest into ASPM platforms, or normalise across scanners.
 Schema: SARIF 2.1.0 (OASIS). The output is validated against the official
 schema at https://json.schemastore.org/sarif-2.1.0.json in tests.
 
-Integration points:
-  - ``write_sarif_report`` writes a SARIF document to disk (CLI-driven,
-    invoked by ``--sarif-output`` on the Strix entrypoint).
-  - The module is also imported by ``strix.telemetry.tracer`` to emit a
-    ``findings.sarif`` sidecar alongside the existing CSV + markdown
-    artefacts on every run. Failure to emit SARIF never blocks CSV + MD.
+Integration:
+  - ``ReportState._save_artifacts`` calls :func:`write_sarif` to emit a
+    ``findings.sarif`` sidecar alongside the existing CSV + markdown + JSON
+    artefacts on every save. The call is wrapped in try/except there so a
+    SARIF failure never blocks the CSV + markdown + run-record path.
 
 Design notes:
   * Rules are keyed on CWE (``id = CWE-NNN``), falling back to CVE, then
@@ -25,13 +24,22 @@ Design notes:
     distinguish CRITICAL vs HIGH.
   * GitHub code-scanning uses ``rule.properties['security-severity']``
     (a 0.0-10.0 string) to rank alerts. We populate it from CVSS when
-    available, otherwise from a conservative label → score map.
+    available, otherwise from a conservative label -> score map.
   * File locations must be repo-relative POSIX paths. Paths that look
     like URIs, absolute paths, or traversal patterns are rejected rather
     than emitted as invalid code-scanning alerts.
-  * Findings without safe locations still appear in the SARIF output as
-    a summary in ``run.properties.locationlessFindings`` rather than
-    getting dropped silently.
+  * Findings with a fix suggestion (``code_locations[].fix_before`` +
+    ``fix_after``) are emitted as SARIF ``fixes`` so code-scanning can
+    render a one-click suggested change.
+  * Endpoint / target-only findings (typical of DAST) carry a SARIF
+    ``logicalLocations`` entry so the finding keeps a meaningful anchor
+    even without a source file + line.
+  * When a repository context is supplied (repo URL / commit / branch),
+    the run carries ``versionControlProvenance`` + ``automationDetails``
+    so code-scanning can bind alerts to the scanned commit and branch.
+  * Findings without safe locations still appear in the SARIF output,
+    anchored to SECURITY.md and flagged via
+    ``properties.synthetic_location`` rather than being dropped silently.
 """
 
 from __future__ import annotations
@@ -55,17 +63,12 @@ TOOL_INFORMATION_URI = "https://strix.ai"
 
 # Synthetic anchor for findings that have no safe code location. SARIF
 # requires every result to carry at least one location, and GitHub
-# code-scanning's UI handles locationless results unreliably.
-# Anchoring to SECURITY.md keeps the result valid + visible while a
-# `properties.zh_synthetic_location: true` flag lets downstream tooling
-# distinguish synthetic anchors from real source locations.
-#
-# The composite-actions/rw-security.yml `Sanitize SARIF` jq step has
-# been doing this anchoring downstream of Strix for ~6 weeks (SEC-6439,
-# project_strix_locationless_drop_blast). Pulling it upstream lets the
-# partialFingerprints + class_hash injection (SEC-6941) cover these
-# findings too — previously they bypassed the fingerprint code path
-# entirely and re-orphaned on every run.
+# code-scanning's UI handles locationless results unreliably. Anchoring
+# to SECURITY.md keeps the result valid + visible while a
+# ``properties.synthetic_location: true`` flag lets downstream tooling
+# distinguish synthetic anchors from real source locations. Anchoring
+# also lets the partialFingerprints + class-hash code path cover these
+# findings instead of re-orphaning them on every run.
 _SYNTHETIC_LOCATION_URI = "SECURITY.md"
 
 
@@ -82,7 +85,7 @@ _SEVERITY_TO_LEVEL = {
 
 # GitHub code-scanning reads ``rule.properties['security-severity']`` (a
 # 0.0-10.0 string) to rank alerts. We prefer CVSS from the finding; absent
-# that we fall back to a conservative label → score map.
+# that we fall back to a conservative label -> score map.
 _SEVERITY_TO_SCORE = {
     "critical": "9.5",
     "high": "8.0",
@@ -102,28 +105,34 @@ def build_sarif_report(
     vulnerability_reports: list[dict[str, Any]],
     *,
     tool_version: str | None = None,
+    repository_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Return a SARIF 2.1.0 document for findings.
 
+    ``repository_context`` (optional) supplies VCS provenance for repo
+    scans: ``repositoryUri``, ``repositoryFullName``, ``commitSha``,
+    ``branch``, ``ref``. When present, the run carries
+    ``versionControlProvenance`` + ``automationDetails`` so code-scanning
+    can bind alerts to the scanned commit; it is omitted for URL / IP
+    (DAST) targets that have no repository.
+
     Findings without safe source locations are anchored synthetically
-    to SECURITY.md and flagged via ``properties.zh_synthetic_location``.
+    to SECURITY.md and flagged via ``properties.synthetic_location``.
     They're still emitted as proper SARIF results so they (a) flow
-    through GHAS code-scanning normally rather than being shunted into
-    a run-properties summary the UI can't render, and (b) carry the
-    SEC-6941 partialFingerprints + class hash so cross-run dismissal
-    stickiness works for them.
+    through code-scanning normally rather than being shunted into a
+    run-properties summary the UI can't render, and (b) carry the
+    partialFingerprints + class hash so cross-run dismissal stickiness
+    works for them.
     """
     rules_by_id: dict[str, dict[str, Any]] = {}
+    rule_index_by_id: dict[str, int] = {}
     results: list[dict[str, Any]] = []
     synthetic_location_count = 0
     dropped_unsafe_location_findings: list[dict[str, Any]] = []
 
     for report in vulnerability_reports:
-        locations, dropped_location_count = _build_locations(report.get("code_locations"))
-        is_synthetic = False
-        if not locations:
-            locations = [_synthetic_location()]
-            is_synthetic = True
+        locations, is_synthetic, dropped_location_count = _build_locations(report)
+        if is_synthetic:
             synthetic_location_count += 1
 
         if dropped_location_count:
@@ -132,8 +141,18 @@ def build_sarif_report(
             )
 
         rule_id = _rule_id(report)
-        rules_by_id.setdefault(rule_id, _build_rule(rule_id, report))
-        results.append(_build_result(rule_id, report, locations, is_synthetic=is_synthetic))
+        if rule_id not in rules_by_id:
+            rule_index_by_id[rule_id] = len(rules_by_id)
+            rules_by_id[rule_id] = _build_rule(rule_id, report)
+        results.append(
+            _build_result(
+                rule_id,
+                rule_index_by_id[rule_id],
+                report,
+                locations,
+                is_synthetic=is_synthetic,
+            )
+        )
 
     driver: dict[str, Any] = {
         "name": TOOL_NAME,
@@ -152,10 +171,9 @@ def build_sarif_report(
     if synthetic_location_count:
         # Surface the count for observability without duplicating the
         # findings themselves — they're already in `results[]` with
-        # `properties.zh_synthetic_location: true`. Anyone counting the
-        # synthetic-anchor population can grep results by that flag,
-        # but having a top-level count means CI logs / dashboards can
-        # bookkeep without parsing the result list.
+        # `properties.synthetic_location: true`. Having a top-level count
+        # means CI logs / dashboards can bookkeep without parsing the
+        # result list.
         run_properties["syntheticLocationCount"] = synthetic_location_count
     if dropped_unsafe_location_findings:
         run_properties["droppedUnsafeLocationCount"] = sum(
@@ -164,6 +182,9 @@ def build_sarif_report(
         run_properties["droppedUnsafeLocationFindings"] = dropped_unsafe_location_findings
     if run_properties:
         run["properties"] = run_properties
+
+    if repository_context:
+        _apply_repository_context(run, repository_context)
 
     return {
         "version": SARIF_VERSION,
@@ -177,6 +198,7 @@ def write_sarif_report(
     vulnerability_reports: list[dict[str, Any]],
     *,
     tool_version: str | None = None,
+    repository_context: dict[str, Any] | None = None,
 ) -> None:
     """Write a SARIF report to disk, creating parent directories first.
 
@@ -185,7 +207,11 @@ def write_sarif_report(
     ``findings.sarif`` for CI to upload in place of the last complete snapshot.
     """
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    sarif = build_sarif_report(vulnerability_reports, tool_version=tool_version)
+    sarif = build_sarif_report(
+        vulnerability_reports,
+        tool_version=tool_version,
+        repository_context=repository_context,
+    )
     tmp_path = output_path.with_name(f"{output_path.name}.{os.getpid()}.tmp")
     try:
         with tmp_path.open("w", encoding="utf-8") as sarif_file:
@@ -196,44 +222,90 @@ def write_sarif_report(
         tmp_path.unlink(missing_ok=True)
 
 
-# ---------------------------------------------------------------------------
-# Backwards-compatible aliases
-# ---------------------------------------------------------------------------
-#
-# ``build_sarif_document`` / ``write_sarif`` are the names our tracer-hook
-# integration imported before the module was restructured around #477. Keep
-# them as thin aliases so internal callers don't break.
-
-
-def build_sarif_document(
-    reports: list[dict[str, Any]],
-    *,
-    tool_version: str | None = None,
-) -> dict[str, Any]:
-    return build_sarif_report(reports, tool_version=tool_version)
-
-
 def write_sarif(
     run_dir: Path,
     reports: list[dict[str, Any]],
     *,
     tool_version: str | None = None,
+    repository_context: dict[str, Any] | None = None,
     filename: str = "findings.sarif",
 ) -> Path:
     """Write ``findings.sarif`` alongside existing outputs in ``run_dir``.
 
-    Returns the output path. This is the tracer-hook entry point: SARIF
+    Returns the output path. This is the ``ReportState`` entry point: SARIF
     writing must never break the CSV + markdown path, so the caller wraps
     it in try/except.
     """
     out = run_dir / filename
-    write_sarif_report(out, reports, tool_version=tool_version)
+    write_sarif_report(
+        out,
+        reports,
+        tool_version=tool_version,
+        repository_context=repository_context,
+    )
     logger.info(
         "Wrote SARIF 2.1.0 report: %s (%d results)",
         out,
         len(reports),
     )
     return out
+
+
+# ``build_sarif_document`` is a convenience alias for callers that prefer a
+# name mirroring ``write_sarif_report``.
+def build_sarif_document(
+    reports: list[dict[str, Any]],
+    *,
+    tool_version: str | None = None,
+    repository_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    return build_sarif_report(
+        reports,
+        tool_version=tool_version,
+        repository_context=repository_context,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Repository provenance
+# ---------------------------------------------------------------------------
+
+
+def _apply_repository_context(run: dict[str, Any], context: dict[str, Any]) -> None:
+    """Attach VCS provenance to a run for code-scanning alert binding.
+
+    ``automationDetails.id`` categorises the run (``strix/<owner>/<repo>``)
+    so multiple Strix runs against the same repo reconcile rather than pile
+    up. ``versionControlProvenance`` records the exact repo + commit + branch
+    the findings came from. Both are omitted when the corresponding context
+    fields are absent (e.g. DAST-only scans).
+    """
+    full_name = _string_value(context.get("repositoryFullName"))
+    uri = _string_value(context.get("repositoryUri"))
+    commit = _string_value(context.get("commitSha"))
+    branch = _string_value(context.get("branch"))
+    ref = _string_value(context.get("ref"))
+
+    if full_name:
+        run["automationDetails"] = {"id": f"strix/{full_name}"}
+
+    if uri:
+        provenance: dict[str, Any] = {"repositoryUri": uri}
+        if commit:
+            provenance["revisionId"] = commit
+        if branch:
+            provenance["branch"] = branch
+        run["versionControlProvenance"] = [provenance]
+
+    properties = run.setdefault("properties", {})
+    if full_name:
+        properties["repository"] = full_name
+    if ref:
+        properties["ref"] = ref
+    if commit:
+        properties["commit_sha"] = commit
+    if not properties:
+        run.pop("properties", None)
 
 
 # ---------------------------------------------------------------------------
@@ -245,6 +317,7 @@ def _build_rule(rule_id: str, report: dict[str, Any]) -> dict[str, Any]:
     """Build a SARIF rule descriptor from a Strix finding."""
     title = _string_value(report.get("title")) or rule_id
     full_description = _string_value(report.get("description")) or title
+    help_text = _help_text(report, full_description)
 
     rule: dict[str, Any] = {
         "id": rule_id,
@@ -252,7 +325,7 @@ def _build_rule(rule_id: str, report: dict[str, Any]) -> dict[str, Any]:
         "shortDescription": {"text": title},
         "fullDescription": {"text": full_description},
         "defaultConfiguration": {"level": _sarif_level(report.get("severity"))},
-        "help": {"text": _help_text(report, full_description)},
+        "help": {"text": help_text, "markdown": help_text},
     }
 
     properties: dict[str, Any] = {
@@ -272,40 +345,50 @@ def _build_rule(rule_id: str, report: dict[str, Any]) -> dict[str, Any]:
 
 def _build_result(
     rule_id: str,
+    rule_index: int,
     report: dict[str, Any],
     locations: list[dict[str, Any]],
     *,
     is_synthetic: bool = False,
 ) -> dict[str, Any]:
-    """Build one SARIF result using validated physical locations.
+    """Build one SARIF result using validated locations.
 
     ``is_synthetic`` flags results whose location is the SECURITY.md
     anchor rather than a real code location — surfaces as
-    ``properties.zh_synthetic_location: true`` so reviewers and
-    downstream tooling can distinguish anchored-locationless findings
-    from source-linked ones.
+    ``properties.synthetic_location: true`` so reviewers and downstream
+    tooling can distinguish anchored-locationless findings from
+    source-linked ones.
     """
     title = _string_value(report.get("title")) or rule_id
+    description = _string_value(report.get("description"))
+    message_text = f"{title}\n\n{description}" if description else title
+
     result: dict[str, Any] = {
         "ruleId": rule_id,
+        "ruleIndex": rule_index,
         "level": _sarif_level(report.get("severity")),
-        "message": {"text": title},
+        "message": {"text": message_text},
     }
     if locations:
         result["locations"] = locations
-    # GHAS auto-resolution + dismissal-stickiness key on
+
+    fixes = _build_fixes(report)
+    if fixes:
+        result["fixes"] = fixes
+
+    # Code-scanning auto-resolution + dismissal-stickiness key on
     # partialFingerprints. Computed from the deterministic primitives
     # this report already carries (CWE, primary code location, route
     # tuple) — NOT from the LLM-authored title or message body, which
-    # vary cosmetically across runs of the same finding. See SEC-6941.
+    # vary cosmetically across runs of the same finding.
     fp = _primary_fingerprint(rule_id, report, locations, is_synthetic=is_synthetic)
     if fp:
         result["partialFingerprints"] = {"primaryLocationLineHash": fp}
     # File-independent class fingerprint as a sibling property: lets
-    # downstream tooling (orphan-sweep) carry "won't fix" / "false
-    # positive" determinations across file rename refactors where the
-    # primary fingerprint legitimately shifts but the underlying class
-    # is unchanged.
+    # downstream tooling carry "won't fix" / "false positive"
+    # determinations across file rename refactors where the primary
+    # fingerprint legitimately shifts but the underlying class is
+    # unchanged.
     class_fp = _class_fingerprint(rule_id, report)
     result["properties"] = _result_properties(report, class_fp, is_synthetic=is_synthetic)
     return result
@@ -327,16 +410,14 @@ def _result_properties(
         "security-severity": _security_severity(report),
     }
     if class_fingerprint:
-        # Surfaced at top level so the orphan-sweep tooling can filter
-        # GHAS alerts by it without parsing the nested strix.* tree.
-        properties["zh_strix_vuln_class_hash"] = class_fingerprint
+        # Surfaced at top level so cross-rename dismissal tooling can
+        # filter alerts by it without parsing the nested strix.* tree.
+        properties["strix_vuln_class_hash"] = class_fingerprint
     if is_synthetic:
         # Top-level so reviewers + downstream automation can filter
         # synthetic-anchored alerts without parsing the nested strix.*
-        # tree. Matches the flag that the composite-actions/rw-security
-        # `Sanitize SARIF` jq step has been emitting downstream of
-        # Strix; pulling it upstream consolidates the semantic.
-        properties["zh_synthetic_location"] = True
+        # tree.
+        properties["synthetic_location"] = True
 
     strix: dict[str, Any] = {}
     for key in (
@@ -379,6 +460,62 @@ def _result_properties(
     return properties
 
 
+def _build_fixes(report: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Build SARIF ``fixes`` from a finding's code-location fix pairs.
+
+    Strix findings carry the suggested change inline on each code
+    location as ``fix_before`` + ``fix_after``. We map every location
+    that has both (and a safe repo-relative URI + start line) into a
+    SARIF ``artifactChange``, replacing the finding's region with the
+    fixed text. Returns None when no location carries a usable fix pair.
+    """
+    raw_locations = report.get("code_locations")
+    if not isinstance(raw_locations, list):
+        return None
+
+    artifact_changes: list[dict[str, Any]] = []
+    for location in raw_locations:
+        if not isinstance(location, dict):
+            continue
+        file_path = _string_value(location.get("file"))
+        fix_before = _string_value(location.get("fix_before"))
+        fix_after = _string_value(location.get("fix_after"))
+        start_line = location.get("start_line")
+        if not (file_path and fix_before and fix_after):
+            continue
+        if type(start_line) is not int or start_line < 1:
+            continue
+        uri = _sarif_uri(file_path)
+        if uri is None:
+            continue
+
+        deleted_region: dict[str, Any] = {"startLine": start_line}
+        end_line = location.get("end_line")
+        if type(end_line) is int and end_line >= start_line:
+            deleted_region["endLine"] = end_line
+
+        artifact_changes.append(
+            {
+                "artifactLocation": {"uri": uri},
+                "replacements": [
+                    {
+                        "deletedRegion": deleted_region,
+                        "insertedContent": {"text": fix_after},
+                    }
+                ],
+            }
+        )
+
+    if not artifact_changes:
+        return None
+
+    fix: dict[str, Any] = {"artifactChanges": artifact_changes}
+    remediation = _string_value(report.get("remediation_steps"))
+    if remediation:
+        fix["description"] = {"text": remediation, "markdown": remediation}
+    return [fix]
+
+
 # ---------------------------------------------------------------------------
 # Location handling
 # ---------------------------------------------------------------------------
@@ -388,9 +525,9 @@ def _synthetic_location() -> dict[str, Any]:
     """Synthetic anchor for findings with no safe code location.
 
     SARIF requires every result to carry at least one location, and
-    GHAS code-scanning's UI handles locationless results unreliably.
+    code-scanning's UI handles locationless results unreliably.
     Anchoring to SECURITY.md gives the result a valid + visible
-    location; the result's ``properties.zh_synthetic_location: true``
+    location; the result's ``properties.synthetic_location: true``
     flag lets reviewers + tooling distinguish synthetic from real.
     """
     return {
@@ -400,20 +537,47 @@ def _synthetic_location() -> dict[str, Any]:
     }
 
 
-def _build_locations(raw_locations: Any) -> tuple[list[dict[str, Any]], int]:
-    """Return SARIF locations and a count of dropped unsafe locations."""
+def _build_locations(report: dict[str, Any]) -> tuple[list[dict[str, Any]], bool, int]:
+    """Return ``(locations, is_synthetic, dropped_count)`` for a finding.
+
+    Physical locations come from validated ``code_locations``. When none
+    are safe, the result is anchored to SECURITY.md (``is_synthetic``).
+    An ``endpoint`` (typical of DAST findings) is added as a
+    ``logicalLocations`` entry; a locationless, endpoint-less finding
+    gets a ``resource`` logical location carrying the target so the
+    finding keeps a human-meaningful anchor.
+    """
+    physical, dropped_location_count = _build_physical_locations(report.get("code_locations"))
+    is_synthetic = not physical
+    locations: list[dict[str, Any]] = list(physical) if physical else [_synthetic_location()]
+
+    endpoint = _string_value(report.get("endpoint"))
+    if endpoint:
+        locations.append(
+            {"logicalLocations": [{"fullyQualifiedName": endpoint, "kind": "endpoint"}]}
+        )
+    elif is_synthetic:
+        resource = _string_value(report.get("target")) or _string_value(report.get("title"))
+        if resource:
+            locations.append(
+                {"logicalLocations": [{"fullyQualifiedName": resource, "kind": "resource"}]}
+            )
+
+    return locations, is_synthetic, dropped_location_count
+
+
+def _build_physical_locations(raw_locations: Any) -> tuple[list[dict[str, Any]], int]:
+    """Return SARIF physical locations and a count of dropped unsafe locations."""
     if not isinstance(raw_locations, list):
         return [], 0
 
-    raw_locations_list = cast("list[Any]", raw_locations)  # type: ignore[redundant-cast]
     locations: list[dict[str, Any]] = []
     dropped_location_count = 0
-    for raw_location in raw_locations_list:
-        if not isinstance(raw_location, dict):
+    for location in raw_locations:
+        if not isinstance(location, dict):
             dropped_location_count += 1
             continue
 
-        location = cast("dict[str, Any]", raw_location)
         file_path = _string_value(location.get("file"))
         start_line = location.get("start_line")
         end_line = location.get("end_line")
@@ -500,9 +664,9 @@ def _normalise_cwe(value: str) -> str | None:
 # Vulnerability-class keywords for the file-independent class
 # fingerprint. Order matters — first match wins, so precise terms
 # come before fuzzy ones (e.g. "broken access control" before
-# "access control"). Keep this list closed and curated; an attacker
-# can't reach it but a future maintainer adding sloppy entries
-# could collapse distinct findings to the same class hash.
+# "access control"). Keep this list closed and curated; a future
+# maintainer adding sloppy entries could collapse distinct findings
+# to the same class hash.
 _VULN_CLASS_KEYWORDS = (
     "missing authentication",
     "missing authorization",
@@ -580,26 +744,21 @@ def _primary_fingerprint(
     Synthetic-anchored findings (``is_synthetic=True``) all share
     uri="SECURITY.md" and have no real start_line. Hashing by
     (rule_id, "SECURITY.md") alone would collapse every locationless
-    finding of the same CWE into a single alert in GHAS. To
-    distinguish them, the synthetic path adds the class keyword
-    extracted from the title (same logic ``_class_fingerprint``
-    uses). The class keyword catalogue is closed and stable, so
-    cross-run identity holds — same vulnerability class on the same
-    rule_id always lands on the same hash, and two different
-    classes on the same rule_id don't collide.
+    finding of the same CWE into a single alert. To distinguish them,
+    the synthetic path adds the class keyword extracted from the title
+    (same logic ``_class_fingerprint`` uses). The class keyword
+    catalogue is closed and stable, so cross-run identity holds — same
+    vulnerability class on the same rule_id always lands on the same
+    hash, and two different classes on the same rule_id don't collide.
 
     Returns None when no anchor is available AND not synthetic.
-    The caller skips partialFingerprints in that case (would never
-    happen post-synthetic-anchor land but the guard stays for
-    defence in depth).
     """
-    primary_loc = locations[0] if locations else None
+    primary_physical = _first_physical_location(locations)
     uri = ""
     start_line: int | None = None
-    if primary_loc:
-        physical = primary_loc.get("physicalLocation") or {}
-        uri = (physical.get("artifactLocation") or {}).get("uri", "") or ""
-        region = physical.get("region") or {}
+    if primary_physical:
+        uri = (primary_physical.get("artifactLocation") or {}).get("uri", "") or ""
+        region = primary_physical.get("region") or {}
         sl = region.get("startLine")
         if isinstance(sl, int) and sl >= 1:
             start_line = sl
@@ -628,10 +787,8 @@ def _primary_fingerprint(
 
     if is_synthetic:
         # Augment with class keyword so locationless findings of
-        # different vuln classes don't collide. _class_keyword is the
-        # closed-list extractor; falls through to first-5-words when
-        # no curated keyword matches. Rule_id is already in the
-        # composite so we don't need to also stamp the CWE.
+        # different vuln classes don't collide. rule_id is already in
+        # the composite so we don't also need to stamp the CWE.
         title = _string_value(report.get("title")) or ""
         if title:
             parts.append(f"synth_class:{_class_keyword(title)}")
@@ -640,13 +797,22 @@ def _primary_fingerprint(
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
 
 
+def _first_physical_location(locations: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Return the first location's physicalLocation payload, if any."""
+    for location in locations:
+        physical = location.get("physicalLocation")
+        if physical:
+            return cast("dict[str, Any]", physical)
+    return None
+
+
 def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
     """File-independent fingerprint for cross-rename dismissal carryover.
 
-    Lets the orphan-sweep tooling apply prior dismissal determinations
-    to a new alert that has the same vulnerability class but a
-    different primary fingerprint (typical case: file rename, or a
-    fix that moves the vulnerable code to a new module).
+    Lets downstream tooling apply prior dismissal determinations to a
+    new alert that has the same vulnerability class but a different
+    primary fingerprint (typical case: file rename, or a fix that moves
+    the vulnerable code to a new module).
 
     Composite of (rule_id, vuln-class keyword extracted from title).
     Title is LLM-authored so it's stochastic at the prose level, but
@@ -655,8 +821,7 @@ def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
 
     Falls back to the first 5 lowercased words of the title when no
     curated keyword matches. Acceptable as a fallback because the
-    class fingerprint is a tiebreaker for orphan-sweep, not a
-    primary reconciliation key.
+    class fingerprint is a tiebreaker, not a primary reconciliation key.
     """
     title = _string_value(report.get("title")) or ""
     keyword = _class_keyword(title) if title else ""
@@ -745,27 +910,8 @@ def _help_text(report: dict[str, Any], fallback: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Summaries for locationless + unsafe-location findings
+# Summaries for unsafe-location findings
 # ---------------------------------------------------------------------------
-
-
-def _locationless_summary(report: dict[str, Any]) -> dict[str, Any]:
-    """Summarize findings that cannot be emitted as code-scanning alerts."""
-    summary: dict[str, Any] = {}
-    for key in (
-        "id",
-        "title",
-        "severity",
-        "cwe",
-        "cve",
-        "target",
-        "endpoint",
-        "method",
-    ):
-        value = report.get(key)
-        if value not in (None, ""):
-            summary[key] = value
-    return summary
 
 
 def _dropped_location_summary(
