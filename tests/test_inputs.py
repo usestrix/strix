@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from strix.core.inputs import build_root_task, child_initial_input
+from strix.core.inputs import build_root_task, child_initial_input, make_model_settings
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -112,3 +112,34 @@ def test_build_root_task_diff_scope() -> None:
     assert "Scope Constraints:" in task
     assert "3 changed file(s)" in task
     assert "2 deleted file(s)" in task
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "bedrock/us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "litellm/bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0",
+        "any-llm/bedrock/converse/us.anthropic.claude-opus-4-5-v1:0",
+    ],
+)
+def test_make_model_settings_omits_parallel_flag_for_bedrock_claude(model_name: str) -> None:
+    # Regression for #644: forcing parallel_tool_calls=False makes LiteLLM emit a
+    # tool_choice without a `type`, which Bedrock rejects and the scan never starts.
+    settings = make_model_settings(None, model_name=model_name)
+
+    assert settings.parallel_tool_calls is None
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "openai/gpt-5.4",
+        "anthropic/claude-sonnet-4-6",  # direct Anthropic API, not Bedrock
+        "bedrock/meta.llama3-1-70b-instruct-v1:0",  # non-Claude Bedrock model
+        "vertex_ai/gemini-3-pro-preview",
+    ],
+)
+def test_make_model_settings_forces_single_tool_call_elsewhere(model_name: str) -> None:
+    settings = make_model_settings(None, model_name=model_name)
+
+    assert settings.parallel_tool_calls is False
