@@ -164,3 +164,23 @@ def is_known_openai_bare_model(model_name: str) -> bool:
         return False
     entry = litellm.model_cost.get(name)
     return bool(entry and entry.get("litellm_provider") == "openai")
+
+
+def is_bedrock_anthropic_model(model_name: str) -> bool:
+    """Return whether the model routes to Anthropic Claude on AWS Bedrock.
+
+    For Claude on Bedrock, LiteLLM translates ``parallel_tool_calls=False`` into
+    a ``tool_choice`` object that omits the required ``type`` discriminator, so
+    Bedrock rejects the request with ``tool_choice.type: Field required`` and the
+    agent never starts. Callers use this to avoid forcing that flag on the
+    affected route (see issue #644).
+    """
+    name = model_name.strip().lower()
+    for prefix in ("litellm/", "any-llm/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    if not name.startswith("bedrock/"):
+        return False
+    return "anthropic" in name or "claude" in name
+    
