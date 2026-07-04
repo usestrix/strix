@@ -83,6 +83,41 @@ def test_disabled_telemetry_sends_nothing(
     assert not calls
 
 
+@pytest.mark.parametrize("module", [scarf, posthog])
+def test_terminal_events_deliver_after_shutdown_flush(
+    monkeypatch: pytest.MonkeyPatch, module: Any
+) -> None:
+    # end()/error() were synchronous before; they must still deliver once the
+    # queue is drained (the atexit hook uses this same flush at shutdown).
+    calls = _install_slow_urlopen(monkeypatch, module, delay=0.0)
+
+    module.error("unhandled_exception")
+    _common.flush(timeout=5.0)
+    assert calls, f"{module.__name__}.error was lost instead of delivered on flush"
+
+
+@pytest.mark.parametrize("module", [scarf, posthog])
+def test_unserializable_property_does_not_raise_to_caller(
+    monkeypatch: pytest.MonkeyPatch, module: Any
+) -> None:
+    # A property whose str()/JSON encoding blows up must be swallowed by the
+    # guarded delivery closure, never propagate through the public call.
+    class _Explosive:
+        def __str__(self) -> str:
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr(module, "_is_enabled", lambda: True)
+    monkeypatch.setattr(
+        module.urllib.request,
+        "urlopen",
+        lambda *_a, **_k: (_ for _ in ()).throw(AssertionError("should not reach network")),
+    )
+
+    # Must not raise even though the property can't be serialized/encoded.
+    module._send("scan_ended", {**_common.base_props(), "bad": _Explosive()})
+    _common.flush(timeout=2.0)
+
+
 def test_dispatch_drops_when_queue_full(monkeypatch: pytest.MonkeyPatch) -> None:
     # A hung endpoint must not let the queue grow without bound or block enqueue.
     full_queue: queue.Queue[Any] = queue.Queue(maxsize=1)

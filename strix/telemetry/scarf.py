@@ -33,18 +33,20 @@ def _send(event: str, properties: dict[str, Any]) -> None:
     if not _is_enabled():
         logger.debug("scarf disabled; skipping event %s", event)
         return
-    props = dict(properties)
-    version = str(props.pop("strix_version", get_version()) or "unknown")
-    path = f"/{urllib.parse.quote(event, safe='')}/{urllib.parse.quote(version, safe='')}"
-    query = urllib.parse.urlencode(
-        {k: ("" if v is None else str(v)) for k, v in props.items()},
-    )
-    url = f"{_SCARF_ENDPOINT}{path}"
-    if query:
-        url = f"{url}?{query}"
-
     def _deliver() -> None:
+        # URL building stays inside the guard: a value whose str()/URL
+        # encoding raises must be swallowed here, never raised back through
+        # the public telemetry call on the caller thread.
         try:
+            props = dict(properties)
+            version = str(props.pop("strix_version", get_version()) or "unknown")
+            path = f"/{urllib.parse.quote(event, safe='')}/{urllib.parse.quote(version, safe='')}"
+            query = urllib.parse.urlencode(
+                {k: ("" if v is None else str(v)) for k, v in props.items()},
+            )
+            url = f"{_SCARF_ENDPOINT}{path}"
+            if query:
+                url = f"{url}?{query}"
             req = urllib.request.Request(url, method="POST")  # noqa: S310
             with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
                 pass

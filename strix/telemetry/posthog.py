@@ -31,19 +31,20 @@ def _send(event: str, properties: dict[str, Any]) -> None:
     if not _is_enabled():
         logger.debug("posthog disabled; skipping event %s", event)
         return
-    payload = {
-        "api_key": _POSTHOG_PUBLIC_API_KEY,
-        "event": event,
-        "distinct_id": SESSION_ID,
-        "properties": properties,
-    }
-    data = json.dumps(payload).encode()
-
     def _deliver() -> None:
+        # Serialization stays inside the guard: a non-JSON-safe property must
+        # be swallowed here, never raised back through the public telemetry
+        # call on the caller thread.
         try:
+            payload = {
+                "api_key": _POSTHOG_PUBLIC_API_KEY,
+                "event": event,
+                "distinct_id": SESSION_ID,
+                "properties": properties,
+            }
             req = urllib.request.Request(  # noqa: S310
                 f"{_POSTHOG_HOST}/capture/",
-                data=data,
+                data=json.dumps(payload).encode(),
                 headers={"Content-Type": "application/json"},
             )
             with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310

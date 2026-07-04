@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import atexit
 import logging
 import platform
 import queue
@@ -70,9 +71,17 @@ def base_props() -> dict[str, Any]:
 # Instead, delivery runs on a single dedicated daemon worker fed by a bounded
 # queue. Enqueue is non-blocking and drops the event when the queue is full,
 # so a slow or hung telemetry endpoint can neither block nor back-pressure the
-# caller. The worker is a daemon thread, so it never delays interpreter exit.
+# caller. The worker is a daemon thread, and an ``atexit`` hook flushes the
+# queue with a bounded timeout at interpreter shutdown so terminal ``end`` /
+# ``error`` events still get a chance to deliver — without letting a hung
+# endpoint stall process exit.
 
 _TELEMETRY_QUEUE_MAXSIZE = 256
+
+# Bounded time we allow queued telemetry (typically the terminal end/error
+# events) to drain at interpreter shutdown. Well under the old synchronous
+# worst case, so shutdown can never hang on an unresponsive endpoint.
+_SHUTDOWN_FLUSH_TIMEOUT = 3.0
 
 _telemetry_queue: queue.Queue[Callable[[], None]] = queue.Queue(maxsize=_TELEMETRY_QUEUE_MAXSIZE)
 _worker_thread: threading.Thread | None = None
@@ -125,3 +134,12 @@ def flush(timeout: float = 5.0) -> None:
     deadline = time.monotonic() + timeout
     while _telemetry_queue.unfinished_tasks and time.monotonic() < deadline:
         time.sleep(0.01)
+
+
+def _flush_on_exit() -> None:
+    # Give queued terminal events (end/error) a bounded chance to deliver
+    # before the daemon worker is torn down at interpreter shutdown.
+    flush(timeout=_SHUTDOWN_FLUSH_TIMEOUT)
+
+
+atexit.register(_flush_on_exit)
