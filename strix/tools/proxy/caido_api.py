@@ -8,7 +8,7 @@ import os
 import time
 import urllib.request
 from typing import TYPE_CHECKING, Any, Literal
-from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from caido_sdk_client import Client, TokenAuthOptions
 from caido_sdk_client.types import (
@@ -254,9 +254,14 @@ def apply_modifications(
 
     if "params" in modifications:
         parsed = urlparse(final_url)
-        existing = {k: v[0] if v else "" for k, v in parse_qs(parsed.query).items()}
-        existing.update(modifications["params"])
-        final_url = urlunparse(parsed._replace(query=urlencode(existing)))
+        overrides = modifications["params"]
+        pairs = [
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key not in overrides
+        ]
+        pairs.extend(overrides.items())
+        final_url = urlunparse(parsed._replace(query=urlencode(pairs)))
     if "headers" in modifications:
         headers.update(modifications["headers"])
     if "body" in modifications:
