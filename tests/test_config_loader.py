@@ -89,6 +89,36 @@ def test_read_json_overrides_skips_keys_already_in_environ(
     assert loader._read_json_overrides(path) == {}
 
 
+def test_read_json_overrides_env_wins_across_field_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # api_key resolves from AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"). The env
+    # sets one alias while the persisted file holds another. Env must still win, so
+    # the stale file value must not be surfaced as an init kwarg (which outranks env).
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"LLM_API_KEY": "sk-file"}}), encoding="utf-8")
+    assert loader._read_json_overrides(path) == {}
+
+
+def test_read_json_overrides_env_wins_case_insensitively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Settings use case_sensitive=False, so a lowercase env var also counts as set.
+    monkeypatch.setenv("strix_llm", "from-env")
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"STRIX_LLM": "from-file"}}), encoding="utf-8")
+    assert loader._read_json_overrides(path) == {}
+
+
+def test_read_json_overrides_uses_json_when_no_alias_in_environ(tmp_path: Path) -> None:
+    # No alias of api_key is set in the environment -> the file value is used, even
+    # when it is stored under a non-first alias.
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"OPENAI_API_KEY": "sk-file"}}), encoding="utf-8")
+    assert loader._read_json_overrides(path) == {"llm": {"api_key": "sk-file"}}
+
+
 # --------------------------------------------------------------------------- #
 # _aliases_for
 # --------------------------------------------------------------------------- #
