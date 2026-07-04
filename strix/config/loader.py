@@ -6,6 +6,7 @@ import contextlib
 import json
 import logging
 import os
+import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -71,9 +72,8 @@ def persist_current() -> None:
                     env_block[alias.upper()] = value
                     break
 
-    target.write_text(json.dumps({"env": env_block}, indent=2), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        target.chmod(0o600)
+    payload = json.dumps({"env": env_block}, indent=2)
+    atomic_write_secure(target, payload)
 
 
 def _aliases_for(finfo: FieldInfo) -> list[str]:
@@ -87,6 +87,41 @@ def _aliases_for(finfo: FieldInfo) -> list[str]:
     elif isinstance(va, str):
         aliases.append(va)
     return aliases
+
+def atomic_write_secure(target: "Path", payload: str) -> None:
+    """Atomically write *payload* to *target* with mode 0o600.
+
+    Guarantees:
+      1. Sensitive content is NEVER observable with mode != 0o600.
+      2. A crash leaves either the old file or the new file, never a
+         half-written file.
+      3. Concurrent readers see either old or new contents, never torn reads.
+      4. O_NOFOLLOW defends against a pre-planted symlink at the tmp path.
+    """
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.with_name(f"{target.name}.{os.getpid()}.{uuid.uuid4().hex[:8]}.tmp")
+    try:
+        fd = os.open(
+            tmp_path,
+            flags=os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW,
+            mode=0o600,
+        )
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                f.write(payload)
+                f.flush()
+                os.fsync(f.fileno())
+        except BaseException:
+            # os.fdopen takes ownership; suppress in case it failed before taking fd
+            with contextlib.suppress(OSError):
+                os.close(fd)
+            raise
+        os.replace(tmp_path, target)
+        # Belt-and-suspenders: enforce mode in case os.replace inherited anything odd
+        target.chmod(0o600)
+    finally:
+        with contextlib.suppress(OSError):
+            tmp_path.unlink()
 
 
 def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
