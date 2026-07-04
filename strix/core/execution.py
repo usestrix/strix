@@ -354,7 +354,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             if hasattr(run_config, "extra_body") and isinstance(run_config.extra_body, dict):
                 if "tool_choice" in run_config.extra_body:
                     run_config.extra_body["tool_choice"] = {"type": "auto"}
-            elif hasattr(run_config, "tool_choice") and (run_config.tool_choice == "auto" or isinstance(run_config.tool_choice, str)):
+            if hasattr(run_config, "tool_choice") and (run_config.tool_choice == "auto" or isinstance(run_config.tool_choice, str)):
                 run_config.tool_choice = {"type": "auto"}
             # -------------------------------------------------------------
 
