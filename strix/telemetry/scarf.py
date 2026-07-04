@@ -10,6 +10,7 @@ from strix.config import load_settings
 from strix.telemetry._common import (
     SESSION_ID,
     base_props,
+    dispatch,
     get_version,
     is_first_run,
 )
@@ -32,23 +33,27 @@ def _send(event: str, properties: dict[str, Any]) -> None:
     if not _is_enabled():
         logger.debug("scarf disabled; skipping event %s", event)
         return
-    try:
-        props = dict(properties)
-        version = str(props.pop("strix_version", get_version()) or "unknown")
-        path = f"/{urllib.parse.quote(event, safe='')}/{urllib.parse.quote(version, safe='')}"
-        query = urllib.parse.urlencode(
-            {k: ("" if v is None else str(v)) for k, v in props.items()},
-        )
-        url = f"{_SCARF_ENDPOINT}{path}"
-        if query:
-            url = f"{url}?{query}"
-        req = urllib.request.Request(url, method="POST")  # noqa: S310
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
-            pass
-    except Exception:  # noqa: BLE001
-        logger.debug("scarf send failed for event %s", event, exc_info=True)
-    else:
-        logger.debug("scarf event sent: %s", event)
+    props = dict(properties)
+    version = str(props.pop("strix_version", get_version()) or "unknown")
+    path = f"/{urllib.parse.quote(event, safe='')}/{urllib.parse.quote(version, safe='')}"
+    query = urllib.parse.urlencode(
+        {k: ("" if v is None else str(v)) for k, v in props.items()},
+    )
+    url = f"{_SCARF_ENDPOINT}{path}"
+    if query:
+        url = f"{url}?{query}"
+
+    def _deliver() -> None:
+        try:
+            req = urllib.request.Request(url, method="POST")  # noqa: S310
+            with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
+                pass
+        except Exception:  # noqa: BLE001
+            logger.debug("scarf send failed for event %s", event, exc_info=True)
+        else:
+            logger.debug("scarf event sent: %s", event)
+
+    dispatch(_deliver)
 
 
 def start(

@@ -8,6 +8,7 @@ from strix.config import load_settings
 from strix.telemetry._common import (
     SESSION_ID,
     base_props,
+    dispatch,
     is_first_run,
 )
 
@@ -30,24 +31,29 @@ def _send(event: str, properties: dict[str, Any]) -> None:
     if not _is_enabled():
         logger.debug("posthog disabled; skipping event %s", event)
         return
-    try:
-        payload = {
-            "api_key": _POSTHOG_PUBLIC_API_KEY,
-            "event": event,
-            "distinct_id": SESSION_ID,
-            "properties": properties,
-        }
-        req = urllib.request.Request(  # noqa: S310
-            f"{_POSTHOG_HOST}/capture/",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
-            pass
-    except Exception:  # noqa: BLE001
-        logger.debug("posthog send failed for event %s", event, exc_info=True)
-    else:
-        logger.debug("posthog event sent: %s", event)
+    payload = {
+        "api_key": _POSTHOG_PUBLIC_API_KEY,
+        "event": event,
+        "distinct_id": SESSION_ID,
+        "properties": properties,
+    }
+    data = json.dumps(payload).encode()
+
+    def _deliver() -> None:
+        try:
+            req = urllib.request.Request(  # noqa: S310
+                f"{_POSTHOG_HOST}/capture/",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
+                pass
+        except Exception:  # noqa: BLE001
+            logger.debug("posthog send failed for event %s", event, exc_info=True)
+        else:
+            logger.debug("posthog event sent: %s", event)
+
+    dispatch(_deliver)
 
 
 def start(
