@@ -131,20 +131,30 @@ def _normalize_todo_ids(raw_ids: Any) -> list[str]:
         stripped = raw_ids.strip()
         if not stripped:
             return []
-        # json.loads is used only to unpack the JSON *array* form, e.g.
-        # '["a", "b"]'. A bare string is a literal id (optionally
-        # comma-separated) and must NOT be routed through the parsed
-        # scalar value: ids are 6-char uuid slugs, and ones like "1e5230"
-        # or "2363e0" are valid JSON numbers that json.loads would mangle
-        # (-> inf / "2363.0"), silently targeting a non-existent todo.
+        # json.loads is used only to unpack a JSON *array* ('["a", "b"]')
+        # or a JSON *string* scalar ('"a3f9c2"', which unwraps to the id).
+        # Any other bare token is a literal id (optionally comma-separated)
+        # and must NOT be routed through a parsed *numeric* scalar: ids are
+        # 6-char uuid slugs, and ones like "1e5230" or "2363e0" are valid
+        # JSON numbers that json.loads would mangle (-> inf / "2363.0"),
+        # silently targeting a non-existent todo.
         try:
             parsed = json.loads(stripped)
         except json.JSONDecodeError:
             parsed = None
         if isinstance(parsed, list):
             return [str(item).strip() for item in parsed if str(item).strip()]
-        parts = stripped.split(",") if "," in stripped else [stripped]
-        return [part.strip() for part in parts if part.strip()]
+        # Otherwise resolve to literal tokens: a JSON string scalar unwraps
+        # to its value, a comma string splits, and anything else is a single
+        # token kept verbatim (so numeric-looking ids aren't mangled by the
+        # parse above).
+        if isinstance(parsed, str):
+            tokens = [parsed]
+        elif "," in stripped:
+            tokens = stripped.split(",")
+        else:
+            tokens = [stripped]
+        return [token.strip() for token in tokens if token.strip()]
     if isinstance(raw_ids, list):
         return [str(item).strip() for item in raw_ids if str(item).strip()]
     return [str(raw_ids).strip()]

@@ -43,6 +43,16 @@ def test_json_array_of_ids_is_unpacked() -> None:
     assert _normalize_todo_ids('["1e5230", "a3f9c2"]') == ["1e5230", "a3f9c2"]
 
 
+def test_json_string_scalar_id_is_unwrapped() -> None:
+    # A caller may JSON-encode a single id ('"a3f9c2"'); the surrounding
+    # quotes must be stripped, not treated as part of the id. A quoted
+    # numeric-looking slug stays a literal string (not a parsed number),
+    # and an empty JSON string yields no ids.
+    assert _normalize_todo_ids('"a3f9c2"') == ["a3f9c2"]
+    assert _normalize_todo_ids('"1e5230"') == ["1e5230"]
+    assert _normalize_todo_ids('""') == []
+
+
 def test_comma_separated_ids_are_split() -> None:
     assert _normalize_todo_ids("1e5230, a3f9c2") == ["1e5230", "a3f9c2"]
 
