@@ -93,6 +93,20 @@ def test_build_root_task_web_application_with_instructions() -> None:
     assert "Special instructions: Focus on auth." in task
 
 
+def test_build_root_task_multiple_targets_are_newline_separated() -> None:
+    config = {
+        "targets": [
+            {"type": "web_application", "details": {"target_url": "https://a.example.com"}},
+            {"type": "web_application", "details": {"target_url": "https://b.example.com"}},
+        ],
+    }
+    task = build_root_task(config)
+
+    assert "\n- https://a.example.com" in task
+    assert "\n- https://b.example.com" in task
+    assert "https://a.example.com - https://b.example.com" not in task
+
+
 def test_build_root_task_diff_scope() -> None:
     config = {
         "targets": [],
