@@ -57,7 +57,7 @@ class RuntimeSettings(BaseSettings):
 class TelemetrySettings(BaseSettings):
     model_config = _BASE_CONFIG
 
-    enabled: bool = Field(default=True, alias="STRIX_TELEMETRY")
+    enabled: bool = Field(default=False, alias="STRIX_TELEMETRY")
 
 
 class IntegrationSettings(BaseSettings):
