@@ -117,7 +117,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         extra_hosts["host.docker.internal"] = "host-gateway"
 
         # Strix injection: host bind mounts (e.g. large repos passed via --mount)
-        # that bypass the SDK's file-by-file LocalDir copy.
+        # that bypass the in-container source copy entirely.
         bind_mounts = getattr(self, "strix_bind_mounts", ())
         if bind_mounts:
             mounts = create_kwargs.setdefault("mounts", [])

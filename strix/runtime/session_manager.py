@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
 import logging
+import os
+import tarfile
 from pathlib import Path
 from typing import Any
 
-from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
@@ -23,24 +26,27 @@ _CONTAINER_CAIDO_PORT = 48080
 
 _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 
-# Manifest root inside the container; entry keys hang off this path.
+# Workspace root inside the container; sources land at ``<root>/<workspace_subdir>``.
 _WORKSPACE_ROOT = "/workspace"
 
+# Container user that runs the agent / shell tools (from the image).
+_CONTAINER_USER = "pentester"
 
-def build_session_entries(
+
+def split_local_sources(
     local_sources: list[dict[str, Any]],
-) -> tuple[dict[str | Path, BaseEntry], list[dict[str, Any]]]:
-    """Split local sources into copied manifest entries and host bind mounts.
+) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
+    """Split local sources into tar-copied entries and host bind mounts.
 
     Sources flagged ``mount`` are bind-mounted read-only at
-    ``/workspace/<workspace_subdir>`` (not added to the manifest, so the SDK
-    does not stream them in file-by-file). Every other source becomes a
-    ``LocalDir`` entry copied into the container as before.
+    ``/workspace/<workspace_subdir>`` (applied by Docker at container-create
+    time). Every other source is copied into the container after start via a
+    single tar ``put_archive`` (see :func:`_import_local_sources`).
     """
-    entries: dict[str | Path, BaseEntry] = {}
+    copied: list[dict[str, str]] = []
     bind_mounts: list[dict[str, Any]] = []
     for src in local_sources:
-        ws_subdir = src.get("workspace_subdir") or ""
+        ws_subdir = (src.get("workspace_subdir") or "").strip("/")
         host_path = src.get("source_path") or ""
         if not ws_subdir or not host_path:
             continue
@@ -54,8 +60,114 @@ def build_session_entries(
                 }
             )
         else:
-            entries[ws_subdir] = LocalDir(src=resolved)
-    return entries, bind_mounts
+            copied.append({"source_path": str(resolved), "workspace_subdir": ws_subdir})
+    return copied, bind_mounts
+
+
+def _build_source_tar(src_root: Path, arc_prefix: str) -> tuple[bytes, int, int]:
+    """Pack ``src_root`` into an in-memory tar rooted at ``arc_prefix``.
+
+    Returns ``(tar_bytes, added, skipped)``. Regular files and directories —
+    including dotfiles such as ``.git`` — are packed as-is so source-aware and
+    git-diff analysis keep working. Symlinks are skipped (and counted) rather
+    than followed, avoiding host path escapes and the dangling links a naive
+    copy would create inside the container.
+    """
+    buf = io.BytesIO()
+    added = 0
+    skipped = 0
+    with tarfile.open(fileobj=buf, mode="w") as tar:
+        for dirpath, dirnames, filenames in os.walk(src_root, followlinks=False):
+            kept_dirs: list[str] = []
+            for name in dirnames:
+                if Path(dirpath, name).is_symlink():
+                    skipped += 1
+                    continue
+                kept_dirs.append(name)
+            dirnames[:] = kept_dirs
+
+            for name in filenames:
+                full = Path(dirpath) / name
+                if full.is_symlink() or not full.is_file():
+                    skipped += 1
+                    continue
+                arcname = f"{arc_prefix}/{full.relative_to(src_root).as_posix()}"
+                tar.add(str(full), arcname=arcname, recursive=False)
+                added += 1
+    return buf.getvalue(), added, skipped
+
+
+def _container_of(session: Any) -> Any:
+    """Reach the underlying docker-py ``Container`` from an SDK session.
+
+    The SDK wraps the backend session in an outer object; the docker backend
+    exposes the real container as ``_inner._container``. Pinned to
+    openai-agents==0.14.6 — re-check these private attrs on SDK bumps.
+    """
+    inner = getattr(session, "_inner", session)
+    container = getattr(inner, "_container", None)
+    if container is None:
+        raise RuntimeError("could not locate docker container on sandbox session")
+    return container
+
+
+async def _import_local_sources(
+    session: Any,
+    copied_sources: list[dict[str, str]],
+) -> None:
+    """Copy each host source tree into the container via a single tar import.
+
+    Replaces the SDK's per-file ``LocalDir`` materialization, which issues
+    several ``docker exec`` calls per file. On large trees that serializes into
+    thousands of exec round-trips against a non-thread-safe docker-py client,
+    causing multi-minute hangs (the "stuck on loading" symptom) and occasional
+    ``ExecTransportError``. ``put_archive`` lands the whole tree in one shot
+    (sub-second for thousands of files).
+
+    Safe here because the copy path attaches no Docker volume-driver mounts —
+    the SDK avoids ``put_archive`` only to sidestep volume plugins that re-run
+    mount setup during archive ops (docker.py:709). ``--mount`` sources use
+    plain read-only bind mounts at a different subdir, which have no such
+    driver.
+    """
+    container = _container_of(session)
+    loop = asyncio.get_running_loop()
+
+    for src in copied_sources:
+        ws_subdir = src["workspace_subdir"]
+        src_root = Path(src["source_path"])
+        if not src_root.is_dir():
+            logger.warning("Skipping non-directory local source: %s", src_root)
+            continue
+
+        tar_bytes, added, skipped = await loop.run_in_executor(
+            None, _build_source_tar, src_root, ws_subdir
+        )
+        logger.info(
+            "Importing %d files into %s/%s (skipped %d symlink entries)",
+            added,
+            _WORKSPACE_ROOT,
+            ws_subdir,
+            skipped,
+        )
+
+        def _put(tar_bytes: bytes = tar_bytes, ws_subdir: str = ws_subdir) -> None:
+            container.exec_run(["mkdir", "-p", _WORKSPACE_ROOT], user="root")
+            if not container.put_archive(_WORKSPACE_ROOT, tar_bytes):
+                raise RuntimeError(f"put_archive failed for {_WORKSPACE_ROOT}/{ws_subdir}")
+            # put_archive unpacks as root with the tar's host uids; hand the
+            # tree to the agent's runtime user so tools can read/write it.
+            container.exec_run(
+                [
+                    "chown",
+                    "-R",
+                    f"{_CONTAINER_USER}:{_CONTAINER_USER}",
+                    f"{_WORKSPACE_ROOT}/{ws_subdir}",
+                ],
+                user="root",
+            )
+
+        await loop.run_in_executor(None, _put)
 
 
 async def create_or_reuse(
@@ -67,16 +179,21 @@ async def create_or_reuse(
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
     Each ``local_sources`` entry exposes its host ``source_path`` at
-    ``/workspace/<workspace_subdir>`` inside the container — copied in, or
-    bind-mounted read-only when the entry is flagged ``mount``.
+    ``/workspace/<workspace_subdir>`` inside the container — copied in via a
+    single tar ``put_archive`` after start, or bind-mounted read-only when the
+    entry is flagged ``mount``.
     """
     cached = _SESSION_CACHE.get(scan_id)
     if cached is not None:
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
-    entries, bind_mounts = build_session_entries(local_sources)
+    copied_sources, bind_mounts = split_local_sources(local_sources)
 
+    # Copied source trees are imported after start() via a single tar
+    # ``put_archive`` (see ``_import_local_sources``) instead of the SDK's
+    # per-file ``LocalDir`` exec loop, which hangs on large trees. So the
+    # manifest itself carries no source entries.
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
     # picks up these env vars automatically. ``NO_PROXY`` keeps the
@@ -84,7 +201,7 @@ async def create_or_reuse(
     # through Caido.
     container_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
     manifest = Manifest(
-        entries=entries,
+        entries={},
         environment=Environment(
             value={
                 "PYTHONUNBUFFERED": "1",
@@ -112,6 +229,8 @@ async def create_or_reuse(
         exposed_ports=(_CONTAINER_CAIDO_PORT,),
         bind_mounts=bind_mounts,
     )
+
+    await _import_local_sources(session, copied_sources)
 
     caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
     host_caido_url = f"http://{caido_endpoint.host}:{caido_endpoint.port}"
