@@ -33,6 +33,16 @@ def _tar_names(tar_bytes: bytes) -> set[str]:
         return set(tar.getnames())
 
 
+def _tar_file_names(tar_bytes: bytes) -> set[str]:
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r") as tar:
+        return {m.name for m in tar.getmembers() if m.isfile()}
+
+
+def _tar_dir_names(tar_bytes: bytes) -> set[str]:
+    with tarfile.open(fileobj=io.BytesIO(tar_bytes), mode="r") as tar:
+        return {m.name for m in tar.getmembers() if m.isdir()}
+
+
 def test_copied_source_is_returned_for_import(tmp_path: Path) -> None:
     copied, bind_mounts = split_local_sources([_source("repo", str(tmp_path))])
 
@@ -96,7 +106,9 @@ def test_tar_packs_files_under_arc_prefix(tmp_path: Path) -> None:
 
     assert added == 2
     assert skipped == 0
-    assert _tar_names(tar_bytes) == {"repo/a.txt", "repo/sub/b.txt"}
+    assert _tar_file_names(tar_bytes) == {"repo/a.txt", "repo/sub/b.txt"}
+    # Directory entries (incl. the arc-prefix root) are packed too.
+    assert {"repo", "repo/sub"} <= _tar_dir_names(tar_bytes)
 
 
 def test_tar_preserves_dotfiles_and_git(tmp_path: Path) -> None:
@@ -110,7 +122,7 @@ def test_tar_preserves_dotfiles_and_git(tmp_path: Path) -> None:
     tar_bytes, added, _ = _build_source_tar(tmp_path, "repo")
 
     assert added == 2
-    assert _tar_names(tar_bytes) == {"repo/.env", "repo/.git/HEAD"}
+    assert _tar_file_names(tar_bytes) == {"repo/.env", "repo/.git/HEAD"}
 
 
 @pytest.mark.skipif(not _HAS_SYMLINK, reason="requires symlink support")
@@ -122,7 +134,7 @@ def test_tar_skips_file_symlinks(tmp_path: Path) -> None:
 
     assert added == 1
     assert skipped == 1
-    assert _tar_names(tar_bytes) == {"repo/real.txt"}
+    assert _tar_file_names(tar_bytes) == {"repo/real.txt"}
 
 
 @pytest.mark.skipif(not _HAS_SYMLINK, reason="requires symlink support")
@@ -142,11 +154,44 @@ def test_tar_skips_dir_symlinks_without_descending(tmp_path: Path) -> None:
     # leaks into the tar.
     assert added == 1
     assert skipped == 1
-    assert _tar_names(tar_bytes) == {"repo/keep.txt"}
+    assert _tar_file_names(tar_bytes) == {"repo/keep.txt"}
+    assert "repo/escape" not in _tar_names(tar_bytes)
 
 
-def test_tar_empty_dir_produces_no_files(tmp_path: Path) -> None:
+def test_tar_preserves_empty_dirs(tmp_path: Path) -> None:
+    # Committed empty directories (cache/output scaffolding) must survive.
+    (tmp_path / "empty").mkdir()
+    (tmp_path / "keep.txt").write_text("k")
+
+    tar_bytes, added, skipped = _build_source_tar(tmp_path, "repo")
+
+    assert added == 1
+    assert skipped == 0
+    assert _tar_file_names(tar_bytes) == {"repo/keep.txt"}
+    assert {"repo", "repo/empty"} <= _tar_dir_names(tar_bytes)
+
+
+def test_tar_empty_root_still_packs_prefix(tmp_path: Path) -> None:
     tar_bytes, added, skipped = _build_source_tar(tmp_path, "repo")
     assert added == 0
     assert skipped == 0
-    assert _tar_names(tar_bytes) == set()
+    assert _tar_file_names(tar_bytes) == set()
+    # The root prefix dir is still created so the workspace subdir exists.
+    assert _tar_dir_names(tar_bytes) == {"repo"}
+
+
+def test_unsafe_workspace_subdir_is_skipped(tmp_path: Path) -> None:
+    copied, bind_mounts = split_local_sources(
+        [
+            _source("../escape", str(tmp_path)),
+            _source("ok/../../escape", str(tmp_path)),
+        ]
+    )
+    assert copied == []
+    assert bind_mounts == []
+
+
+def test_unsafe_workspace_subdir_skipped_for_mount(tmp_path: Path) -> None:
+    copied, bind_mounts = split_local_sources([_source("../escape", str(tmp_path), mount=True)])
+    assert copied == []
+    assert bind_mounts == []

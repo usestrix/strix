@@ -33,6 +33,19 @@ _WORKSPACE_ROOT = "/workspace"
 _CONTAINER_USER = "pentester"
 
 
+def _is_safe_workspace_subdir(ws_subdir: str) -> bool:
+    """Reject subdirs that would escape ``/workspace`` when joined.
+
+    ``ws_subdir`` becomes both a tar member prefix and a ``chown`` target, so a
+    value containing ``..`` (or an absolute path) could write outside the
+    intended ``/workspace/<subdir>`` tree. Callers pass values with surrounding
+    slashes already stripped.
+    """
+    if not ws_subdir:
+        return False
+    return not any(part in ("..", "") for part in ws_subdir.split("/"))
+
+
 def split_local_sources(
     local_sources: list[dict[str, Any]],
 ) -> tuple[list[dict[str, str]], list[dict[str, Any]]]:
@@ -49,6 +62,9 @@ def split_local_sources(
         ws_subdir = (src.get("workspace_subdir") or "").strip("/")
         host_path = src.get("source_path") or ""
         if not ws_subdir or not host_path:
+            continue
+        if not _is_safe_workspace_subdir(ws_subdir):
+            logger.warning("Skipping local source with unsafe workspace_subdir: %r", ws_subdir)
             continue
         resolved = Path(host_path).expanduser().resolve()
         if src.get("mount"):
@@ -68,8 +84,9 @@ def _build_source_tar(src_root: Path, arc_prefix: str) -> tuple[bytes, int, int]
     """Pack ``src_root`` into an in-memory tar rooted at ``arc_prefix``.
 
     Returns ``(tar_bytes, added, skipped)``. Regular files and directories —
-    including dotfiles such as ``.git`` — are packed as-is so source-aware and
-    git-diff analysis keep working. Symlinks are skipped (and counted) rather
+    including dotfiles such as ``.git`` and directories with no files — are
+    packed as-is so source-aware and git-diff analysis keep working and
+    committed empty dirs survive. Symlinks are skipped (and counted) rather
     than followed, avoiding host path escapes and the dangling links a naive
     copy would create inside the container.
     """
@@ -86,8 +103,13 @@ def _build_source_tar(src_root: Path, arc_prefix: str) -> tuple[bytes, int, int]
                 kept_dirs.append(name)
             dirnames[:] = kept_dirs
 
+            dir_abs = Path(dirpath)
+            rel = dir_abs.relative_to(src_root).as_posix()
+            dir_arcname = arc_prefix if rel == "." else f"{arc_prefix}/{rel}"
+            tar.add(str(dir_abs), arcname=dir_arcname, recursive=False)
+
             for name in filenames:
-                full = Path(dirpath) / name
+                full = dir_abs / name
                 if full.is_symlink() or not full.is_file():
                     skipped += 1
                     continue
@@ -109,6 +131,20 @@ def _container_of(session: Any) -> Any:
     if container is None:
         raise RuntimeError("could not locate docker container on sandbox session")
     return container
+
+
+def _run_checked(container: Any, cmd: list[str]) -> None:
+    """Run ``cmd`` in the container as root and raise on non-zero exit.
+
+    ``exec_run`` reports failures only via its result; an ignored ``chown``
+    failure would leave sources root-owned and unwritable while session setup
+    still "succeeds", so surface it here with the command's own diagnostics.
+    """
+    result = container.exec_run(cmd, user="root")
+    if result.exit_code:
+        output = result.output
+        detail = output.decode("utf-8", "replace").strip() if isinstance(output, bytes) else output
+        raise RuntimeError(f"container command {cmd!r} failed (exit {result.exit_code}): {detail}")
 
 
 async def _import_local_sources(
@@ -152,19 +188,19 @@ async def _import_local_sources(
         )
 
         def _put(tar_bytes: bytes = tar_bytes, ws_subdir: str = ws_subdir) -> None:
-            container.exec_run(["mkdir", "-p", _WORKSPACE_ROOT], user="root")
+            _run_checked(container, ["mkdir", "-p", _WORKSPACE_ROOT])
             if not container.put_archive(_WORKSPACE_ROOT, tar_bytes):
                 raise RuntimeError(f"put_archive failed for {_WORKSPACE_ROOT}/{ws_subdir}")
             # put_archive unpacks as root with the tar's host uids; hand the
             # tree to the agent's runtime user so tools can read/write it.
-            container.exec_run(
+            _run_checked(
+                container,
                 [
                     "chown",
                     "-R",
                     f"{_CONTAINER_USER}:{_CONTAINER_USER}",
                     f"{_WORKSPACE_ROOT}/{ws_subdir}",
                 ],
-                user="root",
             )
 
         await loop.run_in_executor(None, _put)
