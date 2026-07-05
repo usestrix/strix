@@ -23,6 +23,8 @@ VALID_STATUSES = ["pending", "in_progress", "done"]
 _PRIORITY_RANK = {"critical": 0, "high": 1, "normal": 2, "low": 3}
 _STATUS_RANK = {"done": 0, "in_progress": 1, "pending": 2}
 
+_TODO_ID_GENERATION_ATTEMPTS = 1024
+
 
 def _todo_sort_key(todo: dict[str, Any]) -> tuple[int, int, str]:
     return (
@@ -107,6 +109,21 @@ def _agent_id_from(ctx: RunContextWrapper) -> str:
 
 def _get_agent_todos(agent_id: str) -> dict[str, dict[str, Any]]:
     return _todos_storage.setdefault(agent_id, {})
+
+
+def _generate_todo_id(agent_todos: dict[str, dict[str, Any]]) -> str | None:
+    """Return a 6-char id unused within this agent's todos, or None if none found.
+
+    Todo ids are ``str(uuid.uuid4())[:6]`` slugs (~16.7M space), so two todos
+    for the same agent can collide on the first six hex chars. Without this
+    check ``create_todo`` would silently overwrite the colliding todo. Mirrors
+    ``notes._generate_note_id`` (added in #630 for the shared 6-char scheme).
+    """
+    for _ in range(_TODO_ID_GENERATION_ATTEMPTS):
+        todo_id = str(uuid.uuid4())[:6]
+        if todo_id not in agent_todos:
+            return todo_id
+    return None
 
 
 def _normalize_priority(priority: str | None, default: str = "normal") -> str:
@@ -303,9 +320,15 @@ async def create_todo(ctx: RunContextWrapper, todos: str) -> str:
 
         agent_todos = _get_agent_todos(agent_id)
         created: list[dict[str, Any]] = []
+        errors: list[dict[str, Any]] = []
         for task in tasks:
             task_priority = _normalize_priority(task.get("priority"))
-            todo_id = str(uuid.uuid4())[:6]
+            todo_id = _generate_todo_id(agent_todos)
+            if todo_id is None:
+                errors.append(
+                    {"title": task["title"], "error": "Failed to generate a unique todo ID"}
+                )
+                continue
             timestamp = datetime.now(UTC).isoformat()
             agent_todos[todo_id] = {
                 "title": task["title"],
@@ -324,18 +347,18 @@ async def create_todo(ctx: RunContextWrapper, todos: str) -> str:
             default=str,
         )
 
-    _persist()
-    return json.dumps(
-        {
-            "success": True,
-            "created": created,
-            "created_count": len(created),
-            "todos": _sorted_todos(agent_id),
-            "total_count": len(_get_agent_todos(agent_id)),
-        },
-        ensure_ascii=False,
-        default=str,
-    )
+    if created:
+        _persist()
+    response: dict[str, Any] = {
+        "success": len(errors) == 0,
+        "created": created,
+        "created_count": len(created),
+        "todos": _sorted_todos(agent_id),
+        "total_count": len(_get_agent_todos(agent_id)),
+    }
+    if errors:
+        response["errors"] = errors
+    return json.dumps(response, ensure_ascii=False, default=str)
 
 
 @function_tool(timeout=30)
