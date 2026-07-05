@@ -49,42 +49,46 @@ async def _docker_backend(
 
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
-    # Handle Issue #671 Edge Cases: Concurrency limits for Windows Docker Desktop
+    # Handle Issue #671 Edge Cases
     concurrency_limits = None
-    try:
-        from agents.sandbox.artifacts import SandboxConcurrencyLimits
-        
-        # Default to 1 (serial) on Windows to prevent race conditions. 
-        # Leave as None (SDK default) for Linux/WSL2 where execution is fast enough.
-        default_limit = 1 if sys.platform == "win32" else None
-        
-        # Check for env var override (e.g., STRIX_DOCKER_CONCURRENCY=4)
-        limit_val = os.environ.get("STRIX_DOCKER_CONCURRENCY", default_limit)
-        
-        if limit_val is not None:
-            limit = int(limit_val)
+    default_limit = 1 if sys.platform == "win32" else None
+    limit_val = os.environ.get("STRIX_DOCKER_CONCURRENCY", default_limit)
+
+    if limit_val is not None:
+        try:
+            # Prevents <= 0 limits breaking the SDK validation
+            limit = max(1, int(limit_val)) 
+            
+            # Try primary import path, fallback if SDK changes
+            try:
+                from agents.sandbox.artifacts import SandboxConcurrencyLimits
+            except ImportError:
+                from agents.sandbox import SandboxConcurrencyLimits
+
             concurrency_limits = SandboxConcurrencyLimits(
                 manifest_entries=limit,
                 local_dir_files=limit
             )
             logger.debug(f"Applied SandboxConcurrencyLimits: {limit}")
-            
-    except ImportError:
-        logger.warning("Could not import SandboxConcurrencyLimits from SDK. Proceeding with defaults.")
-    except ValueError:
-        logger.warning("STRIX_DOCKER_CONCURRENCY must be a valid integer. Proceeding with defaults.")
+        except (ImportError, ValueError) as e:
+            if sys.platform == "win32" and limit_val == 1:
+                # Fail loudly on Windows to avoid silent race condition
+                raise RuntimeError("Failed to import SandboxConcurrencyLimits required for Windows execution.") from e
+            logger.warning("Invalid STRIX_DOCKER_CONCURRENCY or import failed. Proceeding with defaults.")
 
     client = StrixDockerSandboxClient(docker.from_env())
     client.strix_bind_mounts = bind_mounts or []
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     
-    # Pass concurrency_limits if successfully configured
-    create_kwargs = {"options": options, "manifest": manifest}
+    # Create the session (without concurrency_limits keyword)
+    session = await client.create(options=options, manifest=manifest)
+    
+    # Pass concurrency_limits where the session is actually started/materialized
+    start_kwargs = {}
     if concurrency_limits is not None:
-        create_kwargs["concurrency_limits"] = concurrency_limits
+        start_kwargs["concurrency_limits"] = concurrency_limits
         
-    session = await client.create(**create_kwargs)
-    await session.start()
+    await session.start(**start_kwargs)
     return client, session
 
 
