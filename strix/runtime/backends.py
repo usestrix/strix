@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
@@ -47,10 +49,41 @@ async def _docker_backend(
 
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
+    # Handle Issue #671 Edge Cases: Concurrency limits for Windows Docker Desktop
+    concurrency_limits = None
+    try:
+        from agents.sandbox.artifacts import SandboxConcurrencyLimits
+        
+        # Default to 1 (serial) on Windows to prevent race conditions. 
+        # Leave as None (SDK default) for Linux/WSL2 where execution is fast enough.
+        default_limit = 1 if sys.platform == "win32" else None
+        
+        # Check for env var override (e.g., STRIX_DOCKER_CONCURRENCY=4)
+        limit_val = os.environ.get("STRIX_DOCKER_CONCURRENCY", default_limit)
+        
+        if limit_val is not None:
+            limit = int(limit_val)
+            concurrency_limits = SandboxConcurrencyLimits(
+                manifest_entries=limit,
+                local_dir_files=limit
+            )
+            logger.debug(f"Applied SandboxConcurrencyLimits: {limit}")
+            
+    except ImportError:
+        logger.warning("Could not import SandboxConcurrencyLimits from SDK. Proceeding with defaults.")
+    except ValueError:
+        logger.warning("STRIX_DOCKER_CONCURRENCY must be a valid integer. Proceeding with defaults.")
+
     client = StrixDockerSandboxClient(docker.from_env())
     client.strix_bind_mounts = bind_mounts or []
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
-    session = await client.create(options=options, manifest=manifest)
+    
+    # Pass concurrency_limits if successfully configured
+    create_kwargs = {"options": options, "manifest": manifest}
+    if concurrency_limits is not None:
+        create_kwargs["concurrency_limits"] = concurrency_limits
+        
+    session = await client.create(**create_kwargs)
     await session.start()
     return client, session
 
