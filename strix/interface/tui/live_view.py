@@ -14,10 +14,14 @@ from strix.core.paths import runtime_state_dir
 from strix.interface.tui.history import load_session_history
 
 
+MAX_EVENTS_PER_AGENT = 500
+
+
 class TuiLiveView:
     def __init__(self) -> None:
         self.agents: dict[str, dict[str, Any]] = {}
         self.events: list[dict[str, Any]] = []
+        self._events_by_agent: dict[str, list[dict[str, Any]]] = {}
         self._next_event_id = 1
         self._open_assistant_event_by_agent: dict[str, dict[str, Any]] = {}
         self._tool_event_by_call_id: dict[str, dict[str, Any]] = {}
@@ -115,10 +119,10 @@ class TuiLiveView:
             self._record_tool_output(agent_id, item)
 
     def events_for_agent(self, agent_id: str) -> list[dict[str, Any]]:
-        return [event for event in self.events if event.get("agent_id") == agent_id]
+        return list(self._events_by_agent.get(agent_id, []))
 
     def has_events_for_agent(self, agent_id: str) -> bool:
-        return any(event.get("agent_id") == agent_id for event in self.events)
+        return bool(self._events_by_agent.get(agent_id))
 
     def _ingest_raw_response_event(self, agent_id: str, data: Any) -> None:
         data_type = getattr(data, "type", "")
@@ -277,6 +281,16 @@ class TuiLiveView:
         }
         self._next_event_id += 1
         self.events.append(event)
+        agent_events = self._events_by_agent.setdefault(agent_id, [])
+        agent_events.append(event)
+        if len(agent_events) > MAX_EVENTS_PER_AGENT:
+            dropped = agent_events[:len(agent_events) - MAX_EVENTS_PER_AGENT]
+            for d in dropped:
+                try:
+                    self.events.remove(d)
+                except ValueError:
+                    pass
+            del agent_events[:len(agent_events) - MAX_EVENTS_PER_AGENT]
         return event
 
     @staticmethod

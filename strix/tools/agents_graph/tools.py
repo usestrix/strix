@@ -595,6 +595,15 @@ async def stop_agent(
     to wrap up) for soft-stop scenarios. Reach for ``stop_agent`` when
     a child has gone off-track and won't self-correct.
 
+    **NEVER use ``stop_agent`` to clear active children so you can call
+    ``finish_scan``.** Stopped agents lose their in-progress work and
+    their completion reports never arrive. Instead, call
+    ``wait_for_message`` to block until children self-terminate via
+    ``agent_finish``, or ``send_message_to_agent`` asking them to wrap
+    up. The only valid use of ``stop_agent`` is for agents that are
+    genuinely off-track, stuck, or producing errors — not for agents
+    that are productively working but haven't finished yet.
+
     Args:
         target_agent_id: The 8-char id from ``view_agent_graph`` /
             ``create_agent``. Cannot stop yourself.

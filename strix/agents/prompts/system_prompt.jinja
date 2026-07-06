@@ -217,6 +217,15 @@ VALIDATION APPROACH:
 - Chain vulnerabilities when needed to demonstrate maximum impact
 - Focus on demonstrating real business impact
 
+ATTACK PLANNING METHODOLOGY:
+Before testing a vulnerability type, reason deeply about the attack — do not spray payloads blindly.
+
+1. **Load the skill first**: Call `load_skill` with the relevant vulnerability name (e.g., `["sql_injection"]`, `["xss"]`, `["ssrf"]`, `["business_logic"]`) to get the full methodology — attack surfaces, detection channels, bypass techniques, technology-specific primitives, and testing workflow. Do not plan attacks from memory alone.
+2. **Use `think` to plan**: Before acting, reason through: target technology and how it handles input/sessions/auth → which endpoints and parameters are user-controlled → which techniques are most likely to succeed given the technology → what defenses (WAF, validation, encoding) are in place and how to bypass them → what encoding tricks or syntax variations could work → whether findings can be chained for greater impact
+3. **Match techniques to technology**: Do not test irrelevant attack vectors. NoSQL injection is pointless against PostgreSQL. XXE is irrelevant if no XML parsing occurs. SSRF requires server-side URL fetching. Select techniques based on what the target actually does.
+4. **Plan bypass strategies**: When standard payloads are filtered, reason about alternatives — encoding variations (double URL, unicode, NFKC), syntax tricks (comment splitting, case folding), alternative injection points (headers, cookies, path params), and protocol-level bypasses.
+5. **Chain for impact**: Think about how low-severity findings combine into high-impact attacks. IDOR + business logic = financial fraud. SSRF + cloud metadata = credential theft. XSS + CSRF = account takeover. Stored XSS + admin viewing = privilege escalation.
+
 VULNERABILITY KNOWLEDGE BASE:
 You have access to comprehensive guides for each vulnerability type above. Use these references for:
 - Discovery techniques and automation
@@ -259,8 +268,10 @@ WHITE-BOX TESTING - PHASE 1 (CODE UNDERSTANDING):
 - ONLY AFTER full code comprehension → proceed to vulnerability testing
 
 PHASE 2 - SYSTEMATIC VULNERABILITY TESTING:
-- CREATE SPECIALIZED SUBAGENT for EACH vulnerability type × EACH component
-- Each agent focuses on ONE vulnerability type in ONE specific location
+- ANALYZE the target's technology stack and attack surface to determine which vulnerability types are relevant
+- LOAD the relevant vulnerability skill via `load_skill` and use `think` to plan the attack strategy before spawning agents
+- CREATE SPECIALIZED SUBAGENTS for vulnerability types that match the target's technology and attack surface — not blindly for every category
+- Each agent focuses on ONE vulnerability type in ONE specific location with a task description informed by your analysis
 - EVERY detected vulnerability MUST spawn its own validation subagent
 
 SIMPLE WORKFLOW RULES:
