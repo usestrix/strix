@@ -49,7 +49,7 @@ class StrixMCPService:
         self.report_state: ReportState | None = None
         self.bundle: dict[str, Any] | None = None
 
-    async def start_scan(
+    async def start_scan(  # noqa: PLR0911 - lifecycle validation has distinct failure results.
         self,
         targets: list[str],
         *,
@@ -135,7 +135,7 @@ class StrixMCPService:
                 image=load_settings().runtime.image,
                 local_sources=local_sources,
             )
-        except Exception as exc:  # noqa: BLE001 - return a clean MCP error.
+        except Exception as exc:
             state.save_run_data(status="failed")
             logger.exception("Could not create Strix sandbox")
             return {"success": False, "error": f"Could not create Strix sandbox: {exc}"}
@@ -182,12 +182,12 @@ class StrixMCPService:
         max_mb = load_settings().runtime.max_local_copy_mb
         oversized = find_oversized_local_targets(targets_info, max_mb * 1024 * 1024)
         if oversized:
-            details = "; ".join(
+            oversized_details = "; ".join(
                 f"{path} ({size / (1024 * 1024):.0f} MB)" for path, size in oversized
             )
             raise ValueError(
-                f"Local target too large to copy: {details}. Use the mounts argument or raise "
-                "STRIX_MAX_LOCAL_COPY_MB."
+                f"Local target too large to copy: {oversized_details}. "
+                "Use the mounts argument or raise STRIX_MAX_LOCAL_COPY_MB."
             )
 
         scan_name = run_name or generate_run_name(targets_info)
@@ -221,7 +221,7 @@ class StrixMCPService:
             str(destination),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-        )  # noqa: S603 - argv is fixed apart from the authorized URL/path.
+        )
         _stdout, stderr = await process.communicate()
         if process.returncode != 0:
             detail = stderr.decode("utf-8", errors="replace")[-2000:]
@@ -283,7 +283,7 @@ class StrixMCPService:
         try:
             raw = await tool.on_invoke_tool(context, json.dumps(arguments))
             return json.loads(raw) if isinstance(raw, str) else {"success": True, "result": raw}
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             logger.exception("Proxy tool call failed")
             return {"success": False, "error": str(exc)}
 

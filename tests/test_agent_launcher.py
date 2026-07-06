@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from argparse import Namespace
-from pathlib import Path
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
@@ -49,9 +48,7 @@ def test_explicit_legacy_mode_does_not_launch_agent(monkeypatch: pytest.MonkeyPa
     assert agent_launcher.uses_coding_agent(_args(agent="legacy")) is False
 
 
-def test_codex_command_embeds_ephemeral_mcp_config(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(Path, "cwd", classmethod(lambda cls: Path("/tmp/project")))
-
+def test_codex_command_embeds_ephemeral_mcp_config() -> None:
     command = agent_launcher.build_agent_command(_args(non_interactive=True), "codex")
 
     assert command[:2] == ["codex", "exec"]

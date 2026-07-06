@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import os
 import logging
+import os
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -15,10 +15,20 @@ from mcp.shared.message import SessionMessage
 from strix.mcp.service import StrixMCPService
 from strix.tools.proxy.tools import (
     list_requests as _list_requests,
+)
+from strix.tools.proxy.tools import (
     list_sitemap as _list_sitemap,
+)
+from strix.tools.proxy.tools import (
     repeat_request as _repeat_request,
+)
+from strix.tools.proxy.tools import (
     scope_rules as _scope_rules,
+)
+from strix.tools.proxy.tools import (
     view_request as _view_request,
+)
+from strix.tools.proxy.tools import (
     view_sitemap_entry as _view_sitemap_entry,
 )
 
@@ -263,8 +273,8 @@ async def _event_loop_stdio() -> Any:
     and writing the pipe file descriptors through the event loop keeps the MCP
     transport portable while preserving newline-delimited JSON-RPC semantics.
     """
-    read_writer, read_stream = anyio.create_memory_object_stream(0)
-    write_stream, write_reader = anyio.create_memory_object_stream(0)
+    read_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](0)
+    write_stream, write_reader = anyio.create_memory_object_stream[SessionMessage](0)
 
     async def read_stdin() -> None:
         buffered = b""
@@ -290,8 +300,7 @@ async def _event_loop_stdio() -> Any:
         async with write_reader:
             async for session_message in write_reader:
                 payload = (
-                    session_message.message.model_dump_json(by_alias=True, exclude_none=True)
-                    + "\n"
+                    session_message.message.model_dump_json(by_alias=True, exclude_none=True) + "\n"
                 ).encode()
                 while payload:
                     await anyio.wait_writable(1)
@@ -305,10 +314,10 @@ async def _event_loop_stdio() -> Any:
 
 async def _run_stdio() -> None:
     async with _event_loop_stdio() as (read_stream, write_stream):
-        await mcp._mcp_server.run(  # noqa: SLF001 - mirrors FastMCP.run_stdio_async.
+        await mcp._mcp_server.run(
             read_stream,
             write_stream,
-            mcp._mcp_server.create_initialization_options(),  # noqa: SLF001
+            mcp._mcp_server.create_initialization_options(),
         )
 
 
