@@ -34,6 +34,7 @@ classifiers = [
 ]
 dependencies = [
   "openai-agents[litellm]==0.14.6",
+  "mcp>=1.28.1",
   "pydantic>=2.11.3",
   "pydantic-settings>=2.13.0",
   "rich",
@@ -46,6 +47,8 @@ dependencies = [
 
 [project.scripts]
 strix = "strix.interface.main:main"
+strix-mcp = "strix.mcp.server:main"
+strix-skill-path = "strix.mcp.install:print_skill_path"
 
 [dependency-groups]
 dev = [
@@ -68,6 +71,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["strix"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"skills/strix-security" = "strix/agent_skills/strix-security"
 
 # ============================================================================
 # Type Checking Configuration

@@ -458,6 +458,16 @@ Examples:
     )
 
     parser.add_argument(
+        "--agent",
+        choices=["auto", "codex", "claude", "legacy"],
+        default="auto",
+        help=(
+            "Reasoning runtime. 'auto' uses STRIX_LLM when configured, otherwise an installed "
+            "Codex or Claude Code CLI. Agent mode needs no separate model API key."
+        ),
+    )
+
+    parser.add_argument(
         "--resume",
         type=str,
         metavar="RUN_NAME",
@@ -495,7 +505,7 @@ Examples:
             )
         _load_resume_state(args, parser)
         agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"
-        if not agents_path.exists():
+        if args.agent == "legacy" and not agents_path.exists():
             parser.error(
                 f"--resume {args.resume}: missing {agents_path}. The run was "
                 f"persisted but never reached its first agent snapshot — "
@@ -747,6 +757,21 @@ def main() -> None:
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
+
+    from strix.interface.agent_launcher import launch_agent_scan, uses_coding_agent
+
+    if uses_coding_agent(args):
+        check_docker_installed()
+        pull_docker_image()
+        raise SystemExit(launch_agent_scan(args))
+
+    if args.resume:
+        agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"
+        if not agents_path.exists():
+            raise SystemExit(
+                f"--resume {args.resume}: missing {agents_path}; use --agent codex/claude "
+                "for an MCP-mode run or start a fresh legacy run."
+            )
 
     check_docker_installed()
     pull_docker_image()

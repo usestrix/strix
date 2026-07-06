@@ -72,7 +72,7 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 
 **Prerequisites:**
 - Docker (running)
-- An LLM API key from any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+- Codex or Claude Code authenticated with your normal account, or an LLM API key for legacy provider mode
 
 ### Installation & First Scan
 
@@ -80,13 +80,11 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 # Install Strix
 curl -sSL https://strix.ai/install | bash
 
-# Configure your AI provider
-export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
-
-# Run your first security assessment
+# Run through Codex or Claude Code; no model API key is needed
 strix --target ./app-directory
 ```
+
+When `STRIX_LLM` is unset, Strix launches an installed Codex or Claude Code CLI and exposes its security runtime through the local `strix-mcp` server. Every model call stays inside that coding agent. Use `--agent codex` or `--agent claude` to select one explicitly. See [coding-agent integration](docs/integrations/coding-agents.mdx) for standalone MCP and skill installation.
 
 > [!NOTE]
 > First run automatically pulls the sandbox Docker image. Results are saved to `strix_runs/<run-name>`
@@ -223,7 +221,9 @@ jobs:
 > If diff-scope cannot resolve, ensure checkout uses full history (`fetch-depth: 0`) or pass
 > `--diff-base` explicitly.
 
-### Configuration
+### Legacy Provider Configuration (Optional)
+
+Codex/Claude agent mode requires no configuration here. For direct provider mode, set:
 
 ```bash
 export STRIX_LLM="openai/gpt-5.4"

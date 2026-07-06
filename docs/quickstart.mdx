@@ -6,7 +6,7 @@ description: "Install Strix and run your first security scan"
 ## Prerequisites
 
 - Docker (running)
-- An LLM API key from any [supported provider](/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+- Codex or Claude Code authenticated with your normal account, or an LLM API key for [legacy provider mode](/llm-providers/overview)
 
 ## Installation
 
@@ -25,7 +25,13 @@ description: "Install Strix and run your first security scan"
 
 ## Configuration
 
-Set your LLM provider:
+No model API key is required when Codex or Claude Code is installed and authenticated. Strix automatically selects a coding agent when `STRIX_LLM` is unset:
+
+```bash
+strix --target ./your-app
+```
+
+To use legacy direct-provider mode instead, set:
 
 ```bash
 export STRIX_LLM="openai/gpt-5.4"
@@ -41,6 +47,8 @@ For best results, use `openai/gpt-5.4`, `anthropic/claude-opus-4-6`, or `openai/
 ```bash
 strix --target ./your-app
 ```
+
+See [Codex and Claude Code](/integrations/coding-agents) for explicit agent selection and standalone skill/MCP installation.
 
 <Note>
 First run pulls the Docker sandbox image automatically. Results are saved to `strix_runs/<run-name>`.

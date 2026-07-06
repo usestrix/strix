@@ -1,0 +1,10 @@
+interface:
+  display_name: "Strix Security"
+  short_description: "Agent-native application security testing"
+  default_prompt: "Use $strix-security to run an authorized security assessment of this project."
+dependencies:
+  tools:
+    - type: "mcp"
+      value: "strix"
+      description: "Local Strix security sandbox, proxy, knowledge, and reporting server"
+      transport: "stdio"

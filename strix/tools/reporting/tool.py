@@ -169,6 +169,7 @@ async def _do_create(  # noqa: PLR0912
     code_locations: list[dict[str, Any]] | None,
     agent_id: str | None = None,
     agent_name: str | None = None,
+    allow_model_dedupe: bool = True,
 ) -> dict[str, Any]:
     errors: list[str] = []
     fields = {
@@ -225,8 +226,6 @@ async def _do_create(  # noqa: PLR0912
                 "warning": "Report could not be persisted - report state unavailable",
             }
 
-        from strix.report.dedupe import check_duplicate
-
         existing = report_state.get_existing_vulnerabilities()
         candidate = {
             "title": title,
@@ -239,7 +238,36 @@ async def _do_create(  # noqa: PLR0912
             "endpoint": endpoint,
             "method": method,
         }
-        dedupe = await check_duplicate(candidate, existing)
+        if allow_model_dedupe:
+            from strix.report.dedupe import check_duplicate
+
+            dedupe = await check_duplicate(candidate, existing)
+        else:
+            # MCP mode must never call a model. Exact normalized identity catches
+            # accidental retries while the host coding agent handles semantic
+            # deduplication with ``list_findings``.
+            identity = tuple(
+                str(candidate.get(field) or "").strip().casefold()
+                for field in ("title", "target", "endpoint", "method")
+            )
+            duplicate = next(
+                (
+                    report
+                    for report in existing
+                    if tuple(
+                        str(report.get(field) or "").strip().casefold()
+                        for field in ("title", "target", "endpoint", "method")
+                    )
+                    == identity
+                ),
+                None,
+            )
+            dedupe = {
+                "is_duplicate": duplicate is not None,
+                "duplicate_id": duplicate.get("id", "") if duplicate else "",
+                "confidence": 1.0,
+                "reason": "Exact normalized finding identity already exists",
+            }
         if dedupe.get("is_duplicate"):
             duplicate_id = dedupe.get("duplicate_id", "")
             duplicate_title = next(
