@@ -108,16 +108,29 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
     env_block_upper = {str(k).upper(): v for k, v in env_block.items()}
 
     nested: dict[str, dict[str, Any]] = {}
+    
+    # Pre-build a case-insensitive lookup set of all environment variable keys
+    env_keys_upper = {str(k).upper() for k in os.environ}
+
     for sub_name, sub_finfo in Settings.model_fields.items():
         sub_cls = sub_finfo.annotation
         if not (isinstance(sub_cls, type) and issubclass(sub_cls, BaseModel)):
             continue
         sub_data: dict[str, Any] = {}
         for fname, finfo in sub_cls.model_fields.items():
-            for alias in _aliases_for(finfo):
+            # Check if ANY of the aliases for this field are present in the environment (case-insensitively)
+            aliases = _aliases_for(finfo)
+            env_override_present = False
+            for alias in aliases:
+                if alias.upper() in env_keys_upper:
+                    env_override_present = True
+                    break
+            
+            if env_override_present:
+                continue  # env wins; skip JSON for this field
+
+            for alias in aliases:
                 key = alias.upper()
-                if key in os.environ:
-                    break  # env wins; skip JSON for this field
                 if key in env_block_upper:
                     sub_data[fname] = env_block_upper[key]
                     break

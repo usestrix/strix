@@ -89,6 +89,28 @@ def test_read_json_overrides_skips_keys_already_in_environ(
     assert loader._read_json_overrides(path) == {}
 
 
+def test_read_json_overrides_respects_later_alias_in_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # api_key maps to Aliases choices (LLM_API_KEY, OPENAI_API_KEY)
+    # If a later alias is in the env but an earlier alias is in the file, env should still win.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"LLM_API_KEY": "sk-file"}}), encoding="utf-8")
+    overrides = loader._read_json_overrides(path)
+    # The 'api_key' field (which uses LLM_API_KEY / OPENAI_API_KEY) should not be overridden by the file.
+    assert "llm" not in overrides or "api_key" not in overrides["llm"]
+
+
+def test_read_json_overrides_respects_case_insensitive_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("strix_llm", "from-env-lower")
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"STRIX_LLM": "from-file"}}), encoding="utf-8")
+    assert loader._read_json_overrides(path) == {}
+
+
 # --------------------------------------------------------------------------- #
 # _aliases_for
 # --------------------------------------------------------------------------- #
