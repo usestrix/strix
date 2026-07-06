@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 
-WORKFLOW = Path(".github/workflows/build-release.yml")
+WORKFLOW = Path(__file__).resolve().parent.parent / ".github/workflows/build-release.yml"
 
 
 def _matrix_entries() -> list[dict[str, str]]:
