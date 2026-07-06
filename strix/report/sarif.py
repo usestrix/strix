@@ -96,6 +96,99 @@ _SEVERITY_TO_SCORE = {
 }
 
 
+# CWE → STRIDE-leg mapping for SARIF rule tagging. Each finding's rule gets one
+# or more ``stride:<leg>`` tags (Spoofing / Tampering / Repudiation /
+# Information disclosure / Denial of service / Elevation of privilege) so
+# consumers — the GitHub code-scanning Security tab, ASPM dashboards, coverage
+# reports — can group and filter findings by threat-model leg. SARIF results
+# inherit their rule's tags via ``ruleId``, so tagging the rule is sufficient.
+#
+# Where a CWE plausibly spans multiple legs the dominant one is listed first.
+# Unmapped / no-CWE findings fall back to ``_DEFAULT_STRIDE_LEGS`` so every
+# finding carries at least one leg (no coverage gaps in downstream reports).
+_CWE_TO_STRIDE: dict[str, tuple[str, ...]] = {
+    # Spoofing — authentication / identity
+    "287": ("S",),  # Improper Authentication
+    "290": ("S",),  # Authentication Bypass by Spoofing
+    "294": ("S",),  # Authentication Bypass by Capture-replay
+    "306": ("S", "E"),  # Missing Authentication for Critical Function
+    "345": ("S", "T"),  # Insufficient Verification of Data Authenticity
+    "346": ("S",),  # Origin Validation Error
+    "352": ("T", "S"),  # Cross-Site Request Forgery
+    "384": ("S",),  # Session Fixation
+    "521": ("S",),  # Weak Password Requirements
+    "613": ("S",),  # Insufficient Session Expiration
+    "640": ("S",),  # Weak Password Recovery Mechanism
+    "259": ("S", "I"),  # Use of Hard-coded Password
+    "798": ("S", "I"),  # Use of Hard-coded Credentials
+    "1391": ("S",),  # Use of Weak Credentials
+    # Tampering — integrity
+    "20": ("T",),  # Improper Input Validation
+    "73": ("T", "I"),  # External Control of File Name or Path
+    "78": ("T", "E"),  # OS Command Injection
+    "79": ("T", "I"),  # Cross-Site Scripting
+    "89": ("T",),  # SQL Injection
+    "91": ("T",),  # XML Injection
+    "94": ("T", "E"),  # Code Injection
+    "434": ("T",),  # Unrestricted File Upload
+    "502": ("T", "E"),  # Deserialization of Untrusted Data
+    "915": ("E", "T"),  # Improperly Controlled Modification (Mass Assignment)
+    "918": ("T", "I"),  # Server-Side Request Forgery
+    "1336": ("T", "E"),  # Server-Side Template Injection
+    # Repudiation — audit / logging
+    "117": ("R",),  # Improper Output Neutralization for Logs
+    "223": ("R",),  # Omission of Security-relevant Information
+    "778": ("R",),  # Insufficient Logging
+    # Information disclosure — confidentiality
+    "200": ("I",),  # Exposure of Sensitive Information
+    "201": ("I",),  # Insertion of Sensitive Info into Sent Data
+    "209": ("I",),  # Generation of Error Message Containing Sensitive Info
+    "256": ("I",),  # Plaintext Storage of a Password
+    "311": ("I",),  # Missing Encryption of Sensitive Data
+    "319": ("I",),  # Cleartext Transmission of Sensitive Information
+    "327": ("I",),  # Use of a Broken or Risky Cryptographic Algorithm
+    "328": ("I",),  # Use of Weak Hash
+    "522": ("I",),  # Insufficiently Protected Credentials
+    "525": ("I",),  # Use of Web Browser Cache Containing Sensitive Info
+    "532": ("I",),  # Insertion of Sensitive Information into Log File
+    "538": ("I",),  # Insertion of Sensitive Info into Externally-Accessible File
+    "598": ("I",),  # Use of GET Request Method With Sensitive Query Strings
+    # Denial of service — availability
+    "400": ("D",),  # Uncontrolled Resource Consumption
+    "770": ("D",),  # Allocation of Resources Without Limits or Throttling
+    "1333": ("D",),  # Inefficient Regular Expression Complexity (ReDoS)
+    # Elevation of privilege — authorization
+    "269": ("E",),  # Improper Privilege Management
+    "284": ("E",),  # Improper Access Control
+    "285": ("E",),  # Improper Authorization
+    "639": ("E",),  # Authorization Bypass Through User-Controlled Key (IDOR/BOLA)
+    "732": ("E",),  # Incorrect Permission Assignment for Critical Resource
+    "862": ("E",),  # Missing Authorization
+    "863": ("E",),  # Incorrect Authorization
+    "1220": ("E",),  # Insufficient Granularity of Access Control
+    # Multi-leg
+    "22": ("T", "I"),  # Path Traversal — write/read arbitrary paths (T) + file disclosure (I)
+    "611": ("I", "T"),  # XML External Entity (XXE)
+}
+
+# Default for unmapped / no-CWE findings: tampering + information-disclosure is
+# the most-common shape for an unclassified bug (matches the fork's and
+# strix-triage's DEFAULT_STRIDE_LEGS convention).
+_DEFAULT_STRIDE_LEGS: tuple[str, ...] = ("T", "I")
+
+
+def _stride_legs_for_cwe(cwe: str | None) -> tuple[str, ...]:
+    """Map a CWE id (``CWE-306`` / ``306`` / ``cwe: 306``) to STRIDE legs.
+    Returns ``_DEFAULT_STRIDE_LEGS`` for no-CWE / unrecognised input so every
+    finding gets at least one leg tag."""
+    if not cwe:
+        return _DEFAULT_STRIDE_LEGS
+    digits = "".join(c for c in str(cwe) if c.isdigit())
+    if not digits:
+        return _DEFAULT_STRIDE_LEGS
+    return _CWE_TO_STRIDE.get(digits, _DEFAULT_STRIDE_LEGS)
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -863,6 +956,13 @@ def _rule_tags(rule_id: str, report: dict[str, Any]) -> list[str]:
     cve = _string_value(report.get("cve"))
     if cve and cve not in tags:
         tags.append(cve)
+    # STRIDE-leg tags from the CWE → STRIDE mapping. Always at least one (the
+    # default legs for unmapped/no-CWE findings) so downstream threat-model
+    # coverage reports have no gaps. Emitted as ``stride:S``, ``stride:T``, ...
+    for leg in _stride_legs_for_cwe(report.get("cwe")):
+        tag = f"stride:{leg}"
+        if tag not in tags:
+            tags.append(tag)
     return tags
 
 
