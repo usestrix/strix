@@ -99,7 +99,7 @@ def test_read_json_overrides_respects_later_alias_in_environ(
     path.write_text(json.dumps({"env": {"LLM_API_KEY": "sk-file"}}), encoding="utf-8")
     overrides = loader._read_json_overrides(path)
     # The 'api_key' field (which uses LLM_API_KEY / OPENAI_API_KEY) should not be overridden by the file.
-    assert "llm" not in overrides or "api_key" not in overrides["llm"]
+    assert overrides == {}
 
 
 def test_read_json_overrides_respects_case_insensitive_environ(
