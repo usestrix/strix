@@ -1,0 +1,57 @@
+---
+title: "Astraflow"
+description: "Configure Strix with Astraflow models"
+---
+
+[Astraflow](https://astraflow.ucloud-global.com) by UCloud is an OpenAI-compatible AI model aggregation platform supporting 200+ models.
+
+## Setup
+
+### Global Endpoint
+
+```bash
+export STRIX_LLM="gpt-5.4"
+export LLM_API_KEY="your-astraflow-api-key"
+export LLM_API_BASE="https://api-us-ca.umodelverse.ai/v1"
+```
+
+### China Endpoint
+
+```bash
+export STRIX_LLM="gpt-5.4"
+export LLM_API_KEY="your-astraflow-api-key"
+export LLM_API_BASE="https://api.modelverse.cn/v1"
+```
+
+## Available Models
+
+Astraflow provides access to 200+ models from multiple providers. Use standard model names:
+
+| Model | Configuration |
+|-------|---------------|
+| GPT-5.4 | `gpt-5.4` |
+| Claude Sonnet 4.6 | `claude-sonnet-4.6` |
+| Gemini 3 Pro | `gemini-3-pro-preview` |
+| GLM-4.7 | `glm-4.7` |
+| DeepSeek V3 | `deepseek-chat` |
+
+## Get API Key
+
+### Global
+
+1. Go to [astraflow.ucloud-global.com](https://astraflow.ucloud-global.com)
+2. Sign up and navigate to API Keys
+3. Create a new API key
+
+### China
+
+1. Go to [astraflow.ucloud.cn](https://astraflow.ucloud.cn)
+2. Sign up and navigate to API Keys
+3. Create a new API key
+
+## Benefits
+
+- **200+ models** — Access models from OpenAI, Anthropic, Google, Meta, DeepSeek, and more
+- **OpenAI-compatible** — Drop-in replacement for OpenAI API
+- **Global & China endpoints** — Choose the endpoint closest to your location
+- **Cost-effective** — Competitive pricing across all models
