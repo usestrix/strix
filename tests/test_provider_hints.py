@@ -11,6 +11,7 @@ VERTEX_EXTRA_NAME = "vertex"
 BEDROCK_EXTRA_NAME = "bedrock"
 INSTALL_EXTRA_COMMAND_FRAGMENT = 'pipx install "strix-agent['
 WRAPPED_VERTEX_GOOGLE_ERROR = "litellm.APIConnectionError: No module named 'google'"
+WRAPPED_BEDROCK_BOTO3_ERROR = "litellm.APIConnectionError: No module named 'boto3'"
 
 
 def test_bedrock_boto3_hint() -> None:
@@ -35,6 +36,14 @@ def test_vertex_google_hint_for_litellm_wrapped_connection_error() -> None:
     assert hint is not None
     assert INSTALL_EXTRA_COMMAND_FRAGMENT in hint
     assert VERTEX_EXTRA_NAME in hint
+
+
+def test_bedrock_boto3_hint_for_litellm_wrapped_connection_error() -> None:
+    exc = ConnectionError(WRAPPED_BEDROCK_BOTO3_ERROR)
+    hint = _provider_import_hint(exc, BEDROCK_MODEL)
+    assert hint is not None
+    assert INSTALL_EXTRA_COMMAND_FRAGMENT in hint
+    assert BEDROCK_EXTRA_NAME in hint
 
 
 def test_non_import_error_returns_none() -> None:
