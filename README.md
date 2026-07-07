@@ -181,6 +181,9 @@ strix --target api.your-app.com --instruction "Focus on business logic flaws and
 # Provide detailed instructions through file (e.g., rules of engagement, scope, exclusions)
 strix --target api.your-app.com --instruction-file ./instruction.md
 
+# Connect the sandbox to a Docker network
+strix --target https://app.internal --docker-network my-network
+
 # Force PR diff-scope against a specific base branch
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 ```

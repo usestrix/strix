@@ -63,6 +63,7 @@ async def create_or_reuse(
     *,
     image: str,
     local_sources: list[dict[str, Any]],
+    docker_network: str | None = None,
 ) -> dict[str, Any]:
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
@@ -111,11 +112,16 @@ async def create_or_reuse(
         manifest=manifest,
         exposed_ports=(_CONTAINER_CAIDO_PORT,),
         bind_mounts=bind_mounts,
+        docker_network=docker_network,
     )
 
-    caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
-    host_caido_url = f"http://{caido_endpoint.host}:{caido_endpoint.port}"
-    logger.debug("Caido host endpoint resolved: %s", host_caido_url)
+    if docker_network and docker_network.strip().lower() == "host":
+        host_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
+        logger.debug("Caido host endpoint selected for host network: %s", host_caido_url)
+    else:
+        caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
+        host_caido_url = f"http://{caido_endpoint.host}:{caido_endpoint.port}"
+        logger.debug("Caido host endpoint resolved: %s", host_caido_url)
 
     caido_client = await bootstrap_caido(
         session,

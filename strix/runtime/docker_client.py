@@ -3,8 +3,8 @@ NET_ADMIN/NET_RAW capabilities + host-gateway.
 
 The SDK's ``DockerSandboxClient._create_container`` does not expose a hook for
 extending ``create_kwargs`` before ``containers.create`` is called. We subclass
-and reimplement the method body verbatim from the SDK source, with three
-deltas:
+and reimplement the method body verbatim from the SDK source, with
+Strix-specific deltas:
 
 1. Drop the SDK's ``entrypoint=["tail"]`` override; supply ``["tail", "-f",
    "/dev/null"]`` as ``command`` instead. This lets our image's
@@ -15,6 +15,7 @@ deltas:
    other raw-socket tools).
 3. Add ``host.docker.internal`` → host-gateway to ``extra_hosts`` so the
    agent can reach host-served apps.
+4. Attach the container to a configured Docker network, if requested.
 
 Pinned to ``openai-agents==0.14.6``. Bumping the SDK requires
 re-merging the parent body. Track upstream for an injection hook.
@@ -49,6 +50,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     # Host directories to bind-mount into the container, set by the docker
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
     strix_bind_mounts: list[dict[str, Any]] = []  # overridden per-instance in backends.py
+    strix_docker_network: str | None = None  # overridden per-instance in backends.py
 
     async def _create_container(
         self,
@@ -104,6 +106,16 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             }
         # ----- END VERBATIM COPY -----
 
+        docker_network = getattr(self, "strix_docker_network", None)
+        post_create_network: str | None = None
+        if docker_network:
+            docker_network_mode = docker_network.strip().lower()
+            if docker_network_mode == "host":
+                create_kwargs["network_mode"] = "host"
+                create_kwargs.pop("ports", None)
+            elif docker_network_mode != "bridge":
+                post_create_network = docker_network
+
         # Strix injections — append, don't overwrite, so FUSE/SYS_ADMIN survives.
         cap_add = create_kwargs.setdefault("cap_add", [])
         if not isinstance(cap_add, list):
@@ -132,12 +144,20 @@ class StrixDockerSandboxClient(DockerSandboxClient):
                 )
 
         logger.debug(
-            "Creating sandbox container: image=%s caps=%s exposed_ports=%s",
+            "Creating sandbox container: image=%s caps=%s exposed_ports=%s docker_network=%s",
             image,
             cap_add,
             list(exposed_ports),
+            docker_network,
         )
         container = self.docker_client.containers.create(**create_kwargs)
+        if post_create_network:
+            try:
+                self.docker_client.networks.get(post_create_network).connect(container)
+            except Exception:
+                with contextlib.suppress(Exception):
+                    container.remove(force=True)
+                raise
         logger.info(
             "Sandbox container created: id=%s image=%s",
             container.short_id if hasattr(container, "short_id") else "?",

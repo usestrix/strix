@@ -23,6 +23,7 @@ async def _docker_backend(
     manifest: Manifest,
     exposed_ports: tuple[int, ...],
     bind_mounts: list[dict[str, Any]] | None = None,
+    docker_network: str | None = None,
 ) -> tuple[Any, Any]:
     """Bring up a session backed by the local Docker daemon.
 
@@ -41,6 +42,10 @@ async def _docker_backend(
     ``bind_mounts`` are host directories (e.g. large repos passed via
     ``--mount``) bind-mounted read-only; unlike manifest entries they are
     applied by Docker at container-create time, not by ``start()``.
+
+    ``docker_network`` is passed through to Docker. ``host`` changes the
+    container's network mode; custom networks are attached while preserving the
+    default bridge network used for Strix's control port.
     """
     import docker
     from agents.sandbox.sandboxes.docker import DockerSandboxClientOptions
@@ -49,6 +54,7 @@ async def _docker_backend(
 
     client = StrixDockerSandboxClient(docker.from_env())
     client.strix_bind_mounts = bind_mounts or []
+    client.strix_docker_network = docker_network
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)
     await session.start()

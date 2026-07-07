@@ -33,6 +33,13 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   </Note>
 </ParamField>
 
+<ParamField path="--docker-network" type="string">
+  Docker network to connect the container to. Accepts a network name such as `my-network`
+  or a built-in mode such as `host` or `bridge`.
+
+  Use this when the target is only reachable through a specific Docker network.
+</ParamField>
+
 <ParamField path="--instruction" type="string">
   Custom instructions for the scan. Use for credentials, focus areas, or specific testing approaches.
 </ParamField>
@@ -110,6 +117,9 @@ strix --target-list ./targets.txt
 
 # Large local repository — bind-mount instead of copying it in
 strix --mount ./huge-monorepo
+
+# Connect the sandbox to a Docker network
+strix --target https://app.internal --docker-network my-network
 ```
 
 ## Exit Codes
