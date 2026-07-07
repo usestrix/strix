@@ -14,6 +14,10 @@ from strix.core.paths import runtime_state_dir
 from strix.interface.tui.history import load_session_history
 
 
+SETUP_SCRIPT_AGENT_ID = "setup-script"
+_SETUP_SCRIPT_CALL_ID = "setup-script"
+
+
 class TuiLiveView:
     def __init__(self) -> None:
         self.agents: dict[str, dict[str, Any]] = {}
@@ -94,6 +98,48 @@ class TuiLiveView:
                 "role": "user",
                 "content": content,
                 "metadata": {"source": "tui_user"},
+            },
+        )
+
+    def record_setup_script_event(self, data: dict[str, Any]) -> None:
+        status = str(data.get("status") or "running")
+        agent_status = "failed" if status in {"failed", "error"} else status
+        self.upsert_agent(
+            SETUP_SCRIPT_AGENT_ID,
+            name="Setup Script",
+            parent_id=None,
+            status=agent_status,
+        )
+        self.agents[SETUP_SCRIPT_AGENT_ID]["kind"] = "setup_script"
+
+        self._record_tool_call_data(
+            SETUP_SCRIPT_AGENT_ID,
+            {
+                "call_id": _SETUP_SCRIPT_CALL_ID,
+                "tool_name": "setup_script",
+                "args": {
+                    "script": data.get("source_path"),
+                    "container_path": data.get("container_path"),
+                    "command": data.get("command"),
+                },
+            },
+        )
+
+        if status not in {"completed", "failed", "error"}:
+            return
+
+        self._record_tool_output_data(
+            SETUP_SCRIPT_AGENT_ID,
+            {
+                "call_id": _SETUP_SCRIPT_CALL_ID,
+                "tool_name": "setup_script",
+                "output": {
+                    "success": status == "completed",
+                    "stdout": data.get("stdout", ""),
+                    "stderr": data.get("stderr", ""),
+                    "exit_code": data.get("exit_code"),
+                    "duration_seconds": data.get("duration_seconds"),
+                },
             },
         )
 

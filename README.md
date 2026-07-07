@@ -181,6 +181,9 @@ strix --target api.your-app.com --instruction "Focus on business logic flaws and
 # Provide detailed instructions through file (e.g., rules of engagement, scope, exclusions)
 strix --target api.your-app.com --instruction-file ./instruction.md
 
+# Prepare the sandbox before scanning (install dependencies, seed data, connect VPN, etc.)
+strix --target ./app-directory --setup-script ./scripts/prepare-sandbox.sh
+
 # Force PR diff-scope against a specific base branch
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 ```

@@ -64,6 +64,26 @@ def _parse_sdk_shell_result(result: Any) -> dict[str, Any]:
     return parsed
 
 
+def _parse_setup_script_result(result: Any) -> dict[str, Any]:
+    if not isinstance(result, dict):
+        return _parse_sdk_shell_result(result)
+
+    parts: list[str] = []
+    stdout = str(result.get("stdout") or "").strip()
+    stderr = str(result.get("stderr") or "").strip()
+    if stdout:
+        parts.append(f"stdout:\n{stdout}")
+    if stderr:
+        parts.append(f"stderr:\n{stderr}")
+    if not parts:
+        parts.append("(no output)")
+
+    parsed: dict[str, Any] = {"content": "\n\n".join(parts)}
+    if result.get("exit_code") is not None:
+        parsed["exit_code"] = result.get("exit_code")
+    return parsed
+
+
 def _truncate_line(line: str) -> str:
     if len(line) > MAX_LINE_LENGTH:
         return line[: MAX_LINE_LENGTH - 3] + "..."
@@ -229,6 +249,42 @@ class ExecCommandRenderer(BaseToolRenderer):
             prompt="$",
             prompt_style="#22c55e",
             command=cmd,
+            parsed_result=parsed,
+            tool_status=status,
+            meta=meta,
+        )
+
+        return Static(content, classes=cls.get_css_classes(status))
+
+
+@register_tool_renderer
+class SetupScriptRenderer(BaseToolRenderer):
+    tool_name: ClassVar[str] = "setup_script"
+    css_classes: ClassVar[list[str]] = ["tool-call", "terminal-tool", "setup-script-tool"]
+
+    @classmethod
+    def render(cls, tool_data: dict[str, Any]) -> Static:
+        args = tool_data.get("args", {})
+        status = tool_data.get("status", "unknown")
+        result = tool_data.get("result")
+
+        command = str(args.get("command") or "bash /tmp/strix-setup-script.sh")
+        script = args.get("script")
+        duration = result.get("duration_seconds") if isinstance(result, dict) else None
+
+        meta_parts: list[str] = []
+        if script:
+            meta_parts.append(f"script:{script}")
+        if isinstance(duration, int | float):
+            meta_parts.append(f"{duration:.1f}s")
+        meta = ", ".join(meta_parts) if meta_parts else None
+
+        parsed = _parse_setup_script_result(result) if result is not None else None
+
+        content = _build_terminal_content(
+            prompt="setup",
+            prompt_style="#22c55e",
+            command=command,
             parsed_result=parsed,
             tool_status=status,
             meta=meta,

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
+import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +18,7 @@ from strix.runtime.caido_bootstrap import bootstrap_caido
 
 
 logger = logging.getLogger(__name__)
+SetupScriptEventSink = Callable[[dict[str, Any]], None]
 
 
 # In-container Caido sidecar port (matches the image's caido-cli bind).
@@ -25,6 +29,8 @@ _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 
 # Manifest root inside the container; entry keys hang off this path.
 _WORKSPACE_ROOT = "/workspace"
+_SETUP_SCRIPT_CONTAINER_PATH = "/tmp/strix-setup-script.sh"
+_SETUP_SCRIPT_TIMEOUT_SECONDS = 3600
 
 
 def build_session_entries(
@@ -58,11 +64,116 @@ def build_session_entries(
     return entries, bind_mounts
 
 
+def build_setup_script_mount(setup_script: str | None) -> dict[str, Any] | None:
+    """Return the Docker bind-mount spec for a host setup script, if configured."""
+    if not setup_script:
+        return None
+
+    resolved = Path(setup_script).expanduser().resolve()
+    if not resolved.is_file():
+        raise FileNotFoundError(
+            f"Setup script does not exist or is not a file: {setup_script}"
+        )
+
+    return {
+        "source": str(resolved),
+        "target": _SETUP_SCRIPT_CONTAINER_PATH,
+        "read_only": True,
+    }
+
+
+def _exec_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def _emit_setup_script_event(
+    event_sink: SetupScriptEventSink | None,
+    data: dict[str, Any],
+) -> None:
+    if event_sink is None:
+        return
+    try:
+        event_sink(data)
+    except Exception:
+        logger.exception("Setup script event sink failed")
+
+
+async def execute_setup_script(
+    session: Any,
+    *,
+    source_path: str,
+    event_sink: SetupScriptEventSink | None = None,
+) -> None:
+    """Run the configured setup script inside the already-started sandbox."""
+    logger.info("Running setup script inside sandbox: %s", _SETUP_SCRIPT_CONTAINER_PATH)
+    command = f"bash {_SETUP_SCRIPT_CONTAINER_PATH}"
+    started = time.perf_counter()
+    _emit_setup_script_event(
+        event_sink,
+        {
+            "status": "running",
+            "source_path": source_path,
+            "container_path": _SETUP_SCRIPT_CONTAINER_PATH,
+            "command": command,
+        },
+    )
+    result = await session.exec(
+        "bash",
+        _SETUP_SCRIPT_CONTAINER_PATH,
+        timeout=_SETUP_SCRIPT_TIMEOUT_SECONDS,
+    )
+    elapsed = time.perf_counter() - started
+    stdout = _exec_text(getattr(result, "stdout", "")).strip()
+    stderr = _exec_text(getattr(result, "stderr", "")).strip()
+    exit_code = getattr(result, "exit_code", "unknown")
+    if result.ok():
+        _emit_setup_script_event(
+            event_sink,
+            {
+                "status": "completed",
+                "source_path": source_path,
+                "container_path": _SETUP_SCRIPT_CONTAINER_PATH,
+                "command": command,
+                "stdout": stdout,
+                "stderr": stderr,
+                "exit_code": exit_code,
+                "duration_seconds": elapsed,
+            },
+        )
+        if stdout:
+            logger.info("Setup script completed successfully: %s", stdout[-1000:])
+        else:
+            logger.info("Setup script completed successfully")
+        return
+
+    _emit_setup_script_event(
+        event_sink,
+        {
+            "status": "failed",
+            "source_path": source_path,
+            "container_path": _SETUP_SCRIPT_CONTAINER_PATH,
+            "command": command,
+            "stdout": stdout,
+            "stderr": stderr,
+            "exit_code": exit_code,
+            "duration_seconds": elapsed,
+        },
+    )
+    raise RuntimeError(
+        "Setup script failed inside sandbox "
+        f"(exit {exit_code}). stdout: {stdout[-2000:]!r} stderr: {stderr[-2000:]!r}"
+    )
+
+
 async def create_or_reuse(
     scan_id: str,
     *,
     image: str,
     local_sources: list[dict[str, Any]],
+    setup_script: str | None = None,
+    setup_script_event_sink: SetupScriptEventSink | None = None,
 ) -> dict[str, Any]:
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
@@ -76,6 +187,9 @@ async def create_or_reuse(
         return cached
 
     entries, bind_mounts = build_session_entries(local_sources)
+    setup_script_mount = build_setup_script_mount(setup_script)
+    if setup_script_mount is not None:
+        bind_mounts.append(setup_script_mount)
 
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
@@ -122,6 +236,13 @@ async def create_or_reuse(
         host_url=host_caido_url,
         container_url=container_caido_url,
     )
+
+    if setup_script_mount is not None:
+        await execute_setup_script(
+            session,
+            source_path=str(setup_script_mount["source"]),
+            event_sink=setup_script_event_sink,
+        )
 
     bundle = {
         "client": client,

@@ -386,6 +386,7 @@ VulnerabilityDetailScreen {
 
 .browser-tool,
 .terminal-tool,
+.setup-script-tool,
 .agents-graph-tool,
 .file-edit-tool,
 .proxy-tool,
@@ -410,6 +411,8 @@ VulnerabilityDetailScreen {
 .browser-tool.status-running,
 .terminal-tool.status-completed,
 .terminal-tool.status-running,
+.setup-script-tool.status-completed,
+.setup-script-tool.status-running,
 .agents-graph-tool.status-completed,
 .agents-graph-tool.status-running,
 .file-edit-tool.status-completed,

@@ -745,6 +745,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "scope_mode": getattr(args, "scope_mode", "auto"),
             "diff_base": getattr(args, "diff_base", None),
             "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
+            "setup_script": getattr(args, "setup_script", None),
         }
 
     def _setup_cleanup_handlers(self) -> None:
@@ -1127,6 +1128,19 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "completed": ("Agent completed", ""),
         }
 
+        if agent_data.get("kind") == "setup_script":
+            if status == "running":
+                text = self._get_animated_verb_text(agent_id, "Running setup script")
+                return (text, keymap_styled([("ctrl-q", "quit")]), True)
+            if status == "completed":
+                text = Text()
+                text.append("Setup script completed")
+                return (text, Text(), False)
+            if status == "failed":
+                text = Text()
+                text.append("Setup script failed", style="red")
+                return (text, Text(), False)
+
         if status in simple_statuses:
             msg, _ = simple_statuses[status]
             text = Text()
@@ -1372,6 +1386,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                                 interactive=True,
                                 max_budget_usd=getattr(self.args, "max_budget_usd", None),
                                 event_sink=self._capture_sdk_event,
+                                setup_script_event_sink=self._capture_setup_script_event,
                             ),
                         )
 
@@ -1414,6 +1429,18 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _record_sdk_event(self, agent_id: str, event: Any) -> None:
         self.live_view.ingest_sdk_event(agent_id, event)
+
+    def _capture_setup_script_event(self, event: dict[str, Any]) -> None:
+        try:
+            self.call_from_thread(self._record_setup_script_event, event)
+        except RuntimeError:
+            self._record_setup_script_event(event)
+
+    def _record_setup_script_event(self, event: dict[str, Any]) -> None:
+        self.live_view.record_setup_script_event(event)
+        self._displayed_events.clear()
+        self._update_chat_view()
+        self._update_agent_status_display()
 
     def _add_agent_node(self, agent_data: dict[str, Any]) -> None:
         if len(self.screen_stack) > 1 or self.show_splash:
@@ -1685,6 +1712,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if self.selected_agent_id in self.live_view.agents:
                 agent_data = self.live_view.agents[self.selected_agent_id]
                 agent_name = agent_data.get("name", "Unknown Agent")
+                if agent_data.get("kind") == "setup_script":
+                    return agent_name, False
 
                 agent_status = agent_data.get("status", "running")
                 if agent_status not in ["running", "waiting"]:

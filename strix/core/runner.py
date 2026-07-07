@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 StreamEventSink = Callable[[str, Any], None]
+SetupScriptEventSink = Callable[[dict[str, Any]], None]
 
 
 async def run_strix_scan(
@@ -64,6 +65,7 @@ async def run_strix_scan(
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
+    setup_script_event_sink: SetupScriptEventSink | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox."""
     if scan_id is None:
@@ -144,6 +146,8 @@ async def run_strix_scan(
         scan_id,
         image=image,
         local_sources=local_sources or [],
+        setup_script=scan_config.get("setup_script"),
+        setup_script_event_sink=setup_script_event_sink,
     )
     logger.info("Sandbox ready for scan %s", scan_id)
 
