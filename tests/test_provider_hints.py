@@ -5,20 +5,36 @@ from __future__ import annotations
 from strix.interface.main import _provider_import_hint
 
 
+VERTEX_MODEL = "vertex_ai/gemini-3-pro-preview"
+BEDROCK_MODEL = "bedrock/anthropic.claude-4-5-sonnet"
+VERTEX_EXTRA_NAME = "vertex"
+BEDROCK_EXTRA_NAME = "bedrock"
+INSTALL_EXTRA_COMMAND_FRAGMENT = 'pipx install "strix-agent['
+WRAPPED_VERTEX_GOOGLE_ERROR = "litellm.APIConnectionError: No module named 'google'"
+
+
 def test_bedrock_boto3_hint() -> None:
     exc = ModuleNotFoundError("No module named 'boto3'")
-    hint = _provider_import_hint(exc, "bedrock/anthropic.claude-4-5-sonnet")
+    hint = _provider_import_hint(exc, BEDROCK_MODEL)
     assert hint is not None
-    assert 'pipx install "strix-agent[' in hint
-    assert "bedrock" in hint
+    assert INSTALL_EXTRA_COMMAND_FRAGMENT in hint
+    assert BEDROCK_EXTRA_NAME in hint
 
 
 def test_vertex_google_hint() -> None:
     exc = ImportError("No module named 'google'")
-    hint = _provider_import_hint(exc, "vertex_ai/gemini-3-pro-preview")
+    hint = _provider_import_hint(exc, VERTEX_MODEL)
     assert hint is not None
-    assert 'pipx install "strix-agent[' in hint
-    assert "vertex" in hint
+    assert INSTALL_EXTRA_COMMAND_FRAGMENT in hint
+    assert VERTEX_EXTRA_NAME in hint
+
+
+def test_vertex_google_hint_for_litellm_wrapped_connection_error() -> None:
+    exc = ConnectionError(WRAPPED_VERTEX_GOOGLE_ERROR)
+    hint = _provider_import_hint(exc, VERTEX_MODEL)
+    assert hint is not None
+    assert INSTALL_EXTRA_COMMAND_FRAGMENT in hint
+    assert VERTEX_EXTRA_NAME in hint
 
 
 def test_non_import_error_returns_none() -> None:

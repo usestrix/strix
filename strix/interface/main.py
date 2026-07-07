@@ -56,6 +56,16 @@ from strix.telemetry.logging import configure_dependency_logging
 
 
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
+BEDROCK_MODEL_PREFIX = "bedrock/"
+BEDROCK_MISSING_MODULE_ERROR = "No module named 'boto3'"
+BEDROCK_EXTRA_HINT = (
+    'Bedrock support is optional. Install it with: pipx install "strix-agent[bedrock]"'
+)
+VERTEX_MODEL_MARKER = "vertex"
+VERTEX_MISSING_MODULE_ERROR = "No module named 'google'"
+VERTEX_EXTRA_HINT = (
+    'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
+)
 
 
 import logging  # noqa: E402
@@ -214,23 +224,35 @@ def check_docker_installed() -> None:
     logger.debug("Docker CLI present")
 
 
+def _exception_messages(exc: BaseException) -> tuple[str, ...]:
+    messages = [str(exc)]
+    if exc.__cause__ is not None:
+        messages.append(str(exc.__cause__))
+    if exc.__context__ is not None:
+        messages.append(str(exc.__context__))
+    return tuple(messages)
+
+
 def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     """Return an install hint when *exc* is a missing provider dependency.
 
     Bedrock and Vertex AI ship as optional extras: Bedrock needs ``boto3`` and
-    Vertex AI needs ``google-auth``. When either is absent, litellm raises an
-    ``ImportError``/``ModuleNotFoundError`` naming the missing package. Map that
-    back to the matching extra so the user knows what to install. Returns
-    ``None`` for any unrelated error.
+    Vertex AI needs ``google-auth``. When either is absent, litellm may raise an
+    ``ImportError``/``ModuleNotFoundError`` directly or wrap it in a connection
+    error. Map the missing module back to the matching extra so the user knows
+    what to install. Returns ``None`` for any unrelated error.
     """
-    if not isinstance(exc, ImportError):
-        return None
-    message = str(exc)
     model_name = model.lower()
-    if "boto3" in message and model_name.startswith("bedrock/"):
-        return 'Bedrock support is optional. Install it with: pipx install "strix-agent[bedrock]"'
-    if "google" in message and "vertex" in model_name:
-        return 'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
+    messages = _exception_messages(exc)
+    if any(
+        BEDROCK_MISSING_MODULE_ERROR in message for message in messages
+    ) and model_name.startswith(BEDROCK_MODEL_PREFIX):
+        return BEDROCK_EXTRA_HINT
+    if (
+        any(VERTEX_MISSING_MODULE_ERROR in message for message in messages)
+        and VERTEX_MODEL_MARKER in model_name
+    ):
+        return VERTEX_EXTRA_HINT
     return None
 
 
