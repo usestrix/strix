@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import subprocess
@@ -128,6 +129,12 @@ class ReportState:
         }
         self._run_dir: Path | None = None
         self._saved_vuln_ids: set[str] = set()
+
+        # Serializes the read-existing / check-duplicate / write sequence in
+        # `create_vulnerability_report` so concurrent child agents (each running
+        # as an asyncio task) can't both pass the duplicate check against the
+        # same stale snapshot and write the same vulnerability twice.
+        self.dedupe_lock = asyncio.Lock()
 
         self.caido_url: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
