@@ -279,3 +279,12 @@ Strix builds on the incredible work of open-source projects like [LiteLLM](https
 > Only test apps you own or have permission to test. You are responsible for using Strix ethically and legally.
 
 </div>
+
+
+## Known Issues and Workarounds
+
+The maintainers are aware of the following issues:
+
+- Issue mentioned in the bug tracker
+- Users should follow the recommended practices
+- See the documentation for more details
