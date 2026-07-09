@@ -211,6 +211,9 @@ ignore = [
 # Backend factories import their backend's deps lazily so deployments
 # that pick a different backend don't need every backend's libs installed.
 "strix/runtime/backends.py" = ["PLC0415"]
+# CLI auth subcommands print to stdout by design; URLs are fixed
+# https app/API endpoints (or user-configured STRIX_APP_URL).
+"strix/interface/auth.py" = ["T201", "S310"]
 "strix/runtime/docker_client.py" = [
     "TC002",  # Manifest, Container imported for annotations
     "TC003",  # uuid imported for annotation

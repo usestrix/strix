@@ -28,6 +28,7 @@ from strix.config.models import (
     is_known_openai_bare_model,
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.interface.auth import dispatch_auth_command
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
 from strix.interface.utils import (
@@ -379,6 +380,12 @@ Examples:
   # Custom instructions (from file)
   strix --target example.com --instruction-file ./instructions.txt
   strix --target https://app.com --instruction-file /path/to/detailed_instructions.md
+
+Commands:
+  strix login              Authenticate with Strix Cloud (browser-based)
+  strix login --device     Authenticate from a headless/SSH machine
+  strix logout             Remove saved Strix Cloud credentials
+  strix whoami             Show the current Strix Cloud login
         """,
     )
 
@@ -783,6 +790,10 @@ def pull_docker_image() -> None:
 
 
 def main() -> None:
+    auth_exit_code = dispatch_auth_command(sys.argv[1:])
+    if auth_exit_code is not None:
+        sys.exit(auth_exit_code)
+
     configure_dependency_logging()
 
     if sys.platform == "win32":
