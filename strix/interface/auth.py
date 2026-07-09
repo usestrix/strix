@@ -131,14 +131,12 @@ class _CallbackServer(http.server.HTTPServer):
         self.done = threading.Event()
 
 
-def _login_loopback() -> int:
+def _login_loopback(server: _CallbackServer) -> int:
     verifier = secrets.token_urlsafe(64)
     challenge = (
         base64.urlsafe_b64encode(hashlib.sha256(verifier.encode()).digest()).rstrip(b"=").decode()
     )
-    state = secrets.token_urlsafe(32)
-
-    server = _CallbackServer(state)
+    state = server.expected_state
     port = server.server_address[1]
     redirect_uri = f"http://127.0.0.1:{port}{CALLBACK_PATH}"
 
@@ -181,6 +179,7 @@ def _login_loopback() -> int:
             "grant_type": "authorization_code",
             "code": result["code"],
             "code_verifier": verifier,
+            "redirect_uri": redirect_uri,
         },
     )
     if status != 200 or not body.get("token"):
@@ -270,13 +269,14 @@ def run_login(argv: list[str]) -> int:
     if args.device:
         return _login_device()
     try:
-        return _login_loopback()
+        server = _CallbackServer(secrets.token_urlsafe(32))
     except OSError as e:
         print(
             f"Could not start local callback server ({e}); falling back to device-code flow.",
             file=sys.stderr,
         )
         return _login_device()
+    return _login_loopback(server)
 
 
 def run_logout(argv: list[str]) -> int:
