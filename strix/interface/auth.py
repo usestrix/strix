@@ -309,7 +309,7 @@ def run_whoami(argv: list[str]) -> int:
         with _urlopen(request, timeout=15) as response:
             valid = response.status == 200
     except urllib.error.HTTPError as e:
-        valid = e.code not in (401, 403)
+        valid = e.code != 401
     except urllib.error.URLError:
         valid = None  # network error — can't tell
 
