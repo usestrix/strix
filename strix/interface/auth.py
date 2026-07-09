@@ -212,8 +212,11 @@ def _login_device() -> int:
     if not (user_code and verification_uri and device_code):
         print("Device authorization failed: malformed server response.", file=sys.stderr)
         return 1
-    interval = max(int(body.get("interval", 5)), 1)
-    expires_in = int(body.get("expires_in", 600))
+    try:
+        interval = max(int(body.get("interval", 5)), 1)
+        expires_in = int(body.get("expires_in", 600))
+    except (TypeError, ValueError):
+        interval, expires_in = 5, 600
 
     print(f"\nVisit {verification_uri} and enter this code:\n\n  {user_code}\n")
     webbrowser.open(body.get("verification_uri_complete", verification_uri))
@@ -291,7 +294,11 @@ def run_logout(argv: list[str]) -> int:
         prog="strix logout", description="Remove saved Strix Cloud credentials."
     ).parse_args(argv)
     if CREDENTIALS_PATH.exists():
-        CREDENTIALS_PATH.unlink()
+        try:
+            CREDENTIALS_PATH.unlink()
+        except OSError as e:
+            print(f"Failed to remove credentials: {e}", file=sys.stderr)
+            return 1
         print("Logged out. Credentials removed.")
     else:
         print("No saved credentials found.")
