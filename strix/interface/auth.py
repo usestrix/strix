@@ -67,7 +67,13 @@ def _post_json(url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     )
     try:
         with _urlopen(request, timeout=30) as response:
-            return response.status, json.loads(response.read().decode() or "{}")
+            status = response.status
+            raw = response.read()
+        try:
+            body = json.loads(raw.decode() or "{}")
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            body = {}
+        return status, body if isinstance(body, dict) else {}
     except urllib.error.HTTPError as e:
         try:
             body = json.loads(e.read().decode() or "{}")
