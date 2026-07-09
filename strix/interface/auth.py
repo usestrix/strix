@@ -87,7 +87,13 @@ def load_credentials() -> dict[str, Any] | None:
 
 def save_credentials(credentials: dict[str, Any]) -> None:
     CREDENTIALS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    CREDENTIALS_PATH.write_text(json.dumps(credentials, indent=2) + "\n", encoding="utf-8")
+    fd = os.open(
+        CREDENTIALS_PATH,
+        os.O_WRONLY | os.O_CREAT | os.O_TRUNC,
+        stat.S_IRUSR | stat.S_IWUSR,
+    )
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(credentials, indent=2) + "\n")
     CREDENTIALS_PATH.chmod(stat.S_IRUSR | stat.S_IWUSR)
 
 
@@ -141,6 +147,7 @@ def _login_loopback() -> int:
             "redirect_uri": redirect_uri,
             "state": state,
             "code_challenge": challenge,
+            "code_challenge_method": "S256",
             "device": socket.gethostname()[:100],
         }
     )
@@ -193,9 +200,12 @@ def _login_device() -> int:
         print(f"Failed to start device authorization: {detail}", file=sys.stderr)
         return 1
 
-    user_code = body["user_code"]
-    verification_uri = body["verification_uri"]
-    device_code = body["device_code"]
+    user_code = body.get("user_code")
+    verification_uri = body.get("verification_uri")
+    device_code = body.get("device_code")
+    if not (user_code and verification_uri and device_code):
+        print("Device authorization failed: malformed server response.", file=sys.stderr)
+        return 1
     interval = max(int(body.get("interval", 5)), 1)
     expires_in = int(body.get("expires_in", 600))
 
