@@ -40,6 +40,7 @@ from docker import errors as docker_errors  # type: ignore[import-untyped, unuse
 from docker.models.containers import Container  # type: ignore[import-untyped, unused-ignore]
 from docker.types import Mount as DockerSDKMount  # type: ignore[import-untyped, unused-ignore]
 from docker.utils import parse_repository_tag  # type: ignore[import-untyped, unused-ignore]
+from requests.exceptions import RequestException
 
 
 logger = logging.getLogger(__name__)
@@ -148,6 +149,15 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     async def delete(self, session: SandboxSession) -> SandboxSession:
         container_id = getattr(getattr(session._inner, "state", None), "container_id", None)
         if container_id:
-            with contextlib.suppress(docker_errors.NotFound, docker_errors.APIError):
+            # Best-effort kill: NotFound/APIError cover a gone or unhappy
+            # container. RequestException covers a torn-down daemon socket —
+            # containers.get() -> inspect_container raises requests'
+            # ConnectionError, which is a sibling of docker.errors.APIError
+            # under requests.RequestException (not a subclass), so it escapes
+            # an APIError-only suppress and surfaces a full traceback even
+            # though this teardown is meant to be best-effort.
+            with contextlib.suppress(
+                docker_errors.NotFound, docker_errors.APIError, RequestException
+            ):
                 self.docker_client.containers.get(container_id).kill()
         return await super().delete(session)
