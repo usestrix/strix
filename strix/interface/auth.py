@@ -74,6 +74,13 @@ def _post_json(url: str, payload: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         except (json.JSONDecodeError, UnicodeDecodeError):
             body = {}
         return e.code, body
+    except urllib.error.URLError as e:
+        return 0, {"error": "network_error", "error_description": f"Network error: {e.reason}"}
+    except TimeoutError:
+        return 0, {
+            "error": "network_error",
+            "error_description": "Network error: request timed out",
+        }
 
 
 def load_credentials() -> dict[str, Any] | None:
@@ -195,7 +202,7 @@ def _login_device() -> int:
         f"{_api_url()}/auth/cli/device", {"device_name": socket.gethostname()[:100]}
     )
     if status != 201:
-        detail = body.get("detail") or f"HTTP {status}"
+        detail = body.get("detail") or body.get("error_description") or f"HTTP {status}"
         print(f"Failed to start device authorization: {detail}", file=sys.stderr)
         return 1
 
