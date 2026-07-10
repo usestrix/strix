@@ -212,6 +212,40 @@ query IDOR {
 9. Use timing/size/ETag differentials for blind confirmation when content is masked
 10. Prove impact with precise before/after diffs and role-separated evidence
 
+## Harvesting Unguessable IDs
+
+When an object reference is a UUID/GUID or opaque token that can't be enumerated, the attack becomes *find the value*, then swap it. Leak-then-reuse beats brute force. Sources:
+
+- **Archives / passive URL sets** — Wayback CDX (`web.archive.org/cdx/search/cdx?url=*.target.com/*&fl=original&collapse=urlkey`), AlienVault OTX url_list, URLScan search API, Common Crawl, VirusTotal domain report; aggregate with `waymore`/`waybackurls`/`gau`, then regex out UUIDs
+- **Code / search** — GitHub (hardcoded IDs in requests/scripts), Google-indexed and cached pages
+- **Request-side leaks** — `Referer` header forwarding an ID to third parties, browser history, HTTP/proxy/VPN/ISP logs
+- **Predictability flaws** — "random" IDs built from `timestamp + machineID` (UUIDv1/ULID guessable within a window); leak an old UUID via archives, then brute sequentially around it
+- **Fixed/default UUIDs** — admin/system rows on `00000000-0000-0000-0000-000000000000`, `11111111-...`
+- **Other primitives** — clickjacking to lift an ID from the victim's context; a read-only/low-priv user who can *view* IDs they can't act on
+
+## 403 / 401 Bypass
+
+A `403`/`401` is often the only thing between you and the IDOR — treat it as a filter to defeat, not a dead end. And never trust the status: a `403` response can still perform the action (blind IDOR / side effect) — re-check state.
+
+**Path/endpoint rediscovery** — the blocked path may be reachable by another route: fuzz siblings (`dirsearch`/content discovery), and pull historical paths from Wayback that may bypass a newer ACL.
+
+**Auth-bypass headers** — many gateways/reverse proxies trust a forwarded header for source IP or the internal URL. Add one (value `127.0.0.1`, or the internal path) to spoof a trusted origin:
+```
+X-Original-URL: /admin        X-Rewrite-URL: /admin      X-Forwarded-For: 127.0.0.1
+X-Custom-IP-Authorization: 127.0.0.1   X-Forwarded-Host / X-Host / X-Real-IP / X-Originating-IP
+X-Client-IP · X-Remote-IP · X-Remote-Addr · Client-IP · True-Client-IP · Base-Url · Referer
+```
+(`X-Original-URL`/`X-Rewrite-URL` against IIS/ASP.NET is especially high-yield — the app routes on the header *after* the front-end ACL matched the original path.)
+
+**URL-mutation payloads** — front-end and back-end normalize the path differently; mutate it so the proxy sees an allowed path and the app sees the forbidden one. Technique classes (apply to `/admin`):
+- Trailing tricks: `/admin/`, `/admin/.`, `/admin//`, `/admin/./`, `/./admin/..`, `/admin%20`, `/admin%09`, `/admin?`, `/admin#`, `/admin%00`
+- Semicolon/param-path: `/admin;/`, `/admin/;/`, `/admin/;foo=bar`
+- Encoded traversal & separators: `/%2e/admin`, `/admin%2f`, `%2f%2f`, `/admin/..;/`, `/..%2f..%2fadmin`, double-encoding (`%252e`, `%252f`)
+- Case & extension: `/ADMIN`, `/Admin`, append `.json`/`.html`/`;.css` to hit a cache/route differential
+- Method/version swaps: `GET`→`POST`/`PUT`/`HEAD`, `X-HTTP-Method-Override`, older API versions of the same endpoint
+
+Automate the sweep with `bypass-403` / `4-ZERO-3` / `B1pass3r`, then confirm the winning mutation by hand.
+
 ## Summary
 
 Authorization must bind subject, action, and specific object on every request, regardless of identifier opacity or transport. If the binding is missing anywhere, the system is vulnerable.
