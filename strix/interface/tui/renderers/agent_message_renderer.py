@@ -104,7 +104,7 @@ def _apply_markdown_styles(text: str) -> Text:  # noqa: PLR0912
             result.append_text(_process_inline_formatting(line[2:]))
         elif len(line) > 2 and line[0].isdigit() and line[1:3] in (". ", ") "):
             result.append(line[0] + ". ", style="#22c55e")
-            result.append_text(_process_inline_formatting(line[2:]))
+            result.append_text(_process_inline_formatting(line[3:]))
         elif line.strip() in ("---", "***", "___"):
             result.append("─" * 40, style="#22c55e")
         else:
