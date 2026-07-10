@@ -77,7 +77,21 @@ _REQUIRES_QUERY: frozenset[str] = frozenset(
 
 
 def _kb_home() -> Path:
-    return Path(os.path.expanduser(os.environ.get("H1_KB_HOME", _DEFAULT_H1_KB_HOME)))
+    return Path(os.environ.get("H1_KB_HOME", _DEFAULT_H1_KB_HOME)).expanduser()
+
+
+def _plan_args(tech: str, feature: str, target: str, limit: int) -> list[str]:
+    if not tech.strip() and not feature.strip():
+        raise ValueError("mode 'plan' requires at least one of 'tech' or 'feature'")
+    args = ["plan"]
+    if tech.strip():
+        args += ["--tech", tech]
+    if feature.strip():
+        args += ["--feature", feature]
+    if target.strip():
+        args += ["--target", target]
+    args += ["--top", str(limit)]
+    return args
 
 
 def _build_args(
@@ -99,43 +113,34 @@ def _build_args(
         raise ValueError(
             f"unknown mode {mode!r}. Valid modes: {', '.join(sorted(_ALLOWED_MODES))}"
         )
-
     if mode in _REQUIRES_QUERY and not query.strip():
         raise ValueError(f"mode {mode!r} requires a non-empty 'query'")
 
     if mode == "plan":
-        if not tech.strip() and not feature.strip():
-            raise ValueError("mode 'plan' requires at least one of 'tech' or 'feature'")
-        args = ["plan"]
-        if tech.strip():
-            args += ["--tech", tech]
-        if feature.strip():
-            args += ["--feature", feature]
-        if target.strip():
-            args += ["--target", target]
-        args += ["--top", str(limit)]
-        return args
-
+        return _plan_args(tech, feature, target, limit)
     if mode == "show":
         if report_id is None:
             raise ValueError("mode 'show' requires 'report_id'")
         return ["show", str(report_id)]
 
-    if mode in ("search", "class"):
-        return [mode, query, "--limit", str(limit)]
-
-    if mode == "programs":
-        return ["programs", "--limit", str(limit)]
-
-    if mode in ("playbook", "profile", "feature", "tech", "assets"):
-        return [mode, query]
-
-    if mode == "analysis":
-        # optional name; h1_query.py defaults to the README synthesis
-        return ["analysis", query] if query.strip() else ["analysis"]
-
-    # chains, recon, classes — no extra args
-    return [mode]
+    # Remaining modes map to fixed argv shapes. ``analysis`` takes an optional
+    # name (h1_query.py defaults to the README synthesis); chains/recon/classes
+    # take no extra args.
+    per_mode: dict[str, list[str]] = {
+        "search": [mode, query, "--limit", str(limit)],
+        "class": [mode, query, "--limit", str(limit)],
+        "programs": ["programs", "--limit", str(limit)],
+        "playbook": [mode, query],
+        "profile": [mode, query],
+        "feature": [mode, query],
+        "tech": [mode, query],
+        "assets": [mode, query],
+        "analysis": ["analysis", query] if query.strip() else ["analysis"],
+        "chains": ["chains"],
+        "recon": ["recon"],
+        "classes": ["classes"],
+    }
+    return per_mode[mode]
 
 
 def _run_kb(
@@ -151,13 +156,14 @@ def _run_kb(
 ) -> dict[str, Any]:
     home = _kb_home()
     db_path = home / "db" / "h1_kb.sqlite"
-    if not db_path.is_file():
-        logger.warning("hackerone_intel: KB not found at %s", db_path)
-        return {"success": False, "error": "HackerOne KB not configured at H1_KB_HOME"}
-
     script = home / "bin" / "h1_query.py"
-    if not script.is_file():
-        logger.warning("hackerone_intel: query script missing at %s", script)
+    if not db_path.is_file() or not script.is_file():
+        logger.warning(
+            "hackerone_intel: KB not configured (db_present=%s, script_present=%s) under %s",
+            db_path.is_file(),
+            script.is_file(),
+            home,
+        )
         return {"success": False, "error": "HackerOne KB not configured at H1_KB_HOME"}
 
     try:
