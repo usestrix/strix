@@ -63,6 +63,18 @@ _HANDLER_TAG = "_strix_scan_handler"
 # ``openai.agents`` is the openai-agents SDK's canonical logger root.
 _TRACKED_ROOTS: tuple[str, ...] = ("strix", "openai.agents")
 
+_STDOUT_QUIET_ROOTS: frozenset[str] = frozenset({"openai.agents"})
+
+
+class _StdoutQuietFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+        return not any(
+            record.name == root or record.name.startswith(root + ".")
+            for root in _STDOUT_QUIET_ROOTS
+        )
+
 
 def configure_dependency_logging() -> None:
     """Quiet dependency logging/warnings that obscure Strix scan logs."""
@@ -119,20 +131,14 @@ def setup_scan_logging(run_dir: Path, *, debug: bool | None = None) -> Callable[
     stream_handler.setLevel(logging.DEBUG if debug else logging.ERROR)
     stream_handler.setFormatter(formatter)
     stream_handler.addFilter(context_filter)
+    stream_handler.addFilter(_StdoutQuietFilter())
     setattr(stream_handler, _HANDLER_TAG, True)
 
     tracked_loggers = [logging.getLogger(name) for name in _TRACKED_ROOTS]
-    for name, tracked in zip(_TRACKED_ROOTS, tracked_loggers):
+    for tracked in tracked_loggers:
         tracked.setLevel(logging.DEBUG)
         tracked.addHandler(file_handler)
-        # The openai-agents SDK emits one DEBUG record per span / function-call
-        # / reasoning-item. Routing that to stdout -- which Docker's json-file
-        # driver captures without rotation -- can grow the sandbox container log
-        # to tens of GB and exhaust the host disk on long runs. Keep its verbose
-        # DEBUG in the per-scan strix.log file only; stdout stays on Strix's own
-        # logger.
-        if name != "openai.agents":
-            tracked.addHandler(stream_handler)
+        tracked.addHandler(stream_handler)
         tracked.propagate = False
 
     for name in _NOISY_LIBS:
