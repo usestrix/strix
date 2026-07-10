@@ -46,6 +46,25 @@ def test_bedrock_boto3_hint_for_litellm_wrapped_connection_error() -> None:
     assert BEDROCK_EXTRA_NAME in hint
 
 
+def test_vertex_google_submodule_hint() -> None:
+    exc = ModuleNotFoundError("No module named 'google.auth'")
+    hint = _provider_import_hint(exc, VERTEX_MODEL)
+    assert hint is not None
+    assert INSTALL_EXTRA_COMMAND_FRAGMENT in hint
+    assert VERTEX_EXTRA_NAME in hint
+
+
+def test_vertex_google_hint_for_deeply_chained_error() -> None:
+    root = ModuleNotFoundError("No module named 'google.auth'")
+    middle = RuntimeError("provider init failed")
+    middle.__cause__ = root
+    exc = ConnectionError("litellm.APIConnectionError: request failed")
+    exc.__cause__ = middle
+    hint = _provider_import_hint(exc, VERTEX_MODEL)
+    assert hint is not None
+    assert VERTEX_EXTRA_NAME in hint
+
+
 def test_non_import_error_returns_none() -> None:
     assert _provider_import_hint(ConnectionError("boom"), "bedrock/whatever") is None
 

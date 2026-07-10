@@ -62,7 +62,7 @@ BEDROCK_EXTRA_HINT = (
     'Bedrock support is optional. Install it with: pipx install "strix-agent[bedrock]"'
 )
 VERTEX_MODEL_MARKER = "vertex"
-VERTEX_MISSING_MODULE_ERROR = "No module named 'google'"
+VERTEX_MISSING_MODULE_ERROR = "No module named 'google"
 VERTEX_EXTRA_HINT = (
     'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
 )
@@ -225,11 +225,19 @@ def check_docker_installed() -> None:
 
 
 def _exception_messages(exc: BaseException) -> tuple[str, ...]:
-    messages = [str(exc)]
-    if exc.__cause__ is not None:
-        messages.append(str(exc.__cause__))
-    if exc.__context__ is not None:
-        messages.append(str(exc.__context__))
+    messages: list[str] = []
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        messages.append(str(current))
+        if current.__cause__ is not None:
+            stack.append(current.__cause__)
+        if current.__context__ is not None:
+            stack.append(current.__context__)
     return tuple(messages)
 
 
