@@ -25,6 +25,7 @@ from strix.tools.agents_graph.tools import (
     wait_for_message,
 )
 from strix.tools.finish.tool import finish_scan
+from strix.tools.hackerone_intel.tool import hackerone_intel
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
     create_note,
@@ -376,7 +377,7 @@ def build_strix_agent(
     )
 
     if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, finish_scan]
+        tools: list[Tool] = [*_BASE_TOOLS, finish_scan, hackerone_intel]
     else:
         tools = [*_BASE_TOOLS, agent_finish]
 
