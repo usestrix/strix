@@ -16,8 +16,6 @@ jobs:
             target: macos-arm64
           - os: macos-15-intel
             target: macos-x86_64
-          # PyInstaller Linux binaries inherit the builder's glibc baseline.
-          # Keep releases compatible with older LTS distributions.
           - os: ubuntu-22.04
             target: linux-x86_64
           - os: windows-latest
