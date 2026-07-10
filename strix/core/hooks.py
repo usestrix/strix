@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from agents.lifecycle import RunHooks
@@ -27,8 +28,9 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
     """Persist SDK-native usage after every model response."""
 
     def __init__(self, *, model: str, max_budget_usd: float | None = None) -> None:
-        import math
-        if max_budget_usd is not None and (not math.isfinite(max_budget_usd) or max_budget_usd <= 0):
+        if max_budget_usd is not None and (
+            not math.isfinite(max_budget_usd) or max_budget_usd <= 0
+        ):
             raise ValueError("max_budget_usd must be a finite number greater than 0")
         self._model = model
         self._max_budget_usd = max_budget_usd
