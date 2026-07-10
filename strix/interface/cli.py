@@ -90,6 +90,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scan_mode": scan_mode,
         "non_interactive": bool(getattr(args, "non_interactive", False)),
+        "completion_nudge": bool(getattr(args, "completion_nudge", False)),
         "local_sources": getattr(args, "local_sources", None) or [],
         "scope_mode": getattr(args, "scope_mode", "auto"),
         "diff_base": getattr(args, "diff_base", None),
@@ -118,6 +119,26 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         console.print()
 
     report_state.vulnerability_found_callback = display_vulnerability
+    def display_completion_nudge() -> None:
+        nudge_text = Text()
+        nudge_text.append("Completion nudged", style="bold #eab308")
+        nudge_text.append("\n\n")
+        nudge_text.append(
+            "The agent is investigating underexplored areas before finalizing the report."
+        )
+        console.print(
+            Panel(
+                nudge_text,
+                title="[bold white]STRIX",
+                title_align="left",
+                border_style="#eab308",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
+    report_state.completion_nudge_callback = display_completion_nudge
+
 
     def cleanup_on_exit() -> None:
         report_state.cleanup()

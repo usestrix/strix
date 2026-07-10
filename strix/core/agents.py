@@ -119,6 +119,16 @@ class AgentCoordinator:
             runtime.wake.set()
         logger.info("agent.status %s=%s", agent_id, status)
         await self._maybe_snapshot()
+    async def claim_completion_nudge(self, agent_id: str) -> bool:
+        async with self._lock:
+            if agent_id not in self.metadata:
+                return False
+            if self.metadata[agent_id].get("completion_nudge_started"):
+                return False
+            self.metadata[agent_id]["completion_nudge_started"] = True
+        await self._maybe_snapshot()
+        return True
+
 
     async def send(self, target_agent_id: str, message: dict[str, Any]) -> bool:
         """Deliver a user/peer message by appending it to the target SDK session."""

@@ -742,6 +742,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "diff_scope": getattr(args, "diff_scope", {"active": False}),
             "scan_mode": getattr(args, "scan_mode", "deep"),
             "non_interactive": bool(getattr(args, "non_interactive", False)),
+            "completion_nudge": bool(getattr(args, "completion_nudge", False)),
             "local_sources": getattr(args, "local_sources", None) or [],
             "scope_mode": getattr(args, "scope_mode", "auto"),
             "diff_base": getattr(args, "diff_base", None),

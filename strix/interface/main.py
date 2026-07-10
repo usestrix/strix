@@ -473,6 +473,15 @@ Examples:
             "Default is interactive mode with TUI."
         ),
     )
+    parser.add_argument(
+        "--completion-nudge",
+        action="store_true",
+        help=(
+            "Before accepting the final report, nudge the agent once to investigate "
+            "promising leads and other underexplored areas."
+        ),
+    )
+
 
     parser.add_argument(
         "-m",
@@ -639,6 +648,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,
         "non_interactive": args.non_interactive,
+        "completion_nudge": bool(getattr(args, "completion_nudge", False)),
         "local_sources": getattr(args, "local_sources", []),
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scope_mode": args.scope_mode,
@@ -683,6 +693,9 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
 
     if args.instruction is None:
         args.instruction = state.get("instruction")
+    args.completion_nudge = bool(
+        args.completion_nudge or state.get("completion_nudge", False)
+    )
     if state.get("local_sources"):
         args.local_sources = state.get("local_sources")
     if state.get("diff_scope"):

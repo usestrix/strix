@@ -42,3 +42,19 @@ async def test_wait_for_message_returns_immediately_after_budget_stop() -> None:
 
     # No pending messages, but the stop flag short-circuits the wait.
     await asyncio.wait_for(coordinator.wait_for_message("agent"), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_completion_nudge_claim_survives_restore() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    assert await coordinator.claim_completion_nudge("root") is True
+    assert await coordinator.claim_completion_nudge("root") is False
+
+    snapshot = await coordinator.snapshot()
+    assert snapshot["metadata"]["root"]["completion_nudge_started"] is True
+
+    restored = AgentCoordinator()
+    await restored.restore(snapshot)
+    assert await restored.claim_completion_nudge("root") is False

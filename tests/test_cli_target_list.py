@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -88,3 +89,63 @@ def test_parse_arguments_rejects_resume_with_target_list(
         "Cannot combine --resume with --target/--target-list/--mount"
         in capsys.readouterr().err
     )
+
+
+@pytest.mark.parametrize(
+    ("extra_args", "expected"),
+    [([], False), (["--completion-nudge"], True)],
+)
+def test_parse_arguments_completion_nudge_flag(
+    extra_args: list[str],
+    expected: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--target", "https://test.example", *extra_args],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.completion_nudge is expected
+
+
+@pytest.mark.parametrize(
+    ("persisted", "extra_args"),
+    [(True, []), (False, ["--completion-nudge"])],
+)
+def test_parse_arguments_resume_enables_completion_nudge(
+    tmp_path: Path,
+    persisted: bool,
+    extra_args: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    (tmp_path / "run.json").write_text(
+        json.dumps(
+            {
+                "targets_info": [
+                    {
+                        "type": "web_application",
+                        "details": {"target": "https://test.example"},
+                        "original": "https://test.example",
+                    }
+                ],
+                "completion_nudge": persisted,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "agents.json").write_text("{}", encoding="utf-8")
+    monkeypatch.setattr(cli_main, "run_dir_for", lambda _run_name: tmp_path)
+    monkeypatch.setattr(cli_main, "runtime_state_dir", lambda _run_dir: tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--resume", "existing-run", *extra_args],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.completion_nudge is True
