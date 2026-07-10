@@ -161,7 +161,7 @@ def _process_inline_formatting(line: str) -> Text:
 
 
 class AgentMessageRenderer:
-    _cache: ClassVar[dict[int, Text]] = {}
+    _cache: ClassVar[dict[str, Text]] = {}
 
     @classmethod
     def render_simple(cls, content: str) -> Text:
@@ -170,12 +170,11 @@ class AgentMessageRenderer:
         cleaned = _BLANK_LINE_RUNS.sub("\n\n", content).strip()
         if not cleaned:
             return Text()
-        cache_key = hash(cleaned)
-        cached = cls._cache.get(cache_key)
+        cached = cls._cache.get(cleaned)
         if cached is not None:
             return cached.copy()
         rendered = _apply_markdown_styles(cleaned)
         if len(cls._cache) > 100:
             cls._cache.clear()
-        cls._cache[cache_key] = rendered
-        return rendered
+        cls._cache[cleaned] = rendered
+        return rendered.copy()
