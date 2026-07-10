@@ -57,6 +57,12 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   Run in headless mode without TUI. Ideal for CI/CD.
 </ParamField>
 
+<ParamField path="--completion-nudge" type="boolean">
+  Before accepting the final report, continue the same root agent once to investigate promising leads it encountered but did not pursue deeply, then sweep plausible untested scope. The first valid report is treated as a draft and the interface shows `Completion nudged`; only the revised comprehensive report completes the scan.
+
+  This may increase model/tool cost and runtime. It is not a blind duplicate scan or a fixed extra model turn: the existing agent session continues and may use tools or focused subordinate agents.
+</ParamField>
+
 <ParamField path="--config" type="string">
   Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
 </ParamField>
@@ -101,6 +107,9 @@ strix -n --target ./ --scan-mode quick
 
 # Force diff-scope against a specific base ref
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
+
+# Continue the same agent past its first valid report to test underexplored areas
+strix -n --completion-nudge --target ./app-directory
 
 # Multi-target white-box testing
 strix -t https://github.com/org/app -t https://staging.example.com

@@ -183,7 +183,12 @@ strix --target api.your-app.com --instruction-file ./instruction.md
 
 # Force PR diff-scope against a specific base branch
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
+
+# Treat the first valid report as a draft and continue testing underexplored areas
+strix --completion-nudge --target https://your-app.com
 ```
+
+`--completion-nudge` gives the root agent one more pass before finalizing the scan. The first valid report becomes a draft and the interface shows `Completion nudged`. The same agent follows up on leads it found and checks remaining untested areas, using tools or subordinate agents when useful. Its next valid report completes the scan. This can be useful for smaller or weaker models, but it can increase model/tool cost and runtime.
 
 ### Headless Mode
 
