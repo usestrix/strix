@@ -64,6 +64,14 @@ AUTHORIZED TARGETS:
 - {{ target.type }}: {{ target.value }}{% if target.workspace_path %} (workspace: {{ target.workspace_path }}){% endif %}
 {% endfor %}
 {% endif %}
+{% if system_prompt_context and system_prompt_context.credential_names %}
+
+CREDENTIALS AVAILABLE:
+{% for name in system_prompt_context.credential_names %}
+- {{ name }}
+{% endfor %}
+To use a credential, write {% raw %}{{NAME}}{% endraw %} as a placeholder directly in any tool input (e.g. {% raw %}`curl -u {{USERNAME}}:{{PASSWORD}} http://target`{% endraw %}). The real value is substituted before the tool executes — you never see or handle the actual secret. Use the exact name listed above, case-sensitive.
+{% endif %}
 
 AUTHORIZATION STATUS:
 - You have FULL AUTHORIZATION for authorized security validation on in-scope targets to help secure the target systems/app
