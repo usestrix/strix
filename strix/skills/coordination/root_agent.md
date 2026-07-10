@@ -90,3 +90,14 @@ When all agents report completion:
 2. Assess overall security posture
 3. Compile executive summary with prioritized recommendations
 4. Invoke finish tool with final report
+
+## Test-Coverage Memory
+
+A persistent endpoint test log lives in `{state_dir}/test_log.json` and is exposed via three tools: `record_test`, `query_tests`, and `test_log_summary`.
+
+As the coordinator:
+
+- Before spawning a new specialist, run `test_log_summary()` and `query_tests(vuln_class="<class>")` to see whether that surface is already covered.
+- Brief each spawned specialist with the coverage already done so it can `query_tests(endpoint=...)` to avoid duplicate work.
+- On `--resume`, your first action is `test_log_summary()` — it tells you what the prior session finished, what's partial (`needs_more_testing`), and what's untouched.
+- The Vulnerability panel shows confirmed `findings`; the test log records `negative` outcomes too, which the vulnerability panel never will.

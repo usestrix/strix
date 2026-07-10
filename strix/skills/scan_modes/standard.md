@@ -46,6 +46,10 @@ Before testing for vulnerabilities, understand the application:
 
 Test each attack surface methodically. Spawn focused subagents for different areas.
 
+**JS Analysis Agent (runs first)**
+
+Before spawning vulnerability subagents, spawn a single `JS Analysis Agent` with `skills=["js-analysis"]`. It harvests every JS file (including lazy/dynamic chunks via the browser tool), recovers source maps, and extracts API endpoints, parameters, secrets, dangerous sinks, and auth/session touchpoints into a single `js_analysis.md` artifact. Downstream specialists (IDOR, SSRF, XSS, Auth) read it as their surface map.
+
 **Input Validation**
 - Injection testing on all input fields (SQL, XSS, command, template)
 - File upload bypass attempts
@@ -97,3 +101,7 @@ When you discover a useful pivot (info leak, weak boundary, partial access), imm
 ## Mindset
 
 Methodical and systematic. Document as you go. Validate everything—no assumptions about exploitability. Think about business impact, not just technical severity.
+
+## Test Memory
+
+Before testing an endpoint, call `query_tests(endpoint=..., vuln_class=...)`. After every test attempt — including negatives — call `record_test(...)`. Other agents (and the resumed session) read this log to skip duplicate work.

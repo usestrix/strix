@@ -45,6 +45,10 @@ Skip for quick scans:
 - Low-severity information disclosure
 - Theoretical issues without working PoC
 
+**JS Analysis Agent (lightweight pass)**
+
+Even on a quick scan, do one fast JS pass: spawn a `JS Analysis Agent` with `skills=["js-analysis"]` and instruct it to run **Phase 1 + Phase 2 + Phase 3 only** (collection, endpoint/parameter extraction, secret extraction) — skip lazy-chunk browser capture and deep sink analysis. The resulting `js_analysis.md` gives every high-impact agent (Auth bypass, IDOR, SSRF) a free endpoint and secret map without slowing the scan.
+
 ## Phase 3: Validation
 
 - Confirm exploitability with minimal proof-of-concept
@@ -66,3 +70,7 @@ When a strong primitive is found (auth weakness, injection point, internal acces
 ## Mindset
 
 Think like a time-boxed bug bounty hunter going for quick wins. Prioritize breadth over depth on critical areas. If something looks exploitable, validate quickly and move on. Don't get stuck—if an attack vector isn't yielding results quickly, pivot.
+
+## Test Memory
+
+Even in quick mode, call `query_tests` before testing an endpoint and `record_test` after — this is the cheapest possible deduplication. On `--resume` it lets you skip directly to surface you haven't touched yet.

@@ -105,10 +105,12 @@ async def run_strix_scan(
     coordinator.set_snapshot_path(agents_path)
 
     from strix.tools.notes.tools import hydrate_notes_from_disk
+    from strix.tools.test_log.tools import hydrate_test_log_from_disk
     from strix.tools.todo.tools import hydrate_todos_from_disk
 
     hydrate_todos_from_disk(state_dir)
     hydrate_notes_from_disk(state_dir)
+    hydrate_test_log_from_disk(state_dir)
 
     root_id: str | None = None
     if is_resume:
@@ -217,6 +219,7 @@ async def run_strix_scan(
             "sandbox_session": bundle["session"],
             "caido_client": bundle["caido_client"],
             "agent_id": root_id,
+            "agent_name": "strix",
             "parent_id": None,
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,

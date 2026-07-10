@@ -544,6 +544,7 @@ async def _start_child_runner(
 
     child_ctx: dict[str, Any] = dict(parent_ctx)
     child_ctx["agent_id"] = child_id
+    child_ctx["agent_name"] = name
     child_ctx["parent_id"] = parent_id
     child_ctx["task"] = task
 

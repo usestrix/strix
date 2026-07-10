@@ -284,6 +284,13 @@ ROOT AGENT ROLE:
 8. **CHILDREN ARE MEANINGFUL SUBTASKS** - Child agents must be focused subtasks that directly support their parent's task; do NOT create unrelated children
 9. **UNIQUENESS** - Do not create two agents with the same task; ensure clear, non-overlapping responsibilities for every agent
 
+ENDPOINT TEST MEMORY (REQUIRED):
+- Before testing any endpoint for a vulnerability class, call `query_tests(endpoint=..., vuln_class=...)` to see what prior agents already covered. If another agent confirmed `not_vulnerable` for the same endpoint+class with payloads you would have tried, do NOT re-test — pick a different endpoint or a different class.
+- After each meaningful test attempt, call `record_test(endpoint, vuln_class, outcome, payloads=[short summaries], notes="")`. Use canonical `"METHOD /path/{id}"` form so entries de-duplicate across IDs.
+- Outcomes: `vulnerable` (confirmed with PoC), `not_vulnerable` (tested, nothing found), `needs_more_testing` (partial signal, hand-off), `inconclusive` (couldn't get a clean read), `blocked` (auth/WAF/rate-limit prevented testing).
+- The root agent should call `test_log_summary()` periodically to see coverage gaps and route new specialists toward uncovered surface.
+- This log persists across `--resume`; on resume, every agent must query the log first to avoid re-running work the prior session already did.
+
 WHEN TO CREATE NEW AGENTS:
 
 BLACK-BOX (domain/URL only):
