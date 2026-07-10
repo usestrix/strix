@@ -153,11 +153,15 @@ async def run_strix_scan(
         targets = scan_config.get("targets") or []
         scan_mode = str(scan_config.get("scan_mode") or "deep")
         is_whitebox = any(t.get("type") == "local_code" for t in targets)
+        source_in_scope = is_whitebox or any(t.get("type") == "repository" for t in targets)
         skills = list(scan_config.get("skills") or [])
         root_task = build_root_task(scan_config)
         model_settings = make_model_settings(
             settings.llm.reasoning_effort,
             model_name=resolved_model,
+            temperature=settings.llm.temperature,
+            top_p=settings.llm.top_p,
+            max_tokens=settings.llm.max_tokens,
         )
         run_config = RunConfig(
             model=resolved_model,
@@ -219,6 +223,7 @@ async def run_strix_scan(
             "agent_id": root_id,
             "parent_id": None,
             "interactive": interactive,
+            "source_in_scope": source_in_scope,
             "spawn_child_agent": spawn_child_agent,
         }
 

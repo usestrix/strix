@@ -54,3 +54,50 @@ If you use LM Studio, vLLM, or other runners:
 export STRIX_LLM="openai/local-model"
 export LLM_API_BASE="http://localhost:1234/v1"  # Adjust port as needed
 ```
+
+## Context Window Sizing
+
+Strix is agentic: every turn sends a large system prompt, the full tool schema, and a growing multi-step history. This easily exceeds the **small default context window many local runtimes use** — Ollama defaults to roughly **4096 tokens**. When the context is too small the runtime silently clips it, which shows up as:
+
+- Agents looping or repeating the same step
+- Truncated or malformed tool calls (or plain-text "tool calls" that never execute)
+- Scans that stall or fail partway through
+
+If you see these symptoms with a local model, the context window is almost always the cause. Give local models a large context window.
+
+### Ollama
+
+Ollama clips prompts to `num_ctx` unless you raise it. Set it for the whole server:
+
+```bash
+# Applies to every model the server loads
+OLLAMA_CONTEXT_LENGTH=65536 ollama serve
+```
+
+Or bake it into a model with a `Modelfile`:
+
+```
+FROM qwen3-vl
+PARAMETER num_ctx 65536
+```
+
+```bash
+ollama create qwen3-vl-64k -f Modelfile
+export STRIX_LLM="ollama/qwen3-vl-64k"
+```
+
+### LM Studio / llama.cpp / vLLM
+
+- **LM Studio**: raise **Context Length** in the model's load settings before serving.
+- **llama.cpp** (`llama-server`): pass `-c 65536` (or higher).
+- **vLLM**: set `--max-model-len 65536`.
+
+### Recommended minimum
+
+| Scan mode  | Suggested context |
+|------------|-------------------|
+| `quick`    | ≥ 32K tokens      |
+| `standard` | ≥ 64K tokens      |
+| `deep`     | ≥ 128K tokens     |
+
+A larger context needs more VRAM/RAM (roughly a few extra GB at 64–128K, depending on the model and KV-cache precision). If you can't fit a large context, prefer a smaller model with a large context over a larger model whose context is clipped.

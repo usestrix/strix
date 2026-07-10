@@ -31,6 +31,18 @@ Configure Strix using environment variables or a config file.
   Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults to `medium` for quick scan mode.
 </ParamField>
 
+<ParamField path="STRIX_LLM_TEMPERATURE" type="number">
+  Sampling temperature (`0.0`–`2.0`) passed to the model. Unset by default (uses the provider default). Useful for steadier tool use on local/OpenAI-compatible models. Parameters unsupported by a given model are dropped automatically.
+</ParamField>
+
+<ParamField path="STRIX_LLM_TOP_P" type="number">
+  Nucleus sampling `top_p` (`0.0`–`1.0`) passed to the model. Unset by default.
+</ParamField>
+
+<ParamField path="STRIX_LLM_MAX_TOKENS" type="integer">
+  Maximum number of tokens to generate per LLM response. Unset by default (uses the provider default).
+</ParamField>
+
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
   Timeout in seconds for memory compression operations (context summarization).
 </ParamField>

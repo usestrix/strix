@@ -351,6 +351,11 @@ async def create_vulnerability_report(
     for the full rules around ``fix_before`` / ``fix_after``,
     multi-part fixes, and informational-vs-actionable entries.
 
+    **Black-box scans**: when no source code is in scope, do NOT populate
+    ``code_locations`` and do not assert specific source file paths or line
+    numbers — you cannot see the source, so such claims are fabricated. Any
+    ``code_locations`` supplied in a black-box scan are dropped automatically.
+
     **CVSS breakdown** is an object with all 8 metrics (each a single
     uppercase letter):
 
@@ -484,6 +489,15 @@ async def create_vulnerability_report(
             - Duplicating the same change across multiple locations.
     """
     inner = ctx.context if isinstance(ctx.context, dict) else {}
+    if not inner.get("source_in_scope") and code_locations:
+        # No source tree is in scope (e.g. a URL/IP/domain black-box scan), so any
+        # file paths / line numbers / snippets in code_locations can only be
+        # fabricated. Drop them so a hallucinated "Code Analysis" section can never
+        # reach the customer-facing report (#321). Repository and local-code scans
+        # keep code_locations because the agent can actually read the source.
+        logger.info("No source in scope: dropping code_locations from report %r", title)
+        code_locations = None
+
     raw_agent_id = inner.get("agent_id")
     agent_id = raw_agent_id if isinstance(raw_agent_id, str) else None
     agent_name = None
