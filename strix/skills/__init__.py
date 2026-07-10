@@ -58,6 +58,32 @@ def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str
     return None
 
 
+
+def _safe_skill_path(skills_dir: "Path", rel_path: str) -> "Path | None":
+    """Return a resolved path inside skills_dir, or None if it escapes.
+
+    Defense in depth: even if callers do not validate, this guarantees
+    we never read_text() a file outside skills_dir.
+    """
+    if not rel_path or not rel_path.strip():
+        return None
+    if os.path.isabs(rel_path):
+        return None
+    # Resolve both sides and check containment
+    try:
+        resolved = (skills_dir / rel_path).resolve()
+        skills_dir_resolved = skills_dir.resolve()
+        # resolved must have skills_dir_resolved as a prefix
+        resolved_str = str(resolved)
+        base_str = str(skills_dir_resolved)
+        # Use os.sep to ensure we match a directory boundary
+        if not (resolved_str == base_str or
+                resolved_str.startswith(base_str + os.sep)):
+            return None
+        return resolved
+    except (OSError, ValueError):
+        return None
+
 def load_skills(skill_names: list[str]) -> dict[str, str]:
     """Load skill markdown bodies (frontmatter stripped) by name.
 
@@ -93,7 +119,11 @@ def load_skills(skill_names: list[str]) -> dict[str, str]:
             continue
 
         try:
-            content = (skills_dir / rel_path).read_text(encoding="utf-8")
+            safe_path = _safe_skill_path(skills_dir, rel_path)
+            if safe_path is None:
+                logger.warning("Skill path escaped directory: %s", rel_path)
+                continue
+            content = safe_path.read_text(encoding="utf-8")
         except (OSError, ValueError) as e:
             logger.warning("Failed to load skill %s: %s", skill_name, e)
             continue
