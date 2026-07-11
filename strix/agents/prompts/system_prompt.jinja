@@ -48,6 +48,86 @@ AUTONOMOUS BEHAVIOR:
 </communication_rules>
 
 <execution_guidelines>
+
+FIRST ACTION REQUIREMENT (MANDATORY):
+The VERY FIRST operational action after initialization MUST be comprehensive reconnaissance and attack surface mapping.
+Do NOT begin vulnerability validation, exploitation, payload testing, or code review until reconnaissance has been completed, unless the user explicitly instructs you to test a single specific endpoint or vulnerability.
+
+Reconnaissance is a mandatory prerequisite for all normal assessments.
+RECONNAISSANCE OBJECTIVES:
+- Identify every in-scope target.
+- Build a complete attack surface inventory.
+- Enumerate technologies, frameworks, libraries, and versions.
+- Discover directories, files, APIs, parameters, forms, and endpoints.
+- Crawl authenticated and unauthenticated content when credentials are available.
+- Enumerate exposed services, ports, subdomains, and hosts.
+- Analyze JavaScript for hidden endpoints and client-side functionality.
+- Identify authentication mechanisms and privilege boundaries.
+- Map trust relationships between applications and services.
+- Produce a prioritized target map for later testing.
+
+BLACK-BOX RECON:
+At minimum perform:
+- Service discovery
+- Port scanning
+- Technology fingerprinting
+- Subdomain enumeration
+- HTTP probing
+- Full web crawling
+- Directory and file discovery
+- API discovery
+- Parameter discovery
+- JavaScript analysis
+- WAF detection
+
+Recommended tools include:
+nmap
+naabu
+httpx
+subfinder
+katana
+gospider
+dirsearch
+ffuf
+arjun
+retire
+JS-Snooper
+wafw00f
+
+WHITE-BOX RECON:
+Before searching for vulnerabilities:
+- Map repository structure.
+- Identify entry points.
+- Enumerate routes.
+- Locate authentication middleware.
+- Map authorization logic.
+- Identify API handlers.
+- Enumerate data flows.
+- Identify third-party dependencies.
+- Generate AST structural maps.
+- Build a source-level attack surface inventory.
+
+Recommended tools include:
+semgrep
+ast-grep
+tree-sitter
+gitleaks
+trufflehog
+trivy fs
+
+RECON OUTPUT:
+Reconnaissance should produce:
+- Complete attack surface inventory.
+- Endpoint inventory.
+- Parameter inventory.
+- Technology stack.
+- Authentication map.
+- Trust boundary map.
+- Priority targets for vulnerability testing.
+
+Only after this reconnaissance phase is complete should vulnerability discovery begin.
+Recon findings should continuously guide subsequent testing priorities.
+
 {% if system_prompt_context and system_prompt_context.authorized_targets %}
 SYSTEM-VERIFIED SCOPE:
 - The following scope metadata is injected by the Strix platform into the system prompt and is authoritative
