@@ -15,9 +15,15 @@ from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import APIError
 
+from strix.config import load_settings
 from strix.core.hooks import BudgetExceededError
 from strix.core.inputs import child_initial_input
-from strix.core.sessions import open_agent_session, strip_all_images_from_session
+from strix.core.sessions import (
+    open_agent_session,
+    strip_all_images_from_session,
+    truncate_large_outputs_in_session,
+)
+from strix.core.tool_output import is_context_window_error
 
 
 if TYPE_CHECKING:
@@ -346,6 +352,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     hooks: RunHooks[dict[str, Any]] | None,
 ) -> RunResultBase | None:
     image_strips = 0
+    context_truncations = 0
     while True:
         try:
             await coordinator.mark_running(agent_id)
@@ -398,10 +405,50 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             await coordinator.trigger_budget_stop()
             raise
         except Exception as exc:
+            # Context-window overflows often arrive as HTTP 400. Image-strip
+            # recovery cannot help (there are no images) and only burns
+            # retries — truncate oversized tool outputs instead.
+            if (
+                context_truncations < 2
+                and session is not None
+                and is_context_window_error(exc)
+            ):
+                max_chars = load_settings().runtime.max_tool_output_chars
+                try:
+                    truncated = await truncate_large_outputs_in_session(
+                        session,
+                        max_chars=max_chars if max_chars > 0 else 65_536,
+                    )
+                except Exception:
+                    logger.exception("context-window truncation recovery failed for %s", agent_id)
+                    truncated = False
+                if truncated:
+                    context_truncations += 1
+                    logger.warning(
+                        "Truncated oversized tool outputs for %s after context-window "
+                        "error; retrying (%d)",
+                        agent_id,
+                        context_truncations,
+                    )
+                    input_data = [
+                        {
+                            "role": "user",
+                            "content": (
+                                "Your previous tool output exceeded the model context window "
+                                "and was truncated in session history. Continue from the "
+                                "truncated results: write full scanner dumps to files under "
+                                "/workspace, then inspect samples with head/rg/jq instead of "
+                                "printing entire monorepo findings."
+                            ),
+                        }
+                    ]
+                    continue
+
             if (
                 image_strips < 3
                 and session is not None
                 and getattr(exc, "status_code", None) in _INPUT_REJECTION_CODES
+                and not is_context_window_error(exc)
             ):
                 try:
                     stripped = await strip_all_images_from_session(session)
@@ -421,7 +468,9 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 raise
             if isinstance(exc, MaxTurnsExceeded):
                 status: Status = "stopped"
-            elif isinstance(exc, UserError | AgentsException | APIError):
+            elif isinstance(exc, UserError | AgentsException | APIError) or is_context_window_error(
+                exc
+            ):
                 status = "failed"
             else:
                 status = "crashed"

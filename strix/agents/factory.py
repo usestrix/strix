@@ -16,6 +16,8 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
+from strix.config import load_settings
+from strix.core.tool_output import truncate_tool_output
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -217,7 +219,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             parsed["shell"] = "bash"
             raw_input = json.dumps(parsed)
         try:
-            return await invoke_tool(ctx, raw_input)
+            result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
         except InvalidManifestPathError as exc:
@@ -227,6 +229,20 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        # Cap scanner dumps before they land in SQLite session history and
+        # get re-serialized into the next model request (context overflow).
+        if isinstance(result, str):
+            max_chars = load_settings().runtime.max_tool_output_chars
+            truncated = truncate_tool_output(result, max_chars)
+            if truncated != result:
+                logger.info(
+                    "Truncated exec_command output from %d to %d chars (cap=%d)",
+                    len(result),
+                    len(truncated),
+                    max_chars,
+                )
+            return truncated
+        return result
 
     tool.on_invoke_tool = invoke
     return tool
