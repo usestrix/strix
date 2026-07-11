@@ -37,8 +37,10 @@ _CHATGPT_TRANSCRIPT_TAGS = (
     "final",
     "user",
 )
+_CHATGPT_TRANSCRIPT_TAG_ALTERNATION = "|".join(re.escape(tag) for tag in _CHATGPT_TRANSCRIPT_TAGS)
+_OPTIONAL_TAG_ATTRIBUTES_PATTERN = r"(?:\s+[^>]*)?"
 _CHATGPT_TRANSCRIPT_TAG_RE = re.compile(
-    rf"</?(?:{'|'.join(_CHATGPT_TRANSCRIPT_TAGS)})\s*>",
+    rf"</?(?:{_CHATGPT_TRANSCRIPT_TAG_ALTERNATION}){_OPTIONAL_TAG_ATTRIBUTES_PATTERN}\s*/?>",
     flags=re.IGNORECASE,
 )
 
@@ -454,9 +456,10 @@ class AgentCoordinator:
 
     def _message_to_session_item(self, message: dict[str, Any]) -> TResponseInputItem:
         sender = str(message.get("from", "unknown"))
-        content = _strip_chatgpt_transcript_tags(str(message.get("content", "")))
+        content = str(message.get("content", ""))
         if sender == "user":
             return cast("TResponseInputItem", {"role": "user", "content": content})
+        content = _strip_chatgpt_transcript_tags(content)
         sender_name = self.names.get(sender, sender)
         msg_type = message.get("type", "information")
         priority = message.get("priority", "normal")
