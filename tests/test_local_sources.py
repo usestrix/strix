@@ -52,6 +52,9 @@ def test_directory_size_skips_symlinks(tmp_path: Path) -> None:
         (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
     except OSError as exc:
         # Windows without Admin / Developer Mode: WinError 1314.
+        # Other OSErrors (read-only FS, etc.) should still fail the test.
+        if getattr(exc, "winerror", None) != 1314:
+            raise
         pytest.skip(
             f"symlink creation unavailable ({exc}); on Windows run as "
             "Administrator or enable Developer Mode"
