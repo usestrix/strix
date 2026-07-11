@@ -83,6 +83,10 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Maximum size (in MB) of a local directory target that Strix will copy into the sandbox file-by-file. Larger targets exit early with a suggestion to use `--mount` instead. Set to `0` to disable the check.
 </ParamField>
 
+<ParamField path="STRIX_EXEC_FORCE_TTY" default="auto" type="string">
+  Whether `exec_command` forces `tty: true` for every shell command. Defaults to on for native Windows hosts, where Docker Desktop's named-pipe transport can silently return empty output for non-tty execs. Set to `1`/`true`/`yes`/`on` to force it on any platform, or `0`/`false`/`no`/`off` to disable it (including on Windows).
+</ParamField>
+
 ## Sandbox Configuration
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">

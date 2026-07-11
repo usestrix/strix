@@ -5,7 +5,9 @@ from __future__ import annotations
 import inspect
 import json
 import logging
+import os
 import re
+import sys
 from typing import TYPE_CHECKING, Any
 
 from agents.agent import ToolsToFinalOutputResult
@@ -205,10 +207,58 @@ def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
     return f"{tool_name}: invalid arguments — " + "; ".join(parts)
 
 
+_EXEC_TTY_TRUE_STRINGS = frozenset({"1", "true", "yes", "on"})
+_EXEC_TTY_FALSE_STRINGS = frozenset({"0", "false", "no", "off"})
+
+
+def _should_force_exec_tty() -> bool:
+    """Whether ``exec_command`` should force ``tty: true`` (see ``_force_exec_tty``).
+
+    Defaults to on for native Windows hosts. ``STRIX_EXEC_FORCE_TTY``
+    overrides the auto-detection in either direction, for Windows setups
+    where forcing a PTY causes its own problems (e.g. pager/isatty-sensitive
+    commands) or for non-Windows setups that want the same workaround.
+    """
+    override = (os.environ.get("STRIX_EXEC_FORCE_TTY") or "").strip().lower()
+    if override in _EXEC_TTY_TRUE_STRINGS:
+        return True
+    if override in _EXEC_TTY_FALSE_STRINGS:
+        return False
+    return sys.platform == "win32"
+
+
+def _force_exec_tty(raw_input: str) -> str:
+    """Force ``tty: true`` onto an ``exec_command`` payload.
+
+    On native Windows, docker-py talks to Docker Desktop over a named pipe
+    (``NpipeSocket``) rather than a POSIX socket. ``exec_command``'s
+    non-tty path demultiplexes stdout/stderr with a blocking 8-byte
+    frame-header read (``docker.utils.socket.frames_iter_no_tty``); over the
+    named-pipe transport this routinely returns no data within the tool's
+    yield window, so commands appear to hang with empty output (GH #727).
+    The tty path (``frames_iter_tty``) is a single raw read and unaffected.
+    Reproduced directly against the pinned SDK on Windows + Docker Desktop:
+    ``tty=True`` returns output instantly, ``tty=False`` (the schema
+    default) returns empty output with no exception. Force it on
+    unconditionally rather than only when absent, since some models emit
+    the schema default (``tty: false``) explicitly.
+    """
+    try:
+        parsed = json.loads(raw_input)
+    except json.JSONDecodeError:
+        return raw_input
+    if not isinstance(parsed, dict):
+        return raw_input
+    parsed["tty"] = True
+    return json.dumps(parsed)
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
+        if _should_force_exec_tty():
+            raw_input = _force_exec_tty(raw_input)
         try:
             return await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
