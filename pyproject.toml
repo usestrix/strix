@@ -44,6 +44,10 @@ dependencies = [
   "caido-sdk-client>=0.2.0",
 ]
 
+[project.optional-dependencies]
+vertex = ["google-auth>=2.0.0"]
+bedrock = ["boto3>=1.28.0"]
+
 [project.scripts]
 strix = "strix.interface.main:main"
 
