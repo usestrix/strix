@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from strix.core.sessions import truncate_large_outputs_in_session
-from strix.core.tool_output import is_context_window_error, truncate_tool_output
+from strix.core.tool_output import _hard_cap, is_context_window_error, truncate_tool_output
 
 
 def test_is_context_window_error_by_class_name() -> None:
@@ -69,8 +69,38 @@ def test_truncate_text_by_lines() -> None:
 def test_truncate_hard_char_cap() -> None:
     raw = "a" * 10_000
     out = truncate_tool_output(raw, max_chars=500, max_lines=10_000)
-    assert len(out) <= 500 or out.endswith("...[truncated]")
+    assert len(out) <= 500
     assert "truncated" in out
+
+
+def test_hard_cap_never_exceeds_limit() -> None:
+    huge = "x" * 10_000
+    for cap in (1, 5, 16, 100, 500):
+        out = _hard_cap(huge, cap)
+        assert len(out) <= cap
+
+
+@pytest.mark.asyncio
+async def test_truncate_session_restores_history_on_write_failure() -> None:
+    huge = "z" * 100_000
+    original = [
+        {
+            "type": "function_call_output",
+            "call_id": "c1",
+            "output": huge,
+        }
+    ]
+    session = _FakeSession(original)
+    session.add_items = AsyncMock(side_effect=[RuntimeError("disk full"), None])
+
+    with pytest.raises(RuntimeError, match="disk full"):
+        await truncate_large_outputs_in_session(session, max_chars=1_000)  # type: ignore[arg-type]
+
+    # clear (wipe) + failed add + clear (restore prep) + restore previous
+    assert session.clear_session.await_count == 2
+    assert session.add_items.await_count == 2
+    restored = session.add_items.await_args_list[1].args[0]
+    assert restored == original
 
 
 class _FakeSession:

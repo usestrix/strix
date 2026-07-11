@@ -88,9 +88,13 @@ def truncate_tool_output(
 
 
 def _hard_cap(text: str, max_chars: int) -> str:
-    if len(text) <= max_chars:
+    """Return ``text`` guaranteed to be at most ``max_chars`` characters."""
+    if max_chars <= 0 or len(text) <= max_chars:
         return text
-    return text[:max_chars] + "\n...[truncated]"
+    marker = "\n...[truncated]"
+    if max_chars <= len(marker):
+        return text[:max_chars]
+    return text[: max_chars - len(marker)] + marker
 
 
 def _truncate_json_array(
@@ -200,7 +204,8 @@ def _truncate_text_payload(
     if len(candidate) <= max_chars:
         return candidate
     notice = f"[truncated to {max_chars} chars; original {original_len} chars]\n"
-    budget = max_chars - len(notice) - len("\n...[truncated]")
+    marker = "\n...[truncated]"
+    budget = max_chars - len(notice) - len(marker)
     if budget < 1:
-        return text[:max_chars]
-    return notice + candidate[:budget] + "\n...[truncated]"
+        return _hard_cap(candidate, max_chars)
+    return notice + candidate[:budget] + marker

@@ -98,6 +98,62 @@ async def test_context_window_error_uses_truncation_not_image_strip() -> None:
 
 
 @pytest.mark.asyncio
+async def test_disabled_tool_output_cap_skips_truncation_recovery() -> None:
+    coordinator = MagicMock()
+    coordinator.mark_running = AsyncMock()
+    coordinator.attach_stream = AsyncMock()
+    coordinator.detach_stream = AsyncMock()
+    coordinator.set_status = AsyncMock()
+    coordinator._lock = AsyncMock()
+    coordinator._lock.__aenter__ = AsyncMock(return_value=None)
+    coordinator._lock.__aexit__ = AsyncMock(return_value=None)
+    coordinator.statuses = {"agent": "running"}
+    coordinator.parent_of = {"agent": None}
+    coordinator.names = {"agent": "strix"}
+    coordinator.is_shutting_down = False
+    coordinator.send = AsyncMock()
+
+    session = MagicMock()
+    stream1 = _FailOnceStream(ContextWindowExceededError())
+
+    with (
+        patch("strix.core.execution.Runner") as runner_cls,
+        patch(
+            "strix.core.execution.truncate_large_outputs_in_session",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as trunc,
+        patch(
+            "strix.core.execution.strip_all_images_from_session",
+            new_callable=AsyncMock,
+            return_value=False,
+        ) as strip,
+        patch("strix.core.execution.load_settings") as settings,
+    ):
+        settings.return_value.runtime.max_tool_output_chars = 0
+        runner_cls.run_streamed = MagicMock(return_value=stream1)
+
+        with pytest.raises(ContextWindowExceededError):
+            await _run_cycle(
+                agent=MagicMock(),
+                coordinator=coordinator,
+                agent_id="agent",
+                input_data=[],
+                run_config=MagicMock(),
+                context={"parent_id": None},
+                max_turns=10,
+                session=session,
+                interactive=True,
+                event_sink=None,
+                hooks=None,
+            )
+
+    trunc.assert_awaited_once()
+    assert trunc.await_args.kwargs["max_chars"] == 0
+    strip.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_image_rejection_still_uses_image_strip() -> None:
     coordinator = MagicMock()
     coordinator.mark_running = AsyncMock()

@@ -29,14 +29,29 @@ def open_agent_session(agent_id: str, path: Path) -> SQLiteSession:
 _IMAGE_REJECTED_TEXT = "[image rejected by the model]"
 
 
-async def _rewrite_session_items(session: Session, rebuilt: list[Any]) -> None:
+async def _rewrite_session_items(
+    session: Session,
+    rebuilt: list[Any],
+    *,
+    previous: list[Any],
+) -> None:
+    """Replace session items with ``rebuilt``, restoring ``previous`` on failure.
+
+    The SDK only exposes clear+add, so a failed write after clear would otherwise
+    wipe history. Always keep a snapshot of the prior items and re-insert it if
+    the new payload cannot be persisted.
+    """
     rebuilt_items = cast("list[TResponseInputItem]", rebuilt)
+    previous_items = cast("list[TResponseInputItem]", list(previous))
     await session.clear_session()
     try:
         await session.add_items(rebuilt_items)
     except Exception:
+        logger.exception("Failed to write rebuilt session items; restoring prior history")
         with contextlib.suppress(Exception):
-            await session.add_items(rebuilt_items)
+            await session.clear_session()
+            if previous_items:
+                await session.add_items(previous_items)
         raise
 
 
@@ -71,7 +86,7 @@ async def strip_all_images_from_session(session: Session) -> bool:
     if not changed:
         return False
 
-    await _rewrite_session_items(session, rebuilt)
+    await _rewrite_session_items(session, rebuilt, previous=items)
     return True
 
 
@@ -134,7 +149,7 @@ async def truncate_large_outputs_in_session(
     if not changed:
         return False
 
-    await _rewrite_session_items(session, rebuilt)
+    await _rewrite_session_items(session, rebuilt, previous=items)
     logger.info(
         "Truncated oversized tool outputs in session (cap=%d chars)",
         max_chars,

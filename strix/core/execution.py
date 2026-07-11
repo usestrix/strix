@@ -417,7 +417,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 try:
                     truncated = await truncate_large_outputs_in_session(
                         session,
-                        max_chars=max_chars if max_chars > 0 else 65_536,
+                        max_chars=max_chars,
                     )
                 except Exception:
                     logger.exception("context-window truncation recovery failed for %s", agent_id)
