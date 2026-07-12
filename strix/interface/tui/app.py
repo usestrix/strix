@@ -371,6 +371,19 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             text.append("Target: ", style=self.FIELD_STYLE)
             text.append(target)
 
+        dep_meta = vuln.get("dependency_metadata") or {}
+        for label, key in (
+            ("Package", "package_name"),
+            ("Ecosystem", "package_ecosystem"),
+            ("Installed Version", "installed_version"),
+            ("Fixed Version", "fixed_version"),
+        ):
+            value = dep_meta.get(key)
+            if value:
+                text.append("\n\n")
+                text.append(f"{label}: ", style=self.FIELD_STYLE)
+                text.append(str(value))
+
         endpoint = vuln.get("endpoint", "")
         if endpoint:
             text.append("\n\n")
@@ -388,6 +401,18 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             text.append("\n\n")
             text.append("CVE: ", style=self.FIELD_STYLE)
             text.append(cve)
+
+        cwe = vuln.get("cwe", "")
+        if cwe:
+            text.append("\n\n")
+            text.append("CWE: ", style=self.FIELD_STYLE)
+            text.append(cwe)
+
+        fix_effort = vuln.get("fix_effort", "")
+        if fix_effort:
+            text.append("\n\n")
+            text.append("Fix Effort: ", style=self.FIELD_STYLE)
+            text.append(str(fix_effort).title())
 
         cvss_breakdown = vuln.get("cvss_breakdown", {})
         if cvss_breakdown:
@@ -434,6 +459,13 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             text.append("\n")
             text.append(technical_analysis)
 
+        evidence = vuln.get("evidence", "")
+        if evidence:
+            text.append("\n\n")
+            text.append("Evidence", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(evidence)
+
         poc_description = vuln.get("poc_description", "")
         if poc_description:
             text.append("\n\n")
@@ -454,6 +486,13 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             text.append("Remediation", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(remediation_steps)
+
+        assumptions = vuln.get("assumptions", "")
+        if assumptions:
+            text.append("\n\n")
+            text.append("Assumptions", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(assumptions)
 
         return text
 
@@ -476,14 +515,27 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             lines.append(f"**Agent:** {vuln['agent_name']}")
         if vuln.get("target"):
             lines.append(f"**Target:** {vuln['target']}")
+        dep_meta = vuln.get("dependency_metadata") or {}
+        if dep_meta.get("package_name"):
+            lines.append(f"**Package:** {dep_meta['package_name']}")
+        if dep_meta.get("package_ecosystem"):
+            lines.append(f"**Ecosystem:** {dep_meta['package_ecosystem']}")
+        if dep_meta.get("installed_version"):
+            lines.append(f"**Installed Version:** {dep_meta['installed_version']}")
+        if dep_meta.get("fixed_version"):
+            lines.append(f"**Fixed Version:** {dep_meta['fixed_version']}")
         if vuln.get("endpoint"):
             lines.append(f"**Endpoint:** {vuln['endpoint']}")
         if vuln.get("method"):
             lines.append(f"**Method:** {vuln['method']}")
         if vuln.get("cve"):
             lines.append(f"**CVE:** {vuln['cve']}")
+        if vuln.get("cwe"):
+            lines.append(f"**CWE:** {vuln['cwe']}")
         if vuln.get("cvss") is not None:
             lines.append(f"**CVSS:** {vuln['cvss']}")
+        if vuln.get("fix_effort"):
+            lines.append(f"**Fix Effort:** {str(vuln['fix_effort']).title()}")
 
         cvss_breakdown = vuln.get("cvss_breakdown", {})
         if cvss_breakdown:
@@ -513,6 +565,9 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
 
         if vuln.get("technical_analysis"):
             lines.extend(["", "## Technical Analysis", "", vuln["technical_analysis"]])
+
+        if vuln.get("evidence"):
+            lines.extend(["", "## Evidence", "", vuln["evidence"]])
 
         if vuln.get("poc_description") or vuln.get("poc_script_code"):
             lines.extend(["", "## Proof of Concept", ""])
@@ -551,6 +606,9 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
 
         if vuln.get("remediation_steps"):
             lines.extend(["", "## Remediation", "", vuln["remediation_steps"]])
+
+        if vuln.get("assumptions"):
+            lines.extend(["", "## Assumptions", "", vuln["assumptions"]])
 
         lines.append("")
         return "\n".join(lines)
