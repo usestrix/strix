@@ -284,9 +284,34 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
         return "#6b7280"
 
     @classmethod
+    def _render_failed(cls, args: dict[str, Any], result: dict[str, Any]) -> Static:
+        text = Text()
+        text.append("📦 ")
+        text.append("Dependency (SCA) Report", style="bold #ea580c")
+        title = args.get("title", "")
+        if title:
+            text.append("\n\n")
+            text.append("Title: ", style=FIELD_STYLE)
+            text.append(title)
+        errors = result.get("errors")
+        detail = "; ".join(errors) if isinstance(errors, list) and errors else result.get("error")
+        text.append("\n\n")
+        text.append("✗ Not created: ", style="bold #dc2626")
+        text.append(str(detail or "Report was not created."))
+
+        padded = Text()
+        padded.append("\n\n")
+        padded.append_text(text)
+        padded.append("\n\n")
+        return Static(padded, classes=cls.get_css_classes("failed"))
+
+    @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result", {})
+
+        if isinstance(result, dict) and result.get("success") is False:
+            return cls._render_failed(args, result)
 
         title = args.get("title", "")
         description = args.get("description", "")

@@ -559,4 +559,6 @@ def test_vuln_tool_exposes_new_params() -> None:
     dep_props = create_dependency_report.params_json_schema["properties"]
     for field in ("package_name", "installed_version", "cve", "advisory_cvss"):
         assert field in dep_props
-    assert "package_ecosystem" in create_dependency_report.params_json_schema["required"]
+    dep_required = create_dependency_report.params_json_schema["required"]
+    assert "package_ecosystem" in dep_required
+    assert "advisory_cvss" in dep_required
