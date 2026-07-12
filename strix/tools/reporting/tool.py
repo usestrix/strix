@@ -198,8 +198,7 @@ async def _do_create(  # noqa: PLR0912
     fix_effort = (fix_effort or "").strip().lower()
     if fix_effort not in _VALID_FIX_EFFORT:
         errors.append(
-            f"Invalid fix_effort: {fix_effort!r}. "
-            f"Must be one of: {sorted(_VALID_FIX_EFFORT)}"
+            f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
         )
 
     if not isinstance(cvss_breakdown, dict) or not cvss_breakdown:
@@ -610,7 +609,7 @@ _DEP_SEVERITY_FROM_CVSS = {
 
 def _dependency_severity(advisory_cvss: float | None) -> tuple[float, str]:
     if advisory_cvss is None:
-        return 0.0, "medium"
+        return 0.0, "info"
     score = max(0.0, min(10.0, advisory_cvss))
     for (lo, hi), label in _DEP_SEVERITY_FROM_CVSS.items():
         if lo <= score < hi or (hi == 10.0 and score == 10.0):
@@ -652,7 +651,7 @@ def _build_dependency_evidence(
     return evidence
 
 
-async def _do_create_dependency(
+async def _do_create_dependency(  # noqa: PLR0912
     *,
     title: str,
     description: str,
@@ -705,7 +704,13 @@ async def _do_create_dependency(
             f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
         )
 
-    if advisory_cvss is not None and not 0.0 <= advisory_cvss <= 10.0:
+    if advisory_cvss is None:
+        errors.append(
+            "advisory_cvss is required: read the published advisory base score "
+            "(0.0-10.0) off the advisory (trivy CVSS / NVD / GHSA). Severity is "
+            "derived solely from it — do not omit it or the finding cannot be rated."
+        )
+    elif not 0.0 <= advisory_cvss <= 10.0:
         errors.append(f"advisory_cvss must be between 0.0 and 10.0, got {advisory_cvss}")
 
     if errors:
@@ -864,8 +869,10 @@ async def create_dependency_report(
         package_ecosystem: e.g. ``npm`` / ``pypi`` / ``maven`` / ``go``.
         fixed_version: First non-vulnerable version, if known.
         cwe: ``CWE-NNN`` (most specific) if certain, else omit.
-        advisory_cvss: Published advisory base score (0.0-10.0) if known;
-            drives severity. Omit if unknown (defaults to medium).
+        advisory_cvss: **Required.** Published advisory base score
+            (0.0-10.0) — read it off the advisory (trivy CVSS / NVD / GHSA).
+            Severity is derived solely from this score, so it must be the
+            real published value; do not guess or omit it.
         technical_analysis: Optional deeper mechanism/root-cause detail.
         fix_effort: One of ``trivial`` / ``low`` / ``medium`` / ``high``
             (dependency upgrades are usually ``trivial``/``low``).

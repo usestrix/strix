@@ -192,6 +192,30 @@ async def test_dependency_report_with_zero_cvss_remains_low_severity(
     assert report["cvss"] == 0.0
 
 
+async def test_dependency_report_requires_advisory_cvss(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Some impact.",
+        remediation_steps="Upgrade to 1.0.1.",
+        assumptions="Assumes the package ships in deployed builds.",
+        package_ecosystem="npm",
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=None,
+        technical_analysis=None,
+        fix_effort="low",
+    )
+
+    assert result["success"] is False
+    assert any("advisory_cvss is required" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
 async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
     report_state: ReportState,
     monkeypatch: pytest.MonkeyPatch,
