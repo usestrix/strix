@@ -34,12 +34,7 @@ classifiers = [
 ]
 dependencies = [
   "openai-agents[litellm]==0.14.6",
-  # openai 2.45 made InputTokensDetails.cache_write_tokens a required field, which the
-  # pinned openai-agents==0.14.6 usage/LiteLLM adapter does not populate -> fresh installs
-  # crash on first usage handling. Cap below 2.45 until openai-agents is bumped. (see #742)
   "openai>=2.26.0,<2.45",
-  # The completion/MCP code path imports litellm.proxy.* which requires the [proxy] extras
-  # (fastapi, orjson, ...). Plain litellm (pulled via openai-agents[litellm]) lacks them.
   "litellm[proxy]",
   "pydantic>=2.11.3",
   "pydantic-settings>=2.13.0",
