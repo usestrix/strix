@@ -284,7 +284,7 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
         return "#6b7280"
 
     @classmethod
-    def _render_failed(cls, args: dict[str, Any], result: dict[str, Any]) -> Static:
+    def _render_unsuccessful(cls, args: dict[str, Any], result: dict[str, Any]) -> Static:
         text = Text()
         text.append("📦 ")
         text.append("Dependency (SCA) Report", style="bold #ea580c")
@@ -293,11 +293,22 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
             text.append("\n\n")
             text.append("Title: ", style=FIELD_STYLE)
             text.append(title)
-        errors = result.get("errors")
-        detail = "; ".join(errors) if isinstance(errors, list) and errors else result.get("error")
+
+        warning = result.get("warning")
+        if result.get("success") is False:
+            errors = result.get("errors")
+            detail = (
+                "; ".join(errors) if isinstance(errors, list) and errors else result.get("error")
+            )
+            label, style = "✗ Not created: ", "bold #dc2626"
+            fallback = "Report was not created."
+        else:
+            detail = warning
+            label, style = "⚠ Not persisted: ", "bold #d97706"
+            fallback = "Report could not be persisted."
         text.append("\n\n")
-        text.append("✗ Not created: ", style="bold #dc2626")
-        text.append(str(detail or "Report was not created."))
+        text.append(label, style=style)
+        text.append(str(detail or fallback))
 
         padded = Text()
         padded.append("\n\n")
@@ -310,8 +321,8 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
         args = tool_data.get("args", {})
         result = tool_data.get("result", {})
 
-        if isinstance(result, dict) and result.get("success") is False:
-            return cls._render_failed(args, result)
+        if isinstance(result, dict) and (result.get("success") is False or result.get("warning")):
+            return cls._render_unsuccessful(args, result)
 
         title = args.get("title", "")
         description = args.get("description", "")
