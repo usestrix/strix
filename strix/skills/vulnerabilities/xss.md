@@ -170,17 +170,38 @@ Keep a compact set tuned per context:
 
 ## Validation
 
-1. Provide minimal payload and context (sink type) with before/after DOM or network evidence
-2. Demonstrate cross-browser execution where relevant or explain parser-specific behavior
-3. Show bypass of stated defenses (sanitizer settings, CSP/Trusted Types) with proof
-4. Quantify impact beyond alert: data accessed, action performed, persistence achieved
+XSS is only confirmed when a **sink** executes (or would execute) attacker-controlled script
+in a victim browser context. Input acceptance alone is never enough.
+
+**Required evidence (at least one):**
+
+1. **Reflected XSS** — response body / DOM contains the payload unescaped in a scriptable
+   context, **and** browser/agent-browser shows script execution (or a solid DOM proof of
+   an executable sink, e.g. unescaped payload inside a scriptable attribute/`innerHTML` path).
+2. **Stored XSS** — you **open a page that renders the stored value** (victim view, admin
+   panel, notification UI, email preview, etc.) and observe the same: unsafe reflection +
+   execution evidence. Do **not** invent “when an admin opens X” without accessing that view.
+3. **DOM XSS** — instrument or step through source→sink; show the source value reaches a
+   dangerous sink without encoding.
+
+Document: minimal payload, sink type/context, request + response (or screenshot/DOM), and
+impact beyond `alert` when possible.
+
+**Not sufficient as confirmation:**
+
+- HTTP 200 / “success” / “request sent” after POSTing a payload into a form
+- Server storing the string without ever viewing a render path that includes it
+- Black-box speculation that staff UIs “probably” render HTML
+- Payload present only in JSON/logs with proper encoding or `Content-Type` that is not HTML
 
 ## False Positives
 
+- **Form accepted HTML/JS payload (HTTP 200) with no observed render/execution path**
 - Reflected content safely encoded in the exact context
 - CSP with nonces/hashes and no inline/event handlers
 - Trusted Types enforced on sinks; DOMPurify in strict mode with URI allowlists
 - Scriptable contexts disabled (no HTML pass-through, safe URL schemes enforced)
+- Content stored but only shown escaped, or only to the same attacker-controlled client
 
 ## Impact
 
