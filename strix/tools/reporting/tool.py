@@ -351,6 +351,10 @@ async def create_vulnerability_report(
     - Suspicions you haven't confirmed with a PoC.
     - Tracking multiple vulnerabilities at once — one report per vuln.
     - Re-reporting something you (or another agent) already filed.
+    - Known-CVE dependency / supply-chain findings that can't be
+      dynamically PoC'd — a vulnerable dependency version pinned in a
+      lockfile/manifest that matches a published advisory. File those
+      with ``create_dependency_report`` instead, never with this tool.
 
     Automatic LLM-based **deduplication** rejects reports that describe
     the same root cause on the same asset as an existing report. If you
@@ -366,6 +370,9 @@ async def create_vulnerability_report(
       Never leak internal identifiers (proxy request IDs, internal
       report IDs) into any field.
     - Tone: formal, objective, third-person, vendor-neutral, concise.
+      Avoid internal-guidance headings like "QUICK", "Approach", or
+      "Techniques" that read like an engineering runbook rather than a
+      client deliverable.
     - **Use markdown in every text field**: ``**bold**`` for emphasis,
       ``inline code`` for identifiers/values/parameters, and fenced
       code blocks (```` ```language ````) for any code/payload/HTTP
@@ -377,6 +384,13 @@ async def create_vulnerability_report(
       only — NO code/diffs (code fixes go in ``code_locations``).
     - Numbered steps allowed only in PoC and Remediation sections.
     - Avoid hedging language; be precise and non-vague.
+    - Follow a standard pentest report structure across the fields:
+      (1) overview (``description``), (2) severity & CVSS vector
+      (``cvss_breakdown``), (3) affected asset(s) (``target`` /
+      ``endpoint``), (4) technical details (``technical_analysis``),
+      (5) proof of concept (``poc_description`` + ``poc_script_code``),
+      (6) impact (``impact``), (7) evidence (``evidence``), and
+      (8) remediation (``remediation_steps``).
 
     **White-box requirement**: when source is available, you MUST
     populate ``code_locations``. See the ``code_locations`` arg below
@@ -439,7 +453,10 @@ async def create_vulnerability_report(
         title: Specific finding title (e.g.
             ``"SQL Injection in /api/users login parameter"``). Don't
             include the CVE number in the title.
-        description: How the vuln was discovered + what it is.
+        description: Concise, non-technical TL;DR of the vulnerability
+            (1-3 sentences) — it appears first in the report. Deep
+            technical detail and root-cause analysis belong in
+            ``technical_analysis``, not here.
         impact: What an attacker achieves; business risk; data at risk.
         target: Affected URL / domain / repository.
         technical_analysis: The mechanism and root cause.
