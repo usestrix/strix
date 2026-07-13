@@ -120,15 +120,6 @@ _OPENROUTER_ATTRIBUTION_HEADERS = {
 
 
 def _configure_openrouter_attribution(model_name: str | None) -> None:
-    """Attribute OpenRouter usage to Strix rather than LiteLLM's defaults.
-
-    OpenRouter builds its public app rankings/analytics from request headers.
-    LiteLLM's OpenRouter provider defaults ``HTTP-Referer`` / ``X-Title`` to
-    litellm.ai / "liteLLM", so unattributed Strix traffic shows up under
-    LiteLLM. Setting ``litellm.headers`` overrides those defaults; it is only
-    applied when the configured model routes through OpenRouter (and removed
-    otherwise) so the headers never leak onto other providers' requests.
-    """
     import litellm
 
     current: object = litellm.headers
