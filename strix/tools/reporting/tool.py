@@ -638,7 +638,7 @@ def _build_dependency_metadata(
     *,
     package_name: str,
     installed_version: str,
-    package_ecosystem: str,
+    package_ecosystem: str | None,
     fixed_version: str | None,
 ) -> dict[str, str]:
     metadata = {
