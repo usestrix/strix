@@ -65,6 +65,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     llm = settings.llm
     set_tracing_disabled(True)
     _configure_litellm_compatibility()
+    _configure_openrouter_attribution(llm.model)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
         _configure_litellm_default("api_key", llm.api_key)
@@ -109,6 +110,29 @@ def _configure_litellm_compatibility() -> None:
     litellm.suppress_debug_info = True
 
     _register_litellm_cost_callback()
+
+
+_OPENROUTER_ATTRIBUTION_HEADERS = {
+    "HTTP-Referer": "https://strix.ai",
+    "X-Title": "Strix",
+    "X-OpenRouter-Categories": "cli-agent",
+}
+
+
+def _configure_openrouter_attribution(model_name: str | None) -> None:
+    import litellm
+
+    current: object = litellm.headers
+    existing: dict[str, str] = current if isinstance(current, dict) else {}
+    if not model_name or "openrouter/" not in model_name.strip().lower():
+        if any(key in existing for key in _OPENROUTER_ATTRIBUTION_HEADERS):
+            remaining = {
+                k: v for k, v in existing.items() if k not in _OPENROUTER_ATTRIBUTION_HEADERS
+            }
+            litellm.headers = remaining or None  # type: ignore[assignment]
+        return
+
+    litellm.headers = {**existing, **_OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
 
 
 def _register_litellm_cost_callback() -> None:
