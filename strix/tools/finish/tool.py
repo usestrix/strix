@@ -117,8 +117,11 @@ async def finish_scan(
        Calling ``finish_scan`` while children are alive orphans their
        work and produces an incomplete report.
     2. All vulnerabilities you found are filed via
-       ``create_vulnerability_report`` (un-reported findings are not
-       tracked and not credited).
+       ``create_vulnerability_report`` — or, for known-CVE dependency
+       findings, ``create_dependency_report`` (un-reported findings are
+       not tracked and not credited). A dependency CVE already filed via
+       ``create_dependency_report`` counts as reported; it does NOT need
+       re-filing here and does NOT block finishing.
     3. Don't double-report — one report per distinct vulnerability.
     4. **Attack-chaining gate.** Do NOT finish until you have genuinely
        considered chaining the confirmed findings into higher-impact,
