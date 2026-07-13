@@ -112,37 +112,36 @@ def _configure_litellm_compatibility() -> None:
     _register_litellm_cost_callback()
 
 
+_OPENROUTER_ATTRIBUTION_HEADERS = {
+    "HTTP-Referer": "https://strix.ai",
+    "X-Title": "Strix",
+    "X-OpenRouter-Categories": "cli-agent",
+}
+
+
 def _configure_openrouter_attribution(model_name: str | None) -> None:
     """Attribute OpenRouter usage to Strix rather than LiteLLM's defaults.
 
     OpenRouter builds its public app rankings/analytics from request headers.
-    LiteLLM's OpenRouter provider sources ``HTTP-Referer`` / ``X-Title`` from
-    the ``OR_SITE_URL`` / ``OR_APP_NAME`` env vars, defaulting to litellm.ai /
-    "liteLLM" when unset — so unattributed Strix traffic shows up under LiteLLM.
-    Set them (via ``setdefault`` so self-hosters can override) and tag the app
-    via ``X-OpenRouter-Categories`` (``OR_APP_CATEGORIES``, empty to disable),
-    which LiteLLM merges into OpenRouter request headers from ``litellm.headers``.
-    Only applied when the configured model routes through OpenRouter, so the
-    header never leaks onto other providers' requests.
+    LiteLLM's OpenRouter provider defaults ``HTTP-Referer`` / ``X-Title`` to
+    litellm.ai / "liteLLM", so unattributed Strix traffic shows up under
+    LiteLLM. Setting ``litellm.headers`` overrides those defaults; it is only
+    applied when the configured model routes through OpenRouter (and removed
+    otherwise) so the headers never leak onto other providers' requests.
     """
     import litellm
 
     current: object = litellm.headers
+    existing: dict[str, str] = current if isinstance(current, dict) else {}
     if not model_name or "openrouter/" not in model_name.strip().lower():
-        if isinstance(current, dict) and "X-OpenRouter-Categories" in current:
-            remaining = {k: v for k, v in current.items() if k != "X-OpenRouter-Categories"}
+        if any(key in existing for key in _OPENROUTER_ATTRIBUTION_HEADERS):
+            remaining = {
+                k: v for k, v in existing.items() if k not in _OPENROUTER_ATTRIBUTION_HEADERS
+            }
             litellm.headers = remaining or None  # type: ignore[assignment]
         return
 
-    os.environ.setdefault("OR_SITE_URL", "https://strix.ai")
-    os.environ.setdefault("OR_APP_NAME", "Strix")
-
-    categories = os.environ.get("OR_APP_CATEGORIES", "cli-agent").strip()
-    if not categories:
-        return
-    existing: dict[str, str] = current if isinstance(current, dict) else {}
-    if "X-OpenRouter-Categories" not in existing:
-        litellm.headers = {**existing, "X-OpenRouter-Categories": categories}  # type: ignore[assignment]
+    litellm.headers = {**existing, **_OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
 
 
 def _register_litellm_cost_callback() -> None:
