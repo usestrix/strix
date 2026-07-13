@@ -4,6 +4,7 @@ from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
 
+from strix.telemetry import posthog, scarf
 from strix.utils.resource_paths import get_strix_resource_path
 
 
@@ -216,6 +217,8 @@ def load_skills(skill_names: list[str]) -> dict[str, str]:
         var_name = skill_name.split("/")[-1]
         skill_content[var_name] = _FRONTMATTER_PATTERN.sub("", content).lstrip()
         logger.debug("Loaded skill: %s -> %s", skill_name, var_name)
+        posthog.skill_loaded(var_name)
+        scarf.skill_loaded(var_name)
 
     logger.debug("load_skills: %d skill(s) resolved", len(skill_content))
     return skill_content

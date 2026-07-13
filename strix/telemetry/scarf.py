@@ -75,13 +75,26 @@ def start(
     )
 
 
-def finding(severity: str) -> None:
+def finding(severity: str, cwe: str | None = None, is_cve: bool = False) -> None:
     _send(
         "finding_reported",
         {
             **base_props(),
             "session": SESSION_ID,
             "severity": severity.lower(),
+            "cwe": (cwe or "").strip().lower() or "unknown",
+            "is_cve": is_cve,
+        },
+    )
+
+
+def skill_loaded(skill_name: str) -> None:
+    _send(
+        "skill_loaded",
+        {
+            **base_props(),
+            "session": SESSION_ID,
+            "skill": skill_name,
         },
     )
 
