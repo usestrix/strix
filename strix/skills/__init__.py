@@ -1,5 +1,6 @@
 import logging
 import re
+import threading
 from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
@@ -178,6 +179,18 @@ def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str
     return None
 
 
+def _track_skill_loaded(skill_name: str, file_path: Path) -> None:
+    builtin = get_strix_resource_path("skills")
+    if not file_path.is_relative_to(builtin):
+        skill_name = "custom"
+
+    def _send() -> None:
+        posthog.skill_loaded(skill_name)
+        scarf.skill_loaded(skill_name)
+
+    threading.Thread(target=_send, daemon=True).start()
+
+
 def _candidate_skill_files(skill_name: str) -> list[Path]:
     """Resolve *skill_name* to effective matching files."""
     if "/" in skill_name:
@@ -217,8 +230,7 @@ def load_skills(skill_names: list[str]) -> dict[str, str]:
         var_name = skill_name.split("/")[-1]
         skill_content[var_name] = _FRONTMATTER_PATTERN.sub("", content).lstrip()
         logger.debug("Loaded skill: %s -> %s", skill_name, var_name)
-        posthog.skill_loaded(var_name)
-        scarf.skill_loaded(var_name)
+        _track_skill_loaded(var_name, file_path)
 
     logger.debug("load_skills: %d skill(s) resolved", len(skill_content))
     return skill_content
