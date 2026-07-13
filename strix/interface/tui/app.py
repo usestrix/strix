@@ -1359,7 +1359,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _start_dot_animation(self) -> None:
         if self._dot_animation_timer is None:
-            self._dot_animation_timer = self.set_interval(0.25, self._animate_dots)
+            self._dot_animation_timer = self.set_interval(0.06, self._animate_dots)
 
     def _stop_dot_animation(self) -> None:
         if self._dot_animation_timer is not None:
