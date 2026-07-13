@@ -207,8 +207,8 @@ def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
     return f"{tool_name}: invalid arguments — " + "; ".join(parts)
 
 
-_EXEC_TTY_TRUE_STRINGS = frozenset({"1", "true", "yes", "on"})
-_EXEC_TTY_FALSE_STRINGS = frozenset({"0", "false", "no", "off"})
+_EXEC_TTY_TRUE_STRINGS = frozenset({"1", "true", "t", "yes", "y", "on"})
+_EXEC_TTY_FALSE_STRINGS = frozenset({"0", "false", "f", "no", "n", "off"})
 
 
 def _should_force_exec_tty() -> bool:

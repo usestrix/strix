@@ -127,7 +127,7 @@ def test_should_force_exec_tty_defaults_false_on_linux(
     assert factory._should_force_exec_tty() is False
 
 
-@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes", "on"])
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "t", "T", "yes", "y", "on"])
 def test_should_force_exec_tty_env_var_forces_on_non_windows(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
@@ -136,7 +136,7 @@ def test_should_force_exec_tty_env_var_forces_on_non_windows(
     assert factory._should_force_exec_tty() is True
 
 
-@pytest.mark.parametrize("value", ["0", "false", "FALSE", "no", "off"])
+@pytest.mark.parametrize("value", ["0", "false", "FALSE", "f", "F", "no", "n", "off"])
 def test_should_force_exec_tty_env_var_forces_off_on_windows(
     monkeypatch: pytest.MonkeyPatch, value: str
 ) -> None:
