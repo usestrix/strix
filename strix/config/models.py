@@ -125,10 +125,14 @@ def _configure_openrouter_attribution(model_name: str | None) -> None:
     Only applied when the configured model routes through OpenRouter, so the
     header never leaks onto other providers' requests.
     """
-    if not model_name or "openrouter/" not in model_name.strip().lower():
-        return
-
     import litellm
+
+    current: object = litellm.headers
+    if not model_name or "openrouter/" not in model_name.strip().lower():
+        if isinstance(current, dict) and "X-OpenRouter-Categories" in current:
+            remaining = {k: v for k, v in current.items() if k != "X-OpenRouter-Categories"}
+            litellm.headers = remaining or None  # type: ignore[assignment]
+        return
 
     os.environ.setdefault("OR_SITE_URL", "https://strix.ai")
     os.environ.setdefault("OR_APP_NAME", "Strix")
@@ -136,7 +140,7 @@ def _configure_openrouter_attribution(model_name: str | None) -> None:
     categories = os.environ.get("OR_APP_CATEGORIES", "cli-agent").strip()
     if not categories:
         return
-    existing: dict[str, str] = litellm.headers if isinstance(litellm.headers, dict) else {}
+    existing: dict[str, str] = current if isinstance(current, dict) else {}
     if "X-OpenRouter-Categories" not in existing:
         litellm.headers = {**existing, "X-OpenRouter-Categories": categories}  # type: ignore[assignment]
 
