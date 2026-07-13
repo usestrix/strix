@@ -135,6 +135,10 @@ class ReportState:
         self._sarif_repo_ctx: dict[str, Any] | None = None
         self._sarif_repo_ctx_ready: bool = False
 
+        self.posthog_scan_ended_sent: bool = False
+        self.scarf_scan_ended_sent: bool = False
+        self.scan_ended_exit_reason: str | None = None
+
     def get_run_dir(self) -> Path:
         if self._run_dir is None:
             run_dir_name = self.run_name if self.run_name else self.run_id
