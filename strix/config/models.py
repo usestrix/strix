@@ -108,7 +108,29 @@ def _configure_litellm_compatibility() -> None:
     litellm.disable_streaming_logging = False
     litellm.suppress_debug_info = True
 
+    _configure_openrouter_attribution()
     _register_litellm_cost_callback()
+
+
+def _configure_openrouter_attribution() -> None:
+    """Attribute OpenRouter usage to Strix rather than LiteLLM's defaults.
+
+    OpenRouter builds its public app rankings/analytics from request headers.
+    LiteLLM's OpenRouter provider sources ``HTTP-Referer`` / ``X-Title`` from
+    the ``OR_SITE_URL`` / ``OR_APP_NAME`` env vars, defaulting to litellm.ai /
+    "liteLLM" when unset — so unattributed Strix traffic shows up under LiteLLM.
+    Set them (via ``setdefault`` so self-hosters can override) and tag the app
+    as a CLI agent via ``X-OpenRouter-Categories``, which LiteLLM merges into the
+    OpenRouter request headers from ``litellm.headers``.
+    """
+    import litellm
+
+    os.environ.setdefault("OR_SITE_URL", "https://strix.ai")
+    os.environ.setdefault("OR_APP_NAME", "Strix")
+
+    existing: dict[str, str] = litellm.headers if isinstance(litellm.headers, dict) else {}
+    if "X-OpenRouter-Categories" not in existing:
+        litellm.headers = {**existing, "X-OpenRouter-Categories": "cli-agent"}  # type: ignore[assignment]
 
 
 def _register_litellm_cost_callback() -> None:

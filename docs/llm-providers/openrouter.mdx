@@ -35,3 +35,15 @@ Access any model on OpenRouter using the format `openrouter/<provider>/<model>`:
 - **Fallback routing** — Automatic failover between providers
 - **Cost tracking** — Monitor usage across all models
 - **Higher rate limits** — OpenRouter handles provider limits for you
+
+## App Attribution
+
+Strix attributes its OpenRouter usage to the Strix app (via the `HTTP-Referer`,
+`X-Title`, and `X-OpenRouter-Categories` headers) so it appears under Strix in
+OpenRouter's [app rankings](https://openrouter.ai/apps). To attribute usage to
+your own app instead, override the defaults before launching:
+
+```bash
+export OR_SITE_URL="https://your-app.com"
+export OR_APP_NAME="Your App"
+```
