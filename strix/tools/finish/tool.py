@@ -129,7 +129,10 @@ async def finish_scan(
        combination. You may rule out combinations you can confidently
        call unrelated — note why instead of padding chains. Any
        validated chain must already be filed via
-       ``create_vulnerability_report`` and surfaced prominently in
+       ``create_vulnerability_report`` — a demonstrated end-to-end chain
+       is a PoC-backed vulnerability, so it uses that tool even when one
+       link is a dependency CVE (the standalone CVE stays in its own
+       ``create_dependency_report``) — and surfaced prominently in
        ``executive_summary`` / ``technical_analysis``. Finding no real
        chain after a serious attempt is acceptable; skipping the
        chaining reasoning, or ignoring a plausibly-related combination,
