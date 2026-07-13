@@ -2,7 +2,7 @@
 
 To help make Strix better for everyone, we collect anonymized data that helps us understand how to better improve our AI security agent for our users, guide the addition of new features, and fix common errors and bugs. This feedback loop is crucial for improving Strix's capabilities and user experience.
 
-We use [PostHog](https://posthog.com), an open-source analytics platform, and [Scarf](https://scarf.sh) for data collection and analysis. Our telemetry implementation is fully transparent - you can review the source code ([posthog.py](https://github.com/usestrix/strix/blob/main/strix/telemetry/posthog.py), [scarf.py](https://github.com/usestrix/strix/blob/main/strix/telemetry/scarf.py)) to see exactly what we track.
+We use [PostHog](https://posthog.com), an open-source analytics platform, for data collection and analysis, along with [Scarf](https://scarf.sh). Our telemetry implementation is fully transparent - you can review the source code ([posthog.py](https://github.com/usestrix/strix/blob/main/strix/telemetry/posthog.py), [scarf.py](https://github.com/usestrix/strix/blob/main/strix/telemetry/scarf.py)) to see exactly what we track.
 
 ### Telemetry Policy
 
