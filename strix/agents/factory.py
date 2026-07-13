@@ -228,7 +228,7 @@ def _should_force_exec_tty() -> bool:
 
 
 def _force_exec_tty(raw_input: str) -> str:
-    """Force ``tty: true`` onto an ``exec_command`` payload.
+    """Default an ``exec_command`` payload's ``tty`` to ``true`` when unset.
 
     On native Windows, docker-py talks to Docker Desktop over a named pipe
     (``NpipeSocket``) rather than a POSIX socket. ``exec_command``'s
@@ -239,9 +239,14 @@ def _force_exec_tty(raw_input: str) -> str:
     The tty path (``frames_iter_tty``) is a single raw read and unaffected.
     Reproduced directly against the pinned SDK on Windows + Docker Desktop:
     ``tty=True`` returns output instantly, ``tty=False`` (the schema
-    default) returns empty output with no exception. Force it on
-    unconditionally rather than only when absent, since some models emit
-    the schema default (``tty: false``) explicitly.
+    default) returns empty output with no exception.
+
+    Only fills in ``tty`` when the key is absent — an explicit ``tty: false``
+    is left alone, since some commands (e.g. ``git log``, ``git diff``) start
+    a pager or otherwise change behavior under a real TTY and must stay
+    non-interactive. ``exec_command`` is registered with
+    ``strict_json_schema=False``, so models routinely omit optional fields
+    they don't care about; that's the case this covers.
     """
     try:
         parsed = json.loads(raw_input)
@@ -249,7 +254,7 @@ def _force_exec_tty(raw_input: str) -> str:
         return raw_input
     if not isinstance(parsed, dict):
         return raw_input
-    parsed["tty"] = True
+    parsed.setdefault("tty", True)
     return json.dumps(parsed)
 
 

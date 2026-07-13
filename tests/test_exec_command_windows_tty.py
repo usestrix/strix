@@ -46,9 +46,9 @@ def test_force_exec_tty_injects_true_when_absent() -> None:
     assert json.loads(result) == {"cmd": "ls", "tty": True}
 
 
-def test_force_exec_tty_overrides_explicit_false() -> None:
+def test_force_exec_tty_respects_explicit_false() -> None:
     result = factory._force_exec_tty(json.dumps({"cmd": "ls", "tty": False}))
-    assert json.loads(result)["tty"] is True
+    assert json.loads(result)["tty"] is False
 
 
 def test_force_exec_tty_leaves_malformed_json_untouched() -> None:
@@ -94,6 +94,21 @@ async def test_wrap_exec_command_respects_explicit_tty_false_on_linux(
     wrapped = factory._wrap_exec_command(_fake_tool(captured))
 
     await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"cmd": "echo test", "tty": False}))
+
+    assert json.loads(captured["raw_input"])["tty"] is False
+
+
+@pytest.mark.asyncio
+async def test_wrap_exec_command_respects_explicit_tty_false_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model explicitly opting out of a TTY (e.g. for `git log`/`git diff`,
+    which start a pager under a real TTY) must not be overridden."""
+    monkeypatch.setattr(sys, "platform", "win32")
+    captured: dict[str, str] = {}
+    wrapped = factory._wrap_exec_command(_fake_tool(captured))
+
+    await wrapped.on_invoke_tool(cast("Any", None), json.dumps({"cmd": "git log", "tty": False}))
 
     assert json.loads(captured["raw_input"])["tty"] is False
 
