@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 
 # In-container Caido sidecar port (matches the image's caido-cli bind).
 _CONTAINER_CAIDO_PORT = 48080
+_CONTAINER_CAIDO_SCHEME = "http"
+_CONTAINER_CAIDO_HOST = "127.0.0.1"
+_HOST_GATEWAY_NAME = "host.docker.internal"
+_NO_PROXY_VALUE = "localhost,127.0.0.1"
+_CA_BUNDLE_PATH = "/etc/ssl/certs/ca-certificates.crt"
 
 
 _SESSION_CACHE: dict[str, dict[str, Any]] = {}
@@ -34,6 +39,28 @@ _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 _WORKSPACE_ROOT = "/workspace"
 
 _PROTECTED_METADATA_NAMES = (".git", ".agents", ".codex")
+
+def _container_caido_url() -> str:
+    return f"{_CONTAINER_CAIDO_SCHEME}://{_CONTAINER_CAIDO_HOST}:{_CONTAINER_CAIDO_PORT}"
+
+
+def build_sandbox_environment() -> dict[str, str]:
+    """Return environment variables inherited by sandbox subprocesses."""
+    container_caido_url = _container_caido_url()
+    return {
+        "PYTHONUNBUFFERED": "1",
+        "HOST_GATEWAY": _HOST_GATEWAY_NAME,
+        "http_proxy": container_caido_url,
+        "https_proxy": container_caido_url,
+        "HTTP_PROXY": container_caido_url,
+        "HTTPS_PROXY": container_caido_url,
+        "ALL_PROXY": container_caido_url,
+        "all_proxy": container_caido_url,
+        "NO_PROXY": _NO_PROXY_VALUE,
+        "no_proxy": _NO_PROXY_VALUE,
+        "REQUESTS_CA_BUNDLE": _CA_BUNDLE_PATH,
+        "SSL_CERT_FILE": _CA_BUNDLE_PATH,
+    }
 
 
 def _host_identity_env() -> dict[str, str]:
@@ -297,20 +324,10 @@ async def create_or_reuse(
     # picks up these env vars automatically. ``NO_PROXY`` keeps the
     # agent-browser CDP daemon's localhost traffic from looping back
     # through Caido.
-    container_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
+    container_caido_url = _container_caido_url()
     manifest = Manifest(
         entries=entries,
-        environment=Environment(
-            value={
-                "PYTHONUNBUFFERED": "1",
-                "HOST_GATEWAY": "host.docker.internal",
-                **_host_identity_env(),
-                "http_proxy": container_caido_url,
-                "https_proxy": container_caido_url,
-                "ALL_PROXY": container_caido_url,
-                "NO_PROXY": "localhost,127.0.0.1",
-            },
-        ),
+        environment=Environment(value={**build_sandbox_environment(), **_host_identity_env()}),
     )
 
     logger.info(
