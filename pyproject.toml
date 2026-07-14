@@ -1,6 +1,6 @@
 [project]
 name = "strix-agent"
-version = "1.0.4"
+version = "1.1.0"
 description = "Open-source AI Hackers for your apps"
 readme = "README.md"
 license = "Apache-2.0"
