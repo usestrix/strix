@@ -349,6 +349,15 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     while True:
         try:
             await coordinator.mark_running(agent_id)
+
+            # --- PRODUCTION FIX FOR AWS BEDROCK TOOL_CHOICE COMPLIANCE ---
+            if hasattr(run_config, "extra_body") and isinstance(run_config.extra_body, dict):
+                if "tool_choice" in run_config.extra_body:
+                    run_config.extra_body["tool_choice"] = {"type": "auto"}
+            if hasattr(run_config, "tool_choice") and (run_config.tool_choice == "auto" or isinstance(run_config.tool_choice, str)):
+                run_config.tool_choice = {"type": "auto"}
+            # -------------------------------------------------------------
+
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
