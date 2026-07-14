@@ -217,7 +217,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             parsed = json.loads(raw_input)
         except (json.JSONDecodeError, TypeError):
             parsed = None
-        if isinstance(parsed, dict) and not parsed.get("shell"):
+        if isinstance(parsed, dict) and "shell" not in parsed:
             parsed["shell"] = "bash"
             raw_input = json.dumps(parsed)
         try:

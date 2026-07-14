@@ -39,12 +39,13 @@ async def test_wrap_exec_command_defaults_shell_to_bash() -> None:
 
 
 @pytest.mark.asyncio
-async def test_wrap_exec_command_preserves_explicit_shell() -> None:
+@pytest.mark.parametrize("shell", ["/bin/zsh", ""])
+async def test_wrap_exec_command_preserves_explicit_shell(shell: str) -> None:
     captured: dict[str, str] = {}
     wrapped = factory._wrap_exec_command(_capturing_exec_tool(captured))
 
     await wrapped.on_invoke_tool(
-        cast("Any", None), json.dumps({"cmd": "echo test", "shell": "/bin/zsh"})
+        cast("Any", None), json.dumps({"cmd": "echo test", "shell": shell})
     )
 
-    assert json.loads(captured["raw_input"])["shell"] == "/bin/zsh"
+    assert json.loads(captured["raw_input"])["shell"] == shell
