@@ -209,10 +209,6 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
-        # Default the shell to bash when the model doesn't specify one. The SDK
-        # otherwise falls back to the sandbox user's default shell (dash/sh in
-        # the image), which lacks common builtins like `source` and prints
-        # "source: not found". Explicit `shell` values are left untouched.
         try:
             parsed = json.loads(raw_input)
         except (json.JSONDecodeError, TypeError):
