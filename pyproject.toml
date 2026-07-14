@@ -42,6 +42,7 @@ dependencies = [
   "docker>=7.1.0",
   "textual>=6.0.0",
   "requests>=2.32.0",
+  "socksio>=1.0.0",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
 ]
@@ -111,6 +112,7 @@ module = [
     "docker.*",
     "caido_sdk_client.*",
     "pydantic_settings.*",
+    "socksio.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,9 @@ if TYPE_CHECKING:
     from agents.models.interface import ModelProvider
 
     from strix.config.settings import Settings
+
+
+logger = logging.getLogger(__name__)
 
 
 class StrixProvider(MultiProvider):
@@ -99,7 +103,19 @@ FRONTIER_MODEL_FAMILIES = (
 def configure_sdk_model_defaults(settings: Settings) -> None:
     """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
-    set_tracing_disabled(True)
+    try:
+        set_tracing_disabled(True)
+    except ImportError as exc:
+        # Disabling tracing eagerly initializes an httpx client that may need an
+        # optional transport (e.g. socksio for SOCKS proxies). A failure here is
+        # non-fatal for startup, but tracing then stays at the SDK default
+        # (enabled), so make the consequence explicit rather than silent.
+        logger.warning(
+            "Could not disable SDK tracing (%s); tracing may remain enabled and "
+            "spans could be sent to the provider. Install the missing transport "
+            "(e.g. 'socksio') to resolve.",
+            exc,
+        )
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
     if llm.api_key:
