@@ -130,6 +130,13 @@ TLS clues: certificate CN/SAN referencing provider default host instead of the c
 3. Optional: issue a DV certificate (legal scope) and reference CT entry as evidence
 4. Demonstrate impact chains (CSP/script-src trust, OAuth redirect acceptance, cookie Domain scoping)
 
+## Severity
+
+- Score severity based on current claimability plus trusted-origin impact, not just a provider-branded error page
+- When evaluating severity, use `web_search` (if available) for the exact provider/product to confirm whether it now enforces subdomain takeover prevention such as TXT/custom-domain ownership verification or reserved-hostname protections; if search is unavailable, do not treat that absence as evidence that the provider prevents claiming
+- If you have positively confirmed the provider currently prevents third-party claiming and you cannot bypass that control, treat the finding as low severity rather than a confirmed takeover — an unconfirmed provider control is not grounds for downgrading
+- Reserve high/critical severity for cases where you can claim the resource or strongly prove claimability and show meaningful impact such as OAuth redirect abuse, cookie scope abuse, CSP trust, email receipt, or NS delegation control. E.g. Elastic Beanstalk takeovers are still generally legitimate.
+
 ## False Positives
 
 - "Unknown domain" pages that are not claimable due to enforced TXT/ownership checks

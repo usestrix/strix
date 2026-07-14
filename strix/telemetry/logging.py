@@ -63,6 +63,18 @@ _HANDLER_TAG = "_strix_scan_handler"
 # ``openai.agents`` is the openai-agents SDK's canonical logger root.
 _TRACKED_ROOTS: tuple[str, ...] = ("strix", "openai.agents")
 
+_STDOUT_QUIET_ROOTS: frozenset[str] = frozenset({"openai.agents"})
+
+
+class _StdoutQuietFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.levelno >= logging.WARNING:
+            return True
+        return not any(
+            record.name == root or record.name.startswith(root + ".")
+            for root in _STDOUT_QUIET_ROOTS
+        )
+
 
 def configure_dependency_logging() -> None:
     """Quiet dependency logging/warnings that obscure Strix scan logs."""
@@ -119,6 +131,7 @@ def setup_scan_logging(run_dir: Path, *, debug: bool | None = None) -> Callable[
     stream_handler.setLevel(logging.DEBUG if debug else logging.ERROR)
     stream_handler.setFormatter(formatter)
     stream_handler.addFilter(context_filter)
+    stream_handler.addFilter(_StdoutQuietFilter())
     setattr(stream_handler, _HANDLER_TAG, True)
 
     tracked_loggers = [logging.getLogger(name) for name in _TRACKED_ROOTS]

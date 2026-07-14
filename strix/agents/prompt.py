@@ -7,7 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from strix.skills import get_available_skills, load_skills
+from strix.skills import get_available_skills, load_skills, skill_search_dirs
 from strix.utils.resource_paths import get_strix_resource_path
 
 
@@ -69,9 +69,9 @@ def render_system_prompt(
     """Render the system prompt. Returns empty string on template failure."""
     try:
         prompt_dir = get_strix_resource_path("agents", _PROMPT_DIRNAME)
-        skills_dir = get_strix_resource_path("skills")
+        loader_dirs = [prompt_dir, *skill_search_dirs()]
         env = Environment(
-            loader=FileSystemLoader([prompt_dir, skills_dir]),
+            loader=FileSystemLoader(loader_dirs),
             autoescape=select_autoescape(
                 enabled_extensions=(),
                 default_for_string=False,

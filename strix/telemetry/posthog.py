@@ -26,10 +26,10 @@ def _is_enabled() -> bool:
     return load_settings().telemetry.enabled
 
 
-def _send(event: str, properties: dict[str, Any]) -> None:
+def _send(event: str, properties: dict[str, Any]) -> bool:
     if not _is_enabled():
         logger.debug("posthog disabled; skipping event %s", event)
-        return
+        return False
     try:
         payload = {
             "api_key": _POSTHOG_PUBLIC_API_KEY,
@@ -46,8 +46,10 @@ def _send(event: str, properties: dict[str, Any]) -> None:
             pass
     except Exception:  # noqa: BLE001
         logger.debug("posthog send failed for event %s", event, exc_info=True)
+        return False
     else:
         logger.debug("posthog event sent: %s", event)
+        return True
 
 
 def start(
@@ -71,17 +73,34 @@ def start(
     )
 
 
-def finding(severity: str) -> None:
+def finding(severity: str, cwe: str | None = None, is_cve: bool = False) -> None:
     _send(
         "finding_reported",
         {
             **base_props(),
             "severity": severity.lower(),
+            "cwe": (cwe or "").strip().lower() or "unknown",
+            "is_cve": is_cve,
+        },
+    )
+
+
+def skill_loaded(skill_name: str) -> None:
+    _send(
+        "skill_loaded",
+        {
+            **base_props(),
+            "skill": skill_name,
         },
     )
 
 
 def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
+    if report_state.posthog_scan_ended_sent:
+        return
+    if report_state.scan_ended_exit_reason is None:
+        report_state.scan_ended_exit_reason = exit_reason
+
     vulnerabilities_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for v in report_state.vulnerability_reports:
         sev = v.get("severity", "info").lower()
@@ -110,11 +129,11 @@ def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
     except (TypeError, ValueError, AttributeError):
         pass
 
-    _send(
+    report_state.posthog_scan_ended_sent = _send(
         "scan_ended",
         {
             **base_props(),
-            "exit_reason": exit_reason,
+            "exit_reason": report_state.scan_ended_exit_reason,
             "duration_seconds": round(duration),
             "vulnerabilities_total": len(report_state.vulnerability_reports),
             **{f"vulnerabilities_{k}": v for k, v in vulnerabilities_counts.items()},
@@ -123,8 +142,6 @@ def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
     )
 
 
-def error(error_type: str, error_msg: str | None = None) -> None:
+def error(error_type: str) -> None:
     props = {**base_props(), "error_type": error_type}
-    if error_msg:
-        props["error_msg"] = error_msg
     _send("error", props)

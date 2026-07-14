@@ -8,7 +8,11 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
+from strix.config.models import (
+    DEFAULT_MODEL_RETRY,
+    is_known_openai_bare_model,
+    model_supports_reasoning,
+)
 
 
 if TYPE_CHECKING:
@@ -16,6 +20,15 @@ if TYPE_CHECKING:
 
 
 DEFAULT_MAX_TURNS = 500
+
+
+def _accepts_required_tool_choice(model_name: str | None) -> bool:
+    name = (model_name or "").strip().lower()
+    for prefix in ("litellm/", "any-llm/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    return name.startswith("openai/") or is_known_openai_bare_model(name)
 
 
 def build_root_task(scan_config: dict[str, Any]) -> str:
@@ -111,6 +124,7 @@ def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,
     model_name: str,
+    force_required_tool_choice: bool = False,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
@@ -125,6 +139,8 @@ def make_model_settings(
         model_settings = model_settings.resolve(
             ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
         )
+    if force_required_tool_choice and _accepts_required_tool_choice(model_name):
+        model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
     return model_settings
 
 
@@ -136,30 +152,27 @@ def child_initial_input(
     task: str,
     parent_history: list[Any],
 ) -> list[dict[str, Any]]:
-    initial_input: list[dict[str, Any]] = []
+    """Build the initial input for a child agent as a single user message.
+
+    Collapsing the inherited-context block, the identity line, and the task into
+    one ``{"role": "user"}`` message keeps providers that require strictly
+    alternating roles (e.g. Perplexity, llama.cpp) from rejecting consecutive
+    user messages.
+    """
+    parts: list[str] = []
     if parent_history:
         rendered = json.dumps(parent_history, ensure_ascii=False, default=str)
-        initial_input.append(
-            {
-                "role": "user",
-                "content": (
-                    "== Inherited context from parent (background only) ==\n"
-                    f"{rendered}\n"
-                    "== End of inherited context ==\n"
-                    "Use the above as background only; do not continue the "
-                    "parent's work. Your task follows."
-                ),
-            },
+        parts.append(
+            "== Inherited context from parent (background only) ==\n"
+            f"{rendered}\n"
+            "== End of inherited context ==\n"
+            "Use the above as background only; do not continue the "
+            "parent's work. Your task follows.",
         )
-    initial_input.append(
-        {
-            "role": "user",
-            "content": (
-                f"You are agent {name} ({child_id}); your parent is {parent_id}. "
-                "Maintain your own identity. Call agent_finish when your task "
-                "is complete."
-            ),
-        }
+    parts.append(
+        f"You are agent {name} ({child_id}); your parent is {parent_id}. "
+        "Maintain your own identity. Call agent_finish when your task "
+        "is complete.",
     )
-    initial_input.append({"role": "user", "content": task})
-    return initial_input
+    parts.append(task)
+    return [{"role": "user", "content": "\n\n".join(parts)}]

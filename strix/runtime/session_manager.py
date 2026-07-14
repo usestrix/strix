@@ -114,7 +114,8 @@ async def create_or_reuse(
     )
 
     caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
-    host_caido_url = f"http://{caido_endpoint.host}:{caido_endpoint.port}"
+    scheme = "https" if caido_endpoint.tls else "http"
+    host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
     logger.debug("Caido host endpoint resolved: %s", host_caido_url)
 
     caido_client = await bootstrap_caido(
