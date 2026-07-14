@@ -84,7 +84,7 @@ class ChatTextArea(TextArea):  # type: ignore[misc]
 
         super()._on_key(event)
 
-    @on(TextArea.Changed)  # type: ignore[untyped-decorator]
+    @on(TextArea.Changed)  # type: ignore[misc]
     def _update_height(self, _event: TextArea.Changed | None = None) -> None:
         if not self.parent:
             return
@@ -1641,7 +1641,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         return AgentMessageRenderer.render_simple(content)
 
-    @on(Tree.NodeHighlighted)  # type: ignore[untyped-decorator]
+    @on(Tree.NodeHighlighted)  # type: ignore[misc]
     def handle_tree_highlight(self, event: Tree.NodeHighlighted) -> None:
         if len(self.screen_stack) > 1 or self.show_splash:
             return
@@ -1661,7 +1661,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if agent_id:
                 self.selected_agent_id = agent_id
 
-    @on(Tree.NodeSelected)  # type: ignore[untyped-decorator]
+    @on(Tree.NodeSelected)  # type: ignore[misc]
     def handle_tree_node_selected(self, event: Tree.NodeSelected) -> None:
         if len(self.screen_stack) > 1 or self.show_splash:
             return

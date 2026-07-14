@@ -11,13 +11,12 @@ repos:
 
   # MyPy for static type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.19.1
+    rev: v1.17.1
     hooks:
       - id: mypy
         additional_dependencies: [
           types-requests,
           types-python-dateutil,
-          types-Pygments,
           pydantic,
           fastapi,
           pytest,
