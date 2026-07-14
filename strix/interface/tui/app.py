@@ -179,7 +179,7 @@ class SplashScreen(Static):  # type: ignore[misc]
         text = Text("⚠ ", style=Style(color="yellow", bold=True))
         text.append(model, style=Style(color="cyan", bold=True))
         text.append(
-            " is not a recommended frontier model — scans may miss vulnerabilities",
+            " is not a recommended frontier model — pentest quality could be degraded",
             style=Style(color="yellow"),
         )
         return text
