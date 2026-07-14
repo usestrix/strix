@@ -25,6 +25,8 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
         "bedrock_mantle/openai.gpt-5.5",
         "anthropic/claude-opus-4-8",
         "anthropic.claude-opus-4-8",
+        "anthropic/claude-opus-4-7",
+        "anthropic/claude-fable-5",
         "anthropic/claude-sonnet-5",
         "vertex_ai/claude-sonnet-5@default",
         "vertex_ai/claude-sonnet-4-6@default",
