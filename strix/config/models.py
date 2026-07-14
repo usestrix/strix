@@ -71,15 +71,11 @@ RECOMMENDED_MODEL_NAMES = (
     "anthropic/claude-sonnet-4-6",
     "vertex_ai/gemini-3.1-pro-preview",
     "gemini/gemini-3.1-pro-preview",
-    "xai/grok-4.5",
-    "xai/grok-4.3",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
     "dashscope/qwen3.7-max-2026-06-08",
     "moonshot/kimi-k2.7-code",
     "moonshot/kimi-k2.6",
-    "mistral/mistral-medium-3-5",
-    "mistral/magistral-medium-latest",
 )
 
 _RECOMMENDED_MODEL_NAME_SET = frozenset(name.lower() for name in RECOMMENDED_MODEL_NAMES)
@@ -91,11 +87,9 @@ FRONTIER_MODEL_FAMILIES = (
         ("claude-opus-4", "claude-sonnet-5", "claude-sonnet-4"),
     ),
     (("google", "gemini", "vertex_ai"), ("gemini-3",)),
-    (("xai", "x-ai"), ("grok-4",)),
     (("deepseek",), ("deepseek-v4", "deepseek-r1", "deepseek-reasoner")),
     (("alibaba", "dashscope", "qwen"), ("qwen3.7", "qwen3.5", "qwen3-max")),
     (("moonshot", "moonshotai", "kimi"), ("kimi-k2.7", "kimi-k2.6", "kimi-k2.5")),
-    (("mistral", "mistralai"), ("mistral-medium-3-5", "magistral-medium")),
 )
 
 

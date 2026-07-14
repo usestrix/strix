@@ -31,8 +31,6 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
         "any-llm/anthropic/claude-sonnet-4-6",
         "vertex_ai/gemini-3.1-pro-preview",
         "openrouter/google/gemini-3.1-pro-preview",
-        "xai/grok-4.3",
-        "openrouter/x-ai/grok-4",
         "deepseek/deepseek-v4-pro",
         "deepseek/deepseek-r1-0528",
         "deepseek/deepseek-reasoner",
@@ -40,8 +38,6 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
         "qwen3.7-max",
         "moonshot/kimi-k2.6",
         "kimi-k2.7-code",
-        "mistral/mistral-medium-3-5",
-        "mistral/magistral-medium-latest",
     ],
 )
 def test_frontier_model_families_are_accepted(model_name: str) -> None:
@@ -58,6 +54,10 @@ def test_frontier_model_families_are_accepted(model_name: str) -> None:
         "deepseek/deepseek-chat",
         "custom-ollama/gpt-5-mini-local",
         "custom-provider/claude-opus-4-local",
+        "xai/grok-4.5",
+        "openrouter/x-ai/grok-4",
+        "mistral/mistral-medium-3-5",
+        "mistral/magistral-medium-latest",
     ],
 )
 def test_non_frontier_models_are_rejected(model_name: str) -> None:
