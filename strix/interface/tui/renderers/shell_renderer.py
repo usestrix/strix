@@ -71,7 +71,7 @@ def _truncate_line(line: str) -> str:
 
 
 def _clean_output(output: str) -> str:
-    cleaned = Text.from_ansi(output).plain.translate(_CONTROL_BYTES_TO_DROP)
+    cleaned: str = Text.from_ansi(output).plain.translate(_CONTROL_BYTES_TO_DROP)
     for pattern in STRIP_PATTERNS:
         cleaned = re.sub(pattern, "", cleaned, flags=re.MULTILINE)
 

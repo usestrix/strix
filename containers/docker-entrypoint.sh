@@ -9,10 +9,24 @@ if [ ! -f /app/certs/ca.p12 ]; then
   exit 1
 fi
 
+# Caido enforces a Host allowlist (DNS-rebinding protection) and rejects requests
+# whose Host header is a hostname it doesn't recognize. To reach Caido over a
+# hostname (rather than an IP literal), set STRIX_CAIDO_ALLOWED_DOMAINS to a
+# comma-separated list of hostnames to allow. Unset by default.
+# See https://docs.caido.io/app/guides/domain_allowlist
+CAIDO_UI_DOMAIN_ARGS=()
+if [ -n "${STRIX_CAIDO_ALLOWED_DOMAINS:-}" ]; then
+  IFS=',' read -ra _caido_domains <<< "${STRIX_CAIDO_ALLOWED_DOMAINS}"
+  for _d in "${_caido_domains[@]}"; do
+    [ -n "$_d" ] && CAIDO_UI_DOMAIN_ARGS+=(--ui-domain "$_d")
+  done
+fi
+
 caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
           --allow-guests \
           --no-logging \
           --no-open \
+          "${CAIDO_UI_DOMAIN_ARGS[@]}" \
           --import-ca-cert /app/certs/ca.p12 \
           --import-ca-cert-pass "" > "$CAIDO_LOG" 2>&1 &
 
