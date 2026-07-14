@@ -31,6 +31,7 @@ from textual.widgets import Button, Label, Static, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from strix.config import load_settings
+from strix.config.models import is_recommended_or_frontier_model
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
 from strix.interface.tui.live_view import TuiLiveView
@@ -116,9 +117,16 @@ class SplashScreen(Static):  # type: ignore[misc]
         self._animation_timer: Timer | None = None
         self._panel_static: Static | None = None
         self._version = "dev"
+        self._non_frontier_model: str | None = None
 
     def compose(self) -> ComposeResult:
         self._version = get_package_version()
+        try:
+            model = (load_settings().llm.model or "").strip()
+        except Exception:
+            model = ""
+        if model and not is_recommended_or_frontier_model(model):
+            self._non_frontier_model = model
         self._animation_step = 0
         start_line = self._build_start_line_text(self._animation_step)
         panel = self._build_panel(start_line)
@@ -145,7 +153,7 @@ class SplashScreen(Static):  # type: ignore[misc]
         self._panel_static.update(panel)
 
     def _build_panel(self, start_line: Text) -> Panel:
-        content = Group(
+        rows = [
             Align.center(Text(self.BANNER.strip("\n"), style=self.PRIMARY_GREEN, justify="center")),
             Align.center(Text(" ")),
             Align.center(self._build_welcome_text()),
@@ -155,9 +163,26 @@ class SplashScreen(Static):  # type: ignore[misc]
             Align.center(start_line.copy()),
             Align.center(Text(" ")),
             Align.center(self._build_url_text()),
-        )
+        ]
+        if self._non_frontier_model:
+            rows.extend(
+                (
+                    Align.center(Text(" ")),
+                    Align.center(self._build_model_warning_text(self._non_frontier_model)),
+                )
+            )
 
-        return Panel.fit(content, border_style=self.PRIMARY_GREEN, padding=(1, 6))
+        return Panel.fit(Group(*rows), border_style=self.PRIMARY_GREEN, padding=(1, 6))
+
+    @staticmethod
+    def _build_model_warning_text(model: str) -> Text:
+        text = Text("⚠ ", style=Style(color="yellow", bold=True))
+        text.append(model, style=Style(color="cyan", bold=True))
+        text.append(
+            " is not a recommended frontier model — scans may miss vulnerabilities",
+            style=Style(color="yellow"),
+        )
+        return text
 
     def _build_url_text(self) -> Text:
         return Text("strix.ai", style=Style(color=self.PRIMARY_GREEN, bold=True))

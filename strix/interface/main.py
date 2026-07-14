@@ -266,7 +266,7 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     return None
 
 
-async def warm_up_llm() -> None:
+async def warm_up_llm(show_model_warning: bool = True) -> None:
     console = Console()
     logger.info("Warming up LLM connection")
 
@@ -308,7 +308,7 @@ async def warm_up_llm() -> None:
             )
             sys.exit(1)
 
-        if raw_model and not is_recommended_or_frontier_model(raw_model):
+        if show_model_warning and raw_model and not is_recommended_or_frontier_model(raw_model):
             warn_text = Text()
             warn_text.append("MODEL QUALITY WARNING", style="bold yellow")
             warn_text.append("\n\n", style="white")
@@ -855,7 +855,7 @@ def main() -> None:
     pull_docker_image()
 
     validate_environment()
-    asyncio.run(warm_up_llm())
+    asyncio.run(warm_up_llm(show_model_warning=args.non_interactive))
 
     persist_current()
 
