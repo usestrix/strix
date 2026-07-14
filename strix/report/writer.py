@@ -124,8 +124,13 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         f"**Found:** {report.get('timestamp', 'unknown')}",
     ]
 
+    dep_meta = report.get("dependency_metadata") or {}
     metadata: list[tuple[str, Any]] = [
         ("Target", report.get("target")),
+        ("Package", dep_meta.get("package_name")),
+        ("Ecosystem", dep_meta.get("package_ecosystem")),
+        ("Installed Version", dep_meta.get("installed_version")),
+        ("Fixed Version", dep_meta.get("fixed_version")),
         ("Endpoint", report.get("endpoint")),
         ("Method", report.get("method")),
         ("CVE", report.get("cve")),
@@ -134,6 +139,8 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     cvss = report.get("cvss")
     if cvss is not None:
         metadata.append(("CVSS", cvss))
+    if report.get("fix_effort"):
+        metadata.append(("Fix Effort", str(report["fix_effort"]).title()))
     for label, value in metadata:
         if value:
             lines.append(f"**{label}:** {value}")
@@ -142,6 +149,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     lines.append("## Description\n")
     lines.append(report.get("description") or "No description provided.")
     lines.append("")
+
+    if report.get("evidence"):
+        lines.append("## Evidence\n")
+        lines.append(str(report["evidence"]))
+        lines.append("")
 
     if report.get("impact"):
         lines.append("## Impact\n")
@@ -192,6 +204,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     if report.get("remediation_steps"):
         lines.append("## Remediation\n")
         lines.append(str(report["remediation_steps"]))
+        lines.append("")
+
+    if report.get("assumptions"):
+        lines.append("## Assumptions\n")
+        lines.append(str(report["assumptions"]))
         lines.append("")
 
     return "\n".join(lines)

@@ -31,6 +31,7 @@ from textual.widgets import Button, Label, Static, TextArea, Tree
 from textual.widgets.tree import TreeNode
 
 from strix.config import load_settings
+from strix.config.models import is_recommended_or_frontier_model
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
 from strix.interface.tui.live_view import TuiLiveView
@@ -116,9 +117,16 @@ class SplashScreen(Static):  # type: ignore[misc]
         self._animation_timer: Timer | None = None
         self._panel_static: Static | None = None
         self._version = "dev"
+        self._non_frontier_model: str | None = None
 
     def compose(self) -> ComposeResult:
         self._version = get_package_version()
+        try:
+            model = (load_settings().llm.model or "").strip()
+        except Exception:
+            model = ""
+        if model and not is_recommended_or_frontier_model(model):
+            self._non_frontier_model = model
         self._animation_step = 0
         start_line = self._build_start_line_text(self._animation_step)
         panel = self._build_panel(start_line)
@@ -128,7 +136,7 @@ class SplashScreen(Static):  # type: ignore[misc]
         yield panel_static
 
     def on_mount(self) -> None:
-        self._animation_timer = self.set_interval(0.05, self._animate_start_line)
+        self._animation_timer = self.set_interval(0.1, self._animate_start_line)
 
     def on_unmount(self) -> None:
         if self._animation_timer is not None:
@@ -145,7 +153,7 @@ class SplashScreen(Static):  # type: ignore[misc]
         self._panel_static.update(panel)
 
     def _build_panel(self, start_line: Text) -> Panel:
-        content = Group(
+        rows = [
             Align.center(Text(self.BANNER.strip("\n"), style=self.PRIMARY_GREEN, justify="center")),
             Align.center(Text(" ")),
             Align.center(self._build_welcome_text()),
@@ -155,9 +163,26 @@ class SplashScreen(Static):  # type: ignore[misc]
             Align.center(start_line.copy()),
             Align.center(Text(" ")),
             Align.center(self._build_url_text()),
-        )
+        ]
+        if self._non_frontier_model:
+            rows.extend(
+                (
+                    Align.center(Text(" ")),
+                    Align.center(self._build_model_warning_text(self._non_frontier_model)),
+                )
+            )
 
-        return Panel.fit(content, border_style=self.PRIMARY_GREEN, padding=(1, 6))
+        return Panel.fit(Group(*rows), border_style=self.PRIMARY_GREEN, padding=(1, 6))
+
+    @staticmethod
+    def _build_model_warning_text(model: str) -> Text:
+        text = Text("⚠ ", style=Style(color="yellow", bold=True))
+        text.append(model, style=Style(color="cyan", bold=True))
+        text.append(
+            " is not a recommended frontier model - pentest quality could be degraded",
+            style=Style(color="yellow"),
+        )
+        return text
 
     def _build_url_text(self) -> Text:
         return Text("strix.ai", style=Style(color=self.PRIMARY_GREEN, bold=True))
@@ -371,6 +396,19 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             text.append("Target: ", style=self.FIELD_STYLE)
             text.append(target)
 
+        dep_meta = vuln.get("dependency_metadata") or {}
+        for label, key in (
+            ("Package", "package_name"),
+            ("Ecosystem", "package_ecosystem"),
+            ("Installed Version", "installed_version"),
+            ("Fixed Version", "fixed_version"),
+        ):
+            value = dep_meta.get(key)
+            if value:
+                text.append("\n\n")
+                text.append(f"{label}: ", style=self.FIELD_STYLE)
+                text.append(str(value))
+
         endpoint = vuln.get("endpoint", "")
         if endpoint:
             text.append("\n\n")
@@ -388,6 +426,18 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             text.append("\n\n")
             text.append("CVE: ", style=self.FIELD_STYLE)
             text.append(cve)
+
+        cwe = vuln.get("cwe", "")
+        if cwe:
+            text.append("\n\n")
+            text.append("CWE: ", style=self.FIELD_STYLE)
+            text.append(cwe)
+
+        fix_effort = vuln.get("fix_effort", "")
+        if fix_effort:
+            text.append("\n\n")
+            text.append("Fix Effort: ", style=self.FIELD_STYLE)
+            text.append(str(fix_effort).title())
 
         cvss_breakdown = vuln.get("cvss_breakdown", {})
         if cvss_breakdown:
@@ -434,6 +484,13 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             text.append("\n")
             text.append(technical_analysis)
 
+        evidence = vuln.get("evidence", "")
+        if evidence:
+            text.append("\n\n")
+            text.append("Evidence", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(evidence)
+
         poc_description = vuln.get("poc_description", "")
         if poc_description:
             text.append("\n\n")
@@ -454,6 +511,13 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             text.append("Remediation", style=self.FIELD_STYLE)
             text.append("\n")
             text.append(remediation_steps)
+
+        assumptions = vuln.get("assumptions", "")
+        if assumptions:
+            text.append("\n\n")
+            text.append("Assumptions", style=self.FIELD_STYLE)
+            text.append("\n")
+            text.append(assumptions)
 
         return text
 
@@ -476,14 +540,27 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             lines.append(f"**Agent:** {vuln['agent_name']}")
         if vuln.get("target"):
             lines.append(f"**Target:** {vuln['target']}")
+        dep_meta = vuln.get("dependency_metadata") or {}
+        if dep_meta.get("package_name"):
+            lines.append(f"**Package:** {dep_meta['package_name']}")
+        if dep_meta.get("package_ecosystem"):
+            lines.append(f"**Ecosystem:** {dep_meta['package_ecosystem']}")
+        if dep_meta.get("installed_version"):
+            lines.append(f"**Installed Version:** {dep_meta['installed_version']}")
+        if dep_meta.get("fixed_version"):
+            lines.append(f"**Fixed Version:** {dep_meta['fixed_version']}")
         if vuln.get("endpoint"):
             lines.append(f"**Endpoint:** {vuln['endpoint']}")
         if vuln.get("method"):
             lines.append(f"**Method:** {vuln['method']}")
         if vuln.get("cve"):
             lines.append(f"**CVE:** {vuln['cve']}")
+        if vuln.get("cwe"):
+            lines.append(f"**CWE:** {vuln['cwe']}")
         if vuln.get("cvss") is not None:
             lines.append(f"**CVSS:** {vuln['cvss']}")
+        if vuln.get("fix_effort"):
+            lines.append(f"**Fix Effort:** {str(vuln['fix_effort']).title()}")
 
         cvss_breakdown = vuln.get("cvss_breakdown", {})
         if cvss_breakdown:
@@ -513,6 +590,9 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
 
         if vuln.get("technical_analysis"):
             lines.extend(["", "## Technical Analysis", "", vuln["technical_analysis"]])
+
+        if vuln.get("evidence"):
+            lines.extend(["", "## Evidence", "", vuln["evidence"]])
 
         if vuln.get("poc_description") or vuln.get("poc_script_code"):
             lines.extend(["", "## Proof of Concept", ""])
@@ -551,6 +631,9 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
 
         if vuln.get("remediation_steps"):
             lines.extend(["", "## Remediation", "", vuln["remediation_steps"]])
+
+        if vuln.get("assumptions"):
+            lines.extend(["", "## Assumptions", "", vuln["assumptions"]])
 
         lines.append("")
         return "\n".join(lines)
@@ -729,6 +812,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             "#86efac",  # Brightest
         ]
         self._dot_animation_timer: Any | None = None
+        self._pending_scroll_end = False
 
         self._setup_cleanup_handlers()
 
@@ -872,7 +956,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._start_scan_thread()
 
-        self.set_interval(0.35, self._update_ui)
+        self.set_interval(0.5, self._update_ui)
 
     def _update_ui(self) -> None:
         if self.show_splash:
@@ -1018,8 +1102,16 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._safe_widget_operation(chat_display.update, content)
         chat_display.set_classes(css_class)
 
-        if is_at_bottom:
-            self.call_later(chat_history.scroll_end, animate=False)
+        if is_at_bottom and not self._pending_scroll_end:
+            self._pending_scroll_end = True
+            self.call_later(self._do_scroll_end, chat_history)
+
+    def _do_scroll_end(self, chat_history: VerticalScroll) -> None:
+        self._pending_scroll_end = False
+        try:
+            chat_history.scroll_end(animate=False)
+        except Exception:
+            logger.debug("Failed to scroll chat to end", exc_info=True)
 
     def _get_chat_placeholder_content(
         self, message: str, placeholder_class: str

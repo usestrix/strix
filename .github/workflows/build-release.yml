@@ -16,7 +16,7 @@ jobs:
             target: macos-arm64
           - os: macos-15-intel
             target: macos-x86_64
-          - os: ubuntu-latest
+          - os: ubuntu-22.04
             target: linux-x86_64
           - os: windows-latest
             target: windows-x86_64

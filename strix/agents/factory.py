@@ -41,7 +41,7 @@ from strix.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
-from strix.tools.reporting.tool import create_vulnerability_report
+from strix.tools.reporting.tool import create_dependency_report, create_vulnerability_report
 from strix.tools.thinking.tool import think
 from strix.tools.todo.tools import (
     create_todo,
@@ -55,7 +55,7 @@ from strix.tools.web_search.tool import web_search
 
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from agents import RunContextWrapper
     from agents.tool import FunctionToolResult
@@ -335,6 +335,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     delete_note,
     web_search,
     create_vulnerability_report,
+    create_dependency_report,
     list_requests,
     view_request,
     repeat_request,
@@ -349,6 +350,48 @@ _BASE_TOOLS: tuple[Tool, ...] = (
 )
 
 
+# Extra tools registered for scan agents. Mirrors
+# ``strix.runtime.backends.register_backend``: register before the first
+# ``build_strix_agent`` call and every agent (root + children) gets them.
+_EXTRA_TOOLS: list[Tool] = []
+
+
+def _ensure_unique_tool_names(tools: Sequence[Tool]) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for tool in tools:
+        if tool.name in seen:
+            duplicates.add(tool.name)
+        seen.add(tool.name)
+    if duplicates:
+        msg = f"Agent tools must have unique names: {sorted(duplicates)}"
+        raise ValueError(msg)
+
+
+def register_agent_tools(*tools: Tool) -> None:
+    """Register tools for every scan agent built afterwards.
+
+    Tools are added to both root and child agents, after the base set and
+    before the lifecycle tool (``finish_scan`` / ``agent_finish``). Duplicate
+    tool objects are ignored so repeated imports don't double-register.
+    """
+    new_tools: list[Tool] = []
+    for tool in tools:
+        if tool not in _EXTRA_TOOLS and tool not in new_tools:
+            new_tools.append(tool)
+
+    _ensure_unique_tool_names([*_BASE_TOOLS, *_EXTRA_TOOLS, *new_tools, finish_scan, agent_finish])
+
+    for tool in new_tools:
+        _EXTRA_TOOLS.append(tool)
+        logger.info("Registered extra agent tool: %s", getattr(tool, "name", tool))
+
+
+def registered_agent_tools() -> tuple[Tool, ...]:
+    """Return the currently registered scan-agent tools."""
+    return tuple(_EXTRA_TOOLS)
+
+
 def build_strix_agent(
     *,
     name: str = "strix",
@@ -359,26 +402,37 @@ def build_strix_agent(
     interactive: bool = False,
     chat_completions_tools: bool = False,
     system_prompt_context: dict[str, Any] | None = None,
+    extra_tools: Sequence[Tool] | None = None,
+    instructions_override: str | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
     Args:
         chat_completions_tools: Wrap SDK custom tools as function tools
             when the selected backend cannot accept Responses custom tools.
+        extra_tools: Additional tools for this scan agent only, on top of any
+            registered via ``register_agent_tools``.
+        instructions_override: Use this verbatim as the system prompt instead
+            of rendering the built-in scan prompt.
     """
-    instructions = render_system_prompt(
-        skills=skills,
-        scan_mode=scan_mode,
-        is_whitebox=is_whitebox,
-        is_root=is_root,
-        interactive=interactive,
-        system_prompt_context=system_prompt_context,
-    )
-
-    if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, finish_scan]
+    if instructions_override is not None:
+        instructions = instructions_override
     else:
-        tools = [*_BASE_TOOLS, agent_finish]
+        instructions = render_system_prompt(
+            skills=skills,
+            scan_mode=scan_mode,
+            is_whitebox=is_whitebox,
+            is_root=is_root,
+            interactive=interactive,
+            system_prompt_context=system_prompt_context,
+        )
+
+    agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
+    if is_root:
+        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
+    else:
+        tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
+    _ensure_unique_tool_names(tools)
 
     logger.info(
         "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",

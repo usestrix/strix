@@ -481,9 +481,10 @@ async def agent_finish(
     3. Stops this subagent's execution.
 
     **Vulnerability findings must already be filed via
-    ``create_vulnerability_report`` before calling this.** The
-    ``findings`` field here is for narrative summary only — it does
-    not register vulns in the scan report.
+    ``create_vulnerability_report`` (or ``create_dependency_report``
+    for known-CVE dependency/supply-chain findings) before calling
+    this.** The ``findings`` field here is for narrative summary only
+    — it does not register vulns in the scan report.
 
     Write the summary as if the parent has no idea what you were
     doing: what did you test, what did you find/confirm/rule out,
@@ -494,8 +495,9 @@ async def agent_finish(
             and specific (URLs, parameters, payloads that worked).
         findings: Optional bullet list of confirmed observations. For
             credit-bearing vulnerabilities, file
-            ``create_vulnerability_report`` first; this is for
-            narrative.
+            ``create_vulnerability_report`` first (or
+            ``create_dependency_report`` for dependency CVEs); this is
+            for narrative.
         success: Whether the assigned subtask was completed
             successfully. Default ``True``.
         report_to_parent: Whether to deliver the completion report to

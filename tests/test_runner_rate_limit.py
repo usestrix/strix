@@ -33,7 +33,11 @@ async def test_persistent_rate_limit_stops_gracefully(
     monkeypatch.setattr(runner, "set_scan_id", lambda _scan_id: None)
 
     settings = types.SimpleNamespace(
-        llm=types.SimpleNamespace(model="openai/gpt-4o", reasoning_effort="high")
+        llm=types.SimpleNamespace(
+            model="openai/gpt-4o",
+            reasoning_effort="high",
+            force_required_tool_choice=False,
+        )
     )
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
