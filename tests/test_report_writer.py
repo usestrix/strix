@@ -79,6 +79,40 @@ def test_render_vulnerability_md_includes_core_sections() -> None:
     assert "**Endpoint:** /api/login" in md
 
 
+def test_render_vulnerability_md_includes_dependency_fields() -> None:
+    md = render_vulnerability_md(
+        _sample_report(
+            title="CVE-2021-23337 in lodash 4.17.20",
+            severity="high",
+            target="repo/package.json",
+            endpoint=None,
+            method=None,
+            cve="CVE-2021-23337",
+            cwe="CWE-94",
+            cvss=7.2,
+            fix_effort="trivial",
+            finding_class="dependency_cve",
+            evidence="**Advisory evidence:** `CVE-2021-23337` applies to `lodash`.",
+            assumptions="Assumes lodash ships in deployed builds.",
+            dependency_metadata={
+                "package_name": "lodash",
+                "package_ecosystem": "npm",
+                "installed_version": "4.17.20",
+                "fixed_version": "4.17.21",
+            },
+            remediation_steps="Upgrade to 4.17.21.",
+        ),
+    )
+    assert "**Package:** lodash" in md
+    assert "**Ecosystem:** npm" in md
+    assert "**Installed Version:** 4.17.20" in md
+    assert "**Fixed Version:** 4.17.21" in md
+    assert "**CWE:** CWE-94" in md
+    assert "**Fix Effort:** Trivial" in md
+    assert "## Evidence" in md
+    assert "## Assumptions" in md
+
+
 def test_write_vulnerabilities_creates_markdown_csv_and_json(tmp_path: Path) -> None:
     reports = [
         _sample_report(id="vuln-0001", severity="medium", timestamp="2026-07-02 11:00:00 UTC"),

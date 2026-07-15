@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import shutil
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +13,7 @@ from agents.sandbox.manifest import Environment, Manifest
 from strix.config import load_settings
 from strix.runtime.backends import get_backend
 from strix.runtime.caido_bootstrap import bootstrap_caido
+from strix.runtime.local_dir_staging import stage_symlink_safe_dir
 
 
 logger = logging.getLogger(__name__)
@@ -29,16 +31,20 @@ _WORKSPACE_ROOT = "/workspace"
 
 def build_session_entries(
     local_sources: list[dict[str, Any]],
-) -> tuple[dict[str | Path, BaseEntry], list[dict[str, Any]]]:
+) -> tuple[dict[str | Path, BaseEntry], list[dict[str, Any]], list[Path]]:
     """Split local sources into copied manifest entries and host bind mounts.
 
     Sources flagged ``mount`` are bind-mounted read-only at
     ``/workspace/<workspace_subdir>`` (not added to the manifest, so the SDK
     does not stream them in file-by-file). Every other source becomes a
-    ``LocalDir`` entry copied into the container as before.
+    ``LocalDir`` entry copied into the container as before. Trees containing
+    symlinks (which the SDK's ``LocalDir`` walker refuses outright) are first
+    staged into a symlink-safe temp copy; those temp dirs are returned so the
+    caller can remove them once the upload completes.
     """
     entries: dict[str | Path, BaseEntry] = {}
     bind_mounts: list[dict[str, Any]] = []
+    staged_dirs: list[Path] = []
     for src in local_sources:
         ws_subdir = src.get("workspace_subdir") or ""
         host_path = src.get("source_path") or ""
@@ -54,8 +60,11 @@ def build_session_entries(
                 }
             )
         else:
-            entries[ws_subdir] = LocalDir(src=resolved)
-    return entries, bind_mounts
+            upload_path, staged = stage_symlink_safe_dir(resolved)
+            if staged is not None:
+                staged_dirs.append(staged)
+            entries[ws_subdir] = LocalDir(src=upload_path)
+    return entries, bind_mounts, staged_dirs
 
 
 async def create_or_reuse(
@@ -75,7 +84,7 @@ async def create_or_reuse(
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
-    entries, bind_mounts = build_session_entries(local_sources)
+    entries, bind_mounts, staged_dirs = build_session_entries(local_sources)
 
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
@@ -106,12 +115,16 @@ async def create_or_reuse(
         backend_name,
         image,
     )
-    client, session = await backend(
-        image=image,
-        manifest=manifest,
-        exposed_ports=(_CONTAINER_CAIDO_PORT,),
-        bind_mounts=bind_mounts,
-    )
+    try:
+        client, session = await backend(
+            image=image,
+            manifest=manifest,
+            exposed_ports=(_CONTAINER_CAIDO_PORT,),
+            bind_mounts=bind_mounts,
+        )
+    finally:
+        for staged in staged_dirs:
+            shutil.rmtree(staged, ignore_errors=True)
 
     caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
     scheme = "https" if caido_endpoint.tls else "http"

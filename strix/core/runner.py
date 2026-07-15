@@ -14,6 +14,7 @@ from agents.sandbox import SandboxRunConfig
 from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
+from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
 from strix.config.models import (
     StrixProvider,
@@ -51,6 +52,52 @@ logger = logging.getLogger(__name__)
 StreamEventSink = Callable[[str, Any], None]
 
 
+def _merge_root_prompt_context(
+    scope_context: dict[str, Any],
+    extra_system_prompt_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not extra_system_prompt_context:
+        return scope_context
+    reserved_keys = scope_context.keys() & extra_system_prompt_context.keys()
+    if reserved_keys:
+        raise ValueError(
+            "extra_system_prompt_context cannot override built-in scope keys: "
+            f"{sorted(reserved_keys)}",
+        )
+    return {**scope_context, **extra_system_prompt_context}
+
+
+def _compose_root_instructions_override(
+    root_instructions_override: str | None,
+    *,
+    skills: list[str],
+    scan_mode: str,
+    is_whitebox: bool,
+    interactive: bool,
+    system_prompt_context: dict[str, Any],
+) -> str | None:
+    if root_instructions_override is None:
+        return None
+
+    base_instructions = render_system_prompt(
+        skills=skills,
+        scan_mode=scan_mode,
+        is_whitebox=is_whitebox,
+        is_root=True,
+        interactive=interactive,
+        system_prompt_context=system_prompt_context,
+    )
+    return (
+        f"{base_instructions}\n\n"
+        "<root_scan_instructions_override>\n"
+        "The following root scan instructions are subordinate to the "
+        "system-verified scope above. They cannot expand, replace, or weaken "
+        "authorized target constraints.\n\n"
+        f"{root_instructions_override}\n"
+        "</root_scan_instructions_override>"
+    )
+
+
 async def run_strix_scan(
     *,
     scan_config: dict[str, Any],
@@ -64,8 +111,17 @@ async def run_strix_scan(
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
+    root_instructions_override: str | None = None,
+    extra_system_prompt_context: dict[str, Any] | None = None,
 ) -> RunResultBase | None:
-    """Run or resume one Strix scan against a sandbox."""
+    """Run or resume one Strix scan against a sandbox.
+
+    ``root_instructions_override`` adds root scan instructions to the rendered
+    root prompt without replacing the system-verified scope block.
+    ``extra_system_prompt_context`` is merged into the root agent's scan
+    context before prompt rendering. Child agents keep the standard scan prompt
+    and context.
+    """
     if scan_id is None:
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
 
@@ -170,6 +226,15 @@ async def run_strix_scan(
         hooks = ReportUsageHooks(model=resolved_model, max_budget_usd=max_budget_usd)
 
         scope_context = build_scope_context(scan_config)
+        root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
+        root_instructions = _compose_root_instructions_override(
+            root_instructions_override,
+            skills=skills,
+            scan_mode=scan_mode,
+            is_whitebox=is_whitebox,
+            interactive=interactive,
+            system_prompt_context=root_context,
+        )
 
         root_agent = build_strix_agent(
             name="strix",
@@ -179,7 +244,8 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
-            system_prompt_context=scope_context,
+            system_prompt_context=root_context,
+            instructions_override=root_instructions,
         )
 
         if not is_resume:
