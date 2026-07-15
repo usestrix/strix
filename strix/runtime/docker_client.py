@@ -87,7 +87,7 @@ class StrixDockerSandboxSession(DockerSandboxSession):
         attrs = getattr(self._container, "attrs", {}) or {}
         networks = attrs.get("NetworkSettings", {}).get("Networks", {})
         endpoint = networks.get(self.sandbox_network) or {}
-        ip = endpoint.get("IPAddress")
+        ip = endpoint.get("IPAddress") or endpoint.get("GlobalIPv6Address")
         if not isinstance(ip, str) or not ip:
             raise ExposedPortUnavailableError(
                 port=port,
@@ -99,7 +99,8 @@ class StrixDockerSandboxSession(DockerSandboxSession):
                     "network": self.sandbox_network,
                 },
             )
-        return ExposedPortEndpoint(host=ip, port=port, tls=False)
+        host = f"[{ip}]" if ":" in ip else ip
+        return ExposedPortEndpoint(host=host, port=port, tls=False)
 
 
 class StrixDockerSandboxClient(DockerSandboxClient):
