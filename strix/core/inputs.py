@@ -146,8 +146,17 @@ def make_model_settings(
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
     if _is_claude_model(model_name):
+        # Merge into any existing extra_args rather than relying on resolve()'s
+        # dict-merge semantics — makes it obvious at the call site that unrelated
+        # LiteLLM options are preserved (make_model_settings currently builds
+        # from scratch, so extra_args is None here today, but this keeps the
+        # invariant local if that changes).
+        merged_extra_args = {
+            **(model_settings.extra_args or {}),
+            **_claude_prompt_cache_extra_args(),
+        }
         model_settings = model_settings.resolve(
-            ModelSettings(extra_args=_claude_prompt_cache_extra_args()),
+            ModelSettings(extra_args=merged_extra_args),
         )
     return model_settings
 
@@ -187,6 +196,12 @@ def _claude_prompt_cache_extra_args() -> dict[str, Any]:
     Two breakpoints on the stable prefix (2 of the 4 allowed), leaving headroom:
       - the system prompt (``role: system``) — the largest repeated span
       - the tool schemas (``tool_config``) — sizeable and identical every turn
+
+    Both points degrade gracefully on older LiteLLM: an unrecognised location is
+    simply not injected (no error), so a stale pin still gets whatever caching it
+    supports — the system-prompt point (the dominant win) has the widest support,
+    and the tool_config point is applied by LiteLLM's Bedrock Converse transform
+    on versions that recognise it (verified on litellm 1.90.1).
     """
     return {
         "cache_control_injection_points": [
