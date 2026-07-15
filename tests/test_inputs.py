@@ -55,6 +55,35 @@ def test_child_initial_input_no_consecutive_same_role(parent_history: list[Any])
     assert all(prev != nxt for prev, nxt in pairwise(roles))
 
 
+def _cache_points(model_name: str) -> Any:
+    extra = make_model_settings(None, model_name=model_name).extra_args or {}
+    return extra.get("cache_control_injection_points")
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "bedrock/global.anthropic.claude-opus-4-8",
+        "anthropic/claude-sonnet-4-5",
+        "openrouter/anthropic/claude-3.5-sonnet",
+    ],
+)
+def test_make_model_settings_enables_prompt_cache_for_claude(model_name: str) -> None:
+    points = _cache_points(model_name)
+    assert points == [
+        {"location": "message", "role": "system"},
+        {"location": "tool_config"},
+    ]
+
+
+@pytest.mark.parametrize("model_name", ["gpt-5", "vertex_ai/gemini-2.5-pro", "openai/o3"])
+def test_make_model_settings_no_prompt_cache_for_non_claude(model_name: str) -> None:
+    # No injection points for non-Claude models: the LiteLLM cache hook never
+    # fires, so this stays a strict no-op (won't emit cache_control to strict
+    # OpenAI-compatible endpoints).
+    assert make_model_settings(None, model_name=model_name).extra_args is None
+
+
 def test_build_root_task_empty_config() -> None:
     assert build_root_task({}) == ""
 

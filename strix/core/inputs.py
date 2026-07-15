@@ -145,7 +145,55 @@ def make_model_settings(
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
+    if _is_claude_model(model_name):
+        model_settings = model_settings.resolve(
+            ModelSettings(extra_args=_claude_prompt_cache_extra_args()),
+        )
     return model_settings
+
+
+def _is_claude_model(model_name: str) -> bool:
+    return "claude" in (model_name or "").strip().lower()
+
+
+def _claude_prompt_cache_extra_args() -> dict[str, Any]:
+    """Enable Anthropic/Bedrock prompt caching for Claude models via LiteLLM.
+
+    A Strix scan is a long, multi-turn agentic loop that re-sends a large,
+    STABLE prefix every turn — the system prompt plus the tool schemas — while
+    only the conversation tail changes. Without a caching breakpoint the whole
+    prefix is re-tokenised and billed at the full input rate on every turn; on
+    Bedrock Claude that is the single biggest lever on scan cost (measured here:
+    ``cache-read 0% -> 57%`` on a real scan once these points are set).
+
+    LiteLLM already implements this end to end: when
+    ``cache_control_injection_points`` is present in the call kwargs its
+    ``AnthropicCacheControlHook`` fires and emits the provider-appropriate
+    breakpoint (Anthropic ``cache_control``; Bedrock Converse ``cachePoint``),
+    honouring Anthropic's 4-breakpoint cap. ``LitellmModel`` forwards
+    ``ModelSettings.extra_args`` straight into ``litellm.acompletion()``, so
+    passing the injection points there is all that is required.
+
+    This is deliberately kept at the LiteLLM-config layer rather than a general
+    ``ModelSettings`` caching flag: that is the direction the Agents SDK
+    maintainer prescribed when declining a native ``cache_system_prompt`` field
+    (openai/openai-agents-python#3008 / #3009) — caching is a LiteLLM/provider
+    behaviour and a ``ModelSettings`` flag would let strict OpenAI-compatible
+    paths emit non-standard ``cache_control`` parts. Gating on Claude keeps this
+    a no-op for every other provider (no injection points -> the hook never
+    fires), and only Claude-family routes (Anthropic native, Bedrock, Vertex,
+    OpenRouter -> Claude) honour the marker.
+
+    Two breakpoints on the stable prefix (2 of the 4 allowed), leaving headroom:
+      - the system prompt (``role: system``) — the largest repeated span
+      - the tool schemas (``tool_config``) — sizeable and identical every turn
+    """
+    return {
+        "cache_control_injection_points": [
+            {"location": "message", "role": "system"},
+            {"location": "tool_config"},
+        ],
+    }
 
 
 def child_initial_input(
