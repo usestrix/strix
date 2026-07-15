@@ -84,6 +84,15 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
     counts.
 </ParamField>
 
+<ParamField path="--resume" type="string">
+  Resume a prior scan by its run name (the directory under `./strix_runs/`).
+  Restores the root agent plus every non-terminal subagent's full LLM history
+  and topology, and rehydrates prior findings so the report and SARIF are
+  cumulative across runs. Cannot be combined with `--target`/`--target-list`/`--mount`
+  (the original targets are restored from the prior run). See
+  [Resuming a scan](#resuming-a-scan).
+</ParamField>
+
 ## Examples
 
 ```bash
@@ -111,6 +120,48 @@ strix --target-list ./targets.txt
 # Large local repository — bind-mount instead of copying it in
 strix --mount ./huge-monorepo
 ```
+
+## Resuming a scan
+
+`--resume <run_name>` continues a prior scan: it restores the full agent history
+and rehydrates the findings from the previous run, so the report and SARIF are
+**cumulative** across runs. This suits re-scanning a target as it changes — for
+example re-running against each push of a pull request.
+
+```bash
+# First scan of the code
+strix --run-name pr-42 -t ./repo
+
+# Later, after new commits land — pick up where it left off
+strix --resume pr-42
+```
+
+By default a resumed scan is **append-only**: prior findings carry forward, and
+new issues are added, but nothing is removed. If the target has changed such that
+a previously-reported finding is now **fixed**, it still re-appears in the
+cumulative SARIF — which a code-scanning integration cannot auto-resolve.
+
+### Retracting fixed findings
+
+Set `STRIX_RESUME_RETRACT=1` to let a resumed **whitebox** scan drop findings it
+determines are fixed. This exposes a `retract_vulnerability_report` tool: when
+the agent judges a rehydrated finding resolved (the vulnerable code was fixed or
+removed), it is removed from the cumulative report and SARIF, so a code-scanning
+alert can auto-resolve.
+
+```bash
+STRIX_RESUME_RETRACT=1 strix --resume pr-42
+```
+
+<Note>
+  Retraction trusts the agent's judgement — the same judgement used to find the
+  vulnerability in the first place. Each retraction is re-checked against the
+  current source where possible and the result is recorded (`grounded` on the
+  tool result) for auditability, but the agent's decision is not overridden.
+  Because findings are re-derived on every scan, a mistaken retraction is
+  self-correcting: it re-appears on the next scan of the same code. The feature
+  is off by default; `--resume` stays append-only unless you opt in.
+</Note>
 
 ## Exit Codes
 

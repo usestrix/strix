@@ -45,6 +45,10 @@ Configure Strix using environment variables or a config file.
   Telemetry toggle. Set to `0`, `false`, `no`, or `off` to disable telemetry (PostHog, Scarf, OTEL).
 </ParamField>
 
+<ParamField path="STRIX_RESUME_RETRACT" default="false" type="string">
+  Enable retraction of fixed findings on a resumed scan. Off by default, so `--resume` is append-only (findings only carry forward). When set to `1`/`true`, a resumed whitebox scan gains the `retract_vulnerability_report` tool: if the agent determines a rehydrated finding has been fixed, it is dropped from the cumulative report and SARIF so the resolved finding stops re-appearing. See [Resuming scans](/usage/cli#resuming-a-scan).
+</ParamField>
+
 <ParamField path="TRACELOOP_BASE_URL" type="string">
   OTLP/Traceloop base URL for remote OpenTelemetry export. If unset, Strix keeps traces local only.
 </ParamField>

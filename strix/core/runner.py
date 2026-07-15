@@ -98,6 +98,62 @@ def _compose_root_instructions_override(
     )
 
 
+def _make_workspace_file_reader(
+    session: Any,
+    ws_paths: list[str],
+) -> Callable[[str], Any]:
+    """Build the target-file reader the retract guard uses to re-verify a fix.
+
+    Fail-honest contract (the guard scores the result, see retract_tool):
+      - returns the file text when a candidate path is read;
+      - returns ``None`` ONLY when the file is POSITIVELY confirmed absent under
+        EVERY workspace root (``cat`` -> "No such file"); the sink is gone;
+      - RAISES when a read neither returns content nor confirms absence (exec
+        error, or an ambiguous nonzero like permission-denied). "Couldn't read"
+        is scored inconclusive by the guard, never mistaken for "confirmed gone"
+        — so a misdirected read can't masquerade as a verified fix.
+    """
+
+    async def _read_target_file(rel_path: str) -> str | None:
+        rel = rel_path.lstrip("/")
+        confirmed_absent_everywhere = True
+        errors: list[str] = []
+        for base in ws_paths:
+            path = f"{base}/{rel}"
+            try:
+                result = await session.exec("cat", path, timeout=15)
+            except Exception as exc:  # noqa: BLE001 — read failure ≠ proof of absence
+                confirmed_absent_everywhere = False
+                errors.append(f"{path}: exec error {exc!r}")
+                continue
+            if getattr(result, "exit_code", 1) == 0:
+                # ExecResult.stdout is bytes; the guard does a str substring
+                # check, so decode here.
+                stdout = result.stdout
+                return (
+                    stdout.decode("utf-8", errors="replace")
+                    if isinstance(stdout, bytes | bytearray)
+                    else stdout
+                )
+            stderr = getattr(result, "stderr", b"") or b""
+            stderr_txt = (
+                stderr.decode("utf-8", errors="replace")
+                if isinstance(stderr, bytes | bytearray)
+                else str(stderr)
+            )
+            # Only "No such file" is a POSITIVE absence signal. Any other nonzero
+            # (permission denied, is-a-directory) is NOT proof of a fix.
+            if "No such file" not in stderr_txt:
+                confirmed_absent_everywhere = False
+                errors.append(f"{path}: exit {result.exit_code}: {stderr_txt.strip()[:120]}")
+        if confirmed_absent_everywhere:
+            return None  # genuinely absent under every root → sink is gone
+        msg = f"could not read {rel} for retract verification: {'; '.join(errors)}"
+        raise OSError(msg)
+
+    return _read_target_file
+
+
 async def run_strix_scan(
     *,
     scan_config: dict[str, Any],
@@ -244,8 +300,7 @@ async def run_strix_scan(
         if is_resume and is_whitebox and settings.runtime.resume_retract_enabled:
             from strix.tools.reporting.retract_tool import set_target_file_reader
 
-            _session = bundle["session"]
-            _ws_paths = [
+            ws_paths = [
                 f"/workspace/{sub}" if sub else "/workspace"
                 for sub in (
                     (t.get("details") or {}).get("workspace_subdir")
@@ -253,28 +308,7 @@ async def run_strix_scan(
                     if t.get("type") == "local_code"
                 )
             ] or ["/workspace"]
-
-            async def _read_target_file(rel_path: str) -> str | None:
-                rel = rel_path.lstrip("/")
-                for base in _ws_paths:
-                    try:
-                        result = await _session.exec("cat", f"{base}/{rel}", timeout=15)
-                    except Exception as exc:  # noqa: BLE001 — unreadable ≠ proof of absence
-                        logger.debug("retract reader: %s/%s unreadable: %r", base, rel, exc)
-                        continue
-                    if getattr(result, "exit_code", 1) == 0:
-                        # ExecResult.stdout is bytes; the guard does a str
-                        # substring check, so decode here (a raw bytes return
-                        # would raise TypeError on every retract).
-                        stdout = result.stdout
-                        return (
-                            stdout.decode("utf-8", errors="replace")
-                            if isinstance(stdout, bytes | bytearray)
-                            else stdout
-                        )
-                return None  # not found under any workspace root → treat as gone
-
-            set_target_file_reader(_read_target_file)
+            set_target_file_reader(_make_workspace_file_reader(bundle["session"], ws_paths))
 
         root_agent = build_strix_agent(
             name="strix",
@@ -438,6 +472,13 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "failed")
         raise
     finally:
+        # Clear the retract reader so it can't bind to a torn-down session and
+        # verify a later scan against the wrong (or dead) sandbox. The guard
+        # then fails safe (no reader → refuse) until the next resume re-wires it.
+        with contextlib.suppress(Exception):
+            from strix.tools.reporting.retract_tool import set_target_file_reader
+
+            set_target_file_reader(None)
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()

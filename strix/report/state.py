@@ -206,6 +206,15 @@ class ReportState:
                 len(self.vulnerability_reports),
             )
 
+    @staticmethod
+    def _vuln_ordinal(report_id: object) -> int:
+        if isinstance(report_id, str) and report_id.startswith("vuln-"):
+            try:
+                return int(report_id.removeprefix("vuln-"))
+            except ValueError:
+                return 0
+        return 0
+
     def _next_vuln_ordinal(self) -> int:
         """Next ``vuln-NNNN`` ordinal, derived from the max ordinal EVER seen
         rather than the current list length.
@@ -216,22 +225,23 @@ class ReportState:
         recycle: retract ``vuln-0002`` from ``[0001,0002,0003]`` and the next
         add computes ``len+1 = 3`` -> ``vuln-0003``, colliding with a live id and
         overwriting its on-disk MD, and letting a retracted id later re-emit
-        under a different finding (SARIF fingerprint collision). Deriving from
-        the max ordinal across both the live reports and every id ever saved
-        (``_saved_vuln_ids`` retains retracted ids) keeps ids monotonic and
-        stable under removal.
+        under a different finding (SARIF fingerprint collision).
+
+        The high-water mark is persisted in ``run_record["max_vuln_ordinal"]``
+        and restored by :meth:`hydrate_from_run_dir`, so it survives across the
+        process boundary of a resume. Without that, a NEW process rebuilds
+        ``_saved_vuln_ids`` only from the live ``vulnerabilities.json`` — the
+        retracted id is gone from disk, so the next allocation would reuse it.
+        We take the max of the persisted mark and every ordinal currently in
+        memory (live reports + retained ``_saved_vuln_ids``), so it stays correct
+        even if the record is missing/stale.
         """
-        max_ordinal = 0
-        for rid in (
-            *(r.get("id") for r in self.vulnerability_reports),
-            *self._saved_vuln_ids,
-        ):
-            if isinstance(rid, str) and rid.startswith("vuln-"):
-                try:
-                    max_ordinal = max(max_ordinal, int(rid.removeprefix("vuln-")))
-                except ValueError:
-                    continue
-        return max_ordinal + 1
+        candidates = [
+            int(self.run_record.get("max_vuln_ordinal") or 0),
+            *(self._vuln_ordinal(r.get("id")) for r in self.vulnerability_reports),
+            *(self._vuln_ordinal(rid) for rid in self._saved_vuln_ids),
+        ]
+        return max(candidates) + 1
 
     def add_vulnerability_report(
         self,
@@ -260,7 +270,11 @@ class ReportState:
         agent_id: str | None = None,
         agent_name: str | None = None,
     ) -> str:
-        report_id = f"vuln-{self._next_vuln_ordinal():04d}"
+        ordinal = self._next_vuln_ordinal()
+        report_id = f"vuln-{ordinal:04d}"
+        # Persist the high-water mark so a retracted top id is never reused after
+        # a resume in a fresh process (run_record survives via run.json).
+        self.run_record["max_vuln_ordinal"] = ordinal
 
         report: dict[str, Any] = {
             "id": report_id,
