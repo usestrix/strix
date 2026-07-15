@@ -350,13 +350,13 @@ async def wait_for_message(  # noqa: PLR0911
     )
 
 
-@function_tool(timeout=120)
+@function_tool(timeout=120, strict_mode=False)
 async def create_agent(
     ctx: RunContextWrapper,
     name: str,
     task: str,
     inherit_context: bool = True,
-    skills: list[str] | None = None,
+    skills: str | list[str] | None = None,
 ) -> str:
     """Spawn a specialist child agent to run in parallel.
 
@@ -419,6 +419,12 @@ async def create_agent(
             default=str,
         )
 
+    # Tolerate LLM providers that pass array params as JSON-encoded strings
+    if isinstance(skills, str):
+        try:
+            skills = json.loads(skills)
+        except json.JSONDecodeError:
+            skills = [s.strip() for s in skills.split(",") if s.strip()]
     skill_list = list(skills or [])
     skill_error = validate_requested_skills(skill_list)
     if skill_error:

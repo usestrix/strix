@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
+
 from agents import RunContextWrapper, function_tool
 
 from strix.skills import load_skills, validate_requested_skills
 
 
-@function_tool(timeout=10)
-async def load_skill(ctx: RunContextWrapper, skills: list[str]) -> str:
+@function_tool(timeout=10, strict_mode=False)
+async def load_skill(ctx: RunContextWrapper, skills: str | list[str]) -> str:
     """Return the markdown body of one or more skills as reference material.
 
     Use this when you need exact syntax / workflow / payload guidance
@@ -25,6 +27,12 @@ async def load_skill(ctx: RunContextWrapper, skills: list[str]) -> str:
             ``strix/skills/<category>/<name>.md``.
     """
     del ctx
+    # Tolerate LLM providers that pass array params as JSON-encoded strings
+    if isinstance(skills, str):
+        try:
+            skills = json.loads(skills)
+        except json.JSONDecodeError:
+            skills = [s.strip() for s in skills.split(",") if s.strip()]
     requested = list(skills or [])
     err = validate_requested_skills(requested)
     if err:
