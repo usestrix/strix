@@ -24,18 +24,22 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import uuid
-from typing import Any
+from typing import Any, cast
 
+from agents.sandbox.errors import ExposedPortUnavailableError
 from agents.sandbox.manifest import Manifest
 from agents.sandbox.sandboxes.docker import (
     DockerSandboxClient,
+    DockerSandboxSession,
     _build_docker_volume_mounts,
     _docker_port_key,
     _manifest_requires_fuse,
     _manifest_requires_sys_admin,
 )
 from agents.sandbox.session.sandbox_session import SandboxSession
+from agents.sandbox.types import ExposedPortEndpoint
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from docker.models.containers import Container  # type: ignore[import-untyped, unused-ignore]
 from docker.types import Mount as DockerSDKMount  # type: ignore[import-untyped, unused-ignore]
@@ -44,6 +48,58 @@ from requests.exceptions import RequestException
 
 
 logger = logging.getLogger(__name__)
+
+
+_SANDBOX_NETWORK_ENV = "STRIX_DOCKER_SANDBOX_NETWORK"
+
+
+def _sandbox_network() -> str | None:
+    value = os.environ.get(_SANDBOX_NETWORK_ENV, "").strip()
+    return value or None
+
+
+def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
+    network = _sandbox_network()
+    if network:
+        create_kwargs["network"] = network
+        create_kwargs.pop("ports", None)
+
+
+class StrixDockerSandboxSession(DockerSandboxSession):
+    sandbox_network: str = ""
+
+    async def _resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
+        try:
+            self._container.reload()
+        except docker_errors.APIError as e:
+            raise ExposedPortUnavailableError(
+                port=port,
+                exposed_ports=self.state.exposed_ports,
+                reason="backend_unavailable",
+                context={
+                    "backend": "docker",
+                    "detail": "container_reload_failed",
+                    "network": self.sandbox_network,
+                },
+                cause=e,
+            ) from e
+
+        attrs = getattr(self._container, "attrs", {}) or {}
+        networks = attrs.get("NetworkSettings", {}).get("Networks", {})
+        endpoint = networks.get(self.sandbox_network) or {}
+        ip = endpoint.get("IPAddress")
+        if not isinstance(ip, str) or not ip:
+            raise ExposedPortUnavailableError(
+                port=port,
+                exposed_ports=self.state.exposed_ports,
+                reason="backend_unavailable",
+                context={
+                    "backend": "docker",
+                    "detail": "container_not_on_network",
+                    "network": self.sandbox_network,
+                },
+            )
+        return ExposedPortEndpoint(host=ip, port=port, tls=False)
 
 
 class StrixDockerSandboxClient(DockerSandboxClient):
@@ -117,6 +173,8 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         extra_hosts = create_kwargs.setdefault("extra_hosts", {})
         extra_hosts["host.docker.internal"] = "host-gateway"
 
+        _apply_sandbox_network(create_kwargs)
+
         # Strix injection: host bind mounts (e.g. large repos passed via --mount)
         # that bypass the SDK's file-by-file LocalDir copy.
         bind_mounts = getattr(self, "strix_bind_mounts", ())
@@ -145,6 +203,15 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             image,
         )
         return container
+
+    async def create(self, **kwargs: Any) -> SandboxSession:
+        session = await super().create(**kwargs)
+        network = _sandbox_network()
+        inner = session._inner
+        if network and isinstance(inner, DockerSandboxSession):
+            inner.__class__ = StrixDockerSandboxSession
+            cast("StrixDockerSandboxSession", inner).sandbox_network = network
+        return session
 
     async def delete(self, session: SandboxSession) -> SandboxSession:
         container_id = getattr(getattr(session._inner, "state", None), "container_id", None)
