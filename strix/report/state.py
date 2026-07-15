@@ -1,3 +1,4 @@
+import contextlib
 import json
 import logging
 import subprocess
@@ -205,6 +206,43 @@ class ReportState:
                 len(self.vulnerability_reports),
             )
 
+    @staticmethod
+    def _vuln_ordinal(report_id: object) -> int:
+        if isinstance(report_id, str) and report_id.startswith("vuln-"):
+            try:
+                return int(report_id.removeprefix("vuln-"))
+            except ValueError:
+                return 0
+        return 0
+
+    def _next_vuln_ordinal(self) -> int:
+        """Next ``vuln-NNNN`` ordinal, derived from the max ordinal EVER seen
+        rather than the current list length.
+
+        List-length allocation (``len(reports) + 1``) is only correct while the
+        report set is append-only. Once a report can be *removed*
+        (:meth:`retract_vulnerability_report` on resume), length-based ids
+        recycle: retract ``vuln-0002`` from ``[0001,0002,0003]`` and the next
+        add computes ``len+1 = 3`` -> ``vuln-0003``, colliding with a live id and
+        overwriting its on-disk MD, and letting a retracted id later re-emit
+        under a different finding (SARIF fingerprint collision).
+
+        The high-water mark is persisted in ``run_record["max_vuln_ordinal"]``
+        and restored by :meth:`hydrate_from_run_dir`, so it survives across the
+        process boundary of a resume. Without that, a NEW process rebuilds
+        ``_saved_vuln_ids`` only from the live ``vulnerabilities.json`` — the
+        retracted id is gone from disk, so the next allocation would reuse it.
+        We take the max of the persisted mark and every ordinal currently in
+        memory (live reports + retained ``_saved_vuln_ids``), so it stays correct
+        even if the record is missing/stale.
+        """
+        candidates = [
+            int(self.run_record.get("max_vuln_ordinal") or 0),
+            *(self._vuln_ordinal(r.get("id")) for r in self.vulnerability_reports),
+            *(self._vuln_ordinal(rid) for rid in self._saved_vuln_ids),
+        ]
+        return max(candidates) + 1
+
     def add_vulnerability_report(
         self,
         title: str,
@@ -232,7 +270,11 @@ class ReportState:
         agent_id: str | None = None,
         agent_name: str | None = None,
     ) -> str:
-        report_id = f"vuln-{len(self.vulnerability_reports) + 1:04d}"
+        ordinal = self._next_vuln_ordinal()
+        report_id = f"vuln-{ordinal:04d}"
+        # Persist the high-water mark so a retracted top id is never reused after
+        # a resume in a fresh process (run_record survives via run.json).
+        self.run_record["max_vuln_ordinal"] = ordinal
 
         report: dict[str, Any] = {
             "id": report_id,
@@ -295,6 +337,72 @@ class ReportState:
 
         self.save_run_data()
         return report_id
+
+    def retract_vulnerability_report(self, report_id: str, reason: str) -> dict[str, Any]:
+        """Remove a previously-reported finding from the cumulative set.
+
+        On resume, prior findings are rehydrated from ``vulnerabilities.json``.
+        When a later push FIXES one, the agent re-validates and must be able to
+        DROP it — otherwise rehydration is append-only and the fixed finding
+        re-emits into every subsequent SARIF forever, producing a scanner alert
+        that can never auto-resolve (fail-CLOSED). This is the inverse of
+        :meth:`add_vulnerability_report`.
+
+        Reverses add's side effects:
+          1. drop the report from the in-memory ``vulnerability_reports`` list
+          2. delete the stale per-finding ``{id}.md`` (the one append-only
+             artefact; CSV/JSON/SARIF are rewritten wholesale by
+             :meth:`save_run_data` below from the reduced set)
+
+        The id is retained in ``_saved_vuln_ids`` (NOT recycled): combined with
+        :meth:`_next_vuln_ordinal` deriving from the max ordinal ever seen, a
+        physical removal can never cause a later finding to reuse a retracted
+        id. Idempotent: retracting an unknown/already-gone id is a no-op success.
+
+        NOTE: the caller (the retract tool) applies the groundedness guard —
+        re-verifying against the current tree that the vulnerable sink is
+        actually gone — BEFORE invoking this. This method performs the state
+        mutation only; it does not decide whether the retraction is justified.
+        """
+        reason = (reason or "").strip()
+        if not reason:
+            raise ValueError(
+                "retract_vulnerability_report requires a non-empty reason "
+                "(cite what was verified fixed, and where)",
+            )
+        retracted = next(
+            (r for r in self.vulnerability_reports if r.get("id") == report_id),
+            None,
+        )
+        if retracted is None:
+            logger.info("retract: %s not present (no-op)", report_id)
+            return {"success": True, "retracted": False, "reason": "id not present"}
+
+        before = len(self.vulnerability_reports)
+        self.vulnerability_reports = [
+            r for r in self.vulnerability_reports if r.get("id") != report_id
+        ]
+        # Deliberately keep report_id in _saved_vuln_ids so the ordinal counter
+        # never re-allocates it; delete the stale MD so a future rehydration
+        # doesn't reload the retracted finding from disk.
+        with contextlib.suppress(OSError):
+            md_path = self.get_run_dir() / "vulnerabilities" / f"{report_id}.md"
+            md_path.unlink(missing_ok=True)
+
+        logger.info(
+            "Retracted vulnerability report %s (%s) — reason: %s",
+            report_id,
+            retracted.get("title", ""),
+            reason,
+        )
+        self.save_run_data()
+        return {
+            "success": True,
+            "retracted": True,
+            "report_id": report_id,
+            "title": retracted.get("title"),
+            "remaining": before - 1,
+        }
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
         return list(self.vulnerability_reports)
