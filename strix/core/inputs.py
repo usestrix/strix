@@ -9,6 +9,7 @@ from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
 from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
+from strix.core.sessions import scrub_images_from_items
 
 
 if TYPE_CHECKING:
@@ -145,7 +146,11 @@ def child_initial_input(
     """
     parts: list[str] = []
     if parent_history:
-        rendered = json.dumps(parent_history, ensure_ascii=False, default=str)
+        rendered = json.dumps(
+            scrub_images_from_items(parent_history),
+            ensure_ascii=False,
+            default=str,
+        )
         parts.append(
             "== Inherited context from parent (background only) ==\n"
             f"{rendered}\n"

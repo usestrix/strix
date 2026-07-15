@@ -17,7 +17,11 @@ from openai import APIError
 
 from strix.core.hooks import BudgetExceededError
 from strix.core.inputs import child_initial_input
-from strix.core.sessions import open_agent_session, strip_all_images_from_session
+from strix.core.sessions import (
+    enforce_image_budget,
+    open_agent_session,
+    strip_all_images_from_session,
+)
 
 
 if TYPE_CHECKING:
@@ -349,6 +353,13 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     while True:
         try:
             await coordinator.mark_running(agent_id)
+            if session is not None:
+                max_images = context.get("max_context_images")
+                if isinstance(max_images, int):
+                    try:
+                        await enforce_image_budget(session, max_images)
+                    except Exception:
+                        logger.exception("image-budget enforcement failed for %s", agent_id)
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
