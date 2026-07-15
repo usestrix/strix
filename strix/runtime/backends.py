@@ -155,12 +155,15 @@ async def _docker_backend(
     ``docker`` lazily so deployments that target a non-Docker
     backend don't need the docker-py library installed.
 
-    ``session.start()`` is what materializes the manifest entries
-    (LocalDir copies and manifest-declared volume/FUSE mounts) into the
-    running container — the SDK's ``client.create()`` only builds the inner
-    session object without applying the manifest. ``async with session:``
-    would call it too, but Strix manages session lifetime explicitly via
-    ``client.delete()`` so we trigger ``start()`` ourselves.
+    ``session.start()`` materializes any manifest-declared volume/FUSE
+    mounts into the running container. Local source trees are no longer
+    carried as SDK ``LocalDir`` entries (that path is per-file and hangs
+    on large repos); the session manager imports them after ``start()``
+    via a single tar ``put_archive``. The SDK's ``client.create()`` only
+    builds the inner session object without applying the manifest.
+    ``async with session:`` would call ``start()`` too, but Strix manages
+    session lifetime explicitly via ``client.delete()`` so we trigger
+    ``start()`` ourselves.
 
     ``bind_mounts`` are host directories (e.g. large repos passed via
     ``--mount``) bind-mounted read-only; unlike manifest entries they are
