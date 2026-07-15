@@ -126,19 +126,36 @@ def test_tar_preserves_dotfiles_and_git(tmp_path: Path) -> None:
 
 
 @pytest.mark.skipif(not _HAS_SYMLINK, reason="requires symlink support")
-def test_tar_skips_file_symlinks(tmp_path: Path) -> None:
+def test_tar_dereferences_in_tree_file_symlink(tmp_path: Path) -> None:
+    # A link whose target stays inside the tree is materialized in place so the
+    # agent still sees the file (e.g. committed workspace / shared-config links).
     (tmp_path / "real.txt").write_text("real")
     (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
 
     tar_bytes, added, skipped = _build_source_tar(tmp_path, "repo")
 
-    assert added == 1
-    assert skipped == 1
-    assert _tar_file_names(tar_bytes) == {"repo/real.txt"}
+    assert added == 2
+    assert skipped == 0
+    assert _tar_file_names(tar_bytes) == {"repo/real.txt", "repo/link.txt"}
 
 
 @pytest.mark.skipif(not _HAS_SYMLINK, reason="requires symlink support")
-def test_tar_skips_dir_symlinks_without_descending(tmp_path: Path) -> None:
+def test_tar_dereferences_in_tree_dir_symlink(tmp_path: Path) -> None:
+    # A link to an in-tree directory is recursively packed under its link name.
+    real_dir = tmp_path / "shared"
+    real_dir.mkdir()
+    (real_dir / "conf.txt").write_text("conf")
+    (tmp_path / "linked").symlink_to(real_dir)
+
+    tar_bytes, _added, skipped = _build_source_tar(tmp_path, "repo")
+
+    assert skipped == 0
+    assert _tar_file_names(tar_bytes) == {"repo/shared/conf.txt", "repo/linked/conf.txt"}
+    assert {"repo/linked"} <= _tar_dir_names(tar_bytes)
+
+
+@pytest.mark.skipif(not _HAS_SYMLINK, reason="requires symlink support")
+def test_tar_drops_out_of_tree_dir_symlink(tmp_path: Path) -> None:
     outside = tmp_path / "outside"
     outside.mkdir()
     (outside / "secret.txt").write_text("secret")
@@ -150,12 +167,40 @@ def test_tar_skips_dir_symlinks_without_descending(tmp_path: Path) -> None:
 
     tar_bytes, added, skipped = _build_source_tar(src, "repo")
 
-    # The symlinked directory is not followed, so nothing under ``outside``
-    # leaks into the tar.
+    # The out-of-tree link is dropped, so nothing under ``outside`` leaks in.
     assert added == 1
     assert skipped == 1
     assert _tar_file_names(tar_bytes) == {"repo/keep.txt"}
     assert "repo/escape" not in _tar_names(tar_bytes)
+
+
+@pytest.mark.skipif(not _HAS_SYMLINK, reason="requires symlink support")
+def test_tar_drops_dangling_symlink(tmp_path: Path) -> None:
+    (tmp_path / "keep.txt").write_text("keep")
+    (tmp_path / "dangling").symlink_to(tmp_path / "missing")
+
+    tar_bytes, added, skipped = _build_source_tar(tmp_path, "repo")
+
+    assert added == 1
+    assert skipped == 1
+    assert _tar_file_names(tar_bytes) == {"repo/keep.txt"}
+    assert "repo/dangling" not in _tar_names(tar_bytes)
+
+
+@pytest.mark.skipif(not _HAS_SYMLINK, reason="requires symlink support")
+def test_tar_drops_cyclic_symlink(tmp_path: Path) -> None:
+    # A link pointing back at an ancestor would recurse forever; it is dropped.
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    (sub / "keep.txt").write_text("keep")
+    (sub / "loop").symlink_to(tmp_path)
+
+    tar_bytes, added, skipped = _build_source_tar(tmp_path, "repo")
+
+    assert added == 1
+    assert skipped == 1
+    assert _tar_file_names(tar_bytes) == {"repo/sub/keep.txt"}
+    assert "repo/sub/loop" not in _tar_names(tar_bytes)
 
 
 def test_tar_preserves_empty_dirs(tmp_path: Path) -> None:

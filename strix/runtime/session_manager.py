@@ -80,42 +80,94 @@ def split_local_sources(
     return copied, bind_mounts
 
 
+def _is_within(target: Path, root: Path) -> bool:
+    """Return whether ``target`` is ``root`` itself or nested under it."""
+    if target == root:
+        return True
+    try:
+        target.relative_to(root)
+    except ValueError:
+        return False
+    return True
+
+
+def _pack_dir(
+    tar: tarfile.TarFile,
+    src: Path,
+    arc_dir: str,
+    root: Path,
+    seen: frozenset[Path],
+) -> tuple[int, int]:
+    """Recursively pack ``src``'s contents into ``tar`` under ``arc_dir``.
+
+    Returns ``(added, skipped)`` where ``added`` counts regular files (real or
+    materialized from an in-tree symlink) and ``skipped`` counts dropped
+    symlinks and non-regular entries. Symlinks whose target stays inside
+    ``root`` are dereferenced in place; links that escape the tree, dangle, or
+    form a cycle are dropped so no host / out-of-tree content leaks in.
+    """
+    added = 0
+    skipped = 0
+    for entry in os.scandir(src):
+        entry_path = Path(entry.path)
+        arcname = f"{arc_dir}/{entry.name}"
+
+        if entry.is_symlink():
+            target = Path(os.path.realpath(entry_path))
+            if not _is_within(target, root):
+                logger.warning("tar: dropping out-of-tree symlink %s -> %s", entry_path, target)
+                skipped += 1
+                continue
+            if not target.exists():
+                logger.warning("tar: dropping dangling symlink %s", entry_path)
+                skipped += 1
+                continue
+            if target in seen:
+                logger.warning("tar: dropping cyclic symlink %s -> %s", entry_path, target)
+                skipped += 1
+                continue
+            if target.is_dir():
+                tar.add(str(target), arcname=arcname, recursive=False)
+                sub_added, sub_skipped = _pack_dir(tar, target, arcname, root, seen | {target})
+                added += sub_added
+                skipped += sub_skipped
+            else:
+                tar.add(str(target), arcname=arcname, recursive=False)
+                added += 1
+        elif entry.is_dir(follow_symlinks=False):
+            tar.add(str(entry_path), arcname=arcname, recursive=False)
+            sub_added, sub_skipped = _pack_dir(tar, entry_path, arcname, root, seen)
+            added += sub_added
+            skipped += sub_skipped
+        elif entry.is_file(follow_symlinks=False):
+            tar.add(str(entry_path), arcname=arcname, recursive=False)
+            added += 1
+        else:
+            # Sockets, FIFOs, devices — not part of a source tree; skip.
+            logger.debug("tar: skipping non-regular entry %s", entry_path)
+            skipped += 1
+    return added, skipped
+
+
 def _build_source_tar(src_root: Path, arc_prefix: str) -> tuple[bytes, int, int]:
     """Pack ``src_root`` into an in-memory tar rooted at ``arc_prefix``.
 
     Returns ``(tar_bytes, added, skipped)``. Regular files and directories —
     including dotfiles such as ``.git`` and directories with no files — are
     packed as-is so source-aware and git-diff analysis keep working and
-    committed empty dirs survive. Symlinks are skipped (and counted) rather
-    than followed, avoiding host path escapes and the dangling links a naive
-    copy would create inside the container.
+    committed empty dirs survive. Symlinks pointing inside the tree are
+    dereferenced (their target content is materialized in place) so committed
+    workspace / shared-config links still resolve inside the container; links
+    that escape the tree, dangle, or form a cycle are dropped (and counted),
+    avoiding host path escapes and the dangling links a naive copy would create.
     """
     buf = io.BytesIO()
-    added = 0
-    skipped = 0
+    root = src_root.resolve()
     with tarfile.open(fileobj=buf, mode="w") as tar:
-        for dirpath, dirnames, filenames in os.walk(src_root, followlinks=False):
-            kept_dirs: list[str] = []
-            for name in dirnames:
-                if Path(dirpath, name).is_symlink():
-                    skipped += 1
-                    continue
-                kept_dirs.append(name)
-            dirnames[:] = kept_dirs
-
-            dir_abs = Path(dirpath)
-            rel = dir_abs.relative_to(src_root).as_posix()
-            dir_arcname = arc_prefix if rel == "." else f"{arc_prefix}/{rel}"
-            tar.add(str(dir_abs), arcname=dir_arcname, recursive=False)
-
-            for name in filenames:
-                full = dir_abs / name
-                if full.is_symlink() or not full.is_file():
-                    skipped += 1
-                    continue
-                arcname = f"{arc_prefix}/{full.relative_to(src_root).as_posix()}"
-                tar.add(str(full), arcname=arcname, recursive=False)
-                added += 1
+        # Always pack the arc-prefix root so the workspace subdir exists even
+        # when the source tree is empty.
+        tar.add(str(root), arcname=arc_prefix, recursive=False)
+        added, skipped = _pack_dir(tar, root, arc_prefix, root, frozenset({root}))
     return buf.getvalue(), added, skipped
 
 

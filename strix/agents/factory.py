@@ -210,6 +210,13 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
+            parsed = json.loads(raw_input)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict) and "shell" not in parsed:
+            parsed["shell"] = "bash"
+            raw_input = json.dumps(parsed)
+        try:
             return await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
