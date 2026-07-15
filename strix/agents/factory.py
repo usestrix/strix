@@ -411,6 +411,7 @@ def build_strix_agent(
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
+    is_resume: bool = False,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -421,6 +422,11 @@ def build_strix_agent(
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
+        is_resume: On a resumed root run, and only when opted in via
+            ``RuntimeSettings.resume_retract_enabled`` (``STRIX_RESUME_RETRACT``),
+            expose ``retract_vulnerability_report`` so the agent can drop a
+            rehydrated finding it re-verifies as fixed. Off by default → resume
+            stays append-only. A fresh scan never needs it.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -437,6 +443,16 @@ def build_strix_agent(
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
     if is_root:
         tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
+        # retract_vulnerability_report is the inverse of create — meaningful
+        # only on a RESUMED root run (fresh scans have nothing to retract) and
+        # only when explicitly opted in. Guarded again at runtime: the tool
+        # refuses unless a source-tree reader is wired (whitebox resume).
+        from strix.config import load_settings
+
+        if is_resume and load_settings().runtime.resume_retract_enabled:
+            from strix.tools.reporting.retract_tool import retract_vulnerability_report
+
+            tools.append(retract_vulnerability_report)
     else:
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)

@@ -236,6 +236,46 @@ async def run_strix_scan(
             system_prompt_context=root_context,
         )
 
+        # Opt-in grounded retraction on resume: wire a sandbox-backed reader so
+        # the retract tool's guard can re-verify a "fixed" claim against the live
+        # /workspace tree before dropping a finding. Whitebox only — the guard
+        # checks source sinks; without a tree it stays fail-safe (refuse). Gated
+        # behind resume_retract_enabled so this is a no-op unless opted in.
+        if is_resume and is_whitebox and settings.runtime.resume_retract_enabled:
+            from strix.tools.reporting.retract_tool import set_target_file_reader
+
+            _session = bundle["session"]
+            _ws_paths = [
+                f"/workspace/{sub}" if sub else "/workspace"
+                for sub in (
+                    (t.get("details") or {}).get("workspace_subdir")
+                    for t in targets
+                    if t.get("type") == "local_code"
+                )
+            ] or ["/workspace"]
+
+            async def _read_target_file(rel_path: str) -> str | None:
+                rel = rel_path.lstrip("/")
+                for base in _ws_paths:
+                    try:
+                        result = await _session.exec("cat", f"{base}/{rel}", timeout=15)
+                    except Exception as exc:  # noqa: BLE001 — unreadable ≠ proof of absence
+                        logger.debug("retract reader: %s/%s unreadable: %r", base, rel, exc)
+                        continue
+                    if getattr(result, "exit_code", 1) == 0:
+                        # ExecResult.stdout is bytes; the guard does a str
+                        # substring check, so decode here (a raw bytes return
+                        # would raise TypeError on every retract).
+                        stdout = result.stdout
+                        return (
+                            stdout.decode("utf-8", errors="replace")
+                            if isinstance(stdout, bytes | bytearray)
+                            else stdout
+                        )
+                return None  # not found under any workspace root → treat as gone
+
+            set_target_file_reader(_read_target_file)
+
         root_agent = build_strix_agent(
             name="strix",
             skills=skills,
@@ -246,6 +286,7 @@ async def run_strix_scan(
             chat_completions_tools=chat_completions_tools,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
+            is_resume=is_resume,
         )
 
         if not is_resume:

@@ -56,6 +56,16 @@ class RuntimeSettings(BaseSettings):
     # on large repos). Above this, the user must bind-mount via ``--mount``.
     # Set to 0 (or less) to disable the pre-flight check entirely.
     max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
+    # Opt-in: on a resumed scan, expose the retract_vulnerability_report tool so
+    # the agent can DROP a rehydrated finding it re-verifies as fixed. Default
+    # OFF — resume stays append-only (today's behaviour) unless enabled. Only has
+    # any effect on a resumed whitebox run (the guard needs a source tree to
+    # re-verify against); a no-op otherwise. Useful when driving resume as a
+    # PR-lifecycle loop where cumulative findings must shrink as fixes land.
+    resume_retract_enabled: bool = Field(
+        default=False,
+        alias="STRIX_RESUME_RETRACT",
+    )
 
 
 class TelemetrySettings(BaseSettings):
