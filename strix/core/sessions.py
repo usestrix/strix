@@ -40,9 +40,7 @@ def _output_has_image(item_dict: dict[str, Any]) -> bool:
 
 
 def _elided_output(item_dict: dict[str, Any], text: str) -> dict[str, Any]:
-    # Replace only the image blocks; sibling text/other blocks in the same
-    # tool result are preserved so eliding a screenshot never drops the
-    # accompanying text output.
+    # Replace only image blocks; sibling text blocks are preserved.
     output = item_dict.get("output")
     blocks = output if isinstance(output, list) else []
     return {
@@ -61,14 +59,7 @@ _session_write_locks: WeakKeyDictionary[Session, asyncio.Lock] = WeakKeyDictiona
 
 
 def session_write_lock(session: Session) -> asyncio.Lock:
-    """Return the lock serialising *all* writes to ``session``.
-
-    Both the image-budget rewrite (a read + clear + re-add sequence) and
-    out-of-band message delivery (``AgentCoordinator.send``) must acquire this
-    so a rewrite built from a snapshot can never clear away a message that was
-    appended concurrently. Any code that writes to a session out of band must
-    take this lock too.
-    """
+    """Lock serialising all out-of-band writes to ``session``."""
     lock = _session_write_locks.get(session)
     if lock is None:
         lock = asyncio.Lock()
@@ -80,15 +71,7 @@ async def _rewrite_session(
     session: Session,
     transform: Callable[[list[Any]], tuple[list[Any], bool]],
 ) -> bool:
-    """Serialised read-modify-write of a session's items.
-
-    The snapshot is read, transformed, and re-written while holding the shared
-    ``session_write_lock`` so no concurrent writer can be clobbered by the
-    clear + re-add. Nothing is written unless ``transform`` reports a change,
-    and if the re-add fails the original items are restored -- a rewrite can
-    never silently leave the history empty. Returns ``True`` when the session
-    was rewritten.
-    """
+    """Read-modify-write a session under its write lock, restoring on failure."""
     async with session_write_lock(session):
         items = await session.get_items()
         if not items:
@@ -110,11 +93,7 @@ async def _rewrite_session(
 
 
 async def strip_all_images_from_session(session: Session) -> bool:
-    """Replace every image tool output with a text placeholder.
-
-    Reactive recovery for models that reject image inputs (vision not
-    supported / payload too large). All-or-nothing by design.
-    """
+    """Replace every image tool output with a text placeholder (rejection recovery)."""
 
     def _transform(items: list[Any]) -> tuple[list[Any], bool]:
         rebuilt: list[Any] = []
@@ -132,14 +111,7 @@ async def strip_all_images_from_session(session: Session) -> bool:
 
 
 async def enforce_image_budget(session: Session, max_images: int) -> bool:
-    """Keep only the most recent ``max_images`` image outputs in the session.
-
-    Screenshots (base64 ``input_image`` blocks from ``view_image``) otherwise
-    accumulate for the whole agent lifetime and are re-materialised into RAM
-    and re-sent to the model on every turn. Eliding the older ones bounds the
-    per-agent context memory while preserving the most recent visual context.
-    Returns ``True`` if anything was elided.
-    """
+    """Keep only the most recent ``max_images`` image outputs; elide older ones."""
     if max_images < 0:
         return False
 
@@ -164,14 +136,7 @@ async def enforce_image_budget(session: Session, max_images: int) -> bool:
 
 
 def scrub_images_from_items(items: list[Any]) -> list[Any]:
-    """Return a copy of ``items`` with every image block replaced by text.
-
-    Used before serialising a parent's history into a child agent's inherited
-    context: without this, multi-MB base64 screenshots are ``json.dumps``-ed
-    into the child's first message verbatim, duplicated across every spawned
-    child, and can no longer be reclaimed by the reactive image strip (which
-    only matches structured ``input_image`` blocks, not base64 inside text).
-    """
+    """Return a copy of ``items`` with every image block replaced by text."""
 
     def _scrub(obj: Any) -> Any:
         if isinstance(obj, dict):
