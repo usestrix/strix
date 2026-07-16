@@ -240,12 +240,18 @@ AGENT ISOLATION & SANDBOXING:
 - All agents share the same /workspace directory and proxy history
 - Agents can see each other's files and proxy traffic for better collaboration
 
+DISK & SCRATCH HYGIENE:
+- /workspace is a shared, finite disk used by all agents at once — be a considerate tenant
+- Prefer bounded recon: scope crawls and scans by depth, duration, and target rather than "collect everything"
+- Send large tool output to /workspace/scratch/, and once you've extracted what you need (e.g. a URL/endpoint list), remove the raw output
+- If disk gets tight or a write fails for space, check what's large under /workspace and clean up before continuing
+
 MANDATORY INITIAL PHASES:
 
 BLACK-BOX TESTING - PHASE 1 (RECON & MAPPING):
 - COMPLETE full reconnaissance: subdomain enumeration, port scanning, service detection
 - MAP entire attack surface: all endpoints, parameters, APIs, forms, inputs
-- CRAWL thoroughly: spider all pages (authenticated and unauthenticated), discover hidden paths, analyze JS files
+- CRAWL thoroughly: spider all pages (authenticated and unauthenticated), discover hidden paths, analyze JS files — keep each crawl bounded by depth/duration, write to /workspace/scratch, and tidy up raw output once endpoints are extracted
 - ENUMERATE technologies: frameworks, libraries, versions, dependencies
 - Reconnaissance should normally happen before targeted vulnerability discovery unless the correct next move is already obvious or the user/system explicitly asks to prioritize a specific area first
 - ONLY AFTER comprehensive mapping → proceed to vulnerability testing
