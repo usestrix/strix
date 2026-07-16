@@ -24,6 +24,7 @@ from strix.tools.agents_graph.tools import (
     view_agent_graph,
     wait_for_message,
 )
+from strix.tools.batch.tools import batch_terminal_execute, batch_view_files
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
@@ -329,6 +330,8 @@ def _finish_tool_use_behavior(
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
+    batch_view_files,
+    batch_terminal_execute,
     create_todo,
     list_todos,
     update_todo,
