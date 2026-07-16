@@ -88,8 +88,10 @@ axios.get("/api/orders/" + params.id)             // id from route param
 xhr.open("GET", baseApi + "/" + segment)          // segment from postMessage
 ```
 
-If `userId` = `../../admin/keys#`, the browser normalizes
-`/api/users/../../admin/keys` → `/api/admin/keys`, sent with the victim's session.
+If `userId` = `../../admin/keys#` (the trailing `#` starts a fragment, dropping
+the appended `/avatar`), the browser normalizes
+`/api/users/../../admin/keys` → `/admin/keys` (the two `../` segments pop `users`
+then `api`), sent with the victim's session.
 
 ## Reconnaissance
 
@@ -166,7 +168,7 @@ agent-browser screenshot
 **Confirmation criteria** — you have a real CSPT when *all* hold:
 
 1. The **outbound request path in the proxy/HAR** is the traversed target
-   (`/api/admin/keys`), not the intended one (`/api/users/<id>/avatar`).
+   (e.g. `/admin/keys`), not the intended one (`/api/users/<id>/avatar`).
 2. That request carried the **victim's credentials** (session cookie /
    `Authorization` header present on the request — read it from the HAR).
 3. There is a **benign same-endpoint control**: the same flow with a normal

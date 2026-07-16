@@ -41,7 +41,7 @@ agent-browser network requests              # note the intended path, e.g. /api/
 # 3b. TRAVERSAL — drive the same source with a crafted value.
 agent-browser open "<target>/#/orders/..%2f..%2fadmin%2fkeys"
 agent-browser wait --load networkidle
-agent-browser network requests              # note the traversed path, e.g. /api/admin/keys
+agent-browser network requests              # note the traversed path, e.g. /admin/keys/detail
 
 # 4. Stop the capture and keep the HAR as the primary artifact.
 agent-browser network har stop /workspace/.agent-browser-screenshots/cspt.har
@@ -71,7 +71,7 @@ agent-browser open "<target>"
 A finding is a real CSPT only when **all** of these hold, evidenced from the HAR:
 
 1. **Traversed path on the wire** — the outbound request path is the traversed
-   target (e.g. `/api/admin/keys`), not the intended one
+   target (e.g. `/admin/keys/detail`), not the intended one
    (`/api/orders/12345/detail`).
 2. **Ambient credentials** — that request carried the victim's session
    (`Cookie` / `Authorization` header present; read it from the HAR entry).
@@ -103,7 +103,7 @@ Intended (benign control):
 
 Traversed (CSPT):
   GET /api/orders/../../admin/keys/detail
-  → browser normalizes to: GET /api/admin/keys
+  → browser normalizes to: GET /admin/keys/detail
   Cookie: session=<redacted>
   → 200 OK  (admin key material reachable via a low-priv user's fragment)
 ```
@@ -119,9 +119,10 @@ python -m http.server 8000 --directory tests/fixtures/cspt
 agent-browser network har start
 agent-browser open "http://localhost:8000/positive_direct.html#/orders/../../admin/keys"
 agent-browser wait --load networkidle
-agent-browser network requests     # observe the normalized /api/admin/keys request
+agent-browser network requests     # observe the normalized /admin/keys/detail request
 ```
 
-The positive fixtures emit a traversed `/api/...` request; the negative fixtures
+The positive fixtures emit a traversed request whose path escapes the intended
+`/api/...` prefix (e.g. `/admin/keys/detail`); the negative fixtures
 (`negative_validated.html`, `negative_safe_construction.html`) either reject the
 input before the sink or keep the value out of the path entirely.

@@ -4,8 +4,10 @@
   Source: query parameter (?resource=)
   Sink:   XMLHttpRequest.open()
   The value is URL-decoded once, then joined into the path. A payload of
-  %2e%2e%2f%2e%2e%2fadmin%2fconfig decodes to ../../admin/config and the browser
-  normalizes the outbound path to /api/admin/config.
+  %2e%2e%2f%2e%2e%2fadmin%2fconfig decodes to ../../admin/config, the request
+  URL is built as `/api/resources/../../admin/config`, and the browser
+  normalizes the outbound path to /admin/config (the two `../` segments pop
+  `resources` then `api`).
 -->
 <html lang="en">
 <head><meta charset="utf-8" /><title>Resource viewer</title></head>

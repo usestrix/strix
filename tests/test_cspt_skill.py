@@ -178,7 +178,7 @@ def _create_kwargs(**overrides: Any) -> dict[str, Any]:
         "poc_description": "Open the app with a crafted fragment.",
         "poc_script_code": "location.hash = '#/orders/../../admin/keys'",
         "remediation_steps": "Validate the segment against an allowlist.",
-        "evidence": "Outbound request path was /api/admin/keys with the session cookie.",
+        "evidence": "Outbound request path was /admin/keys/detail with the session cookie.",
         "assumptions": "Assumes the victim opens a crafted link while authenticated.",
         "fix_effort": "low",
         "cvss_breakdown": _cvss(),
@@ -298,3 +298,106 @@ def test_sarif_separates_cspt_from_server_side_traversal_class(tmp_path: Path) -
     hashes = [r["properties"].get("strix_vuln_class_hash") for r in results]
     assert all(hashes), "expected a class fingerprint on both findings"
     assert hashes[0] != hashes[1], "CSPT and server-side traversal share a class fingerprint"
+
+
+def test_sarif_class_fingerprint_uses_finding_class_over_colliding_title(tmp_path: Path) -> None:
+    # Regression: a CSPT finding whose *title* contains the generic "path
+    # traversal" keyword must still be separated from a genuine server-side
+    # path-traversal finding. Before the fix the class fingerprint was derived
+    # from the title keyword alone, so both collapsed onto the same hash even
+    # though the structured finding_class distinguished them. The structured
+    # field must win.
+    write_sarif(
+        tmp_path,
+        [
+            {
+                "id": "vuln-0001",
+                "title": "Path Traversal via fragment",  # collides on the generic keyword
+                "severity": "high",
+                "cwe": "CWE-22",
+                "finding_class": "client_side_path_traversal",
+                "timestamp": "2026-07-16 10:00:00 UTC",
+                "code_locations": [{"file": "app.js", "start_line": 12}],
+            },
+            {
+                "id": "vuln-0002",
+                "title": "Path Traversal in download file parameter",
+                "severity": "high",
+                "cwe": "CWE-22",
+                "finding_class": "dynamic",
+                "timestamp": "2026-07-16 10:00:00 UTC",
+                "code_locations": [{"file": "server.py", "start_line": 30}],
+            },
+        ],
+    )
+    results = json.loads((tmp_path / "findings.sarif").read_text(encoding="utf-8"))["runs"][0][
+        "results"
+    ]
+    hashes = [r["properties"].get("strix_vuln_class_hash") for r in results]
+    assert all(hashes), "expected a class fingerprint on both findings"
+    assert hashes[0] != hashes[1], (
+        "CSPT finding with a 'path traversal' title collapsed onto the "
+        "server-side traversal fingerprint; finding_class must take precedence"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Fixture path normalization (documented expected paths must be correct)
+# --------------------------------------------------------------------------- #
+
+
+def _normalize_url_path(path: str) -> str:
+    """Resolve ``.`` / ``..`` segments the way a browser normalizes a URL path.
+
+    Leading ``..`` that would escape the root are clamped (dropped), matching
+    the URL parser rather than a filesystem join.
+    """
+    parts = path.split("/")
+    out: list[str] = []
+    for part in parts:
+        if part == "..":
+            if out and out[-1] not in ("", ".."):
+                out.pop()
+        elif part != ".":
+            out.append(part)
+    return "/".join(out)
+
+
+def test_normalize_helper_matches_documented_examples() -> None:
+    # Guard the helper itself so the assertions below mean something.
+    assert _normalize_url_path("/api/orders/../../admin/keys/detail") == "/admin/keys/detail"
+    assert _normalize_url_path("/api/resources/../../admin/config") == "/admin/config"
+    assert _normalize_url_path("/api/users/../../admin/keys") == "/admin/keys"
+
+
+def test_positive_direct_fixture_documents_correct_normalized_path() -> None:
+    text = (FIXTURES / "positive_direct.html").read_text(encoding="utf-8")
+    # The fixture builds this request URL from orderId="../../admin/keys":
+    assert _normalize_url_path("/api/orders/../../admin/keys/detail") == "/admin/keys/detail"
+    # ...and the comment must document that correct result, not the wrong
+    # /api/admin/keys.
+    assert "/admin/keys/detail" in text
+    assert "/api/admin/keys" not in text
+
+
+def test_positive_encoded_fixture_documents_correct_normalized_path() -> None:
+    text = (FIXTURES / "positive_encoded.html").read_text(encoding="utf-8")
+    assert _normalize_url_path("/api/resources/../../admin/config") == "/admin/config"
+    assert "/admin/config" in text
+    assert "/api/admin/config" not in text
+
+
+def test_no_fixture_or_doc_claims_the_wrong_api_admin_path() -> None:
+    # Belt-and-suspenders: the incorrect "/api/admin/..." normalized paths must
+    # not reappear in any fixture, the skill, or the runbook.
+    repo = Path(__file__).parent.parent
+    targets = [
+        FIXTURES / "positive_direct.html",
+        FIXTURES / "positive_encoded.html",
+        repo / "docs" / "cspt-evidence-runbook.md",
+        repo / "strix" / "skills" / "vulnerabilities" / "client_side_path_traversal.md",
+    ]
+    for path in targets:
+        text = path.read_text(encoding="utf-8")
+        assert "/api/admin/keys" not in text, f"{path.name} claims wrong path /api/admin/keys"
+        assert "/api/admin/config" not in text, f"{path.name} claims wrong path /api/admin/config"

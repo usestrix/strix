@@ -4,8 +4,11 @@
   Source: URL fragment (location.hash)
   Sink:   fetch()
   The fragment segment is concatenated straight into the request path with no
-  validation. A hash of `../../admin/keys` normalizes the outbound request to
-  /api/admin/keys, sent with the page's ambient session.
+  validation. With a hash of `#/orders/../../admin/keys`, orderId becomes
+  `../../admin/keys` and the request URL is built as
+  `/api/orders/../../admin/keys/detail`. The browser normalizes that outbound
+  path to /admin/keys/detail (the two `../` segments pop `orders` then `api`),
+  sent with the page's ambient session.
 -->
 <html lang="en">
 <head><meta charset="utf-8" /><title>Order detail</title></head>

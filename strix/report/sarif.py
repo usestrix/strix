@@ -918,20 +918,36 @@ def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
     primary fingerprint (typical case: file rename, or a fix that moves
     the vulnerable code to a new module).
 
-    Composite of (rule_id, vuln-class keyword extracted from title).
-    Title is LLM-authored so it's stochastic at the prose level, but
-    the class keyword extraction picks up the discrete vulnerability
-    category, which is much more stable than the full title.
+    Composite of (rule_id, vuln-class token). The class token is the
+    structured ``finding_class`` when it carries signal (i.e. is present
+    and not the default ``dynamic``), otherwise a keyword extracted from
+    the title.
 
-    Falls back to the first 5 lowercased words of the title when no
-    curated keyword matches. Acceptable as a fallback because the
-    class fingerprint is a tiebreaker, not a primary reconciliation key.
+    Preferring ``finding_class`` matters when a finding's title happens to
+    contain a broader curated keyword: a CSPT report titled "Path Traversal
+    via fragment" carries ``finding_class="client_side_path_traversal"``
+    but its title matches the generic ``path traversal`` keyword, which
+    would otherwise collapse it onto the same fingerprint as a server-side
+    path-traversal finding (both key on CWE-22). The structured field is
+    authoritative, so it wins; title-keyword extraction is the fallback
+    only when ``finding_class`` is absent or ``dynamic``.
+
+    Title is LLM-authored so it's stochastic at the prose level, but the
+    keyword extraction picks up the discrete vulnerability category, which
+    is much more stable than the full title. Falls back to the first 5
+    lowercased words of the title when no curated keyword matches.
+    Acceptable as a fallback because the class fingerprint is a tiebreaker,
+    not a primary reconciliation key.
     """
-    title = _string_value(report.get("title")) or ""
-    keyword = _class_keyword(title) if title else ""
-    if not keyword:
+    finding_class = _string_value(report.get("finding_class"))
+    if finding_class and finding_class != "dynamic":
+        token = finding_class
+    else:
+        title = _string_value(report.get("title")) or ""
+        token = _class_keyword(title) if title else ""
+    if not token:
         return None
-    composite = f"rule:{rule_id}|class:{keyword}"
+    composite = f"rule:{rule_id}|class:{token}"
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
 
 
