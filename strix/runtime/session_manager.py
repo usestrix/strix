@@ -167,11 +167,19 @@ async def cleanup(scan_id: str) -> None:
         except Exception:  # noqa: BLE001
             logger.debug("cleanup(%s): caido_client.aclose() raised", scan_id, exc_info=True)
 
+    client = bundle["client"]
     try:
-        await bundle["client"].delete(bundle["session"])
+        await client.delete(bundle["session"])
         logger.info("Cleaned up sandbox session for scan %s", scan_id)
     except Exception:
         logger.exception(
             "cleanup(%s): client.delete raised; container may need manual reaping",
             scan_id,
         )
+
+    docker_client = getattr(client, "docker_client", None)
+    if docker_client is not None:
+        try:
+            docker_client.close()
+        except Exception:  # noqa: BLE001
+            logger.debug("cleanup(%s): docker_client.close() raised", scan_id, exc_info=True)
