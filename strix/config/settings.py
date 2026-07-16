@@ -60,7 +60,7 @@ class RuntimeSettings(BaseSettings):
     # single agent's context. Older images are replaced with a text placeholder
     # before each turn so base64 payloads don't accumulate unboundedly in RAM
     # (they remain on disk in the SDK session db). Set to 0 to keep none.
-    max_context_images: int = Field(default=3, alias="STRIX_MAX_CONTEXT_IMAGES")
+    max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 
 
 class TelemetrySettings(BaseSettings):
