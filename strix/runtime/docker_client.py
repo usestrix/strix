@@ -80,7 +80,7 @@ def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
     if cpus:
         with contextlib.suppress(ValueError, OverflowError):
             nano_cpus = int(float(cpus) * 1_000_000_000)
-            if nano_cpus > 0:
+            if 0 < nano_cpus <= 2**63 - 1:
                 create_kwargs["nano_cpus"] = nano_cpus
 
     pids_limit = os.environ.get("STRIX_SANDBOX_PIDS_LIMIT", "").strip()
