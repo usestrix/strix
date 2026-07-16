@@ -214,8 +214,10 @@ async def run_strix_scan(
         # Run registered session-setup hooks now that the sandbox is ready and
         # the target is materialised, but before the agent's first turn — the
         # window an addon needs to prepare in-sandbox state (e.g. a code-graph
-        # index). Best-effort: a hook failure is logged, never fatal.
-        await session_manager.run_session_setups(bundle["session"], scan_config)
+        # index). Runs once per materialized session (a resume reuses the cached
+        # bundle, so setups don't re-run). Best-effort: a hook failure is logged,
+        # never fatal.
+        await session_manager.run_session_setups(bundle, scan_config)
 
         root_task = build_root_task(scan_config)
         model_settings = make_model_settings(

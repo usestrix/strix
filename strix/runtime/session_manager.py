@@ -215,10 +215,37 @@ def registered_session_setups() -> tuple[SessionSetupCallback, ...]:
     return tuple(_SESSION_SETUP_CALLBACKS)
 
 
-async def run_session_setups(session: Any, scan_config: dict[str, Any]) -> None:
-    """Invoke every registered session-setup callback. A callback failure is
-    logged and swallowed — session setup is best-effort and must not fail the
-    scan."""
+_SETUP_DONE_KEY = "_session_setups_done"
+
+
+async def run_session_setups(bundle: dict[str, Any], scan_config: dict[str, Any]) -> None:
+    """Invoke every registered session-setup callback ONCE per materialized
+    sandbox session.
+
+    ``bundle`` is the session bundle from :func:`create_or_reuse`; it's cached
+    and REUSED across resumes of the same ``scan_id`` in one process (the
+    cred-boundary iteration loop resumes in-process). Running setups again on a
+    reused session would re-execute non-idempotent hooks against an
+    already-prepared sandbox (start a service twice, re-append config, or fail
+    mid-way and — since failures are swallowed — leave the resumed agent on
+    invalid state). So we stamp the bundle once setups have run and skip on
+    reuse. A fresh session (new bundle) gets a fresh run.
+
+    On skipping and staleness: the reused bundle is the SAME container with the
+    SAME materialised source, so setup-derived state (e.g. a code-graph index)
+    is not stale — nothing changed between in-process iterations. A cross-push
+    PR resume runs in a NEW process against a freshly materialised sandbox, so
+    it gets a new bundle and setups re-run — the index is rebuilt against the
+    new code. So skipping here never serves a stale artifact.
+
+    Callback failures are logged and swallowed — setup is best-effort and must
+    not fail the scan.
+    """
+    if bundle.get(_SETUP_DONE_KEY):
+        logger.debug("session setups already ran for this session; skipping on reuse")
+        return
+    bundle[_SETUP_DONE_KEY] = True  # stamp first: a partial run must not retry-loop
+    session = bundle.get("session")
     for callback in _SESSION_SETUP_CALLBACKS:
         try:
             await callback(session, scan_config)

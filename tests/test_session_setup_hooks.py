@@ -18,6 +18,11 @@ def _clear_registry() -> Any:
     session_manager._SESSION_SETUP_CALLBACKS[:] = saved
 
 
+def _bundle(session: Any = None) -> dict[str, Any]:
+    """A minimal session bundle, as create_or_reuse returns + caches."""
+    return {"session": session if session is not None else object()}
+
+
 async def test_callbacks_run_in_registration_order() -> None:
     calls: list[str] = []
 
@@ -29,7 +34,7 @@ async def test_callbacks_run_in_registration_order() -> None:
 
     session_manager.register_session_setup(a)
     session_manager.register_session_setup(b)
-    await session_manager.run_session_setups(session=object(), scan_config={})
+    await session_manager.run_session_setups(_bundle(), scan_config={})
 
     assert calls == ["a", "b"]
 
@@ -44,10 +49,47 @@ async def test_callback_receives_session_and_config() -> None:
 
     session_manager.register_session_setup(grab)
     cfg = {"targets": [{"type": "local_code"}]}
-    await session_manager.run_session_setups(session=sentinel_session, scan_config=cfg)
+    await session_manager.run_session_setups(_bundle(sentinel_session), scan_config=cfg)
 
     assert seen["session"] is sentinel_session
     assert seen["cfg"] is cfg
+
+
+async def test_setups_run_once_per_session_on_reuse() -> None:
+    """The bundle is cached + reused when a scan resumes in-process; setups must
+    run ONCE per materialized session, not again on reuse (non-idempotent hooks
+    would double-apply). A fresh bundle runs them again."""
+    calls: list[str] = []
+
+    async def setup(_session: Any, _cfg: dict[str, Any]) -> None:
+        calls.append("run")
+
+    session_manager.register_session_setup(setup)
+
+    bundle = _bundle()
+    await session_manager.run_session_setups(bundle, scan_config={})
+    await session_manager.run_session_setups(bundle, scan_config={})  # resume: same bundle
+    assert calls == ["run"], "setup must not re-run on a reused session"
+
+    # A different materialized session (new bundle) runs setups afresh.
+    await session_manager.run_session_setups(_bundle(), scan_config={})
+    assert calls == ["run", "run"]
+
+
+async def test_setup_marked_done_even_when_callback_fails() -> None:
+    """A partial/failed setup still marks the session done, so a resume doesn't
+    retry-loop a broken non-idempotent hook."""
+    calls: list[str] = []
+
+    async def boom(_session: Any, _cfg: dict[str, Any]) -> None:
+        calls.append("boom")
+        raise RuntimeError("half-applied")
+
+    session_manager.register_session_setup(boom)
+    bundle = _bundle()
+    await session_manager.run_session_setups(bundle, scan_config={})
+    await session_manager.run_session_setups(bundle, scan_config={})
+    assert calls == ["boom"]
 
 
 async def test_duplicate_registration_ignored() -> None:
@@ -73,10 +115,10 @@ async def test_failing_callback_is_swallowed_and_others_still_run() -> None:
     session_manager.register_session_setup(boom)
     session_manager.register_session_setup(after)
     # Must not raise — a best-effort setup step can't fail the scan.
-    await session_manager.run_session_setups(session=object(), scan_config={})
+    await session_manager.run_session_setups(_bundle(), scan_config={})
 
     assert calls == ["boom", "after"]
 
 
 async def test_no_callbacks_is_a_noop() -> None:
-    await session_manager.run_session_setups(session=object(), scan_config={})  # no raise
+    await session_manager.run_session_setups(_bundle(), scan_config={})  # no raise
