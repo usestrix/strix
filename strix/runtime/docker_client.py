@@ -78,7 +78,7 @@ def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
 
     cpus = os.environ.get("STRIX_SANDBOX_CPUS", "").strip()
     if cpus:
-        with contextlib.suppress(ValueError):
+        with contextlib.suppress(ValueError, OverflowError):
             nano_cpus = int(float(cpus) * 1_000_000_000)
             if nano_cpus > 0:
                 create_kwargs["nano_cpus"] = nano_cpus
