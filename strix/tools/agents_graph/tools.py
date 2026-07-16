@@ -257,7 +257,9 @@ async def wait_for_message(  # noqa: PLR0911
             bites when the expected message never arrives — so an oversized
             timeout on a trivial wait just strands you idle until it
             elapses. On timeout the tool returns and you decide whether to
-            keep working or wait again.
+            keep working or wait again. (Applies to autonomous multi-agent
+            runs; in interactive/chat sessions the agent instead parks until
+            a message arrives and this cap is not enforced.)
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
