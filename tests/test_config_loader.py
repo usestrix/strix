@@ -26,6 +26,8 @@ _LLM_ENV_KEYS = [
     "LITELLM_BASE_URL",
     "OLLAMA_API_BASE",
     "STRIX_REASONING_EFFORT",
+    "STRIX_MODEL_BUDGETS_USD",
+    "STRIX_MODEL_FALLBACKS",
     "STRIX_FORCE_REQUIRED_TOOL_CHOICE",
     "LLM_TIMEOUT",
     "PERPLEXITY_API_KEY",
@@ -166,6 +168,28 @@ def test_apply_override_and_load_settings_round_trip(tmp_path: Path) -> None:
     assert settings.integrations.perplexity_api_key == "pk"
     # Second call is memoized -> same object.
     assert loader.load_settings() is settings
+
+
+def test_structured_model_budgets_and_fallbacks_load(tmp_path: Path) -> None:
+    path = tmp_path / "fallbacks.json"
+    path.write_text(
+        json.dumps(
+            {
+                "llm": {
+                    "model": "gpt",
+                    "model_budgets_usd": {"gpt": 5, "glm": 2},
+                    "model_fallbacks": {"gpt": "glm", "glm": "final"},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    loader.apply_config_override(path)
+    settings = loader.load_settings()
+
+    assert settings.llm.model_chain("gpt") == ["gpt", "glm", "final"]
+    assert settings.llm.budget_for("glm") == 2
 
 
 def test_apply_config_override_invalidates_cache(tmp_path: Path) -> None:

@@ -17,8 +17,8 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
-from strix.config.models import uses_chat_completions_tool_schema
 from strix.core.inputs import make_model_settings
+from strix.core.model_routing import chain_uses_chat_completions_tools, resolve_budget_model
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -510,12 +510,13 @@ def make_child_factory(
         model: str | None = None,
     ) -> SandboxAgent[Any]:
         route = _matching_route(skills) if model is None else None
-        resolved_model = (
+        configured_model = (
             model
             or (route.model if route is not None else None)
             or llm.subagent_model
             or default_model
         ).strip()
+        resolved_model = resolve_budget_model(configured_model, llm)
         reasoning: ReasoningEffort | None = (
             route.reasoning_effort
             if route is not None and route.reasoning_effort is not None
@@ -535,8 +536,8 @@ def make_child_factory(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             interactive=interactive,
-            chat_completions_tools=uses_chat_completions_tool_schema(
-                resolved_model,
+            chat_completions_tools=chain_uses_chat_completions_tools(
+                configured_model,
                 settings,
             ),
             model=resolved_model,

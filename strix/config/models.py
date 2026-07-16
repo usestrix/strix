@@ -108,7 +108,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
         # orchestrator credential into differently-routed child providers.
         # Provider-specific environment variables keep concurrent routes apart.
         _mirror_api_key_to_provider_env(llm.model, llm.api_key)
-    for model_name in _subagent_model_names(settings):
+    for model_name in _configured_model_names(settings):
         key = llm.subagent_api_key or (
             llm.api_key if _same_provider(model_name, llm.model) else None
         )
@@ -138,12 +138,22 @@ def _same_provider(first: str | None, second: str | None) -> bool:
     return _provider_prefix(first) == _provider_prefix(second)
 
 
-def _subagent_model_names(settings: Settings) -> set[str]:
+def _configured_model_names(settings: Settings) -> set[str]:
     llm = settings.llm
     names = {route.model for route in llm.skill_model_routes if route.model}
+    names.update(llm.model_budgets_usd)
+    names.update(llm.model_fallbacks)
+    names.update(llm.model_fallbacks.values())
+    if llm.model:
+        names.add(llm.model)
     if llm.subagent_model:
         names.add(llm.subagent_model)
     return names
+
+
+# Kept as a private compatibility alias for callers/tests from earlier releases.
+def _subagent_model_names(settings: Settings) -> set[str]:
+    return _configured_model_names(settings)
 
 
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:

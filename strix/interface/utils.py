@@ -377,20 +377,36 @@ def build_tui_stats_text(report_state: Any) -> Text:
     if not report_state:
         return stats_text
 
-    model = load_settings().llm.model or "unknown"
-    stats_text.append(str(model), style="white")
-
     usage = _llm_usage(report_state)
-    if usage and _int_stat(usage, "total_tokens") > 0:
-        stats_text.append("\n")
-        stats_text.append(
-            f"{format_token_count(_int_stat(usage, 'total_tokens'))} tokens",
-            style="white",
-        )
-        cost = _float_stat(usage, "cost")
-        if cost > 0:
-            stats_text.append(" · ", style="white")
-            stats_text.append(f"${cost:.2f}", style="white")
+    models = usage.get("models") if isinstance(usage, dict) else None
+    if isinstance(models, list) and models:
+        stats_text.append("Tokens by model", style="dim")
+        for model_usage in models:
+            if not isinstance(model_usage, dict):
+                continue
+            stats_text.append("\n")
+            stats_text.append(str(model_usage.get("model") or "unknown"), style="white")
+            stats_text.append("  ", style="dim")
+            stats_text.append(
+                f"{format_token_count(_int_stat(model_usage, 'total_tokens'))} tokens",
+                style="white",
+            )
+            cost = _float_stat(model_usage, "cost")
+            if cost > 0:
+                stats_text.append(f" · ${cost:.2f}", style="white")
+    else:
+        model = load_settings().llm.model or "unknown"
+        stats_text.append(str(model), style="white")
+        if usage and _int_stat(usage, "total_tokens") > 0:
+            stats_text.append("\n")
+            stats_text.append(
+                f"{format_token_count(_int_stat(usage, 'total_tokens'))} tokens",
+                style="white",
+            )
+            cost = _float_stat(usage, "cost")
+            if cost > 0:
+                stats_text.append(" · ", style="white")
+                stats_text.append(f"${cost:.2f}", style="white")
 
     caido_url = getattr(report_state, "caido_url", None)
     if caido_url:

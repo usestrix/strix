@@ -15,8 +15,8 @@ from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import APIError
 
-from strix.core.hooks import BudgetExceededError
-from strix.core.inputs import child_initial_input
+from strix.core.hooks import BudgetExceededError, ModelFallbackError
+from strix.core.inputs import child_initial_input, make_model_settings
 from strix.core.sessions import (
     enforce_image_budget,
     open_agent_session,
@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from agents.memory import Session, SQLiteSession
     from agents.result import RunResultBase
 
+    from strix.config.settings import Settings
     from strix.core.agents import AgentCoordinator, Status
 
 
@@ -56,9 +57,11 @@ async def run_agent_loop(
     start_parked: bool = False,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
+    settings: Settings | None = None,
 ) -> RunResultBase | None:
     await coordinator.attach_runtime(
         agent_id,
+        agent=agent,
         session=session,
         interrupt_on_message=interactive,
     )
@@ -78,6 +81,7 @@ async def run_agent_loop(
                 interactive=interactive,
                 event_sink=event_sink,
                 hooks=hooks,
+                settings=settings,
             )
         else:
             result = await _run_noninteractive_until_lifecycle(
@@ -91,6 +95,7 @@ async def run_agent_loop(
                 session=session,
                 event_sink=event_sink,
                 hooks=hooks,
+                settings=settings,
             )
 
     if not interactive:
@@ -119,6 +124,7 @@ async def run_agent_loop(
             interactive=interactive,
             event_sink=event_sink,
             hooks=hooks,
+            settings=settings,
         )
 
 
@@ -139,6 +145,7 @@ async def spawn_child_agent(
     model: str | None = None,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
+    settings: Settings | None = None,
 ) -> dict[str, Any]:
     parent_id = parent_ctx.get("agent_id")
     if not isinstance(parent_id, str):
@@ -182,6 +189,7 @@ async def spawn_child_agent(
         ),
         event_sink=event_sink,
         hooks=hooks,
+        settings=settings,
     )
 
     return {
@@ -206,6 +214,7 @@ async def respawn_subagents(
     root_id: str,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
+    settings: Settings | None = None,
 ) -> None:
     async with coordinator._lock:
         agents_snapshot = [
@@ -265,6 +274,7 @@ async def respawn_subagents(
                 start_parked=start_parked,
                 event_sink=event_sink,
                 hooks=hooks,
+                settings=settings,
             )
             logger.info(
                 "respawned %s (%s) parent=%s task_len=%d",
@@ -291,6 +301,7 @@ async def _run_noninteractive_until_lifecycle(
     session: Session | None,
     event_sink: StreamEventSink | None,
     hooks: RunHooks[dict[str, Any]] | None,
+    settings: Settings | None,
 ) -> RunResultBase | None:
     """Non-chat mode keeps running until finish_scan / agent_finish settles status."""
     result: RunResultBase | None = None
@@ -315,6 +326,7 @@ async def _run_noninteractive_until_lifecycle(
             interactive=False,
             event_sink=event_sink,
             hooks=hooks,
+            settings=settings,
         )
 
         status = await _agent_status(coordinator, agent_id)
@@ -360,6 +372,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     interactive: bool,
     event_sink: StreamEventSink | None,
     hooks: RunHooks[dict[str, Any]] | None,
+    settings: Settings | None,
 ) -> RunResultBase | None:
     image_strips = 0
     while True:
@@ -392,8 +405,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                                 logger.exception("stream event sink failed for %s", agent_id)
                     if stream.run_loop_exception is not None:
                         raise stream.run_loop_exception
-                except BudgetExceededError:
-                    # A RuntimeError subclass: re-raise explicitly so it is never
+                except (BudgetExceededError, ModelFallbackError):
+                    # RuntimeError subclasses: re-raise explicitly so neither is
                     # mistaken for the LiteLLM "after shutdown" race below.
                     raise
                 except RuntimeError as stream_exc:
@@ -413,6 +426,18 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
+        except ModelFallbackError as exc:
+            if settings is None:
+                raise RuntimeError("model fallback requires scan settings") from exc
+            _refresh_agent_for_model(
+                agent,
+                exc.next_model,
+                settings,
+                is_root=context.get("parent_id") is None,
+            )
+            logger.info("agent %s %s", agent_id, exc)
+            input_data = [] if session is not None else input_data
+            continue
         except BudgetExceededError as exc:
             logger.info(
                 "agent %s reached the scan budget limit; stopping the scan: %s", agent_id, exc
@@ -457,6 +482,28 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
         else:
             await _settle_run_result(coordinator, agent_id, interactive)
             return stream
+
+
+def _refresh_agent_for_model(
+    agent: Any,
+    model: str,
+    settings: Settings,
+    *,
+    is_root: bool,
+) -> None:
+    """Apply a fallback route before replaying the unmodified SDK session."""
+    llm = settings.llm
+    reasoning = (
+        llm.reasoning_effort
+        if is_root
+        else (llm.subagent_reasoning_effort or llm.reasoning_effort)
+    )
+    agent.model = model
+    agent.model_settings = make_model_settings(
+        reasoning,
+        model_name=model,
+        force_required_tool_choice=llm.force_required_tool_choice,
+    )
 
 
 async def _settle_run_result(
@@ -560,10 +607,11 @@ async def _start_child_runner(
     start_parked: bool = False,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
+    settings: Settings | None = None,
 ) -> None:
     session = open_agent_session(child_id, agents_db_path)
     sessions_to_close.append(session)
-    await coordinator.attach_runtime(child_id, session=session)
+    await coordinator.attach_runtime(child_id, agent=child_agent, session=session)
 
     child_ctx: dict[str, Any] = dict(parent_ctx)
     child_ctx["agent_id"] = child_id
@@ -590,6 +638,7 @@ async def _start_child_runner(
                 start_parked=start_parked,
                 event_sink=event_sink,
                 hooks=hooks,
+                settings=settings,
             )
         except BudgetExceededError:
             logger.info("child %s stopped after reaching the scan budget limit", child_id)

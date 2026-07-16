@@ -51,7 +51,7 @@ def _patch_engine_scaffold(
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
     monkeypatch.setattr(
         runner,
-        "uses_chat_completions_tool_schema",
+        "chain_uses_chat_completions_tools",
         lambda _model, _settings: False,
     )
 

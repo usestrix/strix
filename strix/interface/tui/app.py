@@ -900,6 +900,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
             agents_tree.guide_style = "dashed"
 
             stats_display = Static("", id="stats_display")
+            # This is the bottom-right status panel. Usage is grouped by the
+            # actual model route so fallback transitions remain visible.
             stats_scroll = VerticalScroll(stats_display, id="stats_scroll")
 
             vulnerabilities_panel = VulnerabilitiesPanel(id="vulnerabilities_panel")

@@ -31,7 +31,19 @@ def test_cost_callback_reads_openrouter_stream_usage_cost() -> None:
     with patch("strix.report.state.get_global_report_state", return_value=report_state):
         litellm_cost_callback({"response_cost": None}, response)
 
-    report_state.record_observed_llm_cost.assert_called_once_with(1.2345)
+    report_state.record_observed_llm_cost.assert_called_once_with(1.2345, model=None)
+
+
+def test_cost_callback_attributes_cost_to_model() -> None:
+    report_state = MagicMock()
+    response = SimpleNamespace(model="openrouter/z-ai/glm", usage=SimpleNamespace(cost=0.75))
+
+    with patch("strix.report.state.get_global_report_state", return_value=report_state):
+        litellm_cost_callback({}, response)
+
+    report_state.record_observed_llm_cost.assert_called_once_with(
+        0.75, model="openrouter/z-ai/glm"
+    )
 
 
 def test_cost_callback_reads_usage_cost_from_mapping_response() -> None:
@@ -41,4 +53,4 @@ def test_cost_callback_reads_usage_cost_from_mapping_response() -> None:
     with patch("strix.report.state.get_global_report_state", return_value=report_state):
         litellm_cost_callback({}, response)
 
-    report_state.record_observed_llm_cost.assert_called_once_with(0.125)
+    report_state.record_observed_llm_cost.assert_called_once_with(0.125, model=None)

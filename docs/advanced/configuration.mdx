@@ -74,6 +74,45 @@ skill. An explicit model passed to `create_agent` takes precedence over routes.
 }
 ```
 
+### Per-model budgets and fallback chains
+
+Set `llm.model_budgets_usd` and `llm.model_fallbacks` to move every agent using
+an exhausted model to its next configured model. Budgets are cumulative per
+model across the whole scan, so the same rule covers the orchestrator, default
+children, explicit child routes, and skill routes. Fallback targets can have
+their own budget and fallback, creating any number of layers.
+
+```json
+{
+  "llm": {
+    "model": "openai/gpt-5.4",
+    "subagent_model": "z-ai/glm-4.7",
+    "skill_model_routes": [
+      {"skill": "xss", "model": "openai/gpt-5.4"}
+    ],
+    "model_budgets_usd": {
+      "openai/gpt-5.4": 20.0,
+      "z-ai/glm-4.7": 10.0
+    },
+    "model_fallbacks": {
+      "openai/gpt-5.4": "z-ai/glm-4.7",
+      "z-ai/glm-4.7": "deepseek/deepseek-chat"
+    }
+  }
+}
+```
+
+A fallback is checked after a response returns, so a call can slightly
+overshoot its model budget. Strix discards that boundary response before any of
+its tool calls execute, updates the agent's persisted active model, and replays
+the unchanged session with the fallback. This avoids duplicate side effects and
+keeps scan resume on the selected fallback layer. A model budget without a
+fallback only tracks usage; it does not stop the scan. The scan-wide
+`--max-budget-usd` remains a hard stop and takes precedence.
+
+The TUI's bottom-right panel displays cumulative tokens and estimated cost for
+each model actually used, including fallback models.
+
 ### Independent finding verification
 
 <ParamField path="STRIX_VERIFY_FINDINGS" default="false" type="boolean">

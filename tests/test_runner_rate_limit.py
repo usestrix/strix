@@ -43,7 +43,7 @@ async def test_persistent_rate_limit_stops_gracefully(
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
     monkeypatch.setattr(
-        runner, "uses_chat_completions_tool_schema", lambda _model, _settings: False
+        runner, "chain_uses_chat_completions_tools", lambda _model, _settings: False
     )
 
     monkeypatch.setattr(todo_tools, "hydrate_todos_from_disk", lambda _state_dir: None)

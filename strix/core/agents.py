@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from strix.core.inputs import make_model_settings
 from strix.core.sessions import session_write_lock
 
 
@@ -25,6 +26,7 @@ Status = Literal["running", "waiting", "completed", "stopped", "crashed", "faile
 
 @dataclass(slots=True)
 class AgentRuntime:
+    agent: Any | None = None
     session: Session | None = None
     task: asyncio.Task[Any] | None = None
     stream: Any | None = None
@@ -92,12 +94,15 @@ class AgentCoordinator:
         self,
         agent_id: str,
         *,
+        agent: Any | None = None,
         session: Session | None = None,
         task: asyncio.Task[Any] | None = None,
         interrupt_on_message: bool | None = None,
     ) -> None:
         async with self._lock:
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
+            if agent is not None:
+                runtime.agent = agent
             if session is not None:
                 runtime.session = session
             if task is not None:
@@ -110,6 +115,49 @@ class AgentCoordinator:
             if agent_id in self.statuses:
                 self.statuses[agent_id] = "running"
         await self._maybe_snapshot()
+
+    async def transition_model(
+        self,
+        previous_model: str,
+        next_model: str,
+        *,
+        llm_settings: Any | None = None,
+    ) -> None:
+        """Persist and apply a scan-wide model fallback to every matching agent."""
+        previous = previous_model.strip().lower()
+        changed: list[str] = []
+        async with self._lock:
+            for agent_id, metadata in self.metadata.items():
+                current = metadata.get("model")
+                if not isinstance(current, str) or current.strip().lower() != previous:
+                    continue
+                metadata["model"] = next_model
+                runtime_agent = self.runtimes.setdefault(agent_id, AgentRuntime()).agent
+                if runtime_agent is not None:
+                    runtime_agent.model = next_model
+                    if llm_settings is not None:
+                        reasoning = (
+                            llm_settings.reasoning_effort
+                            if self.parent_of.get(agent_id) is None
+                            else (
+                                llm_settings.subagent_reasoning_effort
+                                or llm_settings.reasoning_effort
+                            )
+                        )
+                        runtime_agent.model_settings = make_model_settings(
+                            reasoning,
+                            model_name=next_model,
+                            force_required_tool_choice=llm_settings.force_required_tool_choice,
+                        )
+                changed.append(agent_id)
+        if changed:
+            logger.info(
+                "agent.model fallback %s -> %s (%d agent(s))",
+                previous_model,
+                next_model,
+                len(changed),
+            )
+            await self._maybe_snapshot()
 
     async def park_waiting(self, agent_id: str) -> None:
         await self.set_status(agent_id, "waiting")

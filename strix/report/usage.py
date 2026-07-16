@@ -19,6 +19,10 @@ class LLMUsageLedger:
         self._agent_usage: dict[str, Usage] = {}
         self._agent_metadata: dict[str, dict[str, str]] = {}
         self._agent_cost: dict[str, float] = {}
+        self._model_usage: dict[str, Usage] = {}
+        self._model_estimated_cost: dict[str, float] = {}
+        self._model_observed_cost: dict[str, float] = {}
+        self._model_base_cost: dict[str, float] = {}
         self._total_cost = 0.0
 
     def record(
@@ -35,6 +39,8 @@ class LLMUsageLedger:
         normalized_agent_id = str(agent_id or "unknown")
         self._total_usage.add(usage)
         self._agent_usage.setdefault(normalized_agent_id, Usage()).add(usage)
+        normalized_model = str(model or "unknown").strip() or "unknown"
+        self._model_usage.setdefault(normalized_model, Usage()).add(usage)
 
         metadata = self._agent_metadata.setdefault(normalized_agent_id, {})
         if agent_name:
@@ -42,9 +48,12 @@ class LLMUsageLedger:
         if model:
             metadata["model"] = model
 
-        if not _is_litellm_routed(model):
-            estimated = _estimate_litellm_cost(usage, model)
-            if estimated:
+        estimated = _estimate_litellm_cost(usage, model)
+        if estimated:
+            self._model_estimated_cost[normalized_model] = (
+                self._model_estimated_cost.get(normalized_model, 0.0) + estimated
+            )
+            if not _is_litellm_routed(model):
                 self._total_cost += estimated
                 self._agent_cost[normalized_agent_id] = (
                     self._agent_cost.get(normalized_agent_id, 0.0) + estimated
@@ -52,18 +61,44 @@ class LLMUsageLedger:
 
         return True
 
-    def record_observed_cost(self, cost: float) -> None:
+    def record_observed_cost(self, cost: float, *, model: str | None = None) -> None:
         if isinstance(cost, int | float) and cost > 0:
             self._total_cost += float(cost)
+            normalized_model = str(model or "").strip()
+            if normalized_model:
+                self._model_observed_cost[normalized_model] = (
+                    self._model_observed_cost.get(normalized_model, 0.0) + float(cost)
+                )
 
     @property
     def total_cost(self) -> float:
         return _round_cost(self._total_cost)
 
+    def model_cost(self, model: str) -> float:
+        """Return best available cumulative spend for one exact model route."""
+        normalized = model.strip().lower()
+        estimated = sum(
+            cost for name, cost in self._model_estimated_cost.items() if name.lower() == normalized
+        )
+        observed = sum(
+            cost for name, cost in self._model_observed_cost.items() if name.lower() == normalized
+        )
+        # SDK token pricing and provider callbacks describe the same calls. Use
+        # the larger cumulative figure rather than double-counting them.
+        base = sum(
+            cost for name, cost in self._model_base_cost.items() if name.lower() == normalized
+        )
+        return _round_cost(base + max(estimated, observed))
+
     def to_record(self) -> dict[str, Any]:
         record = serialize_usage(self._total_usage)
         record["cost"] = _round_cost(self._total_cost)
         record["agents"] = []
+        record["models"] = []
+        for model in sorted(self._model_usage, key=str.lower):
+            model_record = serialize_usage(self._model_usage[model])
+            model_record.update({"model": model, "cost": self.model_cost(model)})
+            record["models"].append(model_record)
 
         agent_tokens = {aid: _resolve_total_tokens(u) for aid, u in self._agent_usage.items()}
         # Native provider estimates are tied to an agent. Any remainder comes
@@ -99,11 +134,15 @@ class LLMUsageLedger:
 
         return record
 
-    def hydrate(self, raw_usage: Any) -> None:
+    def hydrate(self, raw_usage: Any) -> None:  # noqa: PLR0912, PLR0915
         self._total_usage = Usage()
         self._agent_usage.clear()
         self._agent_metadata.clear()
         self._agent_cost.clear()
+        self._model_usage.clear()
+        self._model_estimated_cost.clear()
+        self._model_observed_cost.clear()
+        self._model_base_cost.clear()
         self._total_cost = 0.0
 
         if not isinstance(raw_usage, dict):
@@ -116,6 +155,23 @@ class LLMUsageLedger:
             self._total_usage = Usage()
 
         self._total_cost = _float_or_zero(raw_usage.get("cost"))
+
+        raw_models_value = raw_usage.get("models") or []
+        raw_models = raw_models_value if isinstance(raw_models_value, list) else []
+        persisted_model_cost: dict[str, float] = {}
+        if raw_models:
+            for raw_model in raw_models:
+                if not isinstance(raw_model, dict):
+                    continue
+                model = str(raw_model.get("model") or "").strip()
+                if not model:
+                    continue
+                try:
+                    self._model_usage[model] = deserialize_usage(raw_model)
+                except Exception:
+                    logger.exception("Failed to hydrate llm_usage for model %s", model)
+                    self._model_usage[model] = Usage()
+                persisted_model_cost[model] = _float_or_zero(raw_model.get("cost"))
 
         for raw_agent in raw_usage.get("agents") or []:
             if not isinstance(raw_agent, dict):
@@ -131,17 +187,35 @@ class LLMUsageLedger:
 
             metadata: dict[str, str] = {}
             agent_name = raw_agent.get("agent_name")
-            model = raw_agent.get("model")
+            agent_model = raw_agent.get("model")
             if isinstance(agent_name, str) and agent_name:
                 metadata["agent_name"] = agent_name
-            if isinstance(model, str) and model:
-                metadata["model"] = model
+            if isinstance(agent_model, str) and agent_model:
+                metadata["model"] = agent_model
             self._agent_metadata[agent_id] = metadata
             # Persisted per-agent costs may include proportional allocation of
             # provider callback costs. Keep only native estimates here so a
             # resumed run does not double-count that allocation.
             if not _is_litellm_routed(metadata.get("model")):
                 self._agent_cost[agent_id] = _float_or_zero(raw_agent.get("cost"))
+
+            # Backward compatibility for run records written before per-model
+            # usage was persisted. This cannot split agents that switched
+            # models, but old records never supported model switching.
+            if not raw_models and metadata.get("model"):
+                model_name = metadata["model"]
+                self._model_usage.setdefault(model_name, Usage()).add(
+                    self._agent_usage[agent_id]
+                )
+                persisted_model_cost[model_name] = (
+                    persisted_model_cost.get(model_name, 0.0)
+                    + _float_or_zero(raw_agent.get("cost"))
+                )
+
+        # Hydrated values are an immutable historical baseline. New SDK
+        # estimates and provider callbacks are accumulated separately so resume
+        # neither loses nor double-counts the persisted model spend.
+        self._model_base_cost.update(persisted_model_cost)
 
 
 def _resolve_total_tokens(usage: Usage) -> int:

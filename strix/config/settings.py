@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import math
 from typing import Literal
 
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -73,6 +74,14 @@ class LlmSettings(BaseSettings):
     )
     subagent_model: str | None = Field(default=None, alias="STRIX_SUBAGENT_MODEL")
     skill_model_routes: list[SkillModelRoute] = Field(default_factory=list)
+    model_budgets_usd: dict[str, float] = Field(
+        default_factory=dict,
+        alias="STRIX_MODEL_BUDGETS_USD",
+    )
+    model_fallbacks: dict[str, str] = Field(
+        default_factory=dict,
+        alias="STRIX_MODEL_FALLBACKS",
+    )
     api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
@@ -98,6 +107,95 @@ class LlmSettings(BaseSettings):
         alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
     )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
+
+    @field_validator("model_budgets_usd", mode="before")
+    @classmethod
+    def validate_model_budgets(cls, value: object) -> object:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise TypeError("model_budgets_usd must be a model-to-USD mapping")
+        normalized: dict[str, float] = {}
+        for raw_model, raw_budget in value.items():
+            model = str(raw_model).strip()
+            if not model:
+                raise ValueError("model_budgets_usd contains an empty model name")
+            try:
+                budget = float(raw_budget)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(f"budget for {model!r} must be a number") from exc
+            if not math.isfinite(budget) or budget <= 0:
+                raise ValueError(f"budget for {model!r} must be finite and greater than 0")
+            normalized[model] = budget
+        return normalized
+
+    @field_validator("model_fallbacks", mode="before")
+    @classmethod
+    def validate_model_fallbacks(cls, value: object) -> object:
+        if value is None:
+            return {}
+        if not isinstance(value, dict):
+            raise TypeError("model_fallbacks must be a model-to-model mapping")
+        normalized: dict[str, str] = {}
+        for raw_model, raw_fallback in value.items():
+            model = str(raw_model).strip()
+            fallback = str(raw_fallback).strip()
+            if not model or not fallback:
+                raise ValueError("model_fallbacks cannot contain empty model names")
+            if model.lower() == fallback.lower():
+                raise ValueError(f"model {model!r} cannot fall back to itself")
+            normalized[model] = fallback
+        return normalized
+
+    @model_validator(mode="after")
+    def validate_fallback_graph(self) -> LlmSettings:
+        budget_keys = {name.lower() for name in self.model_budgets_usd}
+        fallbacks = {name.lower(): target.lower() for name, target in self.model_fallbacks.items()}
+        display_names = {name.lower(): name for name in self.model_fallbacks}
+        for source in fallbacks:
+            if source not in budget_keys:
+                raise ValueError(
+                    f"model_fallbacks source {display_names[source]!r} requires a "
+                    "model_budgets_usd entry"
+                )
+            seen: set[str] = set()
+            current = source
+            while current in fallbacks:
+                if current in seen:
+                    raise ValueError("model_fallbacks contains a cycle")
+                seen.add(current)
+                current = fallbacks[current]
+        return self
+
+    def budget_for(self, model: str) -> float | None:
+        normalized = model.strip().lower()
+        return next(
+            (
+                budget
+                for name, budget in self.model_budgets_usd.items()
+                if name.lower() == normalized
+            ),
+            None,
+        )
+
+    def fallback_for(self, model: str) -> str | None:
+        normalized = model.strip().lower()
+        return next(
+            (
+                fallback
+                for name, fallback in self.model_fallbacks.items()
+                if name.lower() == normalized
+            ),
+            None,
+        )
+
+    def model_chain(self, model: str) -> list[str]:
+        chain: list[str] = []
+        current: str | None = model.strip()
+        while current:
+            chain.append(current)
+            current = self.fallback_for(current)
+        return chain
 
 
 class FindingVerificationSettings(BaseSettings):

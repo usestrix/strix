@@ -319,8 +319,8 @@ class ReportState:
         ):
             self.save_run_data()
 
-    def record_observed_llm_cost(self, cost: float) -> None:
-        self._llm_usage.record_observed_cost(cost)
+    def record_observed_llm_cost(self, cost: float, *, model: str | None = None) -> None:
+        self._llm_usage.record_observed_cost(cost, model=model)
 
     def get_total_llm_usage(self) -> dict[str, Any]:
         return dict(self.run_record.get("llm_usage") or self._build_llm_usage_record())
@@ -328,6 +328,10 @@ class ReportState:
     def get_total_llm_cost(self) -> float:
         """Live accumulated LLM cost, independent of the persisted run-record snapshot."""
         return self._llm_usage.total_cost
+
+    def get_model_llm_cost(self, model: str) -> float:
+        """Live cumulative spend attributed to one exact model route."""
+        return self._llm_usage.model_cost(model)
 
     def update_scan_final_fields(
         self,
@@ -554,7 +558,17 @@ def litellm_cost_callback(
     report_state = get_global_report_state()
     if report_state is None:
         return
+    model: str | None = None
+    if isinstance(kwargs, dict):
+        raw_model = kwargs.get("model")
+        if isinstance(raw_model, str) and raw_model.strip():
+            model = raw_model.strip()
+    if model is None:
+        raw_model = getattr(completion_response, "model", None)
+        if isinstance(raw_model, str) and raw_model.strip():
+            model = raw_model.strip()
+
     try:
-        report_state.record_observed_llm_cost(cost)
+        report_state.record_observed_llm_cost(cost, model=model)
     except Exception:
         logger.exception("Failed to record observed LiteLLM cost")

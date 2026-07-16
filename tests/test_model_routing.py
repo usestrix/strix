@@ -50,7 +50,7 @@ def test_child_factory_precedence_and_per_model_schema(monkeypatch: pytest.Monke
     )
     seen_schema_models: list[str] = []
     monkeypatch.setattr(
-        "strix.agents.factory.uses_chat_completions_tool_schema",
+        "strix.core.model_routing.uses_chat_completions_tool_schema",
         lambda model, _settings: seen_schema_models.append(model) or model != "openai/escalated",
     )
     monkeypatch.setattr(

@@ -16,11 +16,7 @@ from openai import RateLimitError
 from strix.agents.factory import build_strix_agent, make_child_factory
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
-from strix.config.models import (
-    StrixProvider,
-    configure_sdk_model_defaults,
-    uses_chat_completions_tool_schema,
-)
+from strix.config.models import StrixProvider, configure_sdk_model_defaults
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
     respawn_subagents,
@@ -36,6 +32,7 @@ from strix.core.inputs import (
     build_scope_context,
     make_model_settings,
 )
+from strix.core.model_routing import chain_uses_chat_completions_tools, resolve_budget_model
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
 from strix.runtime import session_manager
@@ -153,8 +150,10 @@ async def run_strix_scan(
         raise RuntimeError(
             "No LLM model configured. Set STRIX_LLM env or pass model= to run_strix_scan().",
         )
+    configured_root_model = resolved_model
+    resolved_model = resolve_budget_model(configured_root_model, settings.llm)
     logger.info("LLM model resolved: %s", resolved_model)
-    chat_completions_tools = uses_chat_completions_tool_schema(resolved_model, settings)
+    chat_completions_tools = chain_uses_chat_completions_tools(configured_root_model, settings)
 
     if coordinator is None:
         coordinator = AgentCoordinator()
@@ -187,10 +186,19 @@ async def run_strix_scan(
             raise RuntimeError(
                 f"Cannot resume scan {scan_id}: agents.json has no root agent (parent=None)",
             )
+        restored_root_model = coordinator.metadata.get(root_id, {}).get("model")
+        if isinstance(restored_root_model, str) and restored_root_model.strip():
+            configured_root_model = restored_root_model.strip()
+            resolved_model = resolve_budget_model(configured_root_model, settings.llm)
+            chat_completions_tools = chain_uses_chat_completions_tools(
+                configured_root_model,
+                settings,
+            )
         logger.info(
-            "Resume: restored coordinator with %d agent(s); root=%s",
+            "Resume: restored coordinator with %d agent(s); root=%s model=%s",
             len(coordinator.statuses),
             root_id,
+            resolved_model,
         )
     else:
         root_id = uuid.uuid4().hex[:8]
@@ -225,7 +233,11 @@ async def run_strix_scan(
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,
         )
-        hooks = ReportUsageHooks(model=resolved_model, max_budget_usd=max_budget_usd)
+        hooks = ReportUsageHooks(
+            model=resolved_model,
+            max_budget_usd=max_budget_usd,
+            llm_settings=settings.llm,
+        )
 
         scope_context = build_scope_context(scan_config)
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
@@ -259,6 +271,7 @@ async def run_strix_scan(
                 parent_id=None,
                 task=root_task,
                 skills=skills,
+                model=resolved_model,
             )
 
         child_agent_builder = make_child_factory(
@@ -281,6 +294,7 @@ async def run_strix_scan(
                 interactive=interactive,
                 event_sink=event_sink,
                 hooks=hooks,
+                settings=settings,
                 **kwargs,
             )
 
@@ -297,7 +311,7 @@ async def run_strix_scan(
 
         root_session = open_agent_session(root_id, agents_db)
         sessions_to_close.append(root_session)
-        await coordinator.attach_runtime(root_id, session=root_session)
+        await coordinator.attach_runtime(root_id, agent=root_agent, session=root_session)
 
         if is_resume:
             await respawn_subagents(
@@ -312,6 +326,7 @@ async def run_strix_scan(
                 root_id=root_id,
                 event_sink=event_sink,
                 hooks=hooks,
+                settings=settings,
             )
 
         initial_input: Any = [] if is_resume else root_task
@@ -353,6 +368,7 @@ async def run_strix_scan(
             start_parked=bool(interactive and is_resume and root_status != "running"),
             event_sink=event_sink,
             hooks=hooks,
+            settings=settings,
         )
         if not interactive and result is not None:
             final = getattr(result, "final_output", None)
