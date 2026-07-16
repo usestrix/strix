@@ -69,3 +69,32 @@ def test_run_name_conflicting_with_resume_is_rejected(monkeypatch: pytest.Monkey
     )
     with pytest.raises(SystemExit):
         cli_main.parse_arguments()
+
+
+def test_fresh_run_name_on_existing_dir_is_rejected(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A fresh (non-resume) --run-name that names an existing run dir would
+    # overwrite run.json but leave the prior run's findings/state — reject it.
+    _stub_settings(monkeypatch)
+    (tmp_path / "strix_runs" / "already-here").mkdir(parents=True)
+    monkeypatch.setattr(cli_main, "run_dir_for", lambda name: tmp_path / "strix_runs" / name)
+    monkeypatch.setattr(
+        sys, "argv", ["strix", "-t", "https://example.com/", "-n", "--run-name", "already-here"]
+    )
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+
+def test_fresh_run_name_on_new_dir_is_accepted(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A name that does NOT collide is fine.
+    _stub_settings(monkeypatch)
+    (tmp_path / "strix_runs").mkdir(parents=True)
+    monkeypatch.setattr(cli_main, "run_dir_for", lambda name: tmp_path / "strix_runs" / name)
+    monkeypatch.setattr(
+        sys, "argv", ["strix", "-t", "https://example.com/", "-n", "--run-name", "brand-new"]
+    )
+    args = cli_main.parse_arguments()
+    assert args.run_name == "brand-new"

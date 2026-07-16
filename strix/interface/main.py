@@ -616,6 +616,19 @@ Examples:
                 f"{args.resume!r}: they name different run dirs. Pass a single "
                 f"name (they must match), or drop one."
             )
+        # A FRESH (non-resume) --run-name must not land on an existing run dir:
+        # the fresh path rewrites run.json while leaving the prior run's
+        # findings/state files in place, mixing artifacts from two scans.
+        # (Auto-generated names are collision-free, so this only guards an
+        # explicit name.) Require --resume to continue an existing run.
+        if not args.resume and run_dir_for(args.run_name).exists():
+            parser.error(
+                f"--run-name {args.run_name!r}: run dir already exists at "
+                f"{run_dir_for(args.run_name)}. A fresh scan would overwrite "
+                f"run.json but leave the prior run's findings/state in place. "
+                f"Pass --resume {args.run_name} to continue it, or choose a new "
+                f"--run-name."
+            )
 
     if args.resume:
         if args.target or args.target_list or args.mount:
