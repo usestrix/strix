@@ -84,6 +84,47 @@ def test_make_model_settings_no_prompt_cache_for_non_claude(model_name: str) -> 
     assert make_model_settings(None, model_name=model_name).extra_args is None
 
 
+def test_no_prompt_cache_for_unmapped_bedrock_claude_model(monkeypatch: Any) -> None:
+    """A BEDROCK Claude route LiteLLM has NOT mapped (a new release, or any model
+    when LiteLLM can't refresh its model map and falls back to a stale local
+    copy) must run UNCACHED, not crash. Bedrock's Converse API rejects the
+    unknown field outright (ValidationException 'cache_control_injection_points:
+    Extra inputs are not permitted'); LiteLLM only strips the marker for models
+    it recognises as cache-capable, so an unmapped model would 500 the first
+    call and fail the whole run."""
+    import litellm
+
+    unmapped = "bedrock/global.anthropic.claude-brand-new-9"
+    # Simulate a model LiteLLM doesn't know: no cost-map entry, checker says no.
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+    if getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None):
+        monkeypatch.setattr(litellm.utils, "supports_prompt_caching", lambda *_a, **_k: False)
+
+    # Bedrock Claude by name, but unmapped → no injection points, no crash.
+    assert make_model_settings(None, model_name=unmapped).extra_args is None
+
+
+def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: Any) -> None:
+    """Non-Bedrock Claude routes must KEEP caching-by-family even when LiteLLM
+    can't confirm support — those providers tolerate/ignore the marker (or
+    LiteLLM maps them under keys we don't resolve, e.g. OpenRouter), so gating
+    them on confirmed support would DISABLE caching for capable models — a
+    regression. Only Bedrock hard-rejects, so only Bedrock is guarded."""
+    import litellm
+
+    monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
+    if getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None):
+        monkeypatch.setattr(litellm.utils, "supports_prompt_caching", lambda *_a, **_k: False)
+
+    # Even with LiteLLM knowing nothing, an Anthropic-native / OpenRouter Claude
+    # still gets the injection points.
+    for model in ("anthropic/claude-brand-new-9", "openrouter/anthropic/claude-brand-new"):
+        assert _cache_points(model) == [
+            {"location": "message", "role": "system"},
+            {"location": "tool_config"},
+        ]
+
+
 def test_build_root_task_empty_config() -> None:
     assert build_root_task({}) == ""
 

@@ -145,7 +145,7 @@ def make_model_settings(
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
-    if _is_claude_model(model_name):
+    if _is_claude_model(model_name) and not _bedrock_route_without_cache_support(model_name):
         # Merge into any existing extra_args rather than relying on resolve()'s
         # dict-merge semantics — makes it obvious at the call site that unrelated
         # LiteLLM options are preserved (make_model_settings currently builds
@@ -163,6 +163,73 @@ def make_model_settings(
 
 def _is_claude_model(model_name: str) -> bool:
     return "claude" in (model_name or "").strip().lower()
+
+
+def _litellm_name_candidates(model_name: str) -> list[str]:
+    """Candidate LiteLLM model-map keys for ``model_name``, most→least specific.
+
+    LiteLLM keys the same model under several names (``bedrock/global.anthropic.
+    claude-opus-4-1``, ``anthropic.claude-opus-4-1``, ``claude-opus-4-1``) and not
+    every provider/region-prefixed variant is present for every model. Strip the
+    LiteLLM route prefix, then leading dotted segments (region, then provider) so
+    a prefixed name still resolves to a bare key.
+    """
+    name = (model_name or "").strip().lower()
+    for prefix in ("litellm/", "bedrock/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    candidates = [name]
+    for cand in list(candidates):
+        rest = cand
+        while "." in rest:
+            rest = rest.split(".", 1)[1]
+            candidates.append(rest)
+    return candidates
+
+
+def _bedrock_route_without_cache_support(model_name: str) -> bool:
+    """True for a BEDROCK Claude route that LiteLLM can't confirm supports prompt
+    caching — the one case where injecting the cache marker HARD-CRASHES the run.
+
+    Bedrock's Converse API rejects unknown request fields outright
+    (``ValidationException: cache_control_injection_points: Extra inputs are not
+    permitted``). LiteLLM's ``AnthropicCacheControlHook`` strips
+    ``cache_control_injection_points`` from the outgoing call only for models it
+    recognises as cache-capable via its (statically bundled) model map; for a
+    model missing from that map the marker passes straight through and Bedrock
+    500s the first call, failing the whole scan. This bites any Bedrock Claude
+    model LiteLLM hasn't mapped yet — a just-released model, or ANY model when
+    LiteLLM can't refresh its remote model map (e.g. behind a TLS-intercepting
+    corporate proxy) and falls back to a stale local copy.
+
+    Scope is deliberately narrow — ONLY Bedrock routes. Anthropic-native,
+    Vertex, and OpenRouter Claude tolerate/ignore the marker (or LiteLLM maps
+    them under keys we don't resolve), so gating those on confirmed support
+    would DISABLE caching for genuinely-capable models — a caching regression,
+    the opposite of this change's intent. So elsewhere we keep injecting by
+    model family and only withhold on the provider that actually rejects.
+    """
+    name = (model_name or "").strip().lower()
+    if not name.startswith("bedrock/") and "anthropic." not in name:
+        # Not a Bedrock route (bedrock/... or a bare bedrock model id like
+        # global.anthropic.claude-...); other providers don't hard-reject.
+        return False
+
+    import litellm
+
+    checker = getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None)
+    for cand in _litellm_name_candidates(model_name):
+        if checker is not None:
+            try:
+                if checker(cand):
+                    return False  # confirmed cache-capable → safe to inject
+            except Exception:  # noqa: BLE001 — unknown model raises; keep checking
+                pass
+        entry = litellm.model_cost.get(cand)
+        if entry and entry.get("supports_prompt_caching"):
+            return False
+    return True  # Bedrock route, support unconfirmed → withhold to avoid the 500
 
 
 def _claude_prompt_cache_extra_args() -> dict[str, Any]:
