@@ -65,6 +65,30 @@ def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
         create_kwargs.pop("ports", None)
 
 
+def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
+    """Apply optional cgroup resource caps from the environment. Unset/blank
+    values leave docker's default (unbounded), so this is opt-in per host."""
+    mem_limit = os.environ.get("STRIX_SANDBOX_MEM_LIMIT", "").strip()
+    if mem_limit:
+        create_kwargs["mem_limit"] = mem_limit
+
+    shm_size = os.environ.get("STRIX_SANDBOX_SHM_SIZE", "").strip()
+    if shm_size:
+        create_kwargs["shm_size"] = shm_size
+
+    cpus = os.environ.get("STRIX_SANDBOX_CPUS", "").strip()
+    if cpus:
+        with contextlib.suppress(ValueError):
+            nano_cpus = int(float(cpus) * 1_000_000_000)
+            if nano_cpus > 0:
+                create_kwargs["nano_cpus"] = nano_cpus
+
+    pids_limit = os.environ.get("STRIX_SANDBOX_PIDS_LIMIT", "").strip()
+    if pids_limit:
+        with contextlib.suppress(ValueError):
+            create_kwargs["pids_limit"] = int(pids_limit)
+
+
 class StrixDockerSandboxSession(DockerSandboxSession):
     sandbox_network: str = ""
 
@@ -175,6 +199,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         extra_hosts["host.docker.internal"] = "host-gateway"
 
         _apply_sandbox_network(create_kwargs)
+        _apply_resource_limits(create_kwargs)
 
         # Strix injection: host bind mounts (e.g. large repos passed via --mount)
         # that bypass the SDK's file-by-file LocalDir copy.
