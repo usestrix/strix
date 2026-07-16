@@ -287,6 +287,7 @@ async def run_strix_scan(
             "parent_id": None,
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
+            "max_context_images": settings.runtime.max_context_images,
         }
 
         root_session = open_agent_session(root_id, agents_db)

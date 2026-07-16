@@ -10,6 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from strix.core.sessions import session_write_lock
+
 
 if TYPE_CHECKING:
     from agents.items import TResponseInputItem
@@ -137,7 +139,8 @@ class AgentCoordinator:
             )
             return False
         try:
-            await session.add_items([self._message_to_session_item(message)])
+            async with session_write_lock(session):
+                await session.add_items([self._message_to_session_item(message)])
         except Exception:
             logger.exception(
                 "agent.send failed to append to SDK session target=%s",

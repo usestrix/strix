@@ -13,6 +13,7 @@ from strix.config.models import (
     is_known_openai_bare_model,
     model_supports_reasoning,
 )
+from strix.core.sessions import scrub_images_from_items
 
 
 if TYPE_CHECKING:
@@ -161,7 +162,11 @@ def child_initial_input(
     """
     parts: list[str] = []
     if parent_history:
-        rendered = json.dumps(parent_history, ensure_ascii=False, default=str)
+        rendered = json.dumps(
+            scrub_images_from_items(parent_history),
+            ensure_ascii=False,
+            default=str,
+        )
         parts.append(
             "== Inherited context from parent (background only) ==\n"
             f"{rendered}\n"
