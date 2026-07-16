@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+  CSPT POSITIVE — normalization bypass
+  Source: route segment parsed from location.pathname
+  Sink:   fetch()
+  A naive single-pass filter strips one "../" occurrence, but the self-
+  collapsing sequence "....//" folds back to "../" after that strip, so the
+  traversal survives and the browser normalizes the outbound path.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Profile</title></head>
+<body>
+<h1>Profile</h1>
+<pre id="out">loading…</pre>
+<script>
+  // SOURCE: route segment, e.g. /view/....//....//admin/settings
+  const segment = location.pathname.replace(/^\/view\//, "");
+
+  // Ineffective sanitizer: a single non-recursive strip. "....//" -> "../".
+  const cleaned = segment.replace(/\.\.\//g, "");
+
+  // SINK: still-tainted value joined into the request path — CSPT.
+  fetch("/api/profile/" + cleaned, { credentials: "include" })
+    .then((r) => r.text())
+    .then((t) => { document.getElementById("out").textContent = t; })
+    .catch((e) => { document.getElementById("out").textContent = String(e); });
+</script>
+</body>
+</html>

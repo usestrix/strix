@@ -531,6 +531,16 @@ def _result_properties(
         if value not in (None, ""):
             strix[key] = value
 
+    # Surface a non-default finding sub-class (e.g. client_side_path_traversal)
+    # so consumers can machine-separate it from other findings that share the
+    # same CWE rule — CSPT and server-side path traversal / LFI / RFI all key
+    # on CWE-22, so ``ruleId`` alone cannot tell them apart. The default
+    # ``dynamic`` carries no signal and is omitted to avoid noise on every
+    # result.
+    finding_class = _string_value(report.get("finding_class"))
+    if finding_class and finding_class != "dynamic":
+        strix["finding_class"] = finding_class
+
     # SARIF is written for external upload (code-scanning / ASPM), so it must
     # NOT carry the weaponized exploit payload — that stays a local run
     # artifact (vulnerabilities.json / the finding MD). We surface the PoC
@@ -773,6 +783,7 @@ _VULN_CLASS_KEYWORDS = (
     "default password",
     "session fixation",
     "open redirect",
+    "client-side path traversal",
     "path traversal",
     "directory traversal",
     "command injection",

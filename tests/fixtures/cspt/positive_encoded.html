@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+  CSPT POSITIVE — URL-encoded traversal
+  Source: query parameter (?resource=)
+  Sink:   XMLHttpRequest.open()
+  The value is URL-decoded once, then joined into the path. A payload of
+  %2e%2e%2f%2e%2e%2fadmin%2fconfig decodes to ../../admin/config and the browser
+  normalizes the outbound path to /api/admin/config.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Resource viewer</title></head>
+<body>
+<h1>Resource viewer</h1>
+<pre id="out">loading…</pre>
+<script>
+  // SOURCE: attacker-controlled query param, e.g. ?resource=%2e%2e%2fadmin%2fconfig
+  const raw = new URLSearchParams(location.search).get("resource") || "";
+  const resource = decodeURIComponent(raw);
+
+  // SINK: decoded value joined directly into the request path — CSPT.
+  const xhr = new XMLHttpRequest();
+  xhr.open("GET", "/api/resources/" + resource);
+  xhr.withCredentials = true;
+  xhr.onload = () => { document.getElementById("out").textContent = xhr.responseText; };
+  xhr.onerror = () => { document.getElementById("out").textContent = "error"; };
+  xhr.send();
+</script>
+</body>
+</html>
