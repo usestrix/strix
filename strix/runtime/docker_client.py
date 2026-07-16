@@ -42,6 +42,7 @@ from agents.sandbox.session.sandbox_session import SandboxSession
 from agents.sandbox.types import ExposedPortEndpoint
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from docker.models.containers import Container  # type: ignore[import-untyped, unused-ignore]
+from docker.types import LogConfig  # type: ignore[import-untyped, unused-ignore]
 from docker.types import Mount as DockerSDKMount  # type: ignore[import-untyped, unused-ignore]
 from docker.utils import parse_repository_tag  # type: ignore[import-untyped, unused-ignore]
 from requests.exceptions import RequestException
@@ -87,6 +88,26 @@ def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
     if pids_limit:
         with contextlib.suppress(ValueError):
             create_kwargs["pids_limit"] = int(pids_limit)
+
+
+def _apply_log_limits(create_kwargs: dict[str, Any]) -> None:
+    """Bound the container's json-file log so a runaway process in the sandbox
+    (e.g. a tool that busy-loops writing to stdout) cannot fill the host disk
+    and take the Docker daemon down with it.
+
+    Unlike the cgroup caps above, this defaults **on** — docker's own default
+    is an unbounded json-file, which is unsafe for an autonomous agent that
+    executes arbitrary commands. ``max-file`` rotation means the on-disk cap is
+    ``max-size * max-file``. Set ``STRIX_SANDBOX_LOG_MAX_SIZE`` to ``0``/``off``
+    to opt back out to docker's default."""
+    max_size = os.environ.get("STRIX_SANDBOX_LOG_MAX_SIZE", "50m").strip()
+    if max_size.lower() in ("0", "off", "none", "unlimited"):
+        return
+    max_file = os.environ.get("STRIX_SANDBOX_LOG_MAX_FILE", "3").strip() or "3"
+    create_kwargs["log_config"] = LogConfig(
+        type=LogConfig.types.JSON,
+        config={"max-size": max_size, "max-file": max_file},
+    )
 
 
 class StrixDockerSandboxSession(DockerSandboxSession):
@@ -200,6 +221,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
 
         _apply_sandbox_network(create_kwargs)
         _apply_resource_limits(create_kwargs)
+        _apply_log_limits(create_kwargs)
 
         # Strix injection: host bind mounts (e.g. large repos passed via --mount)
         # that bypass the SDK's file-by-file LocalDir copy.
