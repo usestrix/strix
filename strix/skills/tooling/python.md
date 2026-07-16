@@ -84,8 +84,9 @@ automatically, so it shows up in `list_requests` and you can use
 For iterative exploit work, put code in a file:
 
 ```text
-1. Create or edit `exploit.py` with `apply_patch`.
-2. Run it with `exec_command`: `python3 exploit.py`.
+1. Create or edit a distinctively-named script (e.g. `strix_poc.py`, to avoid
+   clobbering project files) with `apply_patch`.
+2. Run it with `exec_command`: `python3 strix_poc.py`.
 3. Edit and rerun until the proof-of-concept is reliable.
 ```
 
