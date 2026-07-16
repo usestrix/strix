@@ -1476,13 +1476,13 @@ class StrixTUIApp(App):  # type: ignore[misc]
                     logger.info("Scan stopped: --max-budget-usd limit reached")
                 except (ConnectionError, TimeoutError) as e:
                     logging.exception("Network error during scan")
-                    self._scan_error = e
+                    self._set_scan_error(e)
                 except RuntimeError as e:
                     logging.exception("Runtime error during scan")
-                    self._scan_error = e
+                    self._set_scan_error(e)
                 except Exception as e:
                     logging.exception("Unexpected error during scan")
-                    self._scan_error = e
+                    self._set_scan_error(e)
                 finally:
                     with contextlib.suppress(Exception):
                         loop.run_until_complete(
@@ -1497,6 +1497,27 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._scan_thread = threading.Thread(target=scan_target, daemon=True)
         self._scan_thread.start()
+
+    def _set_scan_error(self, error: BaseException) -> None:
+        """Record a scan failure and surface it in-app immediately.
+
+        Previously errors were only re-raised after the TUI exited, so users
+        saw a silent hang until they quit. Post a toast from the scan thread
+        via ``call_from_thread`` so the failure is visible while the app runs.
+        """
+        self._scan_error = error
+        message = f"{type(error).__name__}: {error}"
+        if len(message) > 280:
+            message = message[:277] + "..."
+        try:
+            self.call_from_thread(
+                self.notify,
+                f"Scan failed — {message}",
+                severity="error",
+            )
+        except RuntimeError:
+            # App not running / no active loop — exit path still raises.
+            logger.debug("Could not show scan-error toast", exc_info=True)
 
     def _capture_sdk_event(self, agent_id: str, event: Any) -> None:
         try:

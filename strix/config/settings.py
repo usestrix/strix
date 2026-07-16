@@ -56,6 +56,13 @@ class RuntimeSettings(BaseSettings):
     # on large repos). Above this, the user must bind-mount via ``--mount``.
     # Set to 0 (or less) to disable the pre-flight check entirely.
     max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
+    # Cap shell/tool stdout stored in the agent session. Unbounded scanner
+    # dumps (e.g. semgrep JSON on a monorepo) otherwise re-enter the next LLM
+    # request and raise ContextWindowExceededError. Set to 0 to disable.
+    max_tool_output_chars: int = Field(
+        default=65_536,
+        alias="STRIX_MAX_TOOL_OUTPUT_CHARS",
+    )
 
 
 class TelemetrySettings(BaseSettings):
