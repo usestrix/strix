@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -175,3 +176,82 @@ async def cleanup(scan_id: str) -> None:
             "cleanup(%s): client.delete raised; container may need manual reaping",
             scan_id,
         )
+
+
+# --- session-setup hooks -----------------------------------------------------
+#
+# Extension point mirroring ``backends.register_backend`` /
+# ``agents.factory.register_agent_tools``: a callback registered here runs once
+# per scan, right after the sandbox session is ready and BEFORE the agent's
+# first turn, with the live session and the scan config. This is the seam an
+# addon needs to prepare in-sandbox state the agent will use — e.g. building a
+# code-graph index against the freshly-materialised target and copying it out.
+#
+# A ``@function_tool`` runs runner-side and only receives a ``RunContextWrapper``
+# (not the session), so setup that must ``session.exec`` inside the container
+# has no other place to hook. Callbacks are awaited in registration order; an
+# exception in one is logged and swallowed so an optional setup step can never
+# break the scan.
+
+SessionSetupCallback = Callable[["Any", dict[str, Any]], Awaitable[None]]
+
+_SESSION_SETUP_CALLBACKS: list[SessionSetupCallback] = []
+
+
+def register_session_setup(callback: SessionSetupCallback) -> None:
+    """Register a coroutine ``callback(session, scan_config)`` to run once per
+    scan after the sandbox session is ready. Duplicate registrations are ignored
+    so repeated imports don't double-run a setup step."""
+    if callback not in _SESSION_SETUP_CALLBACKS:
+        _SESSION_SETUP_CALLBACKS.append(callback)
+        logger.info(
+            "Registered session-setup callback: %s",
+            getattr(callback, "__name__", callback),
+        )
+
+
+def registered_session_setups() -> tuple[SessionSetupCallback, ...]:
+    """Return the currently registered session-setup callbacks."""
+    return tuple(_SESSION_SETUP_CALLBACKS)
+
+
+_SETUP_DONE_KEY = "_session_setups_done"
+
+
+async def run_session_setups(bundle: dict[str, Any], scan_config: dict[str, Any]) -> None:
+    """Invoke every registered session-setup callback ONCE per materialized
+    sandbox session.
+
+    ``bundle`` is the session bundle from :func:`create_or_reuse`; it's cached
+    and REUSED across resumes of the same ``scan_id`` in one process (the
+    cred-boundary iteration loop resumes in-process). Running setups again on a
+    reused session would re-execute non-idempotent hooks against an
+    already-prepared sandbox (start a service twice, re-append config, or fail
+    mid-way and — since failures are swallowed — leave the resumed agent on
+    invalid state). So we stamp the bundle once setups have run and skip on
+    reuse. A fresh session (new bundle) gets a fresh run.
+
+    On skipping and staleness: the reused bundle is the SAME container with the
+    SAME materialised source, so setup-derived state (e.g. a code-graph index)
+    is not stale — nothing changed between in-process iterations. A cross-push
+    PR resume runs in a NEW process against a freshly materialised sandbox, so
+    it gets a new bundle and setups re-run — the index is rebuilt against the
+    new code. So skipping here never serves a stale artifact.
+
+    Callback failures are logged and swallowed — setup is best-effort and must
+    not fail the scan.
+    """
+    if bundle.get(_SETUP_DONE_KEY):
+        logger.debug("session setups already ran for this session; skipping on reuse")
+        return
+    bundle[_SETUP_DONE_KEY] = True  # stamp first: a partial run must not retry-loop
+    session = bundle.get("session")
+    for callback in _SESSION_SETUP_CALLBACKS:
+        try:
+            await callback(session, scan_config)
+        except Exception:  # noqa: BLE001 — an optional setup step must not break the scan
+            logger.warning(
+                "session-setup callback %s raised; continuing",
+                getattr(callback, "__name__", callback),
+                exc_info=True,
+            )
