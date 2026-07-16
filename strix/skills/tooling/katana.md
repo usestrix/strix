@@ -63,7 +63,7 @@ Keeping output manageable:
 - katana does not cap its own output size, so bound crawls with `-ct` (crawl-duration) and `-d` (depth); on large sites an unbounded `-jsl` / `-kf all` deep crawl can grow very large.
 - Reserve deep JS crawling (`-jsl`, `-kf all`, higher `-d`) for a specific narrowed target rather than broad scopes.
 - After a crawl, glance at output size (`du -sh <out>`); if it looks outsized for the scope, tighten `-d`/`-ct`/`-ef` or split per host.
-- Dedupe and reduce before use (`sort -u`), and remove the raw `.jsonl` once you've parsed the URLs you need.
+- For JSONL output, extract and dedupe URLs before use (`jq -r '.url' <out.jsonl> | sort -u > urls.txt`), then remove the raw `.jsonl` once you've preserved any metadata you still need.
 
 Usage rules:
 - Keep `-d`, `-c`, `-p`, and `-rl` explicit for reproducible runs.
