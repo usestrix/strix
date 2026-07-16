@@ -41,6 +41,15 @@ def test_repository_context_uri_only_without_clone() -> None:
     }
 
 
+def test_repository_context_none_for_multiple_repository_targets() -> None:
+    state = ReportState(run_name="t")
+    state.run_record["targets_info"] = [
+        {"type": "repository", "details": {"target_repo": "https://github.com/acme/widget"}},
+        {"type": "repository", "details": {"target_repo": "https://github.com/acme/api"}},
+    ]
+    assert state._sarif_repository_context() is None
+
+
 def test_repository_context_derives_commit_and_branch_from_clone(tmp_path: Path) -> None:
     repo = tmp_path / "widget"
     repo.mkdir()

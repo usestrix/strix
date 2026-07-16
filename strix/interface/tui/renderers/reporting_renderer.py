@@ -256,3 +256,176 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
 
         css_classes = cls.get_css_classes("completed")
         return Static(padded, classes=css_classes)
+
+
+@register_tool_renderer
+class CreateDependencyReportRenderer(BaseToolRenderer):
+    tool_name: ClassVar[str] = "create_dependency_report"
+    css_classes: ClassVar[list[str]] = ["tool-call", "reporting-tool"]
+
+    SEVERITY_COLORS: ClassVar[dict[str, str]] = {
+        "critical": "#dc2626",
+        "high": "#ea580c",
+        "medium": "#d97706",
+        "low": "#65a30d",
+        "info": "#0284c7",
+    }
+
+    @classmethod
+    def _get_cvss_color(cls, cvss_score: float) -> str:
+        if cvss_score >= 9.0:
+            return "#dc2626"
+        if cvss_score >= 7.0:
+            return "#ea580c"
+        if cvss_score >= 4.0:
+            return "#d97706"
+        if cvss_score >= 0.1:
+            return "#65a30d"
+        return "#6b7280"
+
+    @classmethod
+    def _render_unsuccessful(cls, args: dict[str, Any], result: dict[str, Any]) -> Static:
+        text = Text()
+        text.append("📦 ")
+        text.append("Dependency (SCA) Report", style="bold #ea580c")
+        title = args.get("title", "")
+        if title:
+            text.append("\n\n")
+            text.append("Title: ", style=FIELD_STYLE)
+            text.append(title)
+
+        warning = result.get("warning")
+        if result.get("success") is False:
+            errors = result.get("errors")
+            detail = (
+                "; ".join(errors) if isinstance(errors, list) and errors else result.get("error")
+            )
+            label, style = "✗ Not created: ", "bold #dc2626"
+            fallback = "Report was not created."
+        else:
+            detail = warning
+            label, style = "⚠ Not persisted: ", "bold #d97706"
+            fallback = "Report could not be persisted."
+        text.append("\n\n")
+        text.append(label, style=style)
+        text.append(str(detail or fallback))
+
+        padded = Text()
+        padded.append("\n\n")
+        padded.append_text(text)
+        padded.append("\n\n")
+        return Static(padded, classes=cls.get_css_classes("failed"))
+
+    @classmethod
+    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
+        args = tool_data.get("args", {})
+        result = tool_data.get("result", {})
+
+        if isinstance(result, dict) and (result.get("success") is False or result.get("warning")):
+            return cls._render_unsuccessful(args, result)
+
+        title = args.get("title", "")
+        description = args.get("description", "")
+        impact = args.get("impact", "")
+        target = args.get("target", "")
+        technical_analysis = args.get("technical_analysis", "")
+        remediation_steps = args.get("remediation_steps", "")
+        assumptions = args.get("assumptions", "")
+
+        package_name = args.get("package_name", "")
+        package_ecosystem = args.get("package_ecosystem", "")
+        installed_version = args.get("installed_version", "")
+        fixed_version = args.get("fixed_version", "")
+        cve = args.get("cve", "")
+        cwe = args.get("cwe", "")
+        advisory_cvss = args.get("advisory_cvss")
+        fix_effort = args.get("fix_effort", "")
+
+        severity = ""
+        if isinstance(result, dict):
+            severity = result.get("severity", "")
+
+        text = Text()
+        text.append("📦 ")
+        text.append("Dependency (SCA) Report", style="bold #ea580c")
+
+        if title:
+            text.append("\n\n")
+            text.append("Title: ", style=FIELD_STYLE)
+            text.append(title)
+
+        if severity:
+            text.append("\n\n")
+            text.append("Severity: ", style=FIELD_STYLE)
+            severity_color = cls.SEVERITY_COLORS.get(severity.lower(), "#6b7280")
+            text.append(severity.upper(), style=f"bold {severity_color}")
+
+        if advisory_cvss is not None:
+            text.append("\n\n")
+            text.append("Advisory CVSS: ", style=FIELD_STYLE)
+            try:
+                score = float(advisory_cvss)
+                text.append(str(score), style=f"bold {cls._get_cvss_color(score)}")
+            except (TypeError, ValueError):
+                text.append(str(advisory_cvss), style=DIM_STYLE)
+
+        if cve:
+            text.append("\n\n")
+            text.append("CVE: ", style=FIELD_STYLE)
+            text.append(cve)
+
+        if cwe:
+            text.append("\n\n")
+            text.append("CWE: ", style=FIELD_STYLE)
+            text.append(cwe)
+
+        if package_name:
+            text.append("\n\n")
+            text.append("Package: ", style=FIELD_STYLE)
+            text.append(package_name, style=FILE_STYLE)
+            if package_ecosystem:
+                text.append(f" ({package_ecosystem})", style=DIM_STYLE)
+
+        if installed_version:
+            text.append("\n\n")
+            text.append("Installed: ", style=FIELD_STYLE)
+            text.append(installed_version, style=BEFORE_STYLE)
+            if fixed_version:
+                text.append("  →  ", style=DIM_STYLE)
+                text.append("Fixed: ", style=FIELD_STYLE)
+                text.append(fixed_version, style=AFTER_STYLE)
+
+        if fix_effort:
+            text.append("\n\n")
+            text.append("Fix Effort: ", style=FIELD_STYLE)
+            text.append(fix_effort)
+
+        if target:
+            text.append("\n\n")
+            text.append("Target: ", style=FIELD_STYLE)
+            text.append(target)
+
+        for label, value in [
+            ("Description", description),
+            ("Impact", impact),
+            ("Technical Analysis", technical_analysis),
+            ("Assumptions", assumptions),
+            ("Remediation", remediation_steps),
+        ]:
+            if value:
+                text.append("\n\n")
+                text.append(label, style=FIELD_STYLE)
+                text.append("\n")
+                text.append(value)
+
+        if not title:
+            text.append("\n  ")
+            text.append("Creating dependency report...", style="dim")
+
+        padded = Text()
+        padded.append("\n\n")
+        padded.append_text(text)
+        padded.append("\n\n")
+
+        css_classes = cls.get_css_classes("completed")
+        return Static(padded, classes=css_classes)

@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from strix.core.inputs import build_root_task, child_initial_input
+from strix.core.inputs import build_root_task, child_initial_input, make_model_settings
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -112,3 +112,46 @@ def test_build_root_task_diff_scope() -> None:
     assert "Scope Constraints:" in task
     assert "3 changed file(s)" in task
     assert "2 deleted file(s)" in task
+
+
+@pytest.mark.parametrize("model_name", ["openai/o3", "gpt-4o"])
+def test_make_model_settings_forces_required_tool_choice_for_openai_models(
+    model_name: str,
+) -> None:
+    settings = make_model_settings(
+        "none",
+        model_name=model_name,
+        force_required_tool_choice=True,
+    )
+
+    assert settings.tool_choice == "required"
+
+
+def test_make_model_settings_skips_required_tool_choice_for_non_openai_models() -> None:
+    settings = make_model_settings(
+        "none",
+        model_name="anthropic/claude-3-7-sonnet-latest",
+        force_required_tool_choice=True,
+    )
+
+    assert settings.tool_choice is None
+
+
+def test_make_model_settings_forces_required_for_routed_openai_model() -> None:
+    settings = make_model_settings(
+        None,
+        model_name="litellm/openai/gpt-4o",
+        force_required_tool_choice=True,
+    )
+
+    assert settings.tool_choice == "required"
+
+
+def test_make_model_settings_forces_required_for_anyllm_routed_openai_model() -> None:
+    settings = make_model_settings(
+        None,
+        model_name="any-llm/openai/gpt-4o",
+        force_required_tool_choice=True,
+    )
+
+    assert settings.tool_choice == "required"

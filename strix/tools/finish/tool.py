@@ -96,6 +96,15 @@ async def finish_scan(
     2. Writes the four narrative sections to the scan record.
     3. Marks the scan completed and stops execution.
 
+    **This is a terminal action, not a status probe.** Whatever you pass
+    is persisted VERBATIM as the final, customer-facing report and then
+    execution stops. There is no draft mode and no second chance: never
+    submit placeholder, provisional, or "checking if done" text in any
+    field, and never call ``finish_scan`` to poll whether subagents are
+    done (use ``view_agent_graph`` / ``wait_for_message`` for that).
+    Call it exactly ONCE, only when every field holds genuine, finished
+    assessment prose.
+
     **Pre-flight checklist (mandatory — do not skip):**
 
     1. **Call ``view_agent_graph`` first.** Inspect every entry in the
@@ -108,19 +117,39 @@ async def finish_scan(
        Calling ``finish_scan`` while children are alive orphans their
        work and produces an incomplete report.
     2. All vulnerabilities you found are filed via
-       ``create_vulnerability_report`` (un-reported findings are not
-       tracked and not credited).
+       ``create_vulnerability_report`` — or, for known-CVE dependency
+       findings, ``create_dependency_report`` (un-reported findings are
+       not tracked and not credited). A dependency CVE already filed via
+       ``create_dependency_report`` counts as reported; it does NOT need
+       re-filing here and does NOT block finishing.
     3. Don't double-report — one report per distinct vulnerability.
+    4. **Attack-chaining gate.** Do NOT finish until you have genuinely
+       considered chaining the confirmed findings into higher-impact,
+       end-to-end attack paths and tested every plausibly-related
+       combination. You may rule out combinations you can confidently
+       call unrelated — note why instead of padding chains. Any
+       validated chain must already be filed via
+       ``create_vulnerability_report`` — a demonstrated end-to-end chain
+       is a PoC-backed vulnerability, so it uses that tool even when one
+       link is a dependency CVE (the standalone CVE stays in its own
+       ``create_dependency_report``) — and surfaced prominently in
+       ``executive_summary`` / ``technical_analysis``. Finding no real
+       chain after a serious attempt is acceptable; skipping the
+       chaining reasoning, or ignoring a plausibly-related combination,
+       is not.
 
     **Calling this multiple times overwrites the previous report.**
     Make the single call comprehensive.
 
-    **Customer-facing report rules** (this output is rendered into the
-    final PDF the client sees):
+    **Report output rules** (this content may be rendered into generated
+    reports):
 
     - Never mention internal infrastructure: no local/absolute paths
       (``/workspace/...``), no agent names, no sandbox/orchestrator/
       tooling references, no system prompts, no model-internal errors.
+      Never leak internal identifiers (proxy request IDs, internal
+      vulnerability report IDs, or any system-generated IDs) into any
+      field.
     - Tone: formal, third-person, objective, concise. This is a
       consultant deliverable, not an engineering log.
     - Each section has a specific role:
@@ -139,6 +168,74 @@ async def finish_scan(
         - ``recommendations`` — prioritized actions grouped by urgency
           (Immediate / Short-term / Medium-term), each with concrete
           remediation steps. End with retest/validation guidance.
+
+    - **Formatting — use markdown in every field.** These fields may be
+      rendered into generated reports, so structure them clearly: lead
+      each section with a short ``# Heading``, use ``**bold**`` for labels/emphasis,
+      ``inline code`` for identifiers/paths/parameters, bullet or
+      numbered lists for enumerations, and fenced code blocks
+      (```` ```language ````) for any code/payload excerpts. Never emit
+      one flat wall of prose or leave code unformatted.
+    - If **zero** vulnerabilities were found, say so plainly and
+      characterize the posture positively; ``technical_analysis`` should
+      summarize the areas tested and confirm no issues, and
+      ``recommendations`` should focus on general hardening.
+
+    Example (abbreviated — mirror this structure, not the wording)::
+
+        executive_summary:
+            # Executive Summary
+
+            An external assessment of the **Acme Customer Portal**
+            identified multiple weaknesses that could lead to
+            unauthorized access to customer data.
+
+            **Overall risk posture:** Elevated.
+
+            **Key findings**
+            - Confirmed SSRF in a URL-preview feature reaching internal
+              network ranges.
+            - Broken tenant isolation enabling cross-tenant data access.
+
+            **Business impact**
+            - Potential exposure of customer records across tenants.
+
+        methodology:
+            # Methodology
+
+            Conducted per the **OWASP WSTG**.
+
+            **Engagement type:** Gray-box external test.
+            **Scope:** `https://app.acme.example`, `.../api/v1/`.
+
+            **Activities:** recon, authn/session review, authorization
+            and tenant-isolation testing, input/SSRF testing.
+
+        technical_analysis:
+            # Technical Analysis
+
+            **Severity model** reflects exploitability x impact.
+
+            1. **SSRF in URL preview** (Critical) — insufficient
+               destination validation; reaches link-local addresses.
+            2. **Broken tenant isolation** (High) — object identifiers
+               accepted without ownership checks.
+
+            **Systemic themes:** authorization enforced inconsistently;
+            no deny-by-default egress policy.
+
+        recommendations:
+            # Recommendations
+
+            **Immediate**
+            1. Remediate SSRF: enforce a destination allowlist,
+               deny-by-default, re-validate on every redirect hop.
+
+            **Short-term**
+            2. Centralize authorization with deny-by-default middleware.
+
+            **Retest & validation:** re-test immediate items to confirm
+            SSRF and tenant-isolation controls hold.
 
     Args:
         executive_summary: Business-level summary for leadership.
