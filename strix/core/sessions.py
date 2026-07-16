@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
+import logging
 from typing import TYPE_CHECKING, Any, cast
 from weakref import WeakKeyDictionary
 
@@ -16,6 +16,9 @@ if TYPE_CHECKING:
 
     from agents.items import TResponseInputItem
     from agents.memory import Session
+
+
+logger = logging.getLogger(__name__)
 
 
 def open_agent_session(agent_id: str, path: Path) -> SQLiteSession:
@@ -54,14 +57,22 @@ def _elided_output(item_dict: dict[str, Any], text: str) -> dict[str, Any]:
     }
 
 
-_rewrite_locks: WeakKeyDictionary[Session, asyncio.Lock] = WeakKeyDictionary()
+_session_write_locks: WeakKeyDictionary[Session, asyncio.Lock] = WeakKeyDictionary()
 
 
-def _lock_for(session: Session) -> asyncio.Lock:
-    lock = _rewrite_locks.get(session)
+def session_write_lock(session: Session) -> asyncio.Lock:
+    """Return the lock serialising *all* writes to ``session``.
+
+    Both the image-budget rewrite (a read + clear + re-add sequence) and
+    out-of-band message delivery (``AgentCoordinator.send``) must acquire this
+    so a rewrite built from a snapshot can never clear away a message that was
+    appended concurrently. Any code that writes to a session out of band must
+    take this lock too.
+    """
+    lock = _session_write_locks.get(session)
     if lock is None:
         lock = asyncio.Lock()
-        _rewrite_locks[session] = lock
+        _session_write_locks[session] = lock
     return lock
 
 
@@ -71,13 +82,14 @@ async def _rewrite_session(
 ) -> bool:
     """Serialised read-modify-write of a session's items.
 
-    The snapshot is read, transformed, and re-written under a per-session lock
-    so concurrent rewrites can't clobber each other. Nothing is written unless
-    ``transform`` reports a change, and if the re-add fails the original items
-    are restored -- a rewrite can never leave the history empty. Returns
-    ``True`` when the session was rewritten.
+    The snapshot is read, transformed, and re-written while holding the shared
+    ``session_write_lock`` so no concurrent writer can be clobbered by the
+    clear + re-add. Nothing is written unless ``transform`` reports a change,
+    and if the re-add fails the original items are restored -- a rewrite can
+    never silently leave the history empty. Returns ``True`` when the session
+    was rewritten.
     """
-    async with _lock_for(session):
+    async with session_write_lock(session):
         items = await session.get_items()
         if not items:
             return False
@@ -90,9 +102,9 @@ async def _rewrite_session(
         try:
             await session.add_items(rebuilt_items)
         except Exception:
-            with contextlib.suppress(Exception):
-                await session.clear_session()
-                await session.add_items(original_items)
+            logger.exception("session rewrite failed; restoring original items")
+            await session.clear_session()
+            await session.add_items(original_items)
             raise
         return True
 
