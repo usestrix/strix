@@ -104,14 +104,46 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     _configure_openrouter_attribution(llm.model)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
-        _configure_litellm_default("api_key", llm.api_key)
+        # Do not set LiteLLM's process-global ``api_key``: that would leak the
+        # orchestrator credential into differently-routed child providers.
+        # Provider-specific environment variables keep concurrent routes apart.
         _mirror_api_key_to_provider_env(llm.model, llm.api_key)
+    for model_name in _subagent_model_names(settings):
+        key = llm.subagent_api_key or (
+            llm.api_key if _same_provider(model_name, llm.model) else None
+        )
+        if key:
+            _mirror_api_key_to_provider_env(model_name, key)
+    verification = settings.verification
+    if verification.api_key and verification.model:
+        _mirror_api_key_to_provider_env(verification.model, verification.api_key)
     if llm.api_base:
         os.environ["OPENAI_BASE_URL"] = llm.api_base
         _configure_litellm_default("api_base", llm.api_base)
         set_default_openai_api("chat_completions")
     else:
         set_default_openai_api("responses")
+
+
+def _provider_prefix(model_name: str | None) -> str | None:
+    if not model_name:
+        return None
+    name = _normalized_model_name(model_name)
+    if "/" not in name:
+        return "openai"
+    return name.split("/", 1)[0]
+
+
+def _same_provider(first: str | None, second: str | None) -> bool:
+    return _provider_prefix(first) == _provider_prefix(second)
+
+
+def _subagent_model_names(settings: Settings) -> set[str]:
+    llm = settings.llm
+    names = {route.model for route in llm.skill_model_routes if route.model}
+    if llm.subagent_model:
+        names.add(llm.subagent_model)
+    return names
 
 
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:

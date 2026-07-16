@@ -216,10 +216,12 @@ async def run_strix_scan(
             model_name=resolved_model,
             force_required_tool_choice=settings.llm.force_required_tool_choice,
         )
+        # Models and reasoning settings live on each agent. Keeping these unset
+        # here is essential: RunConfig values override every per-agent route.
         run_config = RunConfig(
-            model=resolved_model,
+            model=None,
             model_provider=StrixProvider(),
-            model_settings=model_settings,
+            model_settings=None,
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,
         )
@@ -244,6 +246,8 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
+            model=resolved_model,
+            model_settings=model_settings,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
         )
@@ -258,10 +262,11 @@ async def run_strix_scan(
             )
 
         child_agent_builder = make_child_factory(
+            settings=settings,
+            default_model=resolved_model,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             interactive=interactive,
-            chat_completions_tools=chat_completions_tools,
             system_prompt_context=scope_context,
         )
 

@@ -266,6 +266,25 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     return None
 
 
+async def _warm_up_model(model_name: str, timeout: int) -> None:
+    model = StrixProvider().get_model(model_name)
+    await asyncio.wait_for(
+        model.get_response(
+            system_instructions="You are a helpful assistant.",
+            input="Reply with just 'OK'.",
+            model_settings=ModelSettings(),
+            tools=[],
+            output_schema=None,
+            handoffs=[],
+            tracing=ModelTracing.DISABLED,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        ),
+        timeout=timeout,
+    )
+
+
 async def warm_up_llm(show_model_warning: bool = True) -> None:
     console = Console()
     logger.info("Warming up LLM connection")
@@ -334,23 +353,16 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
                 ),
             )
 
-        model = StrixProvider().get_model(raw_model)
-        await asyncio.wait_for(
-            model.get_response(
-                system_instructions="You are a helpful assistant.",
-                input="Reply with just 'OK'.",
-                model_settings=ModelSettings(),
-                tools=[],
-                output_schema=None,
-                handoffs=[],
-                tracing=ModelTracing.DISABLED,
-                previous_response_id=None,
-                conversation_id=None,
-                prompt=None,
-            ),
-            timeout=llm.timeout,
-        )
-        logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
+        models_to_warm = [raw_model]
+        if llm.subagent_model:
+            models_to_warm.append(llm.subagent_model.strip())
+        models_to_warm.extend(route.model for route in llm.skill_model_routes)
+        if settings.verification.enabled and settings.verification.model:
+            models_to_warm.append(settings.verification.model.strip())
+        for configured_model in dict.fromkeys(models_to_warm):
+            raw_model = configured_model
+            await _warm_up_model(configured_model, llm.timeout)
+            logger.info("LLM warm-up succeeded for model %s", configured_model)
 
     except Exception as e:
         logger.exception("LLM warm-up failed")
@@ -543,6 +555,16 @@ Examples:
         "--config",
         type=str,
         help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
+    )
+
+    parser.add_argument(
+        "--subagent-model",
+        type=str,
+        default=None,
+        help=(
+            "Override the config's default model for all subagents. "
+            "Skill-specific config routes still take precedence."
+        ),
     )
 
     parser.add_argument(
@@ -850,6 +872,10 @@ def main() -> None:
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
+    if args.subagent_model:
+        # CLI is an intentional one-run override. Skill routes remain more
+        # specific and are therefore evaluated before this default.
+        load_settings().llm.subagent_model = args.subagent_model.strip()
 
     check_docker_installed()
     pull_docker_image()

@@ -368,6 +368,7 @@ async def create_agent(
     task: str,
     inherit_context: bool = True,
     skills: list[str] | None = None,
+    model: str | None = None,
 ) -> str:
     """Spawn a specialist child agent to run in parallel.
 
@@ -408,6 +409,8 @@ async def create_agent(
             when starting a clean-slate task.
         skills: List of skill names (e.g. ``["xss", "sql_injection"]``).
             Max 5; prefer 1-3.
+        model: Optional explicit model override for this spawn. Omit it to use
+            config-driven skill routing and the default subagent model.
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
@@ -446,6 +449,7 @@ async def create_agent(
             name=name,
             task=task,
             skills=skill_list,
+            model=model.strip() if isinstance(model, str) and model.strip() else None,
             parent_history=parent_history,
         )
     except Exception as e:

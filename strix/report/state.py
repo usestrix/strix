@@ -229,6 +229,7 @@ class ReportState:
         fix_pr_body: str | None = None,
         finding_class: str | None = None,
         dependency_metadata: dict[str, str] | None = None,
+        verification: dict[str, Any] | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
     ) -> str:
@@ -280,6 +281,8 @@ class ReportState:
         report["finding_class"] = (finding_class or "dynamic").strip().lower()
         if dependency_metadata:
             report["dependency_metadata"] = dependency_metadata
+        report["verification"] = verification or {"status": "not_requested"}
+        report["verified"] = report["verification"].get("status") == "confirmed"
         if agent_id:
             report["agent_id"] = agent_id
         if agent_name:
@@ -368,6 +371,7 @@ class ReportState:
                 "local_sources": config.get("local_sources", []),
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
+                "max_budget_usd": config.get("max_budget_usd"),
             }
         )
 

@@ -228,6 +228,14 @@ def _check_dependency_duplicate(
     }
 
 
+def _raise_budget_exceeded(budget: float) -> None:
+    from strix.core.hooks import BudgetExceededError
+
+    raise BudgetExceededError(
+        f"Token budget of ${budget:.2f} exceeded during finding deduplication"
+    )
+
+
 def _parse_dedupe_response(content: str) -> dict[str, Any]:
     text = content.strip()
     if text.startswith("```"):
@@ -327,6 +335,14 @@ async def check_duplicate(
                 model=resolved_model,
                 usage=response.usage,
             )
+            config = report_state.scan_config
+            raw_budget = config.get("max_budget_usd") if isinstance(config, dict) else None
+            if (
+                isinstance(raw_budget, int | float)
+                and raw_budget > 0
+                and report_state.get_total_llm_cost() >= raw_budget
+            ):
+                _raise_budget_exceeded(float(raw_budget))
         content = _extract_text(response)
         if not content:
             return {
@@ -346,6 +362,10 @@ async def check_duplicate(
         )
 
     except Exception as e:
+        from strix.core.hooks import BudgetExceededError
+
+        if isinstance(e, BudgetExceededError):
+            raise
         logger.exception("Error during vulnerability deduplication check")
         return {
             "is_duplicate": False,

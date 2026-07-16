@@ -61,9 +61,15 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
 </ParamField>
 
+<ParamField path="--subagent-model" type="string">
+  Override the config's default child-agent model for this run. Ordered
+  skill-specific routes in the config remain more specific and take precedence.
+</ParamField>
+
 <ParamField path="--max-budget-usd" type="number">
   Maximum LLM spend in USD for the whole scan, counted cumulatively across the
-  root agent and every child agent. The budget is checked after each model
+  root agent, every child agent, deduplication, and independent finding
+  verification. The budget is checked after each model
   response; once the running cost reaches the threshold, the scan stops cleanly
   with a `stopped` status (not a failure) and the sandbox is torn down.
 

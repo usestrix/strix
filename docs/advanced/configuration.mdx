@@ -7,8 +7,24 @@ Configure Strix using environment variables or a config file.
 
 ## LLM Configuration
 
-<ParamField path="STRIX_LLM" type="string" required>
-  Model name in LiteLLM format (e.g., `openai/gpt-5.4`, `anthropic/claude-sonnet-4-6`).
+<ParamField path="STRIX_ORCHESTRATOR_MODEL" type="string" required>
+  Model for the root/orchestrator in LiteLLM format (for example,
+  `openai/gpt-5.4`). `STRIX_LLM` remains a backward-compatible alias.
+</ParamField>
+
+<ParamField path="STRIX_SUBAGENT_MODEL" type="string">
+  Default model for child agents. If omitted, children use the orchestrator model.
+</ParamField>
+
+<ParamField path="SUBAGENT_LLM_API_KEY" type="string">
+  API key for the subagent provider. Strix mirrors it to the provider-specific
+  environment variable LiteLLM expects. It is optional when both routes use the
+  same provider/key or the provider uses ambient/local authentication.
+</ParamField>
+
+<ParamField path="STRIX_SUBAGENT_REASONING_EFFORT" type="string">
+  Reasoning effort for default and skill-routed subagents. Falls back to
+  `STRIX_REASONING_EFFORT` when omitted.
 </ParamField>
 
 <ParamField path="LLM_API_KEY" type="string">
@@ -34,6 +50,51 @@ Configure Strix using environment variables or a config file.
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
   Timeout in seconds for memory compression operations (context summarization).
 </ParamField>
+
+### Skill-based child routing
+
+Use the structured `llm.skill_model_routes` config field to select models based
+on the skills injected when a child is spawned. Rules are evaluated in order;
+the first match wins. A route accepts a concise single `skill`, or an
+`operator` of `AND`, `OR`, or `ANY`. `ANY` matches a child with any injected
+skill. An explicit model passed to `create_agent` takes precedence over routes.
+
+```json
+{
+  "llm": {
+    "model": "openai/gpt-5.4",
+    "subagent_model": "deepseek/deepseek-chat",
+    "skill_model_routes": [
+      {"skill": "business_logic", "model": "anthropic/claude-sonnet-4-6"},
+      {"operator": "AND", "skills": ["oauth", "authentication_jwt"], "model": "openai/gpt-5.4"},
+      {"operator": "OR", "skills": ["xss", "sql_injection"], "model": "dashscope/qwen-plus"},
+      {"operator": "ANY", "model": "deepseek/deepseek-chat"}
+    ]
+  }
+}
+```
+
+### Independent finding verification
+
+<ParamField path="STRIX_VERIFY_FINDINGS" default="false" type="boolean">
+  Require an independent model to try to refute every candidate before it is
+  persisted. Off by default. Rejected findings and verifier errors fail closed.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_MODEL" type="string">
+  Model used by the independent verifier. Required when verification is enabled.
+</ParamField>
+
+<ParamField path="VERIFICATION_LLM_API_KEY" type="string">
+  Optional provider key for the verification model.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_REASONING_EFFORT" default="high" type="string">
+  Reasoning effort for the verifier.
+</ParamField>
+
+Verification calls are recorded in the same `llm_usage` ledger and count toward
+`--max-budget-usd`, along with root, child, and deduplication calls.
 
 ## Optional Features
 
@@ -106,9 +167,14 @@ strix --target ./app --config /path/to/config.json
 ```json
 {
   "env": {
-    "STRIX_LLM": "openai/gpt-5.4",
-    "LLM_API_KEY": "sk-...",
+    "STRIX_ORCHESTRATOR_MODEL": "openai/gpt-5.4",
+    "STRIX_SUBAGENT_MODEL": "deepseek/deepseek-chat",
+    "LLM_API_KEY": "sk-main-...",
+    "SUBAGENT_LLM_API_KEY": "sk-child-...",
     "STRIX_REASONING_EFFORT": "high"
+  },
+  "verification": {
+    "enabled": false
   }
 }
 ```

@@ -123,6 +123,10 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         f"**Severity:** {report.get('severity', 'unknown').upper()}",
         f"**Found:** {report.get('timestamp', 'unknown')}",
     ]
+    verification = report.get("verification") or {}
+    verification_status = verification.get("status")
+    if verification_status and verification_status != "not_requested":
+        lines.append(f"**Independent Verification:** {str(verification_status).upper()}")
 
     dep_meta = report.get("dependency_metadata") or {}
     metadata: list[tuple[str, Any]] = [

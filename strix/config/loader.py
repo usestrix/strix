@@ -60,7 +60,7 @@ def persist_current() -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
 
     env_block: dict[str, str] = {}
-    for sub_name in s.model_fields:
+    for sub_name in type(s).model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
             continue
@@ -71,7 +71,18 @@ def persist_current() -> None:
                     env_block[alias.upper()] = value
                     break
 
-    target.write_text(json.dumps({"env": env_block}, indent=2), encoding="utf-8")
+    preserved: dict[str, Any] = {}
+    if target.exists():
+        try:
+            current = json.loads(target.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            current = {}
+        if isinstance(current, dict):
+            preserved = {key: value for key, value in current.items() if key != "env"}
+    target.write_text(
+        json.dumps({**preserved, "env": env_block}, indent=2),
+        encoding="utf-8",
+    )
     with contextlib.suppress(OSError):
         target.chmod(0o600)
 
@@ -89,7 +100,7 @@ def _aliases_for(finfo: FieldInfo) -> list[str]:
     return aliases
 
 
-def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
+def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:  # noqa: PLR0912
     """Read ``{"env": {...}}`` from ``path`` and remap to nested kwargs.
 
     Only includes keys whose env var is NOT already set, so env always
@@ -101,9 +112,11 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
-    env_block = data.get("env", {}) if isinstance(data, dict) else {}
-    if not isinstance(env_block, dict):
+    if not isinstance(data, dict):
         return {}
+    env_block = data.get("env", {})
+    if not isinstance(env_block, dict):
+        env_block = {}
 
     env_block_upper = {str(k).upper(): v for k, v in env_block.items()}
     env_present = {k.upper() for k in os.environ}
@@ -114,6 +127,10 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
         if not (isinstance(sub_cls, type) and issubclass(sub_cls, BaseModel)):
             continue
         sub_data: dict[str, Any] = {}
+        structured = data.get(sub_name, {})
+        if not isinstance(structured, dict):
+            structured = {}
+        structured_lower = {str(key).lower(): value for key, value in structured.items()}
         for fname, finfo in sub_cls.model_fields.items():
             aliases = [alias.upper() for alias in _aliases_for(finfo)]
             if any(alias in env_present for alias in aliases):
@@ -122,6 +139,15 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
                 if alias in env_block_upper:
                     sub_data[fname] = env_block_upper[alias]
                     break
+            else:
+                # Structured sections are needed for values such as ordered
+                # skill-routing rules while retaining backward-compatible
+                # {"env": {...}} files.
+                keys = [fname.lower(), *(alias.lower() for alias in _aliases_for(finfo))]
+                for key in keys:
+                    if key in structured_lower:
+                        sub_data[fname] = structured_lower[key]
+                        break
         if sub_data:
             nested[sub_name] = sub_data
     return nested

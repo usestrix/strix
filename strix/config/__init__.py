@@ -17,19 +17,23 @@ from strix.config.loader import (
     persist_current,
 )
 from strix.config.settings import (
+    FindingVerificationSettings,
     IntegrationSettings,
     LlmSettings,
     RuntimeSettings,
     Settings,
+    SkillModelRoute,
     TelemetrySettings,
 )
 
 
 __all__ = [
+    "FindingVerificationSettings",
     "IntegrationSettings",
     "LlmSettings",
     "RuntimeSettings",
     "Settings",
+    "SkillModelRoute",
     "TelemetrySettings",
     "apply_config_override",
     "load_settings",
