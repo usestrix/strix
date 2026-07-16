@@ -7,9 +7,9 @@ description: Run Python through exec_command in the SDK sandbox. Use the image-b
 
 Use `exec_command` for Python. There is no separate Strix Python executor.
 
-Prefer writing reusable scripts to `/workspace/scratch/<name>.py` and
-running them with `python3 /workspace/scratch/<name>.py`. For short
-one-off transformations, `python3 -c` or a small here-document is fine.
+Prefer writing reusable scripts to a `.py` file and running them with
+`python3 <name>.py`. For short one-off transformations, `python3 -c` or a
+small here-document is fine.
 
 The `shell` parameter on `exec_command` is for swapping POSIX shells
 (`bash`/`zsh`/`sh`), not for picking interpreters. Put the interpreter
@@ -84,8 +84,8 @@ automatically, so it shows up in `list_requests` and you can use
 For iterative exploit work, put code in a file:
 
 ```text
-1. Create or edit `/workspace/scratch/exploit.py` with `apply_patch`.
-2. Run it with `exec_command`: `python3 /workspace/scratch/exploit.py`.
+1. Create or edit `exploit.py` with `apply_patch`.
+2. Run it with `exec_command`: `python3 exploit.py`.
 3. Edit and rerun until the proof-of-concept is reliable.
 ```
 
