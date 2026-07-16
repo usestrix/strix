@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shutil
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -175,3 +176,55 @@ async def cleanup(scan_id: str) -> None:
             "cleanup(%s): client.delete raised; container may need manual reaping",
             scan_id,
         )
+
+
+# --- session-setup hooks -----------------------------------------------------
+#
+# Extension point mirroring ``backends.register_backend`` /
+# ``agents.factory.register_agent_tools``: a callback registered here runs once
+# per scan, right after the sandbox session is ready and BEFORE the agent's
+# first turn, with the live session and the scan config. This is the seam an
+# addon needs to prepare in-sandbox state the agent will use — e.g. building a
+# code-graph index against the freshly-materialised target and copying it out.
+#
+# A ``@function_tool`` runs runner-side and only receives a ``RunContextWrapper``
+# (not the session), so setup that must ``session.exec`` inside the container
+# has no other place to hook. Callbacks are awaited in registration order; an
+# exception in one is logged and swallowed so an optional setup step can never
+# break the scan.
+
+SessionSetupCallback = Callable[["Any", dict[str, Any]], Awaitable[None]]
+
+_SESSION_SETUP_CALLBACKS: list[SessionSetupCallback] = []
+
+
+def register_session_setup(callback: SessionSetupCallback) -> None:
+    """Register a coroutine ``callback(session, scan_config)`` to run once per
+    scan after the sandbox session is ready. Duplicate registrations are ignored
+    so repeated imports don't double-run a setup step."""
+    if callback not in _SESSION_SETUP_CALLBACKS:
+        _SESSION_SETUP_CALLBACKS.append(callback)
+        logger.info(
+            "Registered session-setup callback: %s",
+            getattr(callback, "__name__", callback),
+        )
+
+
+def registered_session_setups() -> tuple[SessionSetupCallback, ...]:
+    """Return the currently registered session-setup callbacks."""
+    return tuple(_SESSION_SETUP_CALLBACKS)
+
+
+async def run_session_setups(session: Any, scan_config: dict[str, Any]) -> None:
+    """Invoke every registered session-setup callback. A callback failure is
+    logged and swallowed — session setup is best-effort and must not fail the
+    scan."""
+    for callback in _SESSION_SETUP_CALLBACKS:
+        try:
+            await callback(session, scan_config)
+        except Exception:  # noqa: BLE001 — an optional setup step must not break the scan
+            logger.warning(
+                "session-setup callback %s raised; continuing",
+                getattr(callback, "__name__", callback),
+                exc_info=True,
+            )
