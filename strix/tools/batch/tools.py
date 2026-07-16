@@ -16,6 +16,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from pathlib import PurePosixPath
 from typing import Any
 
 from agents import RunContextWrapper, function_tool
@@ -25,12 +27,41 @@ logger = logging.getLogger(__name__)
 
 _MAX_CONCURRENCY = 8          # bounded fan-out — don't swamp the sandbox
 _MAX_ITEMS = 50               # cap batch size (a 200-file batch is a smell)
-_DEFAULT_TIMEOUT = 60
+
+# Per-item timeouts are bounded so a full, valid batch cannot exceed the
+# enclosing @function_tool deadline (below) and get cancelled before returning
+# its per-item results. Worst case is ceil(_MAX_ITEMS / _MAX_CONCURRENCY) waves
+# of per-item timeouts: ceil(50/8) = 7. So keep 7 * per_item < tool deadline:
+#   view: 7 * 20s = 140s < 180s ;  exec: 7 * 40s = 280s < 300s.
+_VIEW_ITEM_TIMEOUT = 20
+_EXEC_ITEM_TIMEOUT = 40
+_VIEW_TOOL_TIMEOUT = 180
+_EXEC_TOOL_TIMEOUT = 300
 
 
 def _session(ctx: RunContextWrapper) -> Any:
     inner = ctx.context if isinstance(ctx.context, dict) else {}
     return inner.get("sandbox_session")
+
+
+def _safe_workspace_path(path: str) -> str | None:
+    """Resolve a caller path to an absolute /workspace path, or None if it would
+    escape the workspace root.
+
+    The path is passed to ``cat`` verbatim, so a ``..`` hop (e.g.
+    ``workspace/../../etc/passwd``) would read container files outside the
+    target. Normalise and require the result to stay under ``/workspace``.
+    """
+    rel = path.lstrip("/")
+    rel = rel[len("workspace/") :] if rel.startswith("workspace/") else rel
+    # PurePosixPath: sandbox paths are always posix regardless of host OS.
+    normalized = PurePosixPath("/workspace") / rel
+    resolved = PurePosixPath(os.path.normpath(str(normalized)))
+    if resolved != PurePosixPath("/workspace") and PurePosixPath(
+        "/workspace"
+    ) not in resolved.parents:
+        return None
+    return str(resolved)
 
 
 async def _gather_bounded(coros: list[Any]) -> list[Any]:
@@ -54,9 +85,10 @@ async def _view_files_impl(session: Any, paths: list[str]) -> dict[str, Any]:
                 "error": f"batch too large ({len(paths)} > {_MAX_ITEMS}); split it"}
 
     async def _read(path: str) -> dict[str, Any]:
-        rel = path.lstrip("/")
-        target = rel if rel.startswith("workspace/") else f"workspace/{rel}"
-        result = await session.exec("cat", f"/{target}", timeout=_DEFAULT_TIMEOUT)
+        safe = _safe_workspace_path(path)
+        if safe is None:
+            return {"path": path, "error": "path escapes /workspace (rejected)"}
+        result = await session.exec("cat", safe, timeout=_VIEW_ITEM_TIMEOUT)
         if getattr(result, "exit_code", 1) != 0:
             return {"path": path, "error": (getattr(result, "stderr", "") or
                                             "read failed").strip()[:200]}
@@ -73,7 +105,7 @@ async def _view_files_impl(session: Any, paths: list[str]) -> dict[str, Any]:
     return {"success": True, "results": results}
 
 
-@function_tool(timeout=180, strict_mode=False)
+@function_tool(timeout=_VIEW_TOOL_TIMEOUT, strict_mode=False)
 async def batch_view_files(
     ctx: RunContextWrapper,
     paths: list[str],
@@ -101,7 +133,7 @@ async def _exec_impl(session: Any, commands: list[str]) -> dict[str, Any]:
                 "error": f"batch too large ({len(commands)} > {_MAX_ITEMS}); split it"}
 
     async def _run(cmd: str) -> dict[str, Any]:
-        result = await session.exec("sh", "-c", cmd, timeout=_DEFAULT_TIMEOUT)
+        result = await session.exec("sh", "-c", cmd, timeout=_EXEC_ITEM_TIMEOUT)
         return {
             "command": cmd,
             "exit_code": getattr(result, "exit_code", None),
@@ -118,7 +150,7 @@ async def _exec_impl(session: Any, commands: list[str]) -> dict[str, Any]:
     return {"success": True, "results": results}
 
 
-@function_tool(timeout=300, strict_mode=False)
+@function_tool(timeout=_EXEC_TOOL_TIMEOUT, strict_mode=False)
 async def batch_terminal_execute(
     ctx: RunContextWrapper,
     commands: list[str],

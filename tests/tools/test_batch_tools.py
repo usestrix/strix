@@ -7,6 +7,7 @@ the reads/execs actually fan out concurrently (bounded).
 from __future__ import annotations
 
 import asyncio
+import math
 
 from strix.tools.batch import tools as bt
 
@@ -77,6 +78,43 @@ def test_view_files_cap_enforced():
 def test_view_files_no_session():
     res = _view(None, ["a"])
     assert res["success"] is False and "no sandbox session" in res["error"]
+
+
+def test_view_files_rejects_path_traversal():
+    # A '..' hop must not escape /workspace — the path is cat'd verbatim, so
+    # workspace/../../etc/passwd would read container files otherwise.
+    catted: list[str] = []
+
+    def handler(args):
+        catted.append(args[-1])
+        return _Result(stdout="x")
+
+    res = _view(_FakeSession(handler), ["../../etc/passwd", "workspace/../secret", "ok.py"])
+    # traversal entries are rejected with an error, never handed to cat
+    assert res["results"][0]["error"].startswith("path escapes")
+    assert res["results"][1]["error"].startswith("path escapes")
+    assert "content" in res["results"][2]  # the safe one still reads
+    assert all("/workspace/../" not in c and "/etc/passwd" not in c for c in catted)
+
+
+def test_view_files_normalizes_workspace_prefix():
+    # Both bare and workspace-prefixed forms resolve to the same /workspace path.
+    seen: list[str] = []
+
+    def handler(args):
+        seen.append(args[-1])
+        return _Result(stdout="x")
+
+    _view(_FakeSession(handler), ["src/a.py", "workspace/src/a.py", "/src/a.py"])
+    assert seen == ["/workspace/src/a.py"] * 3
+
+
+def test_batch_deadline_fits_tool_timeout():
+    # Worst-case wave count * per-item timeout must stay under the enclosing
+    # @function_tool deadline, or a valid batch is cancelled before returning.
+    waves = math.ceil(bt._MAX_ITEMS / bt._MAX_CONCURRENCY)
+    assert waves * bt._VIEW_ITEM_TIMEOUT < bt._VIEW_TOOL_TIMEOUT
+    assert waves * bt._EXEC_ITEM_TIMEOUT < bt._EXEC_TOOL_TIMEOUT
 
 
 def test_view_files_empty_is_ok():
