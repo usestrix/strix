@@ -20,12 +20,18 @@ def _strip_leading_heading(value: str, section: str) -> str:
     label above the value, so that heading renders twice. Strip a leading
     ``#``-heading whose text matches this section (case-insensitively) so the
     label isn't duplicated; leave all other content — including headings that
-    say something else — untouched.
+    say something else — untouched. Also matches the closing-``#`` ATX form
+    (``# Executive Summary #``). If stripping the heading would leave nothing
+    (the field was ONLY the heading, e.g. ``# Recommendations\n``), keep the
+    original rather than render the field's sole content as blank.
     """
     stripped = value.lstrip()
-    pattern = rf"^#{{1,6}}\s+{re.escape(section)}\s*\n+"
+    pattern = rf"^#{{1,6}}\s+{re.escape(section)}(?:\s+#+)?\s*\n+"
     m = re.match(pattern, stripped, flags=re.IGNORECASE)
-    return stripped[m.end() :] if m else value
+    if not m:
+        return value
+    remainder = stripped[m.end() :]
+    return remainder if remainder.strip() else value
 
 
 @register_tool_renderer

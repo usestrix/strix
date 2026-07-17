@@ -41,9 +41,21 @@ def test_keeps_body_when_no_heading() -> None:
     assert _strip_leading_heading("No heading here", "Methodology") == "No heading here"
 
 
-def test_keeps_lone_heading_with_no_body() -> None:
-    # No trailing newline => not a section split; don't strip to empty.
+def test_keeps_lone_heading_no_trailing_newline() -> None:
+    # No trailing newline => doesn't match the pattern; kept.
     assert _strip_leading_heading("# Recommendations", "Recommendations") == "# Recommendations"
+
+
+def test_keeps_lone_heading_with_trailing_newline() -> None:
+    # Trailing newline DOES match, but stripping leaves nothing — the field's
+    # only content would vanish. Keep the original (Greptile P1).
+    assert _strip_leading_heading("# Recommendations\n", "Recommendations") == "# Recommendations\n"
+    assert _strip_leading_heading("## Methodology\n\n", "Methodology") == "## Methodology\n\n"
+
+
+def test_strips_closing_atx_heading() -> None:
+    # Closed-ATX form `# Section #` must also dedupe (Greptile P2).
+    assert _strip_leading_heading("# Executive Summary #\n\nBody", "Executive Summary") == "Body"
 
 
 # --- end-to-end render ------------------------------------------------------
