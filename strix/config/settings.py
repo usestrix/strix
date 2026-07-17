@@ -218,6 +218,17 @@ class FindingVerificationSettings(BaseSettings):
         return self
 
 
+class DedupeSettings(BaseSettings):
+    model_config = _BASE_CONFIG
+
+    model: str | None = Field(default=None, alias="STRIX_DEDUPE_MODEL")
+    reasoning_effort: ReasoningEffort | None = Field(
+        default=None,
+        alias="STRIX_DEDUPE_REASONING_EFFORT",
+    )
+    api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY")
+
+
 class RuntimeSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -252,6 +263,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     verification: FindingVerificationSettings = Field(default_factory=FindingVerificationSettings)
+    dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)

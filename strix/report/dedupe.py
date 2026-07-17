@@ -7,16 +7,15 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from openai.types.responses import ResponseOutputMessage
 
 from strix.config import load_settings
 from strix.config.models import (
-    DEFAULT_MODEL_RETRY,
     StrixProvider,
     configure_sdk_model_defaults,
 )
+from strix.core.inputs import make_model_settings
 from strix.report.state import get_global_report_state
 
 
@@ -293,13 +292,14 @@ async def check_duplicate(
 
     try:
         settings = load_settings()
-        model_name = settings.llm.model
+        dedupe = settings.dedupe
+        model_name = (dedupe.model or "").strip() or settings.llm.model
         if not model_name:
             return {
                 "is_duplicate": False,
                 "duplicate_id": "",
                 "confidence": 0.0,
-                "reason": "STRIX_LLM not configured; skipping dedupe check",
+                "reason": "No LLM model configured; skipping dedupe check",
             }
 
         candidate_cleaned = _prepare_report_for_comparison(candidate)
@@ -314,11 +314,19 @@ async def check_duplicate(
 
         configure_sdk_model_defaults(settings)
         resolved_model = model_name.strip()
+        if dedupe.model and dedupe.api_key:
+            from strix.config.models import _mirror_api_key_to_provider_env
+
+            _mirror_api_key_to_provider_env(resolved_model, dedupe.api_key)
         model = StrixProvider().get_model(resolved_model)
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,
-            model_settings=ModelSettings(retry=DEFAULT_MODEL_RETRY, include_usage=True),
+            model_settings=make_model_settings(
+                dedupe.reasoning_effort,
+                model_name=resolved_model,
+                force_required_tool_choice=False,
+            ),
             tools=[],
             output_schema=None,
             handoffs=[],

@@ -359,6 +359,8 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         models_to_warm.extend(route.model for route in llm.skill_model_routes)
         if settings.verification.enabled and settings.verification.model:
             models_to_warm.append(settings.verification.model.strip())
+        if settings.dedupe.model:
+            models_to_warm.append(settings.dedupe.model.strip())
         for configured_model in dict.fromkeys(models_to_warm):
             raw_model = configured_model
             await _warm_up_model(configured_model, llm.timeout)
