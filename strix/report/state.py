@@ -534,16 +534,10 @@ def litellm_cost_callback(
                 cost = value
 
     if cost is None:
-        usage: Any = getattr(completion_response, "usage", None)
-        if usage is None and isinstance(completion_response, dict):
-            usage = cast("dict[str, Any]", completion_response).get("usage")
-        usage_cost: Any
-        if isinstance(usage, dict):
-            usage_cost = cast("dict[str, Any]", usage).get("cost")
-        else:
-            usage_cost = getattr(usage, "cost", None)
-        if isinstance(usage_cost, int | float) and usage_cost > 0:
-            cost = float(usage_cost)
+        cost = _usage_reported_cost(completion_response)
+
+    if cost is None:
+        cost = _estimate_response_cost(kwargs, completion_response)
 
     if cost is None or cost <= 0:
         return
@@ -554,3 +548,102 @@ def litellm_cost_callback(
         report_state.record_observed_llm_cost(cost)
     except Exception:
         logger.exception("Failed to record observed LiteLLM cost")
+
+
+def _usage_reported_cost(completion_response: Any) -> float | None:
+    """Provider-reported cost from the ``usage`` block (e.g. OpenRouter).
+
+    BYOK OpenRouter responses report ``usage.cost`` as the credits spent
+    (often 0) and put the provider charge in
+    ``usage.cost_details.upstream_inference_cost``; the true total is the sum.
+    """
+    usage: Any = getattr(completion_response, "usage", None)
+    if usage is None and isinstance(completion_response, dict):
+        usage = cast("dict[str, Any]", completion_response).get("usage")
+    if usage is None:
+        return None
+
+    def _field(name: str) -> Any:
+        if isinstance(usage, dict):
+            return cast("dict[str, Any]", usage).get(name)
+        return getattr(usage, name, None)
+
+    total = 0.0
+    usage_cost = _field("cost")
+    if isinstance(usage_cost, int | float) and usage_cost > 0:
+        total += float(usage_cost)
+
+    cost_details = _field("cost_details")
+    upstream = (
+        cost_details.get("upstream_inference_cost") if isinstance(cost_details, dict) else None
+    )
+    if isinstance(upstream, int | float) and upstream > 0:
+        total += float(upstream)
+
+    return total if total > 0 else None
+
+
+def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | None:
+    """Best-effort LiteLLM cost-map estimate when no provider-reported cost exists.
+
+    LiteLLM strips provider cost fields when rebuilding streamed responses and
+    returns no ``response_cost`` for models missing from its cost map, so try
+    the provider-prefixed name, the raw name, and the bare model name.
+    """
+    from litellm import completion_cost
+
+    model = kwargs.get("model") if isinstance(kwargs, dict) else None
+    if not isinstance(model, str) or not model:
+        if isinstance(completion_response, dict):
+            model = cast("dict[str, Any]", completion_response).get("model")
+        else:
+            model = getattr(completion_response, "model", None)
+    if not isinstance(model, str) or not model:
+        return None
+
+    provider = None
+    litellm_params = kwargs.get("litellm_params") if isinstance(kwargs, dict) else None
+    if isinstance(litellm_params, dict):
+        provider = litellm_params.get("custom_llm_provider")
+
+    usage_payload = _usage_payload(completion_response)
+    if usage_payload is None:
+        return None
+
+    candidates: list[str] = []
+    if isinstance(provider, str) and provider and not model.startswith(f"{provider}/"):
+        candidates.append(f"{provider}/{model}")
+    candidates.append(model)
+    if "/" in model:
+        candidates.append(model.rsplit("/", 1)[-1])
+
+    for candidate in candidates:
+        try:
+            value = completion_cost(
+                completion_response={"model": candidate, "usage": usage_payload},
+                model=candidate,
+            )
+        except Exception:  # nosec B112  # noqa: BLE001, S112
+            continue
+        if isinstance(value, int | float) and value > 0:
+            return float(value)
+    return None
+
+
+def _usage_payload(completion_response: Any) -> dict[str, Any] | None:
+    """Token counts as a plain dict, detached from the response's provider metadata."""
+    usage: Any = getattr(completion_response, "usage", None)
+    if usage is None and isinstance(completion_response, dict):
+        usage = cast("dict[str, Any]", completion_response).get("usage")
+    if usage is None:
+        return None
+    if hasattr(usage, "model_dump"):
+        usage = usage.model_dump()
+    if not isinstance(usage, dict):
+        return None
+    payload = cast("dict[str, Any]", usage)
+    if not payload.get("total_tokens") and not (
+        payload.get("prompt_tokens") or payload.get("completion_tokens")
+    ):
+        return None
+    return payload
