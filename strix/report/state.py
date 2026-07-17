@@ -553,9 +553,10 @@ def litellm_cost_callback(
 def _usage_reported_cost(completion_response: Any) -> float | None:
     """Provider-reported cost from the ``usage`` block (e.g. OpenRouter).
 
-    BYOK OpenRouter responses report ``usage.cost`` as the credits spent
-    (often 0) and put the provider charge in
-    ``usage.cost_details.upstream_inference_cost``; the true total is the sum.
+    Non-BYOK responses charge everything to ``usage.cost``. BYOK responses
+    charge only the OpenRouter fee to ``usage.cost`` (often 0) and report the
+    provider charge in ``usage.cost_details.upstream_inference_cost``, so the
+    true BYOK total is the sum of the two.
     """
     usage: Any = getattr(completion_response, "usage", None)
     if usage is None and isinstance(completion_response, dict):
@@ -563,22 +564,20 @@ def _usage_reported_cost(completion_response: Any) -> float | None:
     if usage is None:
         return None
 
-    def _field(name: str) -> Any:
-        if isinstance(usage, dict):
-            return cast("dict[str, Any]", usage).get(name)
-        return getattr(usage, name, None)
+    def _field(container: Any, name: str) -> Any:
+        if isinstance(container, dict):
+            return cast("dict[str, Any]", container).get(name)
+        return getattr(container, name, None)
 
     total = 0.0
-    usage_cost = _field("cost")
+    usage_cost = _field(usage, "cost")
     if isinstance(usage_cost, int | float) and usage_cost > 0:
         total += float(usage_cost)
 
-    cost_details = _field("cost_details")
-    upstream = (
-        cost_details.get("upstream_inference_cost") if isinstance(cost_details, dict) else None
-    )
-    if isinstance(upstream, int | float) and upstream > 0:
-        total += float(upstream)
+    if bool(_field(usage, "is_byok")):
+        upstream = _field(_field(usage, "cost_details"), "upstream_inference_cost")
+        if isinstance(upstream, int | float) and upstream > 0:
+            total += float(upstream)
 
     return total if total > 0 else None
 

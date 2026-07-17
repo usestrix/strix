@@ -50,7 +50,8 @@ def test_cost_callback_reads_byok_upstream_inference_cost() -> None:
     response = SimpleNamespace(
         usage=SimpleNamespace(
             cost=0,
-            cost_details={"upstream_inference_cost": 6.75e-06},
+            is_byok=True,
+            cost_details=SimpleNamespace(upstream_inference_cost=6.75e-06),
         ),
         _hidden_params={},
     )
@@ -63,12 +64,34 @@ def test_cost_callback_reads_byok_upstream_inference_cost() -> None:
 
 def test_cost_callback_sums_usage_cost_and_upstream_inference_cost() -> None:
     report_state = MagicMock()
-    response = {"usage": {"cost": 0.01, "cost_details": {"upstream_inference_cost": 0.2}}}
+    response = {
+        "usage": {
+            "cost": 0.01,
+            "is_byok": True,
+            "cost_details": {"upstream_inference_cost": 0.2},
+        }
+    }
 
     with patch("strix.report.state.get_global_report_state", return_value=report_state):
         litellm_cost_callback({}, response)
 
     report_state.record_observed_llm_cost.assert_called_once_with(pytest.approx(0.21))
+
+
+def test_cost_callback_ignores_upstream_cost_for_non_byok_responses() -> None:
+    report_state = MagicMock()
+    response = {
+        "usage": {
+            "cost": 0.05,
+            "is_byok": False,
+            "cost_details": {"upstream_inference_cost": 0.04},
+        }
+    }
+
+    with patch("strix.report.state.get_global_report_state", return_value=report_state):
+        litellm_cost_callback({}, response)
+
+    report_state.record_observed_llm_cost.assert_called_once_with(0.05)
 
 
 def test_cost_callback_estimates_cost_with_provider_prefixed_model() -> None:
