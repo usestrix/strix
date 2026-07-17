@@ -10,7 +10,6 @@ exposed-port URL for all subsequent SDK calls.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -80,72 +79,23 @@ async def _login_as_guest(
     raise RuntimeError(f"loginAsGuest failed after {attempts} attempts: {last_err}")
 
 
-async def _aclose_quietly(client: Client) -> None:
-    """Best-effort close of a client whose setup failed; never raises."""
-    with contextlib.suppress(Exception):
-        await client.aclose()
-
-
-async def _connect_client(
-    session: BaseSandboxSession,
-    *,
-    host_url: str,
-    container_url: str,
-) -> Client:
-    access_token = await _login_as_guest(session, container_url=container_url)
-    client = Client(host_url, auth=TokenAuthOptions(token=access_token))
-    await client.connect()
-    return client
-
-
 async def bootstrap_caido(
     session: BaseSandboxSession,
     *,
     host_url: str,
     container_url: str,
-) -> tuple[Client, str]:
-    """Connect to the in-container Caido sidecar and select a fresh project.
-
-    Returns the connected client and the id of the temporary project it
-    selected. The project id lets :func:`reconnect_caido` rebuild a dead
-    transport while staying on the *same* project (and its captured traffic)
-    instead of creating a new empty one.
-    """
+) -> Client:
+    """Connect to the in-container Caido sidecar and select a fresh project."""
     logger.info("Bootstrapping Caido client (host=%s, container=%s)", host_url, container_url)
 
-    client = await _connect_client(session, host_url=host_url, container_url=container_url)
-    try:
-        project = await client.project.create(
-            CreateProjectOptions(name="sandbox", temporary=True),
-        )
-        await client.project.select(project.id)
-    except BaseException:
-        # Don't leak the connected transport if project setup fails.
-        await _aclose_quietly(client)
-        raise
+    access_token = await _login_as_guest(session, container_url=container_url)
+
+    client = Client(host_url, auth=TokenAuthOptions(token=access_token))
+    await client.connect()
+
+    project = await client.project.create(
+        CreateProjectOptions(name="sandbox", temporary=True),
+    )
+    await client.project.select(project.id)
     logger.info("Caido project selected: %s", project.id)
-    return client, str(project.id)
-
-
-async def reconnect_caido(
-    session: BaseSandboxSession,
-    *,
-    host_url: str,
-    container_url: str,
-    project_id: str,
-) -> Client:
-    """Rebuild a Caido client after its transport died, keeping the project.
-
-    Re-authenticates, reconnects, and re-selects the existing project so the
-    caller keeps access to the traffic captured before the disconnect.
-    """
-    logger.info("Reconnecting Caido client (host=%s, project=%s)", host_url, project_id)
-    client = await _connect_client(session, host_url=host_url, container_url=container_url)
-    try:
-        await client.project.select(project_id)
-    except BaseException:
-        # A missing/unavailable project must not leave the freshly-connected
-        # transport dangling — otherwise every retry leaks another one.
-        await _aclose_quietly(client)
-        raise
     return client

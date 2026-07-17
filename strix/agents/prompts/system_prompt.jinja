@@ -434,6 +434,7 @@ SPECIALIZED TOOLS:
 PROXY & INTERCEPTION:
 - Caido CLI - Modern web proxy (already running). Use the proxy tools
   directly, or import `caido_api` from sandbox Python scripts.
+- HTTPQL filters (for `list_requests`): quote string values, leave integers unquoted (`resp.code.eq:200`, not `"200"`); combine terms with `AND`/`OR` (there is no `NOT` — use the negated operator `ne`/`ncont`/`nregex`). Numeric fields (`resp.code`, `req.port`) use `eq`/`ne`/`gt`/`gte`/`lt`/`lte`; text fields (`req.host`, `req.path`, `req.method`, `req.raw`) use `cont`/`ncont`/`eq`/`regex`. Example: `resp.code.gte:200 AND resp.code.lt:300 AND req.host.cont:"api"`.
 - NOTE: If you are seeing proxy errors when sending requests, it usually means you are not sending requests to a correct url/host/port.
 - Ignore Caido proxy-generated 50x HTML error pages; these are proxy issues (might happen when requesting a wrong host or SSL/TLS issues, etc).
 

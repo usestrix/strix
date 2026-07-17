@@ -282,10 +282,6 @@ async def run_strix_scan(
         context: dict[str, Any] = {
             "coordinator": coordinator,
             "sandbox_session": bundle["session"],
-            # One ``SharedCaidoClient`` is reused by every agent in the scan
-            # (child contexts are shallow copies via ``dict(parent_ctx)``). It
-            # serializes access to the non-concurrency-safe GraphQL transport
-            # and rebuilds it if it dies mid-scan.
             "caido_client": bundle["caido_client"],
             "agent_id": root_id,
             "parent_id": None,

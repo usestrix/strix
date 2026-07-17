@@ -5,20 +5,15 @@ from __future__ import annotations
 import logging
 import shutil
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
 from strix.runtime.backends import get_backend
-from strix.runtime.caido_bootstrap import bootstrap_caido, reconnect_caido
+from strix.runtime.caido_bootstrap import bootstrap_caido
 from strix.runtime.local_dir_staging import stage_symlink_safe_dir
-from strix.tools.proxy.caido_api import SharedCaidoClient
-
-
-if TYPE_CHECKING:
-    from caido_sdk_client import Client as CaidoClient
 
 
 logger = logging.getLogger(__name__)
@@ -136,24 +131,16 @@ async def create_or_reuse(
     host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
     logger.debug("Caido host endpoint resolved: %s", host_caido_url)
 
-    caido_client, caido_project_id = await bootstrap_caido(
+    caido_client = await bootstrap_caido(
         session,
         host_url=host_caido_url,
         container_url=container_caido_url,
     )
 
-    async def _reconnect_caido() -> CaidoClient:
-        return await reconnect_caido(
-            session,
-            host_url=host_caido_url,
-            container_url=container_caido_url,
-            project_id=caido_project_id,
-        )
-
     bundle = {
         "client": client,
         "session": session,
-        "caido_client": SharedCaidoClient(caido_client, _reconnect_caido),
+        "caido_client": caido_client,
     }
     _SESSION_CACHE[scan_id] = bundle
     logger.info("Sandbox session for scan %s ready and cached", scan_id)

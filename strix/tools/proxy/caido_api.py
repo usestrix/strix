@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
-import logging
 import os
 import time
 import urllib.request
@@ -28,9 +26,6 @@ if TYPE_CHECKING:
     from caido_sdk_client import Client as CaidoClient
 
 
-logger = logging.getLogger(__name__)
-
-
 RequestPart = Literal["request", "response"]
 SortBy = Literal[
     "timestamp",
@@ -50,18 +45,6 @@ _SITEMAP_PAGE_SIZE = 30
 _DEFAULT_CAIDO_URL = "http://127.0.0.1:48080"
 _CLIENT_CACHE: dict[str, Client] = {}
 _CLIENT_LOCK = asyncio.Lock()
-
-# Substrings that mean the shared client's transport has died or is being used
-# concurrently — recoverable by rebuilding the client and retrying once.
-_CONNECTION_ERROR_MARKERS = (
-    "transport is already connected",
-    "connector is closed",
-    "server disconnected",
-    "session is closed",
-    "cannot write to closing transport",
-    "connection reset",
-    "connection closed",
-)
 _REQ_FIELD_MAP: dict[SortBy, tuple[str, str]] = {
     "timestamp": ("req", "created_at"),
     "host": ("req", "host"),
@@ -108,22 +91,6 @@ async def _new_client() -> Client:
     return client
 
 
-async def _safe_aclose(client: Client | None) -> None:
-    """Close a (possibly dead) client without letting teardown errors escape."""
-    if client is None:
-        return
-    with contextlib.suppress(Exception):
-        await client.aclose()
-
-
-def _is_connection_error(exc: BaseException) -> bool:
-    message = str(exc).lower()
-    if any(marker in message for marker in _CONNECTION_ERROR_MARKERS):
-        return True
-    cause = exc.__cause__ or exc.__context__
-    return cause is not None and cause is not exc and _is_connection_error(cause)
-
-
 async def get_client() -> Client:
     """Return the shared Caido client, creating it under a lock if needed.
 
@@ -139,73 +106,19 @@ async def get_client() -> Client:
         return client
 
 
-async def call_with_client[T](
-    fn: Callable[[Client], Awaitable[T]], *, idempotent: bool = True
-) -> T:
-    """Run ``fn`` against the shared client, serialized and reconnect-safe.
+async def call_with_client[T](fn: Callable[[Client], Awaitable[T]]) -> T:
+    """Run ``fn`` against the shared client, serialized through ``_CLIENT_LOCK``.
 
     The Caido GraphQL transport is not safe for concurrent use: two in-flight
-    requests race and raise "Transport is already connected". All proxy calls
-    are therefore serialized through ``_CLIENT_LOCK``. If the cached client's
-    transport has since died ("Connector is closed" / "Server disconnected"),
-    the stale client is closed and rebuilt so subsequent calls stop failing
-    against a dead client.
-
-    ``fn`` is only re-run automatically when ``idempotent`` is true. For
-    mutations (replay, scope create/update/delete) a connection error may
-    arrive *after* Caido applied the change, so we heal the client for future
-    calls but re-raise instead of risking a double-apply.
+    requests race and raise "Transport is already connected". Serializing every
+    proxy call through the lock prevents that.
     """
     async with _CLIENT_LOCK:
         client = _CLIENT_CACHE.get("default")
         if client is None:
             client = await _new_client()
             _CLIENT_CACHE["default"] = client
-        try:
-            return await fn(client)
-        except Exception as exc:
-            if not _is_connection_error(exc):
-                raise
-            new_client = await _new_client()
-            _CLIENT_CACHE["default"] = new_client
-            await _safe_aclose(client)
-            if not idempotent:
-                raise
-            return await fn(new_client)
-
-
-class SharedCaidoClient:
-    """Serialized, reconnect-safe wrapper around one host-side Caido client.
-
-    Every agent in a scan shares a single instance (propagated through the
-    shallow-copied run context). ``call`` serializes access — the SDK transport
-    is not concurrency-safe — and, when the transport dies, rebuilds the client
-    via ``reconnect`` (which preserves the Caido project) and closes the dead
-    one, so a transient Caido restart no longer disables proxy tools for the
-    rest of the scan.
-    """
-
-    def __init__(self, client: Client, reconnect: Callable[[], Awaitable[Client]]) -> None:
-        self._client = client
-        self._reconnect = reconnect
-        self._lock = asyncio.Lock()
-
-    async def call[T](self, fn: Callable[[Client], Awaitable[T]], *, idempotent: bool = True) -> T:
-        async with self._lock:
-            try:
-                return await fn(self._client)
-            except Exception as exc:
-                if not _is_connection_error(exc):
-                    raise
-                dead, self._client = self._client, await self._reconnect()
-                await _safe_aclose(dead)
-                if not idempotent:
-                    raise
-                return await fn(self._client)
-
-    async def aclose(self) -> None:
-        async with self._lock:
-            await _safe_aclose(self._client)
+        return await fn(client)
 
 
 async def close_client() -> None:
@@ -546,9 +459,7 @@ async def repeat_request(
         )
         return await replay_send_raw(client, raw=raw, connection=connection)
 
-    # A replay mutates server state; don't auto-retry if the transport dies
-    # mid-send (the request may already have been sent).
-    return await call_with_client(_run, idempotent=False)
+    return await call_with_client(_run)
 
 
 async def scope_rules(
@@ -569,8 +480,7 @@ async def scope_rules(
             scope_name=scope_name,
         )
 
-    # get/list are read-only and safe to retry; create/update/delete mutate.
-    return await call_with_client(_run, idempotent=action in {"get", "list"})
+    return await call_with_client(_run)
 
 
 async def _scope_rules_with_client(
@@ -819,11 +729,9 @@ async def view_sitemap_entry(entry_id: str) -> dict[str, Any]:
 __all__ = [
     "RequestPart",
     "ScopeAction",
-    "SharedCaidoClient",
     "SitemapDepth",
     "SortBy",
     "SortOrder",
-    "call_with_client",
     "close_client",
     "get_client",
     "list_requests",
