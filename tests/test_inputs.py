@@ -73,6 +73,7 @@ def test_make_model_settings_enables_prompt_cache_for_claude(model_name: str) ->
     assert points == [
         {"location": "message", "role": "system"},
         {"location": "tool_config"},
+        {"location": "message", "index": -1},
     ]
 
 
@@ -122,7 +123,40 @@ def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: 
         assert _cache_points(model) == [
             {"location": "message", "role": "system"},
             {"location": "tool_config"},
+            {"location": "message", "index": -1},
         ]
+
+
+def test_conversation_tail_breakpoint_moves_with_appended_transcript() -> None:
+    """The tail breakpoint's premise, end-to-end: LiteLLM's own message-injection
+    logic must place the cache_control on the LAST message for both a short and a
+    long transcript — i.e. it tracks the growing (append-only) tail rather than a
+    fixed position — so the immutable prefix-so-far is cached and re-read next
+    turn.
+
+    Driven through the hook's static ``_apply_message_injections`` primitive
+    (stable across LiteLLM versions) rather than the prompt-manager entrypoint
+    (whose signature drifts).
+    """
+    hook_mod = pytest.importorskip("litellm.integrations.anthropic_cache_control_hook")
+    apply = hook_mod.AnthropicCacheControlHook._apply_message_injections
+    points = _cache_points("bedrock/global.anthropic.claude-opus-4-8")
+    msg_points = [p for p in points if p.get("location") == "message"]
+
+    def last_msg_cache_control(n_turns: int) -> Any:
+        messages: list[dict[str, Any]] = [{"role": "system", "content": "stable prompt"}]
+        for i in range(n_turns):
+            messages.append({"role": "assistant", "content": f"turn {i} action"})
+            messages.append({"role": "user", "content": f"turn {i} tool result"})
+        processed = apply(msg_points, messages, 4)
+        last = processed[-1]
+        content = last.get("content")
+        if isinstance(content, list):
+            return content[-1].get("cache_control")
+        return last.get("cache_control")
+
+    assert last_msg_cache_control(2) == {"type": "ephemeral"}
+    assert last_msg_cache_control(20) == {"type": "ephemeral"}
 
 
 def test_build_root_task_empty_config() -> None:

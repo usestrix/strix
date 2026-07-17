@@ -236,11 +236,12 @@ def _claude_prompt_cache_extra_args() -> dict[str, Any]:
     """Enable Anthropic/Bedrock prompt caching for Claude models via LiteLLM.
 
     A Strix scan is a long, multi-turn agentic loop that re-sends a large,
-    STABLE prefix every turn — the system prompt plus the tool schemas — while
-    only the conversation tail changes. Without a caching breakpoint the whole
-    prefix is re-tokenised and billed at the full input rate on every turn; on
-    Bedrock Claude that is the single biggest lever on scan cost (measured here:
-    ``cache-read 0% -> 57%`` on a real scan once these points are set).
+    STABLE prefix every turn — the system prompt plus the tool schemas — AND an
+    append-only conversation transcript that only grows. Without caching
+    breakpoints the whole request is re-tokenised and billed at the full input
+    rate on every turn; on Bedrock Claude that is the single biggest lever on
+    scan cost (measured here: ``cache-read 0% -> 57%`` on a real scan once these
+    points are set).
 
     LiteLLM already implements this end to end: when
     ``cache_control_injection_points`` is present in the call kwargs its
@@ -260,20 +261,36 @@ def _claude_prompt_cache_extra_args() -> dict[str, Any]:
     fires), and only Claude-family routes (Anthropic native, Bedrock, Vertex,
     OpenRouter -> Claude) honour the marker.
 
-    Two breakpoints on the stable prefix (2 of the 4 allowed), leaving headroom:
+    Three breakpoints (3 of the 4 allowed), leaving headroom:
       - the system prompt (``role: system``) — the largest repeated span
       - the tool schemas (``tool_config``) — sizeable and identical every turn
+      - the conversation tail (``index: -1``) — a ROLLING breakpoint on the last
+        message, so the accumulated transcript caches incrementally
 
-    Both points degrade gracefully on older LiteLLM: an unrecognised location is
-    simply not injected (no error), so a stale pin still gets whatever caching it
-    supports — the system-prompt point (the dominant win) has the widest support,
-    and the tool_config point is applied by LiteLLM's Bedrock Converse transform
-    on versions that recognise it (verified on litellm 1.90.1).
+    The tail breakpoint matters more than it looks. The first two only cache the
+    FIXED prefix; the transcript is append-only (prior turns are immutable, each
+    turn just appends the new assistant/tool messages), so on a long scan the
+    growing body is re-sent at full input price every turn and cache-read decays
+    as a denominator effect even though the prefix keeps hitting. A breakpoint at
+    ``index: -1`` re-caches the whole immutable prefix-so-far each turn and hits
+    on the next; the hook resolves the negative index against the live message
+    list. Measured on a 29-turn Bedrock scan, WITHOUT the tail point the cached
+    prefix stayed pinned at ~56k tokens while per-turn input grew to ~256k and
+    cache-read fell from 90% to 22%; adding it lifts modelled cache-read to ~96%
+    and cuts full-price input ~16x on that scan.
+
+    All three points degrade gracefully on older LiteLLM: an unrecognised
+    location is simply not injected (no error), so a stale pin still gets
+    whatever caching it supports — the system-prompt point (the widest support)
+    and the tool_config + message-index points applied by LiteLLM's Bedrock
+    Converse transform on versions that recognise them (verified on litellm
+    1.90.1).
     """
     return {
         "cache_control_injection_points": [
             {"location": "message", "role": "system"},
             {"location": "tool_config"},
+            {"location": "message", "index": -1},
         ],
     }
 
