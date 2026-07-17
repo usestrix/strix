@@ -22,17 +22,7 @@ if TYPE_CHECKING:
 
 
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
-    """Retry provider errors that arrive without an HTTP status code.
-
-    Quota, billing, and other provider-side failures frequently surface *inside*
-    a streamed response as a bare error with no ``status_code`` (the transport
-    already returned ``200`` before the failure). The built-in ``http_status``
-    policy skips these because it requires a known code, so they would otherwise
-    fail on the first attempt. Retrying a statusless error (the runner still
-    refuses to replay a stream once content has been emitted, and never retries a
-    user abort) mirrors the pre-SDK engine, which retried any error lacking a
-    definitive client status code.
-    """
+    """Retry statusless provider errors (e.g. mid-stream quota/billing), but not aborts."""
     normalized = context.normalized
     if normalized.is_abort:
         return False
