@@ -9,12 +9,28 @@ from typing import TYPE_CHECKING, Any
 from agents.lifecycle import RunHooks
 
 from strix.report.state import get_global_report_state
+from strix.report.tool_cost import (
+    get_global_tool_tracker,
+    get_tool_name_from_tool,
+)
 
 
 if TYPE_CHECKING:
     from agents import RunContextWrapper
     from agents.agent import Agent
     from agents.items import ModelResponse
+    from agents.tool import (
+        ApplyPatchTool,
+        ComputerTool,
+        CustomTool,
+        FileSearchTool,
+        FunctionTool,
+        HostedMCPTool,
+        ImageGenerationTool,
+        ShellTool,
+        ToolSearchTool,
+        WebSearchTool,
+    )
 
 
 logger = logging.getLogger(__name__)
@@ -25,7 +41,7 @@ class BudgetExceededError(RuntimeError):
 
 
 class ReportUsageHooks(RunHooks[dict[str, Any]]):
-    """Persist SDK-native usage after every model response."""
+    """Persist SDK-native usage after every model response and track tool costs."""
 
     def __init__(self, *, model: str, max_budget_usd: float | None = None) -> None:
         if max_budget_usd is not None and (
@@ -69,3 +85,43 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
                 raise BudgetExceededError(
                     f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"
                 )
+
+    async def on_tool_end(
+        self,
+        context: RunContextWrapper[dict[str, Any]],
+        agent: Agent[dict[str, Any]],
+        tool: (
+            FunctionTool
+            | ShellTool
+            | ApplyPatchTool
+            | WebSearchTool
+            | FileSearchTool
+            | ImageGenerationTool
+            | ComputerTool
+            | HostedMCPTool
+            | CustomTool
+            | ToolSearchTool
+        ),
+        result: str,
+    ) -> None:
+        """Track tool usage and log estimated cost after each tool execution."""
+        ctx = context.context if isinstance(context.context, dict) else {}
+        agent_id = ctx.get("agent_id")
+        agent_name = getattr(agent, "name", None)
+        
+        # Get tool name
+        tool_name = get_tool_name_from_tool(tool)
+        
+        # Record tool usage with cost estimation
+        tracker = get_global_tool_tracker()
+        if tracker is not None:
+            tracker.record_tool_usage(
+                tool_name=tool_name,
+                agent_id=agent_id,
+                agent_name=agent_name,
+            )
+            logger.debug(
+                "Tool %s executed by agent %s (estimated cost logged)",
+                tool_name,
+                agent_name or agent_id,
+            )
