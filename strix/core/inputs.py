@@ -12,6 +12,7 @@ from strix.config.models import (
     DEFAULT_MODEL_RETRY,
     is_known_openai_bare_model,
     model_supports_reasoning,
+    request_timeout_extra_args,
 )
 from strix.core.sessions import scrub_images_from_items
 
@@ -126,11 +127,13 @@ def make_model_settings(
     *,
     model_name: str,
     force_required_tool_choice: bool = False,
+    request_timeout: float | None = None,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
+        extra_args=request_timeout_extra_args(request_timeout),
     )
     if (
         reasoning_effort is not None

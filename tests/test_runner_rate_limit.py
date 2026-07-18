@@ -37,6 +37,7 @@ async def test_persistent_rate_limit_stops_gracefully(
             model="openai/gpt-4o",
             reasoning_effort="high",
             force_required_tool_choice=False,
+            timeout=300,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
     )

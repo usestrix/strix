@@ -155,3 +155,31 @@ def test_make_model_settings_forces_required_for_anyllm_routed_openai_model() ->
     )
 
     assert settings.tool_choice == "required"
+
+
+def test_make_model_settings_sets_request_timeout() -> None:
+    settings = make_model_settings(
+        "none",
+        model_name="gpt-4o",
+        request_timeout=300.0,
+    )
+
+    assert settings.extra_args == {"timeout": 300.0}
+
+
+def test_make_model_settings_omits_timeout_when_unset() -> None:
+    settings = make_model_settings("none", model_name="gpt-4o")
+
+    assert settings.extra_args is None
+
+
+def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
+    # Reasoning is resolved via ModelSettings.resolve(); the timeout in extra_args
+    # must not be dropped when a reasoning override is merged in.
+    settings = make_model_settings(
+        "high",
+        model_name="openai/o3",
+        request_timeout=120.0,
+    )
+
+    assert settings.extra_args == {"timeout": 120.0}

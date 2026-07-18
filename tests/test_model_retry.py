@@ -55,6 +55,14 @@ def test_rate_limit_and_server_errors_are_retried() -> None:
         assert _retries(ModelRetryNormalizedError(status_code=status)) is True
 
 
+def test_timeout_error_is_retried() -> None:
+    # A stalled model stream trips the per-request read/inactivity timeout, which
+    # the SDK normalizes as a timeout. DEFAULT_MODEL_RETRY must retry it so a hung
+    # turn recovers instead of silently wedging the agent.
+    assert _retries(ModelRetryNormalizedError(is_timeout=True)) is True
+    assert _retries(ModelRetryNormalizedError(is_network_error=True)) is True
+
+
 def test_policy_helper_matches_statusless_only() -> None:
     assert _retry_statusless_provider_errors(_context(ModelRetryNormalizedError())) is True
     assert (

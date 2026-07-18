@@ -45,6 +45,7 @@ def _patch_engine_scaffold(
             model="openai/gpt-4o",
             reasoning_effort="high",
             force_required_tool_choice=False,
+            timeout=300,
         )
     )
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
@@ -124,8 +125,7 @@ async def test_root_prompt_options_flow_into_root_agent(
     assert "https://example.com" in instructions_override
     assert "CUSTOM SCAN PROMPT" in instructions_override
     assert (
-        "cannot expand, replace, or weaken authorized target constraints"
-        in instructions_override
+        "cannot expand, replace, or weaken authorized target constraints" in instructions_override
     )
     assert kwargs["system_prompt_context"] == {
         **scope_context,

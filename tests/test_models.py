@@ -4,12 +4,26 @@ from __future__ import annotations
 
 import pytest
 
-from strix.config.models import RECOMMENDED_MODEL_NAMES, is_recommended_or_frontier_model
+from strix.config.models import (
+    RECOMMENDED_MODEL_NAMES,
+    is_recommended_or_frontier_model,
+    request_timeout_extra_args,
+)
 
 
 @pytest.mark.parametrize("model_name", RECOMMENDED_MODEL_NAMES)
 def test_recommended_models_are_accepted(model_name: str) -> None:
     assert is_recommended_or_frontier_model(model_name)
+
+
+def test_request_timeout_extra_args_positive() -> None:
+    assert request_timeout_extra_args(300) == {"timeout": 300.0}
+    assert request_timeout_extra_args(120.5) == {"timeout": 120.5}
+
+
+@pytest.mark.parametrize("value", [None, 0, -1])
+def test_request_timeout_extra_args_disabled(value: float | None) -> None:
+    assert request_timeout_extra_args(value) is None
 
 
 def test_recommended_models_are_matched_case_insensitively() -> None:

@@ -16,6 +16,7 @@ from strix.config.models import (
     DEFAULT_MODEL_RETRY,
     StrixProvider,
     configure_sdk_model_defaults,
+    request_timeout_extra_args,
 )
 from strix.report.state import get_global_report_state
 
@@ -310,7 +311,11 @@ async def check_duplicate(
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,
-            model_settings=ModelSettings(retry=DEFAULT_MODEL_RETRY, include_usage=True),
+            model_settings=ModelSettings(
+                retry=DEFAULT_MODEL_RETRY,
+                include_usage=True,
+                extra_args=request_timeout_extra_args(settings.llm.timeout),
+            ),
             tools=[],
             output_schema=None,
             handoffs=[],

@@ -21,6 +21,19 @@ if TYPE_CHECKING:
     from strix.config.settings import Settings
 
 
+def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
+    """Per-request model timeout (connect + read/inactivity) as ``extra_args``.
+
+    Restores pre-v1 behavior: a stalled model stream trips this timeout and is
+    retried by ``DEFAULT_MODEL_RETRY`` instead of hanging the agent indefinitely.
+    The value is forwarded to the underlying ``responses.create`` /
+    ``chat.completions.create`` / ``litellm.acompletion`` call.
+    """
+    if not timeout_s or timeout_s <= 0:
+        return None
+    return {"timeout": float(timeout_s)}
+
+
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
     """Retry statusless provider errors (e.g. mid-stream quota/billing), but not aborts."""
     normalized = context.normalized
