@@ -17,8 +17,18 @@ def test_recommended_models_are_accepted(model_name: str) -> None:
 
 
 def test_request_timeout_extra_args_positive() -> None:
-    assert request_timeout_extra_args(300) == {"timeout": 300.0}
-    assert request_timeout_extra_args(120.5) == {"timeout": 120.5}
+    args = request_timeout_extra_args(300)
+    assert args is not None
+    timeout = args["timeout"]
+    # read (inactivity) carries the configured value; connect is capped so a dead
+    # endpoint fails fast rather than waiting the full read window.
+    assert timeout.read == 300.0
+    assert timeout.connect == 30.0
+
+    short = request_timeout_extra_args(10)
+    assert short is not None
+    assert short["timeout"].read == 10.0
+    assert short["timeout"].connect == 10.0
 
 
 @pytest.mark.parametrize("value", [None, 0, -1])

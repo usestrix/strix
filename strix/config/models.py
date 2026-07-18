@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
+import httpx
 from agents import set_default_openai_api, set_default_openai_key, set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
 from agents.retry import (
@@ -21,17 +22,19 @@ if TYPE_CHECKING:
     from strix.config.settings import Settings
 
 
-def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
-    """Per-request model timeout (connect + read/inactivity) as ``extra_args``.
+def request_timeout_extra_args(timeout_s: float | None) -> dict[str, httpx.Timeout] | None:
+    """Per-request model timeout as ``extra_args``, forwarded to the provider call.
 
-    Restores pre-v1 behavior: a stalled model stream trips this timeout and is
-    retried by ``DEFAULT_MODEL_RETRY`` instead of hanging the agent indefinitely.
-    The value is forwarded to the underlying ``responses.create`` /
-    ``chat.completions.create`` / ``litellm.acompletion`` call.
+    Uses ``read`` for inactivity (matching pre-v1's per-chunk ``wait_for``): a stalled
+    stream trips ``read`` and is retried by ``DEFAULT_MODEL_RETRY``, while a healthy
+    long stream that keeps emitting tokens never trips it. An explicit ``httpx.Timeout``
+    (rather than a scalar) keeps this a read-inactivity timeout instead of a
+    total-duration deadline on every httpx-based backend (``responses.create`` /
+    ``chat.completions.create`` / ``litellm.acompletion``).
     """
     if not timeout_s or timeout_s <= 0:
         return None
-    return {"timeout": float(timeout_s)}
+    return {"timeout": httpx.Timeout(timeout_s, connect=min(timeout_s, 30.0))}
 
 
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
