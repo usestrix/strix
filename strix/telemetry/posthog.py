@@ -27,10 +27,18 @@ def _is_enabled() -> bool:
     return load_settings().telemetry.enabled
 
 
-def _send(event: str, properties: dict[str, Any]) -> None:
+def _send(event: str, properties: dict[str, Any]) -> bool:
+    """Enqueue a telemetry event for best-effort background delivery.
+
+    Returns whether the event was accepted for delivery (telemetry enabled and
+    queued), not whether the network send succeeded — delivery runs off-thread.
+    That is enough for callers that only need to avoid enqueuing a terminal
+    event (e.g. ``scan_ended``) more than once.
+    """
     if not _is_enabled():
         logger.debug("posthog disabled; skipping event %s", event)
-        return
+        return False
+
     def _deliver() -> None:
         # Serialization stays inside the guard: a non-JSON-safe property must
         # be swallowed here, never raised back through the public telemetry
@@ -55,6 +63,7 @@ def _send(event: str, properties: dict[str, Any]) -> None:
             logger.debug("posthog event sent: %s", event)
 
     dispatch(_deliver)
+    return True
 
 
 def start(
@@ -78,17 +87,34 @@ def start(
     )
 
 
-def finding(severity: str) -> None:
+def finding(severity: str, cwe: str | None = None, is_cve: bool = False) -> None:
     _send(
         "finding_reported",
         {
             **base_props(),
             "severity": severity.lower(),
+            "cwe": (cwe or "").strip().lower() or "unknown",
+            "is_cve": is_cve,
+        },
+    )
+
+
+def skill_loaded(skill_name: str) -> None:
+    _send(
+        "skill_loaded",
+        {
+            **base_props(),
+            "skill": skill_name,
         },
     )
 
 
 def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
+    if report_state.posthog_scan_ended_sent:
+        return
+    if report_state.scan_ended_exit_reason is None:
+        report_state.scan_ended_exit_reason = exit_reason
+
     vulnerabilities_counts = {"critical": 0, "high": 0, "medium": 0, "low": 0, "info": 0}
     for v in report_state.vulnerability_reports:
         sev = v.get("severity", "info").lower()
@@ -117,11 +143,11 @@ def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
     except (TypeError, ValueError, AttributeError):
         pass
 
-    _send(
+    report_state.posthog_scan_ended_sent = _send(
         "scan_ended",
         {
             **base_props(),
-            "exit_reason": exit_reason,
+            "exit_reason": report_state.scan_ended_exit_reason,
             "duration_seconds": round(duration),
             "vulnerabilities_total": len(report_state.vulnerability_reports),
             **{f"vulnerabilities_{k}": v for k, v in vulnerabilities_counts.items()},

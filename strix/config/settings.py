@@ -36,6 +36,10 @@ class LlmSettings(BaseSettings):
         ),
     )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
+    force_required_tool_choice: bool = Field(
+        default=False,
+        alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
+    )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 
 
@@ -52,6 +56,8 @@ class RuntimeSettings(BaseSettings):
     # on large repos). Above this, the user must bind-mount via ``--mount``.
     # Set to 0 (or less) to disable the pre-flight check entirely.
     max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
+    # Max screenshot/image tool outputs kept live per agent context (0 = none).
+    max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 
 
 class TelemetrySettings(BaseSettings):

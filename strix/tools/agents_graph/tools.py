@@ -229,7 +229,8 @@ async def wait_for_message(  # noqa: PLR0911
     Use when you have nothing useful to do until a child/peer responds
     — typically after spawning subagents and you want to wait for
     their completion reports. The agent automatically resumes when any
-    message arrives.
+    message arrives, so pick a ``timeout_seconds`` proportional to the
+    work you're awaiting.
 
     **Critical caveats:**
 
@@ -246,9 +247,19 @@ async def wait_for_message(  # noqa: PLR0911
         reason: One-line note shown in graph snapshots while you're
             waiting (helps a human or sibling agent debug who's stuck
             on what).
-        timeout_seconds: Hard cap (default 600s). On timeout the tool
-            returns and you decide whether to keep working or wait
-            again.
+        timeout_seconds: Max seconds to wait (default 600). This is only
+            a cap — the tool returns the INSTANT a message arrives, so a
+            larger value never makes you wait longer when the reply does
+            come. Right-size it to what you're waiting on: a short wait
+            (e.g. 10-60s) for a quick ack or a small/fast subtask, and a
+            longer one (e.g. ~100-200s) only for genuinely long-running
+            work (deep recon, exploitation, a full sub-scan). The cap only
+            bites when the expected message never arrives — so an oversized
+            timeout on a trivial wait just strands you idle until it
+            elapses. On timeout the tool returns and you decide whether to
+            keep working or wait again. (Applies to autonomous multi-agent
+            runs; in interactive/chat sessions the agent instead parks until
+            a message arrives and this cap is not enforced.)
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
@@ -481,9 +492,10 @@ async def agent_finish(
     3. Stops this subagent's execution.
 
     **Vulnerability findings must already be filed via
-    ``create_vulnerability_report`` before calling this.** The
-    ``findings`` field here is for narrative summary only — it does
-    not register vulns in the scan report.
+    ``create_vulnerability_report`` (or ``create_dependency_report``
+    for known-CVE dependency/supply-chain findings) before calling
+    this.** The ``findings`` field here is for narrative summary only
+    — it does not register vulns in the scan report.
 
     Write the summary as if the parent has no idea what you were
     doing: what did you test, what did you find/confirm/rule out,
@@ -494,8 +506,9 @@ async def agent_finish(
             and specific (URLs, parameters, payloads that worked).
         findings: Optional bullet list of confirmed observations. For
             credit-bearing vulnerabilities, file
-            ``create_vulnerability_report`` first; this is for
-            narrative.
+            ``create_vulnerability_report`` first (or
+            ``create_dependency_report`` for dependency CVEs); this is
+            for narrative.
         success: Whether the assigned subtask was completed
             successfully. Default ``True``.
         report_to_parent: Whether to deliver the completion report to

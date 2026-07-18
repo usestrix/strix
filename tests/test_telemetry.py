@@ -69,18 +69,17 @@ def test_finding_returns_without_waiting_for_network(
 def test_disabled_telemetry_sends_nothing(
     monkeypatch: pytest.MonkeyPatch, module: Any
 ) -> None:
-    calls: list[str] = []
-
-    def _urlopen(req: Any, timeout: float | None = None) -> _FakeResponse:  # noqa: ARG001
-        calls.append(req.full_url)
-        return _FakeResponse()
-
+    # When disabled, _send must short-circuit before enqueuing any delivery.
+    # Assert on dispatch directly, not on a process-wide urlopen patch: the
+    # background worker is shared, so an unrelated test's in-flight delivery
+    # could otherwise hit the patched urlopen and make this flaky.
+    dispatched: list[Any] = []
+    monkeypatch.setattr(module, "dispatch", dispatched.append)
     monkeypatch.setattr(module, "_is_enabled", lambda: False)
-    monkeypatch.setattr(module.urllib.request, "urlopen", _urlopen)
 
     module.finding("high")
-    _common.flush(timeout=1.0)
-    assert not calls
+
+    assert not dispatched
 
 
 @pytest.mark.parametrize("module", [scarf, posthog])

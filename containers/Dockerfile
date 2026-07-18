@@ -24,6 +24,7 @@ RUN apt-get update && \
     python3 python3-pip python3-dev python3-venv python3-setuptools \
     golang-go \
     net-tools dnsutils whois \
+    file xxd \
     jq parallel ripgrep grep \
     less man-db procps htop \
     iproute2 iputils-ping netcat-traditional \
@@ -192,6 +193,8 @@ RUN mkdir -p /workspace && chown -R pentester:pentester /workspace /app
 USER pentester
 RUN python3 -m venv /app/.venv && \
     /app/.venv/bin/pip install --no-cache-dir caido-sdk-client && \
+    /app/.venv/bin/pip install --no-cache-dir \
+        requests httpx beautifulsoup4 lxml pyjwt cryptography && \
     /app/.venv/bin/pip install --no-cache-dir -r /home/pentester/tools/jwt_tool/requirements.txt && \
     printf '%s\n' \
         '#!/bin/bash' \

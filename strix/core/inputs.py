@@ -8,7 +8,13 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
+from strix.config.models import (
+    DEFAULT_MODEL_RETRY,
+    is_known_openai_bare_model,
+    model_supports_reasoning,
+    request_timeout_extra_args,
+)
+from strix.core.sessions import scrub_images_from_items
 
 
 if TYPE_CHECKING:
@@ -16,6 +22,15 @@ if TYPE_CHECKING:
 
 
 DEFAULT_MAX_TURNS = 500
+
+
+def _accepts_required_tool_choice(model_name: str | None) -> bool:
+    name = (model_name or "").strip().lower()
+    for prefix in ("litellm/", "any-llm/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    return name.startswith("openai/") or is_known_openai_bare_model(name)
 
 
 def build_root_task(scan_config: dict[str, Any]) -> str:
@@ -111,11 +126,14 @@ def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,
     model_name: str,
+    force_required_tool_choice: bool = False,
+    request_timeout: float | None = None,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
+        extra_args=request_timeout_extra_args(request_timeout),
     )
     if (
         reasoning_effort is not None
@@ -125,6 +143,8 @@ def make_model_settings(
         model_settings = model_settings.resolve(
             ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
         )
+    if force_required_tool_choice and _accepts_required_tool_choice(model_name):
+        model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
     return model_settings
 
 
@@ -145,7 +165,11 @@ def child_initial_input(
     """
     parts: list[str] = []
     if parent_history:
-        rendered = json.dumps(parent_history, ensure_ascii=False, default=str)
+        rendered = json.dumps(
+            scrub_images_from_items(parent_history),
+            ensure_ascii=False,
+            default=str,
+        )
         parts.append(
             "== Inherited context from parent (background only) ==\n"
             f"{rendered}\n"

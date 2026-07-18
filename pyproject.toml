@@ -1,6 +1,6 @@
 [project]
 name = "strix-agent"
-version = "1.0.4"
+version = "1.1.0"
 description = "Open-source AI Hackers for your apps"
 readme = "README.md"
 license = "Apache-2.0"
@@ -34,6 +34,8 @@ classifiers = [
 ]
 dependencies = [
   "openai-agents[litellm]==0.14.6",
+  "openai>=2.26.0,<2.45",
+  "litellm",
   "pydantic>=2.11.3",
   "pydantic-settings>=2.13.0",
   "rich",
@@ -43,6 +45,10 @@ dependencies = [
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
 ]
+
+[project.optional-dependencies]
+vertex = ["google-auth>=2.0.0"]
+bedrock = ["boto3>=1.28.0"]
 
 [project.scripts]
 strix = "strix.interface.main:main"

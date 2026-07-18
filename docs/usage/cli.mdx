@@ -6,13 +6,17 @@ description: "Command-line options for Strix"
 ## Basic Usage
 
 ```bash
-strix --target <target> [options]
+strix (--target <target> | --target-list <path> | --mount <path>) [options]
 ```
 
 ## Options
 
-<ParamField path="--target, -t" type="string" required>
-  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times.
+<ParamField path="--target, -t" type="string">
+  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times. Fresh runs require at least one target source: `--target`, `--target-list`, or `--mount`.
+</ParamField>
+
+<ParamField path="--target-list" type="string">
+  Path to a file containing targets, one per non-empty, non-comment line. Lines starting with `#` are ignored. Can be specified multiple times and combined with `--target`.
 </ParamField>
 
 <ParamField path="--mount" type="string">
@@ -100,6 +104,9 @@ strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 # Multi-target white-box testing
 strix -t https://github.com/org/app -t https://staging.example.com
+
+# Targets from a file
+strix --target-list ./targets.txt
 
 # Large local repository — bind-mount instead of copying it in
 strix --mount ./huge-monorepo

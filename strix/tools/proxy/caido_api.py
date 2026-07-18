@@ -21,6 +21,8 @@ from caido_sdk_client.types import (
 
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from caido_sdk_client import Client as CaidoClient
 
 
@@ -42,6 +44,7 @@ _SITEMAP_PAGE_SIZE = 30
 
 _DEFAULT_CAIDO_URL = "http://127.0.0.1:48080"
 _CLIENT_CACHE: dict[str, Client] = {}
+_CLIENT_LOCK = asyncio.Lock()
 _REQ_FIELD_MAP: dict[SortBy, tuple[str, str]] = {
     "timestamp": ("req", "created_at"),
     "host": ("req", "host"),
@@ -81,19 +84,46 @@ def _login_as_guest() -> str:
     return str(payload["data"]["loginAsGuest"]["token"]["accessToken"])
 
 
-async def get_client() -> Client:
-    if client := _CLIENT_CACHE.get("default"):
-        return client
-
+async def _new_client() -> Client:
     token = await asyncio.to_thread(_login_as_guest)
     client = Client(caido_url(), auth=TokenAuthOptions(token=token))
     await client.connect()
-    _CLIENT_CACHE["default"] = client
     return client
 
 
+async def get_client() -> Client:
+    """Return the shared Caido client, creating it under a lock if needed.
+
+    The lock prevents two concurrent callers from each building a client and
+    racing ``connect()`` on the same transport ("Transport is already
+    connected").
+    """
+    async with _CLIENT_LOCK:
+        client = _CLIENT_CACHE.get("default")
+        if client is None:
+            client = await _new_client()
+            _CLIENT_CACHE["default"] = client
+        return client
+
+
+async def call_with_client[T](fn: Callable[[Client], Awaitable[T]]) -> T:
+    """Run ``fn`` against the shared client, serialized through ``_CLIENT_LOCK``.
+
+    The Caido GraphQL transport is not safe for concurrent use: two in-flight
+    requests race and raise "Transport is already connected". Serializing every
+    proxy call through the lock prevents that.
+    """
+    async with _CLIENT_LOCK:
+        client = _CLIENT_CACHE.get("default")
+        if client is None:
+            client = await _new_client()
+            _CLIENT_CACHE["default"] = client
+        return await fn(client)
+
+
 async def close_client() -> None:
-    client = _CLIENT_CACHE.pop("default", None)
+    async with _CLIENT_LOCK:
+        client = _CLIENT_CACHE.pop("default", None)
     if client is None:
         return
     await client.aclose()
@@ -385,19 +415,23 @@ async def list_requests(
     sort_order: SortOrder = "desc",
     scope_id: str | None = None,
 ) -> Any:
-    return await list_requests_with_client(
-        await get_client(),
-        httpql_filter=httpql_filter,
-        first=first,
-        after=after,
-        sort_by=sort_by,
-        sort_order=sort_order,
-        scope_id=scope_id,
+    return await call_with_client(
+        lambda client: list_requests_with_client(
+            client,
+            httpql_filter=httpql_filter,
+            first=first,
+            after=after,
+            sort_by=sort_by,
+            sort_order=sort_order,
+            scope_id=scope_id,
+        )
     )
 
 
 async def view_request(request_id: str, *, part: RequestPart = "request") -> Any:
-    return await get_request_with_client(await get_client(), request_id, part=part)
+    return await call_with_client(
+        lambda client: get_request_with_client(client, request_id, part=part)
+    )
 
 
 async def repeat_request(
@@ -406,22 +440,26 @@ async def repeat_request(
     modifications: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     mods = modifications or {}
-    result = await get_request_with_client(await get_client(), request_id, part="request")
-    if result is None or result.request.raw is None:
-        raise ValueError(f"Request {request_id} not found")
 
-    original = result.request
-    raw_str = result.request.raw.decode("utf-8", errors="replace")
-    components = parse_raw_request(raw_str)
-    full_url = full_url_from_components(original, components, mods)
-    modified = apply_modifications(components, mods, full_url)
-    connection, raw = build_raw_request(
-        method=modified["method"],
-        url=modified["url"],
-        headers=modified["headers"],
-        body=modified["body"],
-    )
-    return await replay_send_raw(await get_client(), raw=raw, connection=connection)
+    async def _run(client: CaidoClient) -> dict[str, Any]:
+        result = await get_request_with_client(client, request_id, part="request")
+        if result is None or result.request.raw is None:
+            raise ValueError(f"Request {request_id} not found")
+
+        original = result.request
+        raw_str = result.request.raw.decode("utf-8", errors="replace")
+        components = parse_raw_request(raw_str)
+        full_url = full_url_from_components(original, components, mods)
+        modified = apply_modifications(components, mods, full_url)
+        connection, raw = build_raw_request(
+            method=modified["method"],
+            url=modified["url"],
+            headers=modified["headers"],
+            body=modified["body"],
+        )
+        return await replay_send_raw(client, raw=raw, connection=connection)
+
+    return await call_with_client(_run)
 
 
 async def scope_rules(
@@ -432,7 +470,28 @@ async def scope_rules(
     scope_id: str | None = None,
     scope_name: str | None = None,
 ) -> Any:
-    client = await get_client()
+    async def _run(client: CaidoClient) -> Any:
+        return await _scope_rules_with_client(
+            client,
+            action,
+            allowlist=allowlist,
+            denylist=denylist,
+            scope_id=scope_id,
+            scope_name=scope_name,
+        )
+
+    return await call_with_client(_run)
+
+
+async def _scope_rules_with_client(
+    client: CaidoClient,
+    action: ScopeAction,
+    *,
+    allowlist: list[str] | None = None,
+    denylist: list[str] | None = None,
+    scope_id: str | None = None,
+    scope_name: str | None = None,
+) -> Any:
     if action == "list":
         result = await scope_list(client)
     elif action == "get":
@@ -651,18 +710,20 @@ async def list_sitemap(
     page: int = 1,
     page_size: int = _SITEMAP_PAGE_SIZE,
 ) -> dict[str, Any]:
-    return await list_sitemap_with_client(
-        await get_client(),
-        scope_id=scope_id,
-        parent_id=parent_id,
-        depth=depth,
-        page=page,
-        page_size=page_size,
+    return await call_with_client(
+        lambda client: list_sitemap_with_client(
+            client,
+            scope_id=scope_id,
+            parent_id=parent_id,
+            depth=depth,
+            page=page,
+            page_size=page_size,
+        )
     )
 
 
 async def view_sitemap_entry(entry_id: str) -> dict[str, Any]:
-    return await view_sitemap_entry_with_client(await get_client(), entry_id)
+    return await call_with_client(lambda client: view_sitemap_entry_with_client(client, entry_id))
 
 
 __all__ = [

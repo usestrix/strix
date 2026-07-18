@@ -135,6 +135,10 @@ class ReportState:
         self._sarif_repo_ctx: dict[str, Any] | None = None
         self._sarif_repo_ctx_ready: bool = False
 
+        self.posthog_scan_ended_sent: bool = False
+        self.scarf_scan_ended_sent: bool = False
+        self.scan_ended_exit_reason: str | None = None
+
     def get_run_dir(self) -> Path:
         if self._run_dir is None:
             run_dir_name = self.run_name if self.run_name else self.run_id
@@ -212,6 +216,9 @@ class ReportState:
         poc_description: str | None = None,
         poc_script_code: str | None = None,
         remediation_steps: str | None = None,
+        evidence: str | None = None,
+        assumptions: str | None = None,
+        fix_effort: str | None = None,
         cvss: float | None = None,
         cvss_breakdown: dict[str, str] | None = None,
         endpoint: str | None = None,
@@ -219,6 +226,9 @@ class ReportState:
         cve: str | None = None,
         cwe: str | None = None,
         code_locations: list[dict[str, Any]] | None = None,
+        fix_pr_body: str | None = None,
+        finding_class: str | None = None,
+        dependency_metadata: dict[str, str] | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
     ) -> str:
@@ -245,6 +255,12 @@ class ReportState:
             report["poc_script_code"] = poc_script_code.strip()
         if remediation_steps:
             report["remediation_steps"] = remediation_steps.strip()
+        if evidence:
+            report["evidence"] = evidence.strip()
+        if assumptions:
+            report["assumptions"] = assumptions.strip()
+        if fix_effort:
+            report["fix_effort"] = fix_effort.strip().lower()
         if cvss is not None:
             report["cvss"] = cvss
         if cvss_breakdown:
@@ -259,6 +275,11 @@ class ReportState:
             report["cwe"] = cwe.strip()
         if code_locations:
             report["code_locations"] = code_locations
+        if fix_pr_body:
+            report["fix_pr_body"] = fix_pr_body.strip()
+        report["finding_class"] = (finding_class or "dynamic").strip().lower()
+        if dependency_metadata:
+            report["dependency_metadata"] = dependency_metadata
         if agent_id:
             report["agent_id"] = agent_id
         if agent_name:
@@ -266,8 +287,8 @@ class ReportState:
 
         self.vulnerability_reports.append(report)
         logger.info(f"Added vulnerability report: {report_id} - {title}")
-        posthog.finding(severity)
-        scarf.finding(severity)
+        posthog.finding(severity, cwe=cwe, is_cve=bool(cve))
+        scarf.finding(severity, cwe=cwe, is_cve=bool(cve))
 
         if self.vulnerability_found_callback:
             self.vulnerability_found_callback(report)
@@ -438,30 +459,37 @@ class ReportState:
         targets = self.run_record.get("targets_info") or []
         if not isinstance(targets, list):
             return None
-        for target in targets:
-            if not isinstance(target, dict) or target.get("type") != "repository":
-                continue
-            details = target.get("details") or {}
-            if not isinstance(details, dict):
-                continue
-            uri = details.get("target_repo")
-            if not isinstance(uri, str) or not uri.strip():
-                continue
+        repo_targets = [
+            target
+            for target in targets
+            if isinstance(target, dict) and target.get("type") == "repository"
+        ]
+        # Provenance binds the whole run to one repo; with multiple repo targets
+        # that's ambiguous, so omit it rather than mis-attributing later repos'
+        # findings to the first repo's URI/commit.
+        if len(repo_targets) != 1:
+            return None
+        target = repo_targets[0]
+        details = target.get("details") or {}
+        if not isinstance(details, dict):
+            return None
+        uri = details.get("target_repo")
+        if not isinstance(uri, str) or not uri.strip():
+            return None
 
-            context: dict[str, Any] = {"repositoryUri": uri.strip()}
-            full_name = _parse_repo_full_name(uri)
-            if full_name:
-                context["repositoryFullName"] = full_name
-            cloned = details.get("cloned_repo_path")
-            if isinstance(cloned, str) and cloned.strip():
-                commit, branch = _git_head(cloned.strip())
-                if commit:
-                    context["commitSha"] = commit
-                if branch:
-                    context["branch"] = branch
-                    context["ref"] = f"refs/heads/{branch}"
-            return context
-        return None
+        context: dict[str, Any] = {"repositoryUri": uri.strip()}
+        full_name = _parse_repo_full_name(uri)
+        if full_name:
+            context["repositoryFullName"] = full_name
+        cloned = details.get("cloned_repo_path")
+        if isinstance(cloned, str) and cloned.strip():
+            commit, branch = _git_head(cloned.strip())
+            if commit:
+                context["commitSha"] = commit
+            if branch:
+                context["branch"] = branch
+                context["ref"] = f"refs/heads/{branch}"
+        return context
 
     def _sync_llm_usage_record(self) -> None:
         self.run_record["llm_usage"] = self._build_llm_usage_record()
@@ -506,16 +534,10 @@ def litellm_cost_callback(
                 cost = value
 
     if cost is None:
-        usage: Any = getattr(completion_response, "usage", None)
-        if usage is None and isinstance(completion_response, dict):
-            usage = cast("dict[str, Any]", completion_response).get("usage")
-        usage_cost: Any
-        if isinstance(usage, dict):
-            usage_cost = cast("dict[str, Any]", usage).get("cost")
-        else:
-            usage_cost = getattr(usage, "cost", None)
-        if isinstance(usage_cost, int | float) and usage_cost > 0:
-            cost = float(usage_cost)
+        cost = _usage_reported_cost(completion_response)
+
+    if cost is None:
+        cost = _estimate_response_cost(kwargs, completion_response)
 
     if cost is None or cost <= 0:
         return
@@ -526,3 +548,101 @@ def litellm_cost_callback(
         report_state.record_observed_llm_cost(cost)
     except Exception:
         logger.exception("Failed to record observed LiteLLM cost")
+
+
+def _usage_reported_cost(completion_response: Any) -> float | None:
+    """Provider-reported cost from the ``usage`` block (e.g. OpenRouter).
+
+    Non-BYOK responses charge everything to ``usage.cost``. BYOK responses
+    charge only the OpenRouter fee to ``usage.cost`` (often 0) and report the
+    provider charge in ``usage.cost_details.upstream_inference_cost``, so the
+    true BYOK total is the sum of the two.
+    """
+    usage: Any = getattr(completion_response, "usage", None)
+    if usage is None and isinstance(completion_response, dict):
+        usage = cast("dict[str, Any]", completion_response).get("usage")
+    if usage is None:
+        return None
+
+    def _field(container: Any, name: str) -> Any:
+        if isinstance(container, dict):
+            return cast("dict[str, Any]", container).get(name)
+        return getattr(container, name, None)
+
+    total = 0.0
+    usage_cost = _field(usage, "cost")
+    if isinstance(usage_cost, int | float) and usage_cost > 0:
+        total += float(usage_cost)
+
+    if bool(_field(usage, "is_byok")):
+        upstream = _field(_field(usage, "cost_details"), "upstream_inference_cost")
+        if isinstance(upstream, int | float) and upstream > 0:
+            total += float(upstream)
+
+    return total if total > 0 else None
+
+
+def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | None:
+    """Best-effort LiteLLM cost-map estimate when no provider-reported cost exists.
+
+    LiteLLM strips provider cost fields when rebuilding streamed responses and
+    returns no ``response_cost`` for models missing from its cost map, so try
+    the provider-prefixed name, the raw name, and the bare model name.
+    """
+    from litellm import completion_cost
+
+    model = kwargs.get("model") if isinstance(kwargs, dict) else None
+    if not isinstance(model, str) or not model:
+        if isinstance(completion_response, dict):
+            model = cast("dict[str, Any]", completion_response).get("model")
+        else:
+            model = getattr(completion_response, "model", None)
+    if not isinstance(model, str) or not model:
+        return None
+
+    provider = None
+    litellm_params = kwargs.get("litellm_params") if isinstance(kwargs, dict) else None
+    if isinstance(litellm_params, dict):
+        provider = litellm_params.get("custom_llm_provider")
+
+    usage_payload = _usage_payload(completion_response)
+    if usage_payload is None:
+        return None
+
+    candidates: list[str] = []
+    if isinstance(provider, str) and provider and not model.startswith(f"{provider}/"):
+        candidates.append(f"{provider}/{model}")
+    candidates.append(model)
+    if "/" in model:
+        candidates.append(model.rsplit("/", 1)[-1])
+
+    for candidate in candidates:
+        try:
+            value = completion_cost(
+                completion_response={"model": candidate, "usage": usage_payload},
+                model=candidate,
+            )
+        except Exception:  # nosec B112  # noqa: BLE001, S112
+            continue
+        if isinstance(value, int | float) and value > 0:
+            return float(value)
+    return None
+
+
+def _usage_payload(completion_response: Any) -> dict[str, Any] | None:
+    """Token counts as a plain dict, detached from the response's provider metadata."""
+    usage: Any = getattr(completion_response, "usage", None)
+    if usage is None and isinstance(completion_response, dict):
+        usage = cast("dict[str, Any]", completion_response).get("usage")
+    if usage is None:
+        return None
+    if hasattr(usage, "model_dump"):
+        usage = usage.model_dump()
+    if not isinstance(usage, dict):
+        return None
+    payload = cast("dict[str, Any]", usage)
+    if not payload.get("total_tokens") and not (
+        payload.get("prompt_tokens") or payload.get("completion_tokens")
+    ):
+        return None
+    return payload

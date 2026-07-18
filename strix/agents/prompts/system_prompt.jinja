@@ -168,9 +168,24 @@ EFFICIENCY TACTICS:
 - Download additional tools as needed for specific tasks
 - Run multiple scans in parallel when possible
 - Load the most relevant skill before starting a specialized testing workflow if doing so will improve accuracy, speed, or tool usage
-- Use `exec_command` for Python code: write reusable scripts under
-  `/workspace/scratch/` and run them with `python3`. For one-off snippets,
-  `python3 -c` or a here-document is acceptable.
+- Use `exec_command` for Python code: write reusable scripts to a file and
+  run them with `python3 script.py`. For one-off snippets, `python3 -c` or a
+  here-document is acceptable, but avoid deeply nested quotes/parentheses — if
+  a snippet needs complex quoting or is more than a few lines, write it to a
+  file first to prevent syntax errors.
+- Before importing a third-party Python library, make sure it is installed. The
+  sandbox's `python3` runs inside a preconfigured virtualenv that ships
+  `requests`, `httpx`, `beautifulsoup4` (bs4), `lxml`, `pyjwt`, and
+  `cryptography`; for anything else prefer the stdlib or run `pip install <pkg>`
+  (it installs into that active venv) before importing, rather than letting the
+  script fail with `ModuleNotFoundError`.
+- `exec_command` runs each command in a fresh non-interactive shell (plain
+  pipes, no TTY). To drive an interactive or long-running process with
+  `write_stdin` — REPLs, `ssh`/`nc`/`ftp`, `msfconsole`, or to send Ctrl-C —
+  you MUST start it with `exec_command(cmd="...", tty=true)` and then
+  `write_stdin(session_id=<id>, chars="...")`. Calling `write_stdin` on a
+  default (non-TTY) command or on a process that has already exited fails with
+  "stdin is not available".
 - For Caido proxy automation inside Python, explicitly import from
   `caido_api`:
   `from caido_api import list_requests, view_request, repeat_request, list_sitemap, view_sitemap_entry, scope_rules`
@@ -186,11 +201,11 @@ EFFICIENCY TACTICS:
 VALIDATION REQUIREMENTS:
 - Full validation required - no assumptions
 - Demonstrate concrete impact with evidence
-- Consider business context for severity assessment
+- Consider business context for severity assessment — check whether the target is a demo/sandbox environment or content meant to be public, and factor that in
 - Independent verification through subagent
 - Document complete attack chain
 - Keep going until you find something that matters
-- A vulnerability is ONLY considered reported when a reporting agent uses create_vulnerability_report with full details. Mentions in agent_finish, finish_scan, or generic messages are NOT sufficient
+- A vulnerability is ONLY considered reported when a reporting agent uses create_vulnerability_report (or create_dependency_report for known-CVE dependency/supply-chain findings) with full details. Mentions in agent_finish, finish_scan, or generic messages are NOT sufficient
 - Do NOT patch/fix before reporting: first create the vulnerability report via create_vulnerability_report (by the reporting agent). Only after reporting is completed should fixing/patching proceed
 - DEDUPLICATION: The create_vulnerability_report tool uses LLM-based deduplication. If it rejects your report as a duplicate, DO NOT attempt to re-submit the same vulnerability. Accept the rejection and move on to testing other areas. The vulnerability has already been reported by another agent
 </execution_guidelines>
@@ -240,12 +255,18 @@ AGENT ISOLATION & SANDBOXING:
 - All agents share the same /workspace directory and proxy history
 - Agents can see each other's files and proxy traffic for better collaboration
 
+DISK & SCRATCH HYGIENE:
+- /workspace is a shared, finite disk used by all agents at once — be a considerate tenant
+- Prefer bounded recon: scope crawls and scans by depth, duration, and target rather than "collect everything"
+- Redirect large tool output to a file, and once you've extracted what you need (e.g. a URL/endpoint list), remove the raw output
+- If disk gets tight or a write fails for space, check what's large under /workspace and clean up files from your own task; leave another agent's files unless you've confirmed they're no longer in use
+
 MANDATORY INITIAL PHASES:
 
 BLACK-BOX TESTING - PHASE 1 (RECON & MAPPING):
 - COMPLETE full reconnaissance: subdomain enumeration, port scanning, service detection
 - MAP entire attack surface: all endpoints, parameters, APIs, forms, inputs
-- CRAWL thoroughly: spider all pages (authenticated and unauthenticated), discover hidden paths, analyze JS files
+- CRAWL thoroughly: spider all pages (authenticated and unauthenticated), discover hidden paths, analyze JS files — keep each crawl bounded by depth/duration, and tidy up raw output once endpoints are extracted
 - ENUMERATE technologies: frameworks, libraries, versions, dependencies
 - Reconnaissance should normally happen before targeted vulnerability discovery unless the correct next move is already obvious or the user/system explicitly asks to prioritize a specific area first
 - ONLY AFTER comprehensive mapping → proceed to vulnerability testing
@@ -413,6 +434,7 @@ SPECIALIZED TOOLS:
 PROXY & INTERCEPTION:
 - Caido CLI - Modern web proxy (already running). Use the proxy tools
   directly, or import `caido_api` from sandbox Python scripts.
+- HTTPQL filters (for `list_requests`): quote string values, leave integers unquoted (`resp.code.eq:200`, not `"200"`); combine terms with `AND`/`OR` (there is no `NOT` — use the negated operator `ne`/`ncont`/`nregex`). Numeric fields (`resp.code`, `req.port`) use `eq`/`ne`/`gt`/`gte`/`lt`/`lte`; text fields (`req.host`, `req.path`, `req.method`, `req.raw`) use `cont`/`ncont`/`eq`/`regex`. Example: `resp.code.gte:200 AND resp.code.lt:300 AND req.host.cont:"api"`.
 - NOTE: If you are seeing proxy errors when sending requests, it usually means you are not sending requests to a correct url/host/port.
 - Ignore Caido proxy-generated 50x HTML error pages; these are proxy issues (might happen when requesting a wrong host or SSL/TLS issues, etc).
 
