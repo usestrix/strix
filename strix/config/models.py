@@ -5,7 +5,6 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING
 
-import httpx
 from agents import set_default_openai_api, set_default_openai_key, set_tracing_disabled
 from agents.models.multi_provider import MultiProvider
 from agents.retry import (
@@ -22,19 +21,23 @@ if TYPE_CHECKING:
     from strix.config.settings import Settings
 
 
-def request_timeout_extra_args(timeout_s: float | None) -> dict[str, httpx.Timeout] | None:
+def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
     """Per-request model timeout as ``extra_args``, forwarded to the provider call.
 
-    Uses ``read`` for inactivity (matching pre-v1's per-chunk ``wait_for``): a stalled
-    stream trips ``read`` and is retried by ``DEFAULT_MODEL_RETRY``, while a healthy
-    long stream that keeps emitting tokens never trips it. An explicit ``httpx.Timeout``
-    (rather than a scalar) keeps this a read-inactivity timeout instead of a
-    total-duration deadline on every httpx-based backend (``responses.create`` /
-    ``chat.completions.create`` / ``litellm.acompletion``).
+    A stalled stream trips the timeout and is retried by ``DEFAULT_MODEL_RETRY``,
+    restoring pre-v1's per-turn inactivity guard.
+
+    The value MUST be a plain ``float``, not an ``httpx.Timeout``. The Chat
+    Completions and LiteLLM model paths build their tracing generation span from
+    ``ModelSettings.to_json_dict()``, which pydantic-serializes ``extra_args`` in
+    JSON mode; an ``httpx.Timeout`` is not JSON-serializable and raises
+    ``PydanticSerializationError`` there, failing every turn on those paths. A
+    scalar serializes cleanly and, on httpx-based clients, is applied as the read
+    (inactivity) timeout — not a total-duration deadline.
     """
     if not timeout_s or timeout_s <= 0:
         return None
-    return {"timeout": httpx.Timeout(timeout_s, connect=min(timeout_s, 30.0))}
+    return {"timeout": timeout_s}
 
 
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:

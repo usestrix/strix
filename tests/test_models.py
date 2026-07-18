@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from agents.model_settings import ModelSettings
 
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
@@ -17,18 +18,15 @@ def test_recommended_models_are_accepted(model_name: str) -> None:
 
 
 def test_request_timeout_extra_args_positive() -> None:
-    args = request_timeout_extra_args(300)
-    assert args is not None
-    timeout = args["timeout"]
-    # read (inactivity) carries the configured value; connect is capped so a dead
-    # endpoint fails fast rather than waiting the full read window.
-    assert timeout.read == 300.0
-    assert timeout.connect == 30.0
+    assert request_timeout_extra_args(300) == {"timeout": 300}
+    assert request_timeout_extra_args(10) == {"timeout": 10}
 
-    short = request_timeout_extra_args(10)
-    assert short is not None
-    assert short["timeout"].read == 10.0
-    assert short["timeout"].connect == 10.0
+
+def test_request_timeout_extra_args_survives_model_settings_json_dump() -> None:
+    """The Chat Completions and LiteLLM paths pydantic-serialize ModelSettings for
+    their tracing span; a non-JSON-serializable timeout fails every turn there."""
+    settings = ModelSettings(extra_args=request_timeout_extra_args(300))
+    assert settings.to_json_dict()["extra_args"] == {"timeout": 300}
 
 
 @pytest.mark.parametrize("value", [None, 0, -1])
