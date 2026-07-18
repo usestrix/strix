@@ -165,7 +165,7 @@ def test_make_model_settings_sets_request_timeout() -> None:
     )
 
     assert settings.extra_args is not None
-    assert settings.extra_args["timeout"].read == 300.0
+    assert settings.extra_args["timeout"] == 300.0
 
 
 def test_make_model_settings_omits_timeout_when_unset() -> None:
@@ -184,4 +184,4 @@ def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
     )
 
     assert settings.extra_args is not None
-    assert settings.extra_args["timeout"].read == 120.0
+    assert settings.extra_args["timeout"] == 120.0

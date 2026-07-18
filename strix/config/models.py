@@ -22,19 +22,7 @@ if TYPE_CHECKING:
 
 
 def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
-    """Per-request model timeout as ``extra_args``, forwarded to the provider call.
-
-    A stalled stream trips the timeout and is retried by ``DEFAULT_MODEL_RETRY``,
-    restoring pre-v1's per-turn inactivity guard.
-
-    The value MUST be a plain ``float``, not an ``httpx.Timeout``. The Chat
-    Completions and LiteLLM model paths build their tracing generation span from
-    ``ModelSettings.to_json_dict()``, which pydantic-serializes ``extra_args`` in
-    JSON mode; an ``httpx.Timeout`` is not JSON-serializable and raises
-    ``PydanticSerializationError`` there, failing every turn on those paths. A
-    scalar serializes cleanly and, on httpx-based clients, is applied as the read
-    (inactivity) timeout — not a total-duration deadline.
-    """
+    """Per-request model timeout; a plain float so ``ModelSettings.to_json_dict()`` stays serializable."""  # noqa: E501
     if not timeout_s or timeout_s <= 0:
         return None
     return {"timeout": timeout_s}
