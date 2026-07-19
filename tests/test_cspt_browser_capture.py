@@ -237,3 +237,50 @@ def test_negative_safe_construction_stays_on_constant_path(browser, server) -> N
     assert server.capture.traversed == [], server.capture
     assert server.capture.intended, "expected the benign /api/search request to fire"
     assert all(p.startswith("/api/search") for p in server.capture.intended), server.capture
+
+
+# --------------------------------------------------------------------------- #
+# Browser URL-normalization ground truth (WHATWG). These pin the exact claim
+# the review corrected: the browser collapses raw ``..`` dot-segments delimited
+# by literal ``/``, but does NOT decode ``%2f`` into a separator, so an
+# un-decoded ``..%2f..%2f`` stays a single literal segment and does not traverse.
+# --------------------------------------------------------------------------- #
+
+
+def _fetch_from_page(browser, server, url_to_fetch: str) -> list[str]:  # type: ignore[no-untyped-def]
+    """Load a served origin, issue a raw ``fetch`` of ``url_to_fetch`` from the
+    page (no application decoding in between), and return the path(s) the server
+    observed off the wire."""
+    context = browser.new_context()
+    page = context.new_page()
+    page.goto(f"{server.base_url}/positive_direct.html#noop", wait_until="networkidle")
+    server.capture.intended.clear()
+    server.capture.traversed.clear()
+    page.evaluate("(u) => fetch(u).catch(() => {})", url_to_fetch)
+    page.wait_for_timeout(200)
+    context.close()
+    return server.capture.traversed + server.capture.intended
+
+
+def test_browser_collapses_raw_dotdot_with_literal_slashes(browser, server) -> None:  # type: ignore[no-untyped-def]
+    # Raw ../ delimited by literal / IS collapsed by the URL parser.
+    observed = _fetch_from_page(browser, server, "/api/orders/../../admin/keys")
+    assert observed == ["/admin/keys"], observed
+    assert not observed[0].startswith("/api/"), observed
+
+
+def test_browser_does_not_decode_percent_2f_as_separator(browser, server) -> None:  # type: ignore[no-untyped-def]
+    # ..%2f..%2f is a single literal segment: NOT decoded to ../../, so the path
+    # does NOT escape the /api/ prefix. This is the exact misconception the
+    # review flagged.
+    observed = _fetch_from_page(browser, server, "/api/orders/..%2f..%2fadmin%2fkeys")
+    assert len(observed) == 1, observed
+    assert observed[0].startswith("/api/orders/"), observed
+    # It did not collapse to /admin/keys.
+    assert observed[0] != "/admin/keys", observed
+
+
+def test_browser_collapses_encoded_dot_segments_with_literal_slashes(browser, server) -> None:  # type: ignore[no-untyped-def]
+    # %2e%2e are recognized as dot-segments when delimited by literal / .
+    observed = _fetch_from_page(browser, server, "/api/orders/%2e%2e/%2e%2e/admin/keys")
+    assert observed == ["/admin/keys"], observed

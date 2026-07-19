@@ -159,7 +159,7 @@ _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 # ``client_side_path_traversal`` (CSPT) is called out explicitly so the
 # finding is machine-separable from server-side path traversal / LFI / RFI,
 # which share CWE-22 but are a distinct vulnerability class (see the
-# ``client-side-path-traversal`` skill). ``dependency_cve`` is reserved for
+# ``client_side_path_traversal`` skill). ``dependency_cve`` is reserved for
 # ``create_dependency_report`` and is not selectable here.
 _VALID_FINDING_CLASS = frozenset({"dynamic", "client_side_path_traversal"})
 
