@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunConfig
 from agents.sandbox import SandboxRunConfig
+from agents.exceptions import MaxTurnsExceeded
 from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
@@ -30,7 +31,6 @@ from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks
-from agents.exceptions import MaxTurnsExceeded
 from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
     build_root_task,
