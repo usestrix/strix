@@ -164,7 +164,7 @@ _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 _VALID_FINDING_CLASS = frozenset({"dynamic", "client_side_path_traversal"})
 
 
-async def _do_create(  # noqa: PLR0912
+async def _do_create(  # noqa: PLR0912, PLR0915
     *,
     title: str,
     description: str,
@@ -217,6 +217,22 @@ async def _do_create(  # noqa: PLR0912
             f"Invalid finding_class: {finding_class!r}. Must be one of: "
             f"{sorted(_VALID_FINDING_CLASS)}"
         )
+
+    # CSPT findings are typically locationless (the bug lives in a JS bundle,
+    # not a server route), so they anchor to SECURITY.md in SARIF. Without a
+    # discriminator, multiple distinct CSPT findings collapse onto the same
+    # synthetic fingerprint. Require the traversed endpoint/method or a
+    # physical code location so each one stays a separate alert.
+    if finding_class == "client_side_path_traversal":
+        has_endpoint = bool(str(endpoint or "").strip())
+        has_location = bool(_normalize_code_locations(code_locations))
+        if not (has_endpoint or has_location):
+            errors.append(
+                "finding_class 'client_side_path_traversal' requires a discriminator: "
+                "set endpoint (the traversed target path, e.g. '/admin/keys') and method, "
+                "or a code_location for the vulnerable client sink. Locationless CSPT "
+                "findings otherwise collapse onto one SARIF fingerprint."
+            )
 
     if not isinstance(cvss_breakdown, dict) or not cvss_breakdown:
         errors.append("cvss_breakdown: must be an object with the 8 CVSS metrics")
@@ -271,6 +287,7 @@ async def _do_create(  # noqa: PLR0912
             "poc_script_code": poc_script_code,
             "endpoint": endpoint,
             "method": method,
+            "finding_class": finding_class,
         }
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
@@ -575,7 +592,7 @@ async def create_vulnerability_report(
             traversal / LFI / RFI but is a distinct class; setting this
             keeps it separated in the report artifacts and SARIF. Do NOT
             use it for server-side traversal / LFI / RFI (leave those
-            ``dynamic``). See the ``client-side-path-traversal`` skill.
+            ``dynamic``). See the ``client_side_path_traversal`` skill.
 
     Example (abbreviated — mirror this structure)::
 

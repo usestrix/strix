@@ -63,6 +63,12 @@ dev = [
   "pyinstaller>=6.17.0; python_version >= '3.12' and python_version < '3.15'",
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
+  # Drives a real headless Chromium for the CSPT browser/outbound-request
+  # assertions in tests/test_cspt_browser_capture.py. CI must also run
+  # `playwright install chromium` once; the tests importorskip when the
+  # runtime or browser build is unavailable so a browserless environment
+  # still runs the rest of the suite.
+  "playwright>=1.40",
 ]
 
 [tool.pytest.ini_options]
@@ -245,6 +251,10 @@ ignore = [
 "strix/interface/tui/app.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915", "SIM105"]
 "strix/interface/main.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
 "strix/interface/tui/renderers/agent_message_renderer.py" = ["PLC0415"]
+# Browser integration harness: broad except around Playwright/Chromium startup
+# is an intentional skip-guard so a browserless CI environment degrades to a
+# clean skip rather than an error.
+"tests/test_cspt_browser_capture.py" = ["BLE001"]
 
 [tool.ruff.lint.isort]
 force-single-line = false

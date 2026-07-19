@@ -1,11 +1,17 @@
 <!doctype html>
 <!--
   CSPT POSITIVE — normalization bypass
-  Source: route segment parsed from location.pathname
+  Source: route segment parsed from the URL fragment (hash router)
   Sink:   fetch()
   A naive single-pass filter strips one "../" occurrence, but the self-
   collapsing sequence "....//" folds back to "../" after that strip, so the
   traversal survives and the browser normalizes the outbound path.
+
+  Served statically: the segment comes from location.hash (a hash router), so
+  the page loads at its own URL under `python -m http.server` and the crafted
+  route travels in the fragment — e.g.
+      positive_normalized.html#/view/....//....//admin/settings
+  No server-side route (/view/...) is required.
 -->
 <html lang="en">
 <head><meta charset="utf-8" /><title>Profile</title></head>
@@ -13,8 +19,8 @@
 <h1>Profile</h1>
 <pre id="out">loading…</pre>
 <script>
-  // SOURCE: route segment, e.g. /view/....//....//admin/settings
-  const segment = location.pathname.replace(/^\/view\//, "");
+  // SOURCE: hash-router route segment, e.g. #/view/....//....//admin/settings
+  const segment = location.hash.replace(/^#\/view\//, "");
 
   // Ineffective sanitizer: a single non-recursive strip. "....//" -> "../".
   const cleaned = segment.replace(/\.\.\//g, "");

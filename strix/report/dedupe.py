@@ -45,6 +45,9 @@ CRITICAL DEDUPLICATION RULES:
    - Different root causes (e.g., stored XSS vs reflected XSS in same field)
    - Different severity levels due to different impact
    - One is authenticated, other is unauthenticated
+   - Different finding_class even under the same CWE (e.g., client_side_path_traversal
+     vs a server-side/dynamic path-traversal finding both mapped to CWE-22): these are
+     distinct classes fixed by different code, so they are NOT duplicates
 
 3. ARE DUPLICATES even if:
    - Titles are worded differently
@@ -67,6 +70,8 @@ COMPARISON GUIDELINES:
 FIELDS TO ANALYZE:
 - title, description: General vulnerability info
 - target, endpoint, method: Exact location of vulnerability
+- finding_class: Machine-readable vulnerability class; a different finding_class means a
+  different class of bug even under a shared CWE — not a duplicate
 - technical_analysis: Root cause details
 - poc_description: How it's exploited
 - impact: What damage it can cause
@@ -109,6 +114,7 @@ def _prepare_report_for_comparison(report: dict[str, Any]) -> dict[str, Any]:
         "endpoint",
         "method",
         "cve",
+        "finding_class",
         "dependency_metadata",
     ]
 

@@ -3,7 +3,7 @@
 Covers the three in-repo pillars of issue #776 that can run in CI without a live
 browser/proxy:
 
-1. The ``client-side-path-traversal`` skill exists, loads, and documents the
+1. The ``client_side_path_traversal`` skill exists, loads, and documents the
    source/sink taxonomy plus the "Not CSPT" boundary the agent relies on.
 2. The HTML fixtures encode a real source->sink flow (positives) or a validation
    guard / safe construction (negatives), asserted structurally so they can't
@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+from strix.report.dedupe import _prepare_report_for_comparison
 from strix.report.sarif import write_sarif
 from strix.report.state import ReportState, set_global_report_state
 from strix.skills import get_all_skill_names, get_available_skills, load_skills
@@ -196,9 +197,10 @@ def test_do_create_accepts_cspt_finding_class() -> None:
     state = ReportState(run_name="cspt-test")
     set_global_report_state(state)
     try:
-        result = asyncio.run(
-            _do_create(finding_class="client_side_path_traversal", **_create_kwargs())
-        )
+        # CSPT requires a discriminator (endpoint or code location); supply the
+        # traversed endpoint.
+        kwargs = _create_kwargs(endpoint="/admin/keys", method="GET")
+        result = asyncio.run(_do_create(finding_class="client_side_path_traversal", **kwargs))
     finally:
         set_global_report_state(None)  # type: ignore[arg-type]
 
@@ -223,6 +225,41 @@ def test_do_create_rejects_unknown_finding_class() -> None:
     result = asyncio.run(_do_create(finding_class="not_a_real_class", **_create_kwargs()))
     assert result["success"] is False
     assert any("finding_class" in e for e in result["errors"])
+
+
+def test_do_create_cspt_requires_endpoint_or_location() -> None:
+    # A CSPT finding with no discriminator (no endpoint, no code_locations) is
+    # rejected so multiple locationless CSPT findings can't collapse onto one
+    # SARIF fingerprint.
+    kwargs = _create_kwargs(endpoint=None, method=None, code_locations=None)
+    result = asyncio.run(_do_create(finding_class="client_side_path_traversal", **kwargs))
+    assert result["success"] is False
+    assert any("discriminator" in e for e in result["errors"]), result
+
+
+def test_do_create_cspt_accepts_with_endpoint() -> None:
+    state = ReportState(run_name="cspt-endpoint")
+    set_global_report_state(state)
+    try:
+        kwargs = _create_kwargs(endpoint="/admin/keys", method="GET", code_locations=None)
+        result = asyncio.run(_do_create(finding_class="client_side_path_traversal", **kwargs))
+    finally:
+        set_global_report_state(None)  # type: ignore[arg-type]
+    assert result["success"] is True, result
+
+
+def test_dedupe_comparison_payload_includes_finding_class() -> None:
+    # The structured discriminator must reach the dedup judge; without it a CSPT
+    # and a server-side traversal on the same endpoint look identical.
+    cleaned = _prepare_report_for_comparison(
+        {
+            "id": "vuln-1",
+            "title": "Path Traversal",
+            "endpoint": "/admin/keys",
+            "finding_class": "client_side_path_traversal",
+        }
+    )
+    assert cleaned.get("finding_class") == "client_side_path_traversal"
 
 
 def test_sarif_surfaces_cspt_finding_class(tmp_path: Path) -> None:
@@ -338,6 +375,92 @@ def test_sarif_class_fingerprint_uses_finding_class_over_colliding_title(tmp_pat
     assert hashes[0] != hashes[1], (
         "CSPT finding with a 'path traversal' title collapsed onto the "
         "server-side traversal fingerprint; finding_class must take precedence"
+    )
+
+
+def test_sarif_primary_fingerprint_separates_locationless_cspt(tmp_path: Path) -> None:
+    # Regression for the *primary* fingerprint (partialFingerprints
+    # .primaryLocationLineHash), not just the custom class property. Both
+    # findings are locationless (no code_locations, no endpoint/method) so they
+    # anchor to SECURITY.md and share the CWE-22 ruleId. Only the structured
+    # finding_class distinguishes them. Before the fix the synthetic branch
+    # derived its class token from the title keyword alone, so a CSPT titled
+    # "Path Traversal via fragment" collapsed onto the server-side traversal's
+    # primary fingerprint — hiding a real, separate alert from code-scanning
+    # reconciliation. The primary fingerprints must differ.
+    write_sarif(
+        tmp_path,
+        [
+            {
+                "id": "vuln-0001",
+                "title": "Path Traversal via fragment",  # generic keyword collision
+                "severity": "high",
+                "cwe": "CWE-22",
+                "finding_class": "client_side_path_traversal",
+                "timestamp": "2026-07-16 10:00:00 UTC",
+                "code_locations": None,
+                "endpoint": None,
+                "method": None,
+            },
+            {
+                "id": "vuln-0002",
+                "title": "Path Traversal in download file parameter",
+                "severity": "high",
+                "cwe": "CWE-22",
+                "finding_class": "dynamic",
+                "timestamp": "2026-07-16 10:00:00 UTC",
+                "code_locations": None,
+                "endpoint": None,
+                "method": None,
+            },
+        ],
+    )
+    results = json.loads((tmp_path / "findings.sarif").read_text(encoding="utf-8"))["runs"][0][
+        "results"
+    ]
+    primary = [r.get("partialFingerprints", {}).get("primaryLocationLineHash") for r in results]
+    assert all(primary), "expected a primary fingerprint on both locationless findings"
+    assert primary[0] != primary[1], (
+        "locationless CSPT and server-side traversal share a primary fingerprint; "
+        "the synthetic-location class token must prefer finding_class"
+    )
+
+
+def test_sarif_primary_fingerprint_separates_cspt_by_endpoint(tmp_path: Path) -> None:
+    # Two locationless CSPT findings that differ only by endpoint must stay
+    # distinct, so multiple CSPT findings don't collapse onto one alert.
+    write_sarif(
+        tmp_path,
+        [
+            {
+                "id": "vuln-0003",
+                "title": "Client-Side Path Traversal",
+                "severity": "high",
+                "cwe": "CWE-22",
+                "finding_class": "client_side_path_traversal",
+                "timestamp": "2026-07-16 10:00:00 UTC",
+                "endpoint": "/admin/keys",
+                "method": "GET",
+            },
+            {
+                "id": "vuln-0004",
+                "title": "Client-Side Path Traversal",
+                "severity": "high",
+                "cwe": "CWE-22",
+                "finding_class": "client_side_path_traversal",
+                "timestamp": "2026-07-16 10:00:00 UTC",
+                "endpoint": "/admin/config",
+                "method": "GET",
+            },
+        ],
+    )
+    results = json.loads((tmp_path / "findings.sarif").read_text(encoding="utf-8"))["runs"][0][
+        "results"
+    ]
+    primary = [r.get("partialFingerprints", {}).get("primaryLocationLineHash") for r in results]
+    assert all(primary)
+    assert primary[0] != primary[1], (
+        "two CSPT findings on different traversed endpoints collapsed onto one primary fingerprint"
     )
 
 

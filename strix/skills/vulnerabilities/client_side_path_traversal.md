@@ -1,5 +1,5 @@
 ---
-name: client-side-path-traversal
+name: client_side_path_traversal
 description: Client-Side Path Traversal (CSPT) testing — attacker-controlled client input steering the victim's own authenticated browser requests to unintended same-origin endpoints
 ---
 
@@ -28,7 +28,7 @@ CSPT becomes account takeover or a stored-XSS delivery path.
 ## Not CSPT (route these elsewhere)
 
 Keep this class clean. The following are **server-side** file/path issues covered
-by the `path-traversal-lfi-rfi` skill — report them as `dynamic` findings, never
+by the `path_traversal_lfi_rfi` skill — report them as `dynamic` findings, never
 as `client_side_path_traversal`:
 
 - **Server-side path traversal** — server code joins a request parameter into a
@@ -116,18 +116,40 @@ Inject into each candidate source and watch the **outbound request path** (via t
 proxy), not the response body alone — the win condition is the browser sending a
 path you didn't intend.
 
-- **Direct**: `../`, `../../`, `..%2f` un-decoded, leading `/` (absolute-path
+Know exactly what the **browser's** URL parser normalizes vs. what stays literal —
+this is where most CSPT reports go wrong:
+
+- **Browser-normalized dot-segments** (WHATWG URL Standard): the parser collapses a
+  path segment that equals `..`, `%2e.`, `.%2e`, or `%2e%2e` **only when it is
+  delimited by literal `/`**. So `../`, `%2e%2e/`, `.%2e/`, `%2e%2e%2e%2e//`-style
+  self-collapsing sequences all traverse once real slashes separate them.
+- **Encoded separators stay encoded**: the browser does **not** turn `%2f` into a
+  path delimiter during normalization. `..%2f..%2fadmin` is a single literal
+  segment `..%2f..%2fadmin` — it does **not** become `../../admin`. Payloads like
+  `..%2f` or `%2e%2e%2f` only traverse if the **application** decodes them before
+  concatenating into the URL (see below). Do not assume `%2f` traversal without
+  confirming decode-then-join in the app code or on the wire.
+- **Application/framework decoding before URL construction**: if app code runs
+  `decodeURIComponent`, reads `URLSearchParams.get()` (which decodes), or a router
+  decodes a route param, an encoded payload becomes raw `../` *before* it reaches
+  the sink — then the literal-slash rule above applies. Double-encoding
+  (`%252e%252e%252f`) matters only when the app decodes twice.
+- **Direct** (no app decode needed): `../`, `../../`, leading `/` (absolute-path
   override: `id=/admin/keys` → `/api//admin/keys` or an absolute join).
-- **Encoded**: `%2e%2e%2f`, `%2e%2e/`, `..%2f`, double-encoded `%252e%252e%252f`
-  when an app decodes before joining. The browser decodes `%2e`/`%2f` in the path
-  during normalization — test both raw and encoded because framework routers may
-  decode a layer first.
-- **Normalized**: `....//` (folds to `../` after one collapse), `..././`,
-  `.%2e/`, mixed `..\` on apps that rewrite backslashes, redundant `//` and `/./`
-  segments that shift the base.
+
+Two more families to try, both using **literal** `/` separators so the browser
+parser acts on them:
+
+- **Self-collapsing / normalization**: `....//` (folds to `../` after a naive
+  single strip), `..././`, `.%2e/`, mixed `..\` on apps that rewrite backslashes,
+  redundant `//` and `/./` segments that shift the base.
 - **Base-relative vs root-relative**: confirm whether the app uses a relative
   base (`api/x`) or rooted (`/api/x`) — it changes how many `../` are needed and
   whether a leading `/` fully replaces the path.
+
+Test both raw and encoded because framework routers may decode a layer first — but
+attribute any `%2f`-based traversal to an **app-layer decode**, never to the browser
+parser.
 
 ## Validation (browser + Caido proxy)
 
@@ -147,8 +169,9 @@ agent-browser auth login <profile>          # or state load — see agent_browse
 agent-browser network har start
 
 # 3. Drive the tainted source. Examples per source type:
-#    - fragment:  navigate with a crafted hash
-agent-browser open "<target>/#/orders/..%2f..%2fadmin%2fkeys"
+#    - fragment:  navigate with a crafted hash (RAW ../ — literal slashes; the
+#                 browser only collapses dot-segments split by real "/")
+agent-browser open "<target>/#/orders/../../admin/keys"
 #    - query:     open with a crafted param
 agent-browser open "<target>/dashboard?tab=../../admin/config"
 #    - postMessage: eval a crafted message into the vulnerable listener
@@ -165,16 +188,38 @@ agent-browser network har stop /workspace/.agent-browser-screenshots/cspt.har
 agent-browser screenshot
 ```
 
-**Confirmation criteria** — you have a real CSPT when *all* hold:
+Confirmation has **two independent levels**. Keep them separate — conflating
+them causes false negatives (a valid primitive dismissed because impact wasn't
+demonstrated *yet*).
 
-1. The **outbound request path in the proxy/HAR** is the traversed target
-   (e.g. `/admin/keys`), not the intended one (`/api/users/<id>/avatar`).
-2. That request carried the **victim's credentials** (session cookie /
-   `Authorization` header present on the request — read it from the HAR).
-3. There is a **benign same-endpoint control**: the same flow with a normal
+**Level 1 — Confirmed CSPT primitive** (the bug exists). Both must hold:
+
+1. The **outbound request path in the proxy/HAR** differs from the intended one
+   because of attacker-controlled client input — the traversed target
+   (e.g. `/admin/keys`) appears on the wire, not the intended
+   `/api/users/<id>/avatar`.
+2. There is a **benign same-endpoint control**: the same flow with a normal
    value hits the intended path. Show both paths side by side.
-4. The traversed endpoint returned data (or performed an action) the source
-   value should not have been able to reach.
+
+That's enough to establish path traversal occurred. Credentials and a successful
+response are **not** required for the primitive to be real — a traversed request
+that is unauthenticated or returns 404 still proves attacker input steered the
+browser's request path, and may become exploitable when chained.
+
+**Level 2 — Confirmed exploit impact** (what it currently demonstrates). One or
+more of:
+
+- The traversed request carried the **victim's credentials** (session cookie /
+  `Authorization` header on the request — read it from the HAR), and
+- The traversed endpoint **returned data or performed an action** the source
+  value should not have reached, or
+- The primitive **participates in a demonstrated chain**: response rendered into
+  a sink (XSS), a permissive CORS reader, a state-changing endpoint with weak/no
+  CSRF defense, or application-added authorization on the reached path.
+
+Credentials, reach, and chaining drive **reportability and severity** — they do
+not decide *whether* traversal happened. Report a confirmed primitive; let the
+impact level set the CVSS and how loudly you rate it.
 
 Record the request/response pair (method, full path, relevant headers, status)
 from the HAR as evidence. Prefer reading a low-sensitivity sibling endpoint to
@@ -203,7 +248,7 @@ File confirmed CSPT with `create_vulnerability_report` and:
 
 ## False positives
 
-Not CSPT — do not report:
+**Not CSPT at all** — the primitive doesn't exist, do not report:
 
 - The source is **validated to the resulting path**: an allowlist of endpoints,
   a strict `^[a-z0-9-]+$` segment check, or `encodeURIComponent` on a value used
@@ -214,11 +259,19 @@ Not CSPT — do not report:
   value only ever becomes a **query parameter or request body field**, never part
   of the path. A tainted query value is not CSPT (it may be another bug).
 - The browser **does not normalize** the value into a different path (confirm on
-  the wire — no traversal actually occurred in the outbound request).
-- The traversed request is **not** sent with ambient credentials (no session on
-  that request), so there's no privilege to abuse — note it, don't over-rate it.
-- Server rejects the traversed path (404/403) with no differential — no reach, no
-  finding.
+  the wire — no traversal actually occurred in the outbound request). This is the
+  real negative: if the outbound path is unchanged, there is no primitive.
+
+**Primitive exists but low/unproven impact** — this is *still CSPT*; report it,
+but rate it honestly and say what's missing (do NOT silently drop it):
+
+- The traversed request carries **no ambient credentials** (no session on that
+  request). The path was still steered — report the primitive at reduced severity
+  and note the missing privilege, or look for a chain that supplies impact.
+- Server **rejects** the traversed path (404/403) with no differential. Reach
+  isn't demonstrated *yet*, but the primitive is confirmed. Report it as a
+  primitive and note that impact depends on a reachable sibling endpoint or a
+  chain (response rendering, CORS reader, state-changing target).
 
 ## Pro tips
 

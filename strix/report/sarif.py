@@ -890,12 +890,19 @@ def _primary_fingerprint(
         parts.append(f"route:{route}")
 
     if is_synthetic:
-        # Augment with class keyword so locationless findings of
+        # Augment with the class token so locationless findings of
         # different vuln classes don't collide. rule_id is already in
         # the composite so we don't also need to stamp the CWE.
-        title = _string_value(report.get("title")) or ""
-        if title:
-            parts.append(f"synth_class:{_class_keyword(title)}")
+        # Prefer the structured finding_class over a title keyword: two
+        # CWE-22 findings (a CSPT with finding_class
+        # "client_side_path_traversal" and a server-side traversal with
+        # finding_class "dynamic") can share a generic "path traversal"
+        # title keyword, so keying on the title alone collapses them onto
+        # the same primary fingerprint. _class_token resolves to the
+        # discriminating structured field when present.
+        token = _class_token(report)
+        if token:
+            parts.append(f"synth_class:{token}")
 
     composite = "|".join(parts)
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
@@ -918,37 +925,39 @@ def _class_fingerprint(rule_id: str, report: dict[str, Any]) -> str | None:
     primary fingerprint (typical case: file rename, or a fix that moves
     the vulnerable code to a new module).
 
-    Composite of (rule_id, vuln-class token). The class token is the
-    structured ``finding_class`` when it carries signal (i.e. is present
-    and not the default ``dynamic``), otherwise a keyword extracted from
-    the title.
-
-    Preferring ``finding_class`` matters when a finding's title happens to
-    contain a broader curated keyword: a CSPT report titled "Path Traversal
-    via fragment" carries ``finding_class="client_side_path_traversal"``
-    but its title matches the generic ``path traversal`` keyword, which
-    would otherwise collapse it onto the same fingerprint as a server-side
-    path-traversal finding (both key on CWE-22). The structured field is
-    authoritative, so it wins; title-keyword extraction is the fallback
-    only when ``finding_class`` is absent or ``dynamic``.
-
-    Title is LLM-authored so it's stochastic at the prose level, but the
-    keyword extraction picks up the discrete vulnerability category, which
-    is much more stable than the full title. Falls back to the first 5
-    lowercased words of the title when no curated keyword matches.
-    Acceptable as a fallback because the class fingerprint is a tiebreaker,
-    not a primary reconciliation key.
+    Composite of (rule_id, vuln-class token). The token comes from
+    ``_class_token``, which prefers the structured ``finding_class`` and
+    falls back to a title keyword — see that helper for why the structured
+    field must win (CSPT vs. server-side traversal both key on CWE-22).
     """
-    finding_class = _string_value(report.get("finding_class"))
-    if finding_class and finding_class != "dynamic":
-        token = finding_class
-    else:
-        title = _string_value(report.get("title")) or ""
-        token = _class_keyword(title) if title else ""
+    token = _class_token(report)
     if not token:
         return None
     composite = f"rule:{rule_id}|class:{token}"
     return hashlib.sha256(composite.encode("utf-8")).hexdigest()
+
+
+def _class_token(report: dict[str, Any]) -> str:
+    """Resolve a finding's vulnerability-class token.
+
+    Prefers the structured ``finding_class`` when it carries signal (i.e.
+    present and not the default ``dynamic``); otherwise falls back to a
+    keyword extracted from the (LLM-authored) title. Returns empty string
+    when neither yields a token.
+
+    Shared by ``_class_fingerprint`` (file-rename dismissal carryover) and
+    the synthetic branch of ``_primary_fingerprint`` (locationless
+    distinguisher) so both fingerprints agree on what counts as "the same
+    class". Keeping them aligned is what stops a CSPT finding whose title
+    contains the generic ``path traversal`` keyword from collapsing onto a
+    server-side path-traversal finding's primary fingerprint: the
+    structured field distinguishes them and both hashes consume it.
+    """
+    finding_class = _string_value(report.get("finding_class"))
+    if finding_class and finding_class != "dynamic":
+        return finding_class
+    title = _string_value(report.get("title")) or ""
+    return _class_keyword(title) if title else ""
 
 
 def _class_keyword(title: str) -> str:

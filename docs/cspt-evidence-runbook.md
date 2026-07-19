@@ -39,7 +39,11 @@ agent-browser wait --load networkidle
 agent-browser network requests              # note the intended path, e.g. /api/orders/12345/detail
 
 # 3b. TRAVERSAL — drive the same source with a crafted value.
-agent-browser open "<target>/#/orders/..%2f..%2fadmin%2fkeys"
+#     Use RAW ../ with literal slashes: the browser's URL parser only collapses
+#     dot-segments delimited by real "/". A percent-encoded ..%2f..%2f stays a
+#     single literal segment and does NOT traverse unless the app decodes it
+#     before joining (see the skill's encoding notes).
+agent-browser open "<target>/#/orders/../../admin/keys"
 agent-browser wait --load networkidle
 agent-browser network requests              # note the traversed path, e.g. /admin/keys/detail
 
@@ -68,20 +72,32 @@ agent-browser open "<target>"
 
 ## Confirmation criteria
 
-A finding is a real CSPT only when **all** of these hold, evidenced from the HAR:
+Confirm at **two independent levels** — don't require impact to accept the
+primitive.
+
+**Level 1 — Confirmed CSPT primitive** (the bug exists), from the HAR:
 
 1. **Traversed path on the wire** — the outbound request path is the traversed
    target (e.g. `/admin/keys/detail`), not the intended one
-   (`/api/orders/12345/detail`).
-2. **Ambient credentials** — that request carried the victim's session
-   (`Cookie` / `Authorization` header present; read it from the HAR entry).
-3. **Benign control** — the same flow with a normal value hit the intended path.
+   (`/api/orders/12345/detail`), because of attacker-controlled client input.
+2. **Benign control** — the same flow with a normal value hit the intended path.
    Show both, side by side.
-4. **Reach** — the traversed endpoint returned data or performed an action the
-   source value should not have been able to reach.
 
-Do not exfiltrate real secrets — a status / length / shape delta against a
-low-sensitivity sibling endpoint is enough to prove reach.
+This alone establishes path traversal. A traversed request that is
+unauthenticated or returns 404 is still a confirmed primitive.
+
+**Level 2 — Confirmed exploit impact** (severity), one or more of:
+
+- **Ambient credentials** — the traversed request carried the victim's session
+  (`Cookie` / `Authorization` header present; read it from the HAR entry).
+- **Reach** — the traversed endpoint returned data or performed an action the
+  source value should not have been able to reach.
+- **Chain** — the response feeds an XSS/CORS sink, or the reached endpoint is
+  state-changing with weak/absent CSRF defense.
+
+Credentials and reach set severity; they don't decide whether traversal
+occurred. Do not exfiltrate real secrets — a status / length / shape delta
+against a low-sensitivity sibling endpoint is enough to prove reach.
 
 ## Turning it into a report
 
@@ -110,9 +126,11 @@ Traversed (CSPT):
 
 ## Demoing against the bundled fixtures
 
-The fixtures in `tests/fixtures/cspt/` are self-contained static pages. Serve the
-directory and drive each one to see the positive/negative behavior without a real
-target:
+The fixtures in `tests/fixtures/cspt/` are self-contained static pages. Every
+positive drives its source from the **fragment, query string, `postMessage`, or
+`localStorage`** — never from a server-side route — so they all serve correctly
+under a plain static server (no SPA fallback needed). Serve the directory and
+drive one to see the behavior without a real target:
 
 ```bash
 python -m http.server 8000 --directory tests/fixtures/cspt
@@ -121,6 +139,20 @@ agent-browser open "http://localhost:8000/positive_direct.html#/orders/../../adm
 agent-browser wait --load networkidle
 agent-browser network requests     # observe the normalized /admin/keys/detail request
 ```
+
+The normalization-bypass fixture is driven the same way, via the fragment:
+
+```bash
+agent-browser open "http://localhost:8000/positive_normalized.html#/view/....//....//admin/settings"
+```
+
+For an automated, reproducible version of this — used as the CI regression that
+proves the source-to-sink flow steers the browser's outbound path — see
+`tests/test_cspt_browser_capture.py`, which serves each fixture from a local
+request-capture server, drives it with headless Chromium (Playwright), and
+asserts the exact traversed path the server observed (and that negatives emit
+none). `tests/test_cspt_dataflow.py` adds a deterministic taint-flow check that
+fails if a fixture's source and sink are present but not connected.
 
 The positive fixtures emit a traversed request whose path escapes the intended
 `/api/...` prefix (e.g. `/admin/keys/detail`); the negative fixtures
