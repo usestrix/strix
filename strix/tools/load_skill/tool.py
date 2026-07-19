@@ -27,12 +27,23 @@ async def load_skill(ctx: RunContextWrapper, skills: str | list[str]) -> str:
             ``strix/skills/<category>/<name>.md``.
     """
     del ctx
-    # Tolerate LLM providers that pass array params as JSON-encoded strings
+    # Tolerate LLM providers that pass array params as JSON-encoded strings.
+    # Validate decoded shape: reject anything that isn't a list of strings.
     if isinstance(skills, str):
+        original_skills = skills
         try:
-            skills = json.loads(skills)
+            decoded_skills = json.loads(skills)
         except json.JSONDecodeError:
             skills = [s.strip() for s in skills.split(",") if s.strip()]
+        else:
+            if isinstance(decoded_skills, str):
+                skills = [decoded_skills]
+            elif isinstance(decoded_skills, list) and all(
+                isinstance(skill, str) for skill in decoded_skills
+            ):
+                skills = decoded_skills
+            else:
+                skills = [original_skills]
     requested = list(skills or [])
     err = validate_requested_skills(requested)
     if err:
