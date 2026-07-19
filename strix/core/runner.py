@@ -30,6 +30,7 @@ from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks
+from agents.exceptions import MaxTurnsExceeded
 from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
     build_root_task,
@@ -390,6 +391,17 @@ async def run_strix_scan(
             await coordinator.cancel_descendants(root_id)
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
+        return None
+    except MaxTurnsExceeded as exc:
+        logger.warning(
+            "Scan %s stopped: MaxTurnsExceeded (%s).",
+            scan_id,
+            exc,
+        )
+        if root_id is not None:
+            await coordinator.cancel_descendants(root_id)
+            with contextlib.suppress(Exception):
+                await coordinator.set_status(root_id, "failed")
         return None
     except BaseException:
         logger.exception("Strix scan %s failed", scan_id)

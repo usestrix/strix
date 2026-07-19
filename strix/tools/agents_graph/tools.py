@@ -574,6 +574,10 @@ async def agent_finish(
     )
     await coordinator.set_status(me, "completed")
 
+    from strix.report.state import get_global_report_state
+    if report_state := get_global_report_state():
+        report_state.save_run_data()
+
     return json.dumps(
         {
             "success": True,

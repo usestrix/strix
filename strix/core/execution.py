@@ -284,7 +284,7 @@ async def _run_noninteractive_until_lifecycle(
     result: RunResultBase | None = None
     input_data: Any = initial_input
     invalid_final_outputs = 0
-    invalid_final_output_limit = max(1, max_turns)
+    invalid_final_output_limit = min(5, max(1, max_turns))
 
     while True:
         if coordinator.budget_stopped:
@@ -581,6 +581,10 @@ async def _start_child_runner(
             )
         except BudgetExceededError:
             logger.info("child %s stopped after reaching the scan budget limit", child_id)
+        except MaxTurnsExceeded as exc:
+            logger.warning("child %s crashed due to MaxTurnsExceeded: %s", child_id, exc)
+        except Exception:
+            logger.exception("child %s crashed with unhandled exception", child_id)
 
     task_handle = asyncio.create_task(_child_loop(), name=f"agent-{name}-{child_id}")
     await coordinator.attach_runtime(child_id, task=task_handle)
