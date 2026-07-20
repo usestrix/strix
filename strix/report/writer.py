@@ -6,6 +6,7 @@ import csv
 import io
 import json
 import logging
+import re
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +18,21 @@ from strix.core.paths import run_record_path
 logger = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+_BACKTICK_RUN = re.compile(r"`+")
+
+
+def _safe_fence(content: str) -> str:
+    """Return a backtick fence that ``content`` cannot break out of.
+
+    Per CommonMark a fenced code block is closed only by a run of backticks at
+    least as long as the opening fence. LLM-authored, attacker-influenced values
+    (PoC scripts, code snippets) may contain their own ``` runs, so we open with
+    a fence one backtick longer than the longest run inside ``content`` (never
+    fewer than three). Everything in ``content`` then renders verbatim.
+    """
+    longest = max((len(m.group()) for m in _BACKTICK_RUN.finditer(content)), default=0)
+    return "`" * max(3, longest + 1)
 
 
 def read_run_record(run_dir: Path) -> dict[str, Any]:
@@ -171,9 +187,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append(str(report["poc_description"]))
             lines.append("")
         if report.get("poc_script_code"):
-            lines.append("```")
-            lines.append(str(report["poc_script_code"]))
-            lines.append("```")
+            code = str(report["poc_script_code"])
+            fence = _safe_fence(code)
+            lines.append(fence)
+            lines.append(code)
+            lines.append(fence)
             lines.append("")
 
     if report.get("code_locations"):
@@ -190,7 +208,9 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             if loc.get("label"):
                 lines.append(f"  {loc['label']}")
             if loc.get("snippet"):
-                lines.append(f"  ```\n  {loc['snippet']}\n  ```")
+                snippet = str(loc["snippet"])
+                fence = _safe_fence(snippet)
+                lines.append(f"  {fence}\n  {snippet}\n  {fence}")
             if loc.get("fix_before") or loc.get("fix_after"):
                 lines.append("\n  **Suggested Fix:**")
                 lines.append("```diff")

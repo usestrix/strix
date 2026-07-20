@@ -113,6 +113,27 @@ def test_render_vulnerability_md_includes_dependency_fields() -> None:
     assert "## Assumptions" in md
 
 
+def test_render_vulnerability_md_poc_code_cannot_break_out_of_fence() -> None:
+    # LLM/target-authored PoC content containing its own ``` must not close the
+    # fence early and turn the injected markdown into live headings/images.
+    injected = "curl x\n```\n\n## Injected Heading\n![x](https://evil.example/beacon.png)"
+    md = render_vulnerability_md(_sample_report(poc_script_code=injected))
+    lines = md.split("\n")
+    fence = next(ln for ln in lines[lines.index("## Proof of Concept") + 1 :] if ln.strip())
+    assert set(fence) == {"`"}
+    assert len(fence) >= 4  # wider than the payload's 3-backtick run
+    assert injected in md  # the payload survives verbatim, inside the fence
+
+
+def test_render_vulnerability_md_snippet_cannot_break_out_of_fence() -> None:
+    snippet = "row = q()\n```\n## Injected"
+    md = render_vulnerability_md(
+        _sample_report(code_locations=[{"file": "app.py", "snippet": snippet}]),
+    )
+    assert "  ````" in md  # indented fence widened past the payload's ``` run
+    assert snippet in md
+
+
 def test_write_vulnerabilities_creates_markdown_csv_and_json(tmp_path: Path) -> None:
     reports = [
         _sample_report(id="vuln-0001", severity="medium", timestamp="2026-07-02 11:00:00 UTC"),
