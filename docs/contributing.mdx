@@ -7,9 +7,8 @@ description: "Contribute to Strix development"
 
 ### Prerequisites
 
-- Python 3.12+
-- Docker (running)
-- [uv](https://docs.astral.sh/uv/)
+- [mise](https://mise.jdx.dev/getting-started.html) — provisions the toolchain (Python 3.12, [uv](https://docs.astral.sh/uv/), Node + the docs CLI) and runs project tasks
+- Docker (running) — install separately; mise manages CLIs/runtimes, not the Docker daemon
 - Git
 
 ### Local Development
@@ -21,14 +20,22 @@ description: "Contribute to Strix development"
     cd strix
     ```
   </Step>
+  <Step title="Install the toolchain">
+    Installs Python and uv as pinned in `mise.toml`. The first time you use mise in this repo, run `mise trust` before `mise install`.
+    ```bash
+    mise trust
+    mise install
+    ```
+  </Step>
   <Step title="Install dependencies">
     ```bash
-    make setup-dev
+    mise setup-dev
 
     # or manually:
     uv sync
-    uv run pre-commit install
+    pre-commit install
     ```
+
   </Step>
   <Step title="Configure LLM">
     ```bash
@@ -63,7 +70,7 @@ Skills are specialized knowledge packages that enhance agent capabilities. They 
 2. **Fork and branch** — Work from `main`
 3. **Make changes** — Follow existing code style
 4. **Write tests** — Ensure coverage for new features
-5. **Run checks** — `make check-all` should pass
+5. **Run checks** — `mise check-all` should pass
 6. **Submit PR** — Link to issue and provide context
 
 ### Code Style
@@ -90,7 +97,11 @@ Include:
   <Card title="Discord" icon="discord" href="https://discord.gg/strix-ai">
     Join the community for help and discussion.
   </Card>
-  <Card title="GitHub Issues" icon="github" href="https://github.com/usestrix/strix/issues">
+  <Card
+    title="GitHub Issues"
+    icon="github"
+    href="https://github.com/usestrix/strix/issues"
+  >
     Report bugs and request features.
   </Card>
 </CardGroup>

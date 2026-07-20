@@ -16,9 +16,14 @@ description: "Install Strix and run your first security scan"
     curl -sSL https://strix.ai/install | bash
     ```
   </Tab>
-  <Tab title="pipx">
+  <Tab title="mise (pipx)">
     ```bash
-    pipx install strix-agent
+    mise use -g "pipx:strix-agent"
+    ```
+  </Tab>
+  <Tab title="mise (github)">
+    ```bash
+    mise use -g "github:usestrix/strix"
     ```
   </Tab>
 </Tabs>

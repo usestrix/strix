@@ -81,6 +81,9 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 # Install Strix
 curl -sSL https://strix.ai/install | bash
 
+# Or, with mise (installs the released binary from the GitHub repo):
+mise use -g "github:usestrix/strix"
+
 # Configure your AI provider
 export STRIX_LLM="openai/gpt-5.4"
 export LLM_API_KEY="your-api-key"
