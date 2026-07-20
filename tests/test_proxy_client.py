@@ -140,6 +140,43 @@ async def test_host_call_serializes_concurrent_calls() -> None:
     assert state["max"] == 1
 
 
+def _headers_named(raw: bytes, name: str) -> list[str]:
+    head = raw.decode("utf-8").split("\r\n\r\n", 1)[0]
+    return [
+        line.split(":", 1)[1].strip()
+        for line in head.split("\r\n")[1:]
+        if line.split(":", 1)[0].strip().lower() == name.lower()
+    ]
+
+
+def test_build_raw_request_recomputes_content_length_for_modified_body() -> None:
+    # The captured request declared Content-Length: 12 (original body); the
+    # replayed body is longer. The emitted request must carry exactly one
+    # Content-Length equal to the ACTUAL body length, or the target truncates
+    # the modified payload (or the connection desyncs).
+    body = '{"user":"a\' OR 1=1 -- injected long payload"}'
+    _conn, raw = caido_api.build_raw_request(
+        method="POST",
+        url="https://example.com/login",
+        headers={"content-length": "12", "Content-Type": "application/json"},
+        body=body,
+    )
+    sent_body = raw.decode("utf-8").split("\r\n\r\n", 1)[1]
+    assert sent_body == body
+    assert _headers_named(raw, "Content-Length") == [str(len(body.encode("utf-8")))]
+
+
+def test_build_raw_request_drops_stale_content_length_for_empty_body() -> None:
+    # A body cleared to empty must not keep the inherited (non-zero) length.
+    _conn, raw = caido_api.build_raw_request(
+        method="POST",
+        url="https://example.com/x",
+        headers={"Content-Length": "12"},
+        body="",
+    )
+    assert _headers_named(raw, "Content-Length") == []
+
+
 class _Ctx:
     def __init__(self, context: Any) -> None:
         self.context = context

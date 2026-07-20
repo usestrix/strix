@@ -187,7 +187,12 @@ def build_raw_request(
     final_headers = {**headers}
     final_headers.setdefault("Host", parsed.netloc)
     final_headers.setdefault("User-Agent", "strix")
-    if body and "Content-Length" not in {k.title() for k in final_headers}:
+    # A Content-Length inherited from the captured request describes the ORIGINAL
+    # body; once the body is modified for replay it is stale. Drop any inherited
+    # value (case-insensitively) and recompute it from the body actually being
+    # sent, so the replayed request is never desynced (truncated / smuggled).
+    final_headers = {k: v for k, v in final_headers.items() if k.title() != "Content-Length"}
+    if body:
         final_headers["Content-Length"] = str(len(body.encode("utf-8")))
 
     lines = [f"{method.upper()} {path} HTTP/1.1"]
