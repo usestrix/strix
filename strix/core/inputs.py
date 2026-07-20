@@ -22,6 +22,11 @@ if TYPE_CHECKING:
 
 DEFAULT_MAX_TURNS = 500
 
+# No-progress circuit breaker: max consecutive LLM turns without a new
+# finding or note before the scan is stopped as "stuck". 0 (or negative)
+# disables the breaker. See STRIX_NO_PROGRESS_MAX_TURNS to override.
+DEFAULT_NO_PROGRESS_MAX_TURNS = 40
+
 
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
     name = (model_name or "").strip().lower()

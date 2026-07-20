@@ -177,6 +177,10 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     len(scan_config.get("targets") or []),
                     bool(getattr(args, "interactive", False)),
                 )
+                if getattr(args, "disable_no_progress_breaker", False):
+                    no_progress_max_turns = 0
+                else:
+                    no_progress_max_turns = getattr(args, "no_progress_max_turns", None)
                 await run_strix_scan(
                     scan_config=scan_config,
                     scan_id=args.run_name,
@@ -184,6 +188,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     local_sources=getattr(args, "local_sources", None) or [],
                     interactive=bool(getattr(args, "interactive", False)),
                     max_budget_usd=getattr(args, "max_budget_usd", None),
+                    no_progress_max_turns=no_progress_max_turns,
                 )
             finally:
                 stop_updates.set()

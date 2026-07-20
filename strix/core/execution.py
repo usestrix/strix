@@ -15,7 +15,7 @@ from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import APIError
 
-from strix.core.hooks import BudgetExceededError
+from strix.core.hooks import BudgetExceededError, ScanLimitError
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
     enforce_image_budget,
@@ -380,7 +380,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                                 logger.exception("stream event sink failed for %s", agent_id)
                     if stream.run_loop_exception is not None:
                         raise stream.run_loop_exception
-                except BudgetExceededError:
+                except ScanLimitError:
                     # A RuntimeError subclass: re-raise explicitly so it is never
                     # mistaken for the LiteLLM "after shutdown" race below.
                     raise
@@ -401,10 +401,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
-        except BudgetExceededError as exc:
-            logger.info(
-                "agent %s reached the scan budget limit; stopping the scan: %s", agent_id, exc
-            )
+        except ScanLimitError as exc:
+            logger.info("agent %s reached a scan stop limit; stopping the scan: %s", agent_id, exc)
             await coordinator.set_status(agent_id, "stopped")
             await coordinator.trigger_budget_stop()
             raise
@@ -579,8 +577,8 @@ async def _start_child_runner(
                 event_sink=event_sink,
                 hooks=hooks,
             )
-        except BudgetExceededError:
-            logger.info("child %s stopped after reaching the scan budget limit", child_id)
+        except ScanLimitError:
+            logger.info("child %s stopped after reaching a scan stop limit", child_id)
 
     task_handle = asyncio.create_task(_child_loop(), name=f"agent-{name}-{child_id}")
     await coordinator.attach_runtime(child_id, task=task_handle)

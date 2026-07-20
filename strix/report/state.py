@@ -350,6 +350,39 @@ class ReportState:
         posthog.end(self, exit_reason="finished_by_tool")
         scarf.end(self, exit_reason="finished_by_tool")
 
+    def write_early_stop_report(
+        self,
+        *,
+        reason: str,
+        executive_summary: str,
+        methodology: str,
+        technical_analysis: str,
+        recommendations: str,
+    ) -> None:
+        """Persist a stub executive report when the scan is stopped early.
+
+        Used by the no-progress circuit breaker (and other scan-stop limits).
+        Unlike :meth:`update_scan_final_fields`, this marks the scan as
+        ``stopped`` / not completed and does not emit a ``finished_by_tool``
+        telemetry event — the scan did not finish normally. Findings already
+        recorded are preserved because they are flushed incrementally.
+        """
+        self.scan_results = {
+            "scan_completed": False,
+            "success": False,
+            "early_stopped": True,
+            "stop_reason": reason,
+            "executive_summary": executive_summary.strip(),
+            "methodology": methodology.strip(),
+            "technical_analysis": technical_analysis.strip(),
+            "recommendations": recommendations.strip(),
+        }
+        self.final_scan_result = self._format_final_scan_result(self.scan_results)
+        self.run_record["scan_results"] = self.scan_results
+        self.run_record["stop_reason"] = reason
+        logger.info("Wrote early-stop report (reason=%s)", reason)
+        self.save_run_data(status="stopped")
+
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config
         self.run_record["status"] = "running"

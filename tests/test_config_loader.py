@@ -35,6 +35,9 @@ _LLM_ENV_KEYS = [
     "STRIX_MAX_LOCAL_COPY_MB",
     # TelemetrySettings
     "STRIX_TELEMETRY",
+    # RunnerSettings
+    "STRIX_NO_PROGRESS_MAX_TURNS",
+    "STRIX_NO_PROGRESS_BREAKER_ENABLED",
 ]
 
 
@@ -207,3 +210,34 @@ def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.Monk
     loader.persist_current()
 
     assert target.stat().st_mode & 0o777 == 0o600
+
+
+# --------------------------------------------------------------------------- #
+# RunnerSettings (no-progress circuit breaker)
+# --------------------------------------------------------------------------- #
+
+
+def test_runner_settings_defaults() -> None:
+    settings = loader.load_settings()
+    assert settings.runner.no_progress_max_turns == 40
+    assert settings.runner.no_progress_breaker_enabled is True
+
+
+def test_runner_settings_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "STRIX_NO_PROGRESS_MAX_TURNS": 12,
+                    "STRIX_NO_PROGRESS_BREAKER_ENABLED": False,
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(path)
+    settings = loader.load_settings()
+
+    assert settings.runner.no_progress_max_turns == 12
+    assert settings.runner.no_progress_breaker_enabled is False

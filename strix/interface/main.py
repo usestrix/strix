@@ -553,6 +553,25 @@ Examples:
     )
 
     parser.add_argument(
+        "--no-progress-max-turns",
+        type=int,
+        default=None,
+        metavar="N",
+        help=(
+            "No-progress circuit breaker: stop the scan after N consecutive "
+            "LLM turns with no new finding or note (default 40). Pass 0 to "
+            "disable. Overrides STRIX_NO_PROGRESS_MAX_TURNS."
+        ),
+    )
+
+    parser.add_argument(
+        "--disable-no-progress-breaker",
+        action="store_true",
+        default=False,
+        help="Disable the no-progress circuit breaker entirely.",
+    )
+
+    parser.add_argument(
         "--resume",
         type=str,
         metavar="RUN_NAME",

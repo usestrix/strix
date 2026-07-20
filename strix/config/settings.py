@@ -72,6 +72,18 @@ class IntegrationSettings(BaseSettings):
     perplexity_api_key: str | None = Field(default=None, alias="PERPLEXITY_API_KEY")
 
 
+class RunnerSettings(BaseSettings):
+    model_config = _BASE_CONFIG
+
+    # No-progress circuit breaker: stop the scan after this many consecutive
+    # LLM turns with no new finding or note (mirrors the default in
+    # ``strix.core.inputs``; kept literal here to avoid importing core).
+    no_progress_max_turns: int = Field(default=40, ge=0, alias="STRIX_NO_PROGRESS_MAX_TURNS")
+    no_progress_breaker_enabled: bool = Field(
+        default=True, alias="STRIX_NO_PROGRESS_BREAKER_ENABLED"
+    )
+
+
 class Settings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -79,3 +91,4 @@ class Settings(BaseSettings):
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
+    runner: RunnerSettings = Field(default_factory=RunnerSettings)

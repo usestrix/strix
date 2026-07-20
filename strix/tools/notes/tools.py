@@ -27,6 +27,16 @@ _NOTE_ID_GENERATION_ATTEMPTS = 1024
 _notes_path: Path | None = None
 
 
+def notes_count() -> int:
+    """Return the total number of notes persisted across all agents.
+
+    Used by the no-progress circuit breaker as an aliveness signal: a scan
+    that stops producing notes (and findings) is likely stuck in a loop.
+    """
+    with _notes_lock:
+        return len(_notes_storage)
+
+
 def _generate_note_id() -> str | None:
     for _ in range(_NOTE_ID_GENERATION_ATTEMPTS):
         note_id = uuid.uuid4().hex[:6]

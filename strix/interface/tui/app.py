@@ -32,7 +32,7 @@ from textual.widgets.tree import TreeNode
 
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
-from strix.core.hooks import BudgetExceededError
+from strix.core.hooks import ScanLimitError
 from strix.core.runner import run_strix_scan
 from strix.interface.tui.live_view import TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
@@ -1454,6 +1454,12 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 try:
                     if not self._scan_stop_event.is_set():
                         image = load_settings().runtime.image or "strix-sandbox:latest"
+                        if getattr(self.args, "disable_no_progress_breaker", False):
+                            no_progress_max_turns = 0
+                        else:
+                            no_progress_max_turns = getattr(
+                                self.args, "no_progress_max_turns", None
+                            )
                         loop.run_until_complete(
                             run_strix_scan(
                                 scan_config=self.scan_config,
@@ -1463,17 +1469,19 @@ class StrixTUIApp(App):  # type: ignore[misc]
                                 coordinator=self.coordinator,
                                 interactive=True,
                                 max_budget_usd=getattr(self.args, "max_budget_usd", None),
+                                no_progress_max_turns=no_progress_max_turns,
                                 event_sink=self._capture_sdk_event,
                             ),
                         )
 
                 except (KeyboardInterrupt, asyncio.CancelledError):
                     logger.info("Scan interrupted by user")
-                except BudgetExceededError:
-                    # Defensive: the runner stops the scan cleanly on budget and
-                    # returns, so this normally never propagates. Treat it as a
-                    # graceful stop, not a scan error, if it ever does.
-                    logger.info("Scan stopped: --max-budget-usd limit reached")
+                except ScanLimitError:
+                    # Defensive: the runner stops the scan cleanly on a scan
+                    # limit (budget or no-progress) and returns, so this
+                    # normally never propagates. Treat it as a graceful stop,
+                    # not a scan error, if it ever does.
+                    logger.info("Scan stopped: a scan limit (budget/no-progress) was reached")
                 except (ConnectionError, TimeoutError) as e:
                     logging.exception("Network error during scan")
                     self._scan_error = e

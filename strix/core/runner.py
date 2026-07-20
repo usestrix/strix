@@ -29,7 +29,11 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import BudgetExceededError, ReportUsageHooks
+from strix.core.hooks import (
+    NoProgressExceededError,
+    ReportUsageHooks,
+    ScanLimitError,
+)
 from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
     build_root_task,
@@ -98,6 +102,66 @@ def _compose_root_instructions_override(
     )
 
 
+def _write_no_progress_report(exc: NoProgressExceededError) -> None:
+    """Synthesize a stub executive report when the no-progress breaker trips.
+
+    Failures here must never mask the clean stop, so the whole body is
+    best-effort. Findings already recorded are preserved regardless because
+    they are flushed incrementally on creation.
+    """
+    with contextlib.suppress(Exception):
+        from strix.report.state import get_global_report_state
+
+        report_state = get_global_report_state()
+        if report_state is None:
+            return
+        reports = report_state.vulnerability_reports
+        count = len(reports)
+
+        def _sev(r: dict[str, Any]) -> str:
+            value = r.get("severity") or "?"
+            return value.upper() if isinstance(value, str) else str(value).upper()
+
+        if count:
+            listing = "\n".join(f"- [{_sev(r)}] {r.get('title') or 'untitled'}" for r in reports)
+        else:
+            listing = "- No vulnerabilities were recorded before the scan stopped."
+
+        trigger = str(exc)
+        executive_summary = (
+            "The scan was terminated early by the no-progress circuit breaker. "
+            f"{trigger} This usually means the agent was stuck in an idle loop "
+            "(calling the model repeatedly without producing new findings or "
+            f"working notes). {count} vulnerability report(s) recorded before "
+            "termination are preserved below."
+        )
+        methodology = (
+            "The assessment ran as configured until the no-progress breaker "
+            "engaged. All findings discovered before the stop are retained; no "
+            "further testing was performed after the breaker tripped."
+        )
+        technical_analysis = (
+            f"Stop reason: no_progress.\nTrigger: {trigger}\n\n"
+            f"Recorded findings ({count}):\n{listing}"
+        )
+        recommendations = (
+            "1. Review whether the configured LLM model terminates correctly "
+            "under this scan mode (the failed runs spun on MiniMax-M3).\n"
+            "2. Re-run the scan; if it stalls again at the same point, narrow "
+            "the target scope or tune STRIX_NO_PROGRESS_MAX_TURNS.\n"
+            "3. The findings above are valid regardless of the early stop and "
+            "should be remediated independently."
+        )
+        report_state.write_early_stop_report(
+            reason="no_progress",
+            executive_summary=executive_summary,
+            methodology=methodology,
+            technical_analysis=technical_analysis,
+            recommendations=recommendations,
+        )
+        logger.info("Wrote no-progress early-stop report with %d finding(s)", count)
+
+
 async def run_strix_scan(
     *,
     scan_config: dict[str, Any],
@@ -108,6 +172,7 @@ async def run_strix_scan(
     interactive: bool = False,
     max_turns: int = DEFAULT_MAX_TURNS,
     max_budget_usd: float | None = None,
+    no_progress_max_turns: int | None = None,
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
@@ -155,6 +220,16 @@ async def run_strix_scan(
         )
     logger.info("LLM model resolved: %s", resolved_model)
     chat_completions_tools = uses_chat_completions_tool_schema(resolved_model, settings)
+
+    # Resolve the no-progress circuit breaker threshold handed to the hook.
+    # An explicit kwarg/CLI value wins: a positive int enables at that value,
+    # a non-positive int disables. ``None`` falls back to settings
+    # (STRIX_NO_PROGRESS_MAX_TURNS / STRIX_NO_PROGRESS_BREAKER_ENABLED).
+    if no_progress_max_turns is None:
+        if settings.runner.no_progress_breaker_enabled:
+            no_progress_max_turns = settings.runner.no_progress_max_turns
+    elif no_progress_max_turns <= 0:
+        no_progress_max_turns = None
 
     if coordinator is None:
         coordinator = AgentCoordinator()
@@ -223,7 +298,11 @@ async def run_strix_scan(
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,
         )
-        hooks = ReportUsageHooks(model=resolved_model, max_budget_usd=max_budget_usd)
+        hooks = ReportUsageHooks(
+            model=resolved_model,
+            max_budget_usd=max_budget_usd,
+            no_progress_max_turns=no_progress_max_turns,
+        )
 
         scope_context = build_scope_context(scan_config)
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
@@ -370,8 +449,10 @@ async def run_strix_scan(
                     str(final)[:300],
                 )
         return result  # noqa: TRY300
-    except BudgetExceededError as exc:
+    except ScanLimitError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
+        if isinstance(exc, NoProgressExceededError):
+            _write_no_progress_report(exc)
         if root_id is not None:
             await coordinator.cancel_descendants(root_id)
             with contextlib.suppress(Exception):
