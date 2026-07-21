@@ -9,9 +9,42 @@ import pytest
 from agents.model_settings import ModelSettings
 from agents.usage import Usage
 
-from strix.agents.factory import build_strix_agent, make_child_factory
+from strix.agents.factory import _resolve_child_api_key, build_strix_agent, make_child_factory
 from strix.config.settings import LlmSettings, Settings, SkillModelRoute
 from strix.core.hooks import ReportUsageHooks
+
+
+def test_child_api_key_prefers_explicit_subagent_key() -> None:
+    llm = LlmSettings(
+        model="openai/root",
+        api_key="root-key",
+        subagent_api_key="child-key",
+    )
+    # Explicit subagent key wins even when the child shares the root provider.
+    assert _resolve_child_api_key(llm, "openai/child", "openai/root") == "child-key"
+
+
+def test_child_api_key_reuses_root_key_only_for_same_provider() -> None:
+    llm = LlmSettings(model="openai/root", api_key="root-key")
+    assert _resolve_child_api_key(llm, "openai/mini", "openai/root") == "root-key"
+    # A cross-provider child must not receive the root provider's credential.
+    assert _resolve_child_api_key(llm, "anthropic/opus", "openai/root") is None
+
+
+def test_child_api_key_flows_into_model_settings_extra_args() -> None:
+    settings = Settings(
+        llm=LlmSettings(
+            model="openai/root",
+            api_key="root-key",
+            subagent_api_key="child-key",
+        )
+    )
+    child = make_child_factory(settings=settings, default_model="openai/root")(
+        name="worker",
+        skills=[],
+        model="anthropic/opus",
+    )
+    assert child.model_settings.extra_args["api_key"] == "child-key"
 
 
 def test_build_agent_accepts_model_and_settings() -> None:

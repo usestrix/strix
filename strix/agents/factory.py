@@ -17,7 +17,7 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
-from strix.config.models import uses_chat_completions_tool_schema
+from strix.config.models import _same_provider, uses_chat_completions_tool_schema
 from strix.core.inputs import make_model_settings
 from strix.tools.agents_graph.tools import (
     agent_finish,
@@ -63,7 +63,7 @@ if TYPE_CHECKING:
     from agents import RunContextWrapper
     from agents.tool import FunctionToolResult
 
-    from strix.config.settings import ReasoningEffort, Settings, SkillModelRoute
+    from strix.config.settings import LlmSettings, ReasoningEffort, Settings, SkillModelRoute
 
 
 logger = logging.getLogger(__name__)
@@ -482,6 +482,22 @@ def build_strix_agent(
     )
 
 
+def _resolve_child_api_key(
+    llm: LlmSettings, resolved_model: str, default_model: str
+) -> str | None:
+    """Pick the credential a child should send as a per-call ``api_key``.
+
+    Prefer an explicit ``SUBAGENT_LLM_API_KEY``. Otherwise reuse the
+    orchestrator key only when the child shares the orchestrator's provider;
+    cross-provider children fall back to their provider's ambient env/auth.
+    """
+    if llm.subagent_api_key and llm.subagent_api_key.strip():
+        return llm.subagent_api_key.strip()
+    if llm.api_key and _same_provider(resolved_model, default_model):
+        return llm.api_key
+    return None
+
+
 def make_child_factory(
     *,
     settings: Settings,
@@ -523,10 +539,12 @@ def make_child_factory(
         )
         if reasoning is None:
             reasoning = llm.reasoning_effort
+        child_api_key = _resolve_child_api_key(llm, resolved_model, default_model)
         child_model_settings = make_model_settings(
             reasoning,
             model_name=resolved_model,
             force_required_tool_choice=llm.force_required_tool_choice,
+            api_key=child_api_key,
         )
         return build_strix_agent(
             name=name,
