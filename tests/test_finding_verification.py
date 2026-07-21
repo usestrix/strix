@@ -9,11 +9,30 @@ from pydantic import ValidationError
 
 from strix.config.settings import FindingVerificationSettings
 from strix.report.state import ReportState, set_global_report_state
+from strix.report.verification import _verifier_model_settings
 from strix.tools.reporting.tool import _do_create
 
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+def test_verifier_key_sent_per_call_not_via_global_env() -> None:
+    verification = FindingVerificationSettings(
+        enabled=True,
+        model="anthropic/verifier",
+        api_key="verifier-key",
+    )
+    settings = _verifier_model_settings(verification, "anthropic/verifier")
+    # The key rides on the request, so a shared-provider primary key can't
+    # clobber it (and vice versa) through the global provider env var.
+    assert settings.extra_args["api_key"] == "verifier-key"
+
+
+def test_verifier_settings_omit_api_key_when_unset() -> None:
+    verification = FindingVerificationSettings(enabled=True, model="anthropic/verifier")
+    settings = _verifier_model_settings(verification, "anthropic/verifier")
+    assert "api_key" not in (settings.extra_args or {})
 
 
 _CVSS = {

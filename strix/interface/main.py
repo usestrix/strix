@@ -356,11 +356,18 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             verification_model = settings.verification.model.strip()
             raw_model = verification_model
             verifier = StrixProvider().get_model(verification_model)
+            verifier_settings = ModelSettings()
+            if settings.verification.api_key and settings.verification.api_key.strip():
+                # Match the runtime path: send the verification key per call so a
+                # separate-provider verifier authenticates during warm-up too.
+                verifier_settings = ModelSettings(
+                    extra_args={"api_key": settings.verification.api_key.strip()}
+                )
             await asyncio.wait_for(
                 verifier.get_response(
                     system_instructions="You are a helpful assistant.",
                     input="Reply with just 'OK'.",
-                    model_settings=ModelSettings(),
+                    model_settings=verifier_settings,
                     tools=[],
                     output_schema=None,
                     handoffs=[],
