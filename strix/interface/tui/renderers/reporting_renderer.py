@@ -22,6 +22,55 @@ def _coerce_list_of_dicts(value: Any) -> list[dict[str, Any]]:
     return []
 
 
+def _is_unsuccessful(result: Any) -> bool:
+    """True when the reporting tool refused to file, or filed but could not persist."""
+    return isinstance(result, dict) and (
+        result.get("success") is False or bool(result.get("warning"))
+    )
+
+
+def _render_rejected_report(
+    icon: str, heading: str, args: dict[str, Any], result: dict[str, Any]
+) -> Text:
+    """Body for a report the tool did not file, or filed but could not persist.
+
+    Shared by the vulnerability and dependency renderers: both tools return the
+    same failure payload shapes (``success: false`` with ``error``/``errors``,
+    or ``success: true`` with ``warning``).
+    """
+    text = Text()
+    text.append(f"{icon} ")
+    text.append(heading, style="bold #ea580c")
+    title = args.get("title", "")
+    if title:
+        text.append("\n\n")
+        text.append("Title: ", style=FIELD_STYLE)
+        text.append(title)
+
+    if result.get("success") is False:
+        errors = result.get("errors")
+        detail = (
+            "; ".join(str(e) for e in errors)
+            if isinstance(errors, list) and errors
+            else result.get("error")
+        )
+        label, style = "✗ Not created: ", "bold #dc2626"
+        fallback = "Report was not created."
+    else:
+        detail = result.get("warning")
+        label, style = "⚠ Not persisted: ", "bold #d97706"
+        fallback = "Report could not be persisted."
+    text.append("\n\n")
+    text.append(label, style=style)
+    text.append(str(detail or fallback))
+
+    padded = Text()
+    padded.append("\n\n")
+    padded.append_text(text)
+    padded.append("\n\n")
+    return padded
+
+
 @cache
 def _get_style_colors() -> dict[Any, str]:
     style = get_style_by_name("native")
@@ -89,6 +138,12 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
     def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result", {})
+
+        if _is_unsuccessful(result):
+            return Static(
+                _render_rejected_report("🐞", "Vulnerability Report", args, result),
+                classes=cls.get_css_classes("failed"),
+            )
 
         title = args.get("title", "")
         description = args.get("description", "")
@@ -285,43 +340,17 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
 
     @classmethod
     def _render_unsuccessful(cls, args: dict[str, Any], result: dict[str, Any]) -> Static:
-        text = Text()
-        text.append("📦 ")
-        text.append("Dependency (SCA) Report", style="bold #ea580c")
-        title = args.get("title", "")
-        if title:
-            text.append("\n\n")
-            text.append("Title: ", style=FIELD_STYLE)
-            text.append(title)
-
-        warning = result.get("warning")
-        if result.get("success") is False:
-            errors = result.get("errors")
-            detail = (
-                "; ".join(errors) if isinstance(errors, list) and errors else result.get("error")
-            )
-            label, style = "✗ Not created: ", "bold #dc2626"
-            fallback = "Report was not created."
-        else:
-            detail = warning
-            label, style = "⚠ Not persisted: ", "bold #d97706"
-            fallback = "Report could not be persisted."
-        text.append("\n\n")
-        text.append(label, style=style)
-        text.append(str(detail or fallback))
-
-        padded = Text()
-        padded.append("\n\n")
-        padded.append_text(text)
-        padded.append("\n\n")
-        return Static(padded, classes=cls.get_css_classes("failed"))
+        return Static(
+            _render_rejected_report("📦", "Dependency (SCA) Report", args, result),
+            classes=cls.get_css_classes("failed"),
+        )
 
     @classmethod
     def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result", {})
 
-        if isinstance(result, dict) and (result.get("success") is False or result.get("warning")):
+        if _is_unsuccessful(result):
             return cls._render_unsuccessful(args, result)
 
         title = args.get("title", "")
