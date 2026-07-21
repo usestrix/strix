@@ -1,4 +1,5 @@
-import { Info } from "lucide-react";
+import { useState } from "react";
+import { ChevronDown, ChevronUp, Info } from "lucide-react";
 import { formatNumber } from "@/lib/display-number";
 
 /**
@@ -54,6 +55,8 @@ export function RunDetails({
   raw: Rec;
   durationSeconds: number | null;
 }) {
+  const [open, setOpen] = useState(true);
+
   // Configuration (launch inputs)
   const targets = arr(raw.targets_info).map((t) => {
     const o = rec(t);
@@ -98,12 +101,23 @@ export function RunDetails({
 
   return (
     <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
-      <div className="mb-4 flex items-center gap-2">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        className="flex w-full cursor-pointer items-center gap-2 text-left"
+      >
         <Info className="h-4 w-4 text-[#888]" aria-hidden="true" />
         <h2 className="text-sm font-semibold text-white">Run details</h2>
-      </div>
+        {open ? (
+          <ChevronUp className="ml-auto h-4 w-4 text-[#666]" aria-hidden="true" />
+        ) : (
+          <ChevronDown className="ml-auto h-4 w-4 text-[#666]" aria-hidden="true" />
+        )}
+      </button>
 
-      <div className="grid grid-cols-1 gap-x-8 gap-y-6 md:grid-cols-2">
+      {open && (
+      <div className="mt-4 grid grid-cols-1 gap-x-8 gap-y-6 md:grid-cols-2">
         <section>
           <h3 className="mb-3 text-[11px] font-semibold uppercase tracking-wide text-[#555]">
             Configuration
@@ -178,6 +192,7 @@ export function RunDetails({
           )}
         </section>
       </div>
+      )}
     </div>
   );
 }
