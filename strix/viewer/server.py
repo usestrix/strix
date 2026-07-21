@@ -255,12 +255,17 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 return
 
             # The launched run is always viewable. Any *other* run's data is part
-            # of the gated history, so it requires the same email verification as
-            # the /api/runs list — otherwise knowing a run name would leak its
+            # of the gated history: it needs this process's session capability
+            # (so merely reaching an exposed --host port is not enough) *and*
+            # email verification -- otherwise knowing a run name would leak its
             # metadata, vulnerabilities, report, and transcript.
-            if run_dir.resolve() != state.run_dir.resolve() and not auth.is_verified():
-                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unverified"})
-                return
+            if run_dir.resolve() != state.run_dir.resolve():
+                if not self._has_session():
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                    return
+                if not auth.is_verified():
+                    self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unverified"})
+                    return
 
             if path == "/api/run":
                 self._send_json(HTTPStatus.OK, read_run_summary(run_dir))

@@ -56,13 +56,33 @@ def test_is_verified_enforces_expiry() -> None:
     assert auth.is_verified() is True
 
 
-def test_is_verified_when_expiry_absent_or_unparseable() -> None:
-    # No/blank expiry: cannot enforce locally, so treat as valid.
+def test_is_verified_fails_closed_when_expiry_absent_or_unparseable() -> None:
+    # No/blank expiry: fail closed rather than unlocking history forever.
     auth.write_auth(email="a@b.com", token="t", verified_at="")
-    assert auth.is_verified() is True
+    assert auth.read_auth() is not None
+    assert auth.is_verified() is False
 
-    # Garbage expiry is ignored rather than locking the user out.
+    # Garbage expiry likewise requires re-verification.
     auth.write_auth(email="a@b.com", token="t", verified_at="not-a-date")
+    assert auth.is_verified() is False
+
+
+def test_is_verified_accepts_epoch_expiry() -> None:
+    # A relay expiry expressed as epoch seconds must not be misread as missing.
+    future = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
+    past = (datetime.now(UTC) - timedelta(hours=1)).timestamp()
+
+    # As a numeric string (how write_auth persists it).
+    auth.write_auth(email="a@b.com", token="t", verified_at=str(future))
+    assert auth.is_verified() is True
+    auth.write_auth(email="a@b.com", token="t", verified_at=str(past))
+    assert auth.is_verified() is False
+
+    # As a raw JSON number, if a record is written that way.
+    auth.AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
+    auth.AUTH_PATH.write_text(
+        f'{{"email": "a@b.com", "token": "t", "verified_at": {future}}}', encoding="utf-8"
+    )
     assert auth.is_verified() is True
 
 
@@ -102,7 +122,8 @@ def test_otp_start_maps_errors(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_otp_verify_success_and_invalid(monkeypatch: pytest.MonkeyPatch) -> None:
-    _stub_post(monkeypatch, 200, {"token": "t", "email": "a@b.com", "expires_at": "later"})
+    expires = _iso(timedelta(hours=1))
+    _stub_post(monkeypatch, 200, {"token": "t", "email": "a@b.com", "expires_at": expires})
     result = auth.otp_verify("a@b.com", "123456")
     assert result["token"] == "t"
 
@@ -110,6 +131,16 @@ def test_otp_verify_success_and_invalid(monkeypatch: pytest.MonkeyPatch) -> None
     with pytest.raises(auth.RelayError) as exc:
         auth.otp_verify("a@b.com", "000000")
     assert exc.value.code == "invalid_code"
+
+
+def test_otp_verify_rejects_token_without_usable_expiry(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A 200 with a token but no valid expiry must not be reported as success,
+    # otherwise the caller would store a record that immediately reads unverified.
+    for expires in (None, "", "later"):
+        _stub_post(monkeypatch, 200, {"token": "t", "email": "a@b.com", "expires_at": expires})
+        with pytest.raises(auth.RelayError) as exc:
+            auth.otp_verify("a@b.com", "123456")
+        assert exc.value.code == "unavailable"
 
 
 def test_report_send_never_includes_password(monkeypatch: pytest.MonkeyPatch) -> None:

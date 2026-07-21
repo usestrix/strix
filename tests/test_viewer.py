@@ -213,9 +213,11 @@ def _session_cookie(url: str, token: str) -> str:
     return raw.split(";", 1)[0]
 
 
-def _get_status(url: str) -> int:
+def _get_status(url: str, *, cookie: str | None = None) -> int:
+    headers = {"Cookie": cookie} if cookie else {}
+    req = urllib.request.Request(url, headers=headers)  # noqa: S310 - localhost test server
     try:
-        with urllib.request.urlopen(url) as resp:  # noqa: S310 - localhost test server
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
             return int(resp.status)
     except urllib.error.HTTPError as exc:
         return int(exc.code)
@@ -378,19 +380,26 @@ def test_historical_run_data_requires_verification(
     verified = {"value": False}
     monkeypatch.setattr("strix.viewer.auth.is_verified", lambda: verified["value"])
 
-    httpd, url, _ = serve(launched, open_browser=False)
+    httpd, url, token = serve(launched, open_browser=False)
     try:
-        # The launched run is always viewable, no verification required.
+        # The launched run is always viewable, no verification and no cookie.
         status, _, _ = _get(f"{url}/api/run")
         assert status == 200
 
-        # A different run's data is gated behind verification.
-        assert _get_status(f"{url}/api/run?run=other") == 401
+        cookie = _session_cookie(url, token)
 
-        # Once verified, the historical run resolves.
+        # A different run needs the session capability first: a cookie-less
+        # caller is forbidden even once the machine is verified.
         verified["value"] = True
-        status, _, _ = _get(f"{url}/api/run?run=other")
-        assert status == 200
+        assert _get_status(f"{url}/api/run?run=other") == 403
+
+        # With the cookie but not verified, the history gate returns 401.
+        verified["value"] = False
+        assert _get_status(f"{url}/api/run?run=other", cookie=cookie) == 401
+
+        # With both the cookie and verification, the historical run resolves.
+        verified["value"] = True
+        assert _get_status(f"{url}/api/run?run=other", cookie=cookie) == 200
     finally:
         httpd.shutdown()
         httpd.server_close()
