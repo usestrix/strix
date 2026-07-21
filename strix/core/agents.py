@@ -72,6 +72,7 @@ class AgentCoordinator:
         *,
         task: str | None = None,
         skills: list[str] | None = None,
+        model: str | None = None,
     ) -> None:
         async with self._lock:
             self.statuses[agent_id] = "running"
@@ -81,6 +82,7 @@ class AgentCoordinator:
             self.metadata[agent_id] = {
                 "task": task or "",
                 "skills": list(skills or []),
+                "model": model,
             }
             self.runtimes.setdefault(agent_id, AgentRuntime())
         logger.info("agent.register %s (%s) parent=%s", agent_id, name, parent_id or "-")

@@ -21,6 +21,7 @@ from strix.config.settings import (
     LlmSettings,
     RuntimeSettings,
     Settings,
+    SkillModelRoute,
     TelemetrySettings,
 )
 
@@ -30,6 +31,7 @@ __all__ = [
     "LlmSettings",
     "RuntimeSettings",
     "Settings",
+    "SkillModelRoute",
     "TelemetrySettings",
     "apply_config_override",
     "load_settings",

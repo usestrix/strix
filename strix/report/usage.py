@@ -18,6 +18,7 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage: dict[str, Usage] = {}
         self._agent_metadata: dict[str, dict[str, str]] = {}
+        self._agent_cost: dict[str, float] = {}
         self._total_cost = 0.0
 
     def record(
@@ -45,6 +46,9 @@ class LLMUsageLedger:
             estimated = _estimate_litellm_cost(usage, model)
             if estimated:
                 self._total_cost += estimated
+                self._agent_cost[normalized_agent_id] = (
+                    self._agent_cost.get(normalized_agent_id, 0.0) + estimated
+                )
 
         return True
 
@@ -62,13 +66,25 @@ class LLMUsageLedger:
         record["agents"] = []
 
         agent_tokens = {aid: _resolve_total_tokens(u) for aid, u in self._agent_usage.items()}
-        total_tokens = sum(agent_tokens.values())
+        # Native provider estimates are tied to an agent. Any remainder comes
+        # from LiteLLM callbacks, whose callback interface has no Strix agent id.
+        unassigned_cost = max(0.0, self._total_cost - sum(self._agent_cost.values()))
+        litellm_agent_tokens = sum(
+            tokens
+            for aid, tokens in agent_tokens.items()
+            if _is_litellm_routed(self._agent_metadata.get(aid, {}).get("model"))
+        )
         for agent_id in sorted(self._agent_usage):
             usage = self._agent_usage[agent_id]
             metadata = self._agent_metadata.get(agent_id, {})
-            agent_cost = (
-                self._total_cost * (agent_tokens[agent_id] / total_tokens) if total_tokens else 0.0
-            )
+            agent_cost = self._agent_cost.get(agent_id, 0.0)
+            if _is_litellm_routed(metadata.get("model")) and litellm_agent_tokens:
+                # LiteLLM's callback does not carry Strix's agent id. Allocate
+                # only callback-observed cost across LiteLLM agents by tokens;
+                # never smear it over native-provider agents.
+                agent_cost += unassigned_cost * (
+                    agent_tokens[agent_id] / litellm_agent_tokens
+                )
 
             agent_record = serialize_usage(usage)
             agent_record.update(
@@ -87,6 +103,7 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage.clear()
         self._agent_metadata.clear()
+        self._agent_cost.clear()
         self._total_cost = 0.0
 
         if not isinstance(raw_usage, dict):
@@ -120,6 +137,11 @@ class LLMUsageLedger:
             if isinstance(model, str) and model:
                 metadata["model"] = model
             self._agent_metadata[agent_id] = metadata
+            # Persisted per-agent costs may include proportional allocation of
+            # provider callback costs. Keep only native estimates here so a
+            # resumed run does not double-count that allocation.
+            if not _is_litellm_routed(metadata.get("model")):
+                self._agent_cost[agent_id] = _float_or_zero(raw_agent.get("cost"))
 
 
 def _resolve_total_tokens(usage: Usage) -> int:
