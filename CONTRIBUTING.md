@@ -101,17 +101,17 @@ We welcome feature ideas! Please:
 
 ## 🖥️ Local viewer SPA
 
-`strix view` serves a prebuilt web UI whose source lives in `strix/viewer_src/`
-(a Vite + React project) and whose built output is committed to
-`strix/viewer/viewer_dist/` and shipped in the package. End users never run a
-JS build. If you change anything under `strix/viewer_src/`, rebuild and commit
-the output:
+`strix view` serves a prebuilt web UI whose source lives in
+`strix/viewer/frontend/` (a Vite + React project) and whose built output is
+committed to `strix/viewer/static/` and shipped in the package. End users never
+run a JS build. If you change anything under `strix/viewer/frontend/`, rebuild
+and commit the output:
 
 ```bash
-make viewer   # or: cd strix/viewer_src && npm ci && npm run build
+make viewer   # or: cd strix/viewer/frontend && npm ci && npm run build
 ```
 
-Commit both the source change and the regenerated `strix/viewer/viewer_dist/`.
+Commit both the source change and the regenerated `strix/viewer/static/`.
 
 ## 🤝 Community
 

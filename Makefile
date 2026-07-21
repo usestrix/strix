@@ -69,8 +69,8 @@ clean:
 
 viewer:
 	@echo "🖥️  Building the local-viewer SPA..."
-	cd strix/viewer_src && npm ci && npm run build
-	@echo "✅ Viewer built to strix/viewer/viewer_dist/ (commit the changes)."
+	cd strix/viewer/frontend && npm ci && npm run build
+	@echo "✅ Viewer built to strix/viewer/static/ (commit the changes)."
 
 dev: format lint type-check
 	@echo "✅ Development cycle complete!"

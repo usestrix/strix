@@ -26,8 +26,8 @@ for tcss_file in strix_root.rglob('*.tcss'):
     datas.append((str(tcss_file), str(rel_path.parent)))
 
 # Prebuilt local-viewer SPA (served by `strix view`).
-viewer_dist = strix_root / 'viewer' / 'viewer_dist'
-for asset in viewer_dist.rglob('*'):
+viewer_static = strix_root / 'viewer' / 'static'
+for asset in viewer_static.rglob('*'):
     if asset.is_file():
         rel_path = asset.relative_to(project_root)
         datas.append((str(asset), str(rel_path.parent)))

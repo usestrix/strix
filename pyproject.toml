@@ -77,10 +77,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["strix"]
-# The prebuilt viewer bundle under strix/viewer/viewer_dist/ ships automatically
+# The prebuilt viewer bundle under strix/viewer/static/ ships automatically
 # (hatchling includes non-.py files under the package). The Vite SOURCE lives
-# under the package dir too but must never ship in the wheel.
-exclude = ["strix/viewer_src", "strix/viewer_src/**"]
+# under the package dir too (strix/viewer/frontend/) but must never ship in the wheel.
+exclude = ["strix/viewer/frontend", "strix/viewer/frontend/**"]
 
 # ============================================================================
 # Type Checking Configuration

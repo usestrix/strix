@@ -1,8 +1,8 @@
 # Node / local-viewer SPA source (the built bundle in
-# strix/viewer/viewer_dist/ is committed and shipped; do not ignore it)
+# strix/viewer/static/ is committed and shipped; do not ignore it)
 node_modules/
-strix/viewer_src/node_modules/
-strix/viewer_src/.vite/
+strix/viewer/frontend/node_modules/
+strix/viewer/frontend/.vite/
 
 # Python
 __pycache__/

@@ -47,7 +47,7 @@ logger = logging.getLogger(__name__)
 
 def bundle_dir() -> Path:
     """Directory holding the committed, prebuilt SPA (index.html + assets)."""
-    return Path(__file__).resolve().parent / "viewer_dist"
+    return Path(__file__).resolve().parent / "static"
 
 
 def bundle_is_built() -> bool:
