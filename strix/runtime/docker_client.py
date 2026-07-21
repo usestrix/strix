@@ -24,25 +24,128 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import os
 import uuid
-from typing import Any
+from typing import Any, cast
 
+from agents.sandbox.errors import ExposedPortUnavailableError
 from agents.sandbox.manifest import Manifest
 from agents.sandbox.sandboxes.docker import (
     DockerSandboxClient,
+    DockerSandboxSession,
     _build_docker_volume_mounts,  # pyright: ignore[reportPrivateUsage]
     _docker_port_key,  # pyright: ignore[reportPrivateUsage]
     _manifest_requires_fuse,  # pyright: ignore[reportPrivateUsage]
     _manifest_requires_sys_admin,  # pyright: ignore[reportPrivateUsage]
 )
 from agents.sandbox.session.sandbox_session import SandboxSession
+from agents.sandbox.types import ExposedPortEndpoint
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from docker.models.containers import Container  # type: ignore[import-untyped, unused-ignore]
+from docker.types import LogConfig  # type: ignore[import-untyped, unused-ignore]
 from docker.types import Mount as DockerSDKMount  # type: ignore[import-untyped, unused-ignore]
 from docker.utils import parse_repository_tag  # type: ignore[import-untyped, unused-ignore]
+from requests.exceptions import RequestException
 
 
 logger = logging.getLogger(__name__)
+
+
+_SANDBOX_NETWORK_ENV = "STRIX_DOCKER_SANDBOX_NETWORK"
+
+
+def _sandbox_network() -> str | None:
+    value = os.environ.get(_SANDBOX_NETWORK_ENV, "").strip()
+    return value or None
+
+
+def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
+    network = _sandbox_network()
+    if network:
+        create_kwargs["network"] = network
+        create_kwargs.pop("ports", None)
+
+
+def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
+    """Apply optional cgroup resource caps from the environment. Unset/blank
+    values leave docker's default (unbounded), so this is opt-in per host."""
+    mem_limit = os.environ.get("STRIX_SANDBOX_MEM_LIMIT", "").strip()
+    if mem_limit:
+        create_kwargs["mem_limit"] = mem_limit
+
+    shm_size = os.environ.get("STRIX_SANDBOX_SHM_SIZE", "").strip()
+    if shm_size:
+        create_kwargs["shm_size"] = shm_size
+
+    cpus = os.environ.get("STRIX_SANDBOX_CPUS", "").strip()
+    if cpus:
+        with contextlib.suppress(ValueError, OverflowError):
+            nano_cpus = int(float(cpus) * 1_000_000_000)
+            if 0 < nano_cpus <= 2**63 - 1:
+                create_kwargs["nano_cpus"] = nano_cpus
+
+    pids_limit = os.environ.get("STRIX_SANDBOX_PIDS_LIMIT", "").strip()
+    if pids_limit:
+        with contextlib.suppress(ValueError):
+            create_kwargs["pids_limit"] = int(pids_limit)
+
+
+def _apply_log_limits(create_kwargs: dict[str, Any]) -> None:
+    """Bound the container's json-file log so a runaway process in the sandbox
+    (e.g. a tool that busy-loops writing to stdout) cannot fill the host disk
+    and take the Docker daemon down with it.
+
+    Unlike the cgroup caps above, this defaults **on** — docker's own default
+    is an unbounded json-file, which is unsafe for an autonomous agent that
+    executes arbitrary commands. ``max-file`` rotation means the on-disk cap is
+    ``max-size * max-file``. Set ``STRIX_SANDBOX_LOG_MAX_SIZE`` to ``0``/``off``
+    to opt back out to docker's default."""
+    max_size = os.environ.get("STRIX_SANDBOX_LOG_MAX_SIZE", "50m").strip()
+    if max_size.lower() in ("0", "off", "none", "unlimited"):
+        return
+    max_file = os.environ.get("STRIX_SANDBOX_LOG_MAX_FILE", "3").strip() or "3"
+    create_kwargs["log_config"] = LogConfig(
+        type=LogConfig.types.JSON,
+        config={"max-size": max_size, "max-file": max_file},
+    )
+
+
+class StrixDockerSandboxSession(DockerSandboxSession):
+    sandbox_network: str = ""
+
+    async def _resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
+        try:
+            self._container.reload()
+        except docker_errors.APIError as e:
+            raise ExposedPortUnavailableError(
+                port=port,
+                exposed_ports=self.state.exposed_ports,
+                reason="backend_unavailable",
+                context={
+                    "backend": "docker",
+                    "detail": "container_reload_failed",
+                    "network": self.sandbox_network,
+                },
+                cause=e,
+            ) from e
+
+        attrs = getattr(self._container, "attrs", {}) or {}
+        networks = attrs.get("NetworkSettings", {}).get("Networks", {})
+        endpoint = networks.get(self.sandbox_network) or {}
+        ip = endpoint.get("IPAddress") or endpoint.get("GlobalIPv6Address")
+        if not isinstance(ip, str) or not ip:
+            raise ExposedPortUnavailableError(
+                port=port,
+                exposed_ports=self.state.exposed_ports,
+                reason="backend_unavailable",
+                context={
+                    "backend": "docker",
+                    "detail": "container_not_on_network",
+                    "network": self.sandbox_network,
+                },
+            )
+        host = f"[{ip}]" if ":" in ip else ip
+        return ExposedPortEndpoint(host=host, port=port, tls=False)
 
 
 class StrixDockerSandboxClient(DockerSandboxClient):
@@ -116,6 +219,10 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         extra_hosts = create_kwargs.setdefault("extra_hosts", {})
         extra_hosts["host.docker.internal"] = "host-gateway"
 
+        _apply_sandbox_network(create_kwargs)
+        _apply_resource_limits(create_kwargs)
+        _apply_log_limits(create_kwargs)
+
         # Strix injection: host bind mounts (e.g. large repos passed via --mount)
         # that bypass the SDK's file-by-file LocalDir copy.
         bind_mounts = self.strix_bind_mounts or []
@@ -145,9 +252,27 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         )
         return container
 
+    async def create(self, **kwargs: Any) -> SandboxSession:
+        session = await super().create(**kwargs)
+        network = _sandbox_network()
+        inner = session._inner
+        if network and isinstance(inner, DockerSandboxSession):
+            inner.__class__ = StrixDockerSandboxSession
+            cast("StrixDockerSandboxSession", inner).sandbox_network = network
+        return session
+
     async def delete(self, session: SandboxSession) -> SandboxSession:
         container_id = getattr(getattr(session._inner, "state", None), "container_id", None)
         if container_id:
-            with contextlib.suppress(docker_errors.NotFound, docker_errors.APIError):
+            # Best-effort kill: NotFound/APIError cover a gone or unhappy
+            # container. RequestException covers a torn-down daemon socket —
+            # containers.get() -> inspect_container raises requests'
+            # ConnectionError, which is a sibling of docker.errors.APIError
+            # under requests.RequestException (not a subclass), so it escapes
+            # an APIError-only suppress and surfaces a full traceback even
+            # though this teardown is meant to be best-effort.
+            with contextlib.suppress(
+                docker_errors.NotFound, docker_errors.APIError, RequestException
+            ):
                 self.docker_client.containers.get(container_id).kill()
         return await super().delete(session)

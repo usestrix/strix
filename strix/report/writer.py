@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import csv
+import io
 import json
 import logging
+import re
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
@@ -16,6 +18,21 @@ from strix.core.paths import run_record_path
 logger = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+
+_BACKTICK_RUN = re.compile(r"`+")
+
+
+def _safe_fence(content: str) -> str:
+    """Return a backtick fence that ``content`` cannot break out of.
+
+    Per CommonMark a fenced code block is closed only by a run of backticks at
+    least as long as the opening fence. LLM-authored, attacker-influenced values
+    (PoC scripts, code snippets) may contain their own ``` runs, so we open with
+    a fence one backtick longer than the longest run inside ``content`` (never
+    fewer than three). Everything in ``content`` then renders verbatim.
+    """
+    longest = max((len(m.group()) for m in _BACKTICK_RUN.finditer(content)), default=0)
+    return "`" * max(3, longest + 1)
 
 
 def read_run_record(run_dir: Path) -> dict[str, Any]:
@@ -58,9 +75,9 @@ def write_vulnerabilities(
     new_reports = [r for r in vulnerability_reports if r["id"] not in saved_vuln_ids]
 
     for report in new_reports:
-        (vuln_dir / f"{report['id']}.md").write_text(
+        _atomic_write_text(
+            vuln_dir / f"{report['id']}.md",
             render_vulnerability_md(report),
-            encoding="utf-8",
         )
         saved_vuln_ids.add(report["id"])
 
@@ -69,20 +86,21 @@ def write_vulnerabilities(
         key=lambda r: (_SEVERITY_ORDER.get(r["severity"], 5), r["timestamp"]),
     )
     csv_path = run_dir / "vulnerabilities.csv"
-    with csv_path.open("w", encoding="utf-8", newline="") as f:
-        fieldnames = ["id", "title", "severity", "timestamp", "file"]
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
-        for report in sorted_reports:
-            writer.writerow(
-                {
-                    "id": report["id"],
-                    "title": report["title"],
-                    "severity": report["severity"].upper(),
-                    "timestamp": report["timestamp"],
-                    "file": f"vulnerabilities/{report['id']}.md",
-                },
-            )
+    csv_buf = io.StringIO()
+    fieldnames = ["id", "title", "severity", "timestamp", "file"]
+    csv_writer = csv.DictWriter(csv_buf, fieldnames=fieldnames, lineterminator="\r\n")
+    csv_writer.writeheader()
+    for report in sorted_reports:
+        csv_writer.writerow(
+            {
+                "id": report["id"],
+                "title": report["title"],
+                "severity": report["severity"].upper(),
+                "timestamp": report["timestamp"],
+                "file": f"vulnerabilities/{report['id']}.md",
+            },
+        )
+    _atomic_write_text(csv_path, csv_buf.getvalue())
 
     _atomic_write_text(
         run_dir / "vulnerabilities.json",
@@ -122,8 +140,13 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         f"**Found:** {report.get('timestamp', 'unknown')}",
     ]
 
+    dep_meta = report.get("dependency_metadata") or {}
     metadata: list[tuple[str, Any]] = [
         ("Target", report.get("target")),
+        ("Package", dep_meta.get("package_name")),
+        ("Ecosystem", dep_meta.get("package_ecosystem")),
+        ("Installed Version", dep_meta.get("installed_version")),
+        ("Fixed Version", dep_meta.get("fixed_version")),
         ("Endpoint", report.get("endpoint")),
         ("Method", report.get("method")),
         ("CVE", report.get("cve")),
@@ -132,6 +155,8 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     cvss = report.get("cvss")
     if cvss is not None:
         metadata.append(("CVSS", cvss))
+    if report.get("fix_effort"):
+        metadata.append(("Fix Effort", str(report["fix_effort"]).title()))
     for label, value in metadata:
         if value:
             lines.append(f"**{label}:** {value}")
@@ -140,6 +165,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     lines.append("## Description\n")
     lines.append(report.get("description") or "No description provided.")
     lines.append("")
+
+    if report.get("evidence"):
+        lines.append("## Evidence\n")
+        lines.append(str(report["evidence"]))
+        lines.append("")
 
     if report.get("impact"):
         lines.append("## Impact\n")
@@ -157,9 +187,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append(str(report["poc_description"]))
             lines.append("")
         if report.get("poc_script_code"):
-            lines.append("```")
-            lines.append(str(report["poc_script_code"]))
-            lines.append("```")
+            code = str(report["poc_script_code"])
+            fence = _safe_fence(code)
+            lines.append(fence)
+            lines.append(code)
+            lines.append(fence)
             lines.append("")
 
     if report.get("code_locations"):
@@ -176,7 +208,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             if loc.get("label"):
                 lines.append(f"  {loc['label']}")
             if loc.get("snippet"):
-                lines.append(f"  ```\n  {loc['snippet']}\n  ```")
+                snippet = str(loc["snippet"])
+                fence = _safe_fence(snippet)
+                lines.append(f"  {fence}")
+                lines.extend(f"  {ln}" for ln in snippet.splitlines())
+                lines.append(f"  {fence}")
             if loc.get("fix_before") or loc.get("fix_after"):
                 lines.append("\n  **Suggested Fix:**")
                 lines.append("```diff")
@@ -190,6 +226,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     if report.get("remediation_steps"):
         lines.append("## Remediation\n")
         lines.append(str(report["remediation_steps"]))
+        lines.append("")
+
+    if report.get("assumptions"):
+        lines.append("## Assumptions\n")
+        lines.append(str(report["assumptions"]))
         lines.append("")
 
     return "\n".join(lines)

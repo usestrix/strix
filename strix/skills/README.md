@@ -41,6 +41,7 @@ The skills are dynamically injected into the agent's system prompt, allowing it 
 Notable source-aware skills:
 - `source_aware_whitebox` (coordination): white-box orchestration playbook
 - `source_aware_sast` (custom): semgrep/AST/secrets/supply-chain static triage workflow
+- `dependency_cve_scanning` (custom): trivy-based SCA workflow for reporting known dependency CVEs via `create_dependency_report`
 
 ---
 

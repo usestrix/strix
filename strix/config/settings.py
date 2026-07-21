@@ -36,6 +36,10 @@ class LlmSettings(BaseSettings):
         ),
     )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
+    force_required_tool_choice: bool = Field(
+        default=False,
+        alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
+    )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 
 
@@ -57,6 +61,8 @@ class RuntimeSettings(BaseSettings):
     # Both cases preserve the total count so the agent knows what was omitted.
     # Set to 0 to disable.
     max_tool_output_chars: int = Field(default=65536, alias="STRIX_MAX_TOOL_OUTPUT_CHARS")
+    # Max screenshot/image tool outputs kept live per agent context (0 = none).
+    max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 
 
 class TelemetrySettings(BaseSettings):

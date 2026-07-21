@@ -22,8 +22,17 @@ _notes_storage: dict[str, dict[str, Any]] = {}
 _VALID_NOTE_CATEGORIES = ["general", "findings", "methodology", "questions", "plan", "wiki"]
 _notes_lock = threading.RLock()
 _DEFAULT_CONTENT_PREVIEW_CHARS = 280
+_NOTE_ID_GENERATION_ATTEMPTS = 1024
 
 _notes_path: Path | None = None
+
+
+def _generate_note_id() -> str | None:
+    for _ in range(_NOTE_ID_GENERATION_ATTEMPTS):
+        note_id = uuid.uuid4().hex[:6]
+        if note_id not in _notes_storage:
+            return note_id
+    return None
 
 
 def hydrate_notes_from_disk(state_dir: Path) -> None:
@@ -153,7 +162,13 @@ def _create_note_impl(
                     "note_id": None,
                 }
 
-            note_id = str(uuid.uuid4())[:6]
+            note_id = _generate_note_id()
+            if note_id is None:
+                return {
+                    "success": False,
+                    "error": "Failed to generate a unique note ID",
+                    "note_id": None,
+                }
 
             timestamp = datetime.now(UTC).isoformat()
             note = {

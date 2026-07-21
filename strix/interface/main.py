@@ -23,9 +23,11 @@ from strix.config import (
     persist_current,
 )
 from strix.config.models import (
+    RECOMMENDED_MODEL_NAMES,
     StrixProvider,
     configure_sdk_model_defaults,
     is_known_openai_bare_model,
+    is_recommended_or_frontier_model,
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
@@ -44,6 +46,7 @@ from strix.interface.utils import (
     infer_target_type,
     is_whitebox_scan,
     process_pull_line,
+    read_target_list_file,
     resolve_diff_scope_context,
     rewrite_localhost_targets,
     validate_config_file,
@@ -55,6 +58,16 @@ from strix.telemetry.logging import configure_dependency_logging
 
 
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
+BEDROCK_MODEL_PREFIX = "bedrock/"
+BEDROCK_MISSING_MODULE_ERROR = "No module named 'boto3'"
+BEDROCK_EXTRA_HINT = (
+    'Bedrock support is optional. Install it with: pipx install "strix-agent[bedrock]"'
+)
+VERTEX_MODEL_MARKER = "vertex"
+VERTEX_MISSING_MODULE_ERROR = "No module named 'google"
+VERTEX_EXTRA_HINT = (
+    'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
+)
 
 
 import logging  # noqa: E402
@@ -213,10 +226,51 @@ def check_docker_installed() -> None:
     logger.debug("Docker CLI present")
 
 
-async def warm_up_llm() -> None:
+def _exception_messages(exc: BaseException) -> tuple[str, ...]:
+    messages: list[str] = []
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        messages.append(str(current))
+        if current.__cause__ is not None:
+            stack.append(current.__cause__)
+        if current.__context__ is not None:
+            stack.append(current.__context__)
+    return tuple(messages)
+
+
+def _provider_import_hint(exc: BaseException, model: str) -> str | None:
+    """Return an install hint when *exc* is a missing provider dependency.
+
+    Bedrock and Vertex AI ship as optional extras: Bedrock needs ``boto3`` and
+    Vertex AI needs ``google-auth``. When either is absent, litellm may raise an
+    ``ImportError``/``ModuleNotFoundError`` directly or wrap it in a connection
+    error. Map the missing module back to the matching extra so the user knows
+    what to install. Returns ``None`` for any unrelated error.
+    """
+    model_name = model.lower()
+    messages = _exception_messages(exc)
+    if any(
+        BEDROCK_MISSING_MODULE_ERROR in message for message in messages
+    ) and model_name.startswith(BEDROCK_MODEL_PREFIX):
+        return BEDROCK_EXTRA_HINT
+    if (
+        any(VERTEX_MISSING_MODULE_ERROR in message for message in messages)
+        and VERTEX_MODEL_MARKER in model_name
+    ):
+        return VERTEX_EXTRA_HINT
+    return None
+
+
+async def warm_up_llm(show_model_warning: bool = True) -> None:
     console = Console()
     logger.info("Warming up LLM connection")
 
+    raw_model = ""
     try:
         settings = load_settings()
         configure_sdk_model_defaults(settings)
@@ -254,6 +308,32 @@ async def warm_up_llm() -> None:
             )
             sys.exit(1)
 
+        if show_model_warning and raw_model and not is_recommended_or_frontier_model(raw_model):
+            warn_text = Text()
+            warn_text.append("MODEL QUALITY WARNING", style="bold yellow")
+            warn_text.append("\n\n", style="white")
+            warn_text.append(f"'{raw_model}'", style="bold cyan")
+            warn_text.append(
+                " is not a recommended frontier model for Strix.\nSecurity scans work best with:\n",
+                style="white",
+            )
+            for recommended_model in RECOMMENDED_MODEL_NAMES:
+                warn_text.append(f"• {recommended_model}\n", style="bold cyan")
+            warn_text.append(
+                "\nYou can continue, but weaker models may miss vulnerabilities "
+                "or produce lower-quality findings.",
+                style="white",
+            )
+            console.print(
+                Panel(
+                    warn_text,
+                    title="[bold white]STRIX",
+                    title_align="left",
+                    border_style="yellow",
+                    padding=(1, 2),
+                ),
+            )
+
         model = StrixProvider().get_model(raw_model)
         await asyncio.wait_for(
             model.get_response(
@@ -279,6 +359,9 @@ async def warm_up_llm() -> None:
         error_text.append("\n\n", style="white")
         error_text.append("Could not establish connection to the language model.\n", style="white")
         error_text.append("Please check your configuration and try again.\n", style="white")
+        hint = _provider_import_hint(e, raw_model)
+        if hint is not None:
+            error_text.append(f"\n{hint}\n", style="bold yellow")
         error_text.append(f"\nError: {e}", style="dim white")
 
         panel = Panel(
@@ -310,6 +393,7 @@ def _positive_budget(value: str) -> float:
     except ValueError as exc:
         raise argparse.ArgumentTypeError(f"invalid float value: {value!r}") from exc
     import math
+
     if not math.isfinite(budget) or budget <= 0:
         raise argparse.ArgumentTypeError("must be a finite number greater than 0")
     return budget
@@ -344,6 +428,9 @@ Examples:
   strix --target https://github.com/user/repo --target https://example.com
   strix --target ./my-project --target https://staging.example.com --target https://prod.example.com
 
+  # Targets from a file, one target per non-empty, non-comment line
+  strix --target-list ./targets.txt
+
   # Custom instructions (inline)
   strix --target example.com --instruction "Focus on authentication vulnerabilities"
 
@@ -367,7 +454,15 @@ Examples:
         action="append",
         help="Target to test (URL, repository, local directory path, domain name, or IP address). "
         "Can be specified multiple times for multi-target scans. "
-        "Required for fresh runs; loaded from disk when ``--resume`` is set.",
+        "Fresh runs require at least one of --target, --target-list, or --mount.",
+    )
+    parser.add_argument(
+        "--target-list",
+        type=str,
+        action="append",
+        metavar="PATH",
+        help="Path to a file containing targets, one per non-empty, non-comment line. "
+        "Can be specified multiple times and combined with --target.",
     )
     parser.add_argument(
         "--mount",
@@ -488,10 +583,11 @@ Examples:
     args.user_explicit_instruction = args.instruction if args.resume else None
 
     if args.resume:
-        if args.target or args.mount:
+        if args.target or args.target_list or args.mount:
             parser.error(
-                "Cannot combine --resume with --target/--mount. --resume picks up where "
-                "the prior run left off, including the original target list."
+                "Cannot combine --resume with --target/--target-list/--mount. "
+                "--resume picks up where the prior run left off, including the "
+                "original target list."
             )
         _load_resume_state(args, parser)
         agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"
@@ -503,13 +599,20 @@ Examples:
                 f"or remove --resume to start over with the same targets."
             )
     else:
-        if not args.target and not args.mount:
+        if not args.target and not args.target_list and not args.mount:
             parser.error(
-                "the following arguments are required: -t/--target or --mount "
+                "the following arguments are required: -t/--target, --target-list, or --mount "
                 "(or use --resume <run_name> to continue a prior scan)"
             )
         args.targets_info = []
-        for target in args.target or []:
+        targets = list(args.target or [])
+        for target_list_path in args.target_list or []:
+            try:
+                targets.extend(read_target_list_file(target_list_path))
+            except ValueError as e:
+                parser.error(str(e))
+
+        for target in targets:
             try:
                 target_type, target_dict = infer_target_type(target)
 
@@ -752,7 +855,7 @@ def main() -> None:
     pull_docker_image()
 
     validate_environment()
-    asyncio.run(warm_up_llm())
+    asyncio.run(warm_up_llm(show_model_warning=args.non_interactive))
 
     persist_current()
 
@@ -820,10 +923,10 @@ def main() -> None:
             asyncio.run(run_tui(args))
     except KeyboardInterrupt:
         exit_reason = "interrupted"
-    except Exception as e:
+    except Exception:
         exit_reason = "error"
-        posthog.error("unhandled_exception", str(e))
-        scarf.error("unhandled_exception", str(e))
+        posthog.error("unhandled_exception")
+        scarf.error("unhandled_exception")
         raise
     finally:
         report_state = get_global_report_state()
