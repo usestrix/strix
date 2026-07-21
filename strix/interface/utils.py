@@ -1147,9 +1147,7 @@ def read_target_list_file(path_str: str) -> list[str]:
             if (target := line.strip()) and not target.startswith("#")
         ]
     except UnicodeDecodeError as e:
-        raise ValueError(
-            f"Target list file '{path_str}' must be valid UTF-8 text: {e!s}"
-        ) from e
+        raise ValueError(f"Target list file '{path_str}' must be valid UTF-8 text: {e!s}") from e
     except OSError as e:
         raise ValueError(f"Failed to read target list file '{path_str}': {e!s}") from e
 
