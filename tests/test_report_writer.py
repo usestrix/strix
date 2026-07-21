@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from strix.report import writer
 from strix.report.writer import (
     read_run_record,
     render_vulnerability_md,
@@ -177,3 +178,28 @@ def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
     assert "# Security Penetration Test Report" in content
     assert "Scan complete. No critical issues." in content
+
+
+def test_write_executive_report_keeps_previous_report_when_rendering_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    write_executive_report(tmp_path, "First complete report.")
+    path = tmp_path / "penetration_test_report.md"
+
+    class _BoomDatetime:
+        @staticmethod
+        def now(_tz: Any) -> Any:
+            raise OSError("clock unavailable")
+
+    monkeypatch.setattr(writer, "datetime", _BoomDatetime)
+
+    with pytest.raises(OSError, match="clock unavailable"):
+        write_executive_report(tmp_path, "Second report.")
+
+    assert "First complete report." in path.read_text(encoding="utf-8")
+
+
+def test_write_executive_report_leaves_no_temp_files(tmp_path: Path) -> None:
+    write_executive_report(tmp_path, "Scan complete.")
+    assert [p.name for p in tmp_path.iterdir()] == ["penetration_test_report.md"]
