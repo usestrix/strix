@@ -91,6 +91,7 @@ def render_system_prompt(
             loaded_skill_names=list(skill_content.keys()),
             available_skills=get_available_skills(),
             interactive=interactive,
+            is_root=is_root,
             system_prompt_context=system_prompt_context or {},
             **skill_content,
         )
