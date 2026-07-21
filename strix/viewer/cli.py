@@ -85,7 +85,10 @@ def run_view(argv: list[str]) -> None:
 
     state_label = "[#eab308]live[/]" if live else "[#22c55e]finished[/]"
     console.print()
-    console.print(f"Serving [bold white]{run_name}[/] ({state_label}) at [#60a5fa]{open_url}[/]")
+    console.print(f"Serving [bold white]{run_name}[/] ({state_label}) at:")
+    # Print the URL alone on its own line with soft_wrap so Rich never inserts a
+    # wrap into the (long, tokened) link -- that keeps it selectable/copyable.
+    console.print(f"  [#60a5fa]{open_url}[/]", soft_wrap=True)
     console.print("[dim]This link authorizes the browser; anyone you share it with can steer[/]")
     console.print("[dim]a live scan and browse history. Press Ctrl-C to stop the viewer.[/]")
     console.print()
