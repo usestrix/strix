@@ -15,6 +15,7 @@ from openai import RateLimitError
 
 import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
+from strix.config.settings import RuntimeSettings
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
 
@@ -46,7 +47,11 @@ def _patch_engine_scaffold(
             reasoning_effort="high",
             force_required_tool_choice=False,
             timeout=300,
-        )
+        ),
+        # Real settings object rather than another SimpleNamespace: it carries
+        # defaults for every runtime field, so a runner that starts reading a
+        # new one does not break this stub again.
+        runtime=RuntimeSettings(),
     )
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
