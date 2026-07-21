@@ -395,6 +395,26 @@ def test_report_send_requires_session_cookie(
         httpd.server_close()
 
 
+def test_report_send_rejects_live_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A running scan would only produce a partial report, so the endpoint must
+    # fail closed even for a verified, session-holding caller.
+    run_dir = _make_run(tmp_path, "live", status="running", end_time=None)
+    _bundle(tmp_path, monkeypatch)
+    monkeypatch.setattr("strix.viewer.auth.read_auth", lambda: {"email": "a@b.com", "token": "t"})
+
+    httpd, url, token = serve(run_dir, open_browser=False)
+    try:
+        status, _ = _post(
+            url, "/api/report/send", {}, cookie=_session_cookie(url, token)
+        )
+        assert status == 409
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_historical_run_data_requires_verification(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -38,6 +38,7 @@ interface SidebarProps {
   issuesCount: number;
   agentCount: number;
   runCount: number;
+  finished: boolean;
   verified: boolean;
   email: string | null;
   onOpenEmail: () => void;
@@ -53,6 +54,7 @@ export default function Sidebar({
   issuesCount,
   agentCount,
   runCount,
+  finished,
   verified,
   email,
   onOpenEmail,
@@ -199,14 +201,18 @@ export default function Sidebar({
             onClick={onOpenHistory}
             collapsed={collapsed}
           />
-          <NavItem
-            icon={Mail}
-            label="Email report"
-            desc="Get an encrypted PDF by email"
-            active={view === "email"}
-            onClick={onOpenEmail}
-            collapsed={collapsed}
-          />
+          {/* Emailing a report only makes sense once the run is complete; a
+              live scan would send a partial report, so hide it until finished. */}
+          {finished && (
+            <NavItem
+              icon={Mail}
+              label="Email report"
+              desc="Get an encrypted PDF by email"
+              active={view === "email"}
+              onClick={onOpenEmail}
+              collapsed={collapsed}
+            />
+          )}
 
           {PLATFORM_ORDER.map((slug) => {
             const feature = FEATURES[slug];

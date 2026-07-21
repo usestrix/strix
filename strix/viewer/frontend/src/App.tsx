@@ -274,6 +274,7 @@ export default function App() {
         issuesCount={run?.vulnerabilities.length ?? 0}
         agentCount={agentCount}
         runCount={runs?.count ?? 0}
+        finished={run?.finished ?? false}
         verified={verified}
         email={auth?.email ?? null}
         onOpenEmail={openEmail}
@@ -387,6 +388,7 @@ export default function App() {
                   total={run.vulnerabilities.length}
                   reportMarkdown={run.reportMarkdown}
                   raw={run.raw}
+                  finished={run.finished}
                   onOpenEmail={openEmailFromOverview}
                 />
               ) : view === "agents" && agentCount > 0 ? (
@@ -647,6 +649,7 @@ function OverviewTab({
   total,
   reportMarkdown,
   raw,
+  finished,
   onOpenEmail,
 }: {
   summary: ParsedRunSummary;
@@ -654,6 +657,7 @@ function OverviewTab({
   total: number;
   reportMarkdown: string | null;
   raw: Record<string, unknown>;
+  finished: boolean;
   onOpenEmail: () => void;
 }) {
   const sections = (
@@ -677,8 +681,9 @@ function OverviewTab({
         </div>
       )}
 
-      {/* Primary CTA: the one primary on Overview. */}
-      <EmailReportCta onOpenEmail={onOpenEmail} />
+      {/* Primary CTA: the one primary on Overview. Hidden until the run is
+          finished, since a live scan would only email a partial report. */}
+      {finished && <EmailReportCta onOpenEmail={onOpenEmail} />}
 
       {sections.length > 0 ? (
         <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5 space-y-8">

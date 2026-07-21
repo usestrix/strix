@@ -353,10 +353,17 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown run"})
                 return
 
+            summary = read_run_summary(run_dir)
+            # Emailing only makes sense for a completed run; a live scan would
+            # send a partial report. The UI hides the entry point, but fail
+            # closed here too so the endpoint can't be driven mid-scan.
+            if not summary.get("finished", False):
+                self._send_json(HTTPStatus.CONFLICT, {"error": "run_not_finished"})
+                return
+
             from strix.viewer.report_pdf import build_encrypted_report
 
             pdf_bytes, password, filename = build_encrypted_report(run_dir)
-            summary = read_run_summary(run_dir)
             run_name = str(summary.get("run_name") or run_dir.name)
             target = primary_target(summary) or "unknown target"
             try:
