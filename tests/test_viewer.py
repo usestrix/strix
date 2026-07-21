@@ -86,8 +86,10 @@ def test_build_run_state_from_agents_json(tmp_path: Path) -> None:
     assert state["events"] == []
 
 
-def _get(url: str) -> tuple[int, str, bytes]:
-    with urllib.request.urlopen(url) as resp:  # noqa: S310 - localhost test server
+def _get(url: str, *, cookie: str | None = None) -> tuple[int, str, bytes]:
+    headers = {"Cookie": cookie} if cookie else {}
+    req = urllib.request.Request(url, headers=headers)  # noqa: S310 - localhost test server
+    with urllib.request.urlopen(req) as resp:  # noqa: S310 - localhost test server
         return resp.status, resp.headers.get("Content-Type", ""), resp.read()
 
 
@@ -302,15 +304,38 @@ def test_auth_status_reflects_expiry(tmp_path: Path, monkeypatch: pytest.MonkeyP
     verified = {"value": True}
     monkeypatch.setattr("strix.viewer.auth.is_verified", lambda: verified["value"])
 
-    httpd, url, _ = serve(run_dir, open_browser=False)
+    httpd, url, token = serve(run_dir, open_browser=False)
     try:
-        _, _, body = _get(f"{url}/api/auth/status")
+        cookie = _session_cookie(url, token)
+        _, _, body = _get(f"{url}/api/auth/status", cookie=cookie)
         assert json.loads(body) == {"verified": True, "email": "a@b.com"}
 
         # Once expired, status must advertise unverified so the SPA re-prompts.
         verified["value"] = False
-        _, _, body = _get(f"{url}/api/auth/status")
+        _, _, body = _get(f"{url}/api/auth/status", cookie=cookie)
         assert json.loads(body)["verified"] is False
+
+        # A cookie-less caller never sees the cached email or verified state.
+        verified["value"] = True
+        _, _, body = _get(f"{url}/api/auth/status")
+        assert json.loads(body) == {"verified": False, "email": None}
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_auth_mutations_require_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_dir = _make_run(tmp_path, "authmut", status="running", end_time=None)
+    _bundle(tmp_path, monkeypatch)
+    forgotten = {"value": False}
+    monkeypatch.setattr("strix.viewer.auth.forget", lambda: forgotten.update(value=True))
+
+    httpd, url, _ = serve(run_dir, open_browser=False)
+    try:
+        for path in ("/api/auth/forget", "/api/auth/otp/start", "/api/auth/otp/verify"):
+            status, _ = _post(url, path, {"email": "a@b.com", "code": "123456"})
+            assert status == 403, path
+        assert forgotten["value"] is False
     finally:
         httpd.shutdown()
         httpd.server_close()

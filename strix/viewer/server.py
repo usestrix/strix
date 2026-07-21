@@ -238,17 +238,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.OK, {"can_steer": state.steer_handler is not None})
                 return
             if path == "/api/auth/status":
-                # Report verification through is_verified() so an expired record
-                # is advertised as unverified -- otherwise the SPA would suppress
-                # re-verification while history stays locked, stranding the user.
-                record = auth.read_auth()
-                self._send_json(
-                    HTTPStatus.OK,
-                    {
-                        "verified": auth.is_verified(),
-                        "email": record.get("email") if record else None,
-                    },
-                )
+                self._handle_auth_status()
                 return
 
             run_values = query.get("run")
@@ -282,7 +272,29 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             else:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
 
+        def _handle_auth_status(self) -> None:
+            # The cached verified email is only disclosed to a caller holding this
+            # process's session capability, so a cookie-less client on an exposed
+            # --host port cannot read it; everyone else looks unverified.
+            # Verification is reported through is_verified() so an expired record
+            # is advertised as unverified -- otherwise the SPA would suppress
+            # re-verification while history stays locked, stranding the user.
+            if not self._has_session():
+                self._send_json(HTTPStatus.OK, {"verified": False, "email": None})
+                return
+            record = auth.read_auth()
+            self._send_json(
+                HTTPStatus.OK,
+                {
+                    "verified": auth.is_verified(),
+                    "email": record.get("email") if record else None,
+                },
+            )
+
         def _handle_otp_start(self) -> None:
+            if not self._has_session():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
             email = str(self._read_body().get("email") or "").strip()
             if not email:
                 self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_email"})
@@ -295,6 +307,9 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             self._send_json(HTTPStatus.OK, {"ok": True})
 
         def _handle_otp_verify(self) -> None:
+            if not self._has_session():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
             body = self._read_body()
             email = str(body.get("email") or "").strip()
             code = str(body.get("code") or "").strip()
@@ -315,6 +330,12 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             self._send_json(HTTPStatus.OK, {"verified": True, "email": verified_email})
 
         def _handle_forget(self) -> None:
+            # Clearing the cached verification is a state change, so it requires
+            # this process's session capability: a cookie-less caller on an
+            # exposed --host port must not be able to log the operator out.
+            if not self._has_session():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
             auth.forget()
             self._send_json(HTTPStatus.OK, {"ok": True})
 
