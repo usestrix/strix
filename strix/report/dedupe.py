@@ -7,6 +7,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from openai.types.responses import ResponseOutputMessage
 
@@ -22,8 +23,32 @@ from strix.report.state import get_global_report_state
 if TYPE_CHECKING:
     from agents.items import ModelResponse
 
+    from strix.config.settings import DedupeSettings
+
 
 logger = logging.getLogger(__name__)
+
+
+def _dedupe_model_settings(
+    dedupe: DedupeSettings, model_name: str, request_timeout: float | None
+) -> ModelSettings:
+    """Build dedupe model settings, sending the dedupe key per call.
+
+    Provider env vars are global, so a shared-provider dedupe key can't be
+    installed via the environment without clobbering (or being clobbered by)
+    the main key. Passing it as a per-call ``api_key`` keeps the two apart.
+    """
+    settings = make_model_settings(
+        dedupe.reasoning_effort,
+        model_name=model_name,
+        force_required_tool_choice=False,
+        request_timeout=request_timeout,
+    )
+    if dedupe.model and dedupe.api_key and dedupe.api_key.strip():
+        settings = settings.resolve(
+            ModelSettings(extra_args={"api_key": dedupe.api_key.strip()})
+        )
+    return settings
 
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.
 Your task is to determine if a candidate vulnerability report describes the SAME vulnerability
@@ -306,19 +331,12 @@ async def check_duplicate(
 
         configure_sdk_model_defaults(settings)
         resolved_model = model_name.strip()
-        if dedupe.model and dedupe.api_key:
-            from strix.config.models import _mirror_api_key_to_provider_env
-
-            _mirror_api_key_to_provider_env(resolved_model, dedupe.api_key)
         model = StrixProvider().get_model(resolved_model)
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,
-            model_settings=make_model_settings(
-                dedupe.reasoning_effort,
-                model_name=resolved_model,
-                force_required_tool_choice=False,
-                request_timeout=settings.llm.timeout,
+            model_settings=_dedupe_model_settings(
+                dedupe, resolved_model, settings.llm.timeout
             ),
             tools=[],
             output_schema=None,

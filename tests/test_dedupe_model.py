@@ -7,12 +7,27 @@ from typing import TYPE_CHECKING
 
 from strix.config import loader
 from strix.config.settings import DedupeSettings
+from strix.report.dedupe import _dedupe_model_settings
 
 
 if TYPE_CHECKING:
     from pathlib import Path
 
     import pytest
+
+
+def test_dedupe_key_sent_per_call_not_via_global_env() -> None:
+    dedupe = DedupeSettings(model="deepseek/cheap", api_key="dedupe-key")
+    settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
+    # The key rides on the request, so a shared-provider main key can't clobber
+    # it (and vice versa) through the global provider env var.
+    assert settings.extra_args["api_key"] == "dedupe-key"
+
+
+def test_dedupe_settings_omit_api_key_when_unset() -> None:
+    dedupe = DedupeSettings(model="deepseek/cheap")
+    settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
+    assert "api_key" not in (settings.extra_args or {})
 
 
 def test_dedupe_defaults_are_empty() -> None:
