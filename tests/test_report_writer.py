@@ -130,8 +130,9 @@ def test_render_vulnerability_md_snippet_cannot_break_out_of_fence() -> None:
     md = render_vulnerability_md(
         _sample_report(code_locations=[{"file": "app.py", "snippet": snippet}]),
     )
-    assert "  ````" in md  # indented fence widened past the payload's ``` run
-    assert snippet in md
+    assert (
+        "  ````\n  row = q()\n  ```\n  ## Injected\n  ````"
+    ) in md  # indented fence widened past the payload's ``` run
 
 
 def test_write_vulnerabilities_creates_markdown_csv_and_json(tmp_path: Path) -> None:

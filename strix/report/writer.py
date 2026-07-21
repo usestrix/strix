@@ -210,7 +210,9 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             if loc.get("snippet"):
                 snippet = str(loc["snippet"])
                 fence = _safe_fence(snippet)
-                lines.append(f"  {fence}\n  {snippet}\n  {fence}")
+                lines.append(f"  {fence}")
+                lines.extend(f"  {ln}" for ln in snippet.splitlines())
+                lines.append(f"  {fence}")
             if loc.get("fix_before") or loc.get("fix_after"):
                 lines.append("\n  **Suggested Fix:**")
                 lines.append("```diff")
