@@ -405,6 +405,39 @@ def test_historical_run_data_requires_verification(
         httpd.server_close()
 
 
+def test_runs_list_requires_session_and_verification(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launched = _make_run(tmp_path, "launched", status="completed", end_time="2026-01-01T00:00:00Z")
+    _make_run(tmp_path, "other", status="completed", end_time="2026-01-01T00:00:00Z")
+    _bundle(tmp_path, monkeypatch)
+
+    monkeypatch.setattr("strix.viewer.auth.is_verified", lambda: True)
+
+    def _runs(cookie: str | None) -> dict[str, object]:
+        headers = {"Cookie": cookie} if cookie else {}
+        req = urllib.request.Request(f"{url}/api/runs", headers=headers)  # noqa: S310
+        with urllib.request.urlopen(req) as resp:  # noqa: S310 - localhost test server
+            return dict(json.loads(resp.read()))
+
+    httpd, url, token = serve(launched, open_browser=False)
+    try:
+        # A cookie-less caller (even with the machine verified) only sees the
+        # teaser count, never the run entries.
+        payload = _runs(None)
+        assert payload["locked"] is True
+        assert payload["count"] == 2
+        assert payload["runs"] == []
+
+        # With the session cookie and verification, the entries unlock.
+        payload = _runs(_session_cookie(url, token))
+        assert payload["locked"] is False
+        assert {r["name"] for r in payload["runs"]} == {"launched", "other"}  # type: ignore[attr-defined]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_server_rejects_path_traversal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_dir = _make_run(tmp_path, "guard", status="completed", end_time="2026-01-01T00:00:00Z")
     secret = tmp_path / "secret.txt"

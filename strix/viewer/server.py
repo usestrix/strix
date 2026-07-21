@@ -222,10 +222,14 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
 
         def _handle_api(self, path: str, query: dict[str, list[str]]) -> None:
-            # The launched run is always viewable with no verification. Only the
-            # cross-run history list (/api/runs) is gated.
+            # The launched run is always viewable with no verification. The
+            # cross-run history list (/api/runs) unlocks its entries only for a
+            # caller that holds this process's session capability *and* is email
+            # verified, so merely reaching an exposed --host port never leaks the
+            # run list (the payload still advertises the count as a teaser).
             if path == "/api/runs":
-                payload = build_runs_payload(state.base_dir, verified=auth.is_verified())
+                unlocked = self._has_session() and auth.is_verified()
+                payload = build_runs_payload(state.base_dir, verified=unlocked)
                 self._send_json(HTTPStatus.OK, payload)
                 return
             if path == "/api/capabilities":
