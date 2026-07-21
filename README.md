@@ -159,8 +159,6 @@ strix view my-run-name
 
 `strix view` starts a lightweight local server (bound to `127.0.0.1` on a random port) and opens your browser to a private, tokened link. Nothing leaves your machine: the dashboard reads the run's files straight off disk, with no cloud account or upload required. The UI ships prebuilt with Strix, so there is no extra install and no JS build step.
 
-It works the same whether a scan is still running or already finished. For a live run the dashboard updates in real time, so findings and agent activity appear as they happen, and you can steer the agents right from the browser.
-
 ### What's in the dashboard
 
 - **Overview**: run status, target, and a severity breakdown of everything found so far.
@@ -169,8 +167,6 @@ It works the same whether a scan is still running or already finished. For a liv
 - **Steering**: send instructions to a live scan from the browser to redirect the agents mid-run.
 - **History**: browse past runs on this machine and jump between them.
 - **Reports**: generate a shareable report and email it to yourself or your team.
-
-A quick, optional email verification unlocks cross-run history and report sending.
 
 ---
 
