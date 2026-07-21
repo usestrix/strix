@@ -35,6 +35,30 @@ Configure Strix using environment variables or a config file.
   Timeout in seconds for memory compression operations (context summarization).
 </ParamField>
 
+### Independent finding verification
+
+<ParamField path="STRIX_VERIFY_FINDINGS" default="false" type="boolean">
+  Require an independent model to try to refute every candidate before it is
+  persisted. Off by default. Rejected findings and verifier errors fail closed.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_MODEL" type="string">
+  Model used by the independent verifier. Required when verification is enabled.
+</ParamField>
+
+<ParamField path="VERIFICATION_LLM_API_KEY" type="string">
+  Optional provider key for the verification model.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_REASONING_EFFORT" default="high" type="string">
+  Reasoning effort for the verifier.
+</ParamField>
+
+When enabled, every candidate finding is sent to an independent model that
+tries to refute it. Only confirmed findings are persisted; rejected findings
+and verifier errors fail closed. Verification calls are recorded in the same
+`llm_usage` ledger and count toward `--max-budget-usd`.
+
 ## Optional Features
 
 <ParamField path="PERPLEXITY_API_KEY" type="string">
