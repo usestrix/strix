@@ -71,7 +71,7 @@ RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
     go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
     go install -v github.com/jaeles-project/gospider@latest && \
     go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest && \
-    go clean -modcache
+    go clean -cache -modcache
 
 RUN nuclei -update-templates
 
@@ -88,7 +88,8 @@ RUN npm install -g retire@latest && \
     npm install -g js-beautify@latest && \
     npm install -g @ast-grep/cli@latest && \
     npm install -g tree-sitter-cli@latest && \
-    npm install -g agent-browser@0.26.0
+    npm install -g agent-browser@0.26.0 && \
+    npm cache clean --force
 
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
