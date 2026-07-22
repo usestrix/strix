@@ -355,7 +355,7 @@ export default function App() {
               {/* Tab strip: shown on small screens where the sidebar is hidden. */}
               <div className="flex gap-5 border-b border-[#2a2a2a] lg:hidden">
                 <TabButton active={view === "overview"} onClick={() => userSetView("overview")}>
-                  Overview
+                  Pentest Overview
                 </TabButton>
                 <TabButton active={view === "issues"} onClick={() => userSetView("issues")}>
                   Issues{run.vulnerabilities.length > 0 ? ` (${run.vulnerabilities.length})` : ""}
@@ -425,11 +425,11 @@ function RunSwitcher({
       <button
         onClick={() => setOpen((o) => !o)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        aria-label="Switch scan"
+        aria-label="Switch pentest"
         className="flex items-center gap-2 rounded-lg border border-[#3a3a3a] bg-[rgba(255,255,255,0.05)] px-3 py-2 text-sm text-white transition-colors hover:border-[#555] hover:bg-[rgba(255,255,255,0.09)]"
       >
         <History className="h-4 w-4 flex-shrink-0 text-[#888]" aria-hidden="true" />
-        <span className="flex-shrink-0 text-[#888]">Scan</span>
+        <span className="flex-shrink-0 text-[#888]">Pentest</span>
         <span className="max-w-[260px] truncate font-medium">{current}</span>
         <ChevronDown className="h-4 w-4 flex-shrink-0 text-[#aaa]" aria-hidden="true" />
       </button>
@@ -439,7 +439,7 @@ function RunSwitcher({
           style={{ border: "1px solid #3a3a3a", background: "#0a0a0a" }}
         >
           <div className="border-b border-[#222] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[#666]">
-            Switch scan
+            Switch pentest
           </div>
           {runs.runs.map((r) => {
             const active = r.name === activeRun;
@@ -499,7 +499,7 @@ function SummaryHeader({ summary }: { summary: ParsedRunSummary }) {
   return (
     <div>
       <h1 className="text-2xl font-semibold text-white">
-        {runTitle(summary.targets[0] ?? null, summary.runName ?? summary.runId ?? "Scan results")}
+        {runTitle(summary.targets[0] ?? null, summary.runName ?? summary.runId ?? "Pentest results")}
       </h1>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[#888]">
         {summary.targets.length > 0 && (
@@ -538,7 +538,7 @@ function FindingsList({
     return (
       <div className="space-y-4">
         <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-8 text-center text-sm text-[#888]">
-          {finished ? "No findings in this run." : "No findings yet. The scan is still running…"}
+          {finished ? "No findings in this run." : "No findings yet. The pentest is still running…"}
         </div>
         {finished && (
           <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
@@ -764,12 +764,12 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
 
       {/* Re-run always routes to Strix Cloud. */}
       <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
-        <p className="text-sm font-semibold text-white">Run this scan with more depth</p>
-        <p className="mt-0.5 text-xs text-[#666]">Re-run this scan on managed infra in the cloud.</p>
+        <p className="text-sm font-semibold text-white">Run this pentest with more depth</p>
+        <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra in the cloud.</p>
         <div className="mt-3 flex flex-wrap gap-2.5">
           <ProInlineCta
             label="Re-run in Strix Cloud with more depth"
-            desc="Run this scan on managed infra with more depth."
+            desc="Run this pentest on managed infra with more depth."
             slug="live_scan"
             surface="agents"
             icon={Rocket}

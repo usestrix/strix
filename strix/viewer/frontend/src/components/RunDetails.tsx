@@ -152,7 +152,7 @@ export function RunDetails({
                 <span className="text-[#666]">None</span>
               )}
             </Field>
-            {scanMode && <Field label="Scan mode">{scanMode}</Field>}
+            {scanMode && <Field label="Pentest mode">{scanMode}</Field>}
             <Field label="Scope">{scope}</Field>
             <Field label="Mode">{nonInteractive ? "Non-interactive" : "Interactive"}</Field>
             {localSources.length > 0 && (

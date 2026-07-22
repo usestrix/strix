@@ -57,5 +57,5 @@ export function parseTarget(target: string): ParsedTarget {
  */
 export function runTitle(target: string | null, fallback: string): string {
   if (target) return parseTarget(target).display.replace(/\/$/, "");
-  return fallback || "Untitled scan";
+  return fallback || "Untitled pentest";
 }

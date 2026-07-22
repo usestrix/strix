@@ -248,7 +248,7 @@ export function ScanPromptComposer({
               void handleSend();
             }
           }}
-          placeholder="Send a live prompt to the running scan…"
+          placeholder="Send a live prompt to the running pentest…"
           maxLength={4000}
           disabled={sending}
           className="block w-full resize-none border-0 bg-transparent p-0 text-[15px] leading-6 text-white placeholder:text-[#444] focus:outline-none disabled:opacity-60 max-h-[160px] overflow-y-auto"
