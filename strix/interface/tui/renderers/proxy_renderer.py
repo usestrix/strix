@@ -275,6 +275,15 @@ class RepeatRequestRenderer(BaseToolRenderer):
         if _has_result(status) and isinstance(result, dict):
             if not result.get("success", True) and result.get("error"):
                 text.append(f"\n  error: {_sanitize(str(result['error']), 150)}", style="#ef4444")
+            elif not result.get("success", True):
+                # A replay that never reached DONE carries no `error`; report the
+                # replay status rather than rendering an empty response as if the
+                # request had come back.
+                replay_status = _sanitize(str(result.get("status") or "unknown"), 40)
+                text.append(
+                    f"\n  replay did not complete: {replay_status}",
+                    style="#ef4444",
+                )
             else:
                 elapsed_ms = result.get("elapsed_ms")
                 response = result.get("response") or {}

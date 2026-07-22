@@ -85,6 +85,43 @@ def test_tool_status_from_result_maps_failure_to_failed() -> None:
     assert _tool_status_from_result({"success": True}) == "completed"
 
 
+def test_incomplete_replay_says_so_instead_of_showing_an_empty_response() -> None:
+    # _format_replay_tool_result sets success=False with no `error` key when the
+    # replay never reached DONE; it must not render as a returned response.
+    tool_data = {
+        "args": {"request_id": "req-1"},
+        "result": {
+            "success": False,
+            "status": "TIMEDOUT",
+            "session_id": "s-1",
+            "elapsed_ms": 30000,
+            "response": None,
+        },
+        "status": "failed",
+    }
+    text = _plain(RepeatRequestRenderer.render(tool_data))
+
+    assert "replay did not complete: TIMEDOUT" in text
+    assert "<<" not in text, "rendered a response line for a replay that never returned"
+
+
+def test_successful_replay_still_renders_its_response() -> None:
+    tool_data = {
+        "args": {"request_id": "req-1"},
+        "result": {
+            "success": True,
+            "status": "DONE",
+            "elapsed_ms": 12,
+            "response": {"status_code": 200, "body": "ok"},
+        },
+        "status": "completed",
+    }
+    text = _plain(RepeatRequestRenderer.render(tool_data))
+
+    assert "200" in text
+    assert "replay did not complete" not in text
+
+
 def test_successful_result_still_renders() -> None:
     tool_data = {
         "args": {},
