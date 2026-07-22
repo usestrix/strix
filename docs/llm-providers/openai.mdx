@@ -29,3 +29,9 @@ export STRIX_LLM="openai/gpt-5.4"
 export LLM_API_KEY="your-key"
 export LLM_API_BASE="https://your-proxy.com/v1"
 ```
+
+The leading `openai/` selects Strix's OpenAI route and is removed before the
+request is sent. If a compatible provider's literal model ID also begins with
+`openai/`, use that provider's LiteLLM prefix instead. For example, NVIDIA's
+`openai/gpt-oss-120b` model is configured as
+`nvidia_nim/openai/gpt-oss-120b`; see the [NVIDIA Build guide](/llm-providers/nvidia).
