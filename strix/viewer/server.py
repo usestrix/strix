@@ -220,6 +220,10 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
 
                 purpose = body.get("purpose")
                 posthog.viewer_email_event(str(event), purpose=str(purpose) if purpose else None)
+            elif event == "agent_steered":
+                from strix.telemetry import posthog
+
+                posthog.viewer_agent_steered()
             self.send_response(HTTPStatus.NO_CONTENT)
             self.end_headers()
 
@@ -405,6 +409,11 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             except auth.RelayError as exc:
                 self._send_relay_error(exc)
                 return
+            # Server-authoritative: fire only after a successful relay (respects
+            # the telemetry opt-out; no message/email content is sent).
+            from strix.telemetry import posthog
+
+            posthog.viewer_feedback_submitted()
             self._send_json(HTTPStatus.OK, {"ok": True})
 
         # Cap on a steering message so a runaway client cannot flood the agent.

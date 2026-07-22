@@ -180,6 +180,14 @@ def viewer_email_event(step: str, purpose: str | None = None) -> None:
     )
 
 
+def viewer_feedback_submitted() -> None:
+    _send("viewer_feedback_submitted", {**base_props()})
+
+
+def viewer_agent_steered() -> None:
+    _send("viewer_agent_steered", {**base_props()})
+
+
 def error(error_type: str) -> None:
     props = {**base_props(), "error_type": error_type}
     _send("error", props)

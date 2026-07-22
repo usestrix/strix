@@ -85,6 +85,13 @@ export default function Sidebar({
   const [upgradeFeature, setUpgradeFeature] = useState<string | null>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
 
+  // Open the upgrade dialog for a platform feature, recording which feature
+  // drove the open (the dialog's own CTAs track the deeper conversion).
+  const openUpgrade = (slug: string, description: string) => {
+    trackCta(slug, "sidebar");
+    setUpgradeFeature(description);
+  };
+
   const persistWidth = useCallback((w: number) => {
     setWidth(w);
     try {
@@ -268,7 +275,8 @@ export default function Sidebar({
               label="PR Security Reviews"
               active={false}
               onClick={() =>
-                setUpgradeFeature(
+                openUpgrade(
+                  "pr_reviews",
                   "Strix reviews every pull request and flags exploitable changes before they merge."
                 )
               }
@@ -278,7 +286,8 @@ export default function Sidebar({
               label="Integrations"
               active={false}
               onClick={() =>
-                setUpgradeFeature(
+                openUpgrade(
+                  "integrations",
                   "Sync findings to Jira, Linear, and Slack so fixes happen where your team already works."
                 )
               }
@@ -288,7 +297,8 @@ export default function Sidebar({
               label="Members"
               active={false}
               onClick={() =>
-                setUpgradeFeature(
+                openUpgrade(
+                  "members",
                   "Invite your team, set roles, and share findings and run history across your org."
                 )
               }

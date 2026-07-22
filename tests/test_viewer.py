@@ -191,6 +191,62 @@ def test_server_event_endpoint_forwards_email_funnel(
         httpd.server_close()
 
 
+def test_server_event_endpoint_forwards_agent_steered(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(tmp_path, "steerevt", status="running", end_time=None)
+    _bundle(tmp_path, monkeypatch)
+
+    seen: list[bool] = []
+    monkeypatch.setattr("strix.telemetry.posthog.viewer_agent_steered", lambda: seen.append(True))
+
+    httpd, url, _ = serve(run_dir, open_browser=False)
+    try:
+        req = urllib.request.Request(  # noqa: S310 - localhost test server
+            f"{url}/api/event",
+            data=json.dumps({"event": "agent_steered"}).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req) as resp:  # noqa: S310
+            assert resp.status == 204
+        assert seen == [True]
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_feedback_records_telemetry_on_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run_dir = _make_run(tmp_path, "fbtel", status="running", end_time=None)
+    _bundle(tmp_path, monkeypatch)
+
+    sent: list[bool] = []
+    monkeypatch.setattr("strix.viewer.auth.feedback_submit", lambda *_a: None)
+    monkeypatch.setattr(
+        "strix.telemetry.posthog.viewer_feedback_submitted", lambda: sent.append(True)
+    )
+
+    httpd, url, token = serve(run_dir, open_browser=False)
+    try:
+        cookie = _session_cookie(url, token)
+        # A successful, session-holding submission relays and records telemetry.
+        status, _ = _post(
+            url, "/api/feedback", {"email": "a@b.com", "message": "hi"}, cookie=cookie
+        )
+        assert status == 200
+        assert sent == [True]
+
+        # A cookie-less caller is rejected and records nothing.
+        sent.clear()
+        status, _ = _post(url, "/api/feedback", {"email": "a@b.com", "message": "hi"})
+        assert status == 403
+        assert sent == []
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def _post(
     url: str, path: str, payload: Mapping[str, object], *, cookie: str | None = None
 ) -> tuple[int, bytes]:
@@ -395,9 +451,7 @@ def test_report_send_requires_session_cookie(
         httpd.server_close()
 
 
-def test_report_send_rejects_live_run(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_report_send_rejects_live_run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # A running scan would only produce a partial report, so the endpoint must
     # fail closed even for a verified, session-holding caller.
     run_dir = _make_run(tmp_path, "live", status="running", end_time=None)
@@ -406,9 +460,7 @@ def test_report_send_rejects_live_run(
 
     httpd, url, token = serve(run_dir, open_browser=False)
     try:
-        status, _ = _post(
-            url, "/api/report/send", {}, cookie=_session_cookie(url, token)
-        )
+        status, _ = _post(url, "/api/report/send", {}, cookie=_session_cookie(url, token))
         assert status == 409
     finally:
         httpd.shutdown()
