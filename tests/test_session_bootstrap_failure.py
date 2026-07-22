@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -14,11 +16,16 @@ if TYPE_CHECKING:
 
 
 class _FakeClient:
-    def __init__(self) -> None:
+    def __init__(self, *, gate: asyncio.Event | None = None) -> None:
         self.deleted: list[object] = []
         self.docker_client = None
+        self.delete_started = asyncio.Event()
+        self._gate = gate
 
     async def delete(self, session: object) -> None:
+        self.delete_started.set()
+        if self._gate is not None:
+            await self._gate.wait()
         self.deleted.append(session)
 
 
@@ -93,6 +100,36 @@ async def test_container_is_deleted_when_caido_bootstrap_fails(
 
     assert client.deleted == [session], "started container was never reaped"
     assert "scan-2" not in session_manager._SESSION_CACHE
+
+
+@pytest.mark.asyncio
+async def test_container_is_deleted_even_when_teardown_is_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel landing mid-teardown must not abandon the container.
+
+    Nothing else can reap it: it was never cached, so cleanup() is a no-op.
+    """
+    gate = asyncio.Event()
+    client = _FakeClient(gate=gate)
+    session = _FakeSession(port_error=TimeoutError("port never exposed"))
+    _patch_backend(monkeypatch, client, session)
+
+    task = asyncio.create_task(
+        session_manager.create_or_reuse("scan-3", image="img", local_sources=[]),
+    )
+    await client.delete_started.wait()  # we are now inside client.delete
+
+    task.cancel()  # second cancellation, arriving during teardown
+    gate.set()  # let the delete finish
+
+    with contextlib.suppress(asyncio.CancelledError, TimeoutError):
+        await task
+    for _ in range(10):  # let the shielded delete run to completion
+        await asyncio.sleep(0)
+
+    assert client.deleted == [session], "container abandoned when teardown was cancelled"
+    assert "scan-3" not in session_manager._SESSION_CACHE
 
 
 @pytest.mark.asyncio

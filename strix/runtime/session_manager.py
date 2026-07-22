@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import shutil
 from pathlib import Path
@@ -146,7 +148,11 @@ async def create_or_reuse(
             "Sandbox bootstrap failed for scan %s; deleting the container it started",
             scan_id,
         )
-        await _delete_quietly(client, session, scan_id)
+        # Shielded: a second cancellation arriving while we await the delete
+        # would otherwise escape and abandon the container mid-teardown, and
+        # since it was never cached no later cleanup() could retry it.
+        with contextlib.suppress(BaseException):
+            await asyncio.shield(_delete_quietly(client, session, scan_id))
         raise
 
     bundle = {
