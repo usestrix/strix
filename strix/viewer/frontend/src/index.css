@@ -19,7 +19,161 @@ body {
   font-family: var(--font-geist-sans);
 }
 
-/* Tab content transition (lifted from strix-app globals.css) */
+/* Thin sidebar scrollbar */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Motion vocabulary --------------------- */
+
+/* Page transition: replayed on every view change via a keyed wrapper. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0px);
+  }
+}
+.animate-page-in {
+  animation: page-in 150ms ease-out;
+}
+
+/* Plain fade. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fade-in 350ms ease-out;
+}
+
+/* Staggered card entrance for lists/grids (first four cascade). */
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-card-in {
+  opacity: 0;
+  animation: cardIn 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.animate-card-in:nth-child(1) {
+  animation-delay: 0ms;
+}
+.animate-card-in:nth-child(2) {
+  animation-delay: 50ms;
+}
+.animate-card-in:nth-child(3) {
+  animation-delay: 100ms;
+}
+.animate-card-in:nth-child(4) {
+  animation-delay: 150ms;
+}
+
+/* Shimmer sweep for progress indicators. */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+/* Dialog enter/exit — mirrors shadcn's data-[state]:animate-in/animate-out
+   (fade-in-0/zoom-in-95 in, fade-out-0/zoom-out-95 out) driven off a
+   data-state attribute rather than a transition, so the enter always plays. */
+@keyframes dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialog-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dialog-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes dialog-panel-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+.dialog-overlay[data-state="open"] {
+  animation: dialog-overlay-in 200ms ease;
+}
+.dialog-overlay[data-state="closed"] {
+  animation: dialog-overlay-out 200ms ease forwards;
+}
+.dialog-panel[data-state="open"] {
+  animation: dialog-panel-in 200ms ease;
+}
+.dialog-panel[data-state="closed"] {
+  animation: dialog-panel-out 200ms ease forwards;
+}
+
+/* Agent detail modal: fade only (no scale) and faster. Its panel holds the full
+   transcript, and animating a transform on that much DOM janks; fading the
+   overlay (the panel inherits its opacity) stays cheap and snappy. */
+.agent-modal[data-state="open"] {
+  animation: dialog-overlay-in 140ms ease;
+}
+.agent-modal[data-state="closed"] {
+  animation: dialog-overlay-out 140ms ease forwards;
+}
+
+/* Tab content transition. */
 @keyframes tab-in {
   from {
     opacity: 0;
@@ -32,12 +186,11 @@ body {
     transform: translateY(0px);
   }
 }
-
 .animate-tab-in {
   animation: tab-in 200ms ease-out;
 }
 
-/* Markdown prose styling (lifted from strix-app globals.css) */
+/* Markdown prose styling */
 .prose-markdown {
   font-size: 14px;
   line-height: 1.7;

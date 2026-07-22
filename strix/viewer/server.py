@@ -174,6 +174,8 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     self._handle_forget()
                 elif path == "/api/report/send":
                     self._handle_report_send()
+                elif path == "/api/feedback":
+                    self._handle_feedback()
                 elif path == "/api/agents/steer":
                     self._handle_steer()
                 else:
@@ -379,6 +381,32 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 {"ok": True, "password": password, "filename": filename},
             )
 
+        # Cap on a feedback message so a runaway client cannot flood the relay.
+        _FEEDBACK_MESSAGE_MAX = 5000
+
+        def _handle_feedback(self) -> None:
+            # Requires this process's session capability, like the other POSTs,
+            # so an exposed --host port can't be used to spam the relay.
+            if not self._has_session():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
+            body = self._read_body()
+            email = str(body.get("email") or "").strip()
+            message = str(body.get("message") or "").strip()
+            if not email:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_email"})
+                return
+            if not message:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_message"})
+                return
+            message = message[: self._FEEDBACK_MESSAGE_MAX]
+            try:
+                auth.feedback_submit(email, message)
+            except auth.RelayError as exc:
+                self._send_relay_error(exc)
+                return
+            self._send_json(HTTPStatus.OK, {"ok": True})
+
         # Cap on a steering message so a runaway client cannot flood the agent.
         _STEER_MESSAGE_MAX = 4000
 
@@ -413,6 +441,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             status_by_code = {
                 "rate_limited": HTTPStatus.TOO_MANY_REQUESTS,
                 "invalid_email": HTTPStatus.BAD_REQUEST,
+                "invalid_message": HTTPStatus.BAD_REQUEST,
                 "work_email_required": HTTPStatus.BAD_REQUEST,
                 "invalid_code": HTTPStatus.FORBIDDEN,
                 "reverify": HTTPStatus.UNAUTHORIZED,

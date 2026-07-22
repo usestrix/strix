@@ -207,6 +207,26 @@ def otp_verify(email: str, code: str) -> dict[str, Any]:
     raise RelayError("unavailable")
 
 
+def feedback_submit(email: str, message: str) -> None:
+    """Relay a feedback message + email to Strix. No verification is required;
+    the email is taken as given. Raises RelayError on failure."""
+    status, data = _post_json(
+        "/api/oss/feedback",
+        {"email": email, "message": message},
+        timeout=_OTP_TIMEOUT,
+    )
+    if status == 200:
+        return
+    if status == 429:
+        raise RelayError("rate_limited")
+    if status == 400:
+        code = data.get("error")
+        if code in ("invalid_email", "invalid_message"):
+            raise RelayError(str(code))
+        raise RelayError("invalid_message")
+    raise RelayError("unavailable")
+
+
 def report_send(
     token: str,
     pdf_bytes: bytes,
@@ -241,6 +261,7 @@ def report_send(
 __all__ = [
     "AUTH_PATH",
     "RelayError",
+    "feedback_submit",
     "forget",
     "is_verified",
     "otp_start",

@@ -143,7 +143,7 @@ export default function PastRunsView({
           <button
             key={run.name}
             onClick={() => onSelectRun(run.name)}
-            className={`group flex w-full cursor-pointer items-center gap-4 rounded-lg border px-4 py-3 text-left transition-colors ${
+            className={`animate-card-in group flex w-full cursor-pointer items-center gap-4 rounded-lg border px-4 py-3 text-left transition-colors ${
               active
                 ? "border-[#444] bg-[rgba(255,255,255,0.04)]"
                 : "border-[#222] bg-[rgba(255,255,255,0.02)] hover:border-[#444]"

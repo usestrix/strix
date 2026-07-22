@@ -3,10 +3,11 @@
 import type { ToolRendererProps } from "@/types/events";
 
 export default function LoadSkillRenderer({ args }: ToolRendererProps) {
-  const requestedRaw = (args.skills as string) ?? "";
-  const requestedSkills = requestedRaw
-    .split(",")
-    .map((skill) => skill.trim())
+  // `skills` may arrive as an array of names or a comma-separated string
+  // depending on the tool call, so normalize both to a clean list.
+  const raw = args.skills;
+  const requestedSkills = (Array.isArray(raw) ? raw : String(raw ?? "").split(","))
+    .map((skill) => String(skill).trim())
     .filter(Boolean);
 
   return (

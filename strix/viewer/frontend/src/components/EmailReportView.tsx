@@ -180,7 +180,7 @@ export default function EmailReportView({
   const confirmationEmail = sentTo || auth?.email || email.trim();
 
   return (
-    <div className="mx-auto max-w-md space-y-4">
+    <div className="mx-auto max-w-xl space-y-4">
       <button
         onClick={() => onExit(verifyOnly ? "history" : "overview")}
         className="cursor-pointer inline-flex items-center gap-1.5 text-sm text-[#888] transition-colors hover:text-white"
@@ -192,7 +192,7 @@ export default function EmailReportView({
       <div className="flex items-center gap-2">
         <Mail className="h-5 w-5 text-[#888]" aria-hidden="true" />
         <h1 className="text-2xl font-semibold text-white">
-          {verifyOnly ? "Verify your email" : "Email report"}
+          {verifyOnly ? "Verify your email" : "Export report to PDF"}
         </h1>
       </div>
 
@@ -225,16 +225,13 @@ export default function EmailReportView({
               <div className="flex items-start gap-2.5">
                 <ShieldCheck className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" aria-hidden="true" />
                 <p className="text-xs leading-relaxed text-[#aaa]">
-                  Viewing stays local and nothing is uploaded. Emailing is an explicit
-                  opt-in: we send an <span className="text-white">encrypted PDF</span>.
+                  We email an <span className="text-white">encrypted PDF</span>. Nothing else leaves your machine.
                 </p>
               </div>
               <div className="flex items-start gap-2.5">
                 <Lock className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#888]" aria-hidden="true" />
                 <p className="text-xs leading-relaxed text-[#aaa]">
-                  The report is encrypted with a password that only you hold. Strix
-                  cannot read it and never stores it. We collect only your email so we
-                  can send it.
+                  Only you hold the password; Strix can&apos;t read it.
                 </p>
               </div>
             </div>
@@ -269,7 +266,6 @@ export default function EmailReportView({
                 className="w-full rounded-lg bg-black px-3 py-2.5 text-sm text-white outline-none transition-colors focus:border-[#444]"
                 style={{ border: "1px solid #2a2a2a" }}
               />
-              <span className="mt-1.5 block text-[11px] text-[#666]">Use your work email.</span>
             </label>
             <button
               type="submit"

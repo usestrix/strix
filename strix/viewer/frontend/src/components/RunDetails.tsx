@@ -72,7 +72,13 @@ export function RunDetails({
   const diffMode = str(diff.mode);
   const diffBase = str(raw.diff_base);
   const nonInteractive = raw.non_interactive === true;
-  const localSources = arr(raw.local_sources).map((x) => String(x)).filter(Boolean);
+  const localSources = arr(raw.local_sources)
+    .map((x) => {
+      if (typeof x === "string") return x;
+      const o = rec(x);
+      return str(o.source_path) ?? str(o.target_path) ?? "";
+    })
+    .filter(Boolean);
   const status = cap(str(raw.status));
 
   let scope = scopeMode ?? "auto";

@@ -6,10 +6,9 @@ import {
 } from "@/lib/local-run-parser";
 
 /**
- * Data seam for the local viewer. Replaces strix-app's browser file-picker
- * (`loadFromTexts`) with fetches against the local Python server's JSON
- * endpoints (same origin, relative URLs). Produces the same in-memory
- * `LoadedRun` shape the UI renders, plus a `finished` flag driving live polling.
+ * Data seam for the local viewer: fetches against the local Python server's
+ * JSON endpoints (same origin, relative URLs), producing the in-memory
+ * `LoadedRun` shape the UI renders plus a `finished` flag driving live polling.
  *
  * The server serves a live in-progress run and a finished one identically; the
  * only signal is `run.finished`.
@@ -197,6 +196,21 @@ export async function steerAgent(agentId: string, message: string): Promise<Stee
     agent_id: agentId,
     message,
   });
+  if (ok && data.ok === true) return { ok: true };
+  return { ok: false, error: String(data.error ?? "unavailable") };
+}
+
+export type SubmitFeedbackResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * POST /api/feedback. Sends a feedback message plus a work email (no
+ * verification) to the local server, which relays it to Strix.
+ */
+export async function submitFeedback(
+  message: string,
+  email: string
+): Promise<SubmitFeedbackResult> {
+  const { ok, data } = await postJson("/api/feedback", { message, email });
   if (ok && data.ok === true) return { ok: true };
   return { ok: false, error: String(data.error ?? "unavailable") };
 }

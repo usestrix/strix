@@ -2,14 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   AlertCircle,
-  Waypoints,
+  Bot,
   Mail,
   ChevronDown,
-  Wrench,
-  FileCheck2,
-  CalendarClock,
   Radar,
-  GitPullRequest,
   Rocket,
   ArrowUpRight,
   History,
@@ -45,11 +41,10 @@ import PastRunsView from "@/components/PastRunsView";
 import EmailReportView from "@/components/EmailReportView";
 import { RunDetails } from "@/components/RunDetails";
 import { TrustToast } from "@/components/TrustToast";
-import FeatureDetail from "@/components/FeatureDetail";
-import { ProTile, ProInlineCta, type ProItem } from "@/components/ProCta";
-import { FEATURES } from "@/lib/pro-features";
+import FeedbackView from "@/components/FeedbackView";
+import { ProInlineCta } from "@/components/ProCta";
 
-export type View = "overview" | "issues" | "agents" | "history" | "feature" | "email";
+export type View = "overview" | "issues" | "agents" | "history" | "email" | "feedback";
 
 const TRUST_BANNER =
   "Your findings stay on your machine. They're rendered here locally in your browser and never uploaded or stored by Strix.";
@@ -57,25 +52,12 @@ const TRUST_BANNER =
 const SEVERITY_ORDER: VulnerabilitySeverity[] = ["critical", "high", "medium", "low"];
 const POLL_MS = 500;
 
-// Curated inline CTAs. Continuous-coverage row on Overview (the restyled upsell
-// tiles), plus the recommendations pairing.
-const RECOMMENDATION_CTAS: ProItem[] = [
-  { title: "One-click autofix + open a fix PR", desc: "Fix it for you and open a PR, retested.", slug: "autofix", icon: Wrench },
-  { title: "Export SOC 2 / ISO 27001 report", desc: "Share an auditor-ready report with your team.", slug: "compliance", icon: FileCheck2 },
-];
-const COVERAGE_CTAS: ProItem[] = [
-  { title: "Scheduled pentesting", desc: "Continuous coverage for your whole org.", slug: "scheduled", icon: CalendarClock },
-  { title: "Attack surface monitoring", desc: "Continuous coverage for your whole org.", slug: "asm", icon: Radar },
-  { title: "PR reviews", desc: "Pentest every pull request your team opens.", slug: "pr_reviews", icon: GitPullRequest },
-];
-
 export default function App() {
   const [activeRun, setActiveRun] = useState<string | null>(null);
   const [run, setRun] = useState<LoadedRun | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<View>("overview");
-  const [activeFeature, setActiveFeature] = useState<string | null>(null);
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [runs, setRuns] = useState<RunsPayload | null>(null);
   const [emailPurpose, setEmailPurpose] = useState<"report" | "verify">("report");
@@ -249,12 +231,6 @@ export default function App() {
     await refreshRuns();
   }, [refreshAuth, refreshRuns]);
 
-  const selectFeature = useCallback((slug: string) => {
-    trackCta(slug, "sidebar_nav");
-    setActiveFeature(slug);
-    userSetView("feature");
-  }, [userSetView]);
-
   const onForget = useCallback(async () => {
     await forgetAuth();
     await refreshAuth();
@@ -266,11 +242,13 @@ export default function App() {
       <Sidebar
         view={view}
         onSelectView={(v) => {
+          // Clicking a sidebar view always lands on that section's top level,
+          // so leaving a specific issue's detail view and clicking "Issues"
+          // returns to the full findings list.
+          setSelectedId(null);
           if (v === "history") openHistory();
           else userSetView(v);
         }}
-        activeFeature={activeFeature}
-        onSelectFeature={selectFeature}
         issuesCount={run?.vulnerabilities.length ?? 0}
         agentCount={agentCount}
         runCount={runs?.count ?? 0}
@@ -285,7 +263,7 @@ export default function App() {
       <div className="flex-1 min-w-0">
         {/* Top bar */}
         <div className="border-b border-[#222]">
-          <div className="max-w-[72rem] mx-auto px-6 py-4 flex items-center gap-1.5">
+          <div className="max-w-[88rem] mx-auto px-3 sm:px-6 py-4 flex items-center gap-1.5">
             <a
               href={ctaUrl("https://app.strix.ai", "logo")}
               target="_blank"
@@ -297,7 +275,6 @@ export default function App() {
               <img src="./logo.png" alt="Strix" className="w-10 h-8 object-cover" />
               <div className="text-base text-white font-medium tracking-tight">Strix</div>
             </a>
-            <span className="text-xs text-[#666]">Local results</span>
             {run && <LiveIndicator finished={run.finished} />}
             <div className="ml-auto flex items-center gap-3">
               {verified && runs && !runs.locked && runs.runs.length > 0 && (
@@ -322,14 +299,20 @@ export default function App() {
           </div>
         </div>
 
-        <div className="max-w-[72rem] mx-auto px-6 py-8 space-y-6">
-          {error && !run && view !== "history" && view !== "email" && view !== "feature" && (
+        <div className="max-w-[88rem] mx-auto px-3 sm:px-6 py-8 sm:py-12 space-y-6">
+          {error && !run && view !== "history" && view !== "email" && (
             <div className="rounded-lg px-4 py-3 flex gap-3 items-start border border-red-500/30 bg-red-500/5">
               <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-red-400" aria-hidden="true" />
               <p className="text-sm text-red-300">{error}</p>
             </div>
           )}
 
+          {/* Keyed wrapper: re-mounts on every view / finding / run change so the
+              page-in transition replays. */}
+          <div
+            key={`${activeRun ?? "launched"}:${view}:${selectedId ?? ""}`}
+            className="animate-page-in space-y-6"
+          >
           {view === "email" ? (
             <EmailReportView
               activeRun={activeRun}
@@ -342,8 +325,11 @@ export default function App() {
               }}
               onExit={(dest) => setView(dest === "history" ? "history" : "overview")}
             />
-          ) : view === "feature" && activeFeature && FEATURES[activeFeature] ? (
-            <FeatureDetail feature={FEATURES[activeFeature]} />
+          ) : view === "feedback" ? (
+            <FeedbackView
+              defaultEmail={auth?.email ?? null}
+              onExit={(dest) => setView(dest)}
+            />
           ) : view === "history" ? (
             <div className="space-y-4">
               <div className="flex items-center gap-2">
@@ -412,6 +398,7 @@ export default function App() {
               )}
             </>
           ) : null}
+          </div>
         </div>
       </div>
       <TrustToast message={TRUST_BANNER} />
@@ -573,7 +560,7 @@ function FindingsList({
         <button
           key={v.id}
           onClick={() => onSelect(v.id)}
-          className="cursor-pointer w-full text-left rounded-lg border border-[#222] hover:border-[#444] bg-[rgba(255,255,255,0.02)] px-4 py-3 transition-colors flex items-center gap-3"
+          className="animate-card-in cursor-pointer w-full text-left rounded-lg border border-[#222] hover:border-[#444] bg-[rgba(255,255,255,0.02)] px-4 py-3 transition-colors flex items-center gap-3"
         >
           <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${getSeverityDot(v.severity)}`} aria-hidden="true" />
           <span className="flex-1 min-w-0">
@@ -636,7 +623,7 @@ function EmailReportCta({ onOpenEmail }: { onOpenEmail: () => void }) {
           </p>
         </div>
         <span className="flex-shrink-0 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black transition-opacity group-hover:opacity-90">
-          Email report
+          Export report to PDF
         </span>
       </div>
     </button>
@@ -673,26 +660,32 @@ function OverviewTab({
 
   return (
     <div className="space-y-6">
-      <RunDetails raw={raw} durationSeconds={summary.durationSeconds} />
+      <div className="animate-card-in">
+        <RunDetails raw={raw} durationSeconds={summary.durationSeconds} />
+      </div>
 
       {total > 0 && (
-        <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
+        <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
           <IssueSeveritySummary findings={{ total, ...counts }} />
         </div>
       )}
 
       {/* Primary CTA: the one primary on Overview. Hidden until the run is
           finished, since a live scan would only email a partial report. */}
-      {finished && <EmailReportCta onOpenEmail={onOpenEmail} />}
+      {finished && (
+        <div className="animate-card-in">
+          <EmailReportCta onOpenEmail={onOpenEmail} />
+        </div>
+      )}
 
       {sections.length > 0 ? (
-        <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5 space-y-8">
+        <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5 space-y-8">
           {sections.map((s) => (
             <ContentSection key={s.title} title={s.title} content={s.content} />
           ))}
         </div>
       ) : reportMarkdown ? (
-        <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
+        <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
           <ContentSection content={dedupeHeadings(reportMarkdown)} />
         </div>
       ) : (
@@ -701,22 +694,6 @@ function OverviewTab({
         )
       )}
 
-      {/* Near Recommendations: act on the fixes. */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {RECOMMENDATION_CTAS.map((item) => (
-          <ProTile key={item.slug} item={item} surface="overview" />
-        ))}
-      </div>
-
-      {/* Continuous coverage for your org (restyled upsell tiles). */}
-      <div>
-        <p className="mb-2 text-sm font-semibold text-white">Continuous coverage for your org</p>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {COVERAGE_CTAS.map((item) => (
-            <ProTile key={item.slug} item={item} surface="overview" />
-          ))}
-        </div>
-      </div>
     </div>
   );
 }
@@ -746,8 +723,7 @@ function TabButton({
 function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
   const { agents, events } = run.transcript;
   const graphAgents = useMemo(() => buildGraphAgents(agents, events), [agents, events]);
-  // Clicking a graph node opens the agent's transcript in a modal (matching the
-  // cloud app); no node selected means no modal.
+  // Clicking a graph node opens the agent's transcript in a modal; no node selected means no modal.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedAgent = selectedId ? (agents.find((a) => a.id === selectedId) ?? null) : null;
 
@@ -758,7 +734,7 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
     <div className="space-y-5">
       <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
         <div className="flex items-center gap-2">
-          <Waypoints className="w-4 h-4 text-[#888]" aria-hidden="true" />
+          <Bot className="w-4 h-4 text-[#888]" aria-hidden="true" />
           <h2 className="text-sm font-semibold text-white">Agent graph</h2>
           <span className="text-xs text-[#666]">
             {agents.length} agent{agents.length === 1 ? "" : "s"}
@@ -797,14 +773,13 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
         </div>
       </div>
 
-      {selectedAgent && (
-        <AgentDetailModal
-          agent={selectedAgent}
-          events={events}
-          steerable={steerable}
-          onClose={() => setSelectedId(null)}
-        />
-      )}
+      <AgentDetailModal
+        open={selectedAgent !== null}
+        agent={selectedAgent}
+        events={events}
+        steerable={steerable}
+        onClose={() => setSelectedId(null)}
+      />
     </div>
   );
 }
