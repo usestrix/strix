@@ -48,10 +48,12 @@ def _patch_engine_scaffold(
             force_required_tool_choice=False,
             timeout=300,
         ),
-        # Real settings object rather than another SimpleNamespace: it carries
-        # defaults for every runtime field, so a runner that starts reading a
-        # new one does not break this stub again.
-        runtime=RuntimeSettings(),
+        # Defaults for every runtime field, so a runner that starts reading a
+        # new one does not break this stub again. model_construct() rather than
+        # RuntimeSettings(): the latter resolves its aliases from the ambient
+        # environment, so a stray STRIX_MAX_CONTEXT_IMAGES=-1 would fail
+        # validation here and re-break these tests the same way.
+        runtime=RuntimeSettings.model_construct(),
     )
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
