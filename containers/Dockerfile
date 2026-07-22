@@ -154,7 +154,19 @@ RUN git clone https://github.com/aravind0x7/JS-Snooper.git && \
 
 USER root
 
-RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+# Pin trufflehog and wrap it to force --no-update: the binary is root-owned in a
+# root-owned dir but runs as non-root `pentester`, so its runtime self-update
+# fails ("cannot move binary") and aborts the scan. The wrapper adds --no-update
+# unless the caller already passed it (avoids a duplicate-flag error).
+ARG TRUFFLEHOG_VERSION=3.95.9
+RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin "v${TRUFFLEHOG_VERSION}" && \
+    mv /usr/local/bin/trufflehog /usr/local/bin/trufflehog.real && \
+    printf '%s\n' \
+        '#!/bin/bash' \
+        'for a in "$@"; do [ "$a" = "--no-update" ] && exec /usr/local/bin/trufflehog.real "$@"; done' \
+        'exec /usr/local/bin/trufflehog.real --no-update "$@"' \
+        > /usr/local/bin/trufflehog && \
+    chmod +x /usr/local/bin/trufflehog
 RUN set -eux; \
     ARCH="$(uname -m)"; \
     case "$ARCH" in \
