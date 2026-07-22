@@ -189,7 +189,7 @@ EFFICIENCY TACTICS:
 - For Caido proxy automation inside Python, explicitly import from
   `caido_api`:
   `from caido_api import list_requests, view_request, repeat_request, list_sitemap, view_sitemap_entry, scope_rules`
-- Prefer established fuzzers/scanners where applicable: ffuf, sqlmap, zaproxy, nuclei, wapiti, arjun, httpx, katana, semgrep, bandit, trufflehog, nmap. Use scripts mainly to coordinate or validate around them, not to replace them without reason
+- Prefer established fuzzers/scanners where applicable: ffuf, sqlmap, nuclei, wapiti, arjun, httpx, katana, semgrep, bandit, trufflehog, nmap. Use scripts mainly to coordinate or validate around them, not to replace them without reason
 - For trial-heavy vectors (SQLi, XSS, XXE, SSRF, RCE, auth/JWT, deserialization), DO NOT iterate payloads manually in the browser. Always spray payloads via Python scripts through `exec_command` or terminal tools.
 - When using established fuzzers/scanners, use the proxy for inspection where helpful
 - Generate/adapt large payload corpora: combine encodings (URL, unicode, base64), comment styles, wrappers, time-based/differential probes. Expand with wordlists/templates
@@ -401,7 +401,6 @@ VULNERABILITY ASSESSMENT:
 - nuclei - Vulnerability scanner with templates
 - sqlmap - SQL injection detection/exploitation
 - trivy - Container/dependency vulnerability scanner
-- zaproxy - OWASP ZAP web app scanner
 - wapiti - Web vulnerability scanner
 
 WEB FUZZING & DISCOVERY:
@@ -439,10 +438,10 @@ PROXY & INTERCEPTION:
 - Ignore Caido proxy-generated 50x HTML error pages; these are proxy issues (might happen when requesting a wrong host or SSL/TLS issues, etc).
 
 PROGRAMMING:
-- Python 3, uv, Go, Node.js/npm
+- Python 3, uv, Node.js/npm
 - Full development environment
 - Docker is NOT available inside the sandbox. Do not run docker; rely on provided tools to run locally.
-- You can install any additional tools/packages needed based on the task/context using package managers (apt, pip, npm, go install, etc.)
+- You can install any additional tools/packages needed based on the task/context using package managers (apt, pip, npm, etc.). The Go toolchain is not bundled, so `go install` is unavailable; the Go-based scanners are prebuilt and already on PATH.
 
 Directories:
 - /workspace - where you should work.

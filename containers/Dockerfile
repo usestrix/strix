@@ -1,3 +1,26 @@
+# ---------------------------------------------------------------------------
+# Builder stage: compile the Go tools here so the Go toolchain (~225MB) and the
+# module/build caches never reach the runtime image. The resulting binaries are
+# statically linked and copied into the final stage.
+# ---------------------------------------------------------------------------
+FROM kalilinux/kali-rolling:latest AS gobuilder
+
+RUN apt-get update && \
+    apt-get install -y kali-archive-keyring && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends golang-go git ca-certificates
+
+ENV GOBIN=/out/bin
+RUN mkdir -p /out/bin && \
+    go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
+    go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
+    go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
+    go install -v github.com/jaeles-project/gospider@latest && \
+    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest
+
+# ---------------------------------------------------------------------------
+# Runtime stage
+# ---------------------------------------------------------------------------
 FROM kalilinux/kali-rolling:latest
 
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
@@ -19,10 +42,9 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     wget curl git vim nano unzip tar \
     apt-transport-https ca-certificates gnupg lsb-release \
-    build-essential software-properties-common \
-    gcc libc6-dev pkg-config libpcap-dev libssl-dev \
-    python3 python3-pip python3-dev python3-venv python3-setuptools \
-    golang-go \
+    software-properties-common \
+    gcc libc6-dev \
+    python3 python3-pip python3-venv python3-setuptools \
     net-tools dnsutils whois \
     file xxd \
     jq parallel ripgrep grep \
@@ -66,12 +88,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 USER pentester
 WORKDIR /tmp
 
-RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
-    go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
-    go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
-    go install -v github.com/jaeles-project/gospider@latest && \
-    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest && \
-    go clean -cache -modcache
+# Go tools are built in the gobuilder stage; copy the static binaries only.
+COPY --from=gobuilder --chown=pentester:pentester /out/bin/ /home/pentester/go/bin/
 
 RUN nuclei -update-templates
 
@@ -89,7 +107,9 @@ RUN npm install -g retire@latest && \
     npm install -g @ast-grep/cli@latest && \
     npm install -g tree-sitter-cli@latest && \
     npm install -g agent-browser@0.26.0 && \
-    npm cache clean --force
+    npm cache clean --force && \
+    # ast-grep ships two identical binaries (`ast-grep` and `sg`); dedupe (~52MB)
+    ln -sf ast-grep /home/pentester/.npm-global/lib/node_modules/@ast-grep/cli/sg
 
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -147,8 +167,6 @@ RUN set -eux; \
     tar -xzf /tmp/gitleaks.tgz -C /tmp; \
     install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks; \
     rm -f /tmp/gitleaks /tmp/gitleaks.tgz
-
-RUN apt-get update && apt-get install -y zaproxy
 
 RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
