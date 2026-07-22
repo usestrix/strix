@@ -768,7 +768,7 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
         <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra in the cloud.</p>
         <div className="mt-3 flex flex-wrap gap-2.5">
           <ProInlineCta
-            label="Re-run in Strix Cloud with more depth"
+            label="Re-run in Strix Pro with more depth"
             desc="Run this pentest on managed infra with more depth."
             slug="live_scan"
             surface="agents"

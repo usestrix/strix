@@ -239,7 +239,7 @@ export default function EmailReportView({
               onClick={startFlow}
               className="w-full cursor-pointer rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
             >
-              {verified ? "Email me the encrypted PDF" : "Continue with your email"}
+              Export report
             </button>
             {verified && auth?.email && (
               <p className="text-center text-xs text-[#666]">Sending to {auth.email}</p>
