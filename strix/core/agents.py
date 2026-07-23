@@ -17,6 +17,8 @@ if TYPE_CHECKING:
     from agents.items import TResponseInputItem
     from agents.memory import Session
 
+    from strix.core.hooks import ScanLimitError
+
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +48,10 @@ class AgentCoordinator:
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
         self._budget_stopped = False
+        # The exception that triggered the scan-wide stop (first writer wins),
+        # so polling stations can re-raise the original type (budget vs
+        # no-progress) instead of a generic BudgetExceededError.
+        self._scan_limit_exc: ScanLimitError | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
@@ -57,10 +63,28 @@ class AgentCoordinator:
     def budget_stopped(self) -> bool:
         return self._budget_stopped
 
-    async def trigger_budget_stop(self) -> None:
-        """Signal a scan-wide budget stop and wake every parked agent so it exits."""
+    @property
+    def scan_limit_exc(self) -> ScanLimitError | None:
+        """The exception that triggered the scan-wide stop, or None.
+
+        First-writer-wins: whichever limit tripped first (budget or
+        no-progress) is recorded so downstream handlers know the real reason.
+        """
+        return self._scan_limit_exc
+
+    async def trigger_budget_stop(self, exc: ScanLimitError | None = None) -> None:
+        """Signal a scan-wide stop and wake every parked agent so it exits.
+
+        ``exc`` is the triggering :class:`ScanLimitError` (budget or
+        no-progress). It is stashed first-writer-wins so an agent that exits via
+        a polling check (rather than its own exception path) can re-raise the
+        original type — e.g. when a child trips no-progress and the parked root
+        exits via the budget-stopped polling check.
+        """
         async with self._lock:
             self._budget_stopped = True
+            if self._scan_limit_exc is None and exc is not None:
+                self._scan_limit_exc = exc
             for runtime in self.runtimes.values():
                 runtime.wake.set()
 

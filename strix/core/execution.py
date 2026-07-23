@@ -104,7 +104,10 @@ async def run_agent_loop(
 
         if coordinator.budget_stopped:
             await coordinator.set_status(agent_id, "stopped")
-            raise BudgetExceededError("scan budget reached")
+            # Re-raise the original trigger (budget or no-progress) so the runner
+            # writes the correct early-stop report when an agent exits via this
+            # polling check rather than its own exception path.
+            raise coordinator.scan_limit_exc or BudgetExceededError("scan budget reached")
 
         await coordinator.consume_pending(agent_id)
         result = await _run_cycle(
@@ -289,7 +292,10 @@ async def _run_noninteractive_until_lifecycle(
     while True:
         if coordinator.budget_stopped:
             await coordinator.set_status(agent_id, "stopped")
-            raise BudgetExceededError("scan budget reached")
+            # Re-raise the original trigger (budget or no-progress) so the runner
+            # writes the correct early-stop report when an agent exits via this
+            # polling check rather than its own exception path.
+            raise coordinator.scan_limit_exc or BudgetExceededError("scan budget reached")
 
         result = await _run_cycle(
             agent,
@@ -404,7 +410,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
         except ScanLimitError as exc:
             logger.info("agent %s reached a scan stop limit; stopping the scan: %s", agent_id, exc)
             await coordinator.set_status(agent_id, "stopped")
-            await coordinator.trigger_budget_stop()
+            await coordinator.trigger_budget_stop(exc)
             raise
         except Exception as exc:
             if (
