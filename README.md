@@ -185,6 +185,27 @@ strix --target https://github.com/org/repo
 strix --target https://your-app.com
 ```
 
+### API Testing (OpenAPI / Swagger / Postman)
+
+Point Strix at an API contract and it tests every declared endpoint instead of
+having to discover them by crawling. Pair the spec with the live base URL so the
+agent knows where to send traffic:
+
+```bash
+# OpenAPI / Swagger file (.json / .yaml)
+strix --target ./openapi.yaml --target https://api.your-app.com
+
+# Postman collection export
+strix --target ./collection.postman_collection.json --target https://api.your-app.com
+
+# Postman collection pulled live by id (no manual export)
+export POSTMAN_API_KEY="PMAK-..."
+strix --target postman://<collection-uuid>
+
+# ...with a Postman environment to resolve {{baseUrl}} / token variables
+strix --target "postman://<collection-uuid>?env=<environment-uuid>"
+```
+
 ### Advanced Testing Scenarios
 
 ```bash
@@ -261,6 +282,7 @@ export LLM_API_KEY="your-api-key"
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
+export POSTMAN_API_KEY="PMAK-..."  # to fetch Postman collections by id (postman://<uuid>)
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
 

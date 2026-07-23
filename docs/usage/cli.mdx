@@ -12,7 +12,13 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
 ## Options
 
 <ParamField path="--target, -t" type="string">
-  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times. Fresh runs require at least one target source: `--target`, `--target-list`, or `--mount`.
+  Target to test. Accepts URLs, repositories, local directories, domains, IP addresses, API spec files (OpenAPI/Swagger `.json`/`.yaml`, a Postman collection export), or a live Postman collection by id (`postman://<collection-uuid>`). Can be specified multiple times. Fresh runs require at least one target source: `--target`, `--target-list`, or `--mount`.
+
+  When the target is an API spec, Strix parses the declared endpoints (method, path, parameters, body fields, auth) into the agent's task and authorizes the spec's base URLs as in-scope hosts - so it tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
+
+  <Note>
+    Fetching a Postman collection by id requires `POSTMAN_API_KEY`. Add `?env=<environment-uuid>` to also pull a Postman environment, which resolves `{{baseUrl}}` / token variables the collection references (e.g. `postman://<collection-uuid>?env=<environment-uid>`).
+  </Note>
 </ParamField>
 
 <ParamField path="--target-list" type="string">
@@ -104,6 +110,12 @@ strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 # Multi-target white-box testing
 strix -t https://github.com/org/app -t https://staging.example.com
+
+# API spec + live target (OpenAPI/Swagger file or Postman collection)
+strix -t ./openapi.yaml -t https://api.example.com
+
+# Postman collection pulled live by id (+ optional environment)
+strix -t "postman://<collection-uuid>?env=<environment-uuid>"
 
 # Targets from a file
 strix --target-list ./targets.txt

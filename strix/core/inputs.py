@@ -14,6 +14,7 @@ from strix.config.models import (
     model_supports_reasoning,
     request_timeout_extra_args,
 )
+from strix.core.api_spec import load_inventory, render_inventory
 from strix.core.sessions import scrub_images_from_items
 
 
@@ -33,6 +34,25 @@ def _accepts_required_tool_choice(model_name: str | None) -> bool:
     return name.startswith("openai/") or is_known_openai_bare_model(name)
 
 
+def _render_diff_scope(diff_scope: dict[str, Any]) -> list[str]:
+    """Render pull-request diff-scope constraints as root-task lines."""
+    if not diff_scope.get("active"):
+        return []
+    parts: list[str] = [
+        "\n\nScope Constraints:",
+        "- Pull request diff-scope mode is active. Prioritize changed files "
+        "and use other files only for context.",
+    ]
+    for repo_scope in diff_scope.get("repos", []) or []:
+        label = repo_scope.get("workspace_subdir") or repo_scope.get("source_path") or "repository"
+        changed = repo_scope.get("analyzable_files_count", 0)
+        deleted = repo_scope.get("deleted_files_count", 0)
+        parts.append(f"- {label}: {changed} changed file(s) in primary scope")
+        if deleted:
+            parts.append(f"- {label}: {deleted} deleted file(s) are context-only")
+    return parts
+
+
 def build_root_task(scan_config: dict[str, Any]) -> str:
     targets = scan_config.get("targets", []) or []
     diff_scope = scan_config.get("diff_scope") or {}
@@ -43,6 +63,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         "Local Codebases": [],
         "URLs": [],
         "IP Addresses": [],
+        "API Specifications": [],
     }
 
     for target in targets:
@@ -65,6 +86,14 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             sections["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":
             sections["IP Addresses"].append(f"- {details.get('target_ip', '')}")
+        elif ttype == "api_spec":
+            inventory = load_inventory(details)
+            if inventory is not None:
+                sections["API Specifications"].append(render_inventory(inventory))
+            else:
+                sections["API Specifications"].append(
+                    f"- {details.get('target_spec', 'unknown spec')} (could not be parsed)",
+                )
 
     parts: list[str] = []
     for label, items in sections.items():
@@ -72,21 +101,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             parts.append(f"\n\n{label}:")
             parts.extend(items)
 
-    if diff_scope.get("active"):
-        parts.append("\n\nScope Constraints:")
-        parts.append(
-            "- Pull request diff-scope mode is active. Prioritize changed files "
-            "and use other files only for context.",
-        )
-        for repo_scope in diff_scope.get("repos", []) or []:
-            label = (
-                repo_scope.get("workspace_subdir") or repo_scope.get("source_path") or "repository"
-            )
-            changed = repo_scope.get("analyzable_files_count", 0)
-            deleted = repo_scope.get("deleted_files_count", 0)
-            parts.append(f"- {label}: {changed} changed file(s) in primary scope")
-            if deleted:
-                parts.append(f"- {label}: {deleted} deleted file(s) are context-only")
+    parts.extend(_render_diff_scope(diff_scope))
 
     task = " ".join(parts)
     if user_instructions:
@@ -101,6 +116,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "local_code": "target_path",
         "web_application": "target_url",
         "ip_address": "target_ip",
+        "api_spec": "target_spec",
     }
     for target in scan_config.get("targets", []) or []:
         ttype = target.get("type", "unknown")
@@ -113,6 +129,16 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         authorized.append(
             {"type": ttype, "value": value, "workspace_path": workspace_path},
         )
+
+        # An API spec authorizes the hosts it declares as in-scope web targets
+        # so the agent can exercise every endpoint without expanding scope.
+        if ttype == "api_spec":
+            inventory = load_inventory(details)
+            if inventory is not None:
+                authorized.extend(
+                    {"type": "web_application", "value": base_url, "workspace_path": ""}
+                    for base_url in inventory.base_urls
+                )
 
     return {
         "scope_source": "system_scan_config",

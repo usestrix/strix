@@ -70,6 +70,7 @@ class IntegrationSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     perplexity_api_key: str | None = Field(default=None, alias="PERPLEXITY_API_KEY")
+    postman_api_key: str | None = Field(default=None, alias="POSTMAN_API_KEY")
 
 
 class ViewerSettings(BaseSettings):

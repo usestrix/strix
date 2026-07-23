@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 import docker
@@ -22,6 +22,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.core.api_spec import detect_spec_format
 
 
 logger = logging.getLogger(__name__)
@@ -445,6 +446,15 @@ def _derive_target_label_for_run_name(targets_info: list[dict[str, Any]] | None)
 
     if target_type == "ip_address":
         return str(details.get("target_ip", original) or original)
+
+    if target_type == "api_spec":
+        if details.get("source") == "postman_api":
+            return "postman-collection"
+        spec_path = details.get("target_spec", original)
+        try:
+            return str(Path(spec_path).stem or spec_path)
+        except Exception:
+            return str(spec_path)
 
     return str(original or "pentest")
 
@@ -1076,6 +1086,25 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         return "repository", {"target_repo": target}
 
     parsed = urlparse(target)
+    if parsed.scheme == "postman":
+        collection_uid = f"{parsed.netloc}{parsed.path}".strip("/")
+        if not collection_uid:
+            raise ValueError(
+                f"Missing Postman collection id in '{target}' "
+                "(expected postman://<collection-uid>)"
+            )
+        details = {
+            "target_spec": target,
+            "spec_format": "postman",
+            "source": "postman_api",
+            "collection_uid": collection_uid,
+        }
+        query = parse_qs(parsed.query)
+        env_uid = (query.get("env") or query.get("environment") or [""])[0].strip()
+        if env_uid:
+            details["environment_uid"] = env_uid
+        return "api_spec", details
+
     if parsed.scheme in ("http", "https"):
         if parsed.username or parsed.password:
             return "repository", {"target_repo": target}
@@ -1100,6 +1129,12 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         if path.exists():
             if path.is_dir():
                 return "local_code", {"target_path": str(path.resolve())}
+            spec_format = detect_spec_format(path)
+            if spec_format is not None:
+                return "api_spec", {
+                    "target_spec": str(path.resolve()),
+                    "spec_format": spec_format,
+                }
             raise ValueError(f"Path exists but is not a directory: {target}")
     except (OSError, RuntimeError) as e:
         raise ValueError(f"Invalid path: {target} - {e!s}") from e
@@ -1126,6 +1161,9 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         "- A valid URL (http:// or https://)\n"
         "- A Git repository URL (https://host/org/repo or git@host:org/repo.git)\n"
         "- A local directory path\n"
+        "- An API spec file (OpenAPI/Swagger .json/.yaml or a Postman collection)\n"
+        "- A Postman collection by id (postman://<collection-uid>[?env=<environment-uid>], "
+        "needs POSTMAN_API_KEY)\n"
         "- A domain name (e.g., example.com)\n"
         "- An IP address (e.g., 192.168.1.10)"
     )
@@ -1147,9 +1185,7 @@ def read_target_list_file(path_str: str) -> list[str]:
             if (target := line.strip()) and not target.startswith("#")
         ]
     except UnicodeDecodeError as e:
-        raise ValueError(
-            f"Target list file '{path_str}' must be valid UTF-8 text: {e!s}"
-        ) from e
+        raise ValueError(f"Target list file '{path_str}' must be valid UTF-8 text: {e!s}") from e
     except OSError as e:
         raise ValueError(f"Failed to read target list file '{path_str}': {e!s}") from e
 

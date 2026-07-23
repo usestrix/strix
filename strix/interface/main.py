@@ -30,6 +30,7 @@ from strix.config.models import (
     is_known_openai_bare_model,
     is_recommended_or_frontier_model,
 )
+from strix.core.api_spec import SpecParseError, parse_api_spec, parse_postman_api
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
@@ -423,6 +424,14 @@ Examples:
   # Local code analysis
   strix --target ./my-project
 
+  # API spec test (OpenAPI/Swagger file or Postman collection export)
+  strix --target ./openapi.yaml --target https://api.example.com
+  strix --target ./collection.postman_collection.json --target https://api.example.com
+
+  # Postman collection pulled live by id (needs POSTMAN_API_KEY); optional environment
+  strix --target postman://<collection-uuid> --target https://api.example.com
+  strix --target "postman://<collection-uuid>?env=<environment-uuid>" --target https://api.example.com
+
   # Large local repository (bind-mounted read-only instead of copied)
   strix --mount ./huge-monorepo
 
@@ -468,8 +477,10 @@ Examples:
         "--target",
         type=str,
         action="append",
-        help="Target to test (URL, repository, local directory path, domain name, or IP address). "
-        "Can be specified multiple times for multi-target scans. "
+        help="Target to test: URL, repository, local directory path, domain name, IP address, "
+        "an API spec file (OpenAPI/Swagger .json/.yaml or a Postman collection export), or a "
+        "Postman collection by id (postman://<collection-uuid>[?env=<environment-uuid>], needs "
+        "POSTMAN_API_KEY). Can be specified multiple times for multi-target scans. "
         "Fresh runs require at least one of --target, --target-list, or --mount.",
     )
     parser.add_argument(
@@ -640,6 +651,21 @@ Examples:
                 else:
                     display_target = target
 
+                if target_type == "api_spec":
+                    try:
+                        if target_dict.get("source") == "postman_api":
+                            postman_key = load_settings().integrations.postman_api_key or ""
+                            inventory = parse_postman_api(
+                                target_dict["collection_uuid"],
+                                postman_key,
+                                target_dict.get("environment_uuid", ""),
+                            )
+                        else:
+                            inventory = parse_api_spec(target_dict["target_spec"])
+                    except SpecParseError as exc:
+                        parser.error(f"Invalid API spec '{target}': {exc}")
+                    if not inventory.endpoints:
+                        parser.error(f"API spec '{target}' contains no endpoints to test")
                 args.targets_info.append(
                     {"type": target_type, "details": target_dict, "original": display_target}
                 )

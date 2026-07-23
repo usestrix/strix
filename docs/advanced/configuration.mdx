@@ -41,6 +41,10 @@ Configure Strix using environment variables or a config file.
   API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
 </ParamField>
 
+<ParamField path="POSTMAN_API_KEY" type="string">
+  Postman API key (`PMAK-…`). Enables fetching Postman collections by id as a target (`postman://<collection-uid>`), and Postman environments (`postman://<collection-uid>?env=<environment-uid>`) to resolve collection variables. Not needed when passing a local collection export file.
+</ParamField>
+
 <ParamField path="STRIX_TELEMETRY" default="1" type="string">
   Telemetry toggle. Set to `0`, `false`, `no`, or `off` to disable telemetry (PostHog, Scarf, OTEL).
 </ParamField>
