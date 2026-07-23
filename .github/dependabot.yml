@@ -1,0 +1,40 @@
+version: 2
+updates:
+  # Python dependencies (uv is a first-class Dependabot ecosystem).
+  # Ungrouped so each update is its own PR — easier to review and to run
+  # against CI individually; capped so the weekly volume stays sane.
+  - package-ecosystem: "uv"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7           # let a new release age a little before a PR opens
+      exclude: ["cryptography"] # ...but security-critical patches land fast
+    ignore:
+      # Respect the deliberate version caps in pyproject.toml so Dependabot
+      # doesn't open bumps past them (they'd only fail CI or be closed).
+      # In-range (patch/minor) updates below each cap still flow normally.
+      - dependency-name: "cryptography"
+        versions: [">=49"]      # 49.x drops the universal2 macOS wheel (#859)
+      - dependency-name: "openai"
+        versions: [">=2.45"]    # fresh-install compatibility cap (#748)
+      - dependency-name: "openai-agents"
+        versions: [">0.14.6"]   # exact-pinned during the SDK migration
+
+  # GitHub Actions in the release workflow — grouped into one weekly PR.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      actions:
+        patterns: ["*"]
+    cooldown:
+      default-days: 7
+
+  # Sandbox image base — enable once it's pinned off ':latest'.
+  # - package-ecosystem: "docker"
+  #   directory: "/containers"
+  #   schedule:
+  #     interval: "weekly"
