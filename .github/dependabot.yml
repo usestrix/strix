@@ -22,6 +22,15 @@ updates:
       - dependency-name: "openai-agents"
         versions: [">0.14.6"]   # exact-pinned during the SDK migration
 
+  # Local-viewer SPA — the tree's npm ecosystem.
+  - package-ecosystem: "npm"
+    directory: "/strix/viewer/frontend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+
   # GitHub Actions in the release workflow — grouped into one weekly PR.
   - package-ecosystem: "github-actions"
     directory: "/"
