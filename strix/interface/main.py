@@ -656,9 +656,9 @@ Examples:
                         if target_dict.get("source") == "postman_api":
                             postman_key = load_settings().integrations.postman_api_key or ""
                             inventory = parse_postman_api(
-                                target_dict["collection_uuid"],
+                                target_dict["collection_uid"],
                                 postman_key,
-                                target_dict.get("environment_uuid", ""),
+                                target_dict.get("environment_uid", ""),
                             )
                         else:
                             inventory = parse_api_spec(target_dict["target_spec"])
