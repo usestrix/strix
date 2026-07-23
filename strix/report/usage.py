@@ -203,7 +203,7 @@ def _estimate_litellm_entry_cost(entry: Any, model: str) -> float | None:
         try:
             cost = completion_cost(
                 completion_response={"model": candidate, "usage": usage_payload},
-                model=model,
+                model=candidate,
             )
             break
         except Exception:  # nosec B112  # noqa: BLE001, S112

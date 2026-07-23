@@ -10,6 +10,7 @@ import pytest
 
 from strix.config.models import _configure_litellm_compatibility
 from strix.report.state import litellm_cost_callback
+from strix.report.usage import _estimate_litellm_cost, _estimate_litellm_entry_cost
 
 
 def test_streaming_logging_stays_enabled_for_cost_callback() -> None:
@@ -151,3 +152,44 @@ def test_cost_callback_records_nothing_when_no_cost_available() -> None:
         litellm_cost_callback({"response_cost": None, "model": "x/y"}, response)
 
     report_state.record_observed_llm_cost.assert_not_called()
+
+
+def test_entry_cost_estimate_falls_back_to_bare_model_name() -> None:
+    entry = SimpleNamespace(
+        input_tokens=1000,
+        output_tokens=500,
+        total_tokens=1500,
+        input_tokens_details=None,
+        output_tokens_details=None,
+    )
+
+    def fake_completion_cost(**kwargs: object) -> float:
+        if kwargs["model"] == "Mistral-7B-Instruct-v0.3":
+            return 0.0021
+        raise ValueError(kwargs["model"])
+
+    with patch("litellm.completion_cost", side_effect=fake_completion_cost):
+        cost = _estimate_litellm_entry_cost(entry, "mistralai/Mistral-7B-Instruct-v0.3")
+
+    assert cost == pytest.approx(0.0021)
+
+
+def test_usage_ledger_estimate_uses_bare_model_fallback_for_prefixed_openai_model() -> None:
+    entry = SimpleNamespace(
+        input_tokens=1000,
+        output_tokens=500,
+        total_tokens=1500,
+        input_tokens_details=None,
+        output_tokens_details=None,
+    )
+    usage = SimpleNamespace(request_usage_entries=[entry])
+
+    def fake_completion_cost(**kwargs: object) -> float:
+        if kwargs["model"] == "Mistral-7B-Instruct-v0.3":
+            return 0.0021
+        raise ValueError(kwargs["model"])
+
+    with patch("litellm.completion_cost", side_effect=fake_completion_cost):
+        cost = _estimate_litellm_cost(usage, "openai/mistralai/Mistral-7B-Instruct-v0.3")
+
+    assert cost == pytest.approx(0.0021)
