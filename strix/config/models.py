@@ -210,7 +210,7 @@ RECOMMENDED_MODEL_NAMES = (
 _RECOMMENDED_MODEL_NAME_SET = frozenset(name.lower() for name in RECOMMENDED_MODEL_NAMES)
 
 FRONTIER_MODEL_FAMILIES = (
-    (("azure", "azure_ai", "bedrock_mantle", "openai"), ("gpt-5",)),
+    (("azure", "azure_ai", "bedrock_mantle", "chatgpt", "openai"), ("gpt-5",)),
     (
         ("anthropic", "azure_ai", "bedrock", "claude", "databricks", "snowflake", "vertex_ai"),
         ("claude-fable-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4"),

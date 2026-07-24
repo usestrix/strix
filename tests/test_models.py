@@ -42,6 +42,7 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
     "model_name",
     [
         "gpt-5.5",
+        "chatgpt/gpt-5.4",
         "litellm/openai/gpt-5.4-pro",
         "azure_ai/gpt-5.5-pro",
         "bedrock_mantle/openai.gpt-5.5",
