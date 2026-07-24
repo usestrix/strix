@@ -15,6 +15,7 @@ from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
 from strix.agents.prompt import render_system_prompt
+from strix.auth import codex
 from strix.config import load_settings
 from strix.config.models import (
     StrixProvider,
@@ -38,6 +39,7 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 
@@ -386,6 +388,23 @@ async def run_strix_scan(
             exc,
             scan_id,
         )
+        if root_id is not None:
+            await coordinator.cancel_descendants(root_id)
+            with contextlib.suppress(Exception):
+                await coordinator.set_status(root_id, "stopped")
+        return None
+    except codex.CodexContentGuardrailError as exc:
+        # A newer subscription model refused the security task via ChatGPT's
+        # content guardrail. Terminal (retrying never clears it): stop cleanly
+        # with an actionable message rather than a crash. No silent fallback.
+        logger.warning("Scan %s stopped: %s", scan_id, exc)
+        # Record the reason on the run record so the CLI, TUI, and viewer can
+        # surface it — a log line alone never reaches the user.
+        report_state = get_global_report_state()
+        if report_state is not None:
+            report_state.record_stop_reason(str(exc), category="content_guardrail")
+            with contextlib.suppress(Exception):
+                report_state.save_run_data(status="stopped")
         if root_id is not None:
             await coordinator.cancel_descendants(root_id)
             with contextlib.suppress(Exception):

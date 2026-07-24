@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -78,6 +79,28 @@ def test_finish_rejects_missing_code() -> None:
     with pytest.raises(codex.CodexAuthError) as exc:
         auth_cli._finish(None, "expected", "verifier", "expected", require_state=True)
     assert exc.value.code == "no_code"
+
+
+def test_select_model_requires_arg() -> None:
+    assert auth_cli.run_auth(["model"]) == 2
+
+
+def test_select_model_valid_persists_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(codex, "is_authenticated", lambda: True)
+    monkeypatch.setattr(codex, "refresh_subscription_models", lambda: codex.SUBSCRIPTION_MODELS)
+    monkeypatch.setattr(auth_cli, "persist_current", lambda: None)
+    monkeypatch.setenv("STRIX_LLM", "openai/subscription")
+
+    assert auth_cli.run_auth(["model", "gpt-5.5"]) == 0
+    assert os.environ["STRIX_LLM"] == "openai/subscription/gpt-5.5"
+
+
+def test_select_model_rejects_unknown(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(codex, "is_authenticated", lambda: True)
+    monkeypatch.setattr(codex, "refresh_subscription_models", lambda: codex.SUBSCRIPTION_MODELS)
+    monkeypatch.setattr(auth_cli, "persist_current", lambda: None)
+
+    assert auth_cli.run_auth(["model", "gpt-4o"]) == 2
 
 
 @pytest.mark.parametrize("provider", ["chatgpt", "codex", "ChatGPT"])

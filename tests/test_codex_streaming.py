@@ -20,11 +20,12 @@ from agents.models.interface import ModelTracing
 from agents.models.openai_responses import OpenAIResponsesModel
 from openai import AsyncOpenAI, BadRequestError
 
+from strix.auth import codex
 from strix.config.models import _CodexResponsesModel
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import AsyncIterator, Iterator
 
 
 def _response_payload() -> dict[str, Any]:
@@ -141,6 +142,64 @@ async def test_codex_model_streams_and_aggregates(backend_url: str) -> None:
     response = await model.get_response(**_call_kwargs())
     assert response.output[0].content[0].text == "OK"
     assert response.usage.total_tokens == 2
+
+
+class _TrackingStream:
+    """An async iterator that yields, then raises, and records if it was closed."""
+
+    def __init__(self, events: list[Any], error: Exception | None) -> None:
+        self._events = iter(events)
+        self._error = error
+        self.closed = False
+
+    def __aiter__(self) -> _TrackingStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return next(self._events)
+        except StopIteration:
+            if self._error is not None:
+                raise self._error from None
+            raise StopAsyncIteration from None
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def _drain(gen: AsyncIterator[Any]) -> list[Any]:
+    return [event async for event in gen]
+
+
+@pytest.mark.asyncio
+async def test_guarded_converts_guardrail_error() -> None:
+    # A mid-stream backend rejection becomes a typed, model-tagged error.
+    model = _CodexResponsesModel(model="gpt-5.6-sol", openai_client=_client("http://x/backend-api"))
+    guardrail = RuntimeError("This content was flagged for possible cybersecurity risk.")
+    stream = _TrackingStream(["a", "b"], guardrail)
+    with pytest.raises(codex.CodexContentGuardrailError) as exc_info:
+        await _drain(model._guarded(stream))
+    assert exc_info.value.model == "gpt-5.6-sol"
+    assert stream.closed is True  # underlying stream is released
+
+
+@pytest.mark.asyncio
+async def test_guarded_passes_through_other_errors() -> None:
+    # A non-guardrail error propagates unchanged (still not swallowed).
+    model = _CodexResponsesModel(model="gpt-5.5", openai_client=_client("http://x/backend-api"))
+    boom = RuntimeError("some unrelated failure")
+    stream = _TrackingStream(["a"], boom)
+    with pytest.raises(RuntimeError, match="some unrelated failure"):
+        await _drain(model._guarded(stream))
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_guarded_yields_all_events_when_clean() -> None:
+    model = _CodexResponsesModel(model="gpt-5.4", openai_client=_client("http://x/backend-api"))
+    stream = _TrackingStream(["a", "b", "c"], None)
+    assert await _drain(model._guarded(stream)) == ["a", "b", "c"]
+    assert stream.closed is True
 
 
 @pytest.mark.asyncio

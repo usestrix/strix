@@ -22,6 +22,7 @@ import base64
 import contextlib
 import hashlib
 import json
+import logging
 import secrets
 import threading
 import time
@@ -38,6 +39,9 @@ if TYPE_CHECKING:
 
 
 from strix.auth import store
+
+
+logger = logging.getLogger(__name__)
 
 
 PROVIDER = "codex"
@@ -63,10 +67,41 @@ _ACCOUNT_CLAIM = "https://api.openai.com/auth"
 SUBSCRIPTION_MODEL = "openai/subscription"
 
 # The actual model sent to the ChatGPT backend for a subscription run. gpt-5.4 is
-# used because gpt-5.5 and newer apply stricter content moderation that
-# interferes with security-testing prompts. (The subscription only exposes the
-# general GPT-5.x models, not the ``*-codex`` API variants.)
+# the default because gpt-5.5 and newer apply stricter content moderation that
+# can block security-testing prompts; a user can override it (see below), but on
+# a plain ``openai/subscription`` this is what runs.
 DEFAULT_CODEX_MODEL = "gpt-5.4"
+
+# The models the ChatGPT (Codex) backend exposes to a subscription. The live set
+# comes from ``GET /backend-api/codex/models`` (see ``fetch_subscription_models``),
+# fetched once at startup and cached; this tuple is the offline fallback used when
+# that fetch is unavailable. A user selects a model by suffixing the switch, e.g.
+# ``STRIX_LLM=openai/subscription/gpt-5.5``; a bare ``openai/subscription`` uses
+# DEFAULT_CODEX_MODEL. Anything newer than gpt-5.4 may be blocked mid-run by
+# content guardrails — Strix surfaces that as an error rather than downgrading.
+SUBSCRIPTION_MODELS = (
+    "gpt-5.4",
+    "gpt-5.4-mini",
+    "gpt-5.5",
+    "gpt-5.6-sol",
+    "gpt-5.6-terra",
+    "gpt-5.6-luna",
+)
+
+# The backend gates the visible catalog by client_version: too low and it returns
+# an empty list, so we claim a high version to see the full set. Kept in step with
+# OpenAI's Codex CLI like the other constants here.
+_MODELS_CLIENT_VERSION = "1.0.0"
+
+# Catalog entries that exist but aren't user-selectable agent models (internal
+# helpers). Excluded from the list offered to users.
+_EXCLUDED_MODEL_SLUGS = frozenset({"codex-auto-review"})
+
+# Advisory labels for `strix models`. Only gpt-5.4 (the default) is
+# production-proven for security prompts, so it's the sole "recommended" model;
+# the gpt-5.6-* variants are prone to content-guardrail blocks. Everything else
+# is left unlabeled rather than endorsed on thin evidence.
+_GUARDRAIL_PRONE_PREFIXES = ("gpt-5.6",)
 
 _TOKEN_TIMEOUT = 30
 # Refresh a little before the token actually expires so a request never goes out
@@ -112,6 +147,48 @@ class CodexAuthError(Exception):
     def __init__(self, code: str, message: str | None = None) -> None:
         self.code = code
         super().__init__(message or code)
+
+
+class CodexContentGuardrailError(Exception):
+    """The ChatGPT backend refused a request via its content guardrail.
+
+    Raised (in place of the raw provider error) when a subscription model is
+    blocked mid-stream for "cybersecurity risk". It carries the offending model
+    so the message can point the user at a model that works. This is a terminal
+    failure — retrying identical content never clears the block — so the retry
+    policy must not retry it (see ``_retry_statusless_provider_errors``).
+    """
+
+    def __init__(self, model: str, original: BaseException | None = None) -> None:
+        self.model = model
+        self.original = original
+        super().__init__(
+            f"'{model}' was blocked by ChatGPT's content guardrails "
+            f"(flagged as a possible cybersecurity risk). This affects gpt-5.6-* "
+            f"models on the ChatGPT subscription. Re-run with a model that isn't "
+            f"blocked, e.g. STRIX_LLM=openai/subscription/{DEFAULT_CODEX_MODEL}."
+        )
+
+
+# Substrings that identify the backend's content-guardrail rejection. Matched
+# case-insensitively against the provider error text so an unrelated API error
+# is not misclassified. Kept in step with the backend's wording.
+_GUARDRAIL_MARKERS = (
+    "flagged for possible cybersecurity risk",
+    "trusted access for cyber",
+)
+
+
+def is_content_guardrail_error(exc: BaseException) -> bool:
+    """Whether ``exc`` is the ChatGPT backend's content-guardrail rejection.
+
+    Recognizes both the already-typed error and a raw provider error whose text
+    carries the backend's guardrail wording.
+    """
+    if isinstance(exc, CodexContentGuardrailError):
+        return True
+    text = str(exc).lower()
+    return any(marker in text for marker in _GUARDRAIL_MARKERS)
 
 
 # --- PKCE + authorization ---------------------------------------------------
@@ -408,13 +485,108 @@ def get_subscription_client() -> AsyncOpenAI:
 
 
 def is_subscription(model_name: str | None) -> bool:
-    """Whether ``STRIX_LLM`` selects the authenticated ChatGPT subscription."""
-    return (model_name or "").strip().lower() == SUBSCRIPTION_MODEL
+    """Whether ``STRIX_LLM`` selects the authenticated ChatGPT subscription.
+
+    Matches the bare switch ``openai/subscription`` and the model-selecting form
+    ``openai/subscription/<slug>`` (but not an unrelated ``openai/subscription-x``).
+    """
+    name = (model_name or "").strip().lower()
+    return name == SUBSCRIPTION_MODEL or name.startswith(f"{SUBSCRIPTION_MODEL}/")
 
 
-def resolve_subscription_model() -> str:
-    """The concrete model sent to the ChatGPT backend for a subscription run."""
-    return DEFAULT_CODEX_MODEL
+def fetch_subscription_models() -> tuple[str, ...]:
+    """Fetch the live set of subscription-exposed model slugs from the backend.
+
+    Hits ``GET /backend-api/codex/models`` with the current OAuth token. Raises
+    (network/auth/parse) on failure — callers fall back to SUBSCRIPTION_MODELS.
+    """
+    access, account_id = get_valid_token()
+    url = f"{CODEX_BASE_URL}/models?client_version={_MODELS_CLIENT_VERSION}"
+    request = urllib.request.Request(  # noqa: S310 - fixed https backend URL
+        url,
+        headers={
+            "Authorization": f"Bearer {access}",
+            "chatgpt-account-id": account_id,
+            "originator": ORIGINATOR,
+        },
+    )
+    with urllib.request.urlopen(request, timeout=_TOKEN_TIMEOUT) as response:  # noqa: S310
+        payload = json.loads(response.read())
+    entries = payload.get("models") if isinstance(payload, dict) else None
+    if not isinstance(entries, list):
+        raise CodexAuthError("bad_models_response", "models catalog missing from response")
+    slugs = tuple(
+        entry["slug"]
+        for entry in entries
+        if isinstance(entry, dict)
+        and isinstance(entry.get("slug"), str)
+        and entry["slug"] not in _EXCLUDED_MODEL_SLUGS
+    )
+    if not slugs:
+        raise CodexAuthError("empty_models_response", "no selectable models in catalog")
+    return slugs
+
+
+_subscription_models_cache: tuple[str, ...] | None = None
+
+
+def get_subscription_models() -> tuple[str, ...]:
+    """The known subscription models: the live catalog if it was fetched this
+    run, otherwise the static SUBSCRIPTION_MODELS fallback."""
+    if _subscription_models_cache is not None:
+        return _subscription_models_cache
+    return SUBSCRIPTION_MODELS
+
+
+def refresh_subscription_models() -> tuple[str, ...]:
+    """Best-effort refresh of the live model catalog; caches it on success.
+
+    Called once at startup. Returns the effective list either way — on any
+    failure it logs and leaves the fallback in place, so selection/validation
+    keep working offline.
+    """
+    global _subscription_models_cache  # noqa: PLW0603
+    try:
+        _subscription_models_cache = fetch_subscription_models()
+        logger.info("Fetched %d subscription models from backend", len(_subscription_models_cache))
+    except Exception:  # noqa: BLE001 - fallback is the whole point
+        logger.debug("Live subscription model fetch failed; using fallback list", exc_info=True)
+    return get_subscription_models()
+
+
+def resolve_subscription_model(model_name: str | None = None) -> str:
+    """The concrete model sent to the ChatGPT backend for a subscription run.
+
+    A bare ``openai/subscription`` (or ``None``) resolves to DEFAULT_CODEX_MODEL;
+    ``openai/subscription/<slug>`` selects ``<slug>``. Validates ``<slug>`` against
+    the known models (the live catalog if fetched this run, else the fallback) and
+    raises ``CodexAuthError`` for an unknown slug, so a typo fails fast with the
+    list of valid models instead of an opaque backend rejection.
+    """
+    name = (model_name or "").strip().lower()
+    if name in ("", SUBSCRIPTION_MODEL):
+        return DEFAULT_CODEX_MODEL
+    prefix = f"{SUBSCRIPTION_MODEL}/"
+    slug = name[len(prefix) :] if name.startswith(prefix) else name
+    models = get_subscription_models()
+    if slug not in models:
+        raise CodexAuthError(
+            "unknown_model",
+            f"'{slug}' is not a subscription model. Choose one of: {', '.join(models)}.",
+        )
+    return slug
+
+
+def subscription_model_label(slug: str) -> str | None:
+    """A short advisory shown beside a model in ``strix auth models``, or None.
+
+    Combines the default marker with a recommend/guardrail-risk note.
+    """
+    if slug == DEFAULT_CODEX_MODEL:
+        return "default, recommended"
+    if any(slug.startswith(prefix) for prefix in _GUARDRAIL_PRONE_PREFIXES):
+        return "may be blocked by content guardrails"
+    return None
 
 
 def auth_mode_label(model_name: str | None) -> str:
@@ -426,21 +598,28 @@ __all__ = [
     "DEFAULT_CODEX_MODEL",
     "PROVIDER",
     "SUBSCRIPTION_MODEL",
+    "SUBSCRIPTION_MODELS",
     "CodexAuthError",
+    "CodexContentGuardrailError",
     "auth_mode_label",
     "build_authorize_url",
     "build_openai_client",
     "create_state",
     "exchange_code",
+    "fetch_subscription_models",
     "generate_pkce",
     "get_subscription_client",
+    "get_subscription_models",
     "get_valid_token",
     "is_authenticated",
+    "is_content_guardrail_error",
     "is_subscription",
     "logout",
     "parse_redirect_input",
     "read_record",
+    "refresh_subscription_models",
     "refresh_tokens",
     "resolve_subscription_model",
     "save_record",
+    "subscription_model_label",
 ]

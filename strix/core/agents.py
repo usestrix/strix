@@ -46,6 +46,7 @@ class AgentCoordinator:
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
         self._budget_stopped = False
+        self._scan_stop_exc: BaseException | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
@@ -56,6 +57,25 @@ class AgentCoordinator:
     @property
     def budget_stopped(self) -> bool:
         return self._budget_stopped
+
+    @property
+    def scan_stop_exc(self) -> BaseException | None:
+        """The error that requested a scan-wide stop (e.g. a content-guardrail
+        block), or None. Agents re-raise it on their next loop turn so the whole
+        scan winds down as soon as any one agent hits it."""
+        return self._scan_stop_exc
+
+    async def request_scan_stop(self, exc: BaseException) -> None:
+        """Ask every agent to stop now by re-raising ``exc`` on its next turn.
+
+        First caller wins (later blocks reuse the same reason). Wakes parked
+        agents so they exit promptly instead of waiting for the root to re-trip.
+        """
+        async with self._lock:
+            if self._scan_stop_exc is None:
+                self._scan_stop_exc = exc
+            for runtime in self.runtimes.values():
+                runtime.wake.set()
 
     async def trigger_budget_stop(self) -> None:
         """Signal a scan-wide budget stop and wake every parked agent so it exits."""

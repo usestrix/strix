@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft,
   AlertCircle,
+  AlertTriangle,
   Bot,
   Mail,
   ChevronDown,
@@ -351,6 +352,21 @@ export default function App() {
           ) : run && counts ? (
             <>
               <SummaryHeader summary={run.summary} />
+
+              {typeof run.raw.stop_reason === "string" && run.raw.stop_reason && (
+                <div className="rounded-lg px-4 py-3 flex gap-3 items-start border border-yellow-500/30 bg-yellow-500/5">
+                  <AlertTriangle
+                    className="w-5 h-5 flex-shrink-0 mt-0.5 text-yellow-400"
+                    aria-hidden="true"
+                  />
+                  <div>
+                    <p className="text-sm font-medium text-yellow-300">Scan stopped</p>
+                    <p className="text-sm text-yellow-200/80 mt-0.5">
+                      {run.raw.stop_reason as string}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* Tab strip: shown on small screens where the sidebar is hidden. */}
               <div className="flex gap-5 border-b border-[#2a2a2a] lg:hidden">

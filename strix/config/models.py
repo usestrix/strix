@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import inspect
 import os
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +27,8 @@ from strix.auth import codex
 
 
 if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
     from agents.models.interface import Model, ModelProvider
     from openai import AsyncOpenAI
 
@@ -39,9 +43,17 @@ def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | No
 
 
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
-    """Retry statusless provider errors (e.g. mid-stream quota/billing), but not aborts."""
+    """Retry statusless provider errors (e.g. mid-stream quota/billing), but not
+    aborts or content-guardrail rejections.
+
+    A guardrail block is status-less, so without this guard it would match and
+    be retried 5x — pointlessly, since retrying identical content never clears
+    the block. It's terminal: fail fast so the user sees the message at once.
+    """
     normalized = context.normalized
     if normalized.is_abort:
+        return False
+    if codex.is_content_guardrail_error(context.error):
         return False
     return normalized.status_code is None
 
@@ -91,18 +103,67 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         if len(args) >= 3:
             args = (*args[:2], self._codex_settings(args[2]), *args[3:])
         # Always call the backend streamed (it rejects non-streamed requests).
-        events = await super()._fetch_response(*args, stream=True, **kwargs)  # type: ignore[call-overload]
+        # A content-guardrail rejection can surface either here (request-time) or
+        # while the stream is read; catch both and raise a typed, terminal error.
+        try:
+            events = await super()._fetch_response(*args, stream=True, **kwargs)  # type: ignore[call-overload]
+        except Exception as exc:
+            guardrail = self._as_guardrail(exc)
+            if guardrail is not None:
+                raise guardrail from exc
+            raise
+        guarded = self._guarded(events)
         if stream:
-            return events
+            # stream_response iterates and closes this generator itself.
+            return guarded
         # Non-streaming caller: aggregate the SSE events into a single Response.
         final_response = None
-        async for event in events:  # iterate to exhaustion so the stream cleans up
+        async for event in guarded:  # iterate to exhaustion so the stream cleans up
             if getattr(event, "type", None) == "response.completed":
                 final_response = event.response
         if final_response is None:
             msg = "ChatGPT backend stream ended without a completed response"
             raise RuntimeError(msg)
         return final_response
+
+    def _as_guardrail(self, exc: BaseException) -> codex.CodexContentGuardrailError | None:
+        """Return a typed guardrail error if ``exc`` is one, else None."""
+        if isinstance(exc, codex.CodexContentGuardrailError):
+            return exc
+        if codex.is_content_guardrail_error(exc):
+            return codex.CodexContentGuardrailError(self.model, exc)
+        return None
+
+    async def _guarded(self, events: Any) -> AsyncIterator[Any]:
+        """Yield the backend's stream events, converting a content-guardrail
+        rejection raised mid-stream into a typed CodexContentGuardrailError, and
+        closing the underlying stream on exit so the wrapper doesn't leak it.
+        """
+        try:
+            async for event in events:
+                yield event
+        except Exception as exc:
+            guardrail = self._as_guardrail(exc)
+            if guardrail is not None:
+                raise guardrail from exc
+            raise
+        finally:
+            await self._aclose(events)
+
+    @staticmethod
+    async def _aclose(events: Any) -> None:
+        # Mirror the SDK's own stream cleanup (aclose, then close).
+        aclose = getattr(events, "aclose", None)
+        if callable(aclose):
+            with contextlib.suppress(Exception):
+                await aclose()
+            return
+        close = getattr(events, "close", None)
+        if callable(close):
+            with contextlib.suppress(Exception):
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
 
 
 class StrixProvider(MultiProvider):
@@ -136,7 +197,7 @@ class StrixProvider(MultiProvider):
             from strix.config.loader import load_settings
 
             return _CodexResponsesModel(
-                codex.resolve_subscription_model(),
+                codex.resolve_subscription_model(model_name),
                 codex.get_subscription_client(),
                 reasoning_effort=load_settings().llm.reasoning_effort,
             )

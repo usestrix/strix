@@ -195,6 +195,24 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         console.print(f"[bold red]Error during penetration test:[/] {e}")
         raise
 
+    stop_reason = report_state.run_record.get("stop_reason")
+    if stop_reason:
+        stop_text = Text()
+        stop_text.append("SCAN STOPPED", style="bold yellow")
+        stop_text.append("\n\n", style="white")
+        stop_text.append(str(stop_reason), style="white")
+        console.print()
+        console.print(
+            Panel(
+                stop_text,
+                title="[bold white]STRIX",
+                title_align="left",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+
     if report_state.final_scan_result:
         console.print()
 

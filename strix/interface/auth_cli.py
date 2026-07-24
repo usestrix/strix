@@ -7,12 +7,15 @@ Subcommands:
   server; ``--manual`` (or a failure to open the browser / bind the port) falls
   back to pasting the redirect URL by hand.
 - ``strix auth status`` — show whether a subscription sign-in is active.
+- ``strix auth model <name>`` — pick which subscription model to run, persisting
+  ``STRIX_LLM=openai/subscription/<name>``. List the options (subscription and
+  API-key) with the top-level ``strix models`` command.
 - ``strix auth logout`` — forget the stored sign-in.
 
 Signing in sets ``STRIX_LLM=openai/subscription`` in ``~/.strix/cli-config.json``
-so subsequent ``strix`` runs use the subscription. Tokens live separately in
-``~/.strix/subscription-auth.json`` (see ``strix/auth/store.py``); they are never
-written to the env-var config.
+so subsequent ``strix`` runs use the subscription (defaulting to gpt-5.4). Tokens
+live separately in ``~/.strix/subscription-auth.json`` (see ``strix/auth/store.py``);
+they are never written to the env-var config.
 """
 
 from __future__ import annotations
@@ -46,28 +49,36 @@ _CALLBACK_TIMEOUT_S = 300
 LOGIN_PROVIDER = "chatgpt"
 _ACCEPTED_PROVIDERS = frozenset({LOGIN_PROVIDER, codex.PROVIDER})
 
-_USAGE = "Usage:\n  strix auth login chatgpt [--manual]\n  strix auth status\n  strix auth logout"
+_USAGE = (
+    "Usage:\n"
+    "  strix auth login chatgpt [--manual]\n"
+    "  strix auth status\n"
+    "  strix auth model <name>   (list options with `strix models`)\n"
+    "  strix auth logout"
+)
 
 
 def run_auth(argv: list[str]) -> int:
     """Entry point for ``strix auth …``. Returns a process exit code."""
     console = Console()
+    # Bare `strix auth` (no subcommand) defaults to login.
     subcommand = argv[0] if argv else "login"
     rest = argv[1:]
 
     if subcommand in ("-h", "--help", "help"):
         console.print(_USAGE)
         return 0
-    if subcommand == "login":
-        return _login(console, rest)
-    if subcommand == "status":
-        return _status(console)
-    if subcommand == "logout":
-        return _logout(console)
 
-    # Bare `strix auth` (no subcommand) defaults to login; anything else is an error.
-    if not argv:
-        return _login(console, [])
+    handlers = {
+        "login": lambda: _login(console, rest),
+        "status": lambda: _status(console),
+        "model": lambda: _select_model(console, rest),
+        "logout": lambda: _logout(console),
+    }
+    handler = handlers.get(subcommand)
+    if handler is not None:
+        return handler()
+
     console.print(f"[red]Unknown auth command:[/] {subcommand}\n")
     console.print(_USAGE)
     return 2
@@ -297,6 +308,40 @@ def _status(console: Console) -> int:
     return 0
 
 
+def _select_model(console: Console, argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        console.print("Usage: strix auth model <name>   (see [cyan]strix models[/])")
+        return 0 if argv else 2
+
+    requested = argv[0].strip()
+    # Accept a bare slug (gpt-5.5) or the full openai/subscription/<slug> form.
+    if codex.is_subscription(requested):
+        candidate = requested
+    else:
+        candidate = f"{codex.SUBSCRIPTION_MODEL}/{requested}"
+    # Validate against the live catalog so a typo fails here, not mid-run.
+    if codex.is_authenticated():
+        codex.refresh_subscription_models()
+    try:
+        slug = codex.resolve_subscription_model(candidate)
+    except codex.CodexAuthError as exc:
+        console.print(f"[red]{exc}[/]")
+        return 2
+
+    os.environ["STRIX_LLM"] = f"{codex.SUBSCRIPTION_MODEL}/{slug}"
+    persist_current()
+
+    label = codex.subscription_model_label(slug)
+    note = f" [dim]({label})[/]" if label else ""
+    console.print(f"[green]Model set:[/] [bold]{slug}[/]{note}")
+    console.print(f"[dim]STRIX_LLM = openai/subscription/{slug}[/]")
+    if not codex.is_authenticated():
+        console.print(
+            "[yellow]Note:[/] not signed in — run [cyan]strix auth login chatgpt[/] to use it."
+        )
+    return 0
+
+
 def _logout(console: Console) -> int:
     codex.logout()
     console.print("[green]Signed out.[/] Stored subscription credentials removed.")
@@ -332,6 +377,14 @@ def _print_success(console: Console) -> None:
     text.append("STRIX_LLM", style="dim")
     text.append("  ")
     text.append(codex.SUBSCRIPTION_MODEL, style="bold white")
+    text.append("\n")
+    text.append("Model", style="dim")
+    text.append("      ")
+    text.append(f"{codex.DEFAULT_CODEX_MODEL} by default — ", style="white")
+    text.append("strix models", style="bold cyan")
+    text.append(" to list, ", style="white")
+    text.append("STRIX_LLM=openai/subscription/<name>", style="bold white")
+    text.append(" to pick (same as an API model)", style="white")
     text.append("\n")
     text.append("Billing", style="dim")
     text.append("    ")

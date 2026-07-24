@@ -212,11 +212,36 @@ def _validate_subscription_environment(console: Console) -> None:
     """Gate a ``STRIX_LLM=openai/subscription`` run on being signed in.
 
     There's no API key to check in this mode; instead we require a stored
-    sign-in. The concrete model is fixed by the subscription backend, so there's
-    nothing else to validate here.
+    sign-in. We also resolve the selected model here so an unknown
+    ``openai/subscription/<slug>`` fails fast with the list of valid models
+    rather than deep in the run — validated against the live backend catalog,
+    which we fetch once here (falling back to the static list if unavailable).
     """
     if codex.is_authenticated():
-        logger.info("Environment OK (subscription, signed in)")
+        codex.refresh_subscription_models()
+    try:
+        selected = codex.resolve_subscription_model(load_settings().llm.model)
+    except codex.CodexAuthError as exc:
+        logger.exception("Invalid subscription model")
+        error_text = Text()
+        error_text.append("INVALID MODEL", style="bold red")
+        error_text.append("\n\n", style="white")
+        error_text.append(f"{exc}\n", style="white")
+        console.print("\n")
+        console.print(
+            Panel(
+                error_text,
+                title="[bold white]STRIX",
+                title_align="left",
+                border_style="red",
+                padding=(1, 2),
+            )
+        )
+        console.print()
+        sys.exit(1)
+
+    if codex.is_authenticated():
+        logger.info("Environment OK (subscription, signed in, model=%s)", selected)
         return
 
     logger.error("Subscription selected but not signed in")
@@ -988,6 +1013,12 @@ def main() -> None:
         from strix.interface.auth_cli import run_auth
 
         sys.exit(run_auth(sys.argv[2:]))
+
+    # `strix models` lists the available models (subscription + API-key) and exits.
+    if len(sys.argv) > 1 and sys.argv[1] == "models":
+        from strix.interface.models_cli import run_models
+
+        sys.exit(run_models(sys.argv[2:]))
 
     args = parse_arguments()
 

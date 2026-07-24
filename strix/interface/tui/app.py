@@ -802,6 +802,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._scan_stop_event = threading.Event()
         self._scan_completed = threading.Event()
         self._scan_error: BaseException | None = None
+        self._stop_reason_shown = False
 
         self._spinner_frame_index: int = 0
         self._sweep_num_squares: int = 6
@@ -1002,6 +1003,22 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._update_stats_display()
 
         self._update_vulnerabilities_panel()
+
+        self._maybe_show_stop_reason()
+
+    def _maybe_show_stop_reason(self) -> None:
+        """Surface a terminal stop reason (e.g. a content-guardrail block) once
+        the scan ends — otherwise the run just appears to stop with no reason."""
+        if self._stop_reason_shown or not self._scan_completed.is_set():
+            return
+        reason = self.report_state.run_record.get("stop_reason")
+        if not reason:
+            return
+        self._stop_reason_shown = True
+        self.notify(str(reason), title="Scan stopped", severity="warning", timeout=30)
+        with contextlib.suppress(Exception):
+            status_text = self.query_one("#status_text", Static)
+            self._safe_widget_operation(status_text.update, f"[yellow]Scan stopped:[/] {reason}")
 
     def _sync_agent_graph(self) -> None:
         future = self._agent_graph_sync_future

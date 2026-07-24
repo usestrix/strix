@@ -379,6 +379,13 @@ class ReportState:
             }
         )
 
+    def record_stop_reason(self, message: str, *, category: str = "error") -> None:
+        """Record a human-readable reason the scan stopped, for the CLI, TUI, and
+        viewer to surface. Stored on the run record; persist with ``save_run_data``.
+        """
+        self.run_record["stop_reason"] = message
+        self.run_record["stop_reason_category"] = category
+
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
         if mark_complete:
             self.end_time = datetime.now(UTC).isoformat()
