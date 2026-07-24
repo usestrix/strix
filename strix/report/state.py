@@ -119,8 +119,6 @@ class ReportState:
         self.scan_results: dict[str, Any] | None = None
         self.scan_config: dict[str, Any] | None = None
         self._llm_usage = LLMUsageLedger()
-        # A subscription run is covered by the user's plan, so there is no metered
-        # cost — track tokens but report $0.
         auth_mode = codex.auth_mode(load_settings().llm.model)
         self._llm_usage.zero_cost = auth_mode == "subscription"
         self.run_record: dict[str, Any] = {
@@ -377,13 +375,6 @@ class ReportState:
                 "diff_base": config.get("diff_base"),
             }
         )
-
-    def record_stop_reason(self, message: str, *, category: str = "error") -> None:
-        """Record a human-readable reason the scan stopped, for the CLI, TUI, and
-        viewer to surface. Stored on the run record; persist with ``save_run_data``.
-        """
-        self.run_record["stop_reason"] = message
-        self.run_record["stop_reason_category"] = category
 
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
         if mark_complete:
