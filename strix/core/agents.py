@@ -41,6 +41,7 @@ class AgentCoordinator:
         self.names: dict[str, str] = {}
         self.metadata: dict[str, dict[str, Any]] = {}
         self.pending_counts: dict[str, int] = {}
+        self.errors: dict[str, str] = {}
         self.runtimes: dict[str, AgentRuntime] = {}
         self._lock = asyncio.Lock()
         self._snapshot_path: Path | None = None
@@ -107,16 +108,23 @@ class AgentCoordinator:
         async with self._lock:
             if agent_id in self.statuses:
                 self.statuses[agent_id] = "running"
+                self.errors.pop(agent_id, None)
         await self._maybe_snapshot()
 
     async def park_waiting(self, agent_id: str) -> None:
         await self.set_status(agent_id, "waiting")
 
-    async def set_status(self, agent_id: str, status: Status | str) -> None:
+    async def set_status(
+        self, agent_id: str, status: Status | str, *, error: str | None = None
+    ) -> None:
         async with self._lock:
             if agent_id not in self.statuses:
                 return
             self.statuses[agent_id] = status  # type: ignore[assignment]
+            if error is not None:
+                self.errors[agent_id] = error
+            elif status == "running":
+                self.errors.pop(agent_id, None)
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
             runtime.wake.set()
         logger.info("agent.status %s=%s", agent_id, status)
@@ -246,9 +254,14 @@ class AgentCoordinator:
 
     async def graph_snapshot(
         self,
-    ) -> tuple[dict[str, str | None], dict[str, Status], dict[str, str]]:
+    ) -> tuple[dict[str, str | None], dict[str, Status], dict[str, str], dict[str, str]]:
         async with self._lock:
-            return dict(self.parent_of), dict(self.statuses), dict(self.names)
+            return (
+                dict(self.parent_of),
+                dict(self.statuses),
+                dict(self.names),
+                dict(self.errors),
+            )
 
     def _message_to_session_item(self, message: dict[str, Any]) -> TResponseInputItem:
         sender = str(message.get("from", "unknown"))
@@ -286,6 +299,7 @@ class AgentCoordinator:
                 "names": dict(self.names),
                 "metadata": {aid: dict(md) for aid, md in self.metadata.items()},
                 "pending_counts": dict(self.pending_counts),
+                "errors": dict(self.errors),
             }
 
     async def restore(self, snap: dict[str, Any]) -> None:
@@ -295,6 +309,7 @@ class AgentCoordinator:
             self.names = dict(snap.get("names", {}))
             self.metadata = {aid: dict(md) for aid, md in snap.get("metadata", {}).items()}
             self.pending_counts = dict(snap.get("pending_counts", {}))
+            self.errors = dict(snap.get("errors", {}))
             for aid in self.statuses:
                 self.runtimes.setdefault(aid, AgentRuntime())
 
