@@ -53,11 +53,13 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         if not isinstance(agent_id, str) or not agent_id:
             agent_id = agent_name or "unknown"
 
+        agent_model = getattr(agent, "model", None)
+        model = agent_model if isinstance(agent_model, str) and agent_model else self._model
         try:
             report_state.record_sdk_usage(
                 agent_id=agent_id,
                 agent_name=agent_name,
-                model=self._model,
+                model=model,
                 usage=response.usage,
             )
         except Exception:

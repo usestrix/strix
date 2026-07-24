@@ -128,12 +128,19 @@ def make_model_settings(
     model_name: str,
     force_required_tool_choice: bool = False,
     request_timeout: float | None = None,
+    api_key: str | None = None,
 ) -> ModelSettings:
+    extra_args: dict[str, Any] = dict(request_timeout_extra_args(request_timeout) or {})
+    # Per-call credential. Env vars are global per provider, so this is the only
+    # way to give same-provider routes (root vs. child/verifier/dedupe) distinct
+    # keys without one clobbering another.
+    if api_key and api_key.strip():
+        extra_args["api_key"] = api_key.strip()
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
-        extra_args=request_timeout_extra_args(request_timeout),
+        extra_args=extra_args or None,
     )
     if (
         reasoning_effort is not None

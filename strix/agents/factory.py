@@ -9,6 +9,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 from agents.agent import ToolsToFinalOutputResult
+from agents.model_settings import ModelSettings
 from agents.sandbox import SandboxAgent
 from agents.sandbox.capabilities import Filesystem, Shell
 from agents.sandbox.errors import InvalidManifestPathError
@@ -16,6 +17,8 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
+from strix.config.models import _same_provider, uses_chat_completions_tool_schema
+from strix.core.inputs import make_model_settings
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -59,6 +62,8 @@ if TYPE_CHECKING:
 
     from agents import RunContextWrapper
     from agents.tool import FunctionToolResult
+
+    from strix.config.settings import LlmSettings, ReasoningEffort, Settings, SkillModelRoute
 
 
 logger = logging.getLogger(__name__)
@@ -408,6 +413,8 @@ def build_strix_agent(
     is_whitebox: bool = False,
     interactive: bool = False,
     chat_completions_tools: bool = False,
+    model: str | None = None,
+    model_settings: ModelSettings | None = None,
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
@@ -417,6 +424,8 @@ def build_strix_agent(
     Args:
         chat_completions_tools: Wrap SDK custom tools as function tools
             when the selected backend cannot accept Responses custom tools.
+        model: Per-agent model route. When omitted, the run default is used.
+        model_settings: Settings resolved for this agent's own model.
         extra_tools: Additional tools for this scan agent only, on top of any
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
@@ -456,7 +465,8 @@ def build_strix_agent(
         instructions=instructions,
         tools=tools,
         tool_use_behavior=_finish_tool_use_behavior,
-        model=None,
+        model=model,
+        model_settings=model_settings or ModelSettings(),
         capabilities=[
             Filesystem(
                 configure_tools=(
@@ -472,12 +482,29 @@ def build_strix_agent(
     )
 
 
+def _resolve_child_api_key(
+    llm: LlmSettings, resolved_model: str, default_model: str
+) -> str | None:
+    """Pick the credential a child should send as a per-call ``api_key``.
+
+    Prefer an explicit ``SUBAGENT_LLM_API_KEY``. Otherwise reuse the
+    orchestrator key only when the child shares the orchestrator's provider;
+    cross-provider children fall back to their provider's ambient env/auth.
+    """
+    if llm.subagent_api_key and llm.subagent_api_key.strip():
+        return llm.subagent_api_key.strip()
+    if llm.api_key and _same_provider(resolved_model, default_model):
+        return llm.api_key
+    return None
+
+
 def make_child_factory(
     *,
+    settings: Settings,
+    default_model: str,
     scan_mode: str = "deep",
     is_whitebox: bool = False,
     interactive: bool = False,
-    chat_completions_tools: bool = False,
     system_prompt_context: dict[str, Any] | None = None,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
@@ -487,7 +514,38 @@ def make_child_factory(
     without the graph tool knowing about runner internals.
     """
 
-    def _factory(*, name: str, skills: list[str]) -> SandboxAgent[Any]:
+    llm = settings.llm
+
+    def _matching_route(skills: list[str]) -> SkillModelRoute | None:
+        return next((route for route in llm.skill_model_routes if route.matches(skills)), None)
+
+    def _factory(
+        *,
+        name: str,
+        skills: list[str],
+        model: str | None = None,
+    ) -> SandboxAgent[Any]:
+        route = _matching_route(skills) if model is None else None
+        resolved_model = (
+            model
+            or (route.model if route is not None else None)
+            or llm.subagent_model
+            or default_model
+        ).strip()
+        reasoning: ReasoningEffort | None = (
+            route.reasoning_effort
+            if route is not None and route.reasoning_effort is not None
+            else llm.subagent_reasoning_effort
+        )
+        if reasoning is None:
+            reasoning = llm.reasoning_effort
+        child_api_key = _resolve_child_api_key(llm, resolved_model, default_model)
+        child_model_settings = make_model_settings(
+            reasoning,
+            model_name=resolved_model,
+            force_required_tool_choice=llm.force_required_tool_choice,
+            api_key=child_api_key,
+        )
         return build_strix_agent(
             name=name,
             skills=skills,
@@ -495,7 +553,12 @@ def make_child_factory(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             interactive=interactive,
-            chat_completions_tools=chat_completions_tools,
+            chat_completions_tools=uses_chat_completions_tool_schema(
+                resolved_model,
+                settings,
+            ),
+            model=resolved_model,
+            model_settings=child_model_settings,
             system_prompt_context=system_prompt_context,
         )
 

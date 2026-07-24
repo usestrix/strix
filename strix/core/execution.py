@@ -136,6 +136,7 @@ async def spawn_child_agent(
     task: str,
     skills: list[str],
     parent_history: list[Any],
+    model: str | None = None,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -144,13 +145,19 @@ async def spawn_child_agent(
         raise TypeError("Parent agent_id missing from context")
 
     child_id = uuid.uuid4().hex[:8]
-    child_agent = factory(name=name, skills=skills)
+    if model is None:
+        child_agent = factory(name=name, skills=skills)
+    else:
+        child_agent = factory(name=name, skills=skills, model=model)
+    child_model = getattr(child_agent, "model", None)
+    resolved_child_model = child_model if isinstance(child_model, str) else model
     await coordinator.register(
         child_id,
         name,
         parent_id,
         task=task,
         skills=skills,
+        model=resolved_child_model,
     )
 
     await _start_child_runner(
@@ -235,7 +242,12 @@ async def respawn_subagents(
                 )
 
             child_skills = list(md.get("skills") or [])
-            child_agent = factory(name=name, skills=child_skills)
+            restored_model = md.get("model")
+            child_agent = factory(
+                name=name,
+                skills=child_skills,
+                model=restored_model if isinstance(restored_model, str) else None,
+            )
             await _start_child_runner(
                 parent_ctx=parent_ctx,
                 coordinator=coordinator,
