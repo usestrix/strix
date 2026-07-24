@@ -23,7 +23,8 @@ from agents.retry import (
 )
 from openai.types.shared import Reasoning
 
-from strix.auth import codex
+from strix.config import codex
+from strix.config.loader import load_settings
 
 
 if TYPE_CHECKING:
@@ -44,11 +45,7 @@ def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | No
 
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
     """Retry statusless provider errors (e.g. mid-stream quota/billing), but not
-    aborts or content-guardrail rejections.
-
-    A guardrail block is status-less, so without this guard it would match and
-    be retried 5x — pointlessly, since retrying identical content never clears
-    the block. It's terminal: fail fast so the user sees the message at once.
+    aborts or content-guardrail rejections (terminal — retrying never clears them).
     """
     normalized = context.normalized
     if normalized.is_abort:
@@ -61,17 +58,10 @@ def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
 class _CodexResponsesModel(OpenAIResponsesModel):
     """A responses model wired for the ChatGPT subscription backend.
 
-    It owns everything that backend requires so the rest of Strix doesn't need
-    to special-case subscription runs:
-
-    - It always calls the API streamed (the backend rejects non-streamed
-      requests). The natively-streamed run path (``Runner.run_streamed``) is
-      forwarded unchanged; the non-streaming ``get_response`` path (warm-up,
-      dedupe) issues a streamed request and aggregates the events back into a
-      single ``Response``.
-    - It forces ``store=false`` + encrypted reasoning (the backend is stateless)
-      and applies the configured reasoning effort, so callers can pass ordinary
-      ``ModelSettings``.
+    Always calls the API streamed (the backend rejects non-streamed requests),
+    aggregating the events back into a single ``Response`` for non-streaming
+    callers, and forces ``store=false`` + encrypted reasoning (the backend is
+    stateless).
     """
 
     def __init__(
@@ -190,16 +180,13 @@ class StrixProvider(MultiProvider):
         return self._get_fallback_provider("litellm"), original_model_name
 
     def get_model(self, model_name: str | None) -> Model:
-        # STRIX_LLM=openai/subscription is self-contained: a model backed by the
-        # OAuth client that talks to the ChatGPT subscription. Everything else
-        # goes through the normal (LiteLLM/OpenAI) resolution unchanged.
-        if codex.is_subscription(model_name):
-            from strix.config.loader import load_settings
-
+        settings = load_settings()
+        slug = codex.subscription_model(model_name, settings.llm.api_key)
+        if slug:
             return _CodexResponsesModel(
-                codex.resolve_subscription_model(model_name),
+                slug,
                 codex.get_subscription_client(),
-                reasoning_effort=load_settings().llm.reasoning_effort,
+                reasoning_effort=settings.llm.reasoning_effort,
             )
         return super().get_model(model_name)
 
@@ -261,10 +248,9 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
     set_tracing_disabled(True)
-    if codex.is_subscription(llm.model):
+    if codex.subscription_model(llm.model, llm.api_key):
         # Subscription runs are self-contained: StrixProvider builds the OAuth
-        # client and the model enforces the backend's requirements, so there are
-        # no LiteLLM/API-key globals to configure here.
+        # client, so there are no LiteLLM/API-key globals to configure.
         return
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
@@ -360,9 +346,8 @@ def _configure_litellm_default(name: str, value: str) -> None:
 
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
-    # The ChatGPT subscription speaks the Responses API, so it takes the native
-    # reasoning-model tool schema regardless of the model name's shape.
-    if codex.is_subscription(model_name):
+    # The ChatGPT subscription speaks the Responses API.
+    if codex.subscription_model(model_name, settings.llm.api_key):
         return False
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):

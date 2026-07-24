@@ -19,8 +19,9 @@ from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from agents.models.openai_responses import OpenAIResponsesModel
 from openai import AsyncOpenAI, BadRequestError
+from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
-from strix.auth import codex
+from strix.config import codex
 from strix.config.models import _CodexResponsesModel
 
 
@@ -140,7 +141,11 @@ async def test_stock_model_fails_on_non_streamed_backend(backend_url: str) -> No
 async def test_codex_model_streams_and_aggregates(backend_url: str) -> None:
     model = _CodexResponsesModel(model="gpt-5.5", openai_client=_client(backend_url))
     response = await model.get_response(**_call_kwargs())
-    assert response.output[0].content[0].text == "OK"
+    message = response.output[0]
+    assert isinstance(message, ResponseOutputMessage)
+    text = message.content[0]
+    assert isinstance(text, ResponseOutputText)
+    assert text.text == "OK"
     assert response.usage.total_tokens == 2
 
 

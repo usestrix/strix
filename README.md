@@ -269,21 +269,21 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 
 #### Sign in with a ChatGPT subscription
 
-Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription. Set `STRIX_LLM=openai/subscription` — that value is the only switch:
+Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
 
 ```bash
-strix auth login chatgpt      # sign in; sets STRIX_LLM=openai/subscription for you
+strix auth login chatgpt      # sign in with your ChatGPT account
+
+export STRIX_LLM="openai/gpt-5.4"   # any OpenAI model; leave LLM_API_KEY unset
 strix --target ./app-directory
 
 strix auth status             # show the active sign-in
-strix models                  # list all models (subscription + API-key sections)
-strix auth model gpt-5.5      # pick a subscription model (sets STRIX_LLM=openai/subscription/gpt-5.5)
 strix auth logout             # forget the sign-in
 ```
 
-To switch back to a metered API key, just point `STRIX_LLM` at a normal model (e.g. `openai/gpt-5.4`) and set `LLM_API_KEY` — there's no separate mode to toggle.
+`STRIX_LLM` stays the single source of truth for the model. A run uses the subscription when you're signed in, `STRIX_LLM` is an `openai/` model, and `LLM_API_KEY` is unset — setting `LLM_API_KEY` switches back to metered API billing.
 
-This uses OpenAI's Codex OAuth flow: inference is billed to your ChatGPT plan rather than per token. A bare `openai/subscription` runs on `gpt-5.4`; to use a different model, append it (`openai/subscription/gpt-5.5`) or run `strix auth model <name>`. Picking a subscription model works exactly like picking an API model — in both cases you're just setting `STRIX_LLM`; the only difference is you authenticate with `strix auth login` instead of `LLM_API_KEY`. `gpt-5.4` is the default because newer models — the `gpt-5.6-*` variants in particular — apply stricter content moderation that can block security-testing prompts; if a selected model is blocked mid-run, Strix stops with a clear message rather than silently switching. Run `strix models` to see all available models (a live list of what your plan exposes, plus recommended API-key models; recommended vs. guardrail-prone are labelled). If the browser can't open, the command falls back to pasting the redirect URL by hand. Tokens are stored in `~/.strix/subscription-auth.json` (`0600`) and refreshed automatically.
+This uses OpenAI's Codex OAuth flow: inference is billed to your ChatGPT plan rather than per token. Note that newer models — the `gpt-5.6-*` variants in particular — apply stricter content moderation that can block security-testing prompts; if the selected model is blocked mid-run, Strix stops with a clear message rather than silently switching. If the browser can't open, the login falls back to pasting the redirect URL by hand. Tokens are stored in `~/.strix/subscription-auth.json` (`0600`) and refreshed automatically.
 
 > [!NOTE]
 > Using a ChatGPT subscription outside OpenAI's own products is not officially supported by OpenAI and may be subject to its terms of use. For unattended/CI runs, prefer an API key.

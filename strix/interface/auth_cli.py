@@ -1,21 +1,8 @@
-"""`strix auth` — manage model-subscription sign-in.
+"""`strix auth` — ChatGPT subscription sign-in (login / status / logout).
 
-Subcommands:
-
-- ``strix auth login chatgpt [--manual]`` — OAuth sign-in with a ChatGPT
-  Plus/Pro subscription. Opens a browser and catches the redirect on a local
-  server; ``--manual`` (or a failure to open the browser / bind the port) falls
-  back to pasting the redirect URL by hand.
-- ``strix auth status`` — show whether a subscription sign-in is active.
-- ``strix auth model <name>`` — pick which subscription model to run, persisting
-  ``STRIX_LLM=openai/subscription/<name>``. List the options (subscription and
-  API-key) with the top-level ``strix models`` command.
-- ``strix auth logout`` — forget the stored sign-in.
-
-Signing in sets ``STRIX_LLM=openai/subscription`` in ``~/.strix/cli-config.json``
-so subsequent ``strix`` runs use the subscription (defaulting to gpt-5.4). Tokens
-live separately in ``~/.strix/subscription-auth.json`` (see ``strix/auth/store.py``);
-they are never written to the env-var config.
+Signing in only stores OAuth tokens (``~/.strix/subscription-auth.json``); model
+selection stays with ``STRIX_LLM``. A signed-in run with an ``openai/`` model and
+no ``LLM_API_KEY`` uses the subscription.
 """
 
 from __future__ import annotations
@@ -23,20 +10,22 @@ from __future__ import annotations
 import argparse
 import base64
 import logging
-import os
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlparse
 
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.auth import codex
-from strix.config import load_settings, persist_current
+from strix.config import codex, load_settings
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -49,13 +38,7 @@ _CALLBACK_TIMEOUT_S = 300
 LOGIN_PROVIDER = "chatgpt"
 _ACCEPTED_PROVIDERS = frozenset({LOGIN_PROVIDER, codex.PROVIDER})
 
-_USAGE = (
-    "Usage:\n"
-    "  strix auth login chatgpt [--manual]\n"
-    "  strix auth status\n"
-    "  strix auth model <name>   (list options with `strix models`)\n"
-    "  strix auth logout"
-)
+_USAGE = "Usage:\n  strix auth login chatgpt [--manual]\n  strix auth status\n  strix auth logout"
 
 
 def run_auth(argv: list[str]) -> int:
@@ -69,10 +52,9 @@ def run_auth(argv: list[str]) -> int:
         console.print(_USAGE)
         return 0
 
-    handlers = {
+    handlers: dict[str, Callable[[], int]] = {
         "login": lambda: _login(console, rest),
         "status": lambda: _status(console),
-        "model": lambda: _select_model(console, rest),
         "logout": lambda: _logout(console),
     }
     handler = handlers.get(subcommand)
@@ -109,11 +91,6 @@ def _login(console: Console, argv: list[str]) -> int:
         )
         return 2
 
-    # Capture any shell-exported STRIX_LLM before we persist our own, so we can
-    # warn if it would override subscription mode (env wins over the config file
-    # we write). This must be read before _persist_subscription_config sets it.
-    preexisting_llm = os.environ.get("STRIX_LLM")
-
     verifier, challenge = codex.generate_pkce()
     state = codex.create_state()
     authorize_url = codex.build_authorize_url(challenge, state)
@@ -134,28 +111,8 @@ def _login(console: Console, argv: list[str]) -> int:
         return 130
 
     codex.save_record(record)
-    _persist_subscription_config()
-    _warn_if_env_overrides(console, preexisting_llm)
-
     _print_success(console)
     return 0
-
-
-def _warn_if_env_overrides(console: Console, preexisting: str | None) -> None:
-    """Warn when a shell-exported STRIX_LLM will override subscription mode.
-
-    The config file we write loses to an environment variable at load time, so a
-    lingering ``export STRIX_LLM=…`` pointing somewhere else would silently win.
-    """
-    if not preexisting or not preexisting.strip():
-        return
-    if codex.is_subscription(preexisting):
-        return
-    console.print(
-        f"[yellow]Note:[/] STRIX_LLM is set in your shell to "
-        f"[bold]{preexisting.strip()}[/], which overrides the subscription just saved. "
-        f"Run [bold cyan]unset STRIX_LLM[/] to use the subscription."
-    )
 
 
 def _run_oauth_flow(
@@ -285,59 +242,23 @@ def _first(query: dict[str, list[str]], key: str) -> str | None:
     return values[0] if values else None
 
 
-def _persist_subscription_config() -> None:
-    """Point STRIX_LLM at the subscription and persist it to cli-config.json."""
-    os.environ["STRIX_LLM"] = codex.SUBSCRIPTION_MODEL
-    persist_current()
-
-
 def _status(console: Console) -> int:
     record = codex.read_record()
     if record is None:
         console.print("[yellow]Not signed in.[/] Run [cyan]strix auth login chatgpt[/] to sign in.")
         return 1
     settings = load_settings()
-    console.print("[green]Signed in[/] with a ChatGPT subscription (Codex).")
+    console.print("[green]Signed in[/] with a ChatGPT subscription.")
     console.print(f"  Account: [bold]{record.get('account_id')}[/]")
-    if not codex.is_subscription(settings.llm.model):
-        console.print(
-            "  [yellow]Note:[/] STRIX_LLM is not 'openai/subscription', so runs won't use "
-            "the subscription. Set [cyan]STRIX_LLM=openai/subscription[/] (or re-run "
-            "[cyan]strix auth login chatgpt[/])."
-        )
-    return 0
-
-
-def _select_model(console: Console, argv: list[str]) -> int:
-    if not argv or argv[0] in ("-h", "--help"):
-        console.print("Usage: strix auth model <name>   (see [cyan]strix models[/])")
-        return 0 if argv else 2
-
-    requested = argv[0].strip()
-    # Accept a bare slug (gpt-5.5) or the full openai/subscription/<slug> form.
-    if codex.is_subscription(requested):
-        candidate = requested
+    slug = codex.subscription_model(settings.llm.model, settings.llm.api_key)
+    if slug:
+        console.print(f"  Runs use the subscription (STRIX_LLM=[bold]{settings.llm.model}[/]).")
+    elif settings.llm.api_key:
+        console.print("  [yellow]Note:[/] LLM_API_KEY is set, so runs use metered API billing.")
     else:
-        candidate = f"{codex.SUBSCRIPTION_MODEL}/{requested}"
-    # Validate against the live catalog so a typo fails here, not mid-run.
-    if codex.is_authenticated():
-        codex.refresh_subscription_models()
-    try:
-        slug = codex.resolve_subscription_model(candidate)
-    except codex.CodexAuthError as exc:
-        console.print(f"[red]{exc}[/]")
-        return 2
-
-    os.environ["STRIX_LLM"] = f"{codex.SUBSCRIPTION_MODEL}/{slug}"
-    persist_current()
-
-    label = codex.subscription_model_label(slug)
-    note = f" [dim]({label})[/]" if label else ""
-    console.print(f"[green]Model set:[/] [bold]{slug}[/]{note}")
-    console.print(f"[dim]STRIX_LLM = openai/subscription/{slug}[/]")
-    if not codex.is_authenticated():
         console.print(
-            "[yellow]Note:[/] not signed in — run [cyan]strix auth login chatgpt[/] to use it."
+            "  [yellow]Note:[/] runs use the subscription only with an OpenAI model — "
+            "set [cyan]STRIX_LLM[/] to e.g. [cyan]openai/gpt-5.4[/]."
         )
     return 0
 
@@ -345,10 +266,6 @@ def _select_model(console: Console, argv: list[str]) -> int:
 def _logout(console: Console) -> int:
     codex.logout()
     console.print("[green]Signed out.[/] Stored subscription credentials removed.")
-    console.print(
-        "[dim]Runs with STRIX_LLM=openai/subscription will ask you to sign in again. "
-        "Point STRIX_LLM at an API-key model (and set LLM_API_KEY) to use metered billing.[/]"
-    )
     return 0
 
 
@@ -374,21 +291,13 @@ def _print_success(console: Console) -> None:
     text = Text()
     text.append("Signed in with your ChatGPT subscription", style="bold #22c55e")
     text.append("\n\n", style="white")
-    text.append("STRIX_LLM", style="dim")
-    text.append("  ")
-    text.append(codex.SUBSCRIPTION_MODEL, style="bold white")
-    text.append("\n")
-    text.append("Model", style="dim")
-    text.append("      ")
-    text.append(f"{codex.DEFAULT_CODEX_MODEL} by default — ", style="white")
-    text.append("strix models", style="bold cyan")
-    text.append(" to list, ", style="white")
-    text.append("STRIX_LLM=openai/subscription/<name>", style="bold white")
-    text.append(" to pick (same as an API model)", style="white")
-    text.append("\n")
-    text.append("Billing", style="dim")
-    text.append("    ")
-    text.append("your ChatGPT plan (no per-token API charges)", style="white")
+    text.append("Set ", style="white")
+    text.append("STRIX_LLM", style="bold white")
+    text.append(" to an OpenAI model (e.g. ", style="white")
+    text.append("openai/gpt-5.4", style="bold cyan")
+    text.append(") and leave ", style="white")
+    text.append("LLM_API_KEY", style="bold white")
+    text.append(" unset — runs are billed to your ChatGPT plan.", style="white")
     text.append("\n\n", style="white")
     text.append("Run a scan as usual, e.g. ", style="white")
     text.append("strix --target https://example.com", style="bold cyan")

@@ -10,13 +10,11 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from strix.auth import codex, store
+from strix.config import codex
 
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
     from pathlib import Path
-    from typing import Self
 
 
 def _fake_jwt(account_id: str) -> str:
@@ -31,7 +29,7 @@ def _fake_jwt(account_id: str) -> str:
 @pytest.fixture(autouse=True)
 def _tmp_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     path = tmp_path / "home" / ".strix" / "subscription-auth.json"
-    monkeypatch.setattr(store, "AUTH_PATH", path)
+    monkeypatch.setattr(codex, "AUTH_PATH", path)
     return path
 
 
@@ -68,45 +66,42 @@ def test_parse_redirect_input(value: str, expected: tuple[str | None, str | None
     assert codex.parse_redirect_input(value) == expected
 
 
+def _signed_in(monkeypatch: pytest.MonkeyPatch, *, value: bool) -> None:
+    monkeypatch.setattr(codex, "is_authenticated", lambda: value)
+
+
 @pytest.mark.parametrize(
-    ("model", "expected"),
+    ("model", "api_key", "expected"),
     [
-        ("openai/subscription", True),
-        ("OpenAI/Subscription", True),  # case-insensitive
-        ("  openai/subscription  ", True),  # surrounding whitespace
-        ("openai/gpt-5.4", False),
-        ("anthropic/claude-opus-4-8", False),
-        ("openai/subscription/gpt-5.5", True),  # model-selecting form
-        ("OpenAI/Subscription/GPT-5.5", True),  # case-insensitive
-        ("openai/subscription-x", False),  # not the switch or a suffix of it
-        ("", False),
-        (None, False),
+        ("openai/gpt-5.4", None, "gpt-5.4"),
+        ("OpenAI/GPT-5.5", None, "GPT-5.5"),
+        ("  openai/gpt-5.4  ", None, "gpt-5.4"),
+        ("openai/gpt-5.4", "sk-key", None),  # explicit API key wins
+        ("anthropic/claude-opus-4-8", None, None),
+        ("gpt-5.4", None, None),  # bare names route via the normal OpenAI path
+        ("openai/", None, None),
+        ("", None, None),
+        (None, None, None),
     ],
 )
-def test_is_subscription(model: str | None, expected: bool) -> None:
-    assert codex.is_subscription(model) is expected
+def test_subscription_model_when_signed_in(
+    monkeypatch: pytest.MonkeyPatch, model: str | None, api_key: str | None, expected: str | None
+) -> None:
+    _signed_in(monkeypatch, value=True)
+    assert codex.subscription_model(model, api_key) == expected
 
 
-def test_resolve_and_label() -> None:
-    assert codex.resolve_subscription_model() == codex.DEFAULT_CODEX_MODEL
-    assert codex.resolve_subscription_model("openai/subscription") == codex.DEFAULT_CODEX_MODEL
-    assert codex.resolve_subscription_model("openai/subscription/gpt-5.5") == "gpt-5.5"
-    # Case-insensitive; every advertised slug resolves to itself.
-    assert codex.resolve_subscription_model("OpenAI/Subscription/GPT-5.6-Sol") == "gpt-5.6-sol"
-    for slug in codex.SUBSCRIPTION_MODELS:
-        assert codex.resolve_subscription_model(f"openai/subscription/{slug}") == slug
-    assert codex.auth_mode_label("openai/subscription") == "subscription"
-    assert codex.auth_mode_label("openai/subscription/gpt-5.5") == "subscription"
-    assert codex.auth_mode_label("openai/gpt-5.4") == "api_key"
-    assert codex.auth_mode_label(None) == "api_key"
+def test_subscription_model_requires_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    _signed_in(monkeypatch, value=False)
+    assert codex.subscription_model("openai/gpt-5.4", None) is None
 
 
-def test_resolve_unknown_model_fails_loud() -> None:
-    with pytest.raises(codex.CodexAuthError) as exc_info:
-        codex.resolve_subscription_model("openai/subscription/gpt-4o")
-    # The error names the offending slug and lists the valid choices.
-    assert "gpt-4o" in str(exc_info.value)
-    assert "gpt-5.4" in str(exc_info.value)
+def test_auth_mode(monkeypatch: pytest.MonkeyPatch) -> None:
+    _signed_in(monkeypatch, value=True)
+    assert codex.auth_mode("openai/gpt-5.4", None) == "subscription"
+    assert codex.auth_mode("openai/gpt-5.4", "sk-key") == "api_key"
+    assert codex.auth_mode("anthropic/claude-opus-4-8", None) == "api_key"
+    assert codex.auth_mode(None, None) == "api_key"
 
 
 def test_is_content_guardrail_error() -> None:
@@ -125,81 +120,8 @@ def test_is_content_guardrail_error() -> None:
 def test_content_guardrail_error_message() -> None:
     err = codex.CodexContentGuardrailError("gpt-5.6-sol")
     assert err.model == "gpt-5.6-sol"
-    # Actionable: names the blocked model and points at the safe default.
     assert "gpt-5.6-sol" in str(err)
-    assert codex.DEFAULT_CODEX_MODEL in str(err)
-
-
-@pytest.fixture(autouse=True)
-def _reset_model_cache() -> Iterator[None]:
-    # Keep the module-level live-catalog cache from leaking across tests.
-    codex._subscription_models_cache = None
-    yield
-    codex._subscription_models_cache = None
-
-
-def test_get_subscription_models_falls_back_when_uncached() -> None:
-    assert codex._subscription_models_cache is None
-    assert codex.get_subscription_models() == codex.SUBSCRIPTION_MODELS
-
-
-def test_refresh_caches_live_catalog(monkeypatch: pytest.MonkeyPatch) -> None:
-    live = ("gpt-5.4", "gpt-5.7-nova")
-    monkeypatch.setattr(codex, "fetch_subscription_models", lambda: live)
-    assert codex.refresh_subscription_models() == live
-    assert codex.get_subscription_models() == live
-    # A model only in the live catalog now validates; the stale fallback doesn't gate it.
-    assert codex.resolve_subscription_model("openai/subscription/gpt-5.7-nova") == "gpt-5.7-nova"
-
-
-def test_refresh_keeps_fallback_on_fetch_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    def _boom() -> tuple[str, ...]:
-        raise codex.CodexAuthError("network", "unreachable")
-
-    monkeypatch.setattr(codex, "fetch_subscription_models", _boom)
-    # Best-effort: no raise, and the static fallback stays in force.
-    assert codex.refresh_subscription_models() == codex.SUBSCRIPTION_MODELS
-    assert codex.resolve_subscription_model("openai/subscription/gpt-5.5") == "gpt-5.5"
-
-
-def test_subscription_model_label() -> None:
-    default_label = codex.subscription_model_label("gpt-5.4")
-    assert default_label is not None
-    assert "default" in default_label
-    assert "recommended" in default_label
-    guardrail = codex.subscription_model_label("gpt-5.6-sol")
-    assert guardrail is not None
-    assert "guardrail" in guardrail
-    # Only the default is recommended; others are left unlabeled, not endorsed.
-    assert codex.subscription_model_label("gpt-5.5") is None
-    assert codex.subscription_model_label("gpt-5.4-mini") is None
-    assert codex.subscription_model_label("gpt-5.7-unknown") is None
-
-
-def test_fetch_parses_catalog_and_excludes_internal(monkeypatch: pytest.MonkeyPatch) -> None:
-    payload = {
-        "models": [
-            {"slug": "gpt-5.4", "display_name": "GPT-5.4"},
-            {"slug": "codex-auto-review"},  # internal helper — excluded
-            {"slug": "gpt-5.6-sol"},
-            {"display_name": "malformed, no slug"},  # skipped
-        ]
-    }
-
-    class _Resp:
-        def __enter__(self) -> Self:
-            return self
-
-        def __exit__(self, *args: object) -> bool:
-            return False
-
-        def read(self) -> bytes:
-            return json.dumps(payload).encode()
-
-    monkeypatch.setattr(codex, "get_valid_token", lambda: ("tok", "acct"))
-    monkeypatch.setattr(codex.urllib.request, "urlopen", lambda *_a, **_k: _Resp())
-
-    assert codex.fetch_subscription_models() == ("gpt-5.4", "gpt-5.6-sol")
+    assert "STRIX_LLM" in str(err)
 
 
 def test_account_id_from_jwt() -> None:
@@ -233,7 +155,7 @@ def test_store_roundtrip_and_logout() -> None:
 
 
 def test_read_record_rejects_incomplete_records() -> None:
-    store.write_provider("codex", {"type": "oauth", "access": "a"})  # missing refresh/account
+    codex.save_record({"type": "oauth", "access": "a"})  # missing refresh/account
     assert codex.read_record() is None
     assert codex.is_authenticated() is False
 
@@ -281,7 +203,9 @@ def test_get_valid_token_refreshes_and_persists_rotation(monkeypatch: pytest.Mon
     assert calls["n"] == 1
     assert account_id == "acct-42"
     # Rotated refresh token was written back to the store.
-    assert codex.read_record()["refresh"] == "r2"
+    record = codex.read_record()
+    assert record is not None
+    assert record["refresh"] == "r2"
 
 
 def test_get_valid_token_uses_token_rotated_by_another_process(

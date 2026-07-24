@@ -15,8 +15,7 @@ from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
 from strix.agents.prompt import render_system_prompt
-from strix.auth import codex
-from strix.config import load_settings
+from strix.config import codex, load_settings
 from strix.config.models import (
     StrixProvider,
     configure_sdk_model_defaults,

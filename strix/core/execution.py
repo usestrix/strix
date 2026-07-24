@@ -15,7 +15,7 @@ from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import APIError
 
-from strix.auth import codex
+from strix.config import codex
 from strix.core.hooks import BudgetExceededError
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import (

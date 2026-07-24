@@ -262,9 +262,10 @@ def _is_subscription(report_state: Any) -> bool:
     record = getattr(report_state, "run_record", None)
     if isinstance(record, dict) and record.get("auth_mode"):
         return record.get("auth_mode") == "subscription"
-    from strix.auth import codex
+    from strix.config import codex
 
-    return codex.is_subscription(load_settings().llm.model)
+    llm = load_settings().llm
+    return codex.auth_mode(llm.model, llm.api_key) == "subscription"
 
 
 def _int_stat(usage: dict[str, Any], key: str) -> int:

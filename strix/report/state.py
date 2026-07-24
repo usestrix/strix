@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from agents.usage import Usage
 
-from strix.auth import codex
+from strix.config import codex
 from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for
 from strix.report.sarif import write_sarif
@@ -121,9 +121,9 @@ class ReportState:
         self._llm_usage = LLMUsageLedger()
         # A subscription run is covered by the user's plan, so there is no metered
         # cost — track tokens but report $0.
-        model = load_settings().llm.model
-        auth_mode = codex.auth_mode_label(model)
-        self._llm_usage.zero_cost = codex.is_subscription(model)
+        llm = load_settings().llm
+        auth_mode = codex.auth_mode(llm.model, llm.api_key)
+        self._llm_usage.zero_cost = auth_mode == "subscription"
         self.run_record: dict[str, Any] = {
             "run_id": self.run_id,
             "run_name": self.run_name,

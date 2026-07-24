@@ -20,9 +20,6 @@ _BASE_CONFIG = SettingsConfigDict(
 class LlmSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
-    # Set to ``openai/subscription`` to run inference on an authenticated ChatGPT
-    # subscription (see ``strix/auth``; ``strix auth login`` sets it); any other
-    # value is a normal API-key model.
     model: str | None = Field(default=None, alias="STRIX_LLM")
     api_key: str | None = Field(
         default=None,

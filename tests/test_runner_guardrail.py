@@ -11,11 +11,12 @@ import pytest
 import strix.report.state as report_state_mod
 import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
-from strix.auth import codex
+from strix.config import codex
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
 from strix.core.paths import run_record_path
 from strix.report.state import ReportState
+from strix.runtime import session_manager
 from strix.viewer.transcript import read_run_summary
 
 
@@ -32,7 +33,7 @@ async def test_content_guardrail_stops_gracefully_and_records_reason(
 
     settings = types.SimpleNamespace(
         llm=types.SimpleNamespace(
-            model="openai/subscription/gpt-5.6-sol",
+            model="openai/gpt-5.6-sol",
             reasoning_effort="high",
             force_required_tool_choice=False,
             timeout=300,
@@ -53,8 +54,8 @@ async def test_content_guardrail_stops_gracefully_and_records_reason(
     async def _cleanup(*_args: Any, **_kwargs: Any) -> None:
         return None
 
-    monkeypatch.setattr(runner.session_manager, "create_or_reuse", _create_or_reuse)
-    monkeypatch.setattr(runner.session_manager, "cleanup", _cleanup)
+    monkeypatch.setattr(session_manager, "create_or_reuse", _create_or_reuse)
+    monkeypatch.setattr(session_manager, "cleanup", _cleanup)
     monkeypatch.setattr(runner, "build_root_task", lambda _scan_config: "task")
     monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: "")
     monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: object())
@@ -91,6 +92,10 @@ async def test_content_guardrail_stops_gracefully_and_records_reason(
     assert report_state.run_record.get("stop_reason_category") == "content_guardrail"
 
 
+def _stop_exc(coordinator: AgentCoordinator) -> BaseException | None:
+    return coordinator.scan_stop_exc
+
+
 @pytest.mark.asyncio
 async def test_request_scan_stop_records_first_reason() -> None:
     """Any agent's guardrail block arms a scan-wide stop; the first reason wins so
@@ -99,11 +104,11 @@ async def test_request_scan_stop_records_first_reason() -> None:
     first = codex.CodexContentGuardrailError("gpt-5.6-sol")
     later = codex.CodexContentGuardrailError("gpt-5.6-terra")
 
-    assert coordinator.scan_stop_exc is None
+    assert _stop_exc(coordinator) is None
     await coordinator.request_scan_stop(first)
-    assert coordinator.scan_stop_exc is first
+    assert _stop_exc(coordinator) is first
     await coordinator.request_scan_stop(later)
-    assert coordinator.scan_stop_exc is first
+    assert _stop_exc(coordinator) is first
 
 
 def test_read_run_summary_passes_stop_reason(tmp_path: Any) -> None:

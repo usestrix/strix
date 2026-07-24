@@ -18,9 +18,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.auth import codex
 from strix.config import (
     apply_config_override,
+    codex,
     load_settings,
     persist_current,
 )
@@ -86,8 +86,8 @@ def validate_environment() -> None:
 
     settings = load_settings()
 
-    if codex.is_subscription(settings.llm.model):
-        _validate_subscription_environment(console)
+    if codex.subscription_model(settings.llm.model, settings.llm.api_key):
+        logger.info("Environment OK (ChatGPT subscription)")
         return
 
     if not settings.llm.model:
@@ -208,70 +208,6 @@ def validate_environment() -> None:
     )
 
 
-def _validate_subscription_environment(console: Console) -> None:
-    """Gate a ``STRIX_LLM=openai/subscription`` run on being signed in.
-
-    There's no API key to check in this mode; instead we require a stored
-    sign-in. We also resolve the selected model here so an unknown
-    ``openai/subscription/<slug>`` fails fast with the list of valid models
-    rather than deep in the run — validated against the live backend catalog,
-    which we fetch once here (falling back to the static list if unavailable).
-    """
-    if codex.is_authenticated():
-        codex.refresh_subscription_models()
-    try:
-        selected = codex.resolve_subscription_model(load_settings().llm.model)
-    except codex.CodexAuthError as exc:
-        logger.exception("Invalid subscription model")
-        error_text = Text()
-        error_text.append("INVALID MODEL", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append(f"{exc}\n", style="white")
-        console.print("\n")
-        console.print(
-            Panel(
-                error_text,
-                title="[bold white]STRIX",
-                title_align="left",
-                border_style="red",
-                padding=(1, 2),
-            )
-        )
-        console.print()
-        sys.exit(1)
-
-    if codex.is_authenticated():
-        logger.info("Environment OK (subscription, signed in, model=%s)", selected)
-        return
-
-    logger.error("Subscription selected but not signed in")
-    error_text = Text()
-    error_text.append("NOT SIGNED IN", style="bold red")
-    error_text.append("\n\n", style="white")
-    error_text.append(
-        "STRIX_LLM is set to 'openai/subscription', but no sign-in was found.\n",
-        style="white",
-    )
-    error_text.append("Sign in with:\n\n", style="white")
-    error_text.append("strix auth login chatgpt", style="bold cyan")
-    error_text.append("\n\nOr set STRIX_LLM to an API-key model (e.g. ", style="white")
-    error_text.append("openai/gpt-5.4", style="bold cyan")
-    error_text.append(") and set LLM_API_KEY.\n", style="white")
-
-    console.print("\n")
-    console.print(
-        Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-    )
-    console.print()
-    sys.exit(1)
-
-
 def check_docker_installed() -> None:
     if shutil.which("docker") is None:
         logger.error("Docker CLI not found in PATH")
@@ -337,24 +273,15 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
 
 
 def _subscription_error_hint(exc: BaseException) -> str | None:
-    """Return an actionable hint for a known ChatGPT-subscription error, or None.
-
-    The ChatGPT Codex backend rejects a model the account can't use, and a few
-    other conditions, with clear 400s. In subscription mode we translate those
-    into a fix rather than surfacing a raw provider traceback.
-    """
-    if not codex.is_subscription(load_settings().llm.model):
+    """Return an actionable hint for a known ChatGPT-subscription error, or None."""
+    llm = load_settings().llm
+    if not codex.subscription_model(llm.model, llm.api_key):
         return None
     joined = " ".join(_exception_messages(exc)).lower()
     if "not supported when using codex with a chatgpt account" in joined:
         return (
-            "This model isn't available on your ChatGPT subscription. This is likely "
-            "an internal Strix issue — please report it."
-        )
-    if "stream must be set to true" in joined:
-        return (
-            "The ChatGPT backend requires streamed requests, but this call wasn't "
-            "streamed. This is an internal Strix issue on this path — please report it."
+            "This model isn't available on your ChatGPT subscription. "
+            "Set STRIX_LLM to a model your plan includes (e.g. openai/gpt-5.4)."
         )
     if (
         "error code: 401" in joined
@@ -378,16 +305,10 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         settings = load_settings()
         configure_sdk_model_defaults(settings)
         llm = settings.llm
-        subscription = codex.is_subscription(llm.model)
         raw_model = (llm.model or "").strip()
-        # The subscription model self-enforces the backend's requirements
-        # (streaming, store=false, encrypted reasoning), so a plain warm-up call
-        # is fine.
-        warm_model_settings = ModelSettings()
 
         if (
-            not subscription
-            and raw_model
+            raw_model
             and "/" not in raw_model
             and not is_known_openai_bare_model(raw_model)
             and not llm.api_base
@@ -417,12 +338,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             )
             sys.exit(1)
 
-        if (
-            show_model_warning
-            and not subscription
-            and raw_model
-            and not is_recommended_or_frontier_model(raw_model)
-        ):
+        if show_model_warning and raw_model and not is_recommended_or_frontier_model(raw_model):
             warn_text = Text()
             warn_text.append("MODEL QUALITY WARNING", style="bold yellow")
             warn_text.append("\n\n", style="white")
@@ -453,7 +369,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             model.get_response(
                 system_instructions="You are a helpful assistant.",
                 input="Reply with just 'OK'.",
-                model_settings=warm_model_settings,
+                model_settings=ModelSettings(),
                 tools=[],
                 output_schema=None,
                 handoffs=[],
@@ -790,7 +706,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "status": "running",
         "start_time": datetime.now(UTC).isoformat(),
         "end_time": None,
-        "auth_mode": codex.auth_mode_label(load_settings().llm.model),
+        "auth_mode": codex.auth_mode(load_settings().llm.model, load_settings().llm.api_key),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,
@@ -1014,12 +930,6 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
-    # `strix models` lists the available models (subscription + API-key) and exits.
-    if len(sys.argv) > 1 and sys.argv[1] == "models":
-        from strix.interface.models_cli import run_models
-
-        sys.exit(run_models(sys.argv[2:]))
-
     args = parse_arguments()
 
     if args.config:
@@ -1081,7 +991,7 @@ def main() -> None:
 
     _telemetry_start_kwargs = {
         "model": load_settings().llm.model,
-        "auth_mode": codex.auth_mode_label(load_settings().llm.model),
+        "auth_mode": codex.auth_mode(load_settings().llm.model, load_settings().llm.api_key),
         "scan_mode": args.scan_mode,
         "is_whitebox": is_whitebox_scan(args.targets_info),
         "interactive": not args.non_interactive,
