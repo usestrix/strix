@@ -180,13 +180,12 @@ class StrixProvider(MultiProvider):
         return self._get_fallback_provider("litellm"), original_model_name
 
     def get_model(self, model_name: str | None) -> Model:
-        settings = load_settings()
-        slug = codex.subscription_model(model_name, settings.llm.api_key)
+        slug = codex.subscription_model(model_name)
         if slug:
             return _CodexResponsesModel(
                 slug,
                 codex.get_subscription_client(),
-                reasoning_effort=settings.llm.reasoning_effort,
+                reasoning_effort=load_settings().llm.reasoning_effort,
             )
         return super().get_model(model_name)
 
@@ -248,7 +247,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
     set_tracing_disabled(True)
-    if codex.subscription_model(llm.model, llm.api_key):
+    if codex.subscription_model(llm.model):
         # Subscription runs are self-contained: StrixProvider builds the OAuth
         # client, so there are no LiteLLM/API-key globals to configure.
         return
@@ -347,7 +346,7 @@ def _configure_litellm_default(name: str, value: str) -> None:
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
     # The ChatGPT subscription speaks the Responses API.
-    if codex.subscription_model(model_name, settings.llm.api_key):
+    if codex.subscription_model(model_name):
         return False
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):

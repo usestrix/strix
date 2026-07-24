@@ -66,42 +66,29 @@ def test_parse_redirect_input(value: str, expected: tuple[str | None, str | None
     assert codex.parse_redirect_input(value) == expected
 
 
-def _signed_in(monkeypatch: pytest.MonkeyPatch, *, value: bool) -> None:
-    monkeypatch.setattr(codex, "is_authenticated", lambda: value)
-
-
 @pytest.mark.parametrize(
-    ("model", "api_key", "expected"),
+    ("model", "expected"),
     [
-        ("openai/gpt-5.4", None, "gpt-5.4"),
-        ("OpenAI/GPT-5.5", None, "GPT-5.5"),
-        ("  openai/gpt-5.4  ", None, "gpt-5.4"),
-        ("openai/gpt-5.4", "sk-key", None),  # explicit API key wins
-        ("anthropic/claude-opus-4-8", None, None),
-        ("gpt-5.4", None, None),  # bare names route via the normal OpenAI path
-        ("openai/", None, None),
-        ("", None, None),
-        (None, None, None),
+        ("chatgpt/gpt-5.4", "gpt-5.4"),
+        ("ChatGPT/GPT-5.5", "GPT-5.5"),
+        ("  chatgpt/gpt-5.4  ", "gpt-5.4"),
+        ("openai/gpt-5.4", None),  # metered API path
+        ("anthropic/claude-opus-4-8", None),
+        ("gpt-5.4", None),
+        ("chatgpt/", None),
+        ("", None),
+        (None, None),
     ],
 )
-def test_subscription_model_when_signed_in(
-    monkeypatch: pytest.MonkeyPatch, model: str | None, api_key: str | None, expected: str | None
-) -> None:
-    _signed_in(monkeypatch, value=True)
-    assert codex.subscription_model(model, api_key) == expected
+def test_subscription_model(model: str | None, expected: str | None) -> None:
+    assert codex.subscription_model(model) == expected
 
 
-def test_subscription_model_requires_sign_in(monkeypatch: pytest.MonkeyPatch) -> None:
-    _signed_in(monkeypatch, value=False)
-    assert codex.subscription_model("openai/gpt-5.4", None) is None
-
-
-def test_auth_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    _signed_in(monkeypatch, value=True)
-    assert codex.auth_mode("openai/gpt-5.4", None) == "subscription"
-    assert codex.auth_mode("openai/gpt-5.4", "sk-key") == "api_key"
-    assert codex.auth_mode("anthropic/claude-opus-4-8", None) == "api_key"
-    assert codex.auth_mode(None, None) == "api_key"
+def test_auth_mode() -> None:
+    assert codex.auth_mode("chatgpt/gpt-5.4") == "subscription"
+    assert codex.auth_mode("openai/gpt-5.4") == "api_key"
+    assert codex.auth_mode("anthropic/claude-opus-4-8") == "api_key"
+    assert codex.auth_mode(None) == "api_key"
 
 
 def test_is_content_guardrail_error() -> None:

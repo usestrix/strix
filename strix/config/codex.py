@@ -396,23 +396,16 @@ def get_subscription_client() -> AsyncOpenAI:
     return _subscription_client
 
 
-def subscription_model(model_name: str | None, api_key: str | None) -> str | None:
-    """The model slug to run on the ChatGPT subscription, or None for API-key runs.
+SUBSCRIPTION_PREFIX = "chatgpt/"
 
-    STRIX_LLM always names a real model. The subscription is used when it is an
-    ``openai/`` model, the user is signed in, and no LLM_API_KEY is set — an
-    explicit API key always wins.
-    """
-    if api_key:
-        return None
+
+def subscription_model(model_name: str | None) -> str | None:
+    """The model slug behind a ``chatgpt/<model>`` STRIX_LLM, or None."""
     name = (model_name or "").strip()
-    if not name.lower().startswith("openai/"):
+    if not name.lower().startswith(SUBSCRIPTION_PREFIX):
         return None
-    slug = name.split("/", 1)[1]
-    if not slug or not is_authenticated():
-        return None
-    return slug
+    return name[len(SUBSCRIPTION_PREFIX) :] or None
 
 
-def auth_mode(model_name: str | None, api_key: str | None) -> str:
-    return "subscription" if subscription_model(model_name, api_key) else "api_key"
+def auth_mode(model_name: str | None) -> str:
+    return "subscription" if subscription_model(model_name) else "api_key"

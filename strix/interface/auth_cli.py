@@ -1,8 +1,8 @@
 """`strix auth` — ChatGPT subscription sign-in (login / status / logout).
 
 Signing in only stores OAuth tokens (``~/.strix/subscription-auth.json``); model
-selection stays with ``STRIX_LLM``. A signed-in run with an ``openai/`` model and
-no ``LLM_API_KEY`` uses the subscription.
+selection stays with ``STRIX_LLM``. A ``chatgpt/<model>`` STRIX_LLM runs on the
+subscription.
 """
 
 from __future__ import annotations
@@ -250,15 +250,12 @@ def _status(console: Console) -> int:
     settings = load_settings()
     console.print("[green]Signed in[/] with a ChatGPT subscription.")
     console.print(f"  Account: [bold]{record.get('account_id')}[/]")
-    slug = codex.subscription_model(settings.llm.model, settings.llm.api_key)
-    if slug:
+    if codex.subscription_model(settings.llm.model):
         console.print(f"  Runs use the subscription (STRIX_LLM=[bold]{settings.llm.model}[/]).")
-    elif settings.llm.api_key:
-        console.print("  [yellow]Note:[/] LLM_API_KEY is set, so runs use metered API billing.")
     else:
         console.print(
-            "  [yellow]Note:[/] runs use the subscription only with an OpenAI model — "
-            "set [cyan]STRIX_LLM[/] to e.g. [cyan]openai/gpt-5.4[/]."
+            "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to e.g. [cyan]chatgpt/gpt-5.4[/] "
+            "to run on the subscription."
         )
     return 0
 
@@ -293,11 +290,11 @@ def _print_success(console: Console) -> None:
     text.append("\n\n", style="white")
     text.append("Set ", style="white")
     text.append("STRIX_LLM", style="bold white")
-    text.append(" to an OpenAI model (e.g. ", style="white")
-    text.append("openai/gpt-5.4", style="bold cyan")
-    text.append(") and leave ", style="white")
-    text.append("LLM_API_KEY", style="bold white")
-    text.append(" unset — runs are billed to your ChatGPT plan.", style="white")
+    text.append(" to a ", style="white")
+    text.append("chatgpt/", style="bold cyan")
+    text.append(" model (e.g. ", style="white")
+    text.append("chatgpt/gpt-5.4", style="bold cyan")
+    text.append(") — runs are billed to your ChatGPT plan.", style="white")
     text.append("\n\n", style="white")
     text.append("Run a scan as usual, e.g. ", style="white")
     text.append("strix --target https://example.com", style="bold cyan")

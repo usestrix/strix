@@ -121,8 +121,7 @@ class ReportState:
         self._llm_usage = LLMUsageLedger()
         # A subscription run is covered by the user's plan, so there is no metered
         # cost — track tokens but report $0.
-        llm = load_settings().llm
-        auth_mode = codex.auth_mode(llm.model, llm.api_key)
+        auth_mode = codex.auth_mode(load_settings().llm.model)
         self._llm_usage.zero_cost = auth_mode == "subscription"
         self.run_record: dict[str, Any] = {
             "run_id": self.run_id,

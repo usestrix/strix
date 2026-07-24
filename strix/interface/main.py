@@ -86,7 +86,13 @@ def validate_environment() -> None:
 
     settings = load_settings()
 
-    if codex.subscription_model(settings.llm.model, settings.llm.api_key):
+    if codex.subscription_model(settings.llm.model):
+        if not codex.is_authenticated():
+            console.print(
+                f"[red]STRIX_LLM={settings.llm.model} uses your ChatGPT subscription, "
+                "but you're not signed in.[/] Run [cyan]strix auth login chatgpt[/] first."
+            )
+            sys.exit(1)
         logger.info("Environment OK (ChatGPT subscription)")
         return
 
@@ -274,14 +280,13 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
 
 def _subscription_error_hint(exc: BaseException) -> str | None:
     """Return an actionable hint for a known ChatGPT-subscription error, or None."""
-    llm = load_settings().llm
-    if not codex.subscription_model(llm.model, llm.api_key):
+    if not codex.subscription_model(load_settings().llm.model):
         return None
     joined = " ".join(_exception_messages(exc)).lower()
     if "not supported when using codex with a chatgpt account" in joined:
         return (
             "This model isn't available on your ChatGPT subscription. "
-            "Set STRIX_LLM to a model your plan includes (e.g. openai/gpt-5.4)."
+            "Set STRIX_LLM to a model your plan includes (e.g. chatgpt/gpt-5.4)."
         )
     if (
         "error code: 401" in joined
@@ -706,7 +711,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "status": "running",
         "start_time": datetime.now(UTC).isoformat(),
         "end_time": None,
-        "auth_mode": codex.auth_mode(load_settings().llm.model, load_settings().llm.api_key),
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,
@@ -991,7 +996,7 @@ def main() -> None:
 
     _telemetry_start_kwargs = {
         "model": load_settings().llm.model,
-        "auth_mode": codex.auth_mode(load_settings().llm.model, load_settings().llm.api_key),
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
         "scan_mode": args.scan_mode,
         "is_whitebox": is_whitebox_scan(args.targets_info),
         "interactive": not args.non_interactive,

@@ -33,7 +33,7 @@ async def test_content_guardrail_stops_gracefully_and_records_reason(
 
     settings = types.SimpleNamespace(
         llm=types.SimpleNamespace(
-            model="openai/gpt-5.6-sol",
+            model="chatgpt/gpt-5.6-sol",
             reasoning_effort="high",
             force_required_tool_choice=False,
             timeout=300,

@@ -274,19 +274,12 @@ Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscri
 ```bash
 strix auth login chatgpt      # sign in with your ChatGPT account
 
-export STRIX_LLM="openai/gpt-5.4"   # any OpenAI model; leave LLM_API_KEY unset
+export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
 strix --target ./app-directory
 
 strix auth status             # show the active sign-in
 strix auth logout             # forget the sign-in
 ```
-
-`STRIX_LLM` stays the single source of truth for the model. A run uses the subscription when you're signed in, `STRIX_LLM` is an `openai/` model, and `LLM_API_KEY` is unset — setting `LLM_API_KEY` switches back to metered API billing.
-
-This uses OpenAI's Codex OAuth flow: inference is billed to your ChatGPT plan rather than per token. Note that newer models — the `gpt-5.6-*` variants in particular — apply stricter content moderation that can block security-testing prompts; if the selected model is blocked mid-run, Strix stops with a clear message rather than silently switching. If the browser can't open, the login falls back to pasting the redirect URL by hand. Tokens are stored in `~/.strix/subscription-auth.json` (`0600`) and refreshed automatically.
-
-> [!NOTE]
-> Using a ChatGPT subscription outside OpenAI's own products is not officially supported by OpenAI and may be subject to its terms of use. For unattended/CI runs, prefer an API key.
 
 **Recommended models for best results:**
 
