@@ -255,6 +255,9 @@ ignore = [
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
 "strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401"]
 "strix/report/usage.py" = ["PLC0415"]
+# Lazy import of strix.core.hooks avoids a circular dependency between the
+# report pipeline and the runner/config layers.
+"strix/report/verification.py" = ["PLC0415"]
 "strix/config/models.py" = ["PLC0415"]
 # Interface utility branches per scope-mode / target-type combination;
 # splitting would obscure the decision tree without simplifying it.

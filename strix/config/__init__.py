@@ -17,6 +17,7 @@ from strix.config.loader import (
     persist_current,
 )
 from strix.config.settings import (
+    FindingVerificationSettings,
     IntegrationSettings,
     LlmSettings,
     RuntimeSettings,
@@ -26,6 +27,7 @@ from strix.config.settings import (
 
 
 __all__ = [
+    "FindingVerificationSettings",
     "IntegrationSettings",
     "LlmSettings",
     "RuntimeSettings",

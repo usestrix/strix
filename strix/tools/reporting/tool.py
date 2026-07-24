@@ -274,6 +274,27 @@ async def _do_create(  # noqa: PLR0912
                 "reason": dedupe.get("reason", ""),
             }
 
+        from strix.report.verification import verify_finding
+
+        verification = await verify_finding(
+            {
+                **candidate,
+                "remediation_steps": remediation_steps,
+                "evidence": evidence,
+                "assumptions": assumptions,
+                "cvss_breakdown": cvss_breakdown,
+                "cve": cve,
+                "cwe": cwe,
+                "code_locations": parsed_locations,
+            }
+        )
+        if verification.get("status") not in {"not_requested", "confirmed"}:
+            return {
+                "success": False,
+                "error": "Finding was not confirmed by the independent verifier",
+                "verification": verification,
+            }
+
         report_id = report_state.add_vulnerability_report(
             title=title,
             description=description,
@@ -295,6 +316,7 @@ async def _do_create(  # noqa: PLR0912
             cwe=cwe,
             code_locations=parsed_locations,
             fix_pr_body=fix_pr_body,
+            verification=verification,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
@@ -808,6 +830,26 @@ async def _do_create_dependency(  # noqa: PLR0912
                 "reason": dedupe.get("reason", ""),
             }
 
+        from strix.report.verification import verify_finding
+
+        verification = await verify_finding(
+            {
+                **candidate,
+                "impact": impact,
+                "remediation_steps": remediation_steps,
+                "evidence": evidence,
+                "assumptions": assumptions,
+                "advisory_cvss": advisory_cvss,
+                "cwe": cwe,
+            }
+        )
+        if verification.get("status") not in {"not_requested", "confirmed"}:
+            return {
+                "success": False,
+                "error": "Dependency finding was not confirmed by the independent verifier",
+                "verification": verification,
+            }
+
         report_id = report_state.add_vulnerability_report(
             title=title,
             description=description,
@@ -824,6 +866,7 @@ async def _do_create_dependency(  # noqa: PLR0912
             cwe=cwe,
             finding_class="dependency_cve",
             dependency_metadata=dependency_metadata,
+            verification=verification,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
