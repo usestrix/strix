@@ -419,7 +419,17 @@ def get_valid_token() -> tuple[str, str]:
             raise CodexAuthError("not_authenticated", "not signed in; run: strix auth login")
         if not _near_expiry(record):
             return record["access"], record["account_id"]
-        refreshed = refresh_tokens(record["refresh"])
+        try:
+            refreshed = refresh_tokens(record["refresh"])
+        except CodexAuthError:
+            # If the cross-process lock was unavailable (no fcntl / flock failed),
+            # another process may have already spent this single-use refresh token
+            # and saved a new one. Re-read once: if it rotated the token, use what
+            # it saved rather than failing the scan on the now-dead token.
+            latest = read_record()
+            if latest and latest["refresh"] != record["refresh"] and not _near_expiry(latest):
+                return latest["access"], latest["account_id"]
+            raise
         save_record(refreshed)
         return refreshed["access"], refreshed["account_id"]
 

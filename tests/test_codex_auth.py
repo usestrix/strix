@@ -327,6 +327,56 @@ def test_get_valid_token_uses_token_rotated_by_another_process(
     assert account_id == "acct"
 
 
+def _expired_record(refresh: str, access: str) -> dict[str, Any]:
+    return {
+        "type": "oauth",
+        "provider": "codex",
+        "access": access,
+        "refresh": refresh,
+        "account_id": "acct-42",
+        "expires_at": time.time() - 10,
+    }
+
+
+def test_get_valid_token_recovers_when_refresh_loses_race(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Lock failed open: our in-guard read still saw the stale token, so we tried to
+    # refresh and lost the race (invalid_grant). By then a peer has saved a fresh
+    # token — recover from it instead of failing the scan on the dead one.
+    codex.save_record(_expired_record("r1", "stale"))
+
+    def _fake_post(_payload: dict[str, str]) -> dict[str, Any]:
+        codex.save_record(
+            {
+                "type": "oauth",
+                "provider": "codex",
+                "access": "fresh-from-peer",
+                "refresh": "r2",
+                "account_id": "acct-42",
+                "expires_at": time.time() + 3600,
+            }
+        )
+        raise codex.CodexAuthError("token_http_error", "HTTP 400: invalid_grant")
+
+    monkeypatch.setattr(codex, "_post_form", _fake_post)
+    assert codex.get_valid_token() == ("fresh-from-peer", "acct-42")
+
+
+def test_get_valid_token_reraises_refresh_error_without_rotation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Refresh fails and no peer rotated the token: surface the error, don't mask it.
+    codex.save_record(_expired_record("r1", "stale"))
+
+    def _fake_post(_payload: dict[str, str]) -> dict[str, Any]:
+        raise codex.CodexAuthError("token_http_error", "HTTP 400: invalid_grant")
+
+    monkeypatch.setattr(codex, "_post_form", _fake_post)
+    with pytest.raises(codex.CodexAuthError):
+        codex.get_valid_token()
+
+
 def test_get_valid_token_raises_when_not_signed_in() -> None:
     with pytest.raises(codex.CodexAuthError) as exc:
         codex.get_valid_token()
