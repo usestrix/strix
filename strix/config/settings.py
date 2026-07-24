@@ -52,6 +52,7 @@ class DedupeSettings(BaseSettings):
         alias="STRIX_DEDUPE_REASONING_EFFORT",
     )
     api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY")
+    api_base: str | None = Field(default=None, alias="DEDUPE_LLM_API_BASE")
 
 
 class RuntimeSettings(BaseSettings):

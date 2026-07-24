@@ -395,16 +395,15 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
         if settings.dedupe.model:
+            from strix.report.dedupe import _dedupe_extra_args
+
             dedupe_model = settings.dedupe.model.strip()
             raw_model = dedupe_model
             deduper = StrixProvider().get_model(dedupe_model)
-            deduper_settings = ModelSettings()
-            if settings.dedupe.api_key and settings.dedupe.api_key.strip():
-                # Match the runtime path: send the dedupe key per call so a
-                # separate-provider dedupe model authenticates during warm-up too.
-                deduper_settings = ModelSettings(
-                    extra_args={"api_key": settings.dedupe.api_key.strip()}
-                )
+            # Match the runtime path: send the dedupe key/endpoint per call so a
+            # separate-provider dedupe model authenticates during warm-up too.
+            deduper_extra = _dedupe_extra_args(settings.dedupe)
+            deduper_settings = ModelSettings(extra_args=deduper_extra or None)
             await asyncio.wait_for(
                 deduper.get_response(
                     system_instructions="You are a helpful assistant.",

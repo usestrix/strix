@@ -50,6 +50,11 @@ affecting the agents that do the actual testing.
   Optional provider key for the deduplication model.
 </ParamField>
 
+<ParamField path="DEDUPE_LLM_API_BASE" type="string">
+  Optional custom API base URL for the deduplication model. Use when the dedupe
+  model runs on a different endpoint than the main model.
+</ParamField>
+
 <ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
   Reasoning effort for the deduplication model. Defaults to the model's own
   baseline when unset.

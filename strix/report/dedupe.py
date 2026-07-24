@@ -29,25 +29,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _dedupe_extra_args(dedupe: DedupeSettings) -> dict[str, str]:
+    """Per-call credential + endpoint for the dedupe model.
+
+    Provider env vars and the global base URL are process-wide, so a
+    shared-provider dedupe key or a distinct dedupe endpoint can't be installed
+    globally without clobbering (or being clobbered by) the main model's
+    config. Passing them per call keeps the two apart. Only applies when a
+    dedicated dedupe model is configured.
+    """
+    if not dedupe.model:
+        return {}
+    extra: dict[str, str] = {}
+    if dedupe.api_key and dedupe.api_key.strip():
+        extra["api_key"] = dedupe.api_key.strip()
+    if dedupe.api_base and dedupe.api_base.strip():
+        extra["api_base"] = dedupe.api_base.strip()
+    return extra
+
+
 def _dedupe_model_settings(
     dedupe: DedupeSettings, model_name: str, request_timeout: float | None
 ) -> ModelSettings:
-    """Build dedupe model settings, sending the dedupe key per call.
-
-    Provider env vars are global, so a shared-provider dedupe key can't be
-    installed via the environment without clobbering (or being clobbered by)
-    the main key. Passing it as a per-call ``api_key`` keeps the two apart.
-    """
     settings = make_model_settings(
         dedupe.reasoning_effort,
         model_name=model_name,
         force_required_tool_choice=False,
         request_timeout=request_timeout,
     )
-    if dedupe.model and dedupe.api_key and dedupe.api_key.strip():
-        settings = settings.resolve(
-            ModelSettings(extra_args={"api_key": dedupe.api_key.strip()})
-        )
+    extra = _dedupe_extra_args(dedupe)
+    if extra:
+        settings = settings.resolve(ModelSettings(extra_args=extra))
     return settings
 
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.
