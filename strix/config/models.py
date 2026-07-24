@@ -186,25 +186,28 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
 )
 
 RECOMMENDED_MODEL_NAMES = (
-    "openai/gpt-5.6",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.6-terra",
-    "openai/gpt-5.5",
+    "openai/gpt-5.6-luna",
+    "openai/gpt-5.6",
     "openai/gpt-5.5-pro",
+    "openai/gpt-5.5",
     "openai/gpt-5.4",
     "openai/gpt-5.3-codex",
     "anthropic/claude-fable-5",
+    "anthropic/claude-opus-5",
     "anthropic/claude-opus-4-8",
-    "anthropic/claude-opus-4-7",
     "anthropic/claude-sonnet-5",
     "anthropic/claude-sonnet-4-6",
     "vertex_ai/gemini-3.1-pro-preview",
     "gemini/gemini-3.1-pro-preview",
+    "gemini/gemini-3.6-flash",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
+    "dashscope/qwen3.8-max",
     "dashscope/qwen3.7-max-2026-06-08",
+    "moonshot/kimi-k3",
     "moonshot/kimi-k2.7-code",
-    "moonshot/kimi-k2.6",
 )
 
 _RECOMMENDED_MODEL_NAME_SET = frozenset(name.lower() for name in RECOMMENDED_MODEL_NAMES)
@@ -213,12 +216,12 @@ FRONTIER_MODEL_FAMILIES = (
     (("azure", "azure_ai", "bedrock_mantle", "chatgpt", "openai"), ("gpt-5",)),
     (
         ("anthropic", "azure_ai", "bedrock", "claude", "databricks", "snowflake", "vertex_ai"),
-        ("claude-fable-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4"),
+        ("claude-fable-5", "claude-opus-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4"),
     ),
     (("google", "gemini", "vertex_ai"), ("gemini-3",)),
     (("deepseek",), ("deepseek-v4", "deepseek-r1", "deepseek-reasoner")),
-    (("alibaba", "dashscope", "qwen"), ("qwen3.7", "qwen3.5", "qwen3-max")),
-    (("moonshot", "moonshotai", "kimi"), ("kimi-k2.7", "kimi-k2.6", "kimi-k2.5")),
+    (("alibaba", "dashscope", "qwen"), ("qwen3.8", "qwen3.7", "qwen3-max")),
+    (("moonshot", "moonshotai", "kimi"), ("kimi-k3", "kimi-k2.7", "kimi-k2.6")),
 )
 
 
