@@ -50,6 +50,11 @@ Configure Strix using environment variables or a config file.
   Optional provider key for the verification model.
 </ParamField>
 
+<ParamField path="VERIFICATION_LLM_API_BASE" type="string">
+  Optional custom API base URL for the verification model. Use when the
+  verifier runs on a different endpoint than the main model.
+</ParamField>
+
 <ParamField path="STRIX_VERIFICATION_REASONING_EFFORT" default="high" type="string">
   Reasoning effort for the verifier.
 </ParamField>

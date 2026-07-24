@@ -353,16 +353,15 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
         if settings.verification.enabled and settings.verification.model:
+            from strix.report.verification import _verifier_extra_args
+
             verification_model = settings.verification.model.strip()
             raw_model = verification_model
             verifier = StrixProvider().get_model(verification_model)
-            verifier_settings = ModelSettings()
-            if settings.verification.api_key and settings.verification.api_key.strip():
-                # Match the runtime path: send the verification key per call so a
-                # separate-provider verifier authenticates during warm-up too.
-                verifier_settings = ModelSettings(
-                    extra_args={"api_key": settings.verification.api_key.strip()}
-                )
+            # Match the runtime path: send the verification key/endpoint per call
+            # so a separate-provider verifier authenticates during warm-up too.
+            verifier_extra = _verifier_extra_args(settings.verification)
+            verifier_settings = ModelSettings(extra_args=verifier_extra or None)
             await asyncio.wait_for(
                 verifier.get_response(
                     system_instructions="You are a helpful assistant.",

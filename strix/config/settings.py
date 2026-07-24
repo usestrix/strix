@@ -53,6 +53,7 @@ class FindingVerificationSettings(BaseSettings):
         alias="STRIX_VERIFICATION_REASONING_EFFORT",
     )
     api_key: str | None = Field(default=None, alias="VERIFICATION_LLM_API_KEY")
+    api_base: str | None = Field(default=None, alias="VERIFICATION_LLM_API_BASE")
 
     @model_validator(mode="after")
     def require_model_when_enabled(self) -> FindingVerificationSettings:

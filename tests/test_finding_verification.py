@@ -33,6 +33,21 @@ def test_verifier_settings_omit_api_key_when_unset() -> None:
     verification = FindingVerificationSettings(enabled=True, model="anthropic/verifier")
     settings = _verifier_model_settings(verification, "anthropic/verifier")
     assert "api_key" not in (settings.extra_args or {})
+    assert "api_base" not in (settings.extra_args or {})
+
+
+def test_verifier_endpoint_sent_per_call() -> None:
+    verification = FindingVerificationSettings(
+        enabled=True,
+        model="openai/verifier",
+        api_key="verifier-key",
+        api_base="https://verifier.example/v1",
+    )
+    settings = _verifier_model_settings(verification, "openai/verifier")
+    # A distinct verification endpoint rides on the request instead of the
+    # process-wide base URL, so it can't clobber the primary model's endpoint.
+    assert settings.extra_args["api_base"] == "https://verifier.example/v1"
+    assert settings.extra_args["api_key"] == "verifier-key"
 
 
 _CVSS = {

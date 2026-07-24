@@ -23,24 +23,33 @@ if TYPE_CHECKING:
     from strix.config.settings import FindingVerificationSettings
 
 
+def _verifier_extra_args(verification: FindingVerificationSettings) -> dict[str, str]:
+    """Per-call credential + endpoint for the verifier.
+
+    Provider env vars and the global base URL are process-wide, so a
+    shared-provider verification key or a distinct verification endpoint can't
+    be installed globally without clobbering (or being clobbered by) the
+    primary model's config. Passing them per call keeps the two independent.
+    """
+    extra: dict[str, str] = {}
+    if verification.api_key and verification.api_key.strip():
+        extra["api_key"] = verification.api_key.strip()
+    if verification.api_base and verification.api_base.strip():
+        extra["api_base"] = verification.api_base.strip()
+    return extra
+
+
 def _verifier_model_settings(
     verification: FindingVerificationSettings, model_name: str
 ) -> ModelSettings:
-    """Build verifier model settings, sending the verification key per call.
-
-    Provider env vars are global, so a shared-provider verification key can't be
-    installed via the environment without clobbering (or being clobbered by) the
-    primary key. Passing it as a per-call ``api_key`` keeps the two independent.
-    """
     settings = make_model_settings(
         verification.reasoning_effort,
         model_name=model_name,
         force_required_tool_choice=False,
     )
-    if verification.api_key and verification.api_key.strip():
-        settings = settings.resolve(
-            ModelSettings(extra_args={"api_key": verification.api_key.strip()})
-        )
+    extra = _verifier_extra_args(verification)
+    if extra:
+        settings = settings.resolve(ModelSettings(extra_args=extra))
     return settings
 
 
