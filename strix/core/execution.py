@@ -15,7 +15,6 @@ from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import APIError
 
-from strix.config import codex
 from strix.core.hooks import BudgetExceededError
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
@@ -23,7 +22,6 @@ from strix.core.sessions import (
     open_agent_session,
     strip_all_images_from_session,
 )
-from strix.report.state import get_global_report_state
 
 
 if TYPE_CHECKING:
@@ -103,9 +101,6 @@ async def run_agent_loop(
             await coordinator.wait_for_message(agent_id)
         except asyncio.CancelledError:
             return result
-
-        if coordinator.scan_stop_exc is not None:
-            raise coordinator.scan_stop_exc
 
         if coordinator.budget_stopped:
             await coordinator.set_status(agent_id, "stopped")
@@ -292,9 +287,6 @@ async def _run_noninteractive_until_lifecycle(
     invalid_final_output_limit = max(1, max_turns)
 
     while True:
-        if coordinator.scan_stop_exc is not None:
-            raise coordinator.scan_stop_exc
-
         if coordinator.budget_stopped:
             await coordinator.set_status(agent_id, "stopped")
             raise BudgetExceededError("scan budget reached")
@@ -415,21 +407,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             )
             await coordinator.set_status(agent_id, "stopped")
             await coordinator.trigger_budget_stop()
-            raise
-        except codex.CodexContentGuardrailError as exc:
-            # The model is blocked by ChatGPT's content guardrail. It will block
-            # every agent on this model, so stop the whole scan now instead of
-            # letting siblings keep hitting the same wall (mirrors the budget
-            # stop). Record the reason so the CLI/TUI/viewer can surface it.
-            logger.warning(
-                "agent %s blocked by content guardrail; stopping the scan: %s", agent_id, exc
-            )
-            report_state = get_global_report_state()
-            if report_state is not None:
-                report_state.record_stop_reason(str(exc), category="content_guardrail")
-            await coordinator.set_status(agent_id, "failed")
-            await _notify_parent_on_crash(coordinator, agent_id, "failed")
-            await coordinator.request_scan_stop(exc)
             raise
         except Exception as exc:
             if (
@@ -604,9 +581,6 @@ async def _start_child_runner(
             )
         except BudgetExceededError:
             logger.info("child %s stopped after reaching the scan budget limit", child_id)
-        except codex.CodexContentGuardrailError:
-            # Scan-wide content-guardrail stop; the root tears the scan down.
-            logger.info("child %s stopped after a content-guardrail scan stop", child_id)
 
     task_handle = asyncio.create_task(_child_loop(), name=f"agent-{name}-{child_id}")
     await coordinator.attach_runtime(child_id, task=task_handle)

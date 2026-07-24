@@ -46,7 +46,6 @@ class AgentCoordinator:
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
         self._budget_stopped = False
-        self._scan_stop_exc: BaseException | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
@@ -57,18 +56,6 @@ class AgentCoordinator:
     @property
     def budget_stopped(self) -> bool:
         return self._budget_stopped
-
-    @property
-    def scan_stop_exc(self) -> BaseException | None:
-        return self._scan_stop_exc
-
-    async def request_scan_stop(self, exc: BaseException) -> None:
-        """Stop every agent by re-raising ``exc`` on its next turn (first caller wins)."""
-        async with self._lock:
-            if self._scan_stop_exc is None:
-                self._scan_stop_exc = exc
-            for runtime in self.runtimes.values():
-                runtime.wake.set()
 
     async def trigger_budget_stop(self) -> None:
         """Signal a scan-wide budget stop and wake every parked agent so it exits."""

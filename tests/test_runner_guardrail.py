@@ -92,25 +92,6 @@ async def test_content_guardrail_stops_gracefully_and_records_reason(
     assert report_state.run_record.get("stop_reason_category") == "content_guardrail"
 
 
-def _stop_exc(coordinator: AgentCoordinator) -> BaseException | None:
-    return coordinator.scan_stop_exc
-
-
-@pytest.mark.asyncio
-async def test_request_scan_stop_records_first_reason() -> None:
-    """Any agent's guardrail block arms a scan-wide stop; the first reason wins so
-    later blocks don't overwrite it."""
-    coordinator = AgentCoordinator()
-    first = codex.CodexContentGuardrailError("gpt-5.6-sol")
-    later = codex.CodexContentGuardrailError("gpt-5.6-terra")
-
-    assert _stop_exc(coordinator) is None
-    await coordinator.request_scan_stop(first)
-    assert _stop_exc(coordinator) is first
-    await coordinator.request_scan_stop(later)
-    assert _stop_exc(coordinator) is first
-
-
 def test_read_run_summary_passes_stop_reason(tmp_path: Any) -> None:
     """The viewer's /api/run payload carries stop_reason through to the web UI."""
     run_record_path(tmp_path).write_text(
