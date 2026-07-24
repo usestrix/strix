@@ -14,6 +14,7 @@ import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
+from strix.runtime import session_manager
 
 
 def _make_rate_limit_error() -> RateLimitError:
@@ -56,6 +57,8 @@ async def test_persistent_rate_limit_stops_gracefully(
     async def _cleanup(*_args: Any, **_kwargs: Any) -> None:
         return None
 
+    monkeypatch.setattr(session_manager, "create_or_reuse", _create_or_reuse)
+    monkeypatch.setattr(session_manager, "cleanup", _cleanup)
     monkeypatch.setattr(runner.session_manager, "create_or_reuse", _create_or_reuse)  # type: ignore[attr-defined]
     monkeypatch.setattr(runner.session_manager, "cleanup", _cleanup)  # type: ignore[attr-defined]
 

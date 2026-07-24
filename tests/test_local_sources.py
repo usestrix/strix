@@ -161,6 +161,7 @@ def test_build_mount_targets_info_rejects_empty_path(empty: str) -> None:
 def test_read_target_list_file_strips_blank_lines(tmp_path: Path) -> None:
     target_list = tmp_path / "targets.txt"
     target_list.write_text(
+        "\n https://test1.com/ \n\nhttp://test2.com:5789/\n  \n",
         "\n"
         " https://test1.com/ \n"
         "\n"
@@ -178,6 +179,7 @@ def test_read_target_list_file_strips_blank_lines(tmp_path: Path) -> None:
 def test_read_target_list_file_ignores_comment_lines(tmp_path: Path) -> None:
     target_list = tmp_path / "targets.txt"
     target_list.write_text(
+        "# production targets\nhttps://test1.com/\n  # staging targets\nhttp://test2.com:5789/\n",
         "# production targets\n"
         "https://test1.com/\n"
         "  # staging targets\n"

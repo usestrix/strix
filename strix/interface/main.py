@@ -274,6 +274,7 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     return None
 
 
+async def warm_up_llm() -> None:
 async def warm_up_llm(show_model_warning: bool = True) -> None:
     console = Console()
     logger.info("Warming up LLM connection")
