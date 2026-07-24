@@ -116,5 +116,6 @@ strix --mount ./huge-monorepo
 
 | Code | Meaning |
 |------|---------|
-| 0 | Scan completed, no vulnerabilities found |
+| 0 | Scan completed successfully (interactive mode always exits `0`; in headless mode, `0` means no vulnerabilities were found) |
+| 1 | A fatal error occurred before or during the scan (e.g. missing environment variables, Docker unavailable, invalid config file, diff-scope resolution failure, or an unhandled error) |
 | 2 | Vulnerabilities found (headless mode only) |
