@@ -60,17 +60,10 @@ class AgentCoordinator:
 
     @property
     def scan_stop_exc(self) -> BaseException | None:
-        """The error that requested a scan-wide stop (e.g. a content-guardrail
-        block), or None. Agents re-raise it on their next loop turn so the whole
-        scan winds down as soon as any one agent hits it."""
         return self._scan_stop_exc
 
     async def request_scan_stop(self, exc: BaseException) -> None:
-        """Ask every agent to stop now by re-raising ``exc`` on its next turn.
-
-        First caller wins (later blocks reuse the same reason). Wakes parked
-        agents so they exit promptly instead of waiting for the root to re-trip.
-        """
+        """Stop every agent by re-raising ``exc`` on its next turn (first caller wins)."""
         async with self._lock:
             if self._scan_stop_exc is None:
                 self._scan_stop_exc = exc

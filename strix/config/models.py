@@ -44,9 +44,7 @@ def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | No
 
 
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
-    """Retry statusless provider errors (e.g. mid-stream quota/billing), but not
-    aborts or content-guardrail rejections (terminal — retrying never clears them).
-    """
+    """Retry statusless provider errors (e.g. mid-stream quota/billing), but not aborts."""
     normalized = context.normalized
     if normalized.is_abort:
         return False
@@ -56,13 +54,7 @@ def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
 
 
 class _CodexResponsesModel(OpenAIResponsesModel):
-    """A responses model wired for the ChatGPT subscription backend.
-
-    Always calls the API streamed (the backend rejects non-streamed requests),
-    aggregating the events back into a single ``Response`` for non-streaming
-    callers, and forces ``store=false`` + encrypted reasoning (the backend is
-    stateless).
-    """
+    """Responses model for the ChatGPT subscription backend (always streamed, stateless)."""
 
     def __init__(
         self,
@@ -78,8 +70,7 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         overrides = ModelSettings(store=False, response_include=["reasoning.encrypted_content"])
         effort = self._reasoning_effort
         if effort and effort != "none":
-            # The ChatGPT backend rejects "minimal" and only some models take
-            # "xhigh"; clamp to what it accepts.
+            # Clamp to efforts the backend accepts.
             if effort == "minimal":
                 effort = "low"
             elif effort == "xhigh":
@@ -88,13 +79,8 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         return model_settings.resolve(overrides)
 
     async def _fetch_response(self, *args: Any, stream: bool = False, **kwargs: Any) -> Any:
-        # model_settings is positional arg 2 for both get_response and
-        # stream_response; force the backend's requirements onto it.
-        if len(args) >= 3:
+        if len(args) >= 3:  # model_settings is positional arg 2
             args = (*args[:2], self._codex_settings(args[2]), *args[3:])
-        # Always call the backend streamed (it rejects non-streamed requests).
-        # A content-guardrail rejection can surface either here (request-time) or
-        # while the stream is read; catch both and raise a typed, terminal error.
         try:
             events = await super()._fetch_response(*args, stream=True, **kwargs)  # type: ignore[call-overload]
         except Exception as exc:
@@ -104,11 +90,9 @@ class _CodexResponsesModel(OpenAIResponsesModel):
             raise
         guarded = self._guarded(events)
         if stream:
-            # stream_response iterates and closes this generator itself.
             return guarded
-        # Non-streaming caller: aggregate the SSE events into a single Response.
         final_response = None
-        async for event in guarded:  # iterate to exhaustion so the stream cleans up
+        async for event in guarded:
             if getattr(event, "type", None) == "response.completed":
                 final_response = event.response
         if final_response is None:
@@ -117,7 +101,6 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         return final_response
 
     def _as_guardrail(self, exc: BaseException) -> codex.CodexContentGuardrailError | None:
-        """Return a typed guardrail error if ``exc`` is one, else None."""
         if isinstance(exc, codex.CodexContentGuardrailError):
             return exc
         if codex.is_content_guardrail_error(exc):
@@ -125,10 +108,7 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         return None
 
     async def _guarded(self, events: Any) -> AsyncIterator[Any]:
-        """Yield the backend's stream events, converting a content-guardrail
-        rejection raised mid-stream into a typed CodexContentGuardrailError, and
-        closing the underlying stream on exit so the wrapper doesn't leak it.
-        """
+        """Convert mid-stream guardrail rejections and close the stream on exit."""
         try:
             async for event in events:
                 yield event
@@ -142,7 +122,6 @@ class _CodexResponsesModel(OpenAIResponsesModel):
 
     @staticmethod
     async def _aclose(events: Any) -> None:
-        # Mirror the SDK's own stream cleanup (aclose, then close).
         aclose = getattr(events, "aclose", None)
         if callable(aclose):
             with contextlib.suppress(Exception):
@@ -248,8 +227,6 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     llm = settings.llm
     set_tracing_disabled(True)
     if codex.subscription_model(llm.model):
-        # Subscription runs are self-contained: StrixProvider builds the OAuth
-        # client, so there are no LiteLLM/API-key globals to configure.
         return
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
@@ -345,7 +322,6 @@ def _configure_litellm_default(name: str, value: str) -> None:
 
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
-    # The ChatGPT subscription speaks the Responses API.
     if codex.subscription_model(model_name):
         return False
     model = model_name.strip().lower()

@@ -393,12 +393,7 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "stopped")
         return None
     except codex.CodexContentGuardrailError as exc:
-        # A newer subscription model refused the security task via ChatGPT's
-        # content guardrail. Terminal (retrying never clears it): stop cleanly
-        # with an actionable message rather than a crash. No silent fallback.
         logger.warning("Scan %s stopped: %s", scan_id, exc)
-        # Record the reason on the run record so the CLI, TUI, and viewer can
-        # surface it — a log line alone never reaches the user.
         report_state = get_global_report_state()
         if report_state is not None:
             report_state.record_stop_reason(str(exc), category="content_guardrail")
