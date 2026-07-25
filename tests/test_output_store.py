@@ -109,6 +109,25 @@ def test_read_stored_output_paginates(tmp_path: Path) -> None:
     assert "offset=10" in page
 
 
+def test_read_stored_output_page_is_bounded_without_new_spill(tmp_path: Path) -> None:
+    # A page of very long lines must be byte-capped in place, never re-spilled
+    # under a fresh output_id (which would make paging loop forever).
+    configure_output_store(tmp_path)
+    text = "\n".join("z" * 5_000 for _ in range(50))
+    output_id = re.search(
+        r'output_id="([0-9a-f]{32})"',
+        bound_and_store(text, max_lines=4, max_bytes=1_000),
+    )
+    assert output_id is not None
+
+    page = read_stored_output(output_id.group(1), offset=0, limit=2_000)
+
+    assert len(page.encode("utf-8")) <= 60 * 1024
+    # No brand-new spill id in the returned page.
+    ids = re.findall(r'output_id="([0-9a-f]{32})"', page)
+    assert ids == [output_id.group(1)] or ids == []
+
+
 def test_read_stored_output_rejects_traversal(tmp_path: Path) -> None:
     configure_output_store(tmp_path)
     assert "Invalid output_id" in read_stored_output("../../etc/passwd")

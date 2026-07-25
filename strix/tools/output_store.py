@@ -10,6 +10,7 @@ truncated detail is bounded in history but never lost.
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 import uuid
@@ -26,6 +27,12 @@ _SPILL_NOTICE = (
 
 _OUTPUT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_STORE_DIR = Path.home() / ".strix" / "tool-output"
+
+# Ceilings for a single retrieval page, so a page of very long lines can't
+# itself overflow history. Applied without spilling (no new output_id), or
+# paging would loop forever.
+_PAGE_MAX_LINES = 2_000
+_PAGE_MAX_BYTES = 50 * 1024
 
 # Single-key holder so the configured path can be swapped per scan without a
 # module-level ``global`` rebind.
@@ -183,11 +190,18 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = 2_000) -
     if not path.is_file():
         return f"No stored output for output_id={output_id!r} (it may have expired)."
 
-    lines = path.read_text(encoding="utf-8").split("\n")
     start = max(0, offset)
-    window = lines[start : start + max(1, limit)]
-    shown = "\n".join(window)
-    remaining = len(lines) - (start + len(window))
+    count = min(max(1, limit), _PAGE_MAX_LINES)
+    with path.open(encoding="utf-8") as handle:
+        # Stream to the window instead of materialising the whole file per page.
+        for _ in itertools.islice(handle, start):
+            pass
+        window = [line.rstrip("\n") for line in itertools.islice(handle, count)]
+        remaining = sum(1 for _ in handle)
+
+    # Bound the page's byte size with a plain notice (never a spill id) so a
+    # page of very long lines stays within history without re-triggering spill.
+    shown = bound_text("\n".join(window), max_lines=_PAGE_MAX_LINES, max_bytes=_PAGE_MAX_BYTES)
     if remaining > 0:
         shown += f"\n\n[... {remaining} more lines; call read_tool_output(output_id="
         shown += f'"{output_id}", offset={start + len(window)}) to continue ...]'

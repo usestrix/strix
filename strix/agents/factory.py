@@ -517,7 +517,12 @@ def build_strix_agent(
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        _with_bounded_result(tool) if isinstance(tool, FunctionTool) else tool for tool in tools
+        # read_tool_output pages already-stored output; re-bounding it would
+        # re-spill a large page under a new id and make retrieval unusable.
+        _with_bounded_result(tool)
+        if isinstance(tool, FunctionTool) and tool is not read_tool_output
+        else tool
+        for tool in tools
     ]
 
     logger.info(
