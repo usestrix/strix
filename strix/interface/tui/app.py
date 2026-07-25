@@ -41,13 +41,13 @@ from strix.interface.tui.renderers import render_tool_widget
 from strix.interface.tui.renderers.agent_message_renderer import AgentMessageRenderer
 from strix.interface.tui.renderers.user_message_renderer import UserMessageRenderer
 from strix.interface.utils import build_tui_stats_text
-from strix.report.fenced import (
+from strix.report.state import ReportState, set_global_report_state
+from strix.report.writer import (
     guess_language_name,
     parse_fenced_code,
     resolve_lexer,
     safe_fence,
 )
-from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
 
 

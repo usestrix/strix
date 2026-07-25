@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pygments.lexers import BashLexer, PythonLexer
 
-from strix.report.fenced import (
+from strix.report.writer import (
     guess_language_name,
     parse_fenced_code,
     resolve_lexer,
