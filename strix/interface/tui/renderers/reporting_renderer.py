@@ -1,15 +1,12 @@
 from functools import cache
 from typing import Any, ClassVar
 
-from pygments.lexer import Lexer
-from pygments.lexers import PythonLexer, get_lexer_by_name
 from pygments.styles import get_style_by_name
-from pygments.util import ClassNotFound
 from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
-from .fenced import parse_fenced_code
+from .fenced import parse_fenced_code, resolve_lexer
 from .registry import register_tool_renderer
 
 
@@ -64,17 +61,8 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
         return None
 
     @classmethod
-    def _get_lexer(cls, language: str | None) -> Lexer:
-        if language:
-            try:
-                return get_lexer_by_name(language)
-            except ClassNotFound:
-                pass
-        return PythonLexer()
-
-    @classmethod
     def _highlight_code(cls, code: str, language: str | None) -> Text:
-        lexer = cls._get_lexer(language)
+        lexer = resolve_lexer(language, code)
         text = Text()
 
         for token_type, token_value in lexer.get_tokens(code):

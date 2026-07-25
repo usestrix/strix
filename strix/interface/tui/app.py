@@ -39,7 +39,11 @@ from strix.interface.tui.live_view import TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
 from strix.interface.tui.renderers import render_tool_widget
 from strix.interface.tui.renderers.agent_message_renderer import AgentMessageRenderer
-from strix.interface.tui.renderers.fenced import parse_fenced_code
+from strix.interface.tui.renderers.fenced import (
+    guess_language_name,
+    parse_fenced_code,
+    resolve_lexer,
+)
 from strix.interface.tui.renderers.user_message_renderer import UserMessageRenderer
 from strix.interface.utils import build_tui_stats_text
 from strix.report.state import ReportState, set_global_report_state
@@ -333,14 +337,9 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
 
     def _highlight_python(self, code: str, language: str | None = None) -> Text:
         try:
-            from pygments.lexers import PythonLexer, get_lexer_by_name
             from pygments.styles import get_style_by_name
-            from pygments.util import ClassNotFound
 
-            lexer = PythonLexer()
-            if language:
-                with contextlib.suppress(ClassNotFound):
-                    lexer = get_lexer_by_name(language)
+            lexer = resolve_lexer(language, code)
             style = get_style_by_name("native")
             colors = {
                 token: f"#{style_def['color']}" for token, style_def in style if style_def["color"]
@@ -608,7 +607,8 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 lines.append("")
             if vuln.get("poc_script_code"):
                 poc_language, poc_code = parse_fenced_code(vuln["poc_script_code"])
-                lines.append(f"```{poc_language or 'python'}")
+                fence_lang = poc_language or guess_language_name(poc_code)
+                lines.append(f"```{fence_lang}")
                 lines.append(poc_code)
                 lines.append("```")
 
