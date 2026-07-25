@@ -13,6 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import litellm
+from litellm.exceptions import ContextWindowExceededError
 
 from strix.config import load_settings
 from strix.core.sessions import replace_session_items, session_write_lock
@@ -30,30 +31,16 @@ _TOOL_OUTPUT_MAX_CHARS = 2_000
 _MIN_ITEMS_TO_COMPACT = 6
 _HEAD_TRUNCATED_MARKER = "\n\n[... older conversation omitted to fit the summary request ...]\n\n"
 
-# Substrings that identify a context-window-overflow error across providers.
-# Deliberately excludes rate-limit/throttle wording, which must not trigger
-# compaction.
-_OVERFLOW_MARKERS = (
-    "context length",
-    "context window",
-    "maximum context",
-    "context_length_exceeded",
-    "too many tokens",
-    "reduce the length",
-    "input is too long",
-    "prompt is too long",
-    "exceeds the maximum",
-    "string too long",
-)
-
 
 def is_context_overflow(exc: BaseException) -> bool:
-    """Whether ``exc`` looks like a model context-window-overflow error."""
-    overflow_error = getattr(litellm, "ContextWindowExceededError", None)
-    if overflow_error is not None and isinstance(exc, overflow_error):
-        return True
-    message = str(exc).lower()
-    return any(marker in message for marker in _OVERFLOW_MARKERS)
+    """Whether ``exc`` is a model context-window-overflow error.
+
+    LiteLLM normalises every provider's overflow error to
+    ``ContextWindowExceededError`` (a ``BadRequestError`` subclass) and keeps
+    the provider-specific detection upstream, so we rely on that type rather
+    than matching error message strings ourselves.
+    """
+    return isinstance(exc, ContextWindowExceededError)
 
 
 _SUMMARY_INSTRUCTIONS = """\

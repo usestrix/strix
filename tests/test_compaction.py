@@ -6,6 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from litellm.exceptions import ContextWindowExceededError, RateLimitError
 
 from strix.config import ContextSettings
 from strix.llm import compaction
@@ -70,12 +71,17 @@ def _has_orphan_tool_output(items: list[Any]) -> bool:
     return any(i["call_id"] not in call_ids for i in items if compaction._is_tool_output(i))
 
 
-def test_is_context_overflow_matches_and_excludes() -> None:
-    assert compaction.is_context_overflow(
-        RuntimeError("This model's maximum context length is 8192")
+def test_is_context_overflow_uses_litellm_typed_error() -> None:
+    # LiteLLM maps every provider's overflow error to this type; anything else
+    # (including a rate-limit error) must not trigger compaction.
+    overflow = ContextWindowExceededError(
+        message="context length exceeded", model="m", llm_provider="openai"
     )
-    assert compaction.is_context_overflow(ValueError("input is too long for the model"))
-    assert not compaction.is_context_overflow(RuntimeError("rate limit exceeded, retry later"))
+    assert compaction.is_context_overflow(overflow)
+    assert not compaction.is_context_overflow(
+        RateLimitError(message="slow down", model="m", llm_provider="openai")
+    )
+    assert not compaction.is_context_overflow(RuntimeError("maximum context length is 8192"))
 
 
 def test_select_split_never_orphans_tool_output(monkeypatch: pytest.MonkeyPatch) -> None:
