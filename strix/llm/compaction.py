@@ -28,8 +28,6 @@ logger = logging.getLogger(__name__)
 _CHECKPOINT_TAG = "<conversation-checkpoint>"
 _TOOL_OUTPUT_MAX_CHARS = 2_000
 _MIN_ITEMS_TO_COMPACT = 6
-# Floor for how much of the head we still try to summarise even on a tiny model.
-_MIN_SUMMARY_INPUT_TOKENS = 1_000
 _HEAD_TRUNCATED_MARKER = "\n\n[... older conversation omitted to fit the summary request ...]\n\n"
 
 # Substrings that identify a context-window-overflow error across providers.
@@ -214,9 +212,11 @@ def _summary_input_budget(model: str, previous: str | None) -> int:
     if previous:
         overhead += count_tokens(model, previous)
     # Leave slack for the prompt's wrapper text ("Conversation to summarise:",
-    # the update instructions, etc.) that is not part of ``overhead``.
+    # the update instructions, etc.) that is not part of ``overhead``. Never
+    # floor above the actual room: doing so would let the summary request
+    # itself overflow a small window (and then compaction silently fails).
     room = context_window(model) - context.summary_max_tokens - overhead - 256
-    return max(_MIN_SUMMARY_INPUT_TOKENS, room)
+    return max(0, room)
 
 
 def _build_summary_prompt(serialized_head: str, previous: str | None) -> str:

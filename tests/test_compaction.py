@@ -203,6 +203,29 @@ async def test_maybe_compact_bounds_summary_prompt(monkeypatch: pytest.MonkeyPat
 
 
 @pytest.mark.asyncio
+async def test_summary_request_fits_when_room_is_below_old_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # When the window leaves less head-input room than the old fixed floor, the
+    # budget must shrink to the real room so the request still fits the window
+    # (a fixed floor above the room would overflow and silently fail).
+    instructions = len(compaction._SUMMARY_INSTRUCTIONS)
+    window = instructions + 64 + 256 + 300  # summary_max(64)+slack(256)+room(300)
+    _patch_budget(monkeypatch, keep_tokens=30, window=window)
+    captured: dict[str, str] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> Any:
+        captured["prompt"] = kwargs["messages"][0]["content"]
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="S"))])
+
+    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+    session = FakeSession([{"role": "user", "content": "y" * 5_000} for _ in range(20)])
+
+    assert await compaction.maybe_compact(session, model="m") is True
+    assert len(captured["prompt"]) <= window
+
+
+@pytest.mark.asyncio
 async def test_maybe_compact_skips_when_summary_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_budget(monkeypatch, keep_tokens=30, window=50)
 
