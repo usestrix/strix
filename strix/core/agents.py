@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed"]
+_TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "stopped", "crashed", "failed"})
 
 
 @dataclass(slots=True)
@@ -115,11 +116,18 @@ class AgentCoordinator:
         await self.set_status(agent_id, "waiting")
 
     async def set_status(
-        self, agent_id: str, status: Status | str, *, error: str | None = None
+        self,
+        agent_id: str,
+        status: Status | str,
+        *,
+        error: str | None = None,
+        notify_parent: bool = True,
     ) -> None:
+        """Set an agent status and notify its parent once on a terminal transition."""
         async with self._lock:
             if agent_id not in self.statuses:
                 return
+            previous_status = self.statuses[agent_id]
             self.statuses[agent_id] = status  # type: ignore[assignment]
             if error is not None:
                 self.errors[agent_id] = error
@@ -127,7 +135,36 @@ class AgentCoordinator:
                 self.errors.pop(agent_id, None)
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
             runtime.wake.set()
+            parent_id = self.parent_of.get(agent_id)
+            should_notify_parent = (
+                notify_parent
+                and parent_id is not None
+                and previous_status not in _TERMINAL_STATUSES
+                and status in _TERMINAL_STATUSES
+            )
+            agent_name = self.names.get(agent_id, agent_id)
         logger.info("agent.status %s=%s", agent_id, status)
+        if should_notify_parent and parent_id is not None:
+            detail = f" Reason: {error}" if error else ""
+            delivered = await self.send(
+                parent_id,
+                {
+                    "from": agent_id,
+                    "type": "terminal_status",
+                    "priority": "high",
+                    "content": (
+                        f"[Agent status] {agent_name} ({agent_id}) entered terminal "
+                        f"status '{status}'.{detail} Do not keep waiting for a "
+                        "completion message from this child."
+                    ),
+                },
+            )
+            if not delivered:
+                logger.warning(
+                    "agent.status could not notify parent=%s of terminal child=%s",
+                    parent_id,
+                    agent_id,
+                )
         await self._maybe_snapshot()
 
     async def send(self, target_agent_id: str, message: dict[str, Any]) -> bool:

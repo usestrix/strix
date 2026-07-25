@@ -572,7 +572,14 @@ async def agent_finish(
         len(findings or []),
         parent_notified,
     )
-    await coordinator.set_status(me, "completed")
+    # The completion report above is normally the parent notification. If that
+    # delivery failed, let the coordinator make one generic fallback attempt;
+    # an explicit report_to_parent=False still suppresses all parent messaging.
+    await coordinator.set_status(
+        me,
+        "completed",
+        notify_parent=report_to_parent and not parent_notified,
+    )
 
     return json.dumps(
         {
