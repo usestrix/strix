@@ -187,8 +187,17 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 logger.exception("viewer request failed: POST %s", path)
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal error"})
 
+        # Cap on request body size so a client cannot force unbounded
+        # memory allocation by sending a huge Content-Length.
+        _MAX_BODY_BYTES = 2 * 1024 * 1024  # 2 MiB
+
         def _read_body(self) -> dict[str, Any]:
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except (ValueError, OverflowError):
+                return {}
+            if length < 0 or length > self._MAX_BODY_BYTES:
+                return {}
             raw = self.rfile.read(length) if length else b""
             try:
                 body = json.loads(raw or b"{}")
