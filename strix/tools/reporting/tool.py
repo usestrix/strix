@@ -154,6 +154,92 @@ _REQUIRED_FIELDS = {
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 
+# Heuristic guard for the common false positive in #745: treating form/API
+# acceptance of a script payload as confirmed XSS without a render sink.
+_XSS_CLAIM_MARKERS = (
+    "xss",
+    "cross-site scripting",
+    "cross site scripting",
+    "cwe-79",
+    "stored xss",
+    "reflected xss",
+    "dom xss",
+)
+_XSS_SUBMIT_ONLY_MARKERS = (
+    "successfully submitting",
+    "successfully submitted",
+    "confirmed by successfully",
+    "responded with http 200",
+    "responded with 200",
+    "http 200",
+    "status 200",
+    "success message",
+    "request sent",
+    "accepted the payload",
+    "accepted and stores",
+    "accepts and stores",
+    "without any input sanitization",
+)
+_XSS_SINK_EVIDENCE_MARKERS = (
+    "script execution",
+    "executed in",
+    "execution confirmed",
+    "onerror fired",
+    "payload executed",
+    "browser confirmed",
+    "agent-browser",
+    "opened the page",
+    "opened the admin",
+    "opened the view",
+    "viewed the stored",
+    "viewed the admin",
+    "response body contained",
+    "page source contained",
+    "dom contained",
+    "reflected unescaped",
+    "rendered unescaped",
+    "appeared unescaped",
+    "innerhtml",
+    "document.write",
+)
+
+
+def _looks_like_xss_submit_only_false_positive(
+    *,
+    title: str,
+    description: str,
+    technical_analysis: str,
+    poc_description: str,
+    evidence: str = "",
+    cwe: str | None,
+) -> str | None:
+    """Return an error message when XSS is claimed from submit-success alone."""
+    blob = " ".join(
+        [
+            title,
+            description,
+            technical_analysis,
+            poc_description,
+            evidence,
+            cwe or "",
+        ]
+    ).lower()
+    claims_xss = any(marker in blob for marker in _XSS_CLAIM_MARKERS)
+    if not claims_xss:
+        return None
+    submit_only = any(marker in blob for marker in _XSS_SUBMIT_ONLY_MARKERS)
+    has_sink = any(marker in blob for marker in _XSS_SINK_EVIDENCE_MARKERS)
+    if submit_only and not has_sink:
+        return (
+            "XSS not confirmed: evidence only shows form/API acceptance "
+            "(e.g. HTTP 200 / success after submit), not a render sink. "
+            "Open the page that displays the stored/reflected value, confirm "
+            "unsafe reflection or script execution, then re-file with that "
+            "sink URL/view and observation. Do not report speculated admin "
+            "impact without accessing that view."
+        )
+    return None
+
 
 async def _do_create(  # noqa: PLR0912
     *,
@@ -223,6 +309,17 @@ async def _do_create(  # noqa: PLR0912
         cwe_err = _validate_cwe(cwe)
         if cwe_err:
             errors.append(cwe_err)
+
+    xss_fp = _looks_like_xss_submit_only_false_positive(
+        title=title,
+        description=description,
+        technical_analysis=technical_analysis,
+        poc_description=poc_description,
+        evidence=evidence,
+        cwe=cwe,
+    )
+    if xss_fp:
+        errors.append(xss_fp)
 
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
@@ -355,6 +452,11 @@ async def create_vulnerability_report(
       dynamically PoC'd — a vulnerable dependency version pinned in a
       lockfile/manifest that matches a published advisory. File those
       with ``create_dependency_report`` instead, never with this tool.
+    - **XSS / stored XSS** where the only evidence is that a form or API
+      accepted a script payload (HTTP 200 / success message). That is not
+      XSS. You must have opened a page/view that **renders** the data and
+      confirmed unsafe reflection or script execution. Do not invent
+      admin-panel impact you never observed.
 
     Automatic LLM-based **deduplication** rejects reports that describe
     the same root cause on the same asset as an existing report. If you
@@ -485,6 +587,8 @@ async def create_vulnerability_report(
         target: Affected URL / domain / repository.
         technical_analysis: The mechanism and root cause.
         poc_description: Step-by-step reproduction (steps only, no code).
+            For XSS: include the sink URL/view opened and how execution was
+            confirmed — not only the submit request.
         poc_script_code: Working PoC (Python preferred).
         remediation_steps: Specific, actionable fix (prose, no code).
         evidence: Concrete proof the issue is real and exploitable —
