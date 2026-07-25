@@ -553,7 +553,7 @@ async def agent_finish(
             findings=list(findings or []),
             recommendations=list(final_recommendations or []),
         )
-        await coordinator.send(
+        parent_notified = await coordinator.send(
             parent_id,
             {
                 "id": f"report_{uuid.uuid4().hex[:8]}",
@@ -563,7 +563,6 @@ async def agent_finish(
                 "priority": "high",
             },
         )
-        parent_notified = True
 
     logger.info(
         "agent_finish: %s success=%s findings=%d parent_notified=%s",
@@ -642,7 +641,7 @@ async def stop_agent(
             ensure_ascii=False,
             default=str,
         )
-    _, statuses, _, _ = await coordinator.graph_snapshot()
+    parent_of, statuses, _, _ = await coordinator.graph_snapshot()
     if target_agent_id not in statuses:
         return json.dumps(
             {"success": False, "error": f"Unknown agent_id: {target_agent_id}"},
@@ -669,10 +668,17 @@ async def stop_agent(
             default=str,
         )
 
+    notify_target_parent = parent_of.get(target_agent_id) != me
     if cascade:
-        await coordinator.cancel_descendants_graceful(target_agent_id)
+        await coordinator.cancel_descendants_graceful(
+            target_agent_id,
+            notify_parent=notify_target_parent,
+        )
     else:
-        await coordinator.request_stop(target_agent_id)
+        await coordinator.request_stop(
+            target_agent_id,
+            notify_parent=notify_target_parent,
+        )
 
     logger.info(
         "stop_agent: target=%s cascade=%s reason=%r",

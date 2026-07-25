@@ -227,17 +227,15 @@ class AgentCoordinator:
         items = await session.get_items()
         return count, list(items[-count:])
 
-    async def request_stop(self, agent_id: str) -> None:
+    async def request_stop(self, agent_id: str, *, notify_parent: bool = True) -> None:
         async with self._lock:
             if agent_id not in self.statuses:
                 return
-            self.statuses[agent_id] = "stopped"
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
-            runtime.wake.set()
             stream = runtime.stream
+        await self.set_status(agent_id, "stopped", notify_parent=notify_parent)
         if stream is not None:
             stream.cancel(mode="after_turn")
-        await self._maybe_snapshot()
 
     async def cancel_descendants(self, agent_id: str) -> None:
         tasks = []
@@ -251,11 +249,21 @@ class AgentCoordinator:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def cancel_descendants_graceful(self, agent_id: str) -> None:
+    async def cancel_descendants_graceful(
+        self,
+        agent_id: str,
+        *,
+        notify_parent: bool = True,
+    ) -> None:
         async with self._lock:
             order = self._subtree_order_locked(agent_id)
         for aid in reversed(order):
-            await self.request_stop(aid)
+            # Descendant parents are part of the same stop cascade, so only the
+            # top-level target's parent needs a terminal notification.
+            await self.request_stop(
+                aid,
+                notify_parent=notify_parent and aid == agent_id,
+            )
         await self._maybe_snapshot()
 
     async def attach_stream(

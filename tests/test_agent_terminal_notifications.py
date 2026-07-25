@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import AsyncMock
 
 import pytest
 from agents.exceptions import MaxTurnsExceeded
@@ -12,7 +13,7 @@ from agents.tool_context import ToolContext
 
 from strix.core.agents import AgentCoordinator, Status
 from strix.core.execution import _run_cycle  # pyright: ignore[reportPrivateUsage]
-from strix.tools.agents_graph.tools import agent_finish
+from strix.tools.agents_graph.tools import agent_finish, stop_agent
 
 
 if TYPE_CHECKING:
@@ -87,6 +88,127 @@ async def test_terminal_child_notification_can_be_suppressed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_request_stop_notifies_waiting_parent() -> None:
+    coordinator, _ = await _coordinator_with_child()
+    waiter = asyncio.create_task(coordinator.wait_for_message("parent"))
+    await asyncio.sleep(0)
+
+    await coordinator.request_stop("child")
+
+    await asyncio.wait_for(waiter, timeout=1.0)
+    pending, items = await coordinator.consume_pending("parent", include_items=True)
+    assert pending == 1
+    assert "entered terminal status 'stopped'" in str(items[0])
+
+
+@pytest.mark.asyncio
+async def test_request_stop_can_suppress_parent_notification() -> None:
+    coordinator, parent_session = await _coordinator_with_child()
+
+    await coordinator.request_stop("child", notify_parent=False)
+
+    pending, items = await coordinator.consume_pending("parent", include_items=True)
+    assert pending == 0
+    assert items == []
+    assert parent_session.items == []
+
+
+@pytest.mark.asyncio
+async def test_stop_agent_suppresses_notification_to_direct_parent() -> None:
+    coordinator, parent_session = await _coordinator_with_child()
+    tool_arguments = json.dumps(
+        {
+            "target_agent_id": "child",
+            "cascade": False,
+        }
+    )
+    ctx = ToolContext(
+        context={
+            "coordinator": coordinator,
+            "agent_id": "parent",
+            "parent_id": None,
+        },
+        tool_name="stop_agent",
+        tool_call_id="call-stop-agent",
+        tool_arguments=tool_arguments,
+    )
+
+    raw_result = await stop_agent.on_invoke_tool(ctx, tool_arguments)
+
+    assert json.loads(raw_result)["success"] is True
+    assert coordinator.statuses["child"] == "stopped"
+    pending, items = await coordinator.consume_pending("parent", include_items=True)
+    assert pending == 0
+    assert items == []
+    assert parent_session.items == []
+
+
+@pytest.mark.asyncio
+async def test_stop_agent_notifies_target_actual_parent() -> None:
+    coordinator, _ = await _coordinator_with_child()
+    child_session = _RecordingSession()
+    await coordinator.attach_runtime(
+        "child",
+        session=cast("Session", child_session),
+    )
+    await coordinator.register("grandchild", "xss", parent_id="child")
+    tool_arguments = json.dumps(
+        {
+            "target_agent_id": "grandchild",
+            "cascade": False,
+        }
+    )
+    ctx = ToolContext(
+        context={
+            "coordinator": coordinator,
+            "agent_id": "parent",
+            "parent_id": None,
+        },
+        tool_name="stop_agent",
+        tool_call_id="call-stop-grandchild",
+        tool_arguments=tool_arguments,
+    )
+
+    raw_result = await stop_agent.on_invoke_tool(ctx, tool_arguments)
+
+    assert json.loads(raw_result)["success"] is True
+    assert coordinator.statuses["grandchild"] == "stopped"
+    pending, items = await coordinator.consume_pending("child", include_items=True)
+    assert pending == 1
+    assert "entered terminal status 'stopped'" in str(items[0])
+
+
+@pytest.mark.asyncio
+async def test_cascade_stop_only_notifies_top_target_parent() -> None:
+    coordinator, parent_session = await _coordinator_with_child()
+    child_session = _RecordingSession()
+    await coordinator.attach_runtime(
+        "child",
+        session=cast("Session", child_session),
+    )
+    await coordinator.register("grandchild", "xss", parent_id="child")
+
+    await coordinator.cancel_descendants_graceful("child")
+
+    assert coordinator.statuses["child"] == "stopped"
+    assert coordinator.statuses["grandchild"] == "stopped"
+    parent_pending, parent_items = await coordinator.consume_pending(
+        "parent",
+        include_items=True,
+    )
+    child_pending, child_items = await coordinator.consume_pending(
+        "child",
+        include_items=True,
+    )
+    assert parent_pending == 1
+    assert "child" in str(parent_items[0])
+    assert child_pending == 0
+    assert child_items == []
+    assert child_session.items == []
+    assert len(parent_session.items) == 1
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("report_to_parent, expected_messages", [(True, 1), (False, 0)])
 async def test_agent_finish_avoids_duplicate_terminal_notification(
     report_to_parent: bool,
@@ -118,6 +240,41 @@ async def test_agent_finish_avoids_duplicate_terminal_notification(
     assert pending == expected_messages
     assert len(parent_session.items) == expected_messages
     assert all("entered terminal status" not in str(item) for item in parent_session.items)
+
+
+@pytest.mark.asyncio
+async def test_agent_finish_falls_back_when_completion_delivery_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator, _ = await _coordinator_with_child()
+    send = AsyncMock(side_effect=[False, True])
+    monkeypatch.setattr(coordinator, "send", send)
+    tool_arguments = json.dumps(
+        {
+            "result_summary": "Testing finished",
+            "report_to_parent": True,
+        }
+    )
+    ctx = ToolContext(
+        context={
+            "coordinator": coordinator,
+            "agent_id": "child",
+            "parent_id": "parent",
+            "task": "Test SQL injection",
+        },
+        tool_name="agent_finish",
+        tool_call_id="call-agent-finish",
+        tool_arguments=tool_arguments,
+    )
+
+    raw_result = await agent_finish.on_invoke_tool(ctx, tool_arguments)
+
+    assert json.loads(raw_result)["parent_notified"] is False
+    assert send.await_count == 2
+    first_message = send.await_args_list[0].args[1]
+    fallback_message = send.await_args_list[1].args[1]
+    assert first_message["type"] == "completion"
+    assert fallback_message["type"] == "terminal_status"
 
 
 @pytest.mark.asyncio
