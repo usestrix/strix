@@ -171,6 +171,37 @@ async def test_maybe_compact_updates_previous_summary(monkeypatch: pytest.Monkey
     assert "OLD SUMMARY TEXT" in captured["prompt"]
 
 
+def test_fit_to_tokens_truncates_oversized_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(compaction, "count_tokens", lambda _m, t: len(t))
+    text = "x" * 10_000
+
+    fitted = compaction._fit_to_tokens("m", text, 500)
+
+    assert len(fitted) <= 500
+    assert compaction._HEAD_TRUNCATED_MARKER in fitted
+    # Small text is returned untouched.
+    assert compaction._fit_to_tokens("m", "short", 500) == "short"
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_bounds_summary_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A tiny window with a huge head must not send an oversized summary request.
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
+    captured: dict[str, str] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> Any:
+        captured["prompt"] = kwargs["messages"][0]["content"]
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="S"))])
+
+    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+    big_turns = [{"role": "user", "content": "y" * 2_000} for _ in range(50)]
+    session = FakeSession(big_turns)
+
+    assert await compaction.maybe_compact(session, model="m") is True
+    # count_tokens==len(chars); prompt must fit the model window.
+    assert len(captured["prompt"]) <= 4_000
+
+
 @pytest.mark.asyncio
 async def test_maybe_compact_skips_when_summary_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_budget(monkeypatch, keep_tokens=30, window=50)
