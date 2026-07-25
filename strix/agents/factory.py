@@ -34,7 +34,7 @@ from strix.tools.notes.tools import (
     list_notes,
     update_note,
 )
-from strix.tools.output_store import bound_text
+from strix.tools.output_store import bound_and_store, bound_text
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -58,6 +58,7 @@ from strix.tools.todo.tools import (
     mark_todo_pending,
     update_todo,
 )
+from strix.tools.tool_output import read_tool_output
 from strix.tools.web_search.tool import web_search
 
 
@@ -119,7 +120,7 @@ def _bound_result(result: Any) -> Any:
     if not isinstance(result, str):
         return result
     max_lines, max_bytes = _tool_output_limits()
-    return bound_text(result, max_lines=max_lines, max_bytes=max_bytes)
+    return bound_and_store(result, max_lines=max_lines, max_bytes=max_bytes)
 
 
 def _format_tool_error(exc: Exception) -> str:
@@ -400,6 +401,7 @@ def _finish_tool_use_behavior(
 
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
+    read_tool_output,
     load_skill,
     create_todo,
     list_todos,

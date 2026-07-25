@@ -1,10 +1,20 @@
-"""Tests for per-tool-output bounding."""
+"""Tests for per-tool-output bounding and the durable spill store."""
 
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
-from strix.tools.output_store import bound_text
+from strix.tools.output_store import (
+    bound_and_store,
+    bound_text,
+    configure_output_store,
+    read_stored_output,
+)
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def test_small_output_passes_through_unchanged() -> None:
@@ -58,3 +68,52 @@ def test_dropped_line_count_accounts_for_byte_trimming() -> None:
     kept = [ln for ln in bounded.splitlines() if ln and "truncated" not in ln]
     assert dropped == 200 - len(kept)
     assert dropped > 200 - 20
+
+
+def test_bound_and_store_small_output_not_spilled(tmp_path: Path) -> None:
+    configure_output_store(tmp_path)
+    text = "just a few lines\nsecond line"
+    assert bound_and_store(text, max_lines=100, max_bytes=10_000) == text
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_bound_and_store_spills_full_output_and_is_retrievable(tmp_path: Path) -> None:
+    configure_output_store(tmp_path)
+    text = "\n".join(f"secret-line-{i}" for i in range(1000))
+
+    bounded = bound_and_store(text, max_lines=10, max_bytes=1_000_000)
+
+    match = re.search(r'output_id="([0-9a-f]{32})"', bounded)
+    assert match is not None, bounded
+    output_id = match.group(1)
+
+    # The full, untruncated output round-trips through the store.
+    full = read_stored_output(output_id, offset=0, limit=10_000)
+    assert full.splitlines() == text.splitlines()
+    # A buried line elided from the preview is retrievable.
+    assert "secret-line-500" not in bounded
+    assert "secret-line-500" in full
+
+
+def test_read_stored_output_paginates(tmp_path: Path) -> None:
+    configure_output_store(tmp_path)
+    text = "\n".join(str(i) for i in range(100))
+    output_id = re.search(
+        r'output_id="([0-9a-f]{32})"',
+        bound_and_store(text, max_lines=4, max_bytes=1_000_000),
+    )
+    assert output_id is not None
+    page = read_stored_output(output_id.group(1), offset=0, limit=10)
+    assert page.startswith("0\n1")
+    assert "more lines" in page
+    assert "offset=10" in page
+
+
+def test_read_stored_output_rejects_traversal(tmp_path: Path) -> None:
+    configure_output_store(tmp_path)
+    assert "Invalid output_id" in read_stored_output("../../etc/passwd")
+
+
+def test_read_stored_output_missing_id(tmp_path: Path) -> None:
+    configure_output_store(tmp_path)
+    assert "No stored output" in read_stored_output("0" * 32)

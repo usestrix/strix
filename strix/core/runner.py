@@ -40,6 +40,7 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
+from strix.tools.output_store import configure_output_store
 
 
 if TYPE_CHECKING:
@@ -134,6 +135,7 @@ async def run_strix_scan(
 
     agents_path = state_dir / "agents.json"
     agents_db = state_dir / "agents.db"
+    configure_output_store(state_dir / "tool-output")
     is_resume = agents_path.exists()
 
     logger.info(
