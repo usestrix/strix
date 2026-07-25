@@ -142,7 +142,12 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
         server_version = "StrixViewer/1.0"
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
-            logger.debug("viewer %s - %s", self.address_string(), format % args)
+            # Redact the bootstrap token from log lines so it cannot be
+            # harvested from log files for session hijacking.
+            msg = format % args
+            if state.session_token and state.session_token in msg:
+                msg = msg.replace(state.session_token, "[REDACTED]")
+            logger.debug("viewer %s - %s", self.address_string(), msg)
 
         def do_GET(self) -> None:
             parts = urlsplit(self.path)
