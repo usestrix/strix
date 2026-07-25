@@ -628,7 +628,9 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 if loc.get("label"):
                     lines.append(f"  {loc['label']}")
                 if loc.get("snippet"):
-                    lines.append(f"```\n{loc['snippet']}\n```")
+                    snippet = str(loc["snippet"])
+                    snippet_fence = safe_fence(snippet)
+                    lines.append(f"{snippet_fence}\n{snippet}\n{snippet_fence}")
                 if loc.get("fix_before") or loc.get("fix_after"):
                     lines.append("**Suggested Fix:**")
                     lines.append("```diff")
