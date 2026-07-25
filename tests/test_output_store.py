@@ -41,6 +41,17 @@ def test_byte_limit_enforced_on_single_long_line() -> None:
     assert len(bounded.encode("utf-8")) <= 1_000
 
 
+def test_spill_preview_honours_byte_budget(tmp_path: Path) -> None:
+    # bound_and_store's notice is longer (it carries the output_id), so the
+    # preview must reserve for the spill notice to stay within max_bytes.
+    configure_output_store(tmp_path)
+    text = "\n".join("x" * 500 for _ in range(200))
+    bounded = bound_and_store(text, max_lines=2_000, max_bytes=2_000)
+
+    assert "output_id=" in bounded
+    assert len(bounded.encode("utf-8")) <= 2_000
+
+
 def test_multibyte_characters_not_split() -> None:
     text = "😀" * 50_000
     bounded = bound_text(text, max_lines=2_000, max_bytes=1_000)
