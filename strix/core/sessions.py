@@ -92,6 +92,39 @@ async def _rewrite_session(
         return True
 
 
+async def replace_session_items(
+    session: Session,
+    new_items: list[Any],
+    *,
+    expected_len: int | None = None,
+) -> bool:
+    """Overwrite the session's items, restoring the originals on failure.
+
+    When ``expected_len`` is given, the rewrite is skipped if the session no
+    longer has that many items (a concurrent writer changed it), so a slow
+    compaction summary can't clobber newer turns.
+    """
+    async with session_write_lock(session):
+        original = list(await session.get_items())
+        if expected_len is not None and len(original) != expected_len:
+            logger.warning(
+                "skipping session rewrite: expected %d items, found %d",
+                expected_len,
+                len(original),
+            )
+            return False
+        rebuilt = cast("list[TResponseInputItem]", new_items)
+        await session.clear_session()
+        try:
+            await session.add_items(rebuilt)
+        except Exception:
+            logger.exception("session rewrite failed; restoring original items")
+            await session.clear_session()
+            await session.add_items(original)
+            raise
+        return True
+
+
 async def strip_all_images_from_session(session: Session) -> bool:
     """Replace every image tool output with a text placeholder (rejection recovery)."""
 

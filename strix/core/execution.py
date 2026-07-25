@@ -22,6 +22,7 @@ from strix.core.sessions import (
     open_agent_session,
     strip_all_images_from_session,
 )
+from strix.llm.compaction import is_context_overflow, maybe_compact
 
 
 if TYPE_CHECKING:
@@ -40,6 +41,41 @@ logger = logging.getLogger(__name__)
 StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
+_MAX_COMPACTIONS_PER_CYCLE = 2
+
+
+def _run_config_model(run_config: RunConfig) -> str | None:
+    return run_config.model if isinstance(run_config.model, str) else None
+
+
+def _agent_instructions(agent: Any) -> str:
+    instructions = getattr(agent, "instructions", None)
+    return instructions if isinstance(instructions, str) else ""
+
+
+def _agent_tools_text(agent: Any) -> str:
+    parts: list[str] = []
+    for tool in getattr(agent, "tools", []) or []:
+        name = getattr(tool, "name", "")
+        description = getattr(tool, "description", "") or ""
+        schema = getattr(tool, "params_json_schema", "") or ""
+        parts.append(f"{name} {description} {schema}")
+    return "\n".join(parts)
+
+
+async def _compact_session(
+    agent: Any, session: Session, run_config: RunConfig, *, force: bool
+) -> bool:
+    model = _run_config_model(run_config)
+    if session is None or model is None:
+        return False
+    return await maybe_compact(
+        session,
+        model=model,
+        instructions=_agent_instructions(agent),
+        tools_text=_agent_tools_text(agent),
+        force=force,
+    )
 
 
 async def run_agent_loop(
@@ -350,6 +386,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     hooks: RunHooks[dict[str, Any]] | None,
 ) -> RunResultBase | None:
     image_strips = 0
+    compactions = 0
     while True:
         try:
             await coordinator.mark_running(agent_id)
@@ -360,6 +397,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                         await enforce_image_budget(session, max_images)
                     except Exception:
                         logger.exception("image-budget enforcement failed for %s", agent_id)
+                try:
+                    await _compact_session(agent, session, run_config, force=False)
+                except Exception:
+                    logger.exception("proactive compaction failed for %s", agent_id)
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
@@ -425,6 +466,25 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                         "Stripped images from %s session after rejection; retrying (%d)",
                         agent_id,
                         image_strips,
+                    )
+                    input_data = []
+                    continue
+            if (
+                compactions < _MAX_COMPACTIONS_PER_CYCLE
+                and session is not None
+                and is_context_overflow(exc)
+            ):
+                try:
+                    compacted = await _compact_session(agent, session, run_config, force=True)
+                except Exception:
+                    logger.exception("overflow compaction recovery failed for %s", agent_id)
+                    compacted = False
+                if compacted:
+                    compactions += 1
+                    logger.info(
+                        "Compacted %s session after context overflow; retrying (%d)",
+                        agent_id,
+                        compactions,
                     )
                     input_data = []
                     continue
