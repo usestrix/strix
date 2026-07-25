@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+from strix.tools import output_store as _output_store
 from strix.tools.output_store import (
     bound_and_store,
     bound_text,
@@ -109,23 +110,34 @@ def test_read_stored_output_paginates(tmp_path: Path) -> None:
     assert "offset=10" in page
 
 
-def test_read_stored_output_page_is_bounded_without_new_spill(tmp_path: Path) -> None:
-    # A page of very long lines must be byte-capped in place, never re-spilled
-    # under a fresh output_id (which would make paging loop forever).
+def test_read_stored_output_pages_long_lines_losslessly(tmp_path: Path) -> None:
+    # A page of very long lines is bounded by returning *fewer whole lines*,
+    # never by dropping content, so paging forward reconstructs everything and
+    # never mints a fresh spill id.
     configure_output_store(tmp_path)
-    text = "\n".join("z" * 5_000 for _ in range(50))
+    lines = [f"{i}-" + "z" * 5_000 for i in range(50)]
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store(text, max_lines=4, max_bytes=1_000),
+        bound_and_store("\n".join(lines), max_lines=4, max_bytes=1_000),
     )
     assert output_id is not None
+    oid = output_id.group(1)
 
-    page = read_stored_output(output_id.group(1), offset=0, limit=2_000)
+    collected: list[str] = []
+    offset = 0
+    for _ in range(200):  # guard against a paging loop
+        page = read_stored_output(oid, offset=offset, limit=2_000)
+        body, _sep, hint = page.partition("\n\n[... more lines;")
+        assert len(body.encode("utf-8")) <= _output_store._PAGE_MAX_BYTES
+        assert re.findall(r'output_id="([0-9a-f]{32})"', body) in ([], [oid])
+        collected.extend(body.split("\n"))
+        if not hint:
+            break
+        match = re.search(r"offset=(\d+)", hint)
+        assert match is not None
+        offset = int(match.group(1))
 
-    assert len(page.encode("utf-8")) <= 60 * 1024
-    # No brand-new spill id in the returned page.
-    ids = re.findall(r'output_id="([0-9a-f]{32})"', page)
-    assert ids == [output_id.group(1)] or ids == []
+    assert collected == lines
 
 
 def test_read_stored_output_rejects_traversal(tmp_path: Path) -> None:

@@ -179,10 +179,15 @@ def bound_and_store(text: str, *, max_lines: int, max_bytes: int) -> str:
 
 
 def read_stored_output(output_id: str, *, offset: int = 0, limit: int = 2_000) -> str:
-    """Return up to ``limit`` lines of a stored output starting at ``offset``.
+    """Return a bounded page of a stored output starting at line ``offset``.
 
     ``output_id`` must be a token previously returned in a truncation notice;
-    it is validated to prevent path traversal.
+    it is validated to prevent path traversal. A page is bounded by both a line
+    count (``limit``, capped at ``_PAGE_MAX_LINES``) and a byte budget
+    (``_PAGE_MAX_BYTES``) so it can't overflow history. The byte budget is
+    honoured by returning *fewer whole lines* — never by dropping content from
+    within the page — so paging forward with the printed ``offset`` hint
+    reconstructs the full output losslessly.
     """
     if not _OUTPUT_ID_RE.match(output_id):
         return f"Invalid output_id: {output_id!r}"
@@ -191,18 +196,29 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = 2_000) -
         return f"No stored output for output_id={output_id!r} (it may have expired)."
 
     start = max(0, offset)
-    count = min(max(1, limit), _PAGE_MAX_LINES)
+    max_lines = min(max(1, limit), _PAGE_MAX_LINES)
+    window: list[str] = []
+    budget = 0
+    has_more = False
     with path.open(encoding="utf-8") as handle:
-        # Stream to the window instead of materialising the whole file per page.
-        for _ in itertools.islice(handle, start):
-            pass
-        window = [line.rstrip("\n") for line in itertools.islice(handle, count)]
-        remaining = sum(1 for _ in handle)
+        # islice skips to ``start`` lazily instead of materialising the file.
+        for raw in itertools.islice(handle, start, None):
+            line = raw.rstrip("\n")
+            size = _byte_len(line) + 1
+            # Stop before a line that would breach either budget (always keep at
+            # least one line). The line we just read is left for the next page,
+            # so nothing is lost.
+            if window and (len(window) >= max_lines or budget + size > _PAGE_MAX_BYTES):
+                has_more = True
+                break
+            window.append(line)
+            budget += size
 
-    # Bound the page's byte size with a plain notice (never a spill id) so a
-    # page of very long lines stays within history without re-triggering spill.
-    shown = bound_text("\n".join(window), max_lines=_PAGE_MAX_LINES, max_bytes=_PAGE_MAX_BYTES)
-    if remaining > 0:
-        shown += f"\n\n[... {remaining} more lines; call read_tool_output(output_id="
-        shown += f'"{output_id}", offset={start + len(window)}) to continue ...]'
+    shown = "\n".join(window)
+    if has_more:
+        next_offset = start + len(window)
+        shown += (
+            "\n\n[... more lines; call read_tool_output("
+            f'output_id="{output_id}", offset={next_offset}) to continue ...]'
+        )
     return shown
