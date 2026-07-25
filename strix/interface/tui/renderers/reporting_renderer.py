@@ -1,12 +1,15 @@
 from functools import cache
 from typing import Any, ClassVar
 
-from pygments.lexers import PythonLexer
+from pygments.lexer import Lexer
+from pygments.lexers import PythonLexer, get_lexer_by_name
 from pygments.styles import get_style_by_name
+from pygments.util import ClassNotFound
 from rich.text import Text
 from textual.widgets import Static
 
 from .base_renderer import BaseToolRenderer
+from .fenced import parse_fenced_code
 from .registry import register_tool_renderer
 
 
@@ -61,8 +64,17 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
         return None
 
     @classmethod
-    def _highlight_python(cls, code: str) -> Text:
-        lexer = PythonLexer()
+    def _get_lexer(cls, language: str | None) -> Lexer:
+        if language:
+            try:
+                return get_lexer_by_name(language)
+            except ClassNotFound:
+                pass
+        return PythonLexer()
+
+    @classmethod
+    def _highlight_code(cls, code: str, language: str | None) -> Text:
+        lexer = cls._get_lexer(language)
         text = Text()
 
         for token_type, token_value in lexer.get_tokens(code):
@@ -234,10 +246,11 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
             text.append(poc_description)
 
         if poc_script_code:
+            poc_language, poc_code = parse_fenced_code(poc_script_code)
             text.append("\n\n")
             text.append("PoC Code", style=FIELD_STYLE)
             text.append("\n")
-            text.append_text(cls._highlight_python(poc_script_code))
+            text.append_text(cls._highlight_code(poc_code, poc_language))
 
         if remediation_steps:
             text.append("\n\n")

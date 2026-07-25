@@ -122,6 +122,7 @@ module = [
     "pydantic_settings.*",
     "reportlab.*",
     "pypdf.*",
+    "pygments.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]

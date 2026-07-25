@@ -39,6 +39,7 @@ from strix.interface.tui.live_view import TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
 from strix.interface.tui.renderers import render_tool_widget
 from strix.interface.tui.renderers.agent_message_renderer import AgentMessageRenderer
+from strix.interface.tui.renderers.fenced import parse_fenced_code
 from strix.interface.tui.renderers.user_message_renderer import UserMessageRenderer
 from strix.interface.utils import build_tui_stats_text
 from strix.report.state import ReportState, set_global_report_state
@@ -330,12 +331,16 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             return "#65a30d"
         return "#6b7280"
 
-    def _highlight_python(self, code: str) -> Text:
+    def _highlight_python(self, code: str, language: str | None = None) -> Text:
         try:
-            from pygments.lexers import PythonLexer
+            from pygments.lexers import PythonLexer, get_lexer_by_name
             from pygments.styles import get_style_by_name
+            from pygments.util import ClassNotFound
 
             lexer = PythonLexer()
+            if language:
+                with contextlib.suppress(ClassNotFound):
+                    lexer = get_lexer_by_name(language)
             style = get_style_by_name("native")
             colors = {
                 token: f"#{style_def['color']}" for token, style_def in style if style_def["color"]
@@ -501,10 +506,11 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
 
         poc_script_code = vuln.get("poc_script_code", "")
         if poc_script_code:
+            poc_language, poc_code = parse_fenced_code(poc_script_code)
             text.append("\n\n")
             text.append("PoC Code", style=self.FIELD_STYLE)
             text.append("\n")
-            text.append_text(self._highlight_python(poc_script_code))
+            text.append_text(self._highlight_python(poc_code, poc_language))
 
         remediation_steps = vuln.get("remediation_steps", "")
         if remediation_steps:
@@ -601,8 +607,9 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 lines.append(vuln["poc_description"])
                 lines.append("")
             if vuln.get("poc_script_code"):
-                lines.append("```python")
-                lines.append(vuln["poc_script_code"])
+                poc_language, poc_code = parse_fenced_code(vuln["poc_script_code"])
+                lines.append(f"```{poc_language or 'python'}")
+                lines.append(poc_code)
                 lines.append("```")
 
         if vuln.get("code_locations"):
