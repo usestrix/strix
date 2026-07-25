@@ -17,15 +17,15 @@ if TYPE_CHECKING:
 
 
 def test_dedupe_key_sent_per_call_not_via_global_env() -> None:
-    dedupe = DedupeSettings(model="deepseek/cheap", api_key="dedupe-key")
+    dedupe = DedupeSettings(STRIX_DEDUPE_MODEL="deepseek/cheap", DEDUPE_LLM_API_KEY="dedupe-key")
     settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
     # The key rides on the request, so a shared-provider main key can't clobber
     # it (and vice versa) through the global provider env var.
-    assert settings.extra_args["api_key"] == "dedupe-key"
+    assert (settings.extra_args or {})["api_key"] == "dedupe-key"
 
 
 def test_dedupe_settings_omit_api_key_when_unset() -> None:
-    dedupe = DedupeSettings(model="deepseek/cheap")
+    dedupe = DedupeSettings(STRIX_DEDUPE_MODEL="deepseek/cheap")
     settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
     assert "api_key" not in (settings.extra_args or {})
     assert "api_base" not in (settings.extra_args or {})
@@ -33,15 +33,15 @@ def test_dedupe_settings_omit_api_key_when_unset() -> None:
 
 def test_dedupe_endpoint_sent_per_call() -> None:
     dedupe = DedupeSettings(
-        model="openai/cheap",
-        api_key="dedupe-key",
-        api_base="https://dedupe.example/v1",
+        STRIX_DEDUPE_MODEL="openai/cheap",
+        DEDUPE_LLM_API_KEY="dedupe-key",
+        DEDUPE_LLM_API_BASE="https://dedupe.example/v1",
     )
     settings = _dedupe_model_settings(dedupe, "openai/cheap", 300)
     # A distinct dedupe endpoint rides on the request instead of the
     # process-wide base URL, so it can't clobber the main model's endpoint.
-    assert settings.extra_args["api_base"] == "https://dedupe.example/v1"
-    assert settings.extra_args["api_key"] == "dedupe-key"
+    assert (settings.extra_args or {})["api_base"] == "https://dedupe.example/v1"
+    assert (settings.extra_args or {})["api_key"] == "dedupe-key"
 
 
 def test_dedupe_defaults_are_empty() -> None:
