@@ -10,7 +10,6 @@ truncated detail is bounded in history but never lost.
 
 from __future__ import annotations
 
-import itertools
 import logging
 import re
 import uuid
@@ -28,10 +27,10 @@ _SPILL_NOTICE = (
 _OUTPUT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_STORE_DIR = Path.home() / ".strix" / "tool-output"
 
-# Ceilings for a single retrieval page, so a page of very long lines can't
-# itself overflow history. Applied without spilling (no new output_id), or
-# paging would loop forever.
-_PAGE_MAX_LINES = 2_000
+# Byte ceiling for a single retrieval page so retrieval itself can never
+# overflow history — even for one very long line. Retrieval pages by byte
+# offset (not by line) precisely so an oversized line is split across pages
+# instead of returned whole.
 _PAGE_MAX_BYTES = 50 * 1024
 
 # Single-key holder so the configured path can be swapped per scan without a
@@ -178,16 +177,47 @@ def bound_and_store(text: str, *, max_lines: int, max_bytes: int) -> str:
     return _join(head, tail, notice)
 
 
-def read_stored_output(output_id: str, *, offset: int = 0, limit: int = 2_000) -> str:
-    """Return a bounded page of a stored output starting at line ``offset``.
+def _trim_incomplete_utf8_tail(chunk: bytes) -> bytes:
+    """Drop a trailing partial UTF-8 sequence so ``chunk`` decodes cleanly.
 
-    ``output_id`` must be a token previously returned in a truncation notice;
-    it is validated to prevent path traversal. A page is bounded by both a line
-    count (``limit``, capped at ``_PAGE_MAX_LINES``) and a byte budget
-    (``_PAGE_MAX_BYTES``) so it can't overflow history. The byte budget is
-    honoured by returning *fewer whole lines* — never by dropping content from
-    within the page — so paging forward with the printed ``offset`` hint
-    reconstructs the full output losslessly.
+    A fixed byte window can land in the middle of a multi-byte character; the
+    incomplete tail bytes are dropped here and re-read on the next page (the
+    caller advances the offset by the *kept* length), so nothing is lost.
+    """
+    # A UTF-8 char is 1-4 bytes; scan back over continuation bytes (0b10xxxxxx)
+    # to the last lead byte, then keep it only if the whole char is present.
+    index = len(chunk) - 1
+    steps = 0
+    while index >= 0 and chunk[index] & 0xC0 == 0x80 and steps < 3:
+        index -= 1
+        steps += 1
+    if index < 0:
+        return chunk
+    lead = chunk[index]
+    if lead & 0x80 == 0x00:
+        expected = 1
+    elif lead & 0xE0 == 0xC0:
+        expected = 2
+    elif lead & 0xF0 == 0xE0:
+        expected = 3
+    elif lead & 0xF8 == 0xF0:
+        expected = 4
+    else:
+        return chunk  # invalid lead byte; leave for errors="replace" to handle
+    if len(chunk) - index < expected:
+        return chunk[:index]
+    return chunk
+
+
+def read_stored_output(output_id: str, *, offset: int = 0, limit: int = _PAGE_MAX_BYTES) -> str:
+    """Return a bounded byte-window of a stored output starting at byte ``offset``.
+
+    ``output_id`` must be a token previously returned in a truncation notice; it
+    is validated to prevent path traversal. The page is bounded by a UTF-8 byte
+    budget (``limit``, capped at ``_PAGE_MAX_BYTES``) so it can never overflow
+    history — even a single very long line is split across pages rather than
+    returned whole. Paging forward with the printed ``offset`` hint reconstructs
+    the full output byte-for-byte.
     """
     if not _OUTPUT_ID_RE.match(output_id):
         return f"Invalid output_id: {output_id!r}"
@@ -196,29 +226,24 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = 2_000) -
         return f"No stored output for output_id={output_id!r} (it may have expired)."
 
     start = max(0, offset)
-    max_lines = min(max(1, limit), _PAGE_MAX_LINES)
-    window: list[str] = []
-    budget = 0
-    has_more = False
-    with path.open(encoding="utf-8") as handle:
-        # islice skips to ``start`` lazily instead of materialising the file.
-        for raw in itertools.islice(handle, start, None):
-            line = raw.rstrip("\n")
-            size = _byte_len(line) + 1
-            # Stop before a line that would breach either budget (always keep at
-            # least one line). The line we just read is left for the next page,
-            # so nothing is lost.
-            if window and (len(window) >= max_lines or budget + size > _PAGE_MAX_BYTES):
-                has_more = True
-                break
-            window.append(line)
-            budget += size
+    size = path.stat().st_size
+    if start >= size:
+        return ""
+    # Floor at 4 bytes (the max UTF-8 char length) so a page always makes
+    # progress past a single multi-byte character.
+    budget = min(max(4, limit), _PAGE_MAX_BYTES)
+    with path.open("rb") as handle:
+        handle.seek(start)
+        chunk = handle.read(budget)
 
-    shown = "\n".join(window)
+    has_more = start + len(chunk) < size
     if has_more:
-        next_offset = start + len(window)
+        chunk = _trim_incomplete_utf8_tail(chunk)
+    shown = chunk.decode("utf-8", errors="replace")
+    if has_more:
+        next_offset = start + len(chunk)
         shown += (
-            "\n\n[... more lines; call read_tool_output("
+            "\n\n[... more; call read_tool_output("
             f'output_id="{output_id}", offset={next_offset}) to continue ...]'
         )
     return shown

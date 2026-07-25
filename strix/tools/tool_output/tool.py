@@ -8,7 +8,7 @@ from strix.tools.output_store import read_stored_output
 
 
 @function_tool(timeout=10)
-async def read_tool_output(output_id: str, offset: int = 0, limit: int = 2000) -> str:
+async def read_tool_output(output_id: str, offset: int = 0, limit: int = 51200) -> str:
     """Read the full content of an earlier tool result that was truncated.
 
     When a tool's output is too large it is trimmed to a head+tail preview in
@@ -18,8 +18,9 @@ async def read_tool_output(output_id: str, offset: int = 0, limit: int = 2000) -
 
     Args:
         output_id: The id from the truncation notice (a 32-char hex token).
-        offset: Zero-based line number to start reading from.
-        limit: Maximum number of lines to return. Page forward by increasing
-            ``offset`` using the hint printed at the end of each page.
+        offset: Zero-based byte offset to start reading from.
+        limit: Maximum number of bytes to return (capped at 50 KiB). Page
+            forward by calling again with the ``offset`` printed in the hint at
+            the end of each page until no hint remains.
     """
     return read_stored_output(output_id, offset=offset, limit=limit)

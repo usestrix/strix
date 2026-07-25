@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
-from strix.tools import output_store as _output_store
 from strix.tools.output_store import (
     bound_and_store,
     bound_text,
@@ -100,7 +99,7 @@ def test_bound_and_store_spills_full_output_and_is_retrievable(tmp_path: Path) -
     output_id = match.group(1)
 
     # The full, untruncated output round-trips through the store.
-    full = read_stored_output(output_id, offset=0, limit=10_000)
+    full = read_stored_output(output_id, offset=0, limit=1_000_000)
     assert full.splitlines() == text.splitlines()
     # A buried line elided from the preview is retrievable.
     assert "secret-line-500" not in bounded
@@ -117,38 +116,68 @@ def test_read_stored_output_paginates(tmp_path: Path) -> None:
     assert output_id is not None
     page = read_stored_output(output_id.group(1), offset=0, limit=10)
     assert page.startswith("0\n1")
-    assert "more lines" in page
+    assert "more;" in page
     assert "offset=10" in page
 
 
 def test_read_stored_output_pages_long_lines_losslessly(tmp_path: Path) -> None:
-    # A page of very long lines is bounded by returning *fewer whole lines*,
-    # never by dropping content, so paging forward reconstructs everything and
-    # never mints a fresh spill id.
+    # A single line far larger than the page budget must be split across pages
+    # (never returned whole), and paging forward must reconstruct the output
+    # byte-for-byte without ever minting a fresh spill id.
     configure_output_store(tmp_path)
-    lines = [f"{i}-" + "z" * 5_000 for i in range(50)]
+    text = "\n".join(f"{i}-" + "z" * 5_000 for i in range(50))
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store("\n".join(lines), max_lines=4, max_bytes=1_000),
+        bound_and_store(text, max_lines=4, max_bytes=1_000),
     )
     assert output_id is not None
     oid = output_id.group(1)
 
-    collected: list[str] = []
+    collected = ""
     offset = 0
-    for _ in range(200):  # guard against a paging loop
+    for _ in range(500):  # guard against a paging loop
         page = read_stored_output(oid, offset=offset, limit=2_000)
-        body, _sep, hint = page.partition("\n\n[... more lines;")
-        assert len(body.encode("utf-8")) <= _output_store._PAGE_MAX_BYTES
+        body, _sep, hint = page.partition("\n\n[... more;")
+        # Every page honours the byte budget, even inside one oversized line.
+        assert len(body.encode("utf-8")) <= 2_000
         assert re.findall(r'output_id="([0-9a-f]{32})"', body) in ([], [oid])
-        collected.extend(body.split("\n"))
+        collected += body
         if not hint:
             break
         match = re.search(r"offset=(\d+)", hint)
         assert match is not None
         offset = int(match.group(1))
 
-    assert collected == lines
+    assert collected == text
+
+
+def test_read_stored_output_pages_multibyte_without_corruption(tmp_path: Path) -> None:
+    # A byte window can split a 4-byte char; paging must never emit a broken
+    # (replacement) character and must still reconstruct the text exactly.
+    configure_output_store(tmp_path)
+    text = "😀" * 20_000
+    output_id = re.search(
+        r'output_id="([0-9a-f]{32})"',
+        bound_and_store(text, max_lines=4, max_bytes=1_000),
+    )
+    assert output_id is not None
+    oid = output_id.group(1)
+
+    collected = ""
+    offset = 0
+    for _ in range(500):  # guard against a paging loop
+        page = read_stored_output(oid, offset=offset, limit=1_002)  # not a multiple of 4
+        body, _sep, hint = page.partition("\n\n[... more;")
+        assert "\ufffd" not in body
+        assert len(body.encode("utf-8")) <= 1_002
+        collected += body
+        if not hint:
+            break
+        match = re.search(r"offset=(\d+)", hint)
+        assert match is not None
+        offset = int(match.group(1))
+
+    assert collected == text
 
 
 def test_read_stored_output_rejects_traversal(tmp_path: Path) -> None:
