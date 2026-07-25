@@ -110,11 +110,6 @@ def stage_symlink_safe_dir(src_root: Path) -> tuple[Path, Path | None]:
     if not tree_has_symlink(root):
         return root, None
 
-    # ``.resolve()`` matters: ``mkdtemp()`` honors ``$TMPDIR``, and on macOS
-    # the default ``$TMPDIR`` resolves through ``/var``, itself a symlink to
-    # ``/private/var``. ``LocalDir`` rejects any symlink component in its
-    # source path, so an unresolved staged path would trip the very check
-    # this function exists to satisfy.
     staged = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX)).resolve()
     try:
         _stage_dir(root, staged, root, frozenset({root}))
