@@ -297,13 +297,19 @@ async def maybe_compact(
 
     split = _select_split(model, items, context.keep_tokens)
     head, recent = items[:split], items[split:]
-    if not head:
+    previous = _previous_summary(head)
+    input_budget = _summary_input_budget(model, previous)
+    if not head or input_budget <= 0:
+        # Nothing to summarise, or the window can't even fit the summary
+        # instructions plus the reserved output allowance — any request would
+        # be rejected, so skip rather than submit a doomed call.
+        if head:
+            logger.warning(
+                "skipping compaction for %s: no room to summarise within its context window", model
+            )
         return False
 
-    previous = _previous_summary(head)
-    serialized_head = _fit_to_tokens(
-        model, _serialize_items(head), _summary_input_budget(model, previous)
-    )
+    serialized_head = _fit_to_tokens(model, _serialize_items(head), input_budget)
     summary = await _summarize(
         model,
         _build_summary_prompt(serialized_head, previous),

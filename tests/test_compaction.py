@@ -139,11 +139,11 @@ async def test_maybe_compact_noop_when_within_budget(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.asyncio
 async def test_maybe_compact_rewrites_and_keeps_pairs(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_budget(monkeypatch, keep_tokens=30, window=50)
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
     _patch_summary(monkeypatch, "SUMMARY BODY")
     session = FakeSession(_turns(12))
 
-    assert await compaction.maybe_compact(session, model="m") is True
+    assert await compaction.maybe_compact(session, model="m", force=True) is True
 
     items = await session.get_items()
     assert items[0]["role"] == "user"
@@ -155,7 +155,8 @@ async def test_maybe_compact_rewrites_and_keeps_pairs(monkeypatch: pytest.Monkey
 
 @pytest.mark.asyncio
 async def test_maybe_compact_updates_previous_summary(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_budget(monkeypatch, keep_tokens=30, window=50)
+    # Window large enough to leave real room for the summary instructions.
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
     captured: dict[str, str] = {}
 
     async def fake_acompletion(**kwargs: Any) -> Any:
@@ -167,7 +168,7 @@ async def test_maybe_compact_updates_previous_summary(monkeypatch: pytest.Monkey
     prior = compaction._checkpoint_item("OLD SUMMARY TEXT")
     session = FakeSession([prior, *_turns(12)])
 
-    assert await compaction.maybe_compact(session, model="m") is True
+    assert await compaction.maybe_compact(session, model="m", force=True) is True
     assert "OLD SUMMARY TEXT" in captured["prompt"]
 
 
@@ -227,7 +228,7 @@ async def test_summary_request_fits_when_room_is_below_old_floor(
 
 @pytest.mark.asyncio
 async def test_maybe_compact_skips_when_summary_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_budget(monkeypatch, keep_tokens=30, window=50)
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
 
     async def fake_acompletion(**_kwargs: Any) -> Any:
         raise RuntimeError("boom")
@@ -236,5 +237,28 @@ async def test_maybe_compact_skips_when_summary_fails(monkeypatch: pytest.Monkey
     session = FakeSession(_turns(12))
     before = await session.get_items()
 
-    assert await compaction.maybe_compact(session, model="m") is False
+    assert await compaction.maybe_compact(session, model="m", force=True) is False
+    assert await session.get_items() == before
+
+
+@pytest.mark.asyncio
+async def test_maybe_compact_skips_when_no_room_to_summarise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A window too small to fit the summary instructions plus the reserved
+    # output leaves no room for any head, so no (doomed) summary is attempted.
+    _patch_budget(monkeypatch, keep_tokens=30, window=200)
+    called = False
+
+    async def fake_acompletion(**_kwargs: Any) -> Any:
+        nonlocal called
+        called = True
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="S"))])
+
+    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+    session = FakeSession(_turns(12))
+    before = await session.get_items()
+
+    assert await compaction.maybe_compact(session, model="m", force=True) is False
+    assert called is False
     assert await session.get_items() == before
