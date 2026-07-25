@@ -238,7 +238,7 @@ async def run_strix_scan(
         )
 
         root_agent = build_strix_agent(
-            name="strix",
+            name="Strix",
             skills=skills,
             is_root=True,
             scan_mode=scan_mode,
@@ -252,7 +252,7 @@ async def run_strix_scan(
         if not is_resume:
             await coordinator.register(
                 root_id,
-                "strix",
+                "Strix",
                 parent_id=None,
                 task=root_task,
                 skills=skills,
