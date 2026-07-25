@@ -315,23 +315,35 @@ def _format_search_hits(content: str, pattern: str) -> dict[str, Any]:
     except re.error as exc:
         return {"success": False, "error": f"Invalid regex: {exc}"}
 
-    hits = []
-    for match in regex.finditer(content):
-        start, end = match.span()
-        before = content[max(0, start - 40) : start]
-        after = content[end : end + 40]
-        hits.append(
-            {
-                "match": match.group(0),
-                "position": start,
-                "before": before,
-                "after": after,
-            },
-        )
-        if len(hits) >= 20:
-            break
+    # Guard against catastrophic backtracking (ReDoS): truncate the
+    # haystack so even a worst-case pattern cannot consume unbounded CPU.
+    _MAX_SEARCH_LEN = 1_048_576  # 1 MiB
+    search_content = content[:_MAX_SEARCH_LEN]
+    truncated = len(content) > _MAX_SEARCH_LEN
 
-    return {"success": True, "hits": hits, "total_hits": len(hits)}
+    hits = []
+    try:
+        for match in regex.finditer(search_content):
+            start, end = match.span()
+            before = search_content[max(0, start - 40) : start]
+            after = search_content[end : end + 40]
+            hits.append(
+                {
+                    "match": match.group(0),
+                    "position": start,
+                    "before": before,
+                    "after": after,
+                },
+            )
+            if len(hits) >= 20:
+                break
+    except (re.error, RecursionError) as exc:
+        return {"success": False, "error": f"Regex execution failed: {exc}"}
+
+    result: dict[str, Any] = {"success": True, "hits": hits, "total_hits": len(hits)}
+    if truncated:
+        result["warning"] = f"Content truncated to {_MAX_SEARCH_LEN} bytes for search"
+    return result
 
 
 def _format_text_page(content: str, *, page: int, page_size: int) -> dict[str, Any]:
