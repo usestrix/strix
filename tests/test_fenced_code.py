@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from pygments.lexers import BashLexer, PythonLexer
 
-from strix.interface.tui.renderers.fenced import (
+from strix.report.fenced import (
     guess_language_name,
     parse_fenced_code,
     resolve_lexer,
+    safe_fence,
 )
 from strix.viewer.report_pdf import _strip_code_fence
 
@@ -62,3 +63,16 @@ def test_resolve_lexer_falls_back_to_python_when_unresolvable() -> None:
 
 def test_guess_language_name_defaults_to_python_when_inconclusive() -> None:
     assert guess_language_name("") == "python"
+
+
+def test_parse_fenced_code_handles_crlf() -> None:
+    language, code = parse_fenced_code("```python\r\nx = 1\r\n```")
+    assert language == "python"
+    assert code == "x = 1"
+
+
+def test_safe_fence_widens_past_embedded_backticks() -> None:
+    # A PoC body containing a ``` run must be wrapped in a longer fence so it
+    # can't terminate the block early.
+    assert safe_fence("plain code") == "```"
+    assert safe_fence("has ```\nfence inside") == "````"

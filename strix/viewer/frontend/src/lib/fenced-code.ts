@@ -3,7 +3,7 @@ export interface ParsedFencedCode {
   code: string;
 }
 
-const FENCE_RE = /^```([^\n`]*)\n([\s\S]*?)\n?```$/;
+const FENCE_RE = /^```([^\n`]*)\r?\n([\s\S]*?)\r?\n?```$/;
 
 /**
  * Agent-generated `poc_script_code` is stored wrapped in a markdown code fence

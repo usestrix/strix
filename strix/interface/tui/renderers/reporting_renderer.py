@@ -5,8 +5,9 @@ from pygments.styles import get_style_by_name
 from rich.text import Text
 from textual.widgets import Static
 
+from strix.report.fenced import parse_fenced_code, resolve_lexer
+
 from .base_renderer import BaseToolRenderer
-from .fenced import parse_fenced_code, resolve_lexer
 from .registry import register_tool_renderer
 
 

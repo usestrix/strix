@@ -39,13 +39,14 @@ from strix.interface.tui.live_view import TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
 from strix.interface.tui.renderers import render_tool_widget
 from strix.interface.tui.renderers.agent_message_renderer import AgentMessageRenderer
-from strix.interface.tui.renderers.fenced import (
+from strix.interface.tui.renderers.user_message_renderer import UserMessageRenderer
+from strix.interface.utils import build_tui_stats_text
+from strix.report.fenced import (
     guess_language_name,
     parse_fenced_code,
     resolve_lexer,
+    safe_fence,
 )
-from strix.interface.tui.renderers.user_message_renderer import UserMessageRenderer
-from strix.interface.utils import build_tui_stats_text
 from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
 
@@ -608,9 +609,10 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
             if vuln.get("poc_script_code"):
                 poc_language, poc_code = parse_fenced_code(vuln["poc_script_code"])
                 fence_lang = poc_language or guess_language_name(poc_code)
-                lines.append(f"```{fence_lang}")
+                fence = safe_fence(poc_code)
+                lines.append(f"{fence}{fence_lang}")
                 lines.append(poc_code)
-                lines.append("```")
+                lines.append(fence)
 
         if vuln.get("code_locations"):
             lines.extend(["", "## Code Analysis", ""])

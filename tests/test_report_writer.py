@@ -119,9 +119,11 @@ def test_render_vulnerability_md_poc_code_cannot_break_out_of_fence() -> None:
     injected = "curl x\n```\n\n## Injected Heading\n![x](https://evil.example/beacon.png)"
     md = render_vulnerability_md(_sample_report(poc_script_code=injected))
     lines = md.split("\n")
-    fence = next(ln for ln in lines[lines.index("## Proof of Concept") + 1 :] if ln.strip())
-    assert set(fence) == {"`"}
-    assert len(fence) >= 4  # wider than the payload's 3-backtick run
+    opening = next(ln for ln in lines[lines.index("## Proof of Concept") + 1 :] if ln.strip())
+    ticks = opening[: len(opening) - len(opening.lstrip("`"))]
+    assert len(ticks) >= 4  # wider than the payload's 3-backtick run
+    assert "`" not in opening.removeprefix(ticks)  # backtick run + language tag only
+    assert f"\n{ticks}\n" in md  # pure-backtick closing fence of the same width
     assert injected in md  # the payload survives verbatim, inside the fence
 
 

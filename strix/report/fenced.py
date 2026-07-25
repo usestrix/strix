@@ -6,7 +6,21 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 
-_FENCE_RE = re.compile(r"^```([^\n`]*)\n(.*?)\n?```$", re.DOTALL)
+_FENCE_RE = re.compile(r"^```([^\n`]*)\r?\n(.*?)\r?\n?```$", re.DOTALL)
+_BACKTICK_RUN = re.compile(r"`+")
+
+
+def safe_fence(content: str) -> str:
+    """Return a backtick fence that ``content`` cannot break out of.
+
+    Per CommonMark a fenced code block is closed only by a run of backticks at
+    least as long as the opening fence. LLM-authored, attacker-influenced values
+    (PoC scripts, code snippets) may contain their own ``` runs, so we open with
+    a fence one backtick longer than the longest run inside ``content`` (never
+    fewer than three). Everything in ``content`` then renders verbatim.
+    """
+    longest = max((len(m.group()) for m in _BACKTICK_RUN.finditer(content)), default=0)
+    return "`" * max(3, longest + 1)
 
 
 def parse_fenced_code(raw: str) -> tuple[str | None, str]:
