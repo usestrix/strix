@@ -426,11 +426,11 @@ Examples:
 
   # API spec test (OpenAPI/Swagger file or Postman collection export)
   strix --target ./openapi.yaml --target https://api.example.com
-  strix --target ./collection.postman_collection.json --target https://api.example.com
+  strix --target ./collection.postman_collection.json
 
   # Postman collection pulled live by id (needs POSTMAN_API_KEY); optional environment
   strix --target postman://<collection-uuid> --target https://api.example.com
-  strix --target "postman://<collection-uuid>?env=<environment-uuid>" --target https://api.example.com
+  strix --target "postman://<collection-uuid>?env=<environment-uuid>"
 
   # Large local repository (bind-mounted read-only instead of copied)
   strix --mount ./huge-monorepo
