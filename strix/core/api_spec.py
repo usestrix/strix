@@ -189,17 +189,67 @@ def _security_names(entries: Any) -> list[str]:
     return list(dict.fromkeys(names))
 
 
-def _body_fields(request_body: Any) -> list[str]:
+def _resolve_ref(ref: Any, root: dict[str, Any]) -> Any:
+    """Resolve a local JSON-Pointer ``$ref`` (``#/a/b``) against *root*.
+
+    Handles both OpenAPI (``#/components/schemas/…``) and Swagger
+    (``#/definitions/…``) roots. Remote refs (``other.json#/…``) are not
+    resolved and yield ``None``.
+    """
+    if not isinstance(ref, str) or not ref.startswith("#/"):
+        return None
+    node: Any = root
+    for part in ref[2:].split("/"):
+        part = part.replace("~1", "/").replace("~0", "~")  # JSON Pointer unescape
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+def _schema_property_names(
+    schema: Any,
+    root: dict[str, Any],
+    seen: set[str] | None = None,
+) -> list[str]:
+    """Collect property names from *schema*, following ``$ref`` and ``allOf`` etc.
+
+    Recurses through ``$ref`` and the ``allOf``/``oneOf``/``anyOf`` composition
+    keywords so bodies declared by reference or composition still surface their
+    fields. ``seen`` guards against circular ``$ref`` chains.
+    """
+    if not isinstance(schema, dict):
+        return []
+    seen = seen if seen is not None else set()
+    ref = schema.get("$ref")
+    if isinstance(ref, str):
+        if ref in seen:
+            return []
+        seen.add(ref)
+        return _schema_property_names(_resolve_ref(ref, root), root, seen)
+    names: list[str] = list(schema.get("properties", {}) or {})
+    for combiner in ("allOf", "oneOf", "anyOf"):
+        for sub in schema.get(combiner, []) or []:
+            names.extend(_schema_property_names(sub, root, seen))
+    return list(dict.fromkeys(names))  # de-duplicate, preserve order
+
+
+def _body_fields(request_body: Any, root: dict[str, Any]) -> list[str]:
     if not isinstance(request_body, dict):
         return []
+    # An OpenAPI requestBody may itself be a $ref into components.requestBodies.
+    ref = request_body.get("$ref")
+    if isinstance(ref, str):
+        resolved = _resolve_ref(ref, root)
+        return _body_fields(resolved, root) if isinstance(resolved, dict) else []
     content = request_body.get("content")
     if not isinstance(content, dict):
         return []
     for media in content.values():
         schema = media.get("schema") if isinstance(media, dict) else None
-        props = schema.get("properties") if isinstance(schema, dict) else None
-        if isinstance(props, dict):
-            return list(props.keys())
+        names = _schema_property_names(schema, root)
+        if names:
+            return names
     return []
 
 
@@ -234,14 +284,20 @@ def _parse_openapi(raw: dict[str, Any]) -> ApiSpecInventory:
                     for p in (*shared_params, *(op.get("parameters", []) or []))
                     if isinstance(p, dict)
                 ]
-                op_security = _security_names(op.get("security")) if "security" in op else global_security
+                # An explicit ``security: []`` opts an operation out of auth and
+                # must override the global policy; only a *missing* key inherits it.
+                op_security = (
+                    _security_names(op.get("security"))
+                    if "security" in op
+                    else global_security
+                )
                 endpoints.append(
                     Endpoint(
                         method=method.upper(),
                         path=str(path),
                         summary=str(op.get("summary", "")).strip(),
                         parameters=[p for p in params if p],
-                        body_fields=_body_fields(op.get("requestBody")),
+                        body_fields=_body_fields(op.get("requestBody"), raw),
                         security=op_security,
                     ),
                 )
@@ -280,11 +336,14 @@ def _parse_swagger(raw: dict[str, Any]) -> ApiSpecInventory:
                 body_fields: list[str] = []
                 for p in merged:
                     if p.get("in") == "body":
-                        schema = p.get("schema")
-                        props = schema.get("properties") if isinstance(schema, dict) else None
-                        if isinstance(props, dict):
-                            body_fields = list(props.keys())
-                op_security = _security_names(op.get("security")) if "security" in op else global_security
+                        body_fields = _schema_property_names(p.get("schema"), raw)
+                # An explicit ``security: []`` opts an operation out of auth and
+                # must override the global policy; only a *missing* key inherits it.
+                op_security = (
+                    _security_names(op.get("security"))
+                    if "security" in op
+                    else global_security
+                )
                 endpoints.append(
                     Endpoint(
                         method=method.upper(),
