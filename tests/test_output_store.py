@@ -217,6 +217,25 @@ def test_read_stored_output_offset_inside_char_returns_valid_utf8(tmp_path: Path
     assert body.startswith("😀")
 
 
+def test_read_stored_output_offset_inside_final_char_terminates(tmp_path: Path) -> None:
+    # An offset inside the last multibyte character must not return an empty page
+    # with an unchanged continuation offset (which would loop forever).
+    configure_output_store(tmp_path)
+    text = "😀" * 10  # 40 bytes; the final emoji spans bytes 36..39
+    output_id = re.search(
+        r'output_id="([0-9a-f]{32})"',
+        bound_and_store(text, max_lines=4, max_bytes=20),
+    )
+    assert output_id is not None
+    oid = output_id.group(1)
+
+    # Offset 37 lands inside the final char's continuation bytes: it advances to
+    # EOF, so the page terminates cleanly with no continuation hint.
+    page = read_stored_output(oid, offset=37, limit=1_000)
+    assert page == ""
+    assert "more;" not in page
+
+
 def test_read_stored_output_rejects_traversal(tmp_path: Path) -> None:
     configure_output_store(tmp_path)
     assert "Invalid output_id" in read_stored_output("../../etc/passwd")
