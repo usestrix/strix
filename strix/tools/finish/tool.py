@@ -110,12 +110,13 @@ async def finish_scan(
     1. **Call ``view_agent_graph`` first.** Inspect every entry in the
        summary. If ANY agent is in ``running`` / ``waiting`` state,
        you MUST NOT call ``finish_scan`` yet —
-       wrap them up first via ``send_message_to_agent`` (ask them to
-       finish), ``wait_for_message`` (block until their report
-       arrives), or ``stop_agent`` (graceful cancel). Only ``completed``
-       / ``crashed`` / ``stopped`` agents are safe to leave behind.
-       Calling ``finish_scan`` while children are alive orphans their
-       work and produces an incomplete report.
+       call ``wait_for_message`` to block until their completion reports
+       arrive, or ``send_message_to_agent`` asking them to call
+       ``agent_finish``. **NEVER use ``stop_agent`` to clear active
+       agents so you can finish — this orphans their work and produces
+       an incomplete report.** Only ``completed`` / ``crashed`` agents
+       are safe to leave behind. ``stopped`` agents were forcibly
+       cancelled and their results are lost.
     2. All vulnerabilities you found are filed via
        ``create_vulnerability_report`` — or, for known-CVE dependency
        findings, ``create_dependency_report`` (un-reported findings are
@@ -259,7 +260,10 @@ async def finish_scan(
                 "scan_completed": False,
                 "error": (
                     "Cannot finish scan while child agents are still active. "
-                    "Wait for completion, send them finish instructions, or stop them first"
+                    "Call wait_for_message to block until their completion reports "
+                    "arrive, or send_message_to_agent asking them to call agent_finish. "
+                    "Do NOT use stop_agent to clear active agents — their work will "
+                    "be lost and the report will be incomplete."
                 ),
                 "active_agents": active_agents,
             },

@@ -25,6 +25,30 @@ Before spawning agents, analyze the target from the scan config/scope and any pr
 3. **Determine approach** - blackbox, greybox, or whitebox assessment
 4. **Prioritize by risk** - critical assets and high-value targets first
 
+## Attack Planning
+
+Before spawning subagents for a vulnerability type, **think deeply about the attack strategy**. Do not blindly spawn agents for every vulnerability category — reason about what is actually relevant to the target.
+
+### Step 1: Load Vulnerability Methodology
+
+Before planning an attack against a specific vulnerability type, call `load_skill` with the relevant skill name (e.g., `["sql_injection"]`, `["xss"]`, `["business_logic"]`, `["ssrf"]`, `["xxe"]`). This gives you the full methodology — attack surfaces, detection channels, bypass techniques, DBMS-specific primitives, testing workflow, and validation steps. **Do not plan attacks from memory alone — load the skill first.**
+
+### Step 2: Reason About the Attack
+
+Use `think` to reason through the attack plan before spawning agents. Structure your thinking:
+
+- **Target technology**: What framework, language, database, server is in use? How does it handle input, auth, sessions?
+- **Attack surface mapping**: Which endpoints, parameters, headers, cookies are user-controlled? Where does data flow to (database, filesystem, OS, other services)?
+- **Technique selection**: Given the technology, which attack techniques are most likely to succeed? Which are irrelevant? (e.g., NoSQL injection is irrelevant for a PostgreSQL backend; XXE is irrelevant if no XML parsing occurs)
+- **Defense analysis**: What WAF, input validation, encoding, or framework protections are in place? How might they be bypassed?
+- **Bypass strategy**: If standard payloads are filtered, what encoding tricks, syntax variations, or alternative injection points could work?
+- **Chaining opportunities**: Can findings be combined for greater impact? (e.g., IDOR + business logic = financial fraud; SSRF + metadata = cloud compromise; XSS + CSRF = account takeover)
+- **Priority ordering**: Which attacks should be attempted first based on likelihood of success and potential impact?
+
+### Step 3: Spawn Targeted Agents
+
+Only after loading the skill and reasoning through the attack, spawn subagents with specific, informed task descriptions. The task description should reflect your analysis — tell the subagent what technology to target, what techniques to prioritize, what bypasses to try, and what the success criteria are. A well-planned task description produces far better results than a generic "test for SQLi."
+
 ## Agent Architecture
 
 Structure agents by function:
@@ -83,9 +107,17 @@ Complex findings warrant specialized subagents:
 
 ## Completion
 
-When all agents report completion:
+**WAIT for all agents to self-terminate.** Do NOT call `stop_agent` on active children to clear them before finishing — this orphans their work and produces an incomplete report.
 
-1. Collect and deduplicate findings across agents
-2. Assess overall security posture
-3. Compile executive summary with prioritized recommendations
-4. Invoke finish tool with final report
+When you believe all work is done:
+
+1. Call `view_agent_graph` to check every agent's status
+2. If ANY agent is still `running` or `waiting`, call `wait_for_message` to block until their completion reports arrive — do NOT stop them
+3. Only proceed when ALL agents show `completed` or `crashed` (these are the only safe terminal states)
+4. `stopped` agents were forcibly cancelled — their results are lost. If agents were stopped, their work must be re-done by spawning replacement agents
+5. Collect and deduplicate findings across all completion reports
+6. Assess overall security posture
+7. Compile executive summary with prioritized recommendations
+8. Invoke `finish_scan` with the final report
+
+**Never use `stop_agent` as a shortcut to bypass the active-agent check in `finish_scan`.** The check exists to prevent incomplete reports. If a child is taking too long, send it a message asking for status or telling it to wrap up via `agent_finish` — don't stop it.

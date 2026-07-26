@@ -830,6 +830,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._dot_animation_timer: Any | None = None
         self._pending_scroll_end = False
 
+        self._event_buffer: list[tuple[str, Any]] = []
+        self._event_flush_timer: Any | None = None
+
         self._setup_cleanup_handlers()
 
     def _build_scan_config(self, args: argparse.Namespace) -> dict[str, Any]:
@@ -1415,7 +1418,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
     def _start_dot_animation(self) -> None:
         if self._dot_animation_timer is None:
-            self._dot_animation_timer = self.set_interval(0.06, self._animate_dots)
+            self._dot_animation_timer = self.set_interval(0.15, self._animate_dots)
 
     def _stop_dot_animation(self) -> None:
         if self._dot_animation_timer is not None:
@@ -1458,9 +1461,13 @@ class StrixTUIApp(App):  # type: ignore[misc]
             if vuln.get("agent_id") == agent_id
         )
 
+    MAX_RENDER_EVENTS = 200
+
     def _gather_agent_events(self, agent_id: str) -> list[dict[str, Any]]:
         events = self.live_view.events_for_agent(agent_id)
         events.sort(key=lambda e: (e["timestamp"], e["id"]))
+        if len(events) > self.MAX_RENDER_EVENTS:
+            events = events[-self.MAX_RENDER_EVENTS:]
         return events
 
     def watch_selected_agent_id(self, _agent_id: str | None) -> None:
@@ -1530,10 +1537,25 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._scan_thread.start()
 
     def _capture_sdk_event(self, agent_id: str, event: Any) -> None:
+        self._event_buffer.append((agent_id, event))
+        if self._event_flush_timer is None:
+            self._event_flush_timer = self.set_timer(0.15, self._flush_event_buffer)
+
+    def _flush_event_buffer(self) -> None:
+        self._event_flush_timer = None
+        if not self._event_buffer:
+            return
+        batch = self._event_buffer[:]
+        self._event_buffer.clear()
         try:
-            self.call_from_thread(self._record_sdk_event, agent_id, event)
+            self.call_from_thread(self._record_sdk_events_batch, batch)
         except RuntimeError:
-            self._record_sdk_event(agent_id, event)
+            for agent_id, event in batch:
+                self._record_sdk_event(agent_id, event)
+
+    def _record_sdk_events_batch(self, batch: list[tuple[str, Any]]) -> None:
+        for agent_id, event in batch:
+            self.live_view.ingest_sdk_event(agent_id, event)
 
     def _record_sdk_event(self, agent_id: str, event: Any) -> None:
         self.live_view.ingest_sdk_event(agent_id, event)
