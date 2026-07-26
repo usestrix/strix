@@ -38,8 +38,10 @@ def test_count_tokens_fallback_on_error(monkeypatch: pytest.MonkeyPatch) -> None
         raise RuntimeError("no tokenizer")
 
     monkeypatch.setattr("strix.llm.context_budget.litellm.token_counter", _raise)
-    text = "x" * 400
-    assert context_budget.count_tokens("weird-model", text) == 100
+    # Conservative ~3-chars/token estimate, rounded up, so budgets never
+    # under-count when no tokenizer is available.
+    assert context_budget.count_tokens("weird-model", "x" * 400) == 134
+    assert context_budget.count_tokens("weird-model", "x") == 1
 
 
 def test_count_tokens_empty_is_zero() -> None:
