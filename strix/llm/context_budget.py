@@ -71,10 +71,11 @@ def count_tokens(model: str, text: str) -> int:
     """Token count for ``text`` under ``model``.
 
     LiteLLM's counter handles known tokenizers (and defaults to a tiktoken
-    encoding otherwise). If it still can't count, fall back to a *conservative*
-    estimate: token density varies, and dense text (code, base64, CJK) can run
-    well under 4 chars/token, so we assume ~3 to over-estimate rather than
-    under-estimate — an under-estimate would let a summary request be packed
+    encoding otherwise). If it still can't count, fall back to the UTF-8 byte
+    length as a guaranteed upper bound: byte-level BPE tokenizers (used by every
+    major provider) emit at least one byte per token, so token count can never
+    exceed the byte count. Over-counting is safe here — it makes budget checks
+    conservative — whereas any under-count could let a summary request be packed
     past the real context window and get rejected.
     """
     if not text:
@@ -82,4 +83,4 @@ def count_tokens(model: str, text: str) -> int:
     try:
         return int(litellm.token_counter(model=_lookup_key(model), text=text))
     except Exception:  # noqa: BLE001 - tokenizer may be unavailable for some models.
-        return -(-len(text) // 3)
+        return len(text.encode("utf-8"))

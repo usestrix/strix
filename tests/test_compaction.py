@@ -190,6 +190,19 @@ def test_fit_to_tokens_truncates_oversized_text(monkeypatch: pytest.MonkeyPatch)
     assert compaction._fit_to_tokens("m", "short", 500) == "short"
 
 
+def test_summary_output_tokens_capped_at_model_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    context = ContextSettings()
+    monkeypatch.setattr(compaction, "load_settings", lambda: SimpleNamespace(context=context))
+
+    monkeypatch.setattr(compaction, "output_limit", lambda _m: 1_000)
+    context.summary_max_tokens = 4_096
+    # Configured allowance above the model cap is clamped down to the cap.
+    assert compaction._summary_output_tokens("m") == 1_000
+    # Below the cap, the configured value is used unchanged.
+    context.summary_max_tokens = 500
+    assert compaction._summary_output_tokens("m") == 500
+
+
 @pytest.mark.asyncio
 async def test_maybe_compact_bounds_summary_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     # A tiny window with a huge head must not send an oversized summary request.

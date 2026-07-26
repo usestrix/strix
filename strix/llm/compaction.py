@@ -192,9 +192,18 @@ def _fit_to_tokens(model: str, text: str, max_tokens: int) -> str:
     return candidate
 
 
+def _summary_output_tokens(model: str) -> int:
+    """Summary output allowance, capped at the model's own output limit.
+
+    A configured ``summary_max_tokens`` above the model's cap would make the
+    provider reject the summary request, so compaction would silently fail and
+    leave the overflowing session unchanged.
+    """
+    return min(load_settings().context.summary_max_tokens, output_limit(model))
+
+
 def _summary_input_budget(model: str, previous: str | None) -> int:
     """Token room left for the head after instructions and the summary output."""
-    context = load_settings().context
     overhead = count_tokens(model, _SUMMARY_INSTRUCTIONS)
     if previous:
         overhead += count_tokens(model, previous)
@@ -202,7 +211,7 @@ def _summary_input_budget(model: str, previous: str | None) -> int:
     # the update instructions, etc.) that is not part of ``overhead``. Never
     # floor above the actual room: doing so would let the summary request
     # itself overflow a small window (and then compaction silently fails).
-    room = context_window(model) - context.summary_max_tokens - overhead - 256
+    room = context_window(model) - _summary_output_tokens(model) - overhead - 256
     return max(0, room)
 
 
@@ -300,7 +309,7 @@ async def maybe_compact(
     summary = await _summarize(
         model,
         _build_summary_prompt(serialized_head, previous),
-        context.summary_max_tokens,
+        _summary_output_tokens(model),
     )
     if summary is None:
         return False
