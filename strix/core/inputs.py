@@ -34,10 +34,12 @@ def _accepts_required_tool_choice(model_name: str | None) -> bool:
 
 
 def is_whitebox_scan(targets_info: list[dict[str, Any]]) -> bool:
-    """True iff any target puts source in the workspace (local tree or cloned repo).
+    """Return whether the targets represent a source-aware scan.
 
-    Mirrors ``collect_local_sources``: a ``repository`` target is source-aware
-    once it has been cloned, exactly like a ``local_code`` target.
+    A ``repository`` target is source-aware once cloned, like a ``local_code``
+    one. Derived from targets rather than ``local_sources`` because older
+    resumed runs may not have persisted the latter, while ``targets_info``
+    still describes the cloned repository in the reused sandbox.
     """
     return any(
         t.get("type") == "local_code" or (t.get("details") or {}).get("cloned_repo_path")

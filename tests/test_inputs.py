@@ -77,7 +77,7 @@ def test_is_whitebox_scan_for_cloned_repository_target() -> None:
 
 
 def test_is_whitebox_scan_matches_collect_local_sources() -> None:
-    """The flag must agree with whether source actually lands in the workspace.
+    """Keep whitebox classification aligned with source collection for supported targets.
 
     ``collect_local_sources`` is what puts code in ``/workspace``; deriving the
     whitebox flag from a narrower rule is how repo targets silently lost the
