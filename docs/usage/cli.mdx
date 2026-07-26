@@ -16,6 +16,7 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
 
   When the target is an API spec, Strix parses the declared endpoints (method, path, parameters, body fields, auth) into the agent's task and authorizes the spec's base URLs as in-scope hosts - so it tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
 
+Strix authorizes the base URLs the spec/collection declares (including those resolved from a Postman environment). If you also pass explicit `--target` hosts, they act as an allow-list that narrows scope to just those hosts, this is useful to keep the agent off example or production URLs a spec happens to declare.
   <Note>
     Fetching a Postman collection by id requires `POSTMAN_API_KEY`. Add `?env=<environment-uuid>` to also pull a Postman environment, which resolves `{{baseUrl}}` / token variables the collection references (e.g. `postman://<collection-uuid>?env=<environment-uid>`).
   </Note>
