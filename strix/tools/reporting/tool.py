@@ -324,6 +324,21 @@ async def _do_create(  # noqa: PLR0912
         }
 
 
+def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
+    """Return the (agent_id, agent_name) of the agent invoking this tool."""
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    raw_agent_id = inner.get("agent_id")
+    agent_id = raw_agent_id if isinstance(raw_agent_id, str) else None
+    agent_name: str | None = None
+    coordinator = inner.get("coordinator")
+    if agent_id is not None and coordinator is not None:
+        names = getattr(coordinator, "names", {})
+        if isinstance(names, dict):
+            raw_agent_name = names.get(agent_id)
+            agent_name = raw_agent_name if isinstance(raw_agent_name, str) else None
+    return agent_id, agent_name
+
+
 @function_tool(timeout=180, strict_mode=False)
 async def create_vulnerability_report(
     ctx: RunContextWrapper,
@@ -610,16 +625,7 @@ async def create_vulnerability_report(
             template engine's auto-escaping over string interpolation.
         fix_effort: "low"
     """
-    inner = ctx.context if isinstance(ctx.context, dict) else {}
-    raw_agent_id = inner.get("agent_id")
-    agent_id = raw_agent_id if isinstance(raw_agent_id, str) else None
-    agent_name = None
-    coordinator = inner.get("coordinator")
-    if agent_id is not None and coordinator is not None:
-        names = getattr(coordinator, "names", {})
-        if isinstance(names, dict):
-            raw_agent_name = names.get(agent_id)
-            agent_name = raw_agent_name if isinstance(raw_agent_name, str) else None
+    agent_id, agent_name = _caller_identity(ctx)
 
     result = await _do_create(
         title=title,
@@ -924,16 +930,7 @@ async def create_dependency_report(
         fix_effort: One of ``trivial`` / ``low`` / ``medium`` / ``high``
             (dependency upgrades are usually ``trivial``/``low``).
     """
-    inner = ctx.context if isinstance(ctx.context, dict) else {}
-    raw_agent_id = inner.get("agent_id")
-    agent_id = raw_agent_id if isinstance(raw_agent_id, str) else None
-    agent_name = None
-    coordinator = inner.get("coordinator")
-    if agent_id is not None and coordinator is not None:
-        names = getattr(coordinator, "names", {})
-        if isinstance(names, dict):
-            raw_agent_name = names.get(agent_id)
-            agent_name = raw_agent_name if isinstance(raw_agent_name, str) else None
+    agent_id, agent_name = _caller_identity(ctx)
 
     result = await _do_create_dependency(
         title=title,
@@ -1017,7 +1014,18 @@ def _report_matches_filters(
     return True
 
 
-def _to_report_summary_entry(report: dict[str, Any]) -> dict[str, Any]:
+def _mark_authorship(
+    entry: dict[str, Any], report: dict[str, Any], caller_agent_id: str | None
+) -> dict[str, Any]:
+    """Flag whether ``report`` was filed by the agent making this call."""
+    if caller_agent_id is not None and report.get("agent_id") == caller_agent_id:
+        entry["by_you"] = True
+    return entry
+
+
+def _to_report_summary_entry(
+    report: dict[str, Any], caller_agent_id: str | None = None
+) -> dict[str, Any]:
     entry = {
         field: report[field] for field in _REPORT_SUMMARY_FIELDS if report.get(field) is not None
     }
@@ -1029,7 +1037,7 @@ def _to_report_summary_entry(report: dict[str, Any]) -> dict[str, Any]:
             )
         else:
             entry["description_preview"] = description
-    return entry
+    return _mark_authorship(entry, report, caller_agent_id)
 
 
 def _severity_counts(reports: list[dict[str, Any]]) -> dict[str, int]:
@@ -1055,6 +1063,7 @@ def _do_list_reports(
     target: str | None,
     search: str | None,
     include_details: bool,
+    caller_agent_id: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     severity = (severity or "").strip().lower() or None
@@ -1098,7 +1107,12 @@ def _do_list_reports(
     ]
     matched.sort(key=lambda r: (_report_severity_rank(r), str(r.get("id", ""))))
 
-    reports = [dict(r) if include_details else _to_report_summary_entry(r) for r in matched]
+    reports = [
+        _mark_authorship(dict(r), r, caller_agent_id)
+        if include_details
+        else _to_report_summary_entry(r, caller_agent_id)
+        for r in matched
+    ]
     return {
         "success": True,
         "reports": reports,
@@ -1108,7 +1122,7 @@ def _do_list_reports(
     }
 
 
-def _do_get_report(report_id: str) -> dict[str, Any]:
+def _do_get_report(report_id: str, caller_agent_id: str | None = None) -> dict[str, Any]:
     report_id = (report_id or "").strip()
     if not report_id:
         return {"success": False, "error": "report_id cannot be empty", "report": None}
@@ -1125,7 +1139,10 @@ def _do_get_report(report_id: str) -> dict[str, Any]:
 
     for report in report_state.get_existing_vulnerabilities():
         if report.get("id") == report_id:
-            return {"success": True, "report": dict(report)}
+            return {
+                "success": True,
+                "report": _mark_authorship(dict(report), report, caller_agent_id),
+            }
     return {
         "success": False,
         "error": f"Report with id '{report_id}' not found",
@@ -1152,8 +1169,9 @@ async def list_reports(
 
     By default each entry is compact: ``id``, ``title``, ``severity``,
     ``cvss``, ``finding_class``, ``cve`` / ``cwe``, ``target`` /
-    ``endpoint``, ``fix_effort``, ``agent_name``, ``timestamp``, plus a
-    280-char ``description_preview``. The response also carries
+    ``endpoint``, ``fix_effort``, ``agent_name`` (who filed it), ``timestamp``,
+    plus a 280-char ``description_preview``. Entries you filed yourself are
+    flagged ``by_you: true``. The response also carries
     ``total_count`` and ``severity_counts`` (counts per severity across all
     reports, ignoring filters). Set ``include_details=True`` for full report
     bodies (PoC, evidence, remediation, code_locations) — token-expensive;
@@ -1176,6 +1194,7 @@ async def list_reports(
         include_details: When False (default) entries are compact; when
             True full report bodies are returned.
     """
+    caller_agent_id, _ = _caller_identity(ctx)
     return json.dumps(
         await _run_report_reader(
             _do_list_reports,
@@ -1184,6 +1203,7 @@ async def list_reports(
             target=target,
             search=search,
             include_details=include_details,
+            caller_agent_id=caller_agent_id,
         ),
         ensure_ascii=False,
         default=str,
@@ -1206,8 +1226,9 @@ async def get_report(ctx: RunContextWrapper, report_id: str) -> str:
             ``create_vulnerability_report`` / ``create_dependency_report``
             response (format ``vuln-NNNN``).
     """
+    caller_agent_id, _ = _caller_identity(ctx)
     return json.dumps(
-        await _run_report_reader(_do_get_report, report_id),
+        await _run_report_reader(_do_get_report, report_id, caller_agent_id),
         ensure_ascii=False,
         default=str,
     )

@@ -447,6 +447,13 @@ def _severity_style(severity: Any) -> str:
     return _LIST_SEVERITY_COLORS.get(str(severity or "").lower(), "#d97706")
 
 
+def _author_label(report: dict[str, Any]) -> str:
+    if report.get("by_you"):
+        return "you"
+    agent_name = report.get("agent_name")
+    return str(agent_name).strip() if agent_name else ""
+
+
 @register_tool_renderer
 class ListReportsRenderer(BaseToolRenderer):
     tool_name: ClassVar[str] = "list_reports"
@@ -488,6 +495,9 @@ class ListReportsRenderer(BaseToolRenderer):
                     if rid:
                         text.append(f"{rid} ", style="dim")
                     text.append(title)
+                    author = _author_label(report)
+                    if author:
+                        text.append(f" ({author})", style="dim")
         else:
             text.append("\n  ")
             text.append("Loading...", style="dim")
@@ -521,6 +531,9 @@ class GetReportRenderer(BaseToolRenderer):
             if rid:
                 text.append(f"{rid} ", style="dim")
             text.append(title)
+            author = _author_label(report)
+            if author:
+                text.append(f" ({author})", style="dim")
             target = str(report.get("target", "")).strip()
             if target:
                 text.append("\n  ")

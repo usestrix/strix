@@ -21,6 +21,14 @@ interface ReportEntry {
   method?: string;
   description_preview?: string;
   description?: string;
+  agent_name?: string;
+  by_you?: boolean;
+}
+
+function authorTag(r: ReportEntry) {
+  if (!r.agent_name && !r.by_you) return null;
+  const label = r.by_you ? "you" : r.agent_name;
+  return <span className="text-[#666] text-xs ml-1.5">({label})</span>;
 }
 
 function sevBadge(severity: string | undefined) {
@@ -46,6 +54,9 @@ export default function ReportListRenderer({ toolName, result }: ToolRendererPro
               {report.id && <span className="text-[#555] font-mono text-[13px]">{report.id}</span>}
               {report.cve && <span className="text-[#888] font-mono text-[13px]">{report.cve}</span>}
               {report.cwe && <span className="text-[#888] font-mono text-[13px]">{report.cwe}</span>}
+              {(report.agent_name || report.by_you) && (
+                <span className="text-[#666] text-[13px]">{report.by_you ? "you" : report.agent_name}</span>
+              )}
             </div>
             {report.title && <div className="text-[15px] text-white/80 font-semibold">{report.title}</div>}
             {(report.target || report.endpoint) && (
@@ -92,6 +103,7 @@ export default function ReportListRenderer({ toolName, result }: ToolRendererPro
               {sevBadge(r.severity)}
               {r.id && <span className="text-[#555] font-mono ml-1.5">{r.id}</span>}
               <span className="text-[#999] ml-1.5">{r.title ?? "(untitled)"}</span>
+              {authorTag(r)}
               {(r.target || r.endpoint) && (
                 <div className="ml-3 text-[#666] font-mono text-xs">
                   {r.target}{r.endpoint ? ` ${r.method ?? ""} ${r.endpoint}` : ""}

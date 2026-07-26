@@ -49,6 +49,9 @@ export default function NotesRenderer({ toolName, args, result }: ToolRendererPr
             <div className="mt-1.5 text-[#999] text-[13px]">
               {note.title ?? "(untitled)"}
               <span className="text-[#555] ml-1">({note.category ?? "general"})</span>
+              {(note.by_you || note.agent_name) && (
+                <span className="text-[#666] ml-1 text-xs">by {note.by_you ? "you" : note.agent_name}</span>
+              )}
             </div>
             {note.content && <div className="mt-1"><Markdown text={note.content} /></div>}
           </>
@@ -74,6 +77,9 @@ export default function NotesRenderer({ toolName, args, result }: ToolRendererPr
                 <span className="text-[#555] mr-1">-</span>
                 <span className="text-[#999]">{n.title ?? "(untitled)"}</span>
                 <span className="text-[#555] ml-1">({n.category ?? "general"})</span>
+                {(n.by_you || n.agent_name) && (
+                  <span className="text-[#666] ml-1 text-xs">by {n.by_you ? "you" : n.agent_name}</span>
+                )}
                 {n.content && <div className="ml-3"><Markdown text={n.content} /></div>}
               </div>
             ))}

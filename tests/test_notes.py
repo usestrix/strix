@@ -32,7 +32,7 @@ def test_create_note_retries_on_note_id_collision(monkeypatch: pytest.MonkeyPatc
             uuid.UUID("12345600-0000-4000-8000-000000000000"),
         ]
     )
-    monkeypatch.setattr(notes_tools.uuid, "uuid4", lambda: next(generated_ids))
+    monkeypatch.setattr("strix.tools.notes.tools.uuid.uuid4", lambda: next(generated_ids))
 
     first = notes_tools._create_note_impl("first", "original content")
     second = notes_tools._create_note_impl("second", "new content")
@@ -51,8 +51,7 @@ def test_create_note_returns_error_after_repeated_note_id_collisions(
 ) -> None:
     monkeypatch.setattr(notes_tools, "_NOTE_ID_GENERATION_ATTEMPTS", 2)
     monkeypatch.setattr(
-        notes_tools.uuid,
-        "uuid4",
+        "strix.tools.notes.tools.uuid.uuid4",
         lambda: uuid.UUID("abcdef00-0000-4000-8000-000000000000"),
     )
     notes_tools._notes_storage["abcdef"] = {"content": "existing"}
@@ -65,3 +64,40 @@ def test_create_note_returns_error_after_repeated_note_id_collisions(
         "note_id": None,
     }
     assert notes_tools._notes_storage == {"abcdef": {"content": "existing"}}
+
+
+def test_create_note_records_author() -> None:
+    result = notes_tools._create_note_impl("t", "c", agent_id="agent-1", agent_name="Agent One")
+    note = notes_tools._notes_storage[result["note_id"]]
+    assert note["agent_id"] == "agent-1"
+    assert note["agent_name"] == "Agent One"
+
+
+def test_list_notes_exposes_author_and_flags_caller() -> None:
+    notes_tools._create_note_impl("mine", "c", agent_id="agent-1", agent_name="Agent One")
+    notes_tools._create_note_impl("theirs", "c", agent_id="agent-2", agent_name="Agent Two")
+
+    result = notes_tools._list_notes_impl(caller_agent_id="agent-1")
+    by_title = {n["title"]: n for n in result["notes"]}
+    assert by_title["mine"]["agent_name"] == "Agent One"
+    assert by_title["mine"].get("by_you") is True
+    assert by_title["theirs"]["agent_name"] == "Agent Two"
+    assert "by_you" not in by_title["theirs"]
+
+
+def test_list_notes_without_author_has_no_attribution() -> None:
+    notes_tools._create_note_impl("anon", "c")
+    entry = notes_tools._list_notes_impl(caller_agent_id="agent-1")["notes"][0]
+    assert "agent_name" not in entry
+    assert "by_you" not in entry
+
+
+def test_get_note_flags_caller_ownership() -> None:
+    note_id = notes_tools._create_note_impl(
+        "mine", "c", agent_id="agent-1", agent_name="Agent One"
+    )["note_id"]
+    mine = notes_tools._get_note_impl(note_id, caller_agent_id="agent-1")
+    assert mine["note"].get("by_you") is True
+    assert mine["note"]["agent_name"] == "Agent One"
+    theirs = notes_tools._get_note_impl(note_id, caller_agent_id="agent-9")
+    assert "by_you" not in theirs["note"]

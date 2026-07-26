@@ -186,3 +186,45 @@ def test_tool_descriptions_mention_read_only() -> None:
     assert "read-only" in list_reports.description.lower()
     assert "get_report" in list_reports.description
     assert "read-only" in get_report.description.lower()
+
+
+def test_list_reports_flags_callers_own_reports(report_state: ReportState) -> None:
+    report_state.add_vulnerability_report(
+        title="Mine", severity="high", target="t", agent_id="agent-1", agent_name="Agent One"
+    )
+    report_state.add_vulnerability_report(
+        title="Theirs", severity="low", target="t", agent_id="agent-2", agent_name="Agent Two"
+    )
+    result = _do_list_reports(
+        severity=None,
+        finding_class=None,
+        target=None,
+        search=None,
+        include_details=False,
+        caller_agent_id="agent-1",
+    )
+    by_title = {r["title"]: r for r in result["reports"]}
+    assert by_title["Mine"].get("by_you") is True
+    assert by_title["Mine"]["agent_name"] == "Agent One"
+    assert "by_you" not in by_title["Theirs"]
+    assert by_title["Theirs"]["agent_name"] == "Agent Two"
+
+
+def test_list_reports_no_caller_marks_nothing(report_state: ReportState) -> None:
+    report_state.add_vulnerability_report(
+        title="Mine", severity="high", target="t", agent_id="agent-1", agent_name="Agent One"
+    )
+    result = _do_list_reports(
+        severity=None, finding_class=None, target=None, search=None, include_details=False
+    )
+    assert "by_you" not in result["reports"][0]
+
+
+def test_get_report_flags_caller_ownership(report_state: ReportState) -> None:
+    report_state.add_vulnerability_report(
+        title="Mine", severity="high", target="t", agent_id="agent-1", agent_name="Agent One"
+    )
+    mine = _do_get_report("vuln-0001", caller_agent_id="agent-1")
+    assert mine["report"].get("by_you") is True
+    theirs = _do_get_report("vuln-0001", caller_agent_id="agent-9")
+    assert "by_you" not in theirs["report"]
