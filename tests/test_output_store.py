@@ -129,9 +129,7 @@ async def test_workspace_writer_is_preferred_over_host_store(tmp_path: Path) -> 
 
     configure_spill_writer(writer)
     text = "\n".join(f"secret-line-{i}" for i in range(1000))
-    bounded = await bound_and_store(
-        text, max_lines=10, max_bytes=1_000_000, allow_workspace_spill=True
-    )
+    bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
 
     assert WORKSPACE_SPILL_DIR in bounded
     assert "exec_command" in bounded
@@ -143,29 +141,6 @@ async def test_workspace_writer_is_preferred_over_host_store(tmp_path: Path) -> 
     assert len(bounded.encode("utf-8")) <= 1_000_000
 
 
-async def test_orchestrator_side_output_never_spills_to_workspace(tmp_path: Path) -> None:
-    # Orchestrator-side tool output (allow_workspace_spill=False, the default)
-    # must never be written into the hostile sandbox, even with a writer set.
-    configure_output_store(tmp_path)
-    written: dict[str, str] = {}
-
-    async def writer(output_id: str, text: str) -> str | None:
-        written[output_id] = text
-        return f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
-
-    configure_spill_writer(writer)
-    text = "\n".join(f"orchestrator-secret-{i}" for i in range(1000))
-    bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
-
-    # The writer was not called; the output went to the host-side store instead.
-    assert written == {}
-    assert WORKSPACE_SPILL_DIR not in bounded
-    match = re.search(r'output_id="([0-9a-f]{32})"', bounded)
-    assert match is not None, bounded
-    full = read_stored_output(match.group(1), offset=0, limit=1_000_000)
-    assert full.splitlines() == text.splitlines()
-
-
 async def test_workspace_writer_failure_falls_back_to_host_store(tmp_path: Path) -> None:
     configure_output_store(tmp_path)
 
@@ -174,9 +149,7 @@ async def test_workspace_writer_failure_falls_back_to_host_store(tmp_path: Path)
 
     configure_spill_writer(failing_writer)
     text = "\n".join(f"line-{i}" for i in range(1000))
-    bounded = await bound_and_store(
-        text, max_lines=10, max_bytes=1_000_000, allow_workspace_spill=True
-    )
+    bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
 
     # Falls back to the host-side store + read_tool_output pointer.
     match = re.search(r'output_id="([0-9a-f]{32})"', bounded)

@@ -224,21 +224,13 @@ def store_full_output(text: str, *, output_id: str | None = None) -> str | None:
     return output_id
 
 
-async def bound_and_store(
-    text: str,
-    *,
-    max_lines: int,
-    max_bytes: int,
-    allow_workspace_spill: bool = False,
-) -> str:
+async def bound_and_store(text: str, *, max_lines: int, max_bytes: int) -> str:
     """Like :func:`bound_text`, but spill the full output and point at it.
 
-    When ``allow_workspace_spill`` is set (only for sandbox-origin tools whose
-    output already lived inside the sandbox), prefers the sandbox-workspace
-    writer so the agent reads the file with its own tools. Orchestrator-side
-    tool output must never be written into the hostile sandbox, so it always
-    uses the host-side store + ``read_tool_output`` fallback. The fallback is
-    also used when no writer is configured or the workspace write fails.
+    Always prefers the sandbox-workspace writer so the agent reads the file with
+    its own tools (``exec_command`` etc.). Falls back to the host-side store +
+    ``read_tool_output`` only when no writer is configured (unit tests, chat
+    mode) or the workspace write fails.
     """
     parts = _head_tail(
         text,
@@ -251,7 +243,7 @@ async def bound_and_store(
     head, tail, dropped_lines, dropped_bytes = parts
     output_id = uuid.uuid4().hex
 
-    writer = _spill.get("writer") if allow_workspace_spill else None
+    writer = _spill.get("writer")
     if writer is not None:
         path = await writer(output_id, text)
         if path is not None:

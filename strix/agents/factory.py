@@ -116,16 +116,11 @@ def _tool_output_limits() -> tuple[int, int]:
     return context.tool_output_max_lines, context.tool_output_max_bytes
 
 
-async def _bound_result(result: Any, *, workspace_spill: bool) -> Any:
+async def _bound_result(result: Any) -> Any:
     if not isinstance(result, str):
         return result
     max_lines, max_bytes = _tool_output_limits()
-    return await bound_and_store(
-        result,
-        max_lines=max_lines,
-        max_bytes=max_bytes,
-        allow_workspace_spill=workspace_spill,
-    )
+    return await bound_and_store(result, max_lines=max_lines, max_bytes=max_bytes)
 
 
 def _format_tool_error(exc: Exception) -> str:
@@ -134,13 +129,8 @@ def _format_tool_error(exc: Exception) -> str:
     return bound_text(message, max_lines=max_lines, max_bytes=max_bytes)
 
 
-def _with_bounded_result(tool: FunctionTool, *, workspace_spill: bool = False) -> FunctionTool:
+def _with_bounded_result(tool: FunctionTool) -> FunctionTool:
     """Cap the size of a tool's result before it enters agent history.
-
-    ``workspace_spill`` is only enabled for sandbox-origin tools (shell /
-    filesystem), whose output already lived inside the sandbox; orchestrator-side
-    tools default to the host-side store so their output is never written into
-    the hostile sandbox.
 
     Idempotent: base tools are shared singletons reused across every agent, so
     the guard prevents stacking the wrapper on repeated ``build_strix_agent``
@@ -151,25 +141,19 @@ def _with_bounded_result(tool: FunctionTool, *, workspace_spill: bool = False) -
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
-        return await _bound_result(
-            await invoke_tool(ctx, raw_input), workspace_spill=workspace_spill
-        )
+        return await _bound_result(await invoke_tool(ctx, raw_input))
 
     tool.on_invoke_tool = invoke
     tool._strix_bounded = True  # type: ignore[attr-defined]
     return tool
 
 
-def _function_tool_with_error_result(
-    tool: FunctionTool, *, workspace_spill: bool = False
-) -> FunctionTool:
+def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
-            return await _bound_result(
-                await invoke_tool(ctx, raw_input), workspace_spill=workspace_spill
-            )
+            return await _bound_result(await invoke_tool(ctx, raw_input))
         except Exception as exc:  # noqa: BLE001 - tool errors should be model-visible results.
             logger.debug("Tool %s failed; returning error as result", tool.name, exc_info=True)
             return _format_tool_error(exc)
@@ -178,17 +162,13 @@ def _function_tool_with_error_result(
     return tool
 
 
-def _custom_tool_as_function_tool(
-    tool: CustomTool, *, workspace_spill: bool = False
-) -> FunctionTool:
+def _custom_tool_as_function_tool(tool: CustomTool) -> FunctionTool:
     async def invoke(ctx: Any, raw_input: str) -> Any:
         custom_input = _extract_custom_input(tool, raw_input)
         if not custom_input:
             return f"`{_custom_tool_input_field(tool)}` must be a non-empty string."
         try:
-            return await _bound_result(
-                await tool.on_invoke_tool(ctx, custom_input), workspace_spill=workspace_spill
-            )
+            return await _bound_result(await tool.on_invoke_tool(ctx, custom_input))
         except Exception as exc:  # noqa: BLE001 - matches SDK CustomTool error-as-result behavior.
             logger.debug("Tool %s failed; returning error as result", tool.name, exc_info=True)
             return _format_tool_error(exc)
@@ -220,7 +200,7 @@ def _custom_tool_as_function_tool(
     )
 
 
-def _bound_custom_tool(tool: CustomTool, *, workspace_spill: bool = False) -> CustomTool:
+def _bound_custom_tool(tool: CustomTool) -> CustomTool:
     """Bound a native ``CustomTool`` result in place.
 
     Chat-completions mode converts filesystem ``CustomTool``s to ``FunctionTool``s
@@ -231,29 +211,25 @@ def _bound_custom_tool(tool: CustomTool, *, workspace_spill: bool = False) -> Cu
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
-        return await _bound_result(
-            await invoke_tool(ctx, raw_input), workspace_spill=workspace_spill
-        )
+        return await _bound_result(await invoke_tool(ctx, raw_input))
 
     tool.on_invoke_tool = invoke
     return tool
 
 
 def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None:
-    # Filesystem tools are sandbox-origin: their output already lived inside the
-    # sandbox, so an oversized read may spill back into the workspace.
     for name, tool in vars(toolset).items():
         if chat_completions:
             if isinstance(tool, CustomTool):
-                setattr(toolset, name, _custom_tool_as_function_tool(tool, workspace_spill=True))
+                setattr(toolset, name, _custom_tool_as_function_tool(tool))
             elif isinstance(tool, FunctionTool):
-                setattr(toolset, name, _function_tool_with_error_result(tool, workspace_spill=True))
+                setattr(toolset, name, _function_tool_with_error_result(tool))
         # Responses-API path: keep tools native but still bound their output so
         # filesystem reads can't exhaust the context window on later turns.
         elif isinstance(tool, CustomTool):
-            setattr(toolset, name, _bound_custom_tool(tool, workspace_spill=True))
+            setattr(toolset, name, _bound_custom_tool(tool))
         elif isinstance(tool, FunctionTool):
-            setattr(toolset, name, _with_bounded_result(tool, workspace_spill=True))
+            setattr(toolset, name, _with_bounded_result(tool))
 
 
 def _make_filesystem_configurator(*, chat_completions: bool) -> Any:
