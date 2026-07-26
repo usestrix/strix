@@ -258,24 +258,32 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = _PAGE_MA
     start = _boundary_offset(path, max(0, offset)) if offset > 0 else 0
     if start >= size:
         return ""
-    # Reserve the continuation hint's bytes out of the effective ceiling so the
-    # *complete* response (content + hint) honours both the caller's ``limit``
-    # and the global page cap — retrieval bypasses the result-bounding wrapper,
-    # so this is the only ceiling. next_offset can never exceed the file size, so
-    # formatting with ``size`` is an exact upper bound on the hint length. Floor
-    # content at 4 bytes (the max UTF-8 char length) so a page always makes
-    # progress past one char even when ``limit`` is smaller than the hint.
+
+    effective = min(max(4, limit), _PAGE_MAX_BYTES)
+    # A final page carries no continuation hint, so the whole remaining output
+    # can use the budget and any limit is honoured exactly.
+    if size - start <= effective:
+        with path.open("rb") as handle:
+            handle.seek(start)
+            return handle.read().decode("utf-8", errors="replace")
+
+    # A non-final page's complete response is content + a continuation hint, and
+    # the whole thing must fit ``effective``. next_offset can never exceed the
+    # file size, so formatting with ``size`` is an exact upper bound on the hint.
+    # A page needs at least one char (4 bytes) of content to make progress, so a
+    # limit too small to hold that plus the hint is rejected rather than silently
+    # exceeded.
     hint_reserve = len(_CONTINUATION_HINT.format(output_id=output_id, offset=size))
-    content_budget = max(4, min(max(4, limit), _PAGE_MAX_BYTES) - hint_reserve)
+    content_budget = effective - hint_reserve
+    if content_budget < 4:
+        return (
+            f"limit={limit} is too small to page this output; "
+            f"request at least {hint_reserve + 4} bytes."
+        )
     with path.open("rb") as handle:
         handle.seek(start)
-        chunk = handle.read(content_budget)
-
-    has_more = start + len(chunk) < size
-    if has_more:
-        chunk = _trim_incomplete_utf8_tail(chunk)
-    shown = chunk.decode("utf-8", errors="replace")
-    if has_more:
-        next_offset = start + len(chunk)
-        shown += _CONTINUATION_HINT.format(output_id=output_id, offset=next_offset)
-    return shown
+        chunk = _trim_incomplete_utf8_tail(handle.read(content_budget))
+    next_offset = start + len(chunk)
+    return chunk.decode("utf-8", errors="replace") + _CONTINUATION_HINT.format(
+        output_id=output_id, offset=next_offset
+    )

@@ -125,6 +125,20 @@ def test_read_stored_output_paginates(tmp_path: Path) -> None:
     assert match is not None and int(match.group(1)) > 0
 
 
+def test_read_stored_output_rejects_limit_too_small_for_a_page(tmp_path: Path) -> None:
+    # A non-final page needs room for content plus the continuation hint; a limit
+    # too small to hold both is rejected rather than silently exceeded.
+    configure_output_store(tmp_path)
+    text = "\n".join(str(i) for i in range(1000))
+    output_id = re.search(
+        r'output_id="([0-9a-f]{32})"',
+        bound_and_store(text, max_lines=4, max_bytes=1_000_000),
+    )
+    assert output_id is not None
+    result = read_stored_output(output_id.group(1), offset=0, limit=10)
+    assert "too small" in result
+
+
 def test_read_stored_output_page_including_hint_stays_within_ceiling(tmp_path: Path) -> None:
     # A full non-final page plus its continuation hint must not exceed the page
     # ceiling — retrieval bypasses the general result-bounding wrapper.
