@@ -1161,11 +1161,16 @@ async def list_reports(
 ) -> str:
     """List vulnerability reports filed so far in this scan — metadata-first.
 
+    **For the orchestrator / root agent.** This is an orchestration tool
+    for tracking scan-wide coverage and assembling the final report — leaf
+    / specialist agents do their own testing and file findings; they should
+    NOT call this. If you are a subagent, ignore it and focus on your task.
+
     Reports are shared across **every** agent in the scan, so this returns
-    findings filed by any agent (root or child), not just your own. Use it
-    to track progress, avoid re-testing already-covered ground, and — as
-    the root agent — build the ``finish_scan`` executive summary and reason
-    about attack-chaining across confirmed findings.
+    findings filed by any agent (root or child), not just your own. As the
+    root agent, use it to track progress, avoid dispatching work on
+    already-covered ground, reason about attack-chaining across confirmed
+    findings, and build the ``finish_scan`` executive summary.
 
     By default each entry is compact: ``id``, ``title``, ``severity``,
     ``cvss``, ``finding_class``, ``cve`` / ``cwe``, ``target`` /

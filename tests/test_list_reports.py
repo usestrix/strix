@@ -228,3 +228,132 @@ def test_get_report_flags_caller_ownership(report_state: ReportState) -> None:
     assert mine["report"].get("by_you") is True
     theirs = _do_get_report("vuln-0001", caller_agent_id="agent-9")
     assert "by_you" not in theirs["report"]
+
+
+def test_list_reports_docstring_scopes_to_orchestrator() -> None:
+    desc = list_reports.description.lower()
+    assert "orchestrator" in desc or "root agent" in desc
+
+
+@pytest.mark.parametrize("sev", ["CRITICAL", "Critical", "critical"])
+def test_list_reports_severity_filter_case_insensitive(report_state: ReportState, sev: str) -> None:
+    _seed(report_state)
+    result = _do_list_reports(
+        severity=sev, finding_class=None, target=None, search=None, include_details=False
+    )
+    assert [r["title"] for r in result["reports"]] == ["SQL Injection in login"]
+
+
+def test_list_reports_finding_class_filter_case_insensitive(report_state: ReportState) -> None:
+    _seed(report_state)
+    result = _do_list_reports(
+        severity=None,
+        finding_class="Dependency_CVE",
+        target=None,
+        search=None,
+        include_details=False,
+    )
+    assert result["filtered_count"] == 1
+
+
+def test_list_reports_target_filter_matches_domain_and_is_case_insensitive(
+    report_state: ReportState,
+) -> None:
+    _seed(report_state)
+    # substring of the `target` field (not the endpoint), mixed case
+    result = _do_list_reports(
+        severity=None,
+        finding_class=None,
+        target="APP.EXAMPLE.COM",
+        search=None,
+        include_details=False,
+    )
+    assert {r["title"] for r in result["reports"]} == {
+        "Reflected XSS in search",
+        "SQL Injection in login",
+    }
+
+
+def test_list_reports_search_matches_title_case_insensitive(report_state: ReportState) -> None:
+    _seed(report_state)
+    result = _do_list_reports(
+        severity=None, finding_class=None, target=None, search="INJECTION", include_details=False
+    )
+    # matches title "SQL Injection in login" and description "Command injection..."
+    assert {r["title"] for r in result["reports"]} == {
+        "SQL Injection in login",
+        "CVE-2021-23337 in lodash 4.17.20",
+    }
+
+
+def test_list_reports_filters_compose(report_state: ReportState) -> None:
+    _seed(report_state)
+    result = _do_list_reports(
+        severity="high",
+        finding_class="dependency_cve",
+        target="package.json",
+        search="lodash",
+        include_details=False,
+    )
+    assert [r["cve"] for r in result["reports"]] == ["CVE-2021-23337"]
+
+
+def test_list_reports_no_match_returns_empty_success(report_state: ReportState) -> None:
+    _seed(report_state)
+    result = _do_list_reports(
+        severity=None,
+        finding_class=None,
+        target=None,
+        search="nonexistent-xyz",
+        include_details=False,
+    )
+    assert result["success"] is True
+    assert result["filtered_count"] == 0
+    assert result["reports"] == []
+    # counts still reflect all reports
+    assert result["total_count"] == 3
+
+
+def test_list_reports_description_preview_truncated(report_state: ReportState) -> None:
+    long_desc = "A" * 400
+    report_state.add_vulnerability_report(
+        title="Long", severity="low", description=long_desc, target="t"
+    )
+    result = _do_list_reports(
+        severity=None, finding_class=None, target=None, search=None, include_details=False
+    )
+    preview = result["reports"][0]["description_preview"]
+    assert preview.endswith("...")
+    assert len(preview) <= 284  # 280 chars + "..."
+
+
+def test_list_reports_severity_counts_ordered_with_none_bucket(
+    report_state: ReportState,
+) -> None:
+    report_state.add_vulnerability_report(title="A", severity="low", target="t")
+    report_state.add_vulnerability_report(title="B", severity="critical", target="t")
+    report_state.add_vulnerability_report(title="C", severity="", target="t")
+    result = _do_list_reports(
+        severity=None, finding_class=None, target=None, search=None, include_details=False
+    )
+    # ordered critical -> ... -> none
+    assert list(result["severity_counts"].keys()) == ["critical", "low", "none"]
+
+
+@pytest.mark.usefixtures("report_state")
+def test_list_reports_no_state_returns_warning(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("strix.report.state.get_global_report_state", lambda: None)
+    result = _do_list_reports(
+        severity=None, finding_class=None, target=None, search=None, include_details=False
+    )
+    assert result["success"] is True
+    assert result["reports"] == []
+    assert "warning" in result
+
+
+@pytest.mark.usefixtures("report_state")
+def test_get_report_no_state_returns_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("strix.report.state.get_global_report_state", lambda: None)
+    result = _do_get_report("vuln-0001")
+    assert result["success"] is False
+    assert result["report"] is None
