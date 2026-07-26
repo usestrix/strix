@@ -952,7 +952,7 @@ def main() -> None:
     # `strix view [<run>]` is a viewer-only subcommand, dispatched before the
     # scan argument parser (which requires a target) and before any scan setup.
     if len(sys.argv) > 1 and sys.argv[1] == "view":
-        from strix.viewer.cli import run_view
+        from strix.interface.viewer.cli import run_view
 
         run_view(sys.argv[2:])
         return

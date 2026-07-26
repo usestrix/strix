@@ -10,7 +10,7 @@ import pytest
 from pypdf import PdfReader
 from pypdf.errors import WrongPasswordError
 
-from strix.viewer.report_pdf import (
+from strix.interface.viewer.report_pdf import (
     build_encrypted_report,
     encrypt_pdf,
     generate_password,
@@ -91,7 +91,7 @@ def test_wrong_password_is_rejected(tmp_path: Path) -> None:
     run_dir = _make_run(tmp_path)
     encrypted = encrypt_pdf(generate_report_pdf(run_dir), "correct-horse-battery")
     with pytest.raises(WrongPasswordError):
-        PdfReader(BytesIO(encrypted), password="not-the-password")
+        PdfReader(BytesIO(encrypted), password="not-the-password")  # nosec B106
 
 
 def test_build_encrypted_report(tmp_path: Path) -> None:

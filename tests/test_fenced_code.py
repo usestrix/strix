@@ -4,13 +4,13 @@ from __future__ import annotations
 
 from pygments.lexers import BashLexer, PythonLexer
 
+from strix.interface.viewer.report_pdf import _strip_code_fence
 from strix.report.writer import (
     guess_language_name,
     parse_fenced_code,
     resolve_lexer,
     safe_fence,
 )
-from strix.viewer.report_pdf import _strip_code_fence
 
 
 def test_parse_fenced_code_extracts_language_and_body() -> None:

@@ -16,8 +16,8 @@ from strix.core.paths import (
     run_record_path,
     runs_base_dir,
 )
-from strix.viewer.server import authorized_url, bundle_is_built, serve
-from strix.viewer.transcript import read_run_summary
+from strix.interface.viewer.server import authorized_url, bundle_is_built, serve
+from strix.interface.viewer.transcript import read_run_summary
 
 
 if TYPE_CHECKING:
@@ -58,7 +58,7 @@ def run_view(argv: list[str]) -> None:
     if not bundle_is_built():
         console.print(
             "[bold red]Viewer UI is not built.[/]\n"
-            "Build it with: [cyan]cd strix/viewer/frontend && npm ci && npm run build[/]"
+            "Build it with: [cyan]cd strix/interface/viewer/frontend && npm ci && npm run build[/]"
         )
         raise SystemExit(1)
 

@@ -6,7 +6,7 @@ directly from the run's on-disk files. No cloud dependency, no file picker.
 
 from __future__ import annotations
 
-from strix.viewer.server import serve
+from strix.interface.viewer.server import serve
 
 
 __all__ = ["serve"]

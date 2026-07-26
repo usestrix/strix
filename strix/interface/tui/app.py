@@ -1862,7 +1862,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 webbrowser.open(self._viewer_url)
             return
         try:
-            from strix.viewer.server import authorized_url, bundle_is_built, serve
+            from strix.interface.viewer.server import authorized_url, bundle_is_built, serve
 
             if not bundle_is_built():
                 self._set_viewer_cta("[#eab308]Viewer UI not built[/]")

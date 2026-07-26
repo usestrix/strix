@@ -38,7 +38,7 @@ from reportlab.platypus import (
     TableStyle,
 )
 
-from strix.viewer.transcript import (
+from strix.interface.viewer.transcript import (
     primary_target,
     read_run_summary,
     read_vulnerabilities,

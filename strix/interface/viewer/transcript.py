@@ -44,8 +44,8 @@ def build_run_state(run_dir: Path) -> dict[str, Any]:
     Reuses the Textual-free ``TuiLiveView`` projection so the viewer and the TUI
     share one parser for ``agents.json`` + ``agents.db`` and never drift.
     """
-    # Imported lazily so importing strix.viewer does not eagerly pull the TUI.
-    from strix.interface.tui.live_view import TuiLiveView  # noqa: PLC0415
+    # Imported lazily so importing strix.interface.viewer does not eagerly pull the TUI.
+    from strix.interface.tui.live_view import TuiLiveView
 
     view = TuiLiveView()
     view.hydrate_from_run_dir(run_dir)

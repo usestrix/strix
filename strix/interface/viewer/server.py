@@ -27,8 +27,8 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from strix.core.paths import run_record_path
-from strix.viewer import auth
-from strix.viewer.transcript import (
+from strix.interface.viewer import auth
+from strix.interface.viewer.transcript import (
     build_run_state,
     primary_target,
     read_report_markdown,
@@ -367,7 +367,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.CONFLICT, {"error": "run_not_finished"})
                 return
 
-            from strix.viewer.report_pdf import build_encrypted_report
+            from strix.interface.viewer.report_pdf import build_encrypted_report
 
             pdf_bytes, password, filename = build_encrypted_report(run_dir)
             run_name = str(summary.get("run_name") or run_dir.name)

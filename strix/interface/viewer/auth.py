@@ -4,7 +4,7 @@ The local viewer proxies email verification and encrypted-report delivery to
 the Strix relay (``STRIX_APP_URL``). The browser never talks to the relay
 directly, and the report password generated locally is never sent to it.
 
-State lives in ``~/.strix/viewer-auth.json`` (0600). ``is_verified`` is a local
+State lives in ``~/.strix/interface/viewer-auth.json`` (0600). ``is_verified`` is a local
 flag that unlocks browsing the run history list; the relay still enforces token
 expiry when a report is actually sent.
 """
@@ -155,7 +155,7 @@ def _post_json(path: str, payload: dict[str, Any], *, timeout: int) -> tuple[int
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310  # nosec B310
             return response.status, _parse_body(response.read())
     except urllib.error.HTTPError as exc:
         return exc.code, _parse_body(exc.read())
