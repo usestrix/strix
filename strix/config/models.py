@@ -2,23 +2,38 @@
 
 from __future__ import annotations
 
+import contextlib
+import inspect
 import os
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
-from agents import set_default_openai_api, set_default_openai_key, set_tracing_disabled
+from agents import (
+    set_default_openai_api,
+    set_default_openai_key,
+    set_tracing_disabled,
+)
+from agents.model_settings import ModelSettings
 from agents.models.multi_provider import MultiProvider
+from agents.models.openai_responses import OpenAIResponsesModel
 from agents.retry import (
     ModelRetryBackoffSettings,
     ModelRetrySettings,
     RetryPolicyContext,
     retry_policies,
 )
+from openai.types.shared import Reasoning
+
+from strix.config import codex
+from strix.config.loader import load_settings
 
 
 if TYPE_CHECKING:
-    from agents.models.interface import ModelProvider
+    from collections.abc import AsyncIterator
 
-    from strix.config.settings import Settings
+    from agents.models.interface import Model, ModelProvider
+    from openai import AsyncOpenAI
+
+    from strix.config.settings import ReasoningEffort, Settings
 
 
 def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
@@ -33,7 +48,91 @@ def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
     normalized = context.normalized
     if normalized.is_abort:
         return False
+    if codex.is_content_guardrail_error(context.error):
+        return False
     return normalized.status_code is None
+
+
+class _CodexResponsesModel(OpenAIResponsesModel):
+    """Responses model for the ChatGPT subscription backend (always streamed, stateless)."""
+
+    def __init__(
+        self,
+        model: str,
+        openai_client: AsyncOpenAI,
+        *,
+        reasoning_effort: ReasoningEffort | None = None,
+    ) -> None:
+        super().__init__(model, openai_client)
+        self._reasoning_effort = reasoning_effort
+
+    def _codex_settings(self, model_settings: ModelSettings) -> ModelSettings:
+        overrides = ModelSettings(store=False, response_include=["reasoning.encrypted_content"])
+        effort = self._reasoning_effort
+        if effort and effort != "none":
+            # Clamp to efforts the backend accepts.
+            if effort == "minimal":
+                effort = "low"
+            elif effort == "xhigh":
+                effort = "high"
+            overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=effort)))
+        return model_settings.resolve(overrides)
+
+    async def _fetch_response(self, *args: Any, stream: bool = False, **kwargs: Any) -> Any:
+        if len(args) >= 3:  # model_settings is positional arg 2
+            args = (*args[:2], self._codex_settings(args[2]), *args[3:])
+        try:
+            events = await super()._fetch_response(*args, stream=True, **kwargs)  # type: ignore[call-overload]
+        except Exception as exc:
+            guardrail = self._as_guardrail(exc)
+            if guardrail is not None:
+                raise guardrail from exc
+            raise
+        guarded = self._guarded(events)
+        if stream:
+            return guarded
+        final_response = None
+        async for event in guarded:
+            if getattr(event, "type", None) == "response.completed":
+                final_response = event.response
+        if final_response is None:
+            msg = "ChatGPT backend stream ended without a completed response"
+            raise RuntimeError(msg)
+        return final_response
+
+    def _as_guardrail(self, exc: BaseException) -> codex.CodexContentGuardrailError | None:
+        if isinstance(exc, codex.CodexContentGuardrailError):
+            return exc
+        if codex.is_content_guardrail_error(exc):
+            return codex.CodexContentGuardrailError(self.model, exc)
+        return None
+
+    async def _guarded(self, events: Any) -> AsyncIterator[Any]:
+        """Convert mid-stream guardrail rejections and close the stream on exit."""
+        try:
+            async for event in events:
+                yield event
+        except Exception as exc:
+            guardrail = self._as_guardrail(exc)
+            if guardrail is not None:
+                raise guardrail from exc
+            raise
+        finally:
+            await self._aclose(events)
+
+    @staticmethod
+    async def _aclose(events: Any) -> None:
+        aclose = getattr(events, "aclose", None)
+        if callable(aclose):
+            with contextlib.suppress(Exception):
+                await aclose()
+            return
+        close = getattr(events, "close", None)
+        if callable(close):
+            with contextlib.suppress(Exception):
+                result = close()
+                if inspect.isawaitable(result):
+                    await result
 
 
 class StrixProvider(MultiProvider):
@@ -59,6 +158,16 @@ class StrixProvider(MultiProvider):
             return self._get_fallback_provider("litellm"), f"ollama_chat/{stripped_model_name}"
         return self._get_fallback_provider("litellm"), original_model_name
 
+    def get_model(self, model_name: str | None) -> Model:
+        slug = codex.subscription_model(model_name)
+        if slug:
+            return _CodexResponsesModel(
+                slug,
+                codex.get_subscription_client(),
+                reasoning_effort=load_settings().llm.reasoning_effort,
+            )
+        return super().get_model(model_name)
+
 
 DEFAULT_MODEL_RETRY = ModelRetrySettings(
     max_retries=5,
@@ -77,39 +186,42 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
 )
 
 RECOMMENDED_MODEL_NAMES = (
-    "openai/gpt-5.6",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.6-terra",
-    "openai/gpt-5.5",
+    "openai/gpt-5.6-luna",
+    "openai/gpt-5.6",
     "openai/gpt-5.5-pro",
+    "openai/gpt-5.5",
     "openai/gpt-5.4",
     "openai/gpt-5.3-codex",
     "anthropic/claude-fable-5",
+    "anthropic/claude-opus-5",
     "anthropic/claude-opus-4-8",
-    "anthropic/claude-opus-4-7",
     "anthropic/claude-sonnet-5",
     "anthropic/claude-sonnet-4-6",
     "vertex_ai/gemini-3.1-pro-preview",
     "gemini/gemini-3.1-pro-preview",
+    "gemini/gemini-3.6-flash",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
+    "dashscope/qwen3.8-max",
     "dashscope/qwen3.7-max-2026-06-08",
+    "moonshot/kimi-k3",
     "moonshot/kimi-k2.7-code",
-    "moonshot/kimi-k2.6",
 )
 
 _RECOMMENDED_MODEL_NAME_SET = frozenset(name.lower() for name in RECOMMENDED_MODEL_NAMES)
 
 FRONTIER_MODEL_FAMILIES = (
-    (("azure", "azure_ai", "bedrock_mantle", "openai"), ("gpt-5",)),
+    (("azure", "azure_ai", "bedrock_mantle", "chatgpt", "openai"), ("gpt-5",)),
     (
         ("anthropic", "azure_ai", "bedrock", "claude", "databricks", "snowflake", "vertex_ai"),
-        ("claude-fable-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4"),
+        ("claude-fable-5", "claude-opus-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4"),
     ),
     (("google", "gemini", "vertex_ai"), ("gemini-3",)),
     (("deepseek",), ("deepseek-v4", "deepseek-r1", "deepseek-reasoner")),
-    (("alibaba", "dashscope", "qwen"), ("qwen3.7", "qwen3.5", "qwen3-max")),
-    (("moonshot", "moonshotai", "kimi"), ("kimi-k2.7", "kimi-k2.6", "kimi-k2.5")),
+    (("alibaba", "dashscope", "qwen"), ("qwen3.8", "qwen3.7", "qwen3-max")),
+    (("moonshot", "moonshotai", "kimi"), ("kimi-k3", "kimi-k2.7", "kimi-k2.6")),
 )
 
 
@@ -117,6 +229,8 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
     set_tracing_disabled(True)
+    if codex.subscription_model(llm.model):
+        return
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
     if llm.api_key:
@@ -211,6 +325,8 @@ def _configure_litellm_default(name: str, value: str) -> None:
 
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
+    if codex.subscription_model(model_name):
+        return False
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
         return True

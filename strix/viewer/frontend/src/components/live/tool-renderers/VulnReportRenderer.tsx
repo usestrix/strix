@@ -3,6 +3,7 @@
 import type { ToolRendererProps } from "@/types/events";
 import { TruncatedText } from "./ToolCard";
 import { MdCodeBlock } from "@/components/vulnerability/MdCodeBlock";
+import { parseFencedCode } from "@/lib/fenced-code";
 import Markdown from "./Markdown";
 
 const SEVERITY_COLORS: Record<string, string> = {
@@ -19,7 +20,7 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
   const method = (args.method as string) ?? "";
   const technicalAnalysis = (args.technical_analysis as string) ?? "";
   const pocDescription = (args.poc_description as string) ?? "";
-  const pocCode = (args.poc_script_code as string) ?? "";
+  const { language: pocLang, code: pocCode } = parseFencedCode((args.poc_script_code as string) ?? "");
   const remediation = (args.remediation_steps as string) ?? "";
   const cve = (args.cve as string) ?? "";
   const cwe = (args.cwe as string) ?? "";
@@ -59,7 +60,7 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
         <div>
           <span className="text-emerald-400/60 text-sm font-semibold">Proof of Concept</span>
           {pocDescription && <div className="mt-1"><Markdown text={pocDescription} /></div>}
-          {pocCode && <MdCodeBlock>{pocCode}</MdCodeBlock>}
+          {pocCode && <MdCodeBlock className={pocLang ? `language-${pocLang}` : undefined}>{pocCode}</MdCodeBlock>}
         </div>
       )}
       {remediation && (

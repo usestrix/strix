@@ -1,10 +1,11 @@
 from functools import cache
 from typing import Any, ClassVar
 
-from pygments.lexers import PythonLexer
 from pygments.styles import get_style_by_name
 from rich.text import Text
 from textual.widgets import Static
+
+from strix.report.writer import parse_fenced_code, resolve_lexer
 
 from .base_renderer import BaseToolRenderer
 from .registry import register_tool_renderer
@@ -61,8 +62,8 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
         return None
 
     @classmethod
-    def _highlight_python(cls, code: str) -> Text:
-        lexer = PythonLexer()
+    def _highlight_code(cls, code: str, language: str | None) -> Text:
+        lexer = resolve_lexer(language, code)
         text = Text()
 
         for token_type, token_value in lexer.get_tokens(code):
@@ -234,10 +235,11 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
             text.append(poc_description)
 
         if poc_script_code:
+            poc_language, poc_code = parse_fenced_code(poc_script_code)
             text.append("\n\n")
             text.append("PoC Code", style=FIELD_STYLE)
             text.append("\n")
-            text.append_text(cls._highlight_python(poc_script_code))
+            text.append_text(cls._highlight_code(poc_code, poc_language))
 
         if remediation_steps:
             text.append("\n\n")

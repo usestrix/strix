@@ -19,6 +19,9 @@ class LLMUsageLedger:
         self._agent_usage: dict[str, Usage] = {}
         self._agent_metadata: dict[str, dict[str, str]] = {}
         self._total_cost = 0.0
+        # When True, tokens are still tracked but cost stays $0 — the run is on a
+        # model subscription, so there is no metered per-token charge to report.
+        self.zero_cost = False
 
     def record(
         self,
@@ -41,7 +44,7 @@ class LLMUsageLedger:
         if model:
             metadata["model"] = model
 
-        if not _is_litellm_routed(model):
+        if not self.zero_cost and not _is_litellm_routed(model):
             estimated = _estimate_litellm_cost(usage, model)
             if estimated:
                 self._total_cost += estimated
@@ -49,6 +52,8 @@ class LLMUsageLedger:
         return True
 
     def record_observed_cost(self, cost: float) -> None:
+        if self.zero_cost:
+            return
         if isinstance(cost, int | float) and cost > 0:
             self._total_cost += float(cost)
 

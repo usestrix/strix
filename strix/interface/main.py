@@ -20,6 +20,7 @@ from rich.text import Text
 
 from strix.config import (
     apply_config_override,
+    codex,
     load_settings,
     persist_current,
 )
@@ -92,6 +93,16 @@ def validate_environment() -> None:
     missing_optional_vars = []
 
     settings = load_settings()
+
+    if codex.subscription_model(settings.llm.model):
+        if not codex.is_authenticated():
+            console.print(
+                f"[red]STRIX_LLM={settings.llm.model} uses your ChatGPT subscription, "
+                "but you're not signed in.[/] Run [cyan]strix auth login chatgpt[/] first."
+            )
+            sys.exit(1)
+        logger.info("Environment OK (ChatGPT subscription)")
+        return
 
     if not settings.llm.model:
         missing_required_vars.append("STRIX_LLM")
@@ -275,6 +286,29 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     return None
 
 
+def _subscription_error_hint(exc: BaseException) -> str | None:
+    """Return an actionable hint for a known ChatGPT-subscription error, or None."""
+    if not codex.subscription_model(load_settings().llm.model):
+        return None
+    joined = " ".join(_exception_messages(exc)).lower()
+    if "not supported when using codex with a chatgpt account" in joined:
+        return (
+            "This model isn't available on your ChatGPT subscription. "
+            "Set STRIX_LLM to a model your plan includes (e.g. chatgpt/gpt-5.4)."
+        )
+    if (
+        "error code: 401" in joined
+        or "http 401" in joined
+        or "unauthorized" in joined
+        or "invalid_grant" in joined
+    ):
+        return (
+            "Your ChatGPT sign-in has expired or was revoked. Sign in again:\n"
+            "  strix auth login chatgpt"
+        )
+    return None
+
+
 async def warm_up_llm(show_model_warning: bool = True) -> None:
     console = Console()
     logger.info("Warming up LLM connection")
@@ -284,8 +318,8 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         settings = load_settings()
         configure_sdk_model_defaults(settings)
         llm = settings.llm
-
         raw_model = (llm.model or "").strip()
+
         if (
             raw_model
             and "/" not in raw_model
@@ -361,23 +395,63 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         )
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
+        if settings.dedupe.model:
+            from strix.report.dedupe import _dedupe_extra_args
+
+            dedupe_model = settings.dedupe.model.strip()
+            raw_model = dedupe_model
+            deduper = StrixProvider().get_model(dedupe_model)
+            # Match the runtime path: send the dedupe key/endpoint per call so a
+            # separate-provider dedupe model authenticates during warm-up too.
+            deduper_extra = _dedupe_extra_args(settings.dedupe)
+            deduper_settings = ModelSettings(extra_args=deduper_extra or None)
+            await asyncio.wait_for(
+                deduper.get_response(
+                    system_instructions="You are a helpful assistant.",
+                    input="Reply with just 'OK'.",
+                    model_settings=deduper_settings,
+                    tools=[],
+                    output_schema=None,
+                    handoffs=[],
+                    tracing=ModelTracing.DISABLED,
+                    previous_response_id=None,
+                    conversation_id=None,
+                    prompt=None,
+                ),
+                timeout=llm.timeout,
+            )
+            logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
+
     except Exception as e:
         logger.exception("LLM warm-up failed")
         error_text = Text()
-        error_text.append("LLM CONNECTION FAILED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Could not establish connection to the language model.\n", style="white")
-        error_text.append("Please check your configuration and try again.\n", style="white")
-        hint = _provider_import_hint(e, raw_model)
-        if hint is not None:
-            error_text.append(f"\n{hint}\n", style="bold yellow")
-        error_text.append(f"\nError: {e}", style="dim white")
+        sub_hint = _subscription_error_hint(e)
+        if sub_hint is not None:
+            # The model/backend answered with a clear, actionable rejection —
+            # show that instead of a generic "connection failed".
+            border_style = "yellow"
+            error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
+            error_text.append("\n\n", style="white")
+            error_text.append(f"{sub_hint}\n", style="white")
+            error_text.append(f"\nDetails: {e}", style="dim white")
+        else:
+            border_style = "red"
+            error_text.append("LLM CONNECTION FAILED", style="bold red")
+            error_text.append("\n\n", style="white")
+            error_text.append(
+                "Could not establish connection to the language model.\n", style="white"
+            )
+            error_text.append("Please check your configuration and try again.\n", style="white")
+            hint = _provider_import_hint(e, raw_model)
+            if hint is not None:
+                error_text.append(f"\n{hint}\n", style="bold yellow")
+            error_text.append(f"\nError: {e}", style="dim white")
 
         panel = Panel(
             error_text,
             title="[bold white]STRIX",
             title_align="left",
-            border_style="red",
+            border_style=border_style,
             padding=(1, 2),
         )
 
@@ -708,6 +782,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "status": "running",
         "start_time": datetime.now(UTC).isoformat(),
         "end_time": None,
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,
@@ -908,6 +983,13 @@ def main() -> None:
         run_view(sys.argv[2:])
         return
 
+    # `strix auth …` manages model-subscription sign-in and exits; it needs no
+    # target, Docker, or scan setup.
+    if len(sys.argv) > 1 and sys.argv[1] == "auth":
+        from strix.interface.auth_cli import run_auth
+
+        sys.exit(run_auth(sys.argv[2:]))
+
     args = parse_arguments()
 
     if args.config:
@@ -975,6 +1057,7 @@ def main() -> None:
 
     _telemetry_start_kwargs = {
         "model": load_settings().llm.model,
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
         "scan_mode": args.scan_mode,
         "is_whitebox": is_whitebox_scan(args.targets_info),
         "interactive": not args.non_interactive,

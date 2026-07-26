@@ -151,19 +151,35 @@ def _styles() -> dict[str, ParagraphStyle]:
         "Finding", fontName=_SANS_BOLD, fontSize=13, leading=17, textColor=_INK, spaceBefore=6
     )
     styles["field_label"] = ParagraphStyle(
-        "FieldLabel", fontName=_SANS_BOLD, fontSize=8.5, leading=12, textColor=_MUTED,
-        spaceBefore=10, spaceAfter=2,
+        "FieldLabel",
+        fontName=_SANS_BOLD,
+        fontSize=8.5,
+        leading=12,
+        textColor=_MUTED,
+        spaceBefore=10,
+        spaceAfter=2,
     )
     styles["body"] = ParagraphStyle(
         "Body", fontName=_SANS, fontSize=10, leading=15, textColor=_TEXT, spaceAfter=8
     )
     styles["md_heading"] = ParagraphStyle(
-        "MdHeading", fontName=_SANS_BOLD, fontSize=11, leading=15, textColor=_INK,
-        spaceBefore=10, spaceAfter=4,
+        "MdHeading",
+        fontName=_SANS_BOLD,
+        fontSize=11,
+        leading=15,
+        textColor=_INK,
+        spaceBefore=10,
+        spaceAfter=4,
     )
     styles["bullet"] = ParagraphStyle(
-        "Bullet", fontName=_SANS, fontSize=10, leading=15, textColor=_TEXT,
-        leftIndent=16, firstLineIndent=-11, spaceAfter=3,
+        "Bullet",
+        fontName=_SANS,
+        fontSize=10,
+        leading=15,
+        textColor=_TEXT,
+        leftIndent=16,
+        firstLineIndent=-11,
+        spaceAfter=3,
     )
     styles["meta_inline"] = ParagraphStyle(
         "MetaInline", fontName=_SANS, fontSize=9, leading=13, textColor=_MUTED, spaceBefore=4
@@ -172,23 +188,44 @@ def _styles() -> dict[str, ParagraphStyle]:
     # a bordered paragraph's top padding, so too small a gap lets the background
     # box bleed up over the field label above it.
     styles["code"] = ParagraphStyle(
-        "Code", fontName=_MONO, fontSize=8, leading=11, textColor=_TEXT,
-        backColor=_LIGHT_BG, borderColor=_BORDER, borderWidth=0.5, borderPadding=8,
-        spaceBefore=12, spaceAfter=12,
+        "Code",
+        fontName=_MONO,
+        fontSize=8,
+        leading=11,
+        textColor=_TEXT,
+        backColor=_LIGHT_BG,
+        borderColor=_BORDER,
+        borderWidth=0.5,
+        borderPadding=8,
+        spaceBefore=12,
+        spaceAfter=12,
     )
     styles["count"] = ParagraphStyle(
         "Count", fontName=_SANS_BOLD, fontSize=30, leading=32, alignment=TA_CENTER
     )
     styles["count_label"] = ParagraphStyle(
-        "CountLabel", fontName=_SANS_BOLD, fontSize=8, leading=12, textColor=_MUTED,
-        alignment=TA_CENTER, spaceBefore=4,
+        "CountLabel",
+        fontName=_SANS_BOLD,
+        fontSize=8,
+        leading=12,
+        textColor=_MUTED,
+        alignment=TA_CENTER,
+        spaceBefore=4,
     )
     styles["badge"] = ParagraphStyle(
-        "Badge", fontName=_SANS_BOLD, fontSize=9, leading=11, textColor=colors.white,
+        "Badge",
+        fontName=_SANS_BOLD,
+        fontSize=9,
+        leading=11,
+        textColor=colors.white,
         alignment=TA_CENTER,
     )
     styles["confidential"] = ParagraphStyle(
-        "Confidential", fontName=_SANS_BOLD, fontSize=9, leading=12, textColor=colors.white,
+        "Confidential",
+        fontName=_SANS_BOLD,
+        fontSize=9,
+        leading=12,
+        textColor=colors.white,
         alignment=TA_CENTER,
     )
     return styles
@@ -256,8 +293,10 @@ def _severity_grid(styles: dict[str, ParagraphStyle], counts: dict[str, int]) ->
         color = _SEVERITY_COLORS[name]
         count_style = ParagraphStyle(f"Count{name}", parent=styles["count"], textColor=color)
         cells.append(
-            [Paragraph(str(counts.get(name, 0)), count_style),
-             Paragraph(name.upper(), styles["count_label"])]
+            [
+                Paragraph(str(counts.get(name, 0)), count_style),
+                Paragraph(name.upper(), styles["count_label"]),
+            ]
         )
     col = (_PAGE_W - 40 * mm) / 4
     table = Table([cells], colWidths=[col] * 4)
@@ -320,8 +359,10 @@ def _cover(
         ("DURATION", _duration(record.get("start_time"), record.get("end_time"))),
     ]
     meta_table = Table(
-        [[Paragraph(label, styles["meta_label"]), Paragraph(_esc(value), styles["meta_value"])]
-         for label, value in meta_rows],
+        [
+            [Paragraph(label, styles["meta_label"]), Paragraph(_esc(value), styles["meta_value"])]
+            for label, value in meta_rows
+        ],
         colWidths=[38 * mm, _PAGE_W - 40 * mm - 38 * mm],
     )
     meta_table.setStyle(
@@ -462,6 +503,18 @@ def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hur
     return flow
 
 
+_FENCE_RE = re.compile(r"^```([^\n`]*)\n(.*?)\n?```$", re.DOTALL)
+
+
+def _strip_code_fence(value: Any) -> Any:
+    """Drop a wrapping markdown code fence so raw-code fields don't show the
+    ``` ```lang ``` marker lines literally in the PDF."""
+    if not isinstance(value, str):
+        return value
+    match = _FENCE_RE.match(value.strip())
+    return match.group(2) if match else value
+
+
 def _field_block(
     styles: dict[str, ParagraphStyle], label: str, value: Any, *, code: bool = False
 ) -> list[Flowable]:
@@ -503,7 +556,8 @@ def _finding_flowables(
     story.extend(_field_block(styles, "Impact", vuln.get("impact")))
     story.extend(_field_block(styles, "Technical analysis", vuln.get("technical_analysis")))
     story.extend(_field_block(styles, "Proof of concept", vuln.get("poc_description")))
-    story.extend(_field_block(styles, "PoC script", vuln.get("poc_script_code"), code=True))
+    poc_script = _strip_code_fence(vuln.get("poc_script_code"))
+    story.extend(_field_block(styles, "PoC script", poc_script, code=True))
     story.extend(_field_block(styles, "Evidence", vuln.get("evidence"), code=True))
 
     remediation = vuln.get("remediation_steps")

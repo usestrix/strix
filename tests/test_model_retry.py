@@ -13,12 +13,15 @@ import asyncio
 
 from agents.retry import ModelRetryNormalizedError, RetryPolicyContext
 
+from strix.config import codex
 from strix.config.models import DEFAULT_MODEL_RETRY, _retry_statusless_provider_errors
 
 
-def _context(normalized: ModelRetryNormalizedError) -> RetryPolicyContext:
+def _context(
+    normalized: ModelRetryNormalizedError, error: Exception | None = None
+) -> RetryPolicyContext:
     return RetryPolicyContext(
-        error=RuntimeError("boom"),
+        error=error or RuntimeError("boom"),
         attempt=1,
         max_retries=5,
         stream=True,
@@ -27,11 +30,11 @@ def _context(normalized: ModelRetryNormalizedError) -> RetryPolicyContext:
     )
 
 
-def _retries(normalized: ModelRetryNormalizedError) -> bool:
+def _retries(normalized: ModelRetryNormalizedError, error: Exception | None = None) -> bool:
     """Evaluate the composed DEFAULT_MODEL_RETRY policy for a normalized error."""
     policy = DEFAULT_MODEL_RETRY.policy
     assert policy is not None
-    decision = asyncio.run(policy(_context(normalized)))
+    decision = asyncio.run(policy(_context(normalized, error)))
     return bool(getattr(decision, "retry", decision))
 
 
@@ -61,6 +64,16 @@ def test_timeout_error_is_retried() -> None:
     # turn recovers instead of silently wedging the agent.
     assert _retries(ModelRetryNormalizedError(is_timeout=True)) is True
     assert _retries(ModelRetryNormalizedError(is_network_error=True)) is True
+
+
+def test_content_guardrail_error_is_not_retried() -> None:
+    # A guardrail block is status-less, so it would match the statusless policy;
+    # the guard must keep it from being retried (retrying never clears it).
+    guardrail = codex.CodexContentGuardrailError("gpt-5.6-sol")
+    assert _retries(ModelRetryNormalizedError(status_code=None), guardrail) is False
+    # A raw provider error carrying the backend's wording is excluded too.
+    raw = RuntimeError("This content was flagged for possible cybersecurity risk.")
+    assert _retries(ModelRetryNormalizedError(status_code=None), raw) is False
 
 
 def test_policy_helper_matches_statusless_only() -> None:

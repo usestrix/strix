@@ -86,6 +86,17 @@ class TuiLiveView:
             current["error_message"] = error_message
         current["updated_at"] = now
 
+    def record_agent_error(self, agent_id: str, error: str) -> None:
+        self._append_event(
+            agent_id,
+            "chat",
+            {
+                "role": "assistant",
+                "content": (f"An error occurred: {error}\nI'm now waiting for new instructions."),
+                "metadata": {"source": "agent_error"},
+            },
+        )
+
     def record_user_message(self, agent_id: str, content: str) -> None:
         self._append_event(
             agent_id,

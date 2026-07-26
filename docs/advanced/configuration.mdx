@@ -35,6 +35,31 @@ Configure Strix using environment variables or a config file.
   Timeout in seconds for memory compression operations (context summarization).
 </ParamField>
 
+### Dedicated deduplication model
+
+Finding deduplication is a cheap, structured classification task. By default it
+runs on the main model, but you can route it to a smaller/cheaper model without
+affecting the agents that do the actual testing.
+
+<ParamField path="STRIX_DEDUPE_MODEL" type="string">
+  Model used to judge whether a candidate finding duplicates an existing report.
+  Falls back to `STRIX_LLM` when unset.
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_API_KEY" type="string">
+  Optional provider key for the deduplication model.
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_API_BASE" type="string">
+  Optional custom API base URL for the deduplication model. Use when the dedupe
+  model runs on a different endpoint than the main model.
+</ParamField>
+
+<ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
+  Reasoning effort for the deduplication model. Defaults to the model's own
+  baseline when unset.
+</ParamField>
+
 ## Optional Features
 
 <ParamField path="PERPLEXITY_API_KEY" type="string">

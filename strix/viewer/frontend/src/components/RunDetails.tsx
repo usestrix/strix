@@ -100,6 +100,7 @@ export function RunDetails({
   const reasoning = num(rec(arr(usage.output_tokens_details)[0]).reasoning_tokens);
   const totalTokens = num(usage.total_tokens);
   const cost = num(usage.cost);
+  const subscription = str(raw.auth_mode) === "subscription";
 
   const sub = (n: number, word: string) => (
     <span className="text-[#666]"> ({formatNumber(n)} {word})</span>
@@ -175,6 +176,15 @@ export function RunDetails({
           {hasUsage ? (
             <dl className="space-y-2.5 tabular-nums">
               <Field label="Model">{models.length ? models.join(", ") : "n/a"}</Field>
+              {subscription && (
+                <Field label="Provider">
+                  <span className="inline-flex items-center gap-1.5">
+                    <span className="rounded-full border border-[#22c55e]/40 bg-[#22c55e]/10 px-2 py-0.5 text-[11px] text-[#22c55e]">
+                      ChatGPT subscription
+                    </span>
+                  </span>
+                </Field>
+              )}
               <Field label="Run time">{fmtDuration(durationSeconds)}</Field>
               {requests != null && <Field label="Requests">{formatNumber(requests)}</Field>}
               {inputTokens != null && (
@@ -190,7 +200,14 @@ export function RunDetails({
                 </Field>
               )}
               {totalTokens != null && <Field label="Total tokens">{formatNumber(totalTokens)}</Field>}
-              {cost != null && <Field label="Cost">${cost.toFixed(2)}</Field>}
+              {subscription ? (
+                <Field label="Cost">
+                  <span className="text-[#22c55e]">$0.00</span>
+                  <span className="text-[#666]"> (subscription)</span>
+                </Field>
+              ) : (
+                cost != null && <Field label="Cost">${cost.toFixed(2)}</Field>
+              )}
               {agents.length > 0 && <Field label="Agents">{formatNumber(agents.length)}</Field>}
             </dl>
           ) : (

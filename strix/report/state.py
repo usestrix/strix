@@ -10,6 +10,8 @@ from uuid import uuid4
 
 from agents.usage import Usage
 
+from strix.config import codex
+from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for
 from strix.report.sarif import write_sarif
 from strix.report.usage import LLMUsageLedger
@@ -117,12 +119,15 @@ class ReportState:
         self.scan_results: dict[str, Any] | None = None
         self.scan_config: dict[str, Any] | None = None
         self._llm_usage = LLMUsageLedger()
+        auth_mode = codex.auth_mode(load_settings().llm.model)
+        self._llm_usage.zero_cost = auth_mode == "subscription"
         self.run_record: dict[str, Any] = {
             "run_id": self.run_id,
             "run_name": self.run_name,
             "start_time": self.start_time,
             "end_time": None,
             "status": "running",
+            "auth_mode": auth_mode,
             "targets_info": [],
             "llm_usage": self._build_llm_usage_record(),
         }

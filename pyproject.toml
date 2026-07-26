@@ -124,6 +124,7 @@ module = [
     "reportlab.*",
     "pypdf.*",
     "yaml.*",
+    "pygments.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
@@ -217,6 +218,10 @@ ignore = [
 # Test doubles use fixture tokens/passwords and match a callee signature whose
 # args they intentionally ignore.
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
+"tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
+# Stdlib HTTP handler overrides (do_GET/do_POST).
+"strix/interface/auth_cli.py" = ["N802"]
+"tests/test_codex_streaming.py" = ["N802"]
 "tests/test_report_pdf.py" = ["S105", "S106"]
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
 # circular dependency with strix.telemetry / strix.viewer.report_pdf.
@@ -255,9 +260,16 @@ ignore = [
 "strix/core/runner.py" = ["TC003", "PLR0912", "PLR0915", "PLC0415"]
 # ReportState carries scan artifact/report fields and
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
-"strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401"]
+"strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401", "PLC0415"]
 "strix/report/usage.py" = ["PLC0415"]
+# Lazy import of strix.config.models avoids a circular dependency between the
+# report pipeline and the config layer.
+"strix/report/dedupe.py" = ["PLC0415"]
+"strix/telemetry/logging.py" = ["PLC0415"]
 "strix/config/models.py" = ["PLC0415"]
+# Heavy inference deps (httpx, openai) imported lazily so auth-status checks
+# don't pull them in.
+"strix/config/codex.py" = ["PLC0415"]
 # Interface utility branches per scope-mode / target-type combination;
 # splitting would obscure the decision tree without simplifying it.
 "strix/interface/utils.py" = ["PLR0912", "BLE001", "PLC0415"]
