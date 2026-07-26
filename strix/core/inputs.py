@@ -10,6 +10,9 @@ from openai.types.shared import Reasoning
 
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
+    bedrock_route_supports_prompt_caching,
+    is_bedrock_route,
+    is_claude_model,
     is_known_openai_bare_model,
     model_supports_reasoning,
     request_timeout_extra_args,
@@ -128,6 +131,7 @@ def make_model_settings(
     model_name: str,
     force_required_tool_choice: bool = False,
     request_timeout: float | None = None,
+    prompt_cache: bool = True,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
@@ -145,94 +149,23 @@ def make_model_settings(
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
-    if _is_claude_model(model_name) and not _bedrock_route_without_cache_support(model_name):
+
+    cache_extra_args = _prompt_cache_extra_args(model_name) if prompt_cache else None
+    if cache_extra_args:
         # Merge into any existing extra_args rather than relying on resolve()'s
         # dict-merge semantics — makes it obvious at the call site that unrelated
         # LiteLLM options are preserved (make_model_settings currently builds
         # from scratch, so extra_args is None here today, but this keeps the
         # invariant local if that changes).
-        merged_extra_args = {
-            **(model_settings.extra_args or {}),
-            **_claude_prompt_cache_extra_args(),
-        }
         model_settings = model_settings.resolve(
-            ModelSettings(extra_args=merged_extra_args),
+            ModelSettings(
+                extra_args={**(model_settings.extra_args or {}), **cache_extra_args},
+            ),
         )
     return model_settings
 
 
-def _is_claude_model(model_name: str) -> bool:
-    return "claude" in (model_name or "").strip().lower()
-
-
-def _litellm_name_candidates(model_name: str) -> list[str]:
-    """Candidate LiteLLM model-map keys for ``model_name``, most→least specific.
-
-    LiteLLM keys the same model under several names (``bedrock/global.anthropic.
-    claude-opus-4-1``, ``anthropic.claude-opus-4-1``, ``claude-opus-4-1``) and not
-    every provider/region-prefixed variant is present for every model. Strip the
-    LiteLLM route prefix, then leading dotted segments (region, then provider) so
-    a prefixed name still resolves to a bare key.
-    """
-    name = (model_name or "").strip().lower()
-    for prefix in ("litellm/", "bedrock/"):
-        if name.startswith(prefix):
-            name = name[len(prefix) :]
-            break
-    candidates = [name]
-    for cand in list(candidates):
-        rest = cand
-        while "." in rest:
-            rest = rest.split(".", 1)[1]
-            candidates.append(rest)
-    return candidates
-
-
-def _bedrock_route_without_cache_support(model_name: str) -> bool:
-    """True for a BEDROCK Claude route that LiteLLM can't confirm supports prompt
-    caching — the one case where injecting the cache marker HARD-CRASHES the run.
-
-    Bedrock's Converse API rejects unknown request fields outright
-    (``ValidationException: cache_control_injection_points: Extra inputs are not
-    permitted``). LiteLLM's ``AnthropicCacheControlHook`` strips
-    ``cache_control_injection_points`` from the outgoing call only for models it
-    recognises as cache-capable via its (statically bundled) model map; for a
-    model missing from that map the marker passes straight through and Bedrock
-    500s the first call, failing the whole scan. This bites any Bedrock Claude
-    model LiteLLM hasn't mapped yet — a just-released model, or ANY model when
-    LiteLLM can't refresh its remote model map (e.g. behind a TLS-intercepting
-    corporate proxy) and falls back to a stale local copy.
-
-    Scope is deliberately narrow — ONLY Bedrock routes. Anthropic-native,
-    Vertex, and OpenRouter Claude tolerate/ignore the marker (or LiteLLM maps
-    them under keys we don't resolve), so gating those on confirmed support
-    would DISABLE caching for genuinely-capable models — a caching regression,
-    the opposite of this change's intent. So elsewhere we keep injecting by
-    model family and only withhold on the provider that actually rejects.
-    """
-    name = (model_name or "").strip().lower()
-    if not name.startswith("bedrock/") and "anthropic." not in name:
-        # Not a Bedrock route (bedrock/... or a bare bedrock model id like
-        # global.anthropic.claude-...); other providers don't hard-reject.
-        return False
-
-    import litellm
-
-    checker = getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None)
-    for cand in _litellm_name_candidates(model_name):
-        if checker is not None:
-            try:
-                if checker(cand):
-                    return False  # confirmed cache-capable → safe to inject
-            except Exception:  # noqa: BLE001 — unknown model raises; keep checking
-                pass
-        entry = litellm.model_cost.get(cand)
-        if entry and entry.get("supports_prompt_caching"):
-            return False
-    return True  # Bedrock route, support unconfirmed → withhold to avoid the 500
-
-
-def _claude_prompt_cache_extra_args() -> dict[str, Any]:
+def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
     """Enable Anthropic/Bedrock prompt caching for Claude models via LiteLLM.
 
     A Strix scan is a long, multi-turn agentic loop that re-sends a large,
@@ -261,9 +194,17 @@ def _claude_prompt_cache_extra_args() -> dict[str, Any]:
     fires), and only Claude-family routes (Anthropic native, Bedrock, Vertex,
     OpenRouter -> Claude) honour the marker.
 
-    Three breakpoints (3 of the 4 allowed), leaving headroom:
+    At most three breakpoints (of the 4 allowed), leaving headroom:
       - the system prompt (``role: system``) — the largest repeated span
-      - the tool schemas (``tool_config``) — sizeable and identical every turn
+      - the tool schemas (``tool_config``) — Bedrock Converse ONLY. LiteLLM's
+        ``tool_config`` location is implemented solely by the Bedrock Converse
+        transform (which appends a ``cachePoint`` to the tool list); on any other
+        route it is not consumed and leaks onto the wire as an unknown top-level
+        ``cache_control_injection_points`` field, which native Anthropic
+        hard-rejects (``400 invalid_request_error: cache_control_injection_points:
+        Extra inputs are not permitted`` — verified live). It is also redundant
+        elsewhere: Anthropic orders tools BEFORE the system prompt, so the system
+        breakpoint already caches the tool schemas in the shared prefix.
       - the conversation tail (``index: -1``) — a ROLLING breakpoint on the last
         message, so the accumulated transcript caches incrementally
 
@@ -279,20 +220,31 @@ def _claude_prompt_cache_extra_args() -> dict[str, Any]:
     cache-read fell from 90% to 22%; adding it lifts modelled cache-read to ~96%
     and cuts full-price input ~16x on that scan.
 
-    All three points degrade gracefully on older LiteLLM: an unrecognised
-    location is simply not injected (no error), so a stale pin still gets
-    whatever caching it supports — the system-prompt point (the widest support)
-    and the tool_config + message-index points applied by LiteLLM's Bedrock
-    Converse transform on versions that recognise them (verified on litellm
-    1.90.1).
+    All points degrade gracefully on older LiteLLM: an unrecognised location is
+    simply not injected (no error), so a stale pin still gets whatever caching
+    it supports — the system-prompt point (the widest support) and the
+    tool_config + message-index points applied by LiteLLM's Bedrock Converse
+    transform on versions that recognise them (verified on litellm 1.90.1).
+
+    Returns ``None`` (a strict no-op — the hook never fires) for non-Claude
+    models, and for Bedrock Claude routes LiteLLM can't confirm as
+    cache-capable: Bedrock's Converse API rejects the unknown field outright
+    and LiteLLM only consumes the marker for models its model map recognises,
+    so an unmapped Bedrock model would pass the marker straight through and
+    crash the first call. Only Bedrock hard-rejects, so only Bedrock is guarded
+    — gating Anthropic-native/Vertex/OpenRouter on confirmed support would
+    needlessly disable caching for capable models.
     """
-    return {
-        "cache_control_injection_points": [
-            {"location": "message", "role": "system"},
-            {"location": "tool_config"},
-            {"location": "message", "index": -1},
-        ],
-    }
+    if not is_claude_model(model_name):
+        return None
+    if is_bedrock_route(model_name) and not bedrock_route_supports_prompt_caching(model_name):
+        return None
+
+    points: list[dict[str, Any]] = [{"location": "message", "role": "system"}]
+    if is_bedrock_route(model_name):
+        points.append({"location": "tool_config"})
+    points.append({"location": "message", "index": -1})
+    return {"cache_control_injection_points": points}
 
 
 def child_initial_input(

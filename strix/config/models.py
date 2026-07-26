@@ -429,3 +429,67 @@ def is_known_openai_bare_model(model_name: str) -> bool:
         return False
     entry = litellm.model_cost.get(name)
     return bool(entry and entry.get("litellm_provider") == "openai")
+
+
+def is_claude_model(model_name: str) -> bool:
+    return "claude" in (model_name or "").strip().lower()
+
+
+def is_bedrock_route(model_name: str) -> bool:
+    """Whether ``model_name`` resolves to an AWS Bedrock route.
+
+    Matches the ``bedrock/...`` LiteLLM route prefix and bare Bedrock model ids
+    (``[region.]anthropic.claude-...``).
+    """
+    name = (model_name or "").strip().lower()
+    return name.startswith("bedrock/") or "anthropic." in name
+
+
+def _prompt_cache_name_candidates(model_name: str) -> list[str]:
+    """Candidate LiteLLM model-map keys for ``model_name``, most→least specific.
+
+    LiteLLM keys the same model under several names (``bedrock/global.anthropic.
+    claude-opus-4-1``, ``anthropic.claude-opus-4-1``, ``claude-opus-4-1``) and not
+    every provider/region-prefixed variant is present for every model. Strip the
+    LiteLLM route prefix, then leading dotted segments (region, then provider) so
+    a prefixed name still resolves to a bare key.
+    """
+    name = (model_name or "").strip().lower()
+    for prefix in ("litellm/", "bedrock/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    candidates = [name]
+    rest = name
+    while "." in rest:
+        rest = rest.split(".", 1)[1]
+        candidates.append(rest)
+    return candidates
+
+
+def bedrock_route_supports_prompt_caching(model_name: str) -> bool:
+    """Whether LiteLLM can confirm this Bedrock model supports prompt caching.
+
+    Bedrock's Converse API rejects unknown request fields outright
+    (``ValidationException: cache_control_injection_points: Extra inputs are
+    not permitted``), and LiteLLM only consumes the cache marker for models its
+    (statically bundled) model map recognises as cache-capable. For a Bedrock
+    model missing from that map — a just-released model, or any model when the
+    remote model-map refresh fails and a stale local copy is used — the marker
+    would pass straight through and fail every call, so callers must withhold
+    it unless support is confirmed here.
+    """
+    import litellm
+
+    checker = getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None)
+    for cand in _prompt_cache_name_candidates(model_name):
+        if checker is not None:
+            # supports_prompt_caching raises for models missing from the map;
+            # keep checking the remaining name candidates.
+            with contextlib.suppress(Exception):
+                if checker(cand):
+                    return True
+        entry = litellm.model_cost.get(cand)
+        if entry and entry.get("supports_prompt_caching"):
+            return True
+    return False

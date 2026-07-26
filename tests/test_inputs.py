@@ -5,6 +5,7 @@ from __future__ import annotations
 from itertools import pairwise
 from typing import Any
 
+import litellm
 import pytest
 
 from strix.core.inputs import build_root_task, child_initial_input, make_model_settings
@@ -60,21 +61,54 @@ def _cache_points(model_name: str) -> Any:
     return extra.get("cache_control_injection_points")
 
 
-@pytest.mark.parametrize(
-    "model_name",
-    [
-        "bedrock/global.anthropic.claude-opus-4-8",
-        "anthropic/claude-sonnet-4-5",
-        "openrouter/anthropic/claude-3.5-sonnet",
-    ],
-)
-def test_make_model_settings_enables_prompt_cache_for_claude(model_name: str) -> None:
-    points = _cache_points(model_name)
-    assert points == [
+def test_make_model_settings_enables_prompt_cache_for_bedrock_claude() -> None:
+    # Bedrock Converse is the only route whose transform consumes the
+    # ``tool_config`` location, so it gets all three breakpoints.
+    assert _cache_points("bedrock/global.anthropic.claude-opus-4-8") == [
         {"location": "message", "role": "system"},
         {"location": "tool_config"},
         {"location": "message", "index": -1},
     ]
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "anthropic/claude-sonnet-4-5",
+        "openrouter/anthropic/claude-3.5-sonnet",
+        "vertex_ai/claude-sonnet-4-5",
+    ],
+)
+def test_make_model_settings_enables_prompt_cache_for_non_bedrock_claude(model_name: str) -> None:
+    # Non-Bedrock routes get system + tail only: LiteLLM implements the
+    # ``tool_config`` location solely in the Bedrock Converse transform, so
+    # sending it elsewhere would leak an unknown top-level field (see the
+    # dedicated no-leak test). Tools are already cached by the system breakpoint
+    # there — Anthropic orders tools ahead of the system prompt in the prefix.
+    assert _cache_points(model_name) == [
+        {"location": "message", "role": "system"},
+        {"location": "message", "index": -1},
+    ]
+
+
+def test_tool_config_point_not_leaked_to_non_bedrock_claude() -> None:
+    # Regression guard: the ``tool_config`` injection point must NEVER be sent on
+    # a non-Bedrock route. LiteLLM leaves it on the outgoing body as a top-level
+    # ``cache_control_injection_points`` field there, which native Anthropic
+    # rejects with a 400 on every call.
+    for model in ("anthropic/claude-sonnet-4-5", "openrouter/anthropic/claude-3.5-sonnet"):
+        points = _cache_points(model) or []
+        assert all(p.get("location") != "tool_config" for p in points)
+
+
+def test_prompt_cache_can_be_disabled() -> None:
+    # STRIX_PROMPT_CACHE=false kill switch: no injection points even for Claude.
+    assert (
+        make_model_settings(
+            None, model_name="anthropic/claude-sonnet-4-5", prompt_cache=False
+        ).extra_args
+        is None
+    )
 
 
 @pytest.mark.parametrize("model_name", ["gpt-5", "vertex_ai/gemini-2.5-pro", "openai/o3"])
@@ -93,8 +127,6 @@ def test_no_prompt_cache_for_unmapped_bedrock_claude_model(monkeypatch: Any) -> 
     Extra inputs are not permitted'); LiteLLM only strips the marker for models
     it recognises as cache-capable, so an unmapped model would 500 the first
     call and fail the whole run."""
-    import litellm
-
     unmapped = "bedrock/global.anthropic.claude-brand-new-9"
     # Simulate a model LiteLLM doesn't know: no cost-map entry, checker says no.
     monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
@@ -111,18 +143,15 @@ def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: 
     LiteLLM maps them under keys we don't resolve, e.g. OpenRouter), so gating
     them on confirmed support would DISABLE caching for capable models — a
     regression. Only Bedrock hard-rejects, so only Bedrock is guarded."""
-    import litellm
-
     monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
     if getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None):
         monkeypatch.setattr(litellm.utils, "supports_prompt_caching", lambda *_a, **_k: False)
 
     # Even with LiteLLM knowing nothing, an Anthropic-native / OpenRouter Claude
-    # still gets the injection points.
+    # still gets the injection points (system + tail, no tool_config).
     for model in ("anthropic/claude-brand-new-9", "openrouter/anthropic/claude-brand-new"):
         assert _cache_points(model) == [
             {"location": "message", "role": "system"},
-            {"location": "tool_config"},
             {"location": "message", "index": -1},
         ]
 

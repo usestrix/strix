@@ -40,6 +40,10 @@ class LlmSettings(BaseSettings):
         default=False,
         alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
     )
+    prompt_cache: bool = Field(
+        default=True,
+        alias="STRIX_PROMPT_CACHE",
+    )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 
 
