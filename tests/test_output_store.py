@@ -1,25 +1,17 @@
-"""Tests for per-tool-output bounding and the durable spill store."""
+"""Tests for per-tool-output bounding and sandbox-workspace spill."""
 
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING
 
 import pytest
 
 from strix.tools.output_store import (
-    _PAGE_MAX_BYTES,
     WORKSPACE_SPILL_DIR,
     bound_and_store,
     bound_text,
-    configure_output_store,
     configure_spill_writer,
-    read_stored_output,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 @pytest.fixture(autouse=True)
@@ -49,17 +41,6 @@ def test_byte_limit_enforced_on_single_long_line() -> None:
 
     assert "truncated" in bounded
     assert len(bounded.encode("utf-8")) <= 1_000
-
-
-async def test_spill_preview_honours_byte_budget(tmp_path: Path) -> None:
-    # bound_and_store's notice is longer (it carries the output_id), so the
-    # preview must reserve for the spill notice to stay within max_bytes.
-    configure_output_store(tmp_path)
-    text = "\n".join("x" * 500 for _ in range(200))
-    bounded = await bound_and_store(text, max_lines=2_000, max_bytes=2_000)
-
-    assert "output_id=" in bounded
-    assert len(bounded.encode("utf-8")) <= 2_000
 
 
 def test_multibyte_characters_not_split() -> None:
@@ -92,35 +73,21 @@ def test_dropped_line_count_accounts_for_byte_trimming() -> None:
     assert dropped > 200 - 20
 
 
-async def test_bound_and_store_small_output_not_spilled(tmp_path: Path) -> None:
-    configure_output_store(tmp_path)
+async def test_bound_and_store_small_output_not_spilled() -> None:
+    written: dict[str, str] = {}
+
+    async def writer(output_id: str, text: str) -> str | None:
+        written[output_id] = text
+        return f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
+
+    configure_spill_writer(writer)
     text = "just a few lines\nsecond line"
     assert await bound_and_store(text, max_lines=100, max_bytes=10_000) == text
-    assert list(tmp_path.iterdir()) == []
+    # Small output is returned as-is; nothing is written to the workspace.
+    assert written == {}
 
 
-async def test_bound_and_store_spills_full_output_and_is_retrievable(tmp_path: Path) -> None:
-    configure_output_store(tmp_path)
-    text = "\n".join(f"secret-line-{i}" for i in range(1000))
-
-    bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
-
-    match = re.search(r'output_id="([0-9a-f]{32})"', bounded)
-    assert match is not None, bounded
-    output_id = match.group(1)
-
-    # The full, untruncated output round-trips through the store.
-    full = read_stored_output(output_id, offset=0, limit=1_000_000)
-    assert full.splitlines() == text.splitlines()
-    # A buried line elided from the preview is retrievable.
-    assert "secret-line-500" not in bounded
-    assert "secret-line-500" in full
-
-
-async def test_workspace_writer_is_preferred_over_host_store(tmp_path: Path) -> None:
-    # When a sandbox writer is configured, the full output goes into the
-    # workspace and the notice points the agent at that path — no host spill.
-    configure_output_store(tmp_path)
+async def test_bound_and_store_spills_full_output_to_workspace() -> None:
     written: dict[str, str] = {}
 
     async def writer(output_id: str, text: str) -> str | None:
@@ -131,19 +98,46 @@ async def test_workspace_writer_is_preferred_over_host_store(tmp_path: Path) -> 
     text = "\n".join(f"secret-line-{i}" for i in range(1000))
     bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
 
+    # The preview points at the workspace file and stays within the ceiling.
     assert WORKSPACE_SPILL_DIR in bounded
     assert "exec_command" in bounded
     assert "read_tool_output" not in bounded
-    # Full output was handed to the sandbox writer, not the host store.
+    assert len(bounded.encode("utf-8")) <= 1_000_000
+    # The writer received the complete, untruncated output.
     assert list(written.values()) == [text]
-    assert list(tmp_path.iterdir()) == []
-    # The preview still fits the configured byte ceiling.
+    stored = next(iter(written.values()))
+    assert stored.splitlines() == text.splitlines()
+    # A buried line elided from the preview is present in the spilled file.
+    assert "secret-line-500" not in bounded
+    assert "secret-line-500" in stored
+
+
+async def test_workspace_notice_carries_the_returned_path() -> None:
+    async def writer(output_id: str, _text: str) -> str | None:
+        return f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
+
+    configure_spill_writer(writer)
+    text = "\n".join(f"line-{i}" for i in range(1000))
+    bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
+
+    match = re.search(rf"{re.escape(WORKSPACE_SPILL_DIR)}/([0-9a-f]{{32}})\.txt", bounded)
+    assert match is not None, bounded
+
+
+async def test_no_writer_degrades_to_plain_preview() -> None:
+    # With no writer configured (autouse fixture clears it) the output can't be
+    # spilled, so it degrades to a plain head+tail preview — no workspace path,
+    # no host-side pointer, nothing persisted.
+    text = "\n".join(f"line-{i}" for i in range(1000))
+    bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
+
+    assert "truncated" in bounded
+    assert WORKSPACE_SPILL_DIR not in bounded
+    assert "read_tool_output" not in bounded
     assert len(bounded.encode("utf-8")) <= 1_000_000
 
 
-async def test_workspace_writer_failure_falls_back_to_host_store(tmp_path: Path) -> None:
-    configure_output_store(tmp_path)
-
+async def test_writer_failure_degrades_to_plain_preview() -> None:
     async def failing_writer(_output_id: str, _text: str) -> str | None:
         return None
 
@@ -151,166 +145,20 @@ async def test_workspace_writer_failure_falls_back_to_host_store(tmp_path: Path)
     text = "\n".join(f"line-{i}" for i in range(1000))
     bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
 
-    # Falls back to the host-side store + read_tool_output pointer.
-    match = re.search(r'output_id="([0-9a-f]{32})"', bounded)
-    assert match is not None, bounded
+    assert "truncated" in bounded
     assert WORKSPACE_SPILL_DIR not in bounded
-    full = read_stored_output(match.group(1), offset=0, limit=1_000_000)
-    assert full.splitlines() == text.splitlines()
+    assert len(bounded.encode("utf-8")) <= 1_000_000
 
 
-async def test_read_stored_output_paginates(tmp_path: Path) -> None:
-    configure_output_store(tmp_path)
-    text = "\n".join(str(i) for i in range(100))
-    output_id = re.search(
-        r'output_id="([0-9a-f]{32})"',
-        await bound_and_store(text, max_lines=4, max_bytes=1_000_000),
-    )
-    assert output_id is not None
-    # A small caller limit bounds the *complete* response (content + hint).
-    page = read_stored_output(output_id.group(1), offset=0, limit=200)
-    assert page.startswith("0\n1")
-    assert "more;" in page
-    assert len(page.encode("utf-8")) <= 200
-    # The continuation offset advances past the returned content.
-    match = re.search(r"offset=(\d+)", page)
-    assert match is not None and int(match.group(1)) > 0
+async def test_workspace_preview_honours_byte_budget() -> None:
+    # The workspace notice is longer than a plain notice, so the preview must
+    # reserve for it to stay within max_bytes.
+    async def writer(output_id: str, _text: str) -> str | None:
+        return f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
 
+    configure_spill_writer(writer)
+    text = "\n".join("x" * 500 for _ in range(200))
+    bounded = await bound_and_store(text, max_lines=2_000, max_bytes=2_000)
 
-async def test_read_stored_output_rejects_limit_too_small_for_a_page(tmp_path: Path) -> None:
-    # A non-final page needs room for content plus the continuation hint; a limit
-    # too small to hold both is rejected rather than silently exceeded.
-    configure_output_store(tmp_path)
-    text = "\n".join(str(i) for i in range(1000))
-    output_id = re.search(
-        r'output_id="([0-9a-f]{32})"',
-        await bound_and_store(text, max_lines=4, max_bytes=1_000_000),
-    )
-    assert output_id is not None
-    result = read_stored_output(output_id.group(1), offset=0, limit=10)
-    assert "too small" in result
-
-
-async def test_read_stored_output_page_including_hint_stays_within_ceiling(tmp_path: Path) -> None:
-    # A full non-final page plus its continuation hint must not exceed the page
-    # ceiling — retrieval bypasses the general result-bounding wrapper.
-    configure_output_store(tmp_path)
-    text = "x" * (_PAGE_MAX_BYTES * 3)
-    output_id = re.search(
-        r'output_id="([0-9a-f]{32})"',
-        await bound_and_store(text, max_lines=4, max_bytes=1_000),
-    )
-    assert output_id is not None
-    page = read_stored_output(output_id.group(1), offset=0, limit=_PAGE_MAX_BYTES)
-    assert "more;" in page  # a hint was appended (non-final page)
-    assert len(page.encode("utf-8")) <= _PAGE_MAX_BYTES
-
-
-async def test_read_stored_output_pages_long_lines_losslessly(tmp_path: Path) -> None:
-    # A single line far larger than the page budget must be split across pages
-    # (never returned whole), and paging forward must reconstruct the output
-    # byte-for-byte without ever minting a fresh spill id.
-    configure_output_store(tmp_path)
-    text = "\n".join(f"{i}-" + "z" * 5_000 for i in range(50))
-    output_id = re.search(
-        r'output_id="([0-9a-f]{32})"',
-        await bound_and_store(text, max_lines=4, max_bytes=1_000),
-    )
-    assert output_id is not None
-    oid = output_id.group(1)
-
-    collected = ""
-    offset = 0
-    for _ in range(500):  # guard against a paging loop
-        page = read_stored_output(oid, offset=offset, limit=2_000)
-        body, _sep, hint = page.partition("\n\n[... more;")
-        # Every page honours the byte budget, even inside one oversized line.
-        assert len(body.encode("utf-8")) <= 2_000
-        assert re.findall(r'output_id="([0-9a-f]{32})"', body) in ([], [oid])
-        collected += body
-        if not hint:
-            break
-        match = re.search(r"offset=(\d+)", hint)
-        assert match is not None
-        offset = int(match.group(1))
-
-    assert collected == text
-
-
-async def test_read_stored_output_pages_multibyte_without_corruption(tmp_path: Path) -> None:
-    # A byte window can split a 4-byte char; paging must never emit a broken
-    # (replacement) character and must still reconstruct the text exactly.
-    configure_output_store(tmp_path)
-    text = "😀" * 20_000
-    output_id = re.search(
-        r'output_id="([0-9a-f]{32})"',
-        await bound_and_store(text, max_lines=4, max_bytes=1_000),
-    )
-    assert output_id is not None
-    oid = output_id.group(1)
-
-    collected = ""
-    offset = 0
-    for _ in range(500):  # guard against a paging loop
-        page = read_stored_output(oid, offset=offset, limit=1_002)  # not a multiple of 4
-        body, _sep, hint = page.partition("\n\n[... more;")
-        assert "\ufffd" not in body
-        assert len(body.encode("utf-8")) <= 1_002
-        collected += body
-        if not hint:
-            break
-        match = re.search(r"offset=(\d+)", hint)
-        assert match is not None
-        offset = int(match.group(1))
-
-    assert collected == text
-
-
-async def test_read_stored_output_offset_inside_char_returns_valid_utf8(tmp_path: Path) -> None:
-    # An arbitrary caller-chosen offset that lands inside a 4-byte char must skip
-    # the partial leading char rather than emit a replacement character.
-    configure_output_store(tmp_path)
-    text = "😀" * 100
-    output_id = re.search(
-        r'output_id="([0-9a-f]{32})"',
-        await bound_and_store(text, max_lines=4, max_bytes=200),
-    )
-    assert output_id is not None
-    oid = output_id.group(1)
-
-    # Byte 1 is inside the first emoji (each 😀 is 4 bytes).
-    page = read_stored_output(oid, offset=1, limit=1_000)
-    body = page.partition("\n\n[... more;")[0]
-    assert "\ufffd" not in body
-    assert body == body.encode("utf-8").decode("utf-8")
-    # The partial leading char is skipped; content resumes at the next boundary.
-    assert body.startswith("😀")
-
-
-async def test_read_stored_output_offset_inside_final_char_terminates(tmp_path: Path) -> None:
-    # An offset inside the last multibyte character must not return an empty page
-    # with an unchanged continuation offset (which would loop forever).
-    configure_output_store(tmp_path)
-    text = "😀" * 10  # 40 bytes; the final emoji spans bytes 36..39
-    output_id = re.search(
-        r'output_id="([0-9a-f]{32})"',
-        await bound_and_store(text, max_lines=4, max_bytes=20),
-    )
-    assert output_id is not None
-    oid = output_id.group(1)
-
-    # Offset 37 lands inside the final char's continuation bytes: it advances to
-    # EOF, so the page terminates cleanly with no continuation hint.
-    page = read_stored_output(oid, offset=37, limit=1_000)
-    assert page == ""
-    assert "more;" not in page
-
-
-def test_read_stored_output_rejects_traversal(tmp_path: Path) -> None:
-    configure_output_store(tmp_path)
-    assert "Invalid output_id" in read_stored_output("../../etc/passwd")
-
-
-def test_read_stored_output_missing_id(tmp_path: Path) -> None:
-    configure_output_store(tmp_path)
-    assert "No stored output" in read_stored_output("0" * 32)
+    assert WORKSPACE_SPILL_DIR in bounded
+    assert len(bounded.encode("utf-8")) <= 2_000

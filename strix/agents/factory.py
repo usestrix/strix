@@ -58,7 +58,6 @@ from strix.tools.todo.tools import (
     mark_todo_pending,
     update_todo,
 )
-from strix.tools.tool_output import read_tool_output
 from strix.tools.web_search.tool import web_search
 
 
@@ -419,7 +418,6 @@ def _finish_tool_use_behavior(
 
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
-    read_tool_output,
     load_skill,
     create_todo,
     list_todos,
@@ -535,12 +533,7 @@ def build_strix_agent(
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        # read_tool_output pages already-stored output; re-bounding it would
-        # re-spill a large page under a new id and make retrieval unusable.
-        _with_bounded_result(tool)
-        if isinstance(tool, FunctionTool) and tool is not read_tool_output
-        else tool
-        for tool in tools
+        _with_bounded_result(tool) if isinstance(tool, FunctionTool) else tool for tool in tools
     ]
 
     logger.info(

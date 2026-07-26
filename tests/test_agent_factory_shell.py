@@ -110,12 +110,10 @@ async def test_chat_completions_filesystem_custom_tool_becomes_function_tool() -
     assert isinstance(toolset.read_file, FunctionTool)
 
 
-def test_read_tool_output_is_not_result_bounded() -> None:
-    # Every other FunctionTool gets the result-bounding wrapper, but the
-    # retrieval tool must be exempt or paging a large stored output would be
-    # re-spilled under a new id.
+def test_function_tools_are_result_bounded() -> None:
+    # Every FunctionTool gets the result-bounding wrapper so no tool result can
+    # enter history unbounded.
     agent = factory.build_strix_agent(is_root=True)
     by_name = {t.name: t for t in agent.tools}
 
-    assert getattr(by_name["read_tool_output"], "_strix_bounded", False) is False
     assert getattr(by_name["think"], "_strix_bounded", False) is True

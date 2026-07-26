@@ -44,7 +44,6 @@ from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
-    configure_output_store,
     configure_spill_writer,
 )
 
@@ -141,7 +140,6 @@ async def run_strix_scan(
 
     agents_path = state_dir / "agents.json"
     agents_db = state_dir / "agents.db"
-    configure_output_store(state_dir / "tool-output")
     is_resume = agents_path.exists()
 
     logger.info(
@@ -216,8 +214,8 @@ async def run_strix_scan(
     async def _spill_to_workspace(output_id: str, text: str) -> str | None:
         """Write an oversized tool result into the agent's sandbox workspace.
 
-        Returns the in-sandbox path the agent can read back, or ``None`` so the
-        caller falls back to the host-side store.
+        Returns the in-sandbox path the agent can read back, or ``None`` if the
+        write failed (the caller then degrades to a plain head+tail preview).
         """
         path = f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
         try:
