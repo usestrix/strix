@@ -2,10 +2,21 @@
 
 A single verbose tool result (a recursive ``find``, a noisy scanner, a full
 page dump) can otherwise pin the whole conversation near the model's context
-limit for the rest of the scan. Oversized results are spilled to a per-scan
-store on disk; what the agent sees is a head + tail slice plus an id it can
-pass to ``read_tool_output`` to page through the full content on demand — so
-truncated detail is bounded in history but never lost.
+limit for the rest of the scan. Oversized results are spilled to durable
+storage; what the agent sees is a head + tail slice plus a pointer to the full
+content it can retrieve on demand — so truncated detail is bounded in history
+but never lost.
+
+Two spill backends exist:
+
+* **Sandbox workspace (preferred):** the full output is written into the
+  agent's own sandbox at ``/workspace/.strix/tool-output/<id>.txt`` and the
+  agent reads it back with its normal file tools (``exec_command`` etc.). A
+  writer is injected by the runner via :func:`configure_spill_writer` once the
+  sandbox session exists.
+* **Host-side store (fallback):** when no sandbox writer is configured (unit
+  tests, chat mode), the output is kept host-side and retrieved through the
+  ``read_tool_output`` tool.
 """
 
 from __future__ import annotations
@@ -14,6 +25,11 @@ import logging
 import re
 import uuid
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 logger = logging.getLogger(__name__)
@@ -23,9 +39,20 @@ _SPILL_NOTICE = (
     "[... {lines} lines ({bytes} bytes) truncated — full output saved as "
     'output_id="{output_id}"; read it with read_tool_output(output_id="{output_id}") ...]'
 )
+_WORKSPACE_SPILL_NOTICE = (
+    "[... {lines} lines ({bytes} bytes) truncated — full output saved to {path} "
+    "in the sandbox; read it with exec_command (e.g. `sed -n`, `grep`, `cat`) ...]"
+)
+
+# Where the workspace writer stores spilled output inside the sandbox. Fixed
+# so a notice's byte size is known before the id is minted (see _head_tail).
+WORKSPACE_SPILL_DIR = "/workspace/.strix/tool-output"
 
 _OUTPUT_ID_RE = re.compile(r"^[0-9a-f]{32}$")
 _DEFAULT_STORE_DIR = Path.home() / ".strix" / "tool-output"
+
+# A representative longest workspace path, used only to reserve notice bytes.
+_SAMPLE_WORKSPACE_PATH = f"{WORKSPACE_SPILL_DIR}/{'0' * 32}.txt"
 
 # Byte ceiling for a single retrieval page so retrieval itself can never
 # overflow history — even for one very long line. Retrieval pages by byte
@@ -41,14 +68,32 @@ _CONTINUATION_HINT = (
     'output_id="{output_id}", offset={offset}) to continue ...]'
 )
 
-# Single-key holder so the configured path can be swapped per scan without a
+# Single-key holders so configuration can be swapped per scan without a
 # module-level ``global`` rebind.
 _config: dict[str, Path] = {}
 
+if TYPE_CHECKING:
+    SpillWriter = Callable[[str, str], Awaitable[str | None]]
+
+_spill: dict[str, SpillWriter] = {}
+
 
 def configure_output_store(directory: Path) -> None:
-    """Point the tool-output store at ``directory`` (created on demand)."""
+    """Point the host-side (fallback) tool-output store at ``directory``."""
     _config["dir"] = directory
+
+
+def configure_spill_writer(writer: SpillWriter | None) -> None:
+    """Install (or clear) the sandbox-workspace spill writer.
+
+    ``writer(output_id, text)`` persists ``text`` inside the sandbox and returns
+    the path the agent can read, or ``None`` if the write failed (so the caller
+    falls back to the host-side store).
+    """
+    if writer is None:
+        _spill.pop("writer", None)
+    else:
+        _spill["writer"] = writer
 
 
 def _active_store_dir() -> Path:
@@ -87,7 +132,11 @@ def _take_suffix(text: str, max_bytes: int) -> str:
 
 
 def _head_tail(
-    text: str, max_lines: int, max_bytes: int, *, notice_template: str = _TRUNCATION_NOTICE
+    text: str,
+    max_lines: int,
+    max_bytes: int,
+    *,
+    notice_templates: tuple[str, ...] = (_TRUNCATION_NOTICE,),
 ) -> tuple[str, str, int, int] | None:
     """Head/tail slices plus dropped line/byte counts, or ``None`` if small.
 
@@ -95,6 +144,8 @@ def _head_tail(
     blank-line separators are reserved out of the byte budget before slicing —
     otherwise ``head + tail`` alone could already consume the whole budget and
     the appended metadata would push the persisted value over ``max_bytes``.
+    The largest of ``notice_templates`` is reserved so the preview fits whichever
+    notice the caller ends up using (workspace path, host id, or plain).
     ``max_bytes`` must be large enough to hold the notice itself (guaranteed by
     the ``tool_output_max_bytes`` config floor).
     """
@@ -104,10 +155,20 @@ def _head_tail(
         return None
 
     # Upper-bound the notice size using the largest possible counts (and a
-    # full-length id); the real notice is never longer. ``+ 4`` covers the two
-    # ``\n\n`` separators added by ``_join``.
+    # full-length id/path); the real notice is never longer. ``+ 4`` covers the
+    # two ``\n\n`` separators added by ``_join``.
     notice_overhead = (
-        _byte_len(notice_template.format(lines=len(lines), bytes=total_bytes, output_id="0" * 32))
+        max(
+            _byte_len(
+                template.format(
+                    lines=len(lines),
+                    bytes=total_bytes,
+                    output_id="0" * 32,
+                    path=_SAMPLE_WORKSPACE_PATH,
+                )
+            )
+            for template in notice_templates
+        )
         + 4
     )
     byte_budget = max(2, max_bytes - notice_overhead)
@@ -152,9 +213,9 @@ def bound_text(text: str, *, max_lines: int, max_bytes: int) -> str:
     return _join(head, tail, _TRUNCATION_NOTICE.format(lines=dropped_lines, bytes=dropped_bytes))
 
 
-def store_full_output(text: str) -> str | None:
-    """Persist ``text`` and return its output id, or ``None`` if writing fails."""
-    output_id = uuid.uuid4().hex
+def store_full_output(text: str, *, output_id: str | None = None) -> str | None:
+    """Persist ``text`` host-side and return its output id, or ``None`` on error."""
+    output_id = output_id or uuid.uuid4().hex
     try:
         (_active_store_dir() / f"{output_id}.txt").write_text(text, encoding="utf-8")
     except OSError:
@@ -163,23 +224,46 @@ def store_full_output(text: str) -> str | None:
     return output_id
 
 
-def bound_and_store(text: str, *, max_lines: int, max_bytes: int) -> str:
-    """Like :func:`bound_text`, but spill the full output and reference its id.
+async def bound_and_store(
+    text: str,
+    *,
+    max_lines: int,
+    max_bytes: int,
+    allow_workspace_spill: bool = False,
+) -> str:
+    """Like :func:`bound_text`, but spill the full output and point at it.
 
-    When truncation happens the complete output is written to the store and the
-    preview's notice tells the agent the ``output_id`` to pass to
-    ``read_tool_output``. Falls back to a plain preview if the spill fails.
+    When ``allow_workspace_spill`` is set (only for sandbox-origin tools whose
+    output already lived inside the sandbox), prefers the sandbox-workspace
+    writer so the agent reads the file with its own tools. Orchestrator-side
+    tool output must never be written into the hostile sandbox, so it always
+    uses the host-side store + ``read_tool_output`` fallback. The fallback is
+    also used when no writer is configured or the workspace write fails.
     """
-    # Reserve for the (longer) spill notice so the preview honours max_bytes
-    # whether or not the spill succeeds.
-    parts = _head_tail(text, max_lines, max_bytes, notice_template=_SPILL_NOTICE)
+    parts = _head_tail(
+        text,
+        max_lines,
+        max_bytes,
+        notice_templates=(_WORKSPACE_SPILL_NOTICE, _SPILL_NOTICE, _TRUNCATION_NOTICE),
+    )
     if parts is None:
         return text
     head, tail, dropped_lines, dropped_bytes = parts
-    output_id = store_full_output(text)
+    output_id = uuid.uuid4().hex
+
+    writer = _spill.get("writer") if allow_workspace_spill else None
+    if writer is not None:
+        path = await writer(output_id, text)
+        if path is not None:
+            notice = _WORKSPACE_SPILL_NOTICE.format(
+                lines=dropped_lines, bytes=dropped_bytes, path=path
+            )
+            return _join(head, tail, notice)
+
+    stored = store_full_output(text, output_id=output_id)
     notice = (
-        _SPILL_NOTICE.format(lines=dropped_lines, bytes=dropped_bytes, output_id=output_id)
-        if output_id is not None
+        _SPILL_NOTICE.format(lines=dropped_lines, bytes=dropped_bytes, output_id=stored)
+        if stored is not None
         else _TRUNCATION_NOTICE.format(lines=dropped_lines, bytes=dropped_bytes)
     )
     return _join(head, tail, notice)

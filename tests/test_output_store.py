@@ -5,17 +5,27 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING
 
+import pytest
+
 from strix.tools.output_store import (
     _PAGE_MAX_BYTES,
+    WORKSPACE_SPILL_DIR,
     bound_and_store,
     bound_text,
     configure_output_store,
+    configure_spill_writer,
     read_stored_output,
 )
 
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+@pytest.fixture(autouse=True)
+def _clear_spill_writer() -> None:
+    # The writer is module-global; keep tests isolated from each other.
+    configure_spill_writer(None)
 
 
 def test_small_output_passes_through_unchanged() -> None:
@@ -41,12 +51,12 @@ def test_byte_limit_enforced_on_single_long_line() -> None:
     assert len(bounded.encode("utf-8")) <= 1_000
 
 
-def test_spill_preview_honours_byte_budget(tmp_path: Path) -> None:
+async def test_spill_preview_honours_byte_budget(tmp_path: Path) -> None:
     # bound_and_store's notice is longer (it carries the output_id), so the
     # preview must reserve for the spill notice to stay within max_bytes.
     configure_output_store(tmp_path)
     text = "\n".join("x" * 500 for _ in range(200))
-    bounded = bound_and_store(text, max_lines=2_000, max_bytes=2_000)
+    bounded = await bound_and_store(text, max_lines=2_000, max_bytes=2_000)
 
     assert "output_id=" in bounded
     assert len(bounded.encode("utf-8")) <= 2_000
@@ -82,18 +92,18 @@ def test_dropped_line_count_accounts_for_byte_trimming() -> None:
     assert dropped > 200 - 20
 
 
-def test_bound_and_store_small_output_not_spilled(tmp_path: Path) -> None:
+async def test_bound_and_store_small_output_not_spilled(tmp_path: Path) -> None:
     configure_output_store(tmp_path)
     text = "just a few lines\nsecond line"
-    assert bound_and_store(text, max_lines=100, max_bytes=10_000) == text
+    assert await bound_and_store(text, max_lines=100, max_bytes=10_000) == text
     assert list(tmp_path.iterdir()) == []
 
 
-def test_bound_and_store_spills_full_output_and_is_retrievable(tmp_path: Path) -> None:
+async def test_bound_and_store_spills_full_output_and_is_retrievable(tmp_path: Path) -> None:
     configure_output_store(tmp_path)
     text = "\n".join(f"secret-line-{i}" for i in range(1000))
 
-    bounded = bound_and_store(text, max_lines=10, max_bytes=1_000_000)
+    bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
 
     match = re.search(r'output_id="([0-9a-f]{32})"', bounded)
     assert match is not None, bounded
@@ -107,12 +117,81 @@ def test_bound_and_store_spills_full_output_and_is_retrievable(tmp_path: Path) -
     assert "secret-line-500" in full
 
 
-def test_read_stored_output_paginates(tmp_path: Path) -> None:
+async def test_workspace_writer_is_preferred_over_host_store(tmp_path: Path) -> None:
+    # When a sandbox writer is configured, the full output goes into the
+    # workspace and the notice points the agent at that path — no host spill.
+    configure_output_store(tmp_path)
+    written: dict[str, str] = {}
+
+    async def writer(output_id: str, text: str) -> str | None:
+        written[output_id] = text
+        return f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
+
+    configure_spill_writer(writer)
+    text = "\n".join(f"secret-line-{i}" for i in range(1000))
+    bounded = await bound_and_store(
+        text, max_lines=10, max_bytes=1_000_000, allow_workspace_spill=True
+    )
+
+    assert WORKSPACE_SPILL_DIR in bounded
+    assert "exec_command" in bounded
+    assert "read_tool_output" not in bounded
+    # Full output was handed to the sandbox writer, not the host store.
+    assert list(written.values()) == [text]
+    assert list(tmp_path.iterdir()) == []
+    # The preview still fits the configured byte ceiling.
+    assert len(bounded.encode("utf-8")) <= 1_000_000
+
+
+async def test_orchestrator_side_output_never_spills_to_workspace(tmp_path: Path) -> None:
+    # Orchestrator-side tool output (allow_workspace_spill=False, the default)
+    # must never be written into the hostile sandbox, even with a writer set.
+    configure_output_store(tmp_path)
+    written: dict[str, str] = {}
+
+    async def writer(output_id: str, text: str) -> str | None:
+        written[output_id] = text
+        return f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
+
+    configure_spill_writer(writer)
+    text = "\n".join(f"orchestrator-secret-{i}" for i in range(1000))
+    bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
+
+    # The writer was not called; the output went to the host-side store instead.
+    assert written == {}
+    assert WORKSPACE_SPILL_DIR not in bounded
+    match = re.search(r'output_id="([0-9a-f]{32})"', bounded)
+    assert match is not None, bounded
+    full = read_stored_output(match.group(1), offset=0, limit=1_000_000)
+    assert full.splitlines() == text.splitlines()
+
+
+async def test_workspace_writer_failure_falls_back_to_host_store(tmp_path: Path) -> None:
+    configure_output_store(tmp_path)
+
+    async def failing_writer(_output_id: str, _text: str) -> str | None:
+        return None
+
+    configure_spill_writer(failing_writer)
+    text = "\n".join(f"line-{i}" for i in range(1000))
+    bounded = await bound_and_store(
+        text, max_lines=10, max_bytes=1_000_000, allow_workspace_spill=True
+    )
+
+    # Falls back to the host-side store + read_tool_output pointer.
+    match = re.search(r'output_id="([0-9a-f]{32})"', bounded)
+    assert match is not None, bounded
+    assert WORKSPACE_SPILL_DIR not in bounded
+    full = read_stored_output(match.group(1), offset=0, limit=1_000_000)
+    assert full.splitlines() == text.splitlines()
+
+
+async def test_read_stored_output_paginates(tmp_path: Path) -> None:
     configure_output_store(tmp_path)
     text = "\n".join(str(i) for i in range(100))
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store(text, max_lines=4, max_bytes=1_000_000),
+        await bound_and_store(text, max_lines=4, max_bytes=1_000_000),
     )
     assert output_id is not None
     # A small caller limit bounds the *complete* response (content + hint).
@@ -125,28 +204,28 @@ def test_read_stored_output_paginates(tmp_path: Path) -> None:
     assert match is not None and int(match.group(1)) > 0
 
 
-def test_read_stored_output_rejects_limit_too_small_for_a_page(tmp_path: Path) -> None:
+async def test_read_stored_output_rejects_limit_too_small_for_a_page(tmp_path: Path) -> None:
     # A non-final page needs room for content plus the continuation hint; a limit
     # too small to hold both is rejected rather than silently exceeded.
     configure_output_store(tmp_path)
     text = "\n".join(str(i) for i in range(1000))
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store(text, max_lines=4, max_bytes=1_000_000),
+        await bound_and_store(text, max_lines=4, max_bytes=1_000_000),
     )
     assert output_id is not None
     result = read_stored_output(output_id.group(1), offset=0, limit=10)
     assert "too small" in result
 
 
-def test_read_stored_output_page_including_hint_stays_within_ceiling(tmp_path: Path) -> None:
+async def test_read_stored_output_page_including_hint_stays_within_ceiling(tmp_path: Path) -> None:
     # A full non-final page plus its continuation hint must not exceed the page
     # ceiling — retrieval bypasses the general result-bounding wrapper.
     configure_output_store(tmp_path)
     text = "x" * (_PAGE_MAX_BYTES * 3)
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store(text, max_lines=4, max_bytes=1_000),
+        await bound_and_store(text, max_lines=4, max_bytes=1_000),
     )
     assert output_id is not None
     page = read_stored_output(output_id.group(1), offset=0, limit=_PAGE_MAX_BYTES)
@@ -154,7 +233,7 @@ def test_read_stored_output_page_including_hint_stays_within_ceiling(tmp_path: P
     assert len(page.encode("utf-8")) <= _PAGE_MAX_BYTES
 
 
-def test_read_stored_output_pages_long_lines_losslessly(tmp_path: Path) -> None:
+async def test_read_stored_output_pages_long_lines_losslessly(tmp_path: Path) -> None:
     # A single line far larger than the page budget must be split across pages
     # (never returned whole), and paging forward must reconstruct the output
     # byte-for-byte without ever minting a fresh spill id.
@@ -162,7 +241,7 @@ def test_read_stored_output_pages_long_lines_losslessly(tmp_path: Path) -> None:
     text = "\n".join(f"{i}-" + "z" * 5_000 for i in range(50))
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store(text, max_lines=4, max_bytes=1_000),
+        await bound_and_store(text, max_lines=4, max_bytes=1_000),
     )
     assert output_id is not None
     oid = output_id.group(1)
@@ -185,14 +264,14 @@ def test_read_stored_output_pages_long_lines_losslessly(tmp_path: Path) -> None:
     assert collected == text
 
 
-def test_read_stored_output_pages_multibyte_without_corruption(tmp_path: Path) -> None:
+async def test_read_stored_output_pages_multibyte_without_corruption(tmp_path: Path) -> None:
     # A byte window can split a 4-byte char; paging must never emit a broken
     # (replacement) character and must still reconstruct the text exactly.
     configure_output_store(tmp_path)
     text = "😀" * 20_000
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store(text, max_lines=4, max_bytes=1_000),
+        await bound_and_store(text, max_lines=4, max_bytes=1_000),
     )
     assert output_id is not None
     oid = output_id.group(1)
@@ -214,14 +293,14 @@ def test_read_stored_output_pages_multibyte_without_corruption(tmp_path: Path) -
     assert collected == text
 
 
-def test_read_stored_output_offset_inside_char_returns_valid_utf8(tmp_path: Path) -> None:
+async def test_read_stored_output_offset_inside_char_returns_valid_utf8(tmp_path: Path) -> None:
     # An arbitrary caller-chosen offset that lands inside a 4-byte char must skip
     # the partial leading char rather than emit a replacement character.
     configure_output_store(tmp_path)
     text = "😀" * 100
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store(text, max_lines=4, max_bytes=200),
+        await bound_and_store(text, max_lines=4, max_bytes=200),
     )
     assert output_id is not None
     oid = output_id.group(1)
@@ -235,14 +314,14 @@ def test_read_stored_output_offset_inside_char_returns_valid_utf8(tmp_path: Path
     assert body.startswith("😀")
 
 
-def test_read_stored_output_offset_inside_final_char_terminates(tmp_path: Path) -> None:
+async def test_read_stored_output_offset_inside_final_char_terminates(tmp_path: Path) -> None:
     # An offset inside the last multibyte character must not return an empty page
     # with an unchanged continuation offset (which would loop forever).
     configure_output_store(tmp_path)
     text = "😀" * 10  # 40 bytes; the final emoji spans bytes 36..39
     output_id = re.search(
         r'output_id="([0-9a-f]{32})"',
-        bound_and_store(text, max_lines=4, max_bytes=20),
+        await bound_and_store(text, max_lines=4, max_bytes=20),
     )
     assert output_id is not None
     oid = output_id.group(1)
