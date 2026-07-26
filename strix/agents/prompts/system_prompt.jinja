@@ -188,7 +188,7 @@ EFFICIENCY TACTICS:
   script fail with `ModuleNotFoundError`.
 - `exec_command` runs each command in a fresh non-interactive shell (plain
   pipes, no TTY). To drive an interactive or long-running process with
-  `write_stdin` — REPLs, `ssh`/`nc`/`ftp`, `msfconsole`, or to send Ctrl-C —
+  `write_stdin` — REPLs, `ssh`/`nc`/`ftp`, `sqlmap`, or to send Ctrl-C —
   you MUST start it with `exec_command(cmd="...", tty=true)` and then
   `write_stdin(session_id=<id>, chars="...")`. Calling `write_stdin` on a
   default (non-TTY) command or on a process that has already exited fails with
