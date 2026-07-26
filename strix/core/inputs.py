@@ -33,6 +33,18 @@ def _accepts_required_tool_choice(model_name: str | None) -> bool:
     return name.startswith("openai/") or is_known_openai_bare_model(name)
 
 
+def is_whitebox_scan(targets_info: list[dict[str, Any]]) -> bool:
+    """True iff any target puts source in the workspace (local tree or cloned repo).
+
+    Mirrors ``collect_local_sources``: a ``repository`` target is source-aware
+    once it has been cloned, exactly like a ``local_code`` target.
+    """
+    return any(
+        t.get("type") == "local_code" or (t.get("details") or {}).get("cloned_repo_path")
+        for t in targets_info or []
+    )
+
+
 def build_root_task(scan_config: dict[str, Any]) -> str:
     targets = scan_config.get("targets", []) or []
     diff_scope = scan_config.get("diff_scope") or {}
