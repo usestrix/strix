@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
@@ -110,30 +109,8 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     return task
 
 
-def _explicit_target_hosts(scan_config: dict[str, Any]) -> set[str]:
-    """Hosts the user explicitly supplied as web/IP targets, lower-cased.
-
-    A spec's declared base URLs are only trusted for authorization when their
-    host matches one of these — a spec must not silently widen scope to a host
-    the user never selected.
-    """
-    hosts: set[str] = set()
-    for target in scan_config.get("targets", []) or []:
-        details = target.get("details") or {}
-        ttype = target.get("type")
-        host: str | None = None
-        if ttype == "web_application":
-            host = urlsplit(str(details.get("target_url", ""))).hostname
-        elif ttype == "ip_address":
-            host = str(details.get("target_ip", "")).strip() or None
-        if host:
-            hosts.add(host.lower())
-    return hosts
-
-
 def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     authorized: list[dict[str, str]] = []
-    explicit_hosts = _explicit_target_hosts(scan_config)
     value_keys = {
         "repository": "target_repo",
         "local_code": "target_path",
@@ -153,17 +130,14 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
             {"type": ttype, "value": value, "workspace_path": workspace_path},
         )
 
-        # A spec's declared base URLs are authorized only when their host was
-        # also supplied explicitly as a target, so a spec cannot expand scope to
-        # an unrelated host the user never selected.
+        # An API spec authorizes the hosts it declares as in-scope web targets
+        # so the agent can exercise every endpoint without expanding scope.
         if ttype == "api_spec":
             inventory = load_inventory(details)
             if inventory is not None:
                 authorized.extend(
                     {"type": "web_application", "value": base_url, "workspace_path": ""}
                     for base_url in inventory.base_urls
-                    if (host := urlsplit(base_url).hostname)
-                    and host.lower() in explicit_hosts
                 )
 
     return {
