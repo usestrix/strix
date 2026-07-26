@@ -116,15 +116,16 @@ async def finish_scan(
        / ``crashed`` / ``stopped`` agents are safe to leave behind.
        Calling ``finish_scan`` while children are alive orphans their
        work and produces an incomplete report.
-    2. All vulnerabilities you found are filed via
-       ``create_vulnerability_report`` — or, for known-CVE dependency
-       findings, ``create_dependency_report`` (un-reported findings are
-       not tracked and not credited). A dependency CVE already filed via
-       ``create_dependency_report`` counts as reported; it does NOT need
-       re-filing here and does NOT block finishing. Call ``list_reports``
-       to review every filed finding (use ``get_report`` for full detail)
-       and ground ``executive_summary`` / ``technical_analysis`` in what
-       was actually reported — do not invent or omit findings.
+    2. It's a good idea to call ``list_reports`` before finishing to
+       review every finding filed in this scan (use ``get_report`` for
+       full detail on any of them) so your ``executive_summary`` /
+       ``technical_analysis`` are grounded in what was actually reported
+       — don't invent or omit findings. All vulnerabilities you found are
+       filed via ``create_vulnerability_report`` — or, for known-CVE
+       dependency findings, ``create_dependency_report`` (un-reported
+       findings are not tracked and not credited). A dependency CVE
+       already filed via ``create_dependency_report`` counts as reported;
+       it does NOT need re-filing here and does NOT block finishing.
     3. Don't double-report — one report per distinct vulnerability.
     4. **Attack-chaining gate.** Do NOT finish until you have genuinely
        considered chaining the confirmed findings into higher-impact,
