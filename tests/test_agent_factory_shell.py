@@ -111,8 +111,6 @@ async def test_chat_completions_filesystem_custom_tool_becomes_function_tool() -
 
 
 def test_function_tools_are_result_bounded() -> None:
-    # Every FunctionTool gets the result-bounding wrapper so no tool result can
-    # enter history unbounded.
     agent = factory.build_strix_agent(is_root=True)
     by_name = {t.name: t for t in agent.tools}
 

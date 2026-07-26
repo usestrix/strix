@@ -129,12 +129,7 @@ def _format_tool_error(exc: Exception) -> str:
 
 
 def _with_bounded_result(tool: FunctionTool) -> FunctionTool:
-    """Cap the size of a tool's result before it enters agent history.
-
-    Idempotent: base tools are shared singletons reused across every agent, so
-    the guard prevents stacking the wrapper on repeated ``build_strix_agent``
-    calls.
-    """
+    """Cap a tool's result size before it enters history (idempotent)."""
     if getattr(tool, "_strix_bounded", False):
         return tool
     invoke_tool = tool.on_invoke_tool
@@ -200,13 +195,7 @@ def _custom_tool_as_function_tool(tool: CustomTool) -> FunctionTool:
 
 
 def _bound_custom_tool(tool: CustomTool) -> CustomTool:
-    """Bound a native ``CustomTool`` result in place.
-
-    Chat-completions mode converts filesystem ``CustomTool``s to ``FunctionTool``s
-    (which bounds the result), but the Responses path keeps them native, so a
-    large ``read_file``/directory listing would otherwise append unbounded text
-    to history. Wrap ``on_invoke_tool`` so the same head+tail bound applies.
-    """
+    """Bound a native ``CustomTool`` result in place (Responses path)."""
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
@@ -223,8 +212,6 @@ def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None
                 setattr(toolset, name, _custom_tool_as_function_tool(tool))
             elif isinstance(tool, FunctionTool):
                 setattr(toolset, name, _function_tool_with_error_result(tool))
-        # Responses-API path: keep tools native but still bound their output so
-        # filesystem reads can't exhaust the context window on later turns.
         elif isinstance(tool, CustomTool):
             setattr(toolset, name, _bound_custom_tool(tool))
         elif isinstance(tool, FunctionTool):
@@ -277,13 +264,8 @@ def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
 
 
 def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
-    """Bound the SDK shell tools' own token cap so a single command can't dump
-    unbounded output into history. The SDK truncates head+tail from this value.
-
-    The configured cap is a ceiling: a missing value defaults to it, and a
-    larger model-supplied value is clamped down to it. A smaller explicit value
-    is respected, so the model can still ask for less.
-    """
+    """Clamp the SDK shell tools' ``max_output_tokens`` to the configured
+    ceiling; a smaller explicit value is respected."""
     ceiling = load_settings().context.tool_output_max_tokens
     requested = parsed.get("max_output_tokens")
     parsed["max_output_tokens"] = (

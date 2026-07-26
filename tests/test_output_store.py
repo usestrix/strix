@@ -16,7 +16,6 @@ from strix.tools.output_store import (
 
 @pytest.fixture(autouse=True)
 def _clear_spill_writer() -> None:
-    # The writer is module-global; keep tests isolated from each other.
     configure_spill_writer(None)
 
 
@@ -83,7 +82,6 @@ async def test_bound_and_store_small_output_not_spilled() -> None:
     configure_spill_writer(writer)
     text = "just a few lines\nsecond line"
     assert await bound_and_store(text, max_lines=100, max_bytes=10_000) == text
-    # Small output is returned as-is; nothing is written to the workspace.
     assert written == {}
 
 
@@ -98,16 +96,14 @@ async def test_bound_and_store_spills_full_output_to_workspace() -> None:
     text = "\n".join(f"secret-line-{i}" for i in range(1000))
     bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
 
-    # The preview points at the workspace file and stays within the ceiling.
     assert WORKSPACE_SPILL_DIR in bounded
     assert "exec_command" in bounded
     assert "read_tool_output" not in bounded
     assert len(bounded.encode("utf-8")) <= 1_000_000
-    # The writer received the complete, untruncated output.
     assert list(written.values()) == [text]
     stored = next(iter(written.values()))
     assert stored.splitlines() == text.splitlines()
-    # A buried line elided from the preview is present in the spilled file.
+    # A buried line elided from the preview is still present in the spilled file.
     assert "secret-line-500" not in bounded
     assert "secret-line-500" in stored
 
@@ -125,9 +121,6 @@ async def test_workspace_notice_carries_the_returned_path() -> None:
 
 
 async def test_no_writer_degrades_to_plain_preview() -> None:
-    # With no writer configured (autouse fixture clears it) the output can't be
-    # spilled, so it degrades to a plain head+tail preview — no workspace path,
-    # no host-side pointer, nothing persisted.
     text = "\n".join(f"line-{i}" for i in range(1000))
     bounded = await bound_and_store(text, max_lines=10, max_bytes=1_000_000)
 
@@ -151,8 +144,7 @@ async def test_writer_failure_degrades_to_plain_preview() -> None:
 
 
 async def test_workspace_preview_honours_byte_budget() -> None:
-    # The workspace notice is longer than a plain notice, so the preview must
-    # reserve for it to stay within max_bytes.
+    # The workspace notice is longer than a plain notice; the preview reserves for it.
     async def writer(output_id: str, _text: str) -> str | None:
         return f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
 

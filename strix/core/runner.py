@@ -212,11 +212,7 @@ async def run_strix_scan(
     sandbox_session = bundle["session"]
 
     async def _spill_to_workspace(output_id: str, text: str) -> str | None:
-        """Write an oversized tool result into the agent's sandbox workspace.
-
-        Returns the in-sandbox path the agent can read back, or ``None`` if the
-        write failed (the caller then degrades to a plain head+tail preview).
-        """
+        """Write an oversized tool result into the sandbox; return its path or None."""
         path = f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
         try:
             await sandbox_session.write(Path(path), io.BytesIO(text.encode("utf-8")))
