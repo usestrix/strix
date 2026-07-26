@@ -241,11 +241,12 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = _PAGE_MA
     """Return a bounded byte-window of a stored output starting at byte ``offset``.
 
     ``output_id`` must be a token previously returned in a truncation notice; it
-    is validated to prevent path traversal. The page is bounded by a UTF-8 byte
-    budget (``limit``, capped at ``_PAGE_MAX_BYTES``) so it can never overflow
-    history — even a single very long line is split across pages rather than
-    returned whole. Paging forward with the printed ``offset`` hint reconstructs
-    the full output byte-for-byte.
+    is validated to prevent path traversal. The *complete* response — content
+    plus any continuation hint — is bounded by a UTF-8 byte budget (``limit``,
+    capped at ``_PAGE_MAX_BYTES``) so it can never overflow history; even a
+    single very long line is split across pages rather than returned whole.
+    Paging forward with the printed ``offset`` hint reconstructs the full output
+    byte-for-byte.
     """
     if not _OUTPUT_ID_RE.match(output_id):
         return f"Invalid output_id: {output_id!r}"
@@ -257,13 +258,15 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = _PAGE_MA
     start = _boundary_offset(path, max(0, offset)) if offset > 0 else 0
     if start >= size:
         return ""
-    # Reserve the continuation hint's bytes so a full page plus its appended
-    # metadata still fits the ceiling (retrieval bypasses the result wrapper).
-    # next_offset can never exceed the file size, so formatting with ``size``
-    # is an exact upper bound on the hint length. Floor content at 4 bytes (the
-    # max UTF-8 char length) so a page always makes progress past one char.
+    # Reserve the continuation hint's bytes out of the effective ceiling so the
+    # *complete* response (content + hint) honours both the caller's ``limit``
+    # and the global page cap — retrieval bypasses the result-bounding wrapper,
+    # so this is the only ceiling. next_offset can never exceed the file size, so
+    # formatting with ``size`` is an exact upper bound on the hint length. Floor
+    # content at 4 bytes (the max UTF-8 char length) so a page always makes
+    # progress past one char even when ``limit`` is smaller than the hint.
     hint_reserve = len(_CONTINUATION_HINT.format(output_id=output_id, offset=size))
-    content_budget = min(max(4, limit), _PAGE_MAX_BYTES - hint_reserve)
+    content_budget = max(4, min(max(4, limit), _PAGE_MAX_BYTES) - hint_reserve)
     with path.open("rb") as handle:
         handle.seek(start)
         chunk = handle.read(content_budget)

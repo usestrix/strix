@@ -115,10 +115,14 @@ def test_read_stored_output_paginates(tmp_path: Path) -> None:
         bound_and_store(text, max_lines=4, max_bytes=1_000_000),
     )
     assert output_id is not None
-    page = read_stored_output(output_id.group(1), offset=0, limit=10)
+    # A small caller limit bounds the *complete* response (content + hint).
+    page = read_stored_output(output_id.group(1), offset=0, limit=200)
     assert page.startswith("0\n1")
     assert "more;" in page
-    assert "offset=10" in page
+    assert len(page.encode("utf-8")) <= 200
+    # The continuation offset advances past the returned content.
+    match = re.search(r"offset=(\d+)", page)
+    assert match is not None and int(match.group(1)) > 0
 
 
 def test_read_stored_output_page_including_hint_stays_within_ceiling(tmp_path: Path) -> None:
