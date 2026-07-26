@@ -177,6 +177,20 @@ def bound_and_store(text: str, *, max_lines: int, max_bytes: int) -> str:
     return _join(head, tail, notice)
 
 
+def _trim_incomplete_utf8_head(chunk: bytes) -> bytes:
+    """Drop leading continuation bytes so a chunk starting mid-character decodes cleanly.
+
+    A caller-supplied ``offset`` can land inside a multi-byte character; its
+    orphaned continuation bytes (0b10xxxxxx) belong to a character whose lead
+    byte is before ``offset``, so we skip forward to the next character start
+    instead of emitting replacement characters.
+    """
+    index = 0
+    while index < len(chunk) and chunk[index] & 0xC0 == 0x80:
+        index += 1
+    return chunk[index:]
+
+
 def _trim_incomplete_utf8_tail(chunk: bytes) -> bytes:
     """Drop a trailing partial UTF-8 sequence so ``chunk`` decodes cleanly.
 
@@ -239,9 +253,15 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = _PAGE_MA
     has_more = start + len(chunk) < size
     if has_more:
         chunk = _trim_incomplete_utf8_tail(chunk)
+    next_offset = start + len(chunk)
+    # Drop a partial leading character when an arbitrary offset lands mid-char.
+    # This never removes content: the previous page's tail-trim guarantees a
+    # forward-paged offset starts on a boundary, so this only affects an
+    # explicit caller-chosen offset (whose partial char began on an earlier page).
+    if start > 0:
+        chunk = _trim_incomplete_utf8_head(chunk)
     shown = chunk.decode("utf-8", errors="replace")
     if has_more:
-        next_offset = start + len(chunk)
         shown += (
             "\n\n[... more; call read_tool_output("
             f'output_id="{output_id}", offset={next_offset}) to continue ...]'

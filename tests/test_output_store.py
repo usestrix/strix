@@ -180,6 +180,27 @@ def test_read_stored_output_pages_multibyte_without_corruption(tmp_path: Path) -
     assert collected == text
 
 
+def test_read_stored_output_offset_inside_char_returns_valid_utf8(tmp_path: Path) -> None:
+    # An arbitrary caller-chosen offset that lands inside a 4-byte char must skip
+    # the partial leading char rather than emit a replacement character.
+    configure_output_store(tmp_path)
+    text = "😀" * 100
+    output_id = re.search(
+        r'output_id="([0-9a-f]{32})"',
+        bound_and_store(text, max_lines=4, max_bytes=200),
+    )
+    assert output_id is not None
+    oid = output_id.group(1)
+
+    # Byte 1 is inside the first emoji (each 😀 is 4 bytes).
+    page = read_stored_output(oid, offset=1, limit=1_000)
+    body = page.partition("\n\n[... more;")[0]
+    assert "\ufffd" not in body
+    assert body == body.encode("utf-8").decode("utf-8")
+    # The partial leading char is skipped; content resumes at the next boundary.
+    assert body.startswith("😀")
+
+
 def test_read_stored_output_rejects_traversal(tmp_path: Path) -> None:
     configure_output_store(tmp_path)
     assert "Invalid output_id" in read_stored_output("../../etc/passwd")
