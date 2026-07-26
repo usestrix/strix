@@ -6,7 +6,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
-from litellm.exceptions import ContextWindowExceededError, RateLimitError
+from litellm.exceptions import BadRequestError, ContextWindowExceededError, RateLimitError
 
 from strix.config import ContextSettings
 from strix.llm import compaction
@@ -72,7 +72,6 @@ def _has_orphan_tool_output(items: list[Any]) -> bool:
 
 
 def test_is_context_overflow_uses_litellm_typed_error() -> None:
-    # Only the typed overflow error triggers compaction, not e.g. a rate limit.
     overflow = ContextWindowExceededError(
         message="context length exceeded", model="m", llm_provider="openai"
     )
@@ -81,6 +80,34 @@ def test_is_context_overflow_uses_litellm_typed_error() -> None:
         RateLimitError(message="slow down", model="m", llm_provider="openai")
     )
     assert not compaction.is_context_overflow(RuntimeError("maximum context length is 8192"))
+
+
+def test_is_context_overflow_matches_untyped_openrouter_400() -> None:
+    # OpenRouter overflows arrive as a plain BadRequestError, so match the message.
+    openrouter = BadRequestError(
+        message=(
+            "litellm.BadRequestError: This endpoint's maximum context length is 16385 "
+            "tokens. However, you requested about 75064 tokens. Please reduce the length "
+            "of the messages."
+        ),
+        model="openrouter/openai/gpt-3.5-turbo",
+        llm_provider="openrouter",
+    )
+    assert compaction.is_context_overflow(openrouter)
+
+
+def test_is_context_overflow_ignores_rate_limit_shaped_bad_request() -> None:
+    # A 400 that is really throttling must never be treated as an overflow.
+    throttled = BadRequestError(
+        message="Rate limit exceeded, please slow down",
+        model="openrouter/openai/gpt-4o",
+        llm_provider="openrouter",
+    )
+    assert not compaction.is_context_overflow(throttled)
+    unrelated = BadRequestError(
+        message="Invalid value for 'temperature'", model="m", llm_provider="openrouter"
+    )
+    assert not compaction.is_context_overflow(unrelated)
 
 
 def test_select_split_never_orphans_tool_output(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -13,7 +13,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 import litellm
-from litellm.exceptions import ContextWindowExceededError
+from litellm.exceptions import BadRequestError, ContextWindowExceededError
 
 from strix.config import load_settings
 from strix.core.sessions import replace_session_items, session_write_lock
@@ -32,12 +32,47 @@ _MIN_ITEMS_TO_COMPACT = 6
 _HEAD_TRUNCATED_MARKER = "\n\n[... older conversation omitted to fit the summary request ...]\n\n"
 
 
+# Providers that don't type overflow errors (OpenRouter maps every 400 to a
+# plain BadRequestError) leave only the message to go on, so we match it the way
+# LiteLLM's own checker does — but with rate-limit exclusions first, so a
+# throttling 429 is never mistaken for an overflow and sent into compaction.
+_OVERFLOW_EXCLUSIONS = (
+    "rate limit",
+    "too many requests",
+    "throttling",
+    "service unavailable",
+    "quota",
+)
+_OVERFLOW_MARKERS = (
+    "context length",
+    "context window",
+    "context_length_exceeded",
+    "prompt is too long",
+    "input is too long",
+    "input length",
+    "maximum prompt length",
+    "reduce the length of the messages",
+    "too many tokens",
+    "token limit exceeded",
+    "request entity too large",
+)
+
+
 def is_context_overflow(exc: BaseException) -> bool:
     """Whether ``exc`` is a model context-window-overflow error.
 
-    LiteLLM normalises every provider's overflow error to this type.
+    LiteLLM types most providers' overflow as ContextWindowExceededError, but its
+    OpenRouter branch raises a plain BadRequestError, so for that we fall back to
+    matching the provider message.
     """
-    return isinstance(exc, ContextWindowExceededError)
+    if isinstance(exc, ContextWindowExceededError):
+        return True
+    if isinstance(exc, BadRequestError):
+        msg = str(exc).lower()
+        if any(x in msg for x in _OVERFLOW_EXCLUSIONS):
+            return False
+        return any(x in msg for x in _OVERFLOW_MARKERS)
+    return False
 
 
 _SUMMARY_INSTRUCTIONS = """\
