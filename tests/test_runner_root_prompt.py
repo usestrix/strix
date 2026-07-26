@@ -17,6 +17,7 @@ import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
+from strix.core.inputs import is_whitebox_scan
 
 
 def _make_rate_limit_error() -> RateLimitError:
@@ -89,6 +90,56 @@ def _patch_engine_scaffold(
 
     monkeypatch.setattr(runner, "run_agent_loop", _raise_rate_limit)
     return captured
+
+
+@pytest.mark.asyncio
+async def test_cloned_repo_target_makes_root_agent_whitebox(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """A repo + domain scan is source-aware: the repo is cloned into /workspace."""
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, {"authorized_targets": []})
+
+    targets = [
+        {
+            "type": "repository",
+            "details": {
+                "target_repo": "https://example.com/org/repo",
+                "cloned_repo_path": "/clone",
+                "workspace_subdir": "repo",
+            },
+        },
+        {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+    ]
+
+    await runner.run_strix_scan(
+        scan_config={"targets": targets, "scan_mode": "deep"},
+        scan_id="scan-whitebox",
+        image="img",
+        coordinator=AgentCoordinator(),
+    )
+
+    assert captured["kwargs"]["is_whitebox"] is True
+    assert captured["kwargs"]["is_whitebox"] is is_whitebox_scan(targets)
+
+
+@pytest.mark.asyncio
+async def test_url_only_scan_is_not_whitebox(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, {"authorized_targets": []})
+
+    targets = [{"type": "web_application", "details": {"target_url": "https://app.example.com"}}]
+
+    await runner.run_strix_scan(
+        scan_config={"targets": targets, "scan_mode": "deep"},
+        scan_id="scan-blackbox",
+        image="img",
+        coordinator=AgentCoordinator(),
+    )
+
+    assert captured["kwargs"]["is_whitebox"] is False
 
 
 @pytest.mark.asyncio

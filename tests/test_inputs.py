@@ -7,7 +7,13 @@ from typing import Any
 
 import pytest
 
-from strix.core.inputs import build_root_task, child_initial_input, make_model_settings
+from strix.core.inputs import (
+    build_root_task,
+    child_initial_input,
+    is_whitebox_scan,
+    make_model_settings,
+)
+from strix.interface.utils import collect_local_sources
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -53,6 +59,43 @@ def test_child_initial_input_no_consecutive_same_role(parent_history: list[Any])
 
     roles = [msg["role"] for msg in result]
     assert all(prev != nxt for prev, nxt in pairwise(roles))
+
+
+def _cloned_repo_target() -> dict[str, Any]:
+    return {
+        "type": "repository",
+        "details": {
+            "target_repo": "https://example.com/org/repo",
+            "cloned_repo_path": "/clone",
+            "workspace_subdir": "repo",
+        },
+    }
+
+
+def test_is_whitebox_scan_for_cloned_repository_target() -> None:
+    assert is_whitebox_scan([_cloned_repo_target()]) is True
+
+
+def test_is_whitebox_scan_matches_collect_local_sources() -> None:
+    """Keep whitebox classification aligned with source collection for supported targets.
+
+    ``collect_local_sources`` is what puts code in ``/workspace``; deriving the
+    whitebox flag from a narrower rule is how repo targets silently lost the
+    source-aware skills.
+    """
+    cases: list[list[dict[str, Any]]] = [
+        [_cloned_repo_target()],
+        [{"type": "local_code", "details": {"target_path": "/src"}}],
+        [{"type": "web_application", "details": {"target_url": "https://app.example.com"}}],
+        [
+            _cloned_repo_target(),
+            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+        ],
+        [{"type": "repository", "details": {"target_repo": "https://example.com/org/repo"}}],
+        [],
+    ]
+    for targets in cases:
+        assert is_whitebox_scan(targets) is bool(collect_local_sources(targets)), targets
 
 
 def test_build_root_task_empty_config() -> None:

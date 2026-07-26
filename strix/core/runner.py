@@ -34,6 +34,7 @@ from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
     build_root_task,
     build_scope_context,
+    is_whitebox_scan,
     make_model_settings,
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
@@ -208,7 +209,7 @@ async def run_strix_scan(
     try:
         targets = scan_config.get("targets") or []
         scan_mode = str(scan_config.get("scan_mode") or "deep")
-        is_whitebox = any(t.get("type") == "local_code" for t in targets)
+        is_whitebox = is_whitebox_scan(targets)
         skills = list(scan_config.get("skills") or [])
         root_task = build_root_task(scan_config)
         model_settings = make_model_settings(

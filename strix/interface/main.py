@@ -31,6 +31,7 @@ from strix.config.models import (
     is_known_openai_bare_model,
     is_recommended_or_frontier_model,
 )
+from strix.core.inputs import is_whitebox_scan
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
@@ -53,7 +54,6 @@ from strix.interface.utils import (
     generate_run_name,
     image_exists,
     infer_target_type,
-    is_whitebox_scan,
     process_pull_line,
     read_target_list_file,
     resolve_diff_scope_context,

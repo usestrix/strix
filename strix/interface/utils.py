@@ -1244,11 +1244,6 @@ def assign_workspace_subdirs(targets_info: list[dict[str, Any]]) -> None:
         details["workspace_subdir"] = workspace_subdir
 
 
-def is_whitebox_scan(targets_info: list[dict[str, Any]]) -> bool:
-    """True iff any target is a local source tree (whitebox / source-aware)."""
-    return any(t.get("type") == "local_code" for t in targets_info or [])
-
-
 def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
     local_sources: list[dict[str, Any]] = []
 
