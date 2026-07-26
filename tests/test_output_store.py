@@ -6,6 +6,7 @@ import re
 from typing import TYPE_CHECKING
 
 from strix.tools.output_store import (
+    _PAGE_MAX_BYTES,
     bound_and_store,
     bound_text,
     configure_output_store,
@@ -118,6 +119,21 @@ def test_read_stored_output_paginates(tmp_path: Path) -> None:
     assert page.startswith("0\n1")
     assert "more;" in page
     assert "offset=10" in page
+
+
+def test_read_stored_output_page_including_hint_stays_within_ceiling(tmp_path: Path) -> None:
+    # A full non-final page plus its continuation hint must not exceed the page
+    # ceiling — retrieval bypasses the general result-bounding wrapper.
+    configure_output_store(tmp_path)
+    text = "x" * (_PAGE_MAX_BYTES * 3)
+    output_id = re.search(
+        r'output_id="([0-9a-f]{32})"',
+        bound_and_store(text, max_lines=4, max_bytes=1_000),
+    )
+    assert output_id is not None
+    page = read_stored_output(output_id.group(1), offset=0, limit=_PAGE_MAX_BYTES)
+    assert "more;" in page  # a hint was appended (non-final page)
+    assert len(page.encode("utf-8")) <= _PAGE_MAX_BYTES
 
 
 def test_read_stored_output_pages_long_lines_losslessly(tmp_path: Path) -> None:

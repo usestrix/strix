@@ -33,6 +33,14 @@ _DEFAULT_STORE_DIR = Path.home() / ".strix" / "tool-output"
 # instead of returned whole.
 _PAGE_MAX_BYTES = 50 * 1024
 
+# Appended to a non-final page so the agent can request the next one. Its bytes
+# are reserved out of the page budget so a full page plus this hint still fits
+# ``_PAGE_MAX_BYTES``.
+_CONTINUATION_HINT = (
+    "\n\n[... more; call read_tool_output("
+    'output_id="{output_id}", offset={offset}) to continue ...]'
+)
+
 # Single-key holder so the configured path can be swapped per scan without a
 # module-level ``global`` rebind.
 _config: dict[str, Path] = {}
@@ -243,12 +251,16 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = _PAGE_MA
     size = path.stat().st_size
     if start >= size:
         return ""
-    # Floor at 4 bytes (the max UTF-8 char length) so a page always makes
-    # progress past a single multi-byte character.
-    budget = min(max(4, limit), _PAGE_MAX_BYTES)
+    # Reserve the continuation hint's bytes so a full page plus its appended
+    # metadata still fits the ceiling (retrieval bypasses the result wrapper).
+    # next_offset can never exceed the file size, so formatting with ``size``
+    # is an exact upper bound on the hint length. Floor content at 4 bytes (the
+    # max UTF-8 char length) so a page always makes progress past one char.
+    hint_reserve = len(_CONTINUATION_HINT.format(output_id=output_id, offset=size))
+    content_budget = min(max(4, limit), _PAGE_MAX_BYTES - hint_reserve)
     with path.open("rb") as handle:
         handle.seek(start)
-        chunk = handle.read(budget)
+        chunk = handle.read(content_budget)
 
     has_more = start + len(chunk) < size
     if has_more:
@@ -262,8 +274,5 @@ def read_stored_output(output_id: str, *, offset: int = 0, limit: int = _PAGE_MA
         chunk = _trim_incomplete_utf8_head(chunk)
     shown = chunk.decode("utf-8", errors="replace")
     if has_more:
-        shown += (
-            "\n\n[... more; call read_tool_output("
-            f'output_id="{output_id}", offset={next_offset}) to continue ...]'
-        )
+        shown += _CONTINUATION_HINT.format(output_id=output_id, offset=next_offset)
     return shown
