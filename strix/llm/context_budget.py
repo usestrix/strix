@@ -1,10 +1,5 @@
-"""Model-aware token budgets.
-
-The context window and output cap vary widely by model (128k for gpt-4o, 272k
-for gpt-5, 1M for claude-sonnet-4, 131k for deepseek). We resolve them from
-LiteLLM's model metadata so compaction triggers at the right point for the
-selected model instead of a fixed guess, falling back to a large configurable
-default for models LiteLLM doesn't map.
+"""Model-aware token budgets, resolved from LiteLLM model metadata with a
+large configurable fallback for models LiteLLM doesn't map.
 """
 
 from __future__ import annotations
@@ -70,13 +65,8 @@ def output_limit(model: str) -> int:
 def count_tokens(model: str, text: str) -> int:
     """Token count for ``text`` under ``model``.
 
-    LiteLLM's counter handles known tokenizers (and defaults to a tiktoken
-    encoding otherwise). If it still can't count, fall back to the UTF-8 byte
-    length as a guaranteed upper bound: byte-level BPE tokenizers (used by every
-    major provider) emit at least one byte per token, so token count can never
-    exceed the byte count. Over-counting is safe here — it makes budget checks
-    conservative — whereas any under-count could let a summary request be packed
-    past the real context window and get rejected.
+    Falls back to UTF-8 byte length (a guaranteed upper bound) when LiteLLM
+    can't count, so budget checks stay conservative.
     """
     if not text:
         return 0

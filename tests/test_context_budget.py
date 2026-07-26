@@ -38,10 +38,8 @@ def test_count_tokens_fallback_on_error(monkeypatch: pytest.MonkeyPatch) -> None
         raise RuntimeError("no tokenizer")
 
     monkeypatch.setattr("strix.llm.context_budget.litellm.token_counter", _raise)
-    # UTF-8 byte length is a guaranteed upper bound on tokens, so budgets never
-    # under-count when no tokenizer is available.
+    # Falls back to UTF-8 byte length (upper bound on tokens).
     assert context_budget.count_tokens("weird-model", "x" * 400) == 400
-    # Multibyte text: bytes (not chars) bound the token count.
     assert context_budget.count_tokens("weird-model", "😀" * 10) == 40
 
 

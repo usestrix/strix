@@ -72,8 +72,7 @@ def _has_orphan_tool_output(items: list[Any]) -> bool:
 
 
 def test_is_context_overflow_uses_litellm_typed_error() -> None:
-    # LiteLLM maps every provider's overflow error to this type; anything else
-    # (including a rate-limit error) must not trigger compaction.
+    # Only the typed overflow error triggers compaction, not e.g. a rate limit.
     overflow = ContextWindowExceededError(
         message="context length exceeded", model="m", llm_provider="openai"
     )
@@ -226,9 +225,7 @@ async def test_maybe_compact_bounds_summary_prompt(monkeypatch: pytest.MonkeyPat
 async def test_summary_request_fits_when_room_is_below_old_floor(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # When the window leaves less head-input room than the old fixed floor, the
-    # budget must shrink to the real room so the request still fits the window
-    # (a fixed floor above the room would overflow and silently fail).
+    # Head-input budget must shrink to the real room so the request fits.
     instructions = len(compaction._SUMMARY_INSTRUCTIONS)
     window = instructions + 64 + 256 + 300  # summary_max(64)+slack(256)+room(300)
     _patch_budget(monkeypatch, keep_tokens=30, window=window)
@@ -264,8 +261,7 @@ async def test_maybe_compact_skips_when_summary_fails(monkeypatch: pytest.Monkey
 async def test_maybe_compact_skips_when_no_room_to_summarise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # A window too small to fit the summary instructions plus the reserved
-    # output leaves no room for any head, so no (doomed) summary is attempted.
+    # No room for any head -> no (doomed) summary is attempted.
     _patch_budget(monkeypatch, keep_tokens=30, window=200)
     called = False
 

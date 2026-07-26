@@ -35,10 +35,7 @@ _HEAD_TRUNCATED_MARKER = "\n\n[... older conversation omitted to fit the summary
 def is_context_overflow(exc: BaseException) -> bool:
     """Whether ``exc`` is a model context-window-overflow error.
 
-    LiteLLM normalises every provider's overflow error to
-    ``ContextWindowExceededError`` (a ``BadRequestError`` subclass) and keeps
-    the provider-specific detection upstream, so we rely on that type rather
-    than matching error message strings ourselves.
+    LiteLLM normalises every provider's overflow error to this type.
     """
     return isinstance(exc, ContextWindowExceededError)
 
@@ -129,11 +126,8 @@ def _is_tool_output(item: Any) -> bool:
 
 
 def _open_calls_at(items: list[Any]) -> list[int]:
-    """Prefix count of tool calls still awaiting their result at each index.
-
-    ``result[i]`` is the number of open calls *before* index ``i``. A split is
-    only safe (won't orphan a tool result from its call) where this is zero.
-    """
+    """Prefix count of tool calls still awaiting their result at each index;
+    a split is only safe where this is zero."""
     balance = [0] * (len(items) + 1)
     for i, item in enumerate(items):
         delta = 1 if _is_tool_call(item) else -1 if _is_tool_output(item) else 0
@@ -142,12 +136,8 @@ def _open_calls_at(items: list[Any]) -> list[int]:
 
 
 def _select_split(model: str, items: list[Any], keep_tokens: int) -> int:
-    """Index where the kept-verbatim recent tail begins.
-
-    Walks newest→oldest until ``keep_tokens`` is reached, then snaps the
-    boundary to a point with no tool call left open so the recent slice is
-    valid provider input on its own.
-    """
+    """Index where the kept-verbatim recent tail begins: walk newest→oldest to
+    ``keep_tokens``, then snap to a point with no tool call left open."""
     total = 0
     split = len(items)
     for i in range(len(items) - 1, -1, -1):
@@ -171,16 +161,10 @@ def _previous_summary(head: list[Any]) -> str | None:
 
 
 def _fit_to_tokens(model: str, text: str, max_tokens: int) -> str:
-    """Head+tail-truncate ``text`` so it fits within ``max_tokens``.
-
-    Keeps the start (objective/setup) and the end (most recent activity), which
-    matter most for continuity, and drops the middle. Prevents the summary
-    request itself from overflowing the model window on very large histories.
-    """
+    """Head+tail-truncate ``text`` to ``max_tokens``, keeping start and end."""
     if count_tokens(model, text) <= max_tokens:
         return text
-    # Convert the token budget to a rough character budget (chars ~= 4x tokens)
-    # split between head and tail, then confirm and tighten by real token count.
+    # Rough char budget (~4x tokens), then tighten by real token count.
     budget_chars = max_tokens * 4
     head_chars = budget_chars // 2
     tail_chars = budget_chars - head_chars
@@ -193,12 +177,7 @@ def _fit_to_tokens(model: str, text: str, max_tokens: int) -> str:
 
 
 def _summary_output_tokens(model: str) -> int:
-    """Summary output allowance, capped at the model's own output limit.
-
-    A configured ``summary_max_tokens`` above the model's cap would make the
-    provider reject the summary request, so compaction would silently fail and
-    leave the overflowing session unchanged.
-    """
+    """Summary output allowance, capped at the model's own output limit."""
     return min(load_settings().context.summary_max_tokens, output_limit(model))
 
 
@@ -207,10 +186,7 @@ def _summary_input_budget(model: str, previous: str | None) -> int:
     overhead = count_tokens(model, _SUMMARY_INSTRUCTIONS)
     if previous:
         overhead += count_tokens(model, previous)
-    # Leave slack for the prompt's wrapper text ("Conversation to summarise:",
-    # the update instructions, etc.) that is not part of ``overhead``. Never
-    # floor above the actual room: doing so would let the summary request
-    # itself overflow a small window (and then compaction silently fails).
+    # 256 leaves slack for the prompt wrapper text not counted in ``overhead``.
     room = context_window(model) - _summary_output_tokens(model) - overhead - 256
     return max(0, room)
 
@@ -296,9 +272,7 @@ async def maybe_compact(
     previous = _previous_summary(head)
     input_budget = _summary_input_budget(model, previous)
     if not head or input_budget <= 0:
-        # Nothing to summarise, or the window can't even fit the summary
-        # instructions plus the reserved output allowance — any request would
-        # be rejected, so skip rather than submit a doomed call.
+        # Nothing to summarise, or no room for even the summary request itself.
         if head:
             logger.warning(
                 "skipping compaction for %s: no room to summarise within its context window", model
