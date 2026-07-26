@@ -43,20 +43,35 @@ def is_context_overflow(exc: BaseException) -> bool:
 _SUMMARY_INSTRUCTIONS = """\
 You are compacting the earlier part of an autonomous security-testing agent's \
 conversation so it fits the model context window. Produce a dense, factual \
-record that lets the agent continue with no loss of important state. Preserve \
-exact values: URLs, endpoints, file paths, parameters, payloads, credentials \
-and tokens, software versions, and error messages. Do not invent anything and \
-do not describe this compaction process.
+record that lets the agent continue with no loss of important state.
+
+This is a security engagement: dropped findings mean lost vulnerabilities. Be \
+EXHAUSTIVE, not concise. Enumerate every distinct item as its own bullet — \
+never merge, deduplicate, generalise, or omit distinct findings, credentials, \
+or dead ends, even if they seem minor or repetitive. If the source mentions \
+five vulnerabilities, list five. Copy exact values verbatim: URLs, endpoints, \
+file paths, parameters, payloads, credentials, tokens, keys, hashes, cracked \
+passwords, software versions, and error messages — never paraphrase or \
+placeholder them. Do not invent anything and do not describe this compaction \
+process.
 
 Return Markdown with exactly these sections:
 
 ## Objective
 The overall goal and target scope.
 
-## Important Details
-Discovered vulnerabilities and attack vectors, scan/tool findings, \
-credentials and auth material, system architecture and weak points, and any \
-exact identifiers worth keeping (URLs, paths, params, payloads, versions).
+## Vulnerabilities & Findings
+One bullet per DISTINCT vulnerability or finding (SQLi, XSS, SSRF, auth bypass, \
+misconfig, etc.). For each: type, exact location (URL/endpoint/param/file), the \
+verbatim payload or proof, confirmation status, and impact. List them all.
+
+## Credentials & Secrets
+One bullet per credential, secret, API key, token, hash, or cracked password, \
+copied verbatim with where it applies. Write "(none)" only if truly none.
+
+## System & Recon Details
+Architecture, tech stack, versions, discovered endpoints/paths/params, and \
+other weak points worth keeping.
 
 ## Work State
 - Completed: what has been verified or finished.
@@ -64,7 +79,9 @@ exact identifiers worth keeping (URLs, paths, params, payloads, versions).
 - Blocked: anything stuck and why.
 
 ## Failed Attempts & Dead Ends
-Approaches already tried that did not work, so they are not repeated.
+One bullet per approach already tried that did not work (including WAF blocks, \
+filtered inputs, non-exploitable leads) so they are not repeated. Write \
+"(none)" only if truly none.
 
 ## Next Move
 The concrete next step(s) the agent intended to take.
