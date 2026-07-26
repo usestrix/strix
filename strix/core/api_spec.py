@@ -234,7 +234,7 @@ def _parse_openapi(raw: dict[str, Any]) -> ApiSpecInventory:
                     for p in (*shared_params, *(op.get("parameters", []) or []))
                     if isinstance(p, dict)
                 ]
-                op_security = _security_names(op.get("security")) or global_security
+                op_security = _security_names(op.get("security")) if "security" in op else global_security
                 endpoints.append(
                     Endpoint(
                         method=method.upper(),
@@ -284,7 +284,7 @@ def _parse_swagger(raw: dict[str, Any]) -> ApiSpecInventory:
                         props = schema.get("properties") if isinstance(schema, dict) else None
                         if isinstance(props, dict):
                             body_fields = list(props.keys())
-                op_security = _security_names(op.get("security")) or global_security
+                op_security = _security_names(op.get("security")) if "security" in op else global_security
                 endpoints.append(
                     Endpoint(
                         method=method.upper(),
