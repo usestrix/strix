@@ -431,3 +431,104 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
 
         css_classes = cls.get_css_classes("completed")
         return Static(padded, classes=css_classes)
+
+
+_LIST_SEVERITY_COLORS = {
+    "critical": "#dc2626",
+    "high": "#ea580c",
+    "medium": "#d97706",
+    "low": "#65a30d",
+    "info": "#0284c7",
+    "none": "#6b7280",
+}
+
+
+def _severity_style(severity: Any) -> str:
+    return _LIST_SEVERITY_COLORS.get(str(severity or "").lower(), "#d97706")
+
+
+@register_tool_renderer
+class ListReportsRenderer(BaseToolRenderer):
+    tool_name: ClassVar[str] = "list_reports"
+    css_classes: ClassVar[list[str]] = ["tool-call", "reporting-tool"]
+
+    @classmethod
+    def render(cls, tool_data: dict[str, Any]) -> Static:
+        result = _coerce_dict(tool_data.get("result"))
+
+        text = Text()
+        text.append("◆ ", style="#ef4444")
+        text.append("reports", style="dim")
+
+        if isinstance(tool_data.get("result"), str) and str(tool_data["result"]).strip():
+            text.append("\n  ")
+            text.append(str(tool_data["result"]).strip(), style="dim")
+        elif result.get("success"):
+            total = result.get("total_count", 0)
+            reports = _coerce_list_of_dicts(result.get("reports"))
+            counts = _coerce_dict(result.get("severity_counts"))
+
+            text.append(f" ({total})", style="dim")
+            for sev, count in counts.items():
+                text.append("  ")
+                text.append(f"{sev} {count}", style=_severity_style(sev))
+
+            if not reports:
+                text.append("\n  ")
+                text.append("No reports filed yet", style="dim")
+            else:
+                for report in reports:
+                    rid = str(report.get("id", "")).strip()
+                    title = str(report.get("title", "")).strip() or "(untitled)"
+                    severity = str(report.get("severity", "")).strip()
+                    text.append("\n  - ")
+                    if severity:
+                        text.append(severity.upper(), style=f"bold {_severity_style(severity)}")
+                        text.append(" ")
+                    if rid:
+                        text.append(f"{rid} ", style="dim")
+                    text.append(title)
+        else:
+            text.append("\n  ")
+            text.append("Loading...", style="dim")
+
+        css_classes = cls.get_css_classes("completed")
+        return Static(text, classes=css_classes)
+
+
+@register_tool_renderer
+class GetReportRenderer(BaseToolRenderer):
+    tool_name: ClassVar[str] = "get_report"
+    css_classes: ClassVar[list[str]] = ["tool-call", "reporting-tool"]
+
+    @classmethod
+    def render(cls, tool_data: dict[str, Any]) -> Static:
+        result = _coerce_dict(tool_data.get("result"))
+
+        text = Text()
+        text.append("◆ ", style="#ef4444")
+        text.append("report read", style="dim")
+
+        report = _coerce_dict(result.get("report")) if result.get("success") else {}
+        if report:
+            rid = str(report.get("id", "")).strip()
+            title = str(report.get("title", "")).strip() or "(untitled)"
+            severity = str(report.get("severity", "")).strip()
+            text.append("\n  ")
+            if severity:
+                text.append(severity.upper(), style=f"bold {_severity_style(severity)}")
+                text.append(" ")
+            if rid:
+                text.append(f"{rid} ", style="dim")
+            text.append(title)
+            target = str(report.get("target", "")).strip()
+            if target:
+                text.append("\n  ")
+                text.append(target, style="dim")
+        else:
+            text.append("\n  ")
+            detail = result.get("error") if result.get("success") is False else None
+            text.append(str(detail) if detail else "Loading...", style="dim")
+
+        css_classes = cls.get_css_classes("completed")
+        return Static(text, classes=css_classes)

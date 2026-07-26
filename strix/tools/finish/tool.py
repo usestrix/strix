@@ -121,7 +121,10 @@ async def finish_scan(
        findings, ``create_dependency_report`` (un-reported findings are
        not tracked and not credited). A dependency CVE already filed via
        ``create_dependency_report`` counts as reported; it does NOT need
-       re-filing here and does NOT block finishing.
+       re-filing here and does NOT block finishing. Call ``list_reports``
+       to review every filed finding (use ``get_report`` for full detail)
+       and ground ``executive_summary`` / ``technical_analysis`` in what
+       was actually reported — do not invent or omit findings.
     3. Don't double-report — one report per distinct vulnerability.
     4. **Attack-chaining gate.** Do NOT finish until you have genuinely
        considered chaining the confirmed findings into higher-impact,
