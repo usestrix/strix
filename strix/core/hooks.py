@@ -14,26 +14,134 @@ from strix.report.state import get_global_report_state
 if TYPE_CHECKING:
     from agents import RunContextWrapper
     from agents.agent import Agent
-    from agents.items import ModelResponse
+    from agents.items import ModelResponse, TResponseInputItem
 
 
 logger = logging.getLogger(__name__)
+
+
+# Fractions of the turn / cost budget at which the agent is nudged to wrap up.
+# Warnings escalate in urgency as the agent gets closer to the hard limit, which
+# still terminates the run (MaxTurnsExceeded for turns, BudgetExceededError for
+# cost). Ordered ascending; the highest crossed band wins on any given turn.
+_TURN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
+_BUDGET_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 
 
 class BudgetExceededError(RuntimeError):
     """Raised when the accumulated LLM cost reaches the configured budget."""
 
 
-class ReportUsageHooks(RunHooks[dict[str, Any]]):
-    """Persist SDK-native usage after every model response."""
+def _crossed_band(fraction: float, bands: tuple[float, ...]) -> float | None:
+    """Return the highest band ``fraction`` has reached, or ``None`` below the lowest."""
+    crossed: float | None = None
+    for band in bands:
+        if fraction >= band:
+            crossed = band
+    return crossed
 
-    def __init__(self, *, model: str, max_budget_usd: float | None = None) -> None:
+
+def _finish_tool_for(context: RunContextWrapper[dict[str, Any]]) -> str:
+    return "finish_scan" if context.context.get("parent_id") is None else "agent_finish"
+
+
+def _urgency(band: float) -> str:
+    if band >= 0.95:
+        return "CRITICAL"
+    if band >= 0.85:
+        return "URGENT"
+    return "NOTICE"
+
+
+class ReportUsageHooks(RunHooks[dict[str, Any]]):
+    """Persist SDK-native usage and warn/stop as turn and cost budgets are consumed."""
+
+    def __init__(
+        self,
+        *,
+        model: str,
+        max_budget_usd: float | None = None,
+        max_turns: int | None = None,
+    ) -> None:
         if max_budget_usd is not None and (
             not math.isfinite(max_budget_usd) or max_budget_usd <= 0
         ):
             raise ValueError("max_budget_usd must be a finite number greater than 0")
+        if max_turns is not None and max_turns <= 0:
+            raise ValueError("max_turns must be a positive integer")
         self._model = model
         self._max_budget_usd = max_budget_usd
+        self._max_turns = max_turns
+
+    async def on_llm_start(
+        self,
+        context: RunContextWrapper[dict[str, Any]],
+        agent: Agent[dict[str, Any]],  # noqa: ARG002
+        system_prompt: str | None,  # noqa: ARG002
+        input_items: list[TResponseInputItem],
+    ) -> None:
+        """Inject graduated wrap-up warnings before the model call when budgets run low.
+
+        Warnings are appended to the per-turn model input only (not persisted to the
+        session), so they nudge the model without cluttering the transcript, and are
+        re-evaluated every turn so the reminder tracks the live remaining budget.
+        """
+        try:
+            self._maybe_warn_turns(context, input_items)
+            self._maybe_warn_budget(context, input_items)
+        except Exception:
+            logger.exception("budget/turn warning injection failed")
+
+    def _maybe_warn_turns(
+        self,
+        context: RunContextWrapper[dict[str, Any]],
+        input_items: list[TResponseInputItem],
+    ) -> None:
+        if not self._max_turns:
+            return
+        usage = getattr(context, "usage", None)
+        requests = getattr(usage, "requests", None)
+        if not isinstance(requests, int):
+            return
+        turns_used = requests + 1  # the turn about to run
+        band = _crossed_band(turns_used / self._max_turns, _TURN_WARN_BANDS)
+        if band is None:
+            return
+        remaining = max(self._max_turns - turns_used, 0)
+        pct = round(100 * turns_used / self._max_turns)
+        finish_tool = _finish_tool_for(context)
+        content = (
+            f"[{_urgency(band)}] Turn budget: {turns_used}/{self._max_turns} used ({pct}%). "
+            f"About {remaining} turn(s) remain before this agent is force-stopped. "
+            f"Prioritize your highest-value remaining work and call {finish_tool} before the "
+            "limit so your results and report are captured — a forced stop discards "
+            "in-progress work."
+        )
+        input_items.append({"role": "user", "content": content})
+
+    def _maybe_warn_budget(
+        self,
+        context: RunContextWrapper[dict[str, Any]],
+        input_items: list[TResponseInputItem],
+    ) -> None:
+        if self._max_budget_usd is None:
+            return
+        report_state = get_global_report_state()
+        if report_state is None:
+            return
+        cost = report_state.get_total_llm_cost()
+        band = _crossed_band(cost / self._max_budget_usd, _BUDGET_WARN_BANDS)
+        if band is None:
+            return
+        pct = round(100 * cost / self._max_budget_usd)
+        finish_tool = _finish_tool_for(context)
+        content = (
+            f"[{_urgency(band)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
+            f"spent ({pct}%). This budget is shared across every agent in the scan. Wind down "
+            f"and call {finish_tool} soon — when the budget is reached the whole scan is stopped "
+            "immediately, so finish and hand off your findings while there is budget left."
+        )
+        input_items.append({"role": "user", "content": content})
 
     async def on_llm_end(
         self,

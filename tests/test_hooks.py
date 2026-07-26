@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -23,6 +24,19 @@ def _make_report_state(cost: float) -> MagicMock:
 def _make_context(agent_id: str = "test-agent") -> MagicMock:
     ctx: MagicMock = MagicMock()
     ctx.context = {"agent_id": agent_id}
+    return ctx
+
+
+def _make_warn_context(
+    *,
+    requests: int,
+    parent_id: str | None = None,
+    agent_id: str = "test-agent",
+) -> MagicMock:
+    ctx: MagicMock = MagicMock()
+    ctx.context = {"agent_id": agent_id, "parent_id": parent_id}
+    ctx.usage = MagicMock()
+    ctx.usage.requests = requests
     return ctx
 
 
@@ -106,3 +120,91 @@ def test_non_positive_budget_rejected(bad_budget: float) -> None:
 def test_budget_exceeded_error_is_runtime_error() -> None:
     err = BudgetExceededError("test")
     assert isinstance(err, RuntimeError)
+
+
+def test_non_positive_max_turns_rejected() -> None:
+    with pytest.raises(ValueError, match="positive integer"):
+        ReportUsageHooks(model="test-model", max_turns=0)
+
+
+# --- graduated turn warnings -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_no_turn_warning_below_first_band() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_turns=100)
+    items: list[Any] = []
+    # 69 turns used (requests=68, +1) -> 69% < 70% band
+    await hooks.on_llm_start(_make_warn_context(requests=68), MagicMock(), None, items)
+    assert items == []
+
+
+@pytest.mark.asyncio
+async def test_turn_warning_notice_band() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_turns=100)
+    items: list[Any] = []
+    await hooks.on_llm_start(_make_warn_context(requests=69), MagicMock(), None, items)
+    assert len(items) == 1
+    content = items[0]["content"]
+    assert "[NOTICE]" in content
+    assert "finish_scan" in content  # parent_id None -> root
+
+
+@pytest.mark.asyncio
+async def test_turn_warning_escalates_and_names_subagent_tool() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_turns=100)
+    items: list[Any] = []
+    await hooks.on_llm_start(
+        _make_warn_context(requests=95, parent_id="root-1"), MagicMock(), None, items
+    )
+    assert len(items) == 1
+    content = items[0]["content"]
+    assert "[CRITICAL]" in content
+    assert "agent_finish" in content  # has parent -> subagent
+
+
+@pytest.mark.asyncio
+async def test_no_turn_warning_when_max_turns_unset() -> None:
+    hooks = ReportUsageHooks(model="test-model")
+    items: list[Any] = []
+    await hooks.on_llm_start(_make_warn_context(requests=999), MagicMock(), None, items)
+    assert items == []
+
+
+# --- graduated budget warnings ----------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_no_budget_warning_below_first_band() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
+    state = _make_report_state(6.9)  # 69% < 70%
+    items: list[Any] = []
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_start(_make_warn_context(requests=0), MagicMock(), None, items)
+    assert items == []
+
+
+@pytest.mark.asyncio
+async def test_budget_warning_broadcast_content() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
+    state = _make_report_state(9.6)  # 96% -> CRITICAL band
+    items: list[Any] = []
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_start(_make_warn_context(requests=0), MagicMock(), None, items)
+    assert len(items) == 1
+    content = items[0]["content"]
+    assert "[CRITICAL]" in content
+    assert "shared across every agent" in content
+
+
+@pytest.mark.asyncio
+async def test_turn_and_budget_warnings_stack() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0, max_turns=100)
+    state = _make_report_state(8.6)
+    items: list[Any] = []
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_start(_make_warn_context(requests=89), MagicMock(), None, items)
+    assert len(items) == 2
+    joined = " ".join(i["content"] for i in items)
+    assert "Turn budget" in joined
+    assert "cost budget" in joined

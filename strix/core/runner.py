@@ -244,7 +244,11 @@ async def run_strix_scan(
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,
         )
-        hooks = ReportUsageHooks(model=resolved_model, max_budget_usd=max_budget_usd)
+        hooks = ReportUsageHooks(
+            model=resolved_model,
+            max_budget_usd=max_budget_usd,
+            max_turns=max_turns,
+        )
 
         scope_context = build_scope_context(scan_config)
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
