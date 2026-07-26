@@ -236,6 +236,7 @@ async def run_strix_scan(
             model_name=resolved_model,
             force_required_tool_choice=settings.llm.force_required_tool_choice,
             request_timeout=settings.llm.timeout,
+            max_tokens=settings.llm.max_tokens,
         )
         run_config = RunConfig(
             model=resolved_model,
