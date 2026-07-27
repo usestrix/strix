@@ -152,11 +152,6 @@ def make_model_settings(
 
     cache_extra_args = _prompt_cache_extra_args(model_name) if prompt_cache else None
     if cache_extra_args:
-        # Merge into any existing extra_args rather than relying on resolve()'s
-        # dict-merge semantics — makes it obvious at the call site that unrelated
-        # LiteLLM options are preserved (make_model_settings currently builds
-        # from scratch, so extra_args is None here today, but this keeps the
-        # invariant local if that changes).
         model_settings = model_settings.resolve(
             ModelSettings(
                 extra_args={**(model_settings.extra_args or {}), **cache_extra_args},
@@ -166,74 +161,13 @@ def make_model_settings(
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
-    """Enable Anthropic/Bedrock prompt caching for Claude models via LiteLLM.
+    """LiteLLM ``cache_control_injection_points`` for Claude prompt caching.
 
-    A Strix scan is a long, multi-turn agentic loop that re-sends a large,
-    STABLE prefix every turn — the system prompt plus the tool schemas — AND an
-    append-only conversation transcript that only grows. Without caching
-    breakpoints the whole request is re-tokenised and billed at the full input
-    rate on every turn; on Bedrock Claude that is the single biggest lever on
-    scan cost (measured here: ``cache-read 0% -> 57%`` on a real scan once these
-    points are set).
-
-    LiteLLM already implements this end to end: when
-    ``cache_control_injection_points`` is present in the call kwargs its
-    ``AnthropicCacheControlHook`` fires and emits the provider-appropriate
-    breakpoint (Anthropic ``cache_control``; Bedrock Converse ``cachePoint``),
-    honouring Anthropic's 4-breakpoint cap. ``LitellmModel`` forwards
-    ``ModelSettings.extra_args`` straight into ``litellm.acompletion()``, so
-    passing the injection points there is all that is required.
-
-    This is deliberately kept at the LiteLLM-config layer rather than a general
-    ``ModelSettings`` caching flag: that is the direction the Agents SDK
-    maintainer prescribed when declining a native ``cache_system_prompt`` field
-    (openai/openai-agents-python#3008 / #3009) — caching is a LiteLLM/provider
-    behaviour and a ``ModelSettings`` flag would let strict OpenAI-compatible
-    paths emit non-standard ``cache_control`` parts. Gating on Claude keeps this
-    a no-op for every other provider (no injection points -> the hook never
-    fires), and only Claude-family routes (Anthropic native, Bedrock, Vertex,
-    OpenRouter -> Claude) honour the marker.
-
-    At most three breakpoints (of the 4 allowed), leaving headroom:
-      - the system prompt (``role: system``) — the largest repeated span
-      - the tool schemas (``tool_config``) — Bedrock Converse ONLY. LiteLLM's
-        ``tool_config`` location is implemented solely by the Bedrock Converse
-        transform (which appends a ``cachePoint`` to the tool list); on any other
-        route it is not consumed and leaks onto the wire as an unknown top-level
-        ``cache_control_injection_points`` field, which native Anthropic
-        hard-rejects (``400 invalid_request_error: cache_control_injection_points:
-        Extra inputs are not permitted`` — verified live). It is also redundant
-        elsewhere: Anthropic orders tools BEFORE the system prompt, so the system
-        breakpoint already caches the tool schemas in the shared prefix.
-      - the conversation tail (``index: -1``) — a ROLLING breakpoint on the last
-        message, so the accumulated transcript caches incrementally
-
-    The tail breakpoint matters more than it looks. The first two only cache the
-    FIXED prefix; the transcript is append-only (prior turns are immutable, each
-    turn just appends the new assistant/tool messages), so on a long scan the
-    growing body is re-sent at full input price every turn and cache-read decays
-    as a denominator effect even though the prefix keeps hitting. A breakpoint at
-    ``index: -1`` re-caches the whole immutable prefix-so-far each turn and hits
-    on the next; the hook resolves the negative index against the live message
-    list. Measured on a 29-turn Bedrock scan, WITHOUT the tail point the cached
-    prefix stayed pinned at ~56k tokens while per-turn input grew to ~256k and
-    cache-read fell from 90% to 22%; adding it lifts modelled cache-read to ~96%
-    and cuts full-price input ~16x on that scan.
-
-    All points degrade gracefully on older LiteLLM: an unrecognised location is
-    simply not injected (no error), so a stale pin still gets whatever caching
-    it supports — the system-prompt point (the widest support) and the
-    tool_config + message-index points applied by LiteLLM's Bedrock Converse
-    transform on versions that recognise them (verified on litellm 1.90.1).
-
-    Returns ``None`` (a strict no-op — the hook never fires) for non-Claude
-    models, and for Bedrock Claude routes LiteLLM can't confirm as
-    cache-capable: Bedrock's Converse API rejects the unknown field outright
-    and LiteLLM only consumes the marker for models its model map recognises,
-    so an unmapped Bedrock model would pass the marker straight through and
-    crash the first call. Only Bedrock hard-rejects, so only Bedrock is guarded
-    — gating Anthropic-native/Vertex/OpenRouter on confirmed support would
-    needlessly disable caching for capable models.
+    System prompt + rolling last-message breakpoint everywhere; ``tool_config``
+    only on Bedrock Converse (the only route whose LiteLLM transform consumes
+    it — elsewhere it leaks onto the wire and native Anthropic 400s). Unmapped
+    Bedrock models get no points at all: Bedrock rejects the passed-through
+    field outright.
     """
     if not is_claude_model(model_name):
         return None

@@ -62,8 +62,6 @@ def _cache_points(model_name: str) -> Any:
 
 
 def test_make_model_settings_enables_prompt_cache_for_bedrock_claude() -> None:
-    # Bedrock Converse is the only route whose transform consumes the
-    # ``tool_config`` location, so it gets all three breakpoints.
     assert _cache_points("bedrock/global.anthropic.claude-opus-4-8") == [
         {"location": "message", "role": "system"},
         {"location": "tool_config"},
@@ -80,11 +78,6 @@ def test_make_model_settings_enables_prompt_cache_for_bedrock_claude() -> None:
     ],
 )
 def test_make_model_settings_enables_prompt_cache_for_non_bedrock_claude(model_name: str) -> None:
-    # Non-Bedrock routes get system + tail only: LiteLLM implements the
-    # ``tool_config`` location solely in the Bedrock Converse transform, so
-    # sending it elsewhere would leak an unknown top-level field (see the
-    # dedicated no-leak test). Tools are already cached by the system breakpoint
-    # there — Anthropic orders tools ahead of the system prompt in the prefix.
     assert _cache_points(model_name) == [
         {"location": "message", "role": "system"},
         {"location": "message", "index": -1},
@@ -92,17 +85,14 @@ def test_make_model_settings_enables_prompt_cache_for_non_bedrock_claude(model_n
 
 
 def test_tool_config_point_not_leaked_to_non_bedrock_claude() -> None:
-    # Regression guard: the ``tool_config`` injection point must NEVER be sent on
-    # a non-Bedrock route. LiteLLM leaves it on the outgoing body as a top-level
-    # ``cache_control_injection_points`` field there, which native Anthropic
-    # rejects with a 400 on every call.
+    # LiteLLM only consumes tool_config on Bedrock; elsewhere it leaks onto the
+    # wire and native Anthropic 400s.
     for model in ("anthropic/claude-sonnet-4-5", "openrouter/anthropic/claude-3.5-sonnet"):
         points = _cache_points(model) or []
         assert all(p.get("location") != "tool_config" for p in points)
 
 
 def test_prompt_cache_can_be_disabled() -> None:
-    # STRIX_PROMPT_CACHE=false kill switch: no injection points even for Claude.
     assert (
         make_model_settings(
             None, model_name="anthropic/claude-sonnet-4-5", prompt_cache=False
@@ -113,42 +103,25 @@ def test_prompt_cache_can_be_disabled() -> None:
 
 @pytest.mark.parametrize("model_name", ["gpt-5", "vertex_ai/gemini-2.5-pro", "openai/o3"])
 def test_make_model_settings_no_prompt_cache_for_non_claude(model_name: str) -> None:
-    # No injection points for non-Claude models: the LiteLLM cache hook never
-    # fires, so this stays a strict no-op (won't emit cache_control to strict
-    # OpenAI-compatible endpoints).
     assert make_model_settings(None, model_name=model_name).extra_args is None
 
 
 def test_no_prompt_cache_for_unmapped_bedrock_claude_model(monkeypatch: Any) -> None:
-    """A BEDROCK Claude route LiteLLM has NOT mapped (a new release, or any model
-    when LiteLLM can't refresh its model map and falls back to a stale local
-    copy) must run UNCACHED, not crash. Bedrock's Converse API rejects the
-    unknown field outright (ValidationException 'cache_control_injection_points:
-    Extra inputs are not permitted'); LiteLLM only strips the marker for models
-    it recognises as cache-capable, so an unmapped model would 500 the first
-    call and fail the whole run."""
+    # A Bedrock Claude model LiteLLM hasn't mapped must run uncached, not crash.
     unmapped = "bedrock/global.anthropic.claude-brand-new-9"
-    # Simulate a model LiteLLM doesn't know: no cost-map entry, checker says no.
     monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
     if getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None):
         monkeypatch.setattr(litellm.utils, "supports_prompt_caching", lambda *_a, **_k: False)
 
-    # Bedrock Claude by name, but unmapped → no injection points, no crash.
     assert make_model_settings(None, model_name=unmapped).extra_args is None
 
 
 def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: Any) -> None:
-    """Non-Bedrock Claude routes must KEEP caching-by-family even when LiteLLM
-    can't confirm support — those providers tolerate/ignore the marker (or
-    LiteLLM maps them under keys we don't resolve, e.g. OpenRouter), so gating
-    them on confirmed support would DISABLE caching for capable models — a
-    regression. Only Bedrock hard-rejects, so only Bedrock is guarded."""
+    # Only Bedrock hard-rejects unknown cache fields, so only Bedrock is guarded.
     monkeypatch.setattr(litellm, "model_cost", {}, raising=False)
     if getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None):
         monkeypatch.setattr(litellm.utils, "supports_prompt_caching", lambda *_a, **_k: False)
 
-    # Even with LiteLLM knowing nothing, an Anthropic-native / OpenRouter Claude
-    # still gets the injection points (system + tail, no tool_config).
     for model in ("anthropic/claude-brand-new-9", "openrouter/anthropic/claude-brand-new"):
         assert _cache_points(model) == [
             {"location": "message", "role": "system"},
@@ -157,16 +130,8 @@ def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: 
 
 
 def test_conversation_tail_breakpoint_moves_with_appended_transcript() -> None:
-    """The tail breakpoint's premise, end-to-end: LiteLLM's own message-injection
-    logic must place the cache_control on the LAST message for both a short and a
-    long transcript — i.e. it tracks the growing (append-only) tail rather than a
-    fixed position — so the immutable prefix-so-far is cached and re-read next
-    turn.
-
-    Driven through the hook's static ``_apply_message_injections`` primitive
-    (stable across LiteLLM versions) rather than the prompt-manager entrypoint
-    (whose signature drifts).
-    """
+    # LiteLLM must place the index=-1 cache_control on the last message however
+    # long the transcript grows.
     hook_mod = pytest.importorskip("litellm.integrations.anthropic_cache_control_hook")
     apply = hook_mod.AnthropicCacheControlHook._apply_message_injections
     points = _cache_points("bedrock/global.anthropic.claude-opus-4-8")
