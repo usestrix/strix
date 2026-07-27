@@ -63,7 +63,7 @@ from strix.interface.utils import (
 from strix.report.state import get_global_report_state
 from strix.report.writer import read_run_record, write_run_record
 from strix.telemetry import posthog, scarf
-from strix.telemetry.logging import configure_dependency_logging, setup_cli_logging
+from strix.telemetry.logging import configure_dependency_logging
 
 
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
@@ -945,7 +945,6 @@ def pull_docker_image() -> None:
 
 def main() -> None:
     configure_dependency_logging()
-    setup_cli_logging()
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
