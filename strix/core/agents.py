@@ -326,6 +326,8 @@ class AgentCoordinator:
                 "metadata": {aid: dict(md) for aid, md in self.metadata.items()},
                 "pending_counts": dict(self.pending_counts),
                 "errors": dict(self.errors),
+                "budget_stopped": self._budget_stopped,
+                "reserve_stopped": self._reserve_stopped,
             }
 
     async def restore(self, snap: dict[str, Any]) -> None:
@@ -336,6 +338,12 @@ class AgentCoordinator:
             self.metadata = {aid: dict(md) for aid, md in snap.get("metadata", {}).items()}
             self.pending_counts = dict(snap.get("pending_counts", {}))
             self.errors = dict(snap.get("errors", {}))
+            # Persist the scan-wide stop flags so an interrupted-then-resumed scan does not
+            # forget it had already hit the budget cap / sub-agent reserve — otherwise the
+            # reserve blocker on finish_scan is reinstated and respawned children get to
+            # spend another paid response before the post-response check re-trips it.
+            self._budget_stopped = bool(snap.get("budget_stopped", False))
+            self._reserve_stopped = bool(snap.get("reserve_stopped", False))
             for aid in self.statuses:
                 self.runtimes.setdefault(aid, AgentRuntime())
 

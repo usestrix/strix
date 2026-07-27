@@ -124,6 +124,25 @@ async def test_reserve_stop_notify_noop_without_root(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
+async def test_snapshot_round_trip_preserves_stop_flags() -> None:
+    # An interrupted scan that already tripped the cap/reserve must remember that on resume,
+    # or respawned children get another paid response and the finish_scan blocker returns.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.trigger_budget_stop()
+    await coordinator.claim_reserve_notification()
+
+    snap = await coordinator.snapshot()
+    assert snap["budget_stopped"] is True
+    assert snap["reserve_stopped"] is True
+
+    restored = AgentCoordinator()
+    await restored.restore(snap)
+    assert restored.budget_stopped is True
+    assert restored.reserve_stopped is True
+
+
+@pytest.mark.asyncio
 async def test_budget_stop_sets_flag() -> None:
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)

@@ -134,6 +134,19 @@ async def run_agent_loop(
     )
     result: RunResultBase | None = None
 
+    # A scan resumed after it already hit the cap/reserve must not let a respawned agent
+    # spend another paid response before the post-response check catches it: the root stops
+    # on the scan-wide cap, sub-agents stop on either the cap or the reserve. (Locals keep
+    # the type checker from narrowing the mutable coordinator flags read again below.)
+    budget_stopped = coordinator.budget_stopped
+    reserve_stopped = coordinator.reserve_stopped
+    if budget_stopped:
+        await coordinator.set_status(agent_id, "stopped")
+        raise BudgetExceededError("scan budget reached")
+    if reserve_stopped and context.get("parent_id") is not None:
+        await coordinator.set_status(agent_id, "stopped")
+        raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
+
     if not (start_parked and interactive):
         if interactive:
             result = await _run_cycle(
