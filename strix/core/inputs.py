@@ -26,6 +26,13 @@ if TYPE_CHECKING:
     from strix.config.settings import ReasoningEffort
 
 
+_CACHE_LOCATION_MESSAGE = "message"
+_CACHE_LOCATION_TOOL_CONFIG = "tool_config"
+_CACHE_ROLE_SYSTEM = "system"
+_CACHE_INDEX_PREVIOUS_MESSAGE = -2
+_CACHE_INDEX_LAST_MESSAGE = -1
+
+
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
     name = (model_name or "").strip().lower()
     for prefix in ("litellm/", "any-llm/"):
@@ -295,7 +302,7 @@ def _reasoning_settings(
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
     """LiteLLM ``cache_control_injection_points`` for Claude prompt caching.
 
-    System prompt + rolling last-message breakpoint everywhere; ``tool_config``
+    System prompt + rolling recent-message breakpoints everywhere; ``tool_config``
     only on Bedrock Converse (the only route whose LiteLLM transform consumes
     it — elsewhere it leaks onto the wire and native Anthropic 400s). Unmapped
     Bedrock models get no points at all: Bedrock rejects the passed-through
@@ -306,10 +313,17 @@ def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
     if is_bedrock_route(model_name) and not bedrock_route_supports_prompt_caching(model_name):
         return None
 
-    points: list[dict[str, Any]] = [{"location": "message", "role": "system"}]
+    points: list[dict[str, Any]] = [
+        {"location": _CACHE_LOCATION_MESSAGE, "role": _CACHE_ROLE_SYSTEM}
+    ]
     if is_bedrock_route(model_name):
-        points.append({"location": "tool_config"})
-    points.append({"location": "message", "index": -1})
+        points.append({"location": _CACHE_LOCATION_TOOL_CONFIG})
+    points.extend(
+        [
+            {"location": _CACHE_LOCATION_MESSAGE, "index": _CACHE_INDEX_PREVIOUS_MESSAGE},
+            {"location": _CACHE_LOCATION_MESSAGE, "index": _CACHE_INDEX_LAST_MESSAGE},
+        ]
+    )
     return {"cache_control_injection_points": points}
 
 
