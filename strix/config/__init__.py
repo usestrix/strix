@@ -15,7 +15,6 @@ from strix.config.loader import (
     apply_config_override,
     load_settings,
     persist_current,
-    reload_settings,
 )
 from strix.config.settings import (
     ContextSettings,
@@ -39,5 +38,4 @@ __all__ = [
     "apply_config_override",
     "load_settings",
     "persist_current",
-    "reload_settings",
 ]

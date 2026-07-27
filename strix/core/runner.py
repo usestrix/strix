@@ -376,12 +376,6 @@ async def run_strix_scan(
 
         async with coordinator._lock:
             root_status = coordinator.statuses.get(root_id)
-            root_error = coordinator.errors.get(root_id)
-
-        root_recoverable_park = root_status == "waiting" and bool(root_error)
-        root_start_parked = bool(
-            interactive and is_resume and root_status != "running" and not root_recoverable_park
-        )
 
         result = await run_agent_loop(
             agent=root_agent,
@@ -393,7 +387,7 @@ async def run_strix_scan(
             agent_id=root_id,
             interactive=interactive,
             session=root_session,
-            start_parked=root_start_parked,
+            start_parked=bool(interactive and is_resume and root_status != "running"),
             event_sink=event_sink,
             hooks=hooks,
         )

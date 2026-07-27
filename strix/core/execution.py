@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import dataclasses
 import logging
 import uuid
 from collections.abc import Callable
@@ -22,14 +21,12 @@ from openai import (
     RateLimitError,
 )
 
-from strix.config import codex, reload_settings
-from strix.config.models import configure_sdk_model_defaults
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
     SubagentBudgetReservedError,
 )
-from strix.core.inputs import child_initial_input, make_model_settings
+from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
     enforce_image_budget,
     open_agent_session,
@@ -61,31 +58,6 @@ def _run_config_model(run_config: RunConfig) -> str | None:
     return run_config.model if isinstance(run_config.model, str) else None
 
 
-def refresh_run_config_model(run_config: RunConfig) -> RunConfig:
-    """Adopt a changed configured model before re-running a woken agent."""
-    current_model = _run_config_model(run_config)
-    if current_model is None:
-        return run_config
-    try:
-        settings = reload_settings()
-    except Exception:
-        logger.exception("settings reload failed; keeping model %s", current_model)
-        return run_config
-    new_model = (settings.llm.model or "").strip()
-    if not new_model or new_model == current_model:
-        return run_config
-    configure_sdk_model_defaults(settings)
-    model_settings = make_model_settings(
-        settings.llm.reasoning_effort,
-        model_name=new_model,
-        force_required_tool_choice=settings.llm.force_required_tool_choice,
-        request_timeout=settings.llm.timeout,
-        prompt_cache=settings.llm.prompt_cache,
-    )
-    logger.info("model switched on wake: %s -> %s", current_model, new_model)
-    return dataclasses.replace(run_config, model=new_model, model_settings=model_settings)
-
-
 def _agent_instructions(agent: Any) -> str:
     instructions = getattr(agent, "instructions", None)
     return instructions if isinstance(instructions, str) else ""
@@ -115,12 +87,6 @@ async def _compact_session(
         force=force,
     )
 
-
-_GUARDRAIL_PARK_ERROR = (
-    "Blocked by the model's content guardrail (flagged as a possible cybersecurity risk). "
-    "Switch STRIX_LLM to a model that isn't blocked (update it in ~/.strix/cli-config.json "
-    "and message this agent, or resume the scan with a new STRIX_LLM)."
-)
 
 _TRANSIENT_MODEL_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
 _MAX_TRANSIENT_MODEL_RETRIES = 4
@@ -232,7 +198,6 @@ async def run_agent_loop(
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
         await coordinator.consume_pending(agent_id)
-        run_config = refresh_run_config_model(run_config)
         with contextlib.suppress(BudgetPausedError):
             result = await _run_cycle(
                 agent,
@@ -339,7 +304,6 @@ async def respawn_subagents(
             if coordinator.parent_of.get(aid) is None or aid == root_id:
                 continue
             md["_restored_status"] = status
-            md["_restored_error"] = coordinator.errors.get(aid)
             candidates.append(
                 (
                     aid,
@@ -352,8 +316,7 @@ async def respawn_subagents(
     for child_id, name, parent_id, md in candidates:
         try:
             restored_status = str(md.get("_restored_status") or "running")
-            recoverable_park = restored_status == "waiting" and bool(md.get("_restored_error"))
-            start_parked = interactive and restored_status != "running" and not recoverable_park
+            start_parked = interactive and restored_status != "running"
 
             if start_parked:
                 logger.warning(
@@ -609,10 +572,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 if session is not None:
                     input_data = []
                 continue
-            if codex.is_content_guardrail_error(exc):
-                return await _handle_content_guardrail(
-                    coordinator, agent_id, exc, interactive=interactive
-                )
             if not interactive:
                 raise
             if isinstance(exc, MaxTurnsExceeded):
@@ -628,22 +587,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
         else:
             await _settle_run_result(coordinator, agent_id, interactive)
             return stream
-
-
-async def _handle_content_guardrail(
-    coordinator: AgentCoordinator,
-    agent_id: str,
-    exc: BaseException,
-    *,
-    interactive: bool,
-) -> RunResultBase | None:
-    logger.warning("agent %s blocked by the model's content guardrail: %s", agent_id, exc)
-    if interactive:
-        await coordinator.set_status(agent_id, "waiting", error=_GUARDRAIL_PARK_ERROR)
-        return None
-    await coordinator.set_status(agent_id, "failed", error=_GUARDRAIL_PARK_ERROR)
-    await _notify_parent_on_terminal(coordinator, agent_id, "failed")
-    return None
 
 
 async def _settle_run_result(

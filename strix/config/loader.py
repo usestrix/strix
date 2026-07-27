@@ -45,13 +45,6 @@ def load_settings() -> Settings:
     return _cached
 
 
-def reload_settings() -> Settings:
-    """Invalidate the cache and re-resolve settings from env + JSON file."""
-    global _cached  # noqa: PLW0603
-    _cached = None
-    return load_settings()
-
-
 def apply_config_override(path: Path) -> None:
     """Switch the JSON source to ``path`` and invalidate the cache."""
     global _override, _cached  # noqa: PLW0603
