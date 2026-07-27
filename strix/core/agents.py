@@ -203,15 +203,7 @@ class AgentCoordinator:
     async def send(
         self, target_agent_id: str, message: dict[str, Any], *, interrupt: bool = True
     ) -> bool:
-        """Deliver a user/peer message by appending it to the target SDK session.
-
-        ``interrupt`` controls whether a mid-turn target has its in-flight stream
-        cancelled so it picks up the message immediately. Terminal-child notices set
-        ``interrupt=False`` so a dying agent never reaches across into a sibling/parent's
-        live stream — that cross-agent immediate cancel can wedge the shared event loop.
-        The target is still woken (pending + wake) either way; it just processes the
-        message at its next turn boundary.
-        """
+        """Deliver a user/peer message by appending it to the target SDK session."""
         if message.get("from") == "user" and self._budget_paused:
             await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:

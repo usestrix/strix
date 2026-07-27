@@ -484,9 +484,6 @@ class _RecordingStream:
 
 @pytest.mark.asyncio
 async def test_terminal_notice_does_not_cancel_parent_stream(tmp_path: Any) -> None:
-    # A dying child must NOT reach across and immediate-cancel its parent's in-flight
-    # stream (that cross-agent cancel is what wedged the shared loop). The parent is
-    # still woken; it just picks up the notice at its next turn boundary.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")
@@ -504,8 +501,6 @@ async def test_terminal_notice_does_not_cancel_parent_stream(tmp_path: Any) -> N
 
 @pytest.mark.asyncio
 async def test_guardrail_interactive_parks_agent_wakeable(tmp_path: Any) -> None:
-    # A content-guardrail block is recoverable, not a crash: park the agent in a
-    # wakeable "waiting" state with an actionable error, and never trigger a scan stop.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")
@@ -529,9 +524,6 @@ async def test_guardrail_interactive_parks_agent_wakeable(tmp_path: Any) -> None
 
 @pytest.mark.asyncio
 async def test_guardrail_noninteractive_fails_only_blocked_agent(tmp_path: Any) -> None:
-    # In non-interactive mode there's no user to switch models, so the blocked agent
-    # settles as "failed" with the actionable error and notifies its parent. The failure
-    # is isolated to that agent; the scan is not stopped scan-wide.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")

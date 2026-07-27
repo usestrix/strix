@@ -91,8 +91,7 @@ async def _compact_session(
 
 _GUARDRAIL_PARK_ERROR = (
     "Blocked by the model's content guardrail (flagged as a possible cybersecurity risk). "
-    "Set STRIX_LLM to a model that isn't blocked, then send this agent a message or resume "
-    "the scan to continue."
+    "Set STRIX_LLM to a model that isn't blocked and resume the scan to continue."
 )
 
 _TRANSIENT_MODEL_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
@@ -607,16 +606,6 @@ async def _handle_content_guardrail(
     *,
     interactive: bool,
 ) -> RunResultBase | None:
-    """A content-guardrail block is terminal for the model but must NOT kill the agent.
-
-    Interactive: park the agent in a wakeable ``waiting`` state with an actionable label,
-    so a user prompt (after switching STRIX_LLM) or a resume can revive it — never
-    ``crashed``, and never a cross-agent stream cancel that could wedge the loop.
-
-    Non-interactive: settle this one agent as ``failed`` with the actionable label and
-    notify its parent. The failure is isolated to the blocked agent; other agents keep
-    running.
-    """
     logger.warning("agent %s blocked by the model's content guardrail: %s", agent_id, exc)
     if interactive:
         await coordinator.set_status(agent_id, "waiting", error=_GUARDRAIL_PARK_ERROR)
