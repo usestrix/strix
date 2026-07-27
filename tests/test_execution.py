@@ -12,7 +12,7 @@ from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
 
 from strix.core.agents import AgentCoordinator
-from strix.core.execution import _notify_root_on_budget_reserve
+from strix.core.execution import _notify_parent_on_terminal, _notify_root_on_budget_reserve
 from strix.tools.finish.tool import finish_scan
 
 
@@ -427,3 +427,41 @@ async def test_snapshot_round_trip_preserves_budget_pause() -> None:
     await restored.restore(snap)
     assert restored.budget_paused is True
     assert restored.statuses["root"] == "budget_paused"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["stopped", "failed", "crashed"])
+async def test_terminal_child_wakes_parked_parent(tmp_path: Any, status: str) -> None:
+    # Regression for #870: a child reaching a terminal state (e.g. MaxTurnsExceeded
+    # -> "stopped") must wake the parent parked in wait_for_message, so the root can
+    # finalize the scan instead of hanging for a completion report that never arrives.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "SQL Injection", parent_id="root")
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
+
+    root_waiter = asyncio.create_task(coordinator.wait_for_message("root"))
+    await asyncio.sleep(0)
+    assert not root_waiter.done()
+
+    await coordinator.set_status("child", status, error="Max turns (500) exceeded")
+    await _notify_parent_on_terminal(coordinator, "child", status)
+
+    await asyncio.wait_for(root_waiter, timeout=1.0)
+    assert coordinator.pending_counts.get("root", 0) > 0
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_notify_parent_on_terminal_ignores_non_terminal_status(tmp_path: Any) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
+
+    await _notify_parent_on_terminal(coordinator, "child", "waiting")
+
+    assert coordinator.pending_counts.get("root", 0) == 0
+    session.close()

@@ -417,7 +417,7 @@ async def _run_noninteractive_until_lifecycle(
 
         if invalid_final_outputs >= invalid_final_output_limit:
             await coordinator.set_status(agent_id, "crashed")
-            await _notify_parent_on_crash(coordinator, agent_id, "crashed")
+            await _notify_parent_on_terminal(coordinator, agent_id, "crashed")
             raise MaxTurnsExceeded(
                 "Agent exhausted non-interactive recovery attempts without calling "
                 "finish_scan or agent_finish."
@@ -582,7 +582,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 status = "crashed"
             logger.exception("agent run failed for %s; parking as %s", agent_id, status)
             await coordinator.set_status(agent_id, status, error=str(exc) or type(exc).__name__)
-            await _notify_parent_on_crash(coordinator, agent_id, status)
+            await _notify_parent_on_terminal(coordinator, agent_id, status)
             return None
         else:
             await _settle_run_result(coordinator, agent_id, interactive)
@@ -646,12 +646,31 @@ async def _append_noninteractive_tool_required_message(
     return []
 
 
-async def _notify_parent_on_crash(
+_TERMINAL_NOTICE = {
+    "crashed": (
+        "[Agent crash] {name} ({agent_id}) terminated unexpectedly. "
+        "Stop waiting on this child unless you want to message it again."
+    ),
+    "failed": (
+        "[Agent failed] {name} ({agent_id}) stopped with an error and will not "
+        "send a completion report. Stop waiting on this child unless you want to "
+        "message it again."
+    ),
+    "stopped": (
+        "[Agent capped] {name} ({agent_id}) hit its turn limit and was stopped "
+        "before finishing. It will not send a completion report, so stop waiting "
+        "on this child; account for its capped subtask and continue."
+    ),
+}
+
+
+async def _notify_parent_on_terminal(
     coordinator: AgentCoordinator,
     agent_id: str,
     status: str,
 ) -> None:
-    if status != "crashed":
+    template = _TERMINAL_NOTICE.get(status)
+    if template is None:
         return
     async with coordinator._lock:
         parent = coordinator.parent_of.get(agent_id)
@@ -662,12 +681,9 @@ async def _notify_parent_on_crash(
         parent,
         {
             "from": agent_id,
-            "type": "crash",
+            "type": status,
             "priority": "high",
-            "content": (
-                f"[Agent crash] {name} ({agent_id}) terminated unexpectedly. "
-                "Stop waiting on this child unless you want to message it again."
-            ),
+            "content": template.format(name=name, agent_id=agent_id),
         },
     )
 
