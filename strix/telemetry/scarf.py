@@ -7,13 +7,13 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
-from strix.net import tls_context
 from strix.telemetry._common import (
     SESSION_ID,
     base_props,
     get_version,
     is_first_run,
 )
+from strix.utils.net import tls_context
 
 
 if TYPE_CHECKING:

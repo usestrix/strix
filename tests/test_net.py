@@ -8,7 +8,7 @@ from typing import Any
 import certifi
 import pytest
 
-from strix import net
+from strix.utils import net
 
 
 @pytest.fixture(autouse=True)

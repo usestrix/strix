@@ -22,7 +22,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
-from strix.net import tls_context
+from strix.utils.net import tls_context
 
 
 logger = logging.getLogger(__name__)

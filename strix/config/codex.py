@@ -24,7 +24,7 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strix.net import tls_context
+from strix.utils.net import tls_context
 
 
 if TYPE_CHECKING:

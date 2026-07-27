@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from strix.config.loader import load_settings
-from strix.net import tls_context
+from strix.utils.net import tls_context
 
 
 logger = logging.getLogger(__name__)
