@@ -47,6 +47,7 @@ class AgentCoordinator:
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
         self._budget_stopped = False
+        self._reserve_notified = False
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
@@ -64,6 +65,19 @@ class AgentCoordinator:
             self._budget_stopped = True
             for runtime in self.runtimes.values():
                 runtime.wake.set()
+
+    async def claim_reserve_notification(self) -> str | None:
+        """Return the root agent id the first time this is called, else ``None``.
+
+        Sub-agents all trip the budget reserve at roughly the same time; this lets a
+        single scan-wide "sub-agents stopped" notice reach the root instead of one
+        message per stopped child.
+        """
+        async with self._lock:
+            if self._reserve_notified:
+                return None
+            self._reserve_notified = True
+            return next((aid for aid, parent in self.parent_of.items() if parent is None), None)
 
     async def register(
         self,
