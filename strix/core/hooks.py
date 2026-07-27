@@ -20,12 +20,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Fractions of the turn / cost budget at which the agent is nudged to wrap up.
-# Warnings escalate in urgency as the agent gets closer to the hard limit, which
-# still terminates the run (MaxTurnsExceeded for turns, BudgetExceededError for
-# cost). Ordered ascending; the highest crossed band wins on any given turn.
+# Each warning has three escalating stages: NOTICE -> URGENT -> CRITICAL. A band
+# set is the fraction of the limit at which each stage fires (ascending); the
+# highest crossed stage wins on any given turn. Warnings escalate in urgency as the
+# agent nears its hard stop, which still terminates the run (MaxTurnsExceeded for
+# turns, BudgetExceededError for the root's cost cap).
+_STAGE_LABELS: tuple[str, ...] = ("NOTICE", "URGENT", "CRITICAL")
+
+# Turns are per-agent (hard stop at 100% of max_turns), so both roles use the same
+# bands measured against the full turn budget.
 _TURN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
-_BUDGET_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
+
+# Cost is one shared pool. The root's hard stop is the full budget, so its bands
+# span up to 95%. Sub-agents are hard-stopped early at the reserve (below), so their
+# bands are clustered just before it — measured against the full budget, not the
+# reserve, so the numbers are the actual spend percentages the agent sees.
+_ROOT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
+_SUBAGENT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.75, 0.80, 0.85)
 
 # Sub-agents are hard-stopped once cumulative cost reaches this fraction of the
 # budget, reserving the remaining slice for the root agent to wind down and write
@@ -47,69 +58,64 @@ class SubagentBudgetReservedError(RuntimeError):
     """
 
 
-def _crossed_band(fraction: float, bands: tuple[float, ...]) -> float | None:
-    """Return the highest band ``fraction`` has reached, or ``None`` below the lowest."""
-    crossed: float | None = None
-    for band in bands:
+def _crossed_stage(fraction: float, bands: tuple[float, ...]) -> int | None:
+    """Return the index of the highest band ``fraction`` reached, or ``None`` below all."""
+    crossed: int | None = None
+    for index, band in enumerate(bands):
         if fraction >= band:
-            crossed = band
+            crossed = index
     return crossed
 
 
-# Wind-down guidance that escalates with the crossed band, keyed by (is_root, band).
-# The root agent owns the whole scan (finish_scan → compile/deliver the final report);
-# a sub-agent owns only its assigned task (report a confirmed vuln, then agent_finish
-# back to its parent). Tone hardens from a gentle heads-up (0.70) to a hard "stop
-# everything and finish now" (0.95).
-_ROOT_DIRECTIVES: dict[float, str] = {
-    0.70: (
+# Wind-down guidance that escalates per stage (index 0 = NOTICE, 1 = URGENT, 2 = CRITICAL).
+# The root agent owns the whole scan (finish_scan → compile/deliver the final report); a
+# sub-agent owns only its assigned task (report a confirmed vuln, then agent_finish back to
+# its parent). Tone hardens from a gentle heads-up to a hard "stop everything and finish now".
+_ROOT_DIRECTIVES: tuple[str, ...] = (
+    (
         "As the root agent, begin planning your wind-down of the whole scan: avoid "
         "starting large new lines of investigation, and keep your required objectives on "
         "track so you can call finish_scan comfortably before the limit."
     ),
-    0.85: (
+    (
         "As the root agent, prioritize wrapping up the whole scan now: stop opening new "
         "lines of investigation, close out only what is essential, and move toward calling "
         "finish_scan to compile and deliver the final report."
     ),
-    0.95: (
+    (
         "As the root agent, STOP all other work on the whole scan and finish immediately: "
         "secure your findings and call finish_scan now — anything left unfinished when the "
         "limit is hit is discarded."
     ),
-}
-_SUBAGENT_DIRECTIVES: dict[float, str] = {
-    0.70: (
+)
+_SUBAGENT_DIRECTIVES: tuple[str, ...] = (
+    (
         "As a sub-agent, begin planning your wind-down: avoid starting large new subtasks, "
         "and if you are close to a confirmed, validated vulnerability, drive it to a result "
         "you can report."
     ),
-    0.85: (
+    (
         "As a sub-agent, prioritize wrapping up your task now: report any confirmed, "
         "validated vulnerability, finish work that is nearly done rather than starting "
         "anything new, and prepare to call agent_finish."
     ),
-    0.95: (
+    (
         "As a sub-agent, STOP all other work and finish immediately: report any confirmed "
         "vulnerability right now and call agent_finish to hand your results back to your "
         "parent before you are cut off."
     ),
-}
+)
 
 
-def _wrapup_directive(context: RunContextWrapper[dict[str, Any]], band: float) -> str:
-    """Role- and stage-specific wind-down guidance for the crossed ``band``."""
+def _wrapup_directive(context: RunContextWrapper[dict[str, Any]], stage: int) -> str:
+    """Role- and stage-specific wind-down guidance for the crossed ``stage``."""
     is_root = context.context.get("parent_id") is None
     directives = _ROOT_DIRECTIVES if is_root else _SUBAGENT_DIRECTIVES
-    return directives[band]
+    return directives[stage]
 
 
-def _urgency(band: float) -> str:
-    if band >= 0.95:
-        return "CRITICAL"
-    if band >= 0.85:
-        return "URGENT"
-    return "NOTICE"
+def _urgency(stage: int) -> str:
+    return _STAGE_LABELS[stage]
 
 
 class ReportUsageHooks(RunHooks[dict[str, Any]]):
@@ -163,15 +169,15 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         if not isinstance(requests, int):
             return
         turns_used = requests + 1  # the turn about to run
-        band = _crossed_band(turns_used / self._max_turns, _TURN_WARN_BANDS)
-        if band is None:
+        stage = _crossed_stage(turns_used / self._max_turns, _TURN_WARN_BANDS)
+        if stage is None:
             return
         remaining = max(self._max_turns - turns_used, 0)
         pct = round(100 * turns_used / self._max_turns)
         content = (
-            f"[{_urgency(band)}] Turn budget: {turns_used}/{self._max_turns} used ({pct}%). "
+            f"[{_urgency(stage)}] Turn budget: {turns_used}/{self._max_turns} used ({pct}%). "
             f"About {remaining} turn(s) remain before this agent is force-stopped and any "
-            f"in-progress work is discarded. {_wrapup_directive(context, band)}"
+            f"in-progress work is discarded. {_wrapup_directive(context, stage)}"
         )
         input_items.append({"role": "user", "content": content})
 
@@ -187,31 +193,30 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             return
         cost = report_state.get_total_llm_cost()
         is_root = context.context.get("parent_id") is None
-        # Warn each agent relative to *its own* hard stop so every band stays reachable:
-        # the root spends up to the full budget, a sub-agent only up to the reserve. Bands
-        # measured against the full budget would never fire the 85/95% warnings for a
-        # sub-agent, since it is already stopped at the reserve (90% of the full budget).
-        cap = self._max_budget_usd if is_root else self._max_budget_usd * _SUBAGENT_BUDGET_RESERVE
-        band = _crossed_band(cost / cap, _BUDGET_WARN_BANDS)
-        if band is None:
+        # Both roles measure spend against the full budget, so the percentages shown are the
+        # real spend. Only the band set differs: the root's stop is the full budget (bands up
+        # to 95%), while sub-agents are stopped early at the reserve, so their bands sit just
+        # below it — keeping every stage reachable before each role's hard stop.
+        bands = _ROOT_BUDGET_WARN_BANDS if is_root else _SUBAGENT_BUDGET_WARN_BANDS
+        stage = _crossed_stage(cost / self._max_budget_usd, bands)
+        if stage is None:
             return
-        pct = round(100 * cost / cap)
+        pct = round(100 * cost / self._max_budget_usd)
         reserve_pct = round(_SUBAGENT_BUDGET_RESERVE * 100)
         if is_root:
             content = (
-                f"[{_urgency(band)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
+                f"[{_urgency(stage)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
                 f"spent ({pct}%). This budget is shared across every agent in the scan; when it "
                 "is reached the whole scan is stopped immediately, and sub-agents are stopped at "
                 f"{reserve_pct}% to reserve the remainder for your final report. "
-                f"{_wrapup_directive(context, band)}"
+                f"{_wrapup_directive(context, stage)}"
             )
         else:
             content = (
-                f"[{_urgency(band)}] Scan cost budget: ${cost:.2f} spent of your ${cap:.2f} "
-                f"sub-agent limit ({pct}%) — the full scan budget is ${self._max_budget_usd:.2f}, "
-                f"shared across every agent, and sub-agents are stopped at the {reserve_pct}% "
-                "reserve to leave the remainder for the root agent's final report. "
-                f"{_wrapup_directive(context, band)}"
+                f"[{_urgency(stage)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
+                f"spent ({pct}%). This budget is shared across every agent in the scan; "
+                f"sub-agents are stopped at {reserve_pct}% to leave the remainder for the root "
+                f"agent's final report. {_wrapup_directive(context, stage)}"
             )
         input_items.append({"role": "user", "content": content})
 

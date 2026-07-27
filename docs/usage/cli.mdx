@@ -70,12 +70,12 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   Sub-agents are stopped early, at 90% of the budget, reserving the final slice
   for the root agent to wind down and produce the final report.
 
-  As the budget is approached, graduated wrap-up warnings (at 70%, 85% and 95%)
-  are surfaced to **every** agent so they can finish their work and call their
-  lifecycle tool before the hard stop. Each agent is warned relative to its own
-  stop point, so the bands stay reachable for both roles: the root against the
-  full budget, and sub-agents against their 90% reserve (i.e. a sub-agent's 95%
-  warning fires at ~85% of the full budget, just before it is stopped).
+  As the budget is approached, graduated wrap-up warnings are surfaced to
+  **every** agent so they can finish their work and call their lifecycle tool
+  before the hard stop. The bands sit just below each role's own stop point: the
+  root is warned at **70%, 85% and 95%** (it stops at 100%), while sub-agents are
+  warned at **75%, 80% and 85%** (they stop at the 90% reserve). Percentages shown
+  in the warnings are the real cumulative spend against the full budget.
 
   Must be greater than `0`. Omit the flag for no limit.
 
