@@ -884,7 +884,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     view_text = Text()
     view_text.append("\n")
     view_text.append("View", style="dim")
-    view_text.append("         ")
+    view_text.append("    ")
     view_text.append(f"strix view {args.run_name}", style="#22c55e")
     panel_parts.extend(["\n", view_text])
 
