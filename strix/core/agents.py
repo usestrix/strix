@@ -47,7 +47,7 @@ class AgentCoordinator:
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
         self._budget_stopped = False
-        self._reserve_notified = False
+        self._reserve_stopped = False
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
@@ -66,17 +66,25 @@ class AgentCoordinator:
             for runtime in self.runtimes.values():
                 runtime.wake.set()
 
-    async def claim_reserve_notification(self) -> str | None:
-        """Return the root agent id the first time this is called, else ``None``.
+    @property
+    def reserve_stopped(self) -> bool:
+        return self._reserve_stopped
 
-        Sub-agents all trip the budget reserve at roughly the same time; this lets a
-        single scan-wide "sub-agents stopped" notice reach the root instead of one
-        message per stopped child.
+    async def claim_reserve_notification(self) -> str | None:
+        """Mark the budget reserve as tripped; return the root id on the first call only.
+
+        Sub-agents all trip the budget reserve at roughly the same time. The first call
+        flips ``reserve_stopped`` (so idle/parked sub-agents exit instead of spending),
+        wakes every parked agent, and returns the root agent id so a single scan-wide
+        notice reaches the root instead of one message per stopped child; later calls
+        are no-ops.
         """
         async with self._lock:
-            if self._reserve_notified:
+            if self._reserve_stopped:
                 return None
-            self._reserve_notified = True
+            self._reserve_stopped = True
+            for runtime in self.runtimes.values():
+                runtime.wake.set()
             return next((aid for aid, parent in self.parent_of.items() if parent is None), None)
 
     async def register(
@@ -180,7 +188,11 @@ class AgentCoordinator:
     async def wait_for_message(self, agent_id: str) -> None:
         while True:
             async with self._lock:
-                if self._budget_stopped or self.pending_counts.get(agent_id, 0) > 0:
+                # Release parked sub-agents once the reserve trips so they exit instead of
+                # idling; the root keeps waiting until it actually receives its notice (a
+                # pending message), so it is not spun in a busy loop.
+                reserve_exit = self._reserve_stopped and self.parent_of.get(agent_id) is not None
+                if self._budget_stopped or reserve_exit or self.pending_counts.get(agent_id, 0) > 0:
                     return
                 wake = self.runtimes.setdefault(agent_id, AgentRuntime()).wake
                 wake.clear()

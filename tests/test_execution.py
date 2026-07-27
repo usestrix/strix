@@ -9,6 +9,7 @@ import pytest
 
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import _notify_root_on_budget_reserve
+from strix.tools.finish.tool import _blocking_active_agents
 
 
 @pytest.mark.asyncio
@@ -52,6 +53,56 @@ async def test_concurrent_reserve_claims_yield_single_root() -> None:
 
     assert results.count("root") == 1
     assert all(r is None for r in results if r != "root")
+
+
+@pytest.mark.asyncio
+async def test_claim_reserve_sets_flag_and_wakes_parked_agents() -> None:
+    # The first reserve claim must flip the scan-wide reserve flag and release any parked
+    # sub-agent so it exits instead of sitting idle after the reserve is tripped.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+
+    flag_before = coordinator.reserve_stopped
+    assert flag_before is False
+    waiter = asyncio.create_task(coordinator.wait_for_message("child"))
+    await asyncio.sleep(0)
+    assert not waiter.done()
+
+    await coordinator.claim_reserve_notification()
+
+    flag_after = coordinator.reserve_stopped
+    assert flag_after is True
+    await asyncio.wait_for(waiter, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_finish_scan_bypasses_active_agent_guard_after_reserve() -> None:
+    # After the reserve is tripped every sub-agent is force-stopped, so finish_scan must
+    # not be blocked by lingering "running" siblings (each rejection burns reserved budget).
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    await coordinator.set_status("child", "running")
+
+    # Before the reserve trips, a running sibling still blocks the root.
+    assert await _blocking_active_agents(coordinator, "root", None) != []
+
+    await coordinator.claim_reserve_notification()  # trips the reserve
+
+    # After it trips, the same running sibling no longer blocks finishing.
+    assert await _blocking_active_agents(coordinator, "root", None) == []
+
+
+@pytest.mark.asyncio
+async def test_finish_scan_gate_ignores_sub_agent_caller() -> None:
+    # Only the root gates on siblings; a sub-agent caller never blocks (it uses agent_finish).
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    await coordinator.set_status("child", "running")
+
+    assert await _blocking_active_agents(coordinator, "child", "root") == []
 
 
 @pytest.mark.asyncio

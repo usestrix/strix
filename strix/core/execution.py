@@ -176,6 +176,10 @@ async def run_agent_loop(
             await coordinator.set_status(agent_id, "stopped")
             raise BudgetExceededError("scan budget reached")
 
+        if coordinator.reserve_stopped and context.get("parent_id") is not None:
+            await coordinator.set_status(agent_id, "stopped")
+            raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
+
         await coordinator.consume_pending(agent_id)
         result = await _run_cycle(
             agent,
@@ -360,6 +364,10 @@ async def _run_noninteractive_until_lifecycle(
         if coordinator.budget_stopped:
             await coordinator.set_status(agent_id, "stopped")
             raise BudgetExceededError("scan budget reached")
+
+        if coordinator.reserve_stopped and context.get("parent_id") is not None:
+            await coordinator.set_status(agent_id, "stopped")
+            raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
         result = await _run_cycle(
             agent,
