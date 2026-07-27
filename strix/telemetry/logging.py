@@ -59,6 +59,8 @@ _NOISY_LIBS: tuple[str, ...] = (
 
 _HANDLER_TAG = "_strix_scan_handler"
 
+_PRE_SCAN_TAG = "_strix_pre_scan_handler"
+
 
 # ``openai.agents`` is the openai-agents SDK's canonical logger root.
 _TRACKED_ROOTS: tuple[str, ...] = ("strix", "openai.agents")
@@ -89,6 +91,41 @@ def configure_dependency_logging() -> None:
     warnings.filterwarnings("ignore", category=RuntimeWarning, module="asyncio")
 
 
+def _debug_enabled(debug: bool | None) -> bool:
+    if debug is not None:
+        return debug
+    return (os.environ.get("STRIX_DEBUG") or "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def setup_cli_logging(*, debug: bool | None = None) -> None:
+    """Configure tracked loggers for CLI phases that run before any scan.
+
+    Until ``setup_scan_logging`` attaches handlers, records at WARNING and
+    above on the tracked loggers fall through to ``logging.lastResort``,
+    which dumps raw messages and tracebacks to stderr on top of the CLI's
+    own error panels. A ``NullHandler`` keeps them quiet; when debug is
+    enabled a formatted stderr handler is attached instead so the full
+    detail is still visible.
+    """
+    debug = _debug_enabled(debug)
+
+    for name in _TRACKED_ROOTS:
+        tracked = logging.getLogger(name)
+        if any(isinstance(handler, logging.NullHandler) for handler in tracked.handlers):
+            continue
+        tracked.addHandler(logging.NullHandler())
+        if debug and not any(
+            getattr(handler, _PRE_SCAN_TAG, False) for handler in tracked.handlers
+        ):
+            stream_handler = logging.StreamHandler()
+            stream_handler.setLevel(logging.DEBUG)
+            stream_handler.setFormatter(logging.Formatter(_FORMAT, datefmt=_DATEFMT))
+            stream_handler.addFilter(_StrixContextFilter())
+            setattr(stream_handler, _PRE_SCAN_TAG, True)
+            tracked.setLevel(logging.DEBUG)
+            tracked.addHandler(stream_handler)
+
+
 def setup_scan_logging(run_dir: Path, *, debug: bool | None = None) -> Callable[[], None]:
     """Attach scan-scoped handlers; return a teardown callable.
 
@@ -107,13 +144,7 @@ def setup_scan_logging(run_dir: Path, *, debug: bool | None = None) -> Callable[
     """
     configure_dependency_logging()
 
-    if debug is None:
-        debug = (os.environ.get("STRIX_DEBUG") or "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+    debug = _debug_enabled(debug)
 
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "strix.log"
@@ -136,6 +167,12 @@ def setup_scan_logging(run_dir: Path, *, debug: bool | None = None) -> Callable[
 
     tracked_loggers = [logging.getLogger(name) for name in _TRACKED_ROOTS]
     for tracked in tracked_loggers:
+        for handler in list(tracked.handlers):
+            if getattr(handler, _PRE_SCAN_TAG, False):
+                tracked.removeHandler(handler)
+                with contextlib.suppress(Exception):
+                    handler.flush()
+                    handler.close()
         tracked.setLevel(logging.DEBUG)
         tracked.addHandler(file_handler)
         tracked.addHandler(stream_handler)
