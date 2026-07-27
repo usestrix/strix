@@ -61,11 +61,15 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
 </ParamField>
 
-<ParamField path="--max-budget-usd" type="number">
+<ParamField path="--max-budget" type="number">
   Maximum LLM spend in USD for the whole scan, counted cumulatively across the
   root agent and every child agent. The budget is checked after each model
   response; once the running cost reaches the threshold, the scan stops cleanly
   with a `stopped` status (not a failure) and the sandbox is torn down.
+
+  As the budget is approached, graduated wrap-up warnings (at 70%, 85% and 95%)
+  are surfaced to **every** agent so they can finish their work and call their
+  lifecycle tool before the hard stop.
 
   Must be greater than `0`. Omit the flag for no limit.
 
@@ -84,6 +88,19 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
     counts.
 </ParamField>
 
+<ParamField path="--max-turns" type="integer" default="500">
+  Maximum number of turns (one model response plus its tool round) allotted to
+  **each** agent, applied per run. When an agent reaches this limit it is
+  force-stopped.
+
+  As the limit is approached, graduated wrap-up warnings (at 70%, 85% and 95%)
+  are injected into that agent's next model turn so it can prioritise its
+  remaining work and call its lifecycle tool (`finish_scan` for the root agent,
+  `agent_finish` for sub-agents) before the hard stop.
+
+  Must be greater than `0`.
+</ParamField>
+
 ## Examples
 
 ```bash
@@ -98,6 +115,9 @@ strix --target api.example.com --instruction "Focus on IDOR and auth bypass"
 
 # CI/CD mode
 strix -n --target ./ --scan-mode quick
+
+# Cap cost and per-agent turns
+strix --target https://example.com --max-budget 25 --max-turns 300
 
 # Force diff-scope against a specific base ref
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main

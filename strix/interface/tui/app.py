@@ -34,6 +34,7 @@ from textual.widgets.tree import TreeNode
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
 from strix.core.hooks import BudgetExceededError
+from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.interface.tui.live_view import TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
@@ -1494,6 +1495,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                                 coordinator=self.coordinator,
                                 interactive=True,
                                 max_budget_usd=getattr(self.args, "max_budget_usd", None),
+                                max_turns=getattr(self.args, "max_turns", DEFAULT_MAX_TURNS),
                                 event_sink=self._capture_sdk_event,
                             ),
                         )
@@ -1504,7 +1506,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                     # Defensive: the runner stops the scan cleanly on budget and
                     # returns, so this normally never propagates. Treat it as a
                     # graceful stop, not a scan error, if it ever does.
-                    logger.info("Scan stopped: --max-budget-usd limit reached")
+                    logger.info("Scan stopped: --max-budget limit reached")
                 except (ConnectionError, TimeoutError) as e:
                     logging.exception("Network error during scan")
                     self._scan_error = e

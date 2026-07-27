@@ -31,6 +31,7 @@ from strix.config.models import (
     is_known_openai_bare_model,
     is_recommended_or_frontier_model,
 )
+from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
@@ -481,6 +482,16 @@ def _positive_budget(value: str) -> float:
     return budget
 
 
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be an integer greater than 0")
+    return parsed
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
@@ -636,10 +647,27 @@ Examples:
     )
 
     parser.add_argument(
-        "--max-budget-usd",
+        "--max-budget",
+        dest="max_budget_usd",
+        metavar="USD",
         type=_positive_budget,
         default=None,
-        help="Maximum LLM cost in USD (> 0). The scan stops cleanly when this limit is reached.",
+        help=(
+            "Maximum LLM cost in USD (> 0). The scan stops cleanly when this limit is reached. "
+            "Graduated wrap-up warnings are sent to all agents as it is approached."
+        ),
+    )
+
+    parser.add_argument(
+        "--max-turns",
+        dest="max_turns",
+        metavar="N",
+        type=_positive_int,
+        default=DEFAULT_MAX_TURNS,
+        help=(
+            "Maximum turns per agent (> 0, default %(default)s). Each agent is force-stopped "
+            "when it reaches this limit, with graduated wrap-up warnings as it is approached."
+        ),
     )
 
     parser.add_argument(
