@@ -62,6 +62,7 @@ Then build and select that local variant:
 ollama create qwen3-vl-64k -f Modelfile
 export STRIX_LLM="ollama/qwen3-vl-64k"
 export LLM_API_BASE="http://localhost:11434"
+export STRIX_CONTEXT_FALLBACK_TOKENS="65536"
 ```
 
 You can also set `num_ctx` on OpenAI-compatible local servers that expose runtime parameters. In LM Studio, set the context length in the model settings before starting the local server. In llama.cpp, start the server with an explicit context size:
@@ -71,6 +72,8 @@ llama-server --ctx-size 65536 --model /path/to/model.gguf
 ```
 
 Larger context windows require more VRAM and RAM. If the model becomes slow or fails to load, lower the scan mode first, then lower the context window. Avoid using a 4k or 8k context for real scans; it is usually too small for Strix's agent workflow.
+
+When you use a custom local model name, keep `STRIX_CONTEXT_FALLBACK_TOKENS` aligned with the server's configured context size. This prevents Strix from assuming a larger unknown-model fallback window and compacting too late.
 
 ### Context Clipping Symptoms
 
