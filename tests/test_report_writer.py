@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+import strix.report.writer as report_writer
 from strix.report.writer import (
     read_run_record,
     render_vulnerability_md,
@@ -19,6 +20,22 @@ from strix.report.writer import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+
+
+REPORT_FILENAME = "penetration_test_report.md"
+EXISTING_EXECUTIVE_REPORT = "previous complete report\n"
+TIMESTAMP_FAILURE_MESSAGE = "timestamp unavailable"
+
+
+class FailingTimestamp:
+    def strftime(self, _format: str) -> str:
+        raise RuntimeError(TIMESTAMP_FAILURE_MESSAGE)
+
+
+class FailingDateTime:
+    @classmethod
+    def now(cls, _tz: object) -> FailingTimestamp:
+        return FailingTimestamp()
 
 
 def _sample_report(**overrides: Any) -> dict[str, Any]:
@@ -176,6 +193,20 @@ def test_write_vulnerabilities_skips_already_saved_ids(tmp_path: Path) -> None:
 
 def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     write_executive_report(tmp_path, "Scan complete. No critical issues.")
-    content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
+    content = (tmp_path / REPORT_FILENAME).read_text(encoding="utf-8")
     assert "# Security Penetration Test Report" in content
     assert "Scan complete. No critical issues." in content
+
+
+def test_write_executive_report_preserves_existing_report_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / REPORT_FILENAME
+    report_path.write_text(EXISTING_EXECUTIVE_REPORT, encoding="utf-8")
+    monkeypatch.setattr(report_writer, "datetime", FailingDateTime)
+
+    with pytest.raises(RuntimeError, match=TIMESTAMP_FAILURE_MESSAGE):
+        write_executive_report(tmp_path, "replacement report")
+
+    assert report_path.read_text(encoding="utf-8") == EXISTING_EXECUTIVE_REPORT
