@@ -42,8 +42,6 @@ dependencies = [
   "docker>=7.1.0",
   "textual>=6.0.0",
   "requests>=2.32.0",
-  # Direct dep: strix/utils/net.py imports certifi so raw urllib callers fall back to
-  # its CA bundle when the platform trust store is empty (frozen builds).
   "certifi>=2024.7.4",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",

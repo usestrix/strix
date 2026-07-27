@@ -7,6 +7,7 @@ import hashlib
 import json
 import ssl
 import time
+import urllib.request
 from typing import TYPE_CHECKING, Any
 from unittest import mock
 
@@ -55,17 +56,10 @@ def test_authorize_url_carries_pkce_and_client() -> None:
 
 
 def test_post_form_verifies_tls_with_certifi_context() -> None:
-    """The token exchange must hand urlopen a certifi-backed SSL context.
-
-    In the PyInstaller standalone build, raw urllib falls back to OpenSSL's
-    compiled-in CA paths (absent on the user's machine) and every HTTPS call
-    dies with CERTIFICATE_VERIFY_FAILED. Passing a certifi-backed context is
-    what prevents that, so guard it against regressing to a context-less call.
-    """
     resp = mock.MagicMock()
     resp.__enter__.return_value.read.return_value = b"{}"
 
-    with mock.patch.object(codex.urllib.request, "urlopen", return_value=resp) as urlopen:
+    with mock.patch.object(urllib.request, "urlopen", return_value=resp) as urlopen:
         codex._post_form({"grant_type": "refresh_token"})
 
     context = urlopen.call_args.kwargs.get("context")

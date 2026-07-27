@@ -1,5 +1,3 @@
-"""Tests for the shared TLS context used by stdlib ``urllib`` callers."""
-
 from __future__ import annotations
 
 import ssl
@@ -13,7 +11,6 @@ from strix.utils import net
 
 @pytest.fixture(autouse=True)
 def _reset_cache(monkeypatch: pytest.MonkeyPatch) -> None:
-    # tls_context() memoizes into a module global; clear it so each test builds fresh.
     monkeypatch.setattr(net, "_context", None)
 
 
@@ -31,7 +28,6 @@ def test_tls_context_is_cached() -> None:
 def test_tls_context_falls_back_to_certifi_when_os_store_empty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The frozen-build case: an empty platform store must fall back to certifi."""
     real_create = ssl.create_default_context
     calls: list[dict[str, Any]] = []
 
@@ -39,7 +35,6 @@ def test_tls_context_falls_back_to_certifi_when_os_store_empty(
         calls.append(kwargs)
         context = real_create(*args, **kwargs)
         if "cafile" not in kwargs:
-            # Simulate the frozen build: platform trust store resolves to nothing.
             monkeypatch.setattr(context, "cert_store_stats", lambda: {"x509_ca": 0})
         return context
 
@@ -47,5 +42,4 @@ def test_tls_context_falls_back_to_certifi_when_os_store_empty(
 
     net.tls_context()
 
-    # Empty store on the first (platform) call → a second call loading certifi.
     assert calls[-1].get("cafile") == certifi.where()
