@@ -8,6 +8,7 @@ import sqlite3
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from strix.core.paths import latest_run_dir, runs_base_dir
 from strix.interface.viewer.server import serve
@@ -341,6 +342,11 @@ def _session_cookie(url: str, token: str) -> str:
     return raw.split(";", 1)[0]
 
 
+def _cookie_name(url: str) -> str:
+    """The per-server session cookie name, derived from the bound port."""
+    return f"strix_viewer_session_{urlsplit(url).port}"
+
+
 def _get_status(url: str, *, cookie: str | None = None) -> int:
     headers = {"Cookie": cookie} if cookie else {}
     req = urllib.request.Request(url, headers=headers)  # noqa: S310 - localhost test server
@@ -381,7 +387,7 @@ def test_capability_issued_only_for_tokened_bootstrap(
         # Only the correct bootstrap token mints the session cookie.
         with urllib.request.urlopen(f"{url}/?token={token}") as resp:  # noqa: S310  # nosec B310
             cookie = str(resp.headers.get("Set-Cookie", ""))
-        assert "strix_viewer_session=" in cookie
+        assert f"{_cookie_name(url)}=" in cookie
         assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
 
         # Static assets never carry it.
@@ -414,7 +420,7 @@ def test_unauthorized_client_cannot_acquire_capability(
             url,
             "/api/agents/steer",
             {"agent_id": "root", "message": "pwn"},
-            cookie="strix_viewer_session=",
+            cookie=f"{_cookie_name(url)}=",
         )
         assert status == 403
         assert delivered == []
@@ -609,6 +615,53 @@ def test_runs_list_requires_session_and_verification(
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_concurrent_servers_use_distinct_cookies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cookies are host-scoped, not port-scoped: two viewers on 127.0.0.1 must
+    not share a cookie slot, and one server's cookie must not pass the other's
+    session gate."""
+    run_a = _make_run(tmp_path / "a", "run-a", status="running", end_time=None)
+    run_b = _make_run(tmp_path / "b", "run-b", status="running", end_time=None)
+    _bundle(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "strix.interface.viewer.auth.read_auth", lambda: {"email": "a@b.com", "token": "t"}
+    )
+    monkeypatch.setattr("strix.interface.viewer.auth.is_verified", lambda: True)
+
+    httpd_a, url_a, token_a = serve(run_a, open_browser=False)
+    httpd_b, url_b, token_b = serve(run_b, open_browser=False)
+    try:
+        cookie_a = _session_cookie(url_a, token_a)
+        cookie_b = _session_cookie(url_b, token_b)
+
+        # The two servers mint differently named cookies, so a browser stores both.
+        assert cookie_a.split("=", 1)[0] == _cookie_name(url_a)
+        assert cookie_b.split("=", 1)[0] == _cookie_name(url_b)
+        assert cookie_a.split("=", 1)[0] != cookie_b.split("=", 1)[0]
+
+        def _status(url: str, cookie: str) -> dict[str, object]:
+            _, _, body = _get(f"{url}/api/auth/status", cookie=cookie)
+            return dict(json.loads(body))
+
+        # Each server honors its own cookie...
+        assert _status(url_a, cookie_a)["verified"] is True
+        assert _status(url_b, cookie_b)["verified"] is True
+        # ...but treats the other server's cookie as session-less.
+        assert _status(url_a, cookie_b)["verified"] is False
+        assert _status(url_b, cookie_a)["verified"] is False
+        # Even both cookies together (what a real browser would send) only
+        # match the token minted by the receiving server.
+        both = f"{cookie_a}; {cookie_b}"
+        assert _status(url_a, both)["verified"] is True
+        assert _status(url_b, both)["verified"] is True
+    finally:
+        httpd_a.shutdown()
+        httpd_a.server_close()
+        httpd_b.shutdown()
+        httpd_b.server_close()
 
 
 def test_server_rejects_path_traversal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
