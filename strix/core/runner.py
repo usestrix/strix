@@ -24,6 +24,7 @@ from strix.config.models import (
     uses_chat_completions_tool_schema,
 )
 from strix.core.agents import AgentCoordinator
+from strix.core.constants import DEFAULT_MAX_TURNS
 from strix.core.execution import (
     respawn_subagents,
     run_agent_loop,
@@ -33,7 +34,6 @@ from strix.core.execution import (
 )
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
-    DEFAULT_MAX_TURNS,
     build_root_task,
     build_scope_context,
     make_model_settings,

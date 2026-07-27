@@ -316,33 +316,97 @@ def _download_and_replace(version: str, target: str, console: Console) -> bool:
 
         if is_windows:
             with zipfile.ZipFile(archive_path) as zf:
-                zf.extract(binary_name, tmp_dir)
+                zf.extractall(tmp_dir)  # noqa: S202  # nosec B202  checksum-verified above
         else:
             with tarfile.open(archive_path, "r:gz") as tf:
-                tf.extract(binary_name, tmp_dir, filter="data")
+                tf.extractall(tmp_dir, filter="data")  # nosec B202
+
+        bundle_dir = tmp_dir / f"strix-{version}-{target}"
+        if bundle_dir.is_dir():
+            _swap_app_bundle(bundle_dir, current_exe, is_windows=is_windows)
+            return True
 
         new_binary = tmp_dir / binary_name
-        new_binary.chmod(new_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-        staged = current_exe.with_name(current_exe.name + ".new")
-        try:
-            shutil.copy2(new_binary, staged)
-            if is_windows:
-                # Windows can't replace a running executable in place; move it aside first.
-                old = current_exe.with_name(current_exe.name + ".old")
-                old.unlink(missing_ok=True)
-                current_exe.rename(old)
-                try:
-                    staged.replace(current_exe)
-                except Exception:
-                    old.rename(current_exe)
-                    raise
-            else:
-                staged.replace(current_exe)
-        except Exception:
-            staged.unlink(missing_ok=True)
-            raise
+        if not new_binary.is_file():
+            raise RuntimeError(f"unexpected archive layout in {filename}")
+        _swap_single_binary(new_binary, current_exe, is_windows=is_windows)
     return True
+
+
+def _swap_single_binary(new_binary: Path, current_exe: Path, *, is_windows: bool) -> None:
+    """Replace a legacy single-file binary in place."""
+    new_binary.chmod(new_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    staged = current_exe.with_name(current_exe.name + ".new")
+    try:
+        shutil.copy2(new_binary, staged)
+        if is_windows:
+            # Windows can't replace a running executable in place; move it aside first.
+            old = current_exe.with_name(current_exe.name + ".old")
+            old.unlink(missing_ok=True)
+            current_exe.rename(old)
+            try:
+                staged.replace(current_exe)
+            except Exception:
+                old.rename(current_exe)
+                raise
+        else:
+            staged.replace(current_exe)
+    except Exception:
+        staged.unlink(missing_ok=True)
+        raise
+
+
+def _swap_app_bundle(bundle_dir: Path, current_exe: Path, *, is_windows: bool) -> None:
+    """Swap an onedir app bundle (exe + ``_internal/``) into place."""
+    exe_name = "strix.exe" if is_windows else "strix"
+    new_exe = bundle_dir / exe_name
+    new_internal = bundle_dir / "_internal"
+    if not new_exe.is_file() or not new_internal.is_dir():
+        raise RuntimeError("unexpected app bundle layout (missing strix or _internal)")
+    new_exe.chmod(new_exe.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+    app_dir = current_exe.parent
+    internal = app_dir / "_internal"
+    old_internal = app_dir / "_internal.old"
+    staged_internal = app_dir / "_internal.new"
+    staged_exe = current_exe.with_name(current_exe.name + ".new")
+    old_exe = current_exe.with_name(current_exe.name + ".old")
+
+    shutil.rmtree(staged_internal, ignore_errors=True)
+    shutil.rmtree(old_internal, ignore_errors=True)
+    staged_exe.unlink(missing_ok=True)
+    old_exe.unlink(missing_ok=True)
+
+    shutil.copytree(new_internal, staged_internal)
+    shutil.copy2(new_exe, staged_exe)
+
+    internal_moved = False
+    try:
+        internal.rename(old_internal)
+        internal_moved = True
+        staged_internal.rename(internal)
+        if is_windows:
+            # Windows can't replace a running executable in place; move it aside first.
+            current_exe.rename(old_exe)
+            try:
+                staged_exe.replace(current_exe)
+            except Exception:
+                old_exe.rename(current_exe)
+                raise
+        else:
+            staged_exe.replace(current_exe)
+    except Exception:
+        if internal_moved and not internal.exists() and old_internal.exists():
+            old_internal.rename(internal)
+        shutil.rmtree(staged_internal, ignore_errors=True)
+        staged_exe.unlink(missing_ok=True)
+        raise
+
+    # Best effort: on Windows loaded DLLs/exe may resist deletion until restart.
+    shutil.rmtree(old_internal, ignore_errors=True)
+    if not is_windows:
+        old_exe.unlink(missing_ok=True)
 
 
 def self_update(console: Console | None = None, version: str | None = None) -> bool:

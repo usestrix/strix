@@ -11,9 +11,6 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from agents.model_settings import ModelSettings
-from agents.models.interface import ModelTracing
-from docker.errors import DockerException
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -24,17 +21,8 @@ from strix.config import (
     load_settings,
     persist_current,
 )
-from strix.config.models import (
-    RECOMMENDED_MODEL_NAMES,
-    StrixProvider,
-    configure_sdk_model_defaults,
-    is_known_openai_bare_model,
-    is_recommended_or_frontier_model,
-)
-from strix.core.inputs import DEFAULT_MAX_TURNS
+from strix.core.constants import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
-from strix.interface.cli import run_cli
-from strix.interface.tui import run_tui
 from strix.interface.update_check import (
     is_binary_install,
     notify_update,
@@ -61,8 +49,6 @@ from strix.interface.utils import (
     rewrite_localhost_targets,
     validate_config_file,
 )
-from strix.report.state import get_global_report_state
-from strix.report.writer import read_run_record, write_run_record
 from strix.telemetry import posthog, scarf
 from strix.telemetry.logging import configure_dependency_logging
 
@@ -312,6 +298,17 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
 async def warm_up_llm(show_model_warning: bool = True) -> None:
     console = Console()
     logger.info("Warming up LLM connection")
+
+    from agents.model_settings import ModelSettings
+    from agents.models.interface import ModelTracing
+
+    from strix.config.models import (
+        RECOMMENDED_MODEL_NAMES,
+        StrixProvider,
+        configure_sdk_model_defaults,
+        is_known_openai_bare_model,
+        is_recommended_or_frontier_model,
+    )
 
     raw_model = ""
     try:
@@ -776,6 +773,8 @@ Examples:
 
 
 def _persist_run_record(args: argparse.Namespace) -> None:
+    from strix.report.writer import write_run_record
+
     run_dir = run_dir_for(args.run_name)
     run_dir.mkdir(parents=True, exist_ok=True)
     run_record = {
@@ -799,6 +798,8 @@ def _persist_run_record(args: argparse.Namespace) -> None:
 
 def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Populate ``args.targets_info`` and friends from a prior run's run.json."""
+    from strix.report.writer import read_run_record
+
     run_dir = run_dir_for(args.resume)
     state_path = run_dir / "run.json"
     if not state_path.exists():
@@ -843,6 +844,8 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
 
 
 def display_completion_message(args: argparse.Namespace, results_path: Path) -> None:
+    from strix.report.state import get_global_report_state
+
     console = Console()
     report_state = get_global_report_state()
 
@@ -922,6 +925,8 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
 
 def pull_docker_image() -> None:
+    from docker.errors import DockerException
+
     console = Console()
     client = check_docker_connection()
 
@@ -1071,8 +1076,12 @@ def main() -> None:
     exit_reason = "user_exit"
     try:
         if args.non_interactive:
+            from strix.interface.cli import run_cli
+
             asyncio.run(run_cli(args))
         else:
+            from strix.interface.tui import run_tui
+
             asyncio.run(run_tui(args))
     except KeyboardInterrupt:
         exit_reason = "interrupted"
@@ -1082,6 +1091,8 @@ def main() -> None:
         scarf.error("unhandled_exception")
         raise
     finally:
+        from strix.report.state import get_global_report_state
+
         report_state = get_global_report_state()
         if report_state:
             status = {"interrupted": "interrupted", "error": "failed"}.get(
@@ -1097,6 +1108,8 @@ def main() -> None:
     display_completion_message(args, results_path)
 
     if args.non_interactive:
+        from strix.report.state import get_global_report_state
+
         report_state = get_global_report_state()
         if report_state and report_state.vulnerability_reports:
             sys.exit(2)

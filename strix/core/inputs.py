@@ -24,9 +24,6 @@ if TYPE_CHECKING:
     from strix.config.settings import ReasoningEffort
 
 
-DEFAULT_MAX_TURNS = 500
-
-
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
     name = (model_name or "").strip().lower()
     for prefix in ("litellm/", "any-llm/"):

@@ -159,12 +159,28 @@ download_and_install() {
     fi
 
     echo -e "${MUTED}Extracting...${NC}"
+    local extracted="strix-${specific_version}-${target}"
     if [ "$os" = "windows" ]; then
         unzip -q "$filename"
-        mv "strix-${specific_version}-${target}.exe" "$INSTALL_DIR/strix.exe"
+        if [ -d "$extracted" ]; then
+            # Onedir app bundle (strix.exe + _internal/).
+            rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/strix.exe"
+            cp -R "$extracted/." "$INSTALL_DIR/"
+        else
+            # Legacy single-file binary.
+            mv "${extracted}.exe" "$INSTALL_DIR/strix.exe"
+        fi
     else
         tar -xzf "$filename"
-        mv "strix-${specific_version}-${target}" "$INSTALL_DIR/strix"
+        if [ -d "$extracted" ]; then
+            # Onedir app bundle (strix + _internal/).
+            rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/strix"
+            cp -R "$extracted/." "$INSTALL_DIR/"
+        else
+            # Legacy single-file binary.
+            rm -rf "$INSTALL_DIR/strix"
+            mv "$extracted" "$INSTALL_DIR/strix"
+        fi
         chmod 755 "$INSTALL_DIR/strix"
     fi
 

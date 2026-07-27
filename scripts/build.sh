@@ -54,45 +54,48 @@ uv run pyinstaller strix.spec --noconfirm
 RELEASE_DIR="dist/release"
 mkdir -p "$RELEASE_DIR"
 
-BINARY_NAME="strix-${VERSION}-${OS_NAME}-${ARCH_NAME}"
+# Onedir build: dist/strix/ is an app directory (strix + _internal/).
+BUNDLE_NAME="strix-${VERSION}-${OS_NAME}-${ARCH_NAME}"
 
 if [ "$OS_NAME" = "windows" ]; then
-    if [ ! -f "dist/strix.exe" ]; then
-        echo -e "${RED}Build failed: Binary not found${NC}"
-        exit 1
-    fi
-    BINARY_NAME="${BINARY_NAME}.exe"
-    cp "dist/strix.exe" "$RELEASE_DIR/$BINARY_NAME"
+    EXE_NAME="strix.exe"
+else
+    EXE_NAME="strix"
+fi
+
+if [ ! -f "dist/strix/$EXE_NAME" ]; then
+    echo -e "${RED}Build failed: Binary not found${NC}"
+    exit 1
+fi
+
+cp -R "dist/strix" "$RELEASE_DIR/$BUNDLE_NAME"
+chmod +x "$RELEASE_DIR/$BUNDLE_NAME/$EXE_NAME"
+
+if [ "$OS_NAME" = "windows" ]; then
     echo -e "\n${BLUE}Creating zip...${NC}"
-    ARCHIVE_NAME="${BINARY_NAME%.exe}.zip"
+    ARCHIVE_NAME="${BUNDLE_NAME}.zip"
 
     if command -v 7z &> /dev/null; then
-        7z a "$RELEASE_DIR/$ARCHIVE_NAME" "$RELEASE_DIR/$BINARY_NAME"
+        (cd "$RELEASE_DIR" && 7z a "$ARCHIVE_NAME" "$BUNDLE_NAME")
     else
-        powershell -Command "Compress-Archive -Path '$RELEASE_DIR/$BINARY_NAME' -DestinationPath '$RELEASE_DIR/$ARCHIVE_NAME'"
+        powershell -Command "Compress-Archive -Path '$RELEASE_DIR/$BUNDLE_NAME' -DestinationPath '$RELEASE_DIR/$ARCHIVE_NAME'"
     fi
     echo -e "${GREEN}Created:${NC} $RELEASE_DIR/$ARCHIVE_NAME"
 else
-    if [ ! -f "dist/strix" ]; then
-        echo -e "${RED}Build failed: Binary not found${NC}"
-        exit 1
-    fi
-    cp "dist/strix" "$RELEASE_DIR/$BINARY_NAME"
-    chmod +x "$RELEASE_DIR/$BINARY_NAME"
     echo -e "\n${BLUE}Creating tarball...${NC}"
-    ARCHIVE_NAME="${BINARY_NAME}.tar.gz"
-    tar -czvf "$RELEASE_DIR/$ARCHIVE_NAME" -C "$RELEASE_DIR" "$BINARY_NAME"
+    ARCHIVE_NAME="${BUNDLE_NAME}.tar.gz"
+    tar -czvf "$RELEASE_DIR/$ARCHIVE_NAME" -C "$RELEASE_DIR" "$BUNDLE_NAME"
     echo -e "${GREEN}Created:${NC} $RELEASE_DIR/$ARCHIVE_NAME"
 fi
 
 echo -e "\n${GREEN}Build successful!${NC}"
 echo "================================"
-echo -e "${YELLOW}Binary:${NC} $RELEASE_DIR/$BINARY_NAME"
+echo -e "${YELLOW}App directory:${NC} $RELEASE_DIR/$BUNDLE_NAME"
 
-SIZE=$(ls -lh "$RELEASE_DIR/$BINARY_NAME" | awk '{print $5}')
+SIZE=$(du -sh "$RELEASE_DIR/$BUNDLE_NAME" | awk '{print $1}')
 echo -e "${YELLOW}Size:${NC} $SIZE"
 
 echo -e "\n${BLUE}Testing binary...${NC}"
-"$RELEASE_DIR/$BINARY_NAME" --help > /dev/null 2>&1 && echo -e "${GREEN}Binary test passed!${NC}" || echo -e "${RED}Binary test failed${NC}"
+"$RELEASE_DIR/$BUNDLE_NAME/$EXE_NAME" --help > /dev/null 2>&1 && echo -e "${GREEN}Binary test passed!${NC}" || echo -e "${RED}Binary test failed${NC}"
 
 echo -e "\n${GREEN}Done!${NC}"

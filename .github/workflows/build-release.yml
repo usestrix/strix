@@ -45,15 +45,16 @@ jobs:
           uv sync --frozen
           uv run pyinstaller strix.spec --noconfirm
 
+          # Onedir build: dist/strix/ is an app directory (strix + _internal/).
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            dist/strix.exe --version
+            dist/strix/strix.exe --version
           else
-            dist/strix --version
+            dist/strix/strix --version
           fi
 
           if [[ "${{ matrix.target }}" == "linux-arm64" ]]; then
-            file dist/strix
-            file dist/strix | grep -q "ARM aarch64" || {
+            file dist/strix/strix
+            file dist/strix/strix | grep -q "ARM aarch64" || {
               echo "::error::linux-arm64 artifact is not an ARM aarch64 binary"
               exit 1
             }
@@ -62,13 +63,15 @@ jobs:
           VERSION=$(grep '^version' pyproject.toml | head -1 | sed 's/.*"\(.*\)"/\1/')
           mkdir -p dist/release
 
+          cp -R dist/strix "dist/release/strix-${VERSION}-${{ matrix.target }}"
+
           if [[ "${{ runner.os }}" == "Windows" ]]; then
-            cp dist/strix.exe "dist/release/strix-${VERSION}-${{ matrix.target }}.exe"
-            (cd dist/release && 7z a "strix-${VERSION}-${{ matrix.target }}.zip" "strix-${VERSION}-${{ matrix.target }}.exe")
+            (cd dist/release && 7z a "strix-${VERSION}-${{ matrix.target }}.zip" "strix-${VERSION}-${{ matrix.target }}")
+            rm -rf "dist/release/strix-${VERSION}-${{ matrix.target }}"
           else
-            cp dist/strix "dist/release/strix-${VERSION}-${{ matrix.target }}"
-            chmod +x "dist/release/strix-${VERSION}-${{ matrix.target }}"
+            chmod +x "dist/release/strix-${VERSION}-${{ matrix.target }}/strix"
             tar -C dist/release -czvf "dist/release/strix-${VERSION}-${{ matrix.target }}.tar.gz" "strix-${VERSION}-${{ matrix.target }}"
+            rm -rf "dist/release/strix-${VERSION}-${{ matrix.target }}"
           fi
 
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2

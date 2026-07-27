@@ -33,8 +33,8 @@ from textual.widgets.tree import TreeNode
 
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
+from strix.core.constants import DEFAULT_MAX_TURNS
 from strix.core.hooks import BudgetExceededError
-from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.interface.tui.live_view import TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
