@@ -36,6 +36,14 @@ _CVSS = {
     "availability": "H",
 }
 
+BASELINE_RUN_NAME = "baseline-run"
+BASELINE_REPORT_ID = "vuln-0042"
+BASELINE_REPORT_TITLE = "Baseline SQL injection"
+BASELINE_REPORT_SEVERITY = "high"
+BASELINE_REPORT_TIMESTAMP = "2026-07-27 00:00:00 UTC"
+BASELINE_REPORT_TARGET = "https://app.example.com"
+NEW_REPORT_TITLE = "SQL injection in login"
+
 
 @pytest.fixture
 def report_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReportState:
@@ -469,6 +477,62 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
         },
         "technical_analysis": None,
     }
+
+
+async def test_create_report_suppresses_duplicate_from_baseline_run(
+    report_state: ReportState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, object] = {}
+
+    async def fake_check_duplicate(
+        candidate: dict[str, object],
+        existing: list[dict[str, object]],
+    ) -> dict[str, object]:
+        captured["candidate"] = candidate
+        captured["existing"] = existing
+        return {
+            "is_duplicate": True,
+            "duplicate_id": BASELINE_REPORT_ID,
+            "confidence": 1.0,
+            "reason": "Same endpoint and root cause.",
+        }
+
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
+    baseline_report = {
+        "id": BASELINE_REPORT_ID,
+        "title": BASELINE_REPORT_TITLE,
+        "severity": BASELINE_REPORT_SEVERITY,
+        "timestamp": BASELINE_REPORT_TIMESTAMP,
+        "target": BASELINE_REPORT_TARGET,
+    }
+    report_state.load_baseline_vulnerabilities(BASELINE_RUN_NAME, [baseline_report])
+
+    result = await _do_create(
+        title=NEW_REPORT_TITLE,
+        description="Unsanitized input reaches a SQL query.",
+        impact="Database read access.",
+        target=BASELINE_REPORT_TARGET,
+        technical_analysis="The login query interpolates the username.",
+        poc_description="Submit a tautology payload.",
+        poc_script_code="curl https://app.example.com/login",
+        remediation_steps="Use parameterized queries.",
+        evidence="The response contains authenticated data.",
+        assumptions="Assumes the endpoint is reachable.",
+        fix_effort="low",
+        cvss_breakdown=_CVSS,
+        endpoint="/login",
+        method="POST",
+        cve=None,
+        cwe=None,
+        code_locations=None,
+    )
+
+    assert result["success"] is False
+    assert result["duplicate_of"] == BASELINE_REPORT_ID
+    assert result["duplicate_title"] == BASELINE_REPORT_TITLE
+    assert captured["existing"] == [baseline_report]
+    assert not report_state.vulnerability_reports
 
 
 async def test_dependency_report_rejects_bad_cve(report_state: ReportState) -> None:

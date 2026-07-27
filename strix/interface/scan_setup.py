@@ -264,5 +264,6 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scope_mode": args.scope_mode,
         "diff_base": args.diff_base,
+        "baseline_run": getattr(args, "baseline_run", None),
     }
     write_run_record(run_dir, run_record)
