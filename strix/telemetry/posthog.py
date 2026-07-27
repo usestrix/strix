@@ -5,6 +5,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
+from strix.net import tls_context
 from strix.telemetry._common import (
     SESSION_ID,
     base_props,
@@ -42,7 +43,7 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
+        with urllib.request.urlopen(req, timeout=10, context=tls_context()):  # noqa: S310  # nosec B310
             pass
     except Exception:  # noqa: BLE001
         logger.debug("posthog send failed for event %s", event, exc_info=True)

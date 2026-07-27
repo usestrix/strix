@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
+from strix.net import tls_context
 from strix.telemetry._common import (
     SESSION_ID,
     base_props,
@@ -43,7 +44,7 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
         if query:
             url = f"{url}?{query}"
         req = urllib.request.Request(url, method="POST")  # noqa: S310
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
+        with urllib.request.urlopen(req, timeout=10, context=tls_context()):  # noqa: S310  # nosec B310
             pass
     except Exception:  # noqa: BLE001
         logger.debug("scarf send failed for event %s", event, exc_info=True)

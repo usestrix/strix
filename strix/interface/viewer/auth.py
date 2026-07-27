@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from strix.config.loader import load_settings
+from strix.net import tls_context
 
 
 logger = logging.getLogger(__name__)
@@ -155,7 +156,9 @@ def _post_json(path: str, payload: dict[str, Any], *, timeout: int) -> tuple[int
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310  # nosec B310
+        with urllib.request.urlopen(  # noqa: S310  # nosec B310 - fixed https relay URL
+            request, timeout=timeout, context=tls_context()
+        ) as response:
             return response.status, _parse_body(response.read())
     except urllib.error.HTTPError as exc:
         return exc.code, _parse_body(exc.read())

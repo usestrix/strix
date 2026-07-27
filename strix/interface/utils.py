@@ -22,6 +22,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.net import tls_context
 
 
 logger = logging.getLogger(__name__)
@@ -1089,7 +1090,7 @@ def _is_http_git_repo(url: str) -> bool:
     check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
     try:
         req = Request(check_url, headers={"User-Agent": "git/strix"})  # noqa: S310
-        with urlopen(req, timeout=10) as resp:  # noqa: S310  # nosec B310
+        with urlopen(req, timeout=10, context=tls_context()) as resp:  # noqa: S310  # nosec B310
             return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
     except HTTPError as e:
         return e.code == 401

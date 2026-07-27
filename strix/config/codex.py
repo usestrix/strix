@@ -24,6 +24,8 @@ import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from strix.net import tls_context
+
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -233,7 +235,7 @@ def _post_form(payload: dict[str, str]) -> dict[str, Any]:
     )
     try:
         with urllib.request.urlopen(  # noqa: S310  # nosec B310 - fixed https endpoint
-            request, timeout=_TOKEN_TIMEOUT
+            request, timeout=_TOKEN_TIMEOUT, context=tls_context()
         ) as response:
             data = json.loads(response.read() or b"{}")
     except urllib.error.HTTPError as exc:
