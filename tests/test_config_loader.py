@@ -10,7 +10,7 @@ from pydantic import AliasChoices, Field, ValidationError
 from pydantic.fields import FieldInfo
 
 from strix.config import loader
-from strix.config.settings import ContextSettings
+from strix.config.settings import ContextSettings, RuntimeSettings
 
 
 if TYPE_CHECKING:
@@ -33,6 +33,7 @@ _LLM_ENV_KEYS = [
     # RuntimeSettings
     "STRIX_IMAGE",
     "STRIX_RUNTIME_BACKEND",
+    "STRIX_MAX_CHILD_AGENTS",
     # TelemetrySettings
     "STRIX_TELEMETRY",
 ]
@@ -127,6 +128,10 @@ def test_tool_output_max_bytes_rejects_sub_notice_values() -> None:
 
 def test_tool_output_max_bytes_accepts_floor() -> None:
     assert ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=1024).tool_output_max_bytes == 1024
+
+
+def test_max_child_agents_env_alias() -> None:
+    assert RuntimeSettings(STRIX_MAX_CHILD_AGENTS=7).max_child_agents == 7
 
 
 # --------------------------------------------------------------------------- #

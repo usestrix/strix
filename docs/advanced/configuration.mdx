@@ -122,6 +122,10 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Runtime backend for the sandbox environment.
 </ParamField>
 
+<ParamField path="STRIX_MAX_CHILD_AGENTS" default="0" type="integer">
+  Maximum number of child agents a scan may spawn. Set to `0` for no limit.
+</ParamField>
+
 ## Sandbox Configuration
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">

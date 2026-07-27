@@ -54,6 +54,8 @@ StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
 _MAX_COMPACTIONS_PER_CYCLE = 2
+_UNLIMITED_CHILD_AGENTS = 0
+_CHILD_AGENT_LIMIT_ERROR = "child agent limit reached"
 
 
 class ProviderRefusalError(AgentsException):
@@ -302,10 +304,29 @@ async def spawn_child_agent(
     parent_history: list[Any],
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
+    max_child_agents: int = _UNLIMITED_CHILD_AGENTS,
 ) -> dict[str, Any]:
     parent_id = parent_ctx.get("agent_id")
     if not isinstance(parent_id, str):
         raise TypeError("Parent agent_id missing from context")
+
+    child_count = _child_agent_count(coordinator)
+    if max_child_agents > _UNLIMITED_CHILD_AGENTS and child_count >= max_child_agents:
+        logger.info(
+            "refusing to spawn child agent %r: limit %d already reached",
+            name,
+            max_child_agents,
+        )
+        return {
+            "success": False,
+            "error": _CHILD_AGENT_LIMIT_ERROR,
+            "message": (
+                f"Cannot spawn '{name}': configured child agent limit "
+                f"({max_child_agents}) is already reached."
+            ),
+            "limit": max_child_agents,
+            "current_child_agents": child_count,
+        }
 
     child_id = uuid.uuid4().hex[:8]
     child_agent = factory(name=name, skills=skills)
@@ -348,6 +369,10 @@ async def spawn_child_agent(
         "parent_id": parent_id,
         "message": f"Spawned '{name}' ({child_id}) running in parallel.",
     }
+
+
+def _child_agent_count(coordinator: AgentCoordinator) -> int:
+    return sum(parent_id is not None for parent_id in coordinator.parent_of.values())
 
 
 async def respawn_subagents(
