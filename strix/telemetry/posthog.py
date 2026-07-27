@@ -10,6 +10,7 @@ from strix.telemetry._common import (
     base_props,
     is_first_run,
 )
+from strix.utils.http import tls_context
 
 
 if TYPE_CHECKING:
@@ -42,7 +43,7 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
             data=json.dumps(payload).encode(),
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
+        with urllib.request.urlopen(req, timeout=10, context=tls_context()):  # noqa: S310  # nosec B310
             pass
     except Exception:  # noqa: BLE001
         logger.debug("posthog send failed for event %s", event, exc_info=True)
