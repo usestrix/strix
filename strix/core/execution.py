@@ -143,6 +143,9 @@ async def run_agent_loop(
         await coordinator.set_status(agent_id, "stopped")
         raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
+    if reserve_stopped and start_parked and interactive and context.get("parent_id") is None:
+        await coordinator.send(agent_id, _reserve_notice())
+
     if not (start_parked and interactive):
         if interactive:
             result = await _run_cycle(
@@ -659,25 +662,26 @@ async def _notify_parent_on_crash(
     )
 
 
+def _reserve_notice() -> dict[str, Any]:
+    return {
+        "from": "system",
+        "type": "budget_reserve_stop",
+        "priority": "high",
+        "content": (
+            "[Budget reserve] The scan has reached the sub-agent budget reserve: every "
+            "sub-agent is being force-stopped as soon as its in-flight turn completes, and "
+            "none will send a completion report. Their confirmed vulnerabilities are "
+            "already filed as they were found. Do not wait on any sub-agents and do not "
+            "spawn new ones — wrap up now and call finish_scan."
+        ),
+    }
+
+
 async def _notify_root_on_budget_reserve(coordinator: AgentCoordinator) -> None:
     root = await coordinator.claim_reserve_notification()
     if root is None:
         return
-    await coordinator.send(
-        root,
-        {
-            "from": "system",
-            "type": "budget_reserve_stop",
-            "priority": "high",
-            "content": (
-                "[Budget reserve] The scan has reached the sub-agent budget reserve: every "
-                "sub-agent is being force-stopped as soon as its in-flight turn completes, and "
-                "none will send a completion report. Their confirmed vulnerabilities are "
-                "already filed as they were found. Do not wait on any sub-agents and do not "
-                "spawn new ones — wrap up now and call finish_scan."
-            ),
-        },
-    )
+    await coordinator.send(root, _reserve_notice())
 
 
 async def _start_child_runner(

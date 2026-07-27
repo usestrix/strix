@@ -255,3 +255,51 @@ async def test_respawned_children_after_reserve_never_spend(
     assert ledger.calls == []
     for session in sessions:
         session.close()
+
+
+@pytest.mark.asyncio
+async def test_resumed_parked_root_after_reserve_is_renotified_and_finalizes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = _FakeLedger()
+    ledger.cost = 9.0
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=MAX_BUDGET)
+    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger))
+    monkeypatch.setattr(execution, "_compact_session", _noop_compact)
+
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.set_status("root", "waiting")
+    snap = await coordinator.snapshot()
+    snap["reserve_stopped"] = True
+
+    restored = AgentCoordinator()
+    await restored.restore(snap)
+    assert restored.reserve_stopped is True
+
+    root_session = open_agent_session("root", tmp_path / "agents.sqlite")
+    with patch("strix.core.hooks.get_global_report_state", return_value=ledger):
+        root_task = asyncio.create_task(
+            run_agent_loop(
+                agent=MagicMock(),
+                initial_input=[],
+                run_config=MagicMock(),
+                context={"agent_id": "root", "parent_id": None},
+                max_turns=500,
+                coordinator=restored,
+                agent_id="root",
+                interactive=True,
+                session=root_session,
+                start_parked=True,
+                hooks=hooks,
+            )
+        )
+        with pytest.raises(BudgetExceededError):
+            await asyncio.wait_for(root_task, timeout=5.0)
+
+    assert ledger.calls == ["root"]
+    assert ledger.cost == pytest.approx(MAX_BUDGET)
+    root_items = await root_session.get_items()
+    notices = [item for item in root_items if "Budget reserve" in str(item)]
+    assert len(notices) == 1
+    root_session.close()
