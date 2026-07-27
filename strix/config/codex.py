@@ -21,6 +21,7 @@ import time
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from strix.utils.secret_files import write_secret_text
 
 import requests
 
@@ -67,14 +68,7 @@ def _read_store() -> dict[str, Any]:
 
 
 def _write_store(data: dict[str, Any]) -> None:
-    AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = AUTH_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        tmp.chmod(0o600)
-    tmp.replace(AUTH_PATH)
-    with contextlib.suppress(OSError):
-        AUTH_PATH.chmod(0o600)
+    write_secret_text(AUTH_PATH, json.dumps(data, indent=2))
 
 
 def read_record() -> dict[str, Any] | None:

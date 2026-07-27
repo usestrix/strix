@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 import os
@@ -12,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import AliasChoices, BaseModel
 
 from strix.config.settings import Settings
+from strix.utils.secret_files import write_secret_text
 
 
 if TYPE_CHECKING:
@@ -71,9 +71,7 @@ def persist_current() -> None:
                     env_block[alias.upper()] = value
                     break
 
-    target.write_text(json.dumps({"env": env_block}, indent=2), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        target.chmod(0o600)
+    write_secret_text(target, json.dumps({"env": env_block}, indent=2))
 
 
 def _aliases_for(finfo: FieldInfo) -> list[str]:
