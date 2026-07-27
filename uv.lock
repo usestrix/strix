@@ -2415,7 +2415,6 @@ version = "1.3.1"
 source = { editable = "." }
 dependencies = [
     { name = "caido-sdk-client" },
-    { name = "certifi" },
     { name = "cryptography" },
     { name = "cvss" },
     { name = "docker" },
@@ -2455,7 +2454,6 @@ dev = [
 requires-dist = [
     { name = "boto3", marker = "extra == 'bedrock'", specifier = ">=1.28.0" },
     { name = "caido-sdk-client", specifier = ">=0.2.0" },
-    { name = "certifi", specifier = ">=2024.7.4" },
     { name = "cryptography", specifier = ">=48.0.1,<49" },
     { name = "cvss", specifier = ">=3.2" },
     { name = "docker", specifier = ">=7.1.0" },

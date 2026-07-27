@@ -1,8 +1,8 @@
-import json
 import logging
-import urllib.request
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+import requests
 
 from strix.config import load_settings
 from strix.telemetry._common import (
@@ -10,7 +10,6 @@ from strix.telemetry._common import (
     base_props,
     is_first_run,
 )
-from strix.utils.net import tls_context
 
 
 if TYPE_CHECKING:
@@ -38,13 +37,7 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
             "distinct_id": SESSION_ID,
             "properties": properties,
         }
-        req = urllib.request.Request(  # noqa: S310
-            f"{_POSTHOG_HOST}/capture/",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=10, context=tls_context()):  # noqa: S310  # nosec B310
-            pass
+        requests.post(f"{_POSTHOG_HOST}/capture/", json=payload, timeout=10)
     except Exception:  # noqa: BLE001
         logger.debug("posthog send failed for event %s", event, exc_info=True)
         return False

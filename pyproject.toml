@@ -42,7 +42,6 @@ dependencies = [
   "docker>=7.1.0",
   "textual>=6.0.0",
   "requests>=2.32.0",
-  "certifi>=2024.7.4",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
   "reportlab>=4.0",

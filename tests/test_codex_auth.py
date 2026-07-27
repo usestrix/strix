@@ -5,13 +5,12 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
-import ssl
 import time
-import urllib.request
 from typing import TYPE_CHECKING, Any
 from unittest import mock
 
 import pytest
+import requests
 
 from strix.config import codex
 
@@ -55,16 +54,16 @@ def test_authorize_url_carries_pkce_and_client() -> None:
     assert "state=st8" in url
 
 
-def test_post_form_verifies_tls_with_certifi_context() -> None:
+def test_post_form_returns_parsed_body() -> None:
     resp = mock.MagicMock()
-    resp.__enter__.return_value.read.return_value = b"{}"
+    resp.status_code = 200
+    resp.content = b'{"access_token": "tok"}'
 
-    with mock.patch.object(urllib.request, "urlopen", return_value=resp) as urlopen:
-        codex._post_form({"grant_type": "refresh_token"})
+    with mock.patch.object(requests, "post", return_value=resp) as post:
+        data = codex._post_form({"grant_type": "refresh_token"})
 
-    context = urlopen.call_args.kwargs.get("context")
-    assert isinstance(context, ssl.SSLContext)
-    assert context.verify_mode == ssl.CERT_REQUIRED
+    assert data == {"access_token": "tok"}
+    assert post.call_args.kwargs["timeout"] == codex._TOKEN_TIMEOUT
 
 
 @pytest.mark.parametrize(
