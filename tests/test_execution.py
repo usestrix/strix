@@ -6,17 +6,20 @@ import asyncio
 import contextlib
 import json
 from typing import Any
+from unittest.mock import MagicMock
 
 import pytest
 from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
 
 from strix.config import codex
+from strix.core import execution
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
     _handle_content_guardrail,
     _notify_parent_on_terminal,
     _notify_root_on_budget_reserve,
+    respawn_subagents,
 )
 from strix.tools.finish.tool import finish_scan
 
@@ -539,3 +542,37 @@ async def test_guardrail_noninteractive_fails_only_blocked_agent(tmp_path: Any) 
     assert coordinator.statuses["root"] == "running"
     assert coordinator.pending_counts.get("root", 0) > 0
     session.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_revives_guardrail_parked_child_but_not_plain_waiting(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("blocked", "recon", parent_id="root")
+    await coordinator.register("peer_waiter", "recon", parent_id="root")
+    await coordinator.set_status("blocked", "waiting", error="STRIX_LLM guardrail")
+    await coordinator.set_status("peer_waiter", "waiting")
+
+    parked: dict[str, bool] = {}
+
+    async def _fake_start_child_runner(**kwargs: Any) -> None:
+        parked[kwargs["child_id"]] = bool(kwargs["start_parked"])
+
+    monkeypatch.setattr(execution, "_start_child_runner", _fake_start_child_runner)
+
+    await respawn_subagents(
+        coordinator=coordinator,
+        factory=lambda **_kwargs: object(),
+        agents_db_path=tmp_path / "agents.db",
+        sessions_to_close=[],
+        run_config=MagicMock(),
+        max_turns=10,
+        interactive=True,
+        parent_ctx={"agent_id": "root", "parent_id": None},
+        root_id="root",
+    )
+
+    assert parked["blocked"] is False
+    assert parked["peer_waiter"] is True

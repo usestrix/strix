@@ -310,6 +310,7 @@ async def respawn_subagents(
             if coordinator.parent_of.get(aid) is None or aid == root_id:
                 continue
             md["_restored_status"] = status
+            md["_restored_error"] = coordinator.errors.get(aid)
             candidates.append(
                 (
                     aid,
@@ -322,7 +323,8 @@ async def respawn_subagents(
     for child_id, name, parent_id, md in candidates:
         try:
             restored_status = str(md.get("_restored_status") or "running")
-            start_parked = interactive and restored_status != "running"
+            recoverable_park = restored_status == "waiting" and bool(md.get("_restored_error"))
+            start_parked = interactive and restored_status != "running" and not recoverable_park
 
             if start_parked:
                 logger.warning(
