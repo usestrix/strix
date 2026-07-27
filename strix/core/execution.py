@@ -479,9 +479,11 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 await coordinator.detach_stream(agent_id, stream)
         except SubagentBudgetReservedError as exc:
             # Only this sub-agent stops; the scan-wide fan-out is intentionally not
-            # triggered so the root keeps the reserved budget to finish the scan.
+            # triggered so the root keeps the reserved budget to finish the scan. Notify
+            # the parent since no agent_finish report is sent, so it does not hang waiting.
             logger.info("sub-agent %s stopped at the budget reserve: %s", agent_id, exc)
             await coordinator.set_status(agent_id, "stopped")
+            await _notify_parent_on_budget_reserve(coordinator, agent_id)
             raise
         except BudgetExceededError as exc:
             logger.info(
@@ -640,6 +642,38 @@ async def _notify_parent_on_crash(
             "content": (
                 f"[Agent crash] {name} ({agent_id}) terminated unexpectedly. "
                 "Stop waiting on this child unless you want to message it again."
+            ),
+        },
+    )
+
+
+async def _notify_parent_on_budget_reserve(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+) -> None:
+    """Wake the parent when a child is stopped at the sub-agent budget reserve.
+
+    A reserve-stopped child never runs ``agent_finish``, so without this the parent
+    gets no completion report and, if parked in ``wait_for_message``, would hang
+    until timeout. Any confirmed findings the child filed are already in the report.
+    """
+    async with coordinator._lock:
+        parent = coordinator.parent_of.get(agent_id)
+        name = coordinator.names.get(agent_id, agent_id)
+    if parent is None:
+        return
+    await coordinator.send(
+        parent,
+        {
+            "from": agent_id,
+            "type": "budget_reserve_stop",
+            "priority": "high",
+            "content": (
+                f"[Budget reserve] {name} ({agent_id}) was stopped at the sub-agent budget "
+                "reserve so the remaining budget is preserved for you to finish the scan. It "
+                "did not send a normal completion report; any vulnerabilities it confirmed are "
+                "already filed. Stop waiting on this child and move to wrap up and call "
+                "finish_scan."
             ),
         },
     )
