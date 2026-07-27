@@ -422,7 +422,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
 
     except Exception as e:
-        logger.exception("LLM warm-up failed")
+        logger.debug("LLM warm-up failed", exc_info=True)
         error_text = Text()
         sub_hint = _subscription_error_hint(e)
         if sub_hint is not None:
