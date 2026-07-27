@@ -27,9 +27,24 @@ logger = logging.getLogger(__name__)
 _TURN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 _BUDGET_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 
+# Sub-agents are hard-stopped once cumulative cost reaches this fraction of the
+# budget, reserving the remaining slice for the root agent to wind down and write
+# the final report (which itself costs model calls via finish_scan). The root
+# agent's own hard stop stays at the full budget (see ``on_llm_end``).
+_SUBAGENT_BUDGET_RESERVE = 0.90
+
 
 class BudgetExceededError(RuntimeError):
     """Raised when the accumulated LLM cost reaches the configured budget."""
+
+
+class SubagentBudgetReservedError(RuntimeError):
+    """Raised to stop a single sub-agent once the reserve threshold is crossed.
+
+    Distinct from :class:`BudgetExceededError`: this stops only the sub-agent that
+    raised it (the scan-wide fan-out is *not* triggered), leaving the reserved
+    budget for the root agent to finish the scan.
+    """
 
 
 def _crossed_band(fraction: float, bands: tuple[float, ...]) -> float | None:
@@ -175,10 +190,22 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         if band is None:
             return
         pct = round(100 * cost / self._max_budget_usd)
+        is_root = context.context.get("parent_id") is None
+        if is_root:
+            stop_clause = (
+                "when it is reached the whole scan is stopped immediately, and sub-agents are "
+                f"stopped at {round(_SUBAGENT_BUDGET_RESERVE * 100)}% to reserve the remainder "
+                "for your final report."
+            )
+        else:
+            stop_clause = (
+                f"sub-agents are stopped at {round(_SUBAGENT_BUDGET_RESERVE * 100)}% to reserve "
+                "the remainder for the root agent's final report."
+            )
         content = (
             f"[{_urgency(band)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
-            f"spent ({pct}%). This budget is shared across every agent in the scan; when it is "
-            f"reached the whole scan is stopped immediately. {_wrapup_directive(context, band)}"
+            f"spent ({pct}%). This budget is shared across every agent in the scan; "
+            f"{stop_clause} {_wrapup_directive(context, band)}"
         )
         input_items.append({"role": "user", "content": content})
 
@@ -212,7 +239,18 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
 
         if self._max_budget_usd is not None:
             cost = report_state.get_total_llm_cost()
-            if cost >= self._max_budget_usd:
-                raise BudgetExceededError(
-                    f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"
-                )
+            is_root = ctx.get("parent_id") is None
+            if is_root:
+                if cost >= self._max_budget_usd:
+                    raise BudgetExceededError(
+                        f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"
+                    )
+            else:
+                reserve_limit = self._max_budget_usd * _SUBAGENT_BUDGET_RESERVE
+                if cost >= reserve_limit:
+                    raise SubagentBudgetReservedError(
+                        f"Sub-agent budget reserve reached: spent ${cost:.4f} of "
+                        f"${self._max_budget_usd:.2f} "
+                        f"(>= {round(_SUBAGENT_BUDGET_RESERVE * 100)}% reserve); stopping this "
+                        "sub-agent so the root agent can finish the scan."
+                    )

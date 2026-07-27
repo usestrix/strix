@@ -7,7 +7,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from strix.core.hooks import BudgetExceededError, ReportUsageHooks
+from strix.core.hooks import (
+    BudgetExceededError,
+    ReportUsageHooks,
+    SubagentBudgetReservedError,
+)
 
 
 def _make_hooks(max_budget: float | None) -> ReportUsageHooks:
@@ -21,9 +25,9 @@ def _make_report_state(cost: float) -> MagicMock:
     return state
 
 
-def _make_context(agent_id: str = "test-agent") -> MagicMock:
+def _make_context(agent_id: str = "test-agent", parent_id: str | None = None) -> MagicMock:
     ctx: MagicMock = MagicMock()
-    ctx.context = {"agent_id": agent_id}
+    ctx.context = {"agent_id": agent_id, "parent_id": parent_id}
     return ctx
 
 
@@ -101,6 +105,65 @@ async def test_error_message_includes_amounts() -> None:
         with pytest.raises(BudgetExceededError, match=r"\$5\.00") as exc_info:
             await hooks.on_llm_end(_make_context(), MagicMock(), MagicMock())
         assert "7.1234" in str(exc_info.value)
+
+
+# --- sub-agent budget reserve -------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_subagent_stops_at_reserve() -> None:
+    hooks = _make_hooks(10.0)
+    state = _make_report_state(9.0)  # 90% -> reserve line
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=state),
+        pytest.raises(SubagentBudgetReservedError),
+    ):
+        await hooks.on_llm_end(_make_context(parent_id="root-1"), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_subagent_below_reserve_does_not_raise() -> None:
+    hooks = _make_hooks(10.0)
+    state = _make_report_state(8.99)  # just under 90%
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_end(_make_context(parent_id="root-1"), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_root_keeps_running_inside_reserve() -> None:
+    hooks = _make_hooks(10.0)
+    state = _make_report_state(9.5)  # 95%: past the sub reserve, under the full budget
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_end(_make_context(parent_id=None), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_root_hard_stop_stays_at_full_budget() -> None:
+    hooks = _make_hooks(10.0)
+    state = _make_report_state(10.0)
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=state),
+        pytest.raises(BudgetExceededError),
+    ):
+        await hooks.on_llm_end(_make_context(parent_id=None), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_budget_warning_mentions_reserve() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
+    state = _make_report_state(7.5)  # 75% -> NOTICE band, below the sub reserve
+    root_items: list[Any] = []
+    sub_items: list[Any] = []
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_start(
+            _make_warn_context(requests=0, parent_id=None), MagicMock(), None, root_items
+        )
+        await hooks.on_llm_start(
+            _make_warn_context(requests=0, parent_id="root-1"), MagicMock(), None, sub_items
+        )
+    assert "stopped at 90%" in root_items[0]["content"]
+    assert "stopped at 90%" in sub_items[0]["content"]
+    assert "root agent's final report" in sub_items[0]["content"]
 
 
 @pytest.mark.asyncio

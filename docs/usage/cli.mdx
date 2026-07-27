@@ -71,6 +71,9 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   are surfaced to **every** agent so they can finish their work and call their
   lifecycle tool before the hard stop.
 
+  Sub-agents are stopped early, at 90% of the budget, reserving the final slice
+  for the root agent to wind down and produce the final report.
+
   Must be greater than `0`. Omit the flag for no limit.
 
   **Limitations**

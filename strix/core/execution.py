@@ -21,7 +21,7 @@ from openai import (
     RateLimitError,
 )
 
-from strix.core.hooks import BudgetExceededError
+from strix.core.hooks import BudgetExceededError, SubagentBudgetReservedError
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
     enforce_image_budget,
@@ -456,8 +456,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                                 logger.exception("stream event sink failed for %s", agent_id)
                     if stream.run_loop_exception is not None:
                         raise stream.run_loop_exception
-                except BudgetExceededError:
-                    # A RuntimeError subclass: re-raise explicitly so it is never
+                except (BudgetExceededError, SubagentBudgetReservedError):
+                    # RuntimeError subclasses: re-raise explicitly so they are never
                     # mistaken for the LiteLLM "after shutdown" race below.
                     raise
                 except RuntimeError as stream_exc:
@@ -477,6 +477,12 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
+        except SubagentBudgetReservedError as exc:
+            # Only this sub-agent stops; the scan-wide fan-out is intentionally not
+            # triggered so the root keeps the reserved budget to finish the scan.
+            logger.info("sub-agent %s stopped at the budget reserve: %s", agent_id, exc)
+            await coordinator.set_status(agent_id, "stopped")
+            raise
         except BudgetExceededError as exc:
             logger.info(
                 "agent %s reached the scan budget limit; stopping the scan: %s", agent_id, exc
@@ -690,6 +696,8 @@ async def _start_child_runner(
             )
         except BudgetExceededError:
             logger.info("child %s stopped after reaching the scan budget limit", child_id)
+        except SubagentBudgetReservedError:
+            logger.info("child %s stopped at the sub-agent budget reserve", child_id)
 
     task_handle = asyncio.create_task(_child_loop(), name=f"agent-{name}-{child_id}")
     await coordinator.attach_runtime(child_id, task=task_handle)
