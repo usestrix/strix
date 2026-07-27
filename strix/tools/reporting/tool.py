@@ -872,7 +872,7 @@ async def _do_create(
 
         from strix.report.dedupe import check_duplicate
 
-        existing = report_state.get_existing_vulnerabilities()
+        existing = report_state.get_dedupe_vulnerabilities()
         candidate = {
             "title": title,
             "description": description,
@@ -2023,7 +2023,7 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
 
         from strix.report.dedupe import check_duplicate
 
-        existing = report_state.get_existing_vulnerabilities()
+        existing = report_state.get_dedupe_vulnerabilities()
         candidate = {
             "title": title,
             "description": description,
