@@ -24,13 +24,15 @@ def _write_executable(path: Path, content: str) -> None:
 
 
 def _create_release_archive(tmp_path: Path) -> Path:
-    binary_name = f"strix-{RELEASE_VERSION}-{RELEASE_TARGET}"
-    binary_path = tmp_path / binary_name
-    _write_executable(binary_path, f"#!/bin/sh\nprintf 'strix {RELEASE_VERSION}\\n'\n")
+    bundle_name = f"strix-{RELEASE_VERSION}-{RELEASE_TARGET}"
+    bundle_dir = tmp_path / bundle_name
+    (bundle_dir / "_internal").mkdir(parents=True)
+    (bundle_dir / "_internal" / "base_library.zip").write_bytes(b"")
+    _write_executable(bundle_dir / "strix", f"#!/bin/sh\nprintf 'strix {RELEASE_VERSION}\\n'\n")
 
-    archive_path = tmp_path / f"{binary_name}.tar.gz"
+    archive_path = tmp_path / f"{bundle_name}.tar.gz"
     with tarfile.open(archive_path, "w:gz") as archive:
-        archive.add(binary_path, arcname=binary_name)
+        archive.add(bundle_dir, arcname=bundle_name)
     return archive_path
 
 
