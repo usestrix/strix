@@ -235,12 +235,14 @@ def make_model_settings(
     prompt_cache: bool = True,
     extra_headers: dict[str, str] | None = None,
     has_tools: bool = True,
+    max_tokens: int | None = None,
 ) -> ModelSettings:
     headers = _request_headers(model_name, extra_headers)
     model_settings = ModelSettings(
         parallel_tool_calls=False if has_tools else None,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
+        max_tokens=max_tokens,
         extra_args=request_timeout_extra_args(request_timeout),
         extra_headers=headers,
     )
