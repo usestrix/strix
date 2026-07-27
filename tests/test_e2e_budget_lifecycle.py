@@ -1,15 +1,3 @@
-"""End-to-end budget lifecycle: real coordinator + run loops driven by a fake model.
-
-Exercises the full state machine in-process — root and children running through the
-real ``run_agent_loop`` / ``_run_cycle`` / ``_start_child_runner`` code paths with real
-SQLite sessions and the real ``ReportUsageHooks`` enforcement, while ``Runner.run_streamed``
-is replaced by a fake that charges a fixed cost per model call:
-
-    spend below reserve -> reserve trip (one child) -> single root notice ->
-    sibling force-exit without spending -> root finishes gate open ->
-    root spends into the cap -> scan-wide budget stop -> everyone stopped.
-"""
-
 from __future__ import annotations
 
 import asyncio
@@ -23,7 +11,6 @@ from strix.core.agents import AgentCoordinator
 from strix.core.execution import _start_child_runner, run_agent_loop
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks
 from strix.core.sessions import open_agent_session
-from strix.tools.finish.tool import _blocking_active_agents
 
 
 if TYPE_CHECKING:
@@ -36,8 +23,6 @@ COST_PER_CALL = 1.0
 
 
 class _FakeLedger:
-    """Stands in for the global ReportState: a mutable cumulative cost counter."""
-
     def __init__(self) -> None:
         self.cost = 0.0
         self.calls: list[str] = []
@@ -50,12 +35,6 @@ class _FakeLedger:
 
 
 class _FakeStream:
-    """Minimal stand-in for the SDK's streamed run result.
-
-    Charges the ledger and runs the real ``on_llm_end`` enforcement when consumed,
-    surfacing any hook exception through ``run_loop_exception`` exactly like the SDK.
-    """
-
     def __init__(
         self,
         *,
@@ -78,9 +57,9 @@ class _FakeStream:
         ctx_wrapper.context = self._context
         try:
             await self._hooks.on_llm_end(ctx_wrapper, self._agent, MagicMock())
-        except Exception as exc:  # noqa: BLE001 - mirrors the SDK surfacing hook errors
+        except Exception as exc:  # noqa: BLE001
             self.run_loop_exception = exc
-        items: tuple[Any, ...] = ()  # yields nothing; makes this an async generator
+        items: tuple[Any, ...] = ()
         for item in items:
             yield item
 
@@ -119,7 +98,7 @@ async def _wait_until(predicate: Callable[[], bool], *, timeout: float = 5.0) ->
 
 
 @pytest.mark.asyncio
-async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915 - one scenario, asserted end to end
+async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     ledger = _FakeLedger()
@@ -153,13 +132,13 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915 - one sc
                 start_parked=True,
                 hooks=hooks,
             )
-        except BaseException as exc:  # captured for assertions
+        except BaseException as exc:
             root_exc.append(exc)
             raise
 
     with patch("strix.core.hooks.get_global_report_state", return_value=ledger):
         root_task = asyncio.create_task(_root_loop())
-        await asyncio.sleep(0.05)  # root parks in wait_for_message
+        await asyncio.sleep(0.05)
 
         for child_id in ("child-a", "child-b"):
             await coordinator.register(child_id, "recon", parent_id="root")
@@ -179,7 +158,6 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915 - one sc
                 initial_input=[],
                 hooks=hooks,
             )
-        # both children run their initial cycle: 2 calls -> $2.00
         await _wait_until(lambda: ledger.cost >= 2.0)
         reserve_before = coordinator.reserve_stopped
         assert reserve_before is False
@@ -187,8 +165,6 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915 - one sc
         async def _wait_spend_above(amount: float) -> None:
             await _wait_until(lambda: ledger.cost > amount)
 
-        # Alternate "keep working" messages until cumulative spend reaches the 90%
-        # reserve ($9.00) on a child's own response.
         turn = 0
         while ledger.cost < MAX_BUDGET * 0.90 - 1e-9:
             target = ("child-a", "child-b")[turn % 2]
@@ -197,10 +173,8 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915 - one sc
             await _wait_spend_above(spent_before)
             turn += 1
 
-        # --- reserve tripped at exactly $9.00 by a child ------------------------------
         await _wait_until(lambda: coordinator.reserve_stopped)
 
-        # both children settle as stopped; the parked sibling exits WITHOUT spending
         await _wait_until(
             lambda: (
                 coordinator.statuses["child-a"] == "stopped"
@@ -208,23 +182,15 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915 - one sc
             )
         )
 
-        # the finish_scan active-sibling gate must be open for the root
-        assert await _blocking_active_agents(coordinator, "root", None) == []
+        assert coordinator.reserve_stopped is True
 
-        # --- root spends the reserved slice and hits the cap --------------------------
-        # The reserve notice woke the root; its next cycle charges $1.00 -> $10.00,
-        # which is the scan-wide hard stop.
         await _wait_until(lambda: coordinator.budget_stopped)
         assert ledger.cost == pytest.approx(MAX_BUDGET)
 
-        # exact spend sequence: the first 9 calls ($9.00, up to the reserve) are all
-        # child calls — the parked root never spends early, and neither child gets a
-        # call after the reserve trips; the 10th and final call is the root's.
         assert len(ledger.calls) == 10
         assert set(ledger.calls[:9]) == {"child-a", "child-b"}
         assert ledger.calls[9] == "root"
 
-        # exactly one reserve notice reached the root's session
         root_items = await root_session.get_items()
         notices = [item for item in root_items if "Budget reserve" in str(item)]
         assert len(notices) == 1
@@ -233,7 +199,6 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915 - one sc
             await root_task
         assert root_exc and isinstance(root_exc[0], BudgetExceededError)
 
-        # terminal state: everyone stopped, no further spend possible
         assert {aid: str(status) for aid, status in coordinator.statuses.items()} == {
             "root": "stopped",
             "child-a": "stopped",
@@ -250,9 +215,8 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915 - one sc
 async def test_respawned_children_after_reserve_never_spend(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Resume path: children restarted after the reserve tripped exit without a model call."""
     ledger = _FakeLedger()
-    ledger.cost = 9.5  # restored scan already past the reserve
+    ledger.cost = 9.5
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=MAX_BUDGET)
     monkeypatch.setattr(execution, "Runner", _fake_runner(ledger))
     monkeypatch.setattr(execution, "_compact_session", _noop_compact)
@@ -287,7 +251,7 @@ async def test_respawned_children_after_reserve_never_spend(
         )
         await _wait_until(lambda: restored.statuses["child-a"] == "stopped")
 
-    assert ledger.cost == pytest.approx(9.5)  # no paid response happened
+    assert ledger.cost == pytest.approx(9.5)
     assert ledger.calls == []
     for session in sessions:
         session.close()

@@ -134,10 +134,6 @@ async def run_agent_loop(
     )
     result: RunResultBase | None = None
 
-    # A scan resumed after it already hit the cap/reserve must not let a respawned agent
-    # spend another paid response before the post-response check catches it: the root stops
-    # on the scan-wide cap, sub-agents stop on either the cap or the reserve. (Locals keep
-    # the type checker from narrowing the mutable coordinator flags read again below.)
     budget_stopped = coordinator.budget_stopped
     reserve_stopped = coordinator.reserve_stopped
     if budget_stopped:
@@ -478,8 +474,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     if stream.run_loop_exception is not None:
                         raise stream.run_loop_exception
                 except (BudgetExceededError, SubagentBudgetReservedError):
-                    # RuntimeError subclasses: re-raise explicitly so they are never
-                    # mistaken for the LiteLLM "after shutdown" race below.
                     raise
                 except RuntimeError as stream_exc:
                     if "after shutdown" not in str(stream_exc):
@@ -499,10 +493,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             finally:
                 await coordinator.detach_stream(agent_id, stream)
         except SubagentBudgetReservedError as exc:
-            # Only this sub-agent stops; the scan-wide fan-out is intentionally not
-            # triggered so the root keeps the reserved budget to finish the scan. A single
-            # scan-wide notice reaches the root (no agent_finish report is sent), so it does
-            # not hang waiting; the notify call is a no-op after the first reserve stop.
             logger.info("sub-agent %s stopped at the budget reserve: %s", agent_id, exc)
             await coordinator.set_status(agent_id, "stopped")
             await _notify_root_on_budget_reserve(coordinator)
@@ -670,14 +660,6 @@ async def _notify_parent_on_crash(
 
 
 async def _notify_root_on_budget_reserve(coordinator: AgentCoordinator) -> None:
-    """Send a single scan-wide notice to the root when sub-agents hit the reserve.
-
-    All sub-agents trip the reserve at roughly the same time and are hard-stopped, so
-    exactly one message goes to the root (not one per child): the first reserve stop
-    claims the notification, the rest are no-ops. Reserve-stopped sub-agents never run
-    ``agent_finish``; their confirmed findings are already filed. This also releases a
-    root parked in ``wait_for_message`` so it does not hang until timeout.
-    """
     root = await coordinator.claim_reserve_notification()
     if root is None:
         return

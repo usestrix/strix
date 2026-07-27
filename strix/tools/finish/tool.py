@@ -9,7 +9,7 @@ from typing import Any
 
 from agents import RunContextWrapper, function_tool
 
-from strix.core.agents import AgentCoordinator, coordinator_from_context
+from strix.core.agents import coordinator_from_context
 
 
 logger = logging.getLogger(__name__)
@@ -77,30 +77,6 @@ def _do_finish(
             "message": "Scan completed successfully",
             "vulnerabilities_found": vuln_count,
         }
-
-
-async def _blocking_active_agents(
-    coordinator: AgentCoordinator | None,
-    me: Any,
-    parent_id: Any,
-) -> list[dict[str, Any]]:
-    """Active siblings that must stop before the root finishes — empty once the reserve trips.
-
-    Only the root gates on siblings. Once the budget reserve is tripped every sub-agent is
-    force-stopped as soon as its in-flight turn completes and can do no further work, so the
-    root must not be blocked from finishing — each rejected attempt would burn the budget
-    reserved for producing the final report.
-    """
-    if coordinator is None or parent_id is not None or not isinstance(me, str) or not me:
-        return []
-    active_agents = await coordinator.active_agents_except(me)
-    if active_agents and coordinator.reserve_stopped:
-        logger.info(
-            "finish_scan proceeding despite %d active agent(s): budget reserve tripped",
-            len(active_agents),
-        )
-        return []
-    return active_agents
 
 
 @function_tool(timeout=60)
@@ -275,7 +251,12 @@ async def finish_scan(
     coordinator = coordinator_from_context(inner)
     me = inner.get("agent_id")
     parent_id = inner.get("parent_id")
-    active_agents = await _blocking_active_agents(coordinator, me, parent_id)
+    if coordinator is not None and parent_id is None and me is not None:
+        active_agents = await coordinator.active_agents_except(me)
+        if active_agents and coordinator.reserve_stopped:
+            active_agents = []
+    else:
+        active_agents = []
 
     if active_agents:
         return json.dumps(

@@ -107,13 +107,10 @@ async def test_error_message_includes_amounts() -> None:
         assert "7.1234" in str(exc_info.value)
 
 
-# --- sub-agent budget reserve -------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_subagent_stops_at_reserve() -> None:
     hooks = _make_hooks(10.0)
-    state = _make_report_state(9.0)  # 90% -> reserve line
+    state = _make_report_state(9.0)
     with (
         patch("strix.core.hooks.get_global_report_state", return_value=state),
         pytest.raises(SubagentBudgetReservedError),
@@ -124,18 +121,15 @@ async def test_subagent_stops_at_reserve() -> None:
 @pytest.mark.asyncio
 async def test_subagent_below_reserve_does_not_raise() -> None:
     hooks = _make_hooks(10.0)
-    state = _make_report_state(8.99)  # just under 90%
+    state = _make_report_state(8.99)
     with patch("strix.core.hooks.get_global_report_state", return_value=state):
         await hooks.on_llm_end(_make_context(parent_id="root-1"), MagicMock(), MagicMock())
 
 
 @pytest.mark.asyncio
 async def test_subagent_overshoot_to_full_budget_triggers_scan_wide_stop() -> None:
-    # A sub-agent whose own response overshoots straight past the *full* budget must raise
-    # the scan-wide BudgetExceededError (which fans out via trigger_budget_stop), not the
-    # child-only reserve exception — otherwise the root/others could keep spending past 100%.
     hooks = _make_hooks(10.0)
-    state = _make_report_state(10.5)  # past the full budget, not just the reserve
+    state = _make_report_state(10.5)
     with (
         patch("strix.core.hooks.get_global_report_state", return_value=state),
         pytest.raises(BudgetExceededError),
@@ -146,7 +140,7 @@ async def test_subagent_overshoot_to_full_budget_triggers_scan_wide_stop() -> No
 @pytest.mark.asyncio
 async def test_root_keeps_running_inside_reserve() -> None:
     hooks = _make_hooks(10.0)
-    state = _make_report_state(9.5)  # 95%: past the sub reserve, under the full budget
+    state = _make_report_state(9.5)
     with patch("strix.core.hooks.get_global_report_state", return_value=state):
         await hooks.on_llm_end(_make_context(parent_id=None), MagicMock(), MagicMock())
 
@@ -165,7 +159,7 @@ async def test_root_hard_stop_stays_at_full_budget() -> None:
 @pytest.mark.asyncio
 async def test_budget_warning_mentions_reserve() -> None:
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
-    state = _make_report_state(7.5)  # 75% -> NOTICE band, below the sub reserve
+    state = _make_report_state(7.5)
     root_items: list[Any] = []
     sub_items: list[Any] = []
     with patch("strix.core.hooks.get_global_report_state", return_value=state):
@@ -182,11 +176,8 @@ async def test_budget_warning_mentions_reserve() -> None:
 
 @pytest.mark.asyncio
 async def test_subagent_critical_budget_warning_reachable_before_reserve() -> None:
-    # Sub-agents stop at the 90% reserve, so their warning bands sit just below it (up to
-    # 85%). The CRITICAL band must fire before the reserve stop, while at the same spend
-    # the root — measured against the full budget — is only URGENT.
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
-    state = _make_report_state(8.6)  # 86% of the budget: sub CRITICAL (>=85%), root URGENT
+    state = _make_report_state(8.6)
     sub_items: list[Any] = []
     root_items: list[Any] = []
     with patch("strix.core.hooks.get_global_report_state", return_value=state):
@@ -200,30 +191,23 @@ async def test_subagent_critical_budget_warning_reachable_before_reserve() -> No
     assert "[URGENT]" in root_items[0]["content"]
 
 
-# Dense decision table over (role, spend fraction) -> enforcement outcome, hammering the
-# boundaries of the state machine: reserve edge (90%), cap edge (100%), and both sides of each.
 @pytest.mark.parametrize(
     ("parent_id", "cost", "expected"),
     [
-        # sub-agent: free below the reserve
         ("root-1", 0.0, None),
         ("root-1", 8.9999, None),
-        # sub-agent: reserve stop in the [90%, 100%) window
         ("root-1", 9.0, SubagentBudgetReservedError),
         ("root-1", 9.0001, SubagentBudgetReservedError),
         ("root-1", 9.5, SubagentBudgetReservedError),
         ("root-1", 9.9999, SubagentBudgetReservedError),
-        # sub-agent: at/over the full cap the scan-wide stop wins over the reserve stop
         ("root-1", 10.0, BudgetExceededError),
         ("root-1", 10.0001, BudgetExceededError),
         ("root-1", 25.0, BudgetExceededError),
-        # root: free through the whole reserve window
         (None, 0.0, None),
         (None, 8.9999, None),
         (None, 9.0, None),
         (None, 9.5, None),
         (None, 9.9999, None),
-        # root: scan-wide stop at/over the cap
         (None, 10.0, BudgetExceededError),
         (None, 10.0001, BudgetExceededError),
         (None, 25.0, BudgetExceededError),
@@ -241,7 +225,7 @@ async def test_budget_enforcement_decision_table(
         else:
             with pytest.raises(expected):
                 await hooks.on_llm_end(_make_context(parent_id=parent_id), MagicMock(), MagicMock())
-    state.record_sdk_usage.assert_called_once()  # usage is always recorded before any raise
+    state.record_sdk_usage.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -268,14 +252,10 @@ def test_non_positive_max_turns_rejected() -> None:
         ReportUsageHooks(model="test-model", max_turns=0)
 
 
-# --- graduated turn warnings -------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_no_turn_warning_below_first_band() -> None:
     hooks = ReportUsageHooks(model="test-model", max_turns=100)
     items: list[Any] = []
-    # 69 turns used (requests=68, +1) -> 69% < 70% band
     await hooks.on_llm_start(_make_warn_context(requests=68), MagicMock(), None, items)
     assert items == []
 
@@ -288,7 +268,7 @@ async def test_turn_warning_notice_band() -> None:
     assert len(items) == 1
     content = items[0]["content"]
     assert "[NOTICE]" in content
-    assert "finish_scan" in content  # parent_id None -> root
+    assert "finish_scan" in content
 
 
 @pytest.mark.asyncio
@@ -301,7 +281,7 @@ async def test_turn_warning_escalates_and_names_subagent_tool() -> None:
     assert len(items) == 1
     content = items[0]["content"]
     assert "[CRITICAL]" in content
-    assert "agent_finish" in content  # has parent -> subagent
+    assert "agent_finish" in content
 
 
 @pytest.mark.asyncio
@@ -321,12 +301,10 @@ async def test_turn_warning_root_directive_distinct_from_subagent() -> None:
     sub = sub_items[0]["content"]
 
     assert root != sub
-    # root: whole-scan wind-down, finish_scan only
     assert "root agent" in root
     assert "finish_scan" in root
     assert "agent_finish" not in root
     assert "whole scan" in root
-    # subagent: finish current task, report confirmed vuln, agent_finish only
     assert "sub-agent" in sub
     assert "agent_finish" in sub
     assert "finish_scan" not in sub
@@ -360,7 +338,6 @@ async def test_budget_warning_root_directive_distinct_from_subagent() -> None:
 async def test_turn_warning_directive_escalates_per_stage(parent_id: str | None) -> None:
     hooks = ReportUsageHooks(model="test-model", max_turns=100)
     contents: dict[str, str] = {}
-    # requests+1 lands squarely inside each band: 70 -> 0.70, 86 -> 0.85, 96 -> 0.95
     for label, requests in (("notice", 69), ("urgent", 85), ("critical", 95)):
         items: list[Any] = []
         await hooks.on_llm_start(
@@ -368,9 +345,7 @@ async def test_turn_warning_directive_escalates_per_stage(parent_id: str | None)
         )
         contents[label] = items[0]["content"]
 
-    # each stage is worded differently
     assert len({contents["notice"], contents["urgent"], contents["critical"]}) == 3
-    # tone hardens: gentle -> prioritize -> stop everything
     assert "[NOTICE]" in contents["notice"] and "begin planning" in contents["notice"]
     assert "[URGENT]" in contents["urgent"] and "prioritize" in contents["urgent"]
     assert "[CRITICAL]" in contents["critical"] and "STOP" in contents["critical"]
@@ -384,13 +359,10 @@ async def test_no_turn_warning_when_max_turns_unset() -> None:
     assert items == []
 
 
-# --- graduated budget warnings ----------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_no_budget_warning_below_first_band() -> None:
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
-    state = _make_report_state(6.9)  # 69% < 70%
+    state = _make_report_state(6.9)
     items: list[Any] = []
     with patch("strix.core.hooks.get_global_report_state", return_value=state):
         await hooks.on_llm_start(_make_warn_context(requests=0), MagicMock(), None, items)
@@ -400,7 +372,7 @@ async def test_no_budget_warning_below_first_band() -> None:
 @pytest.mark.asyncio
 async def test_budget_warning_broadcast_content() -> None:
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
-    state = _make_report_state(9.6)  # 96% -> CRITICAL band
+    state = _make_report_state(9.6)
     items: list[Any] = []
     with patch("strix.core.hooks.get_global_report_state", return_value=state):
         await hooks.on_llm_start(_make_warn_context(requests=0), MagicMock(), None, items)

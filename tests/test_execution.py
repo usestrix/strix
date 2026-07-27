@@ -4,19 +4,34 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 from typing import Any
 
 import pytest
+from agents.tool_context import ToolContext
 
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import _notify_root_on_budget_reserve
-from strix.tools.finish.tool import _blocking_active_agents
+from strix.tools.finish.tool import finish_scan
+
+
+async def _call_finish_scan(
+    coordinator: AgentCoordinator, agent_id: str, parent_id: str | None
+) -> dict[str, Any]:
+    ctx = ToolContext(
+        context={"coordinator": coordinator, "agent_id": agent_id, "parent_id": parent_id},
+        tool_name="finish_scan",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+    )
+    fields = ("executive_summary", "methodology", "technical_analysis", "recommendations")
+    result: str = await finish_scan.on_invoke_tool(ctx, json.dumps(dict.fromkeys(fields, "x")))
+    parsed: dict[str, Any] = json.loads(result)
+    return parsed
 
 
 @pytest.mark.asyncio
 async def test_reserve_stop_notifies_root_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    # All sub-agents trip the reserve together, but only a single scan-wide notice must
-    # reach the root (not one message per stopped child).
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child-a", "recon", parent_id="root")
@@ -30,7 +45,6 @@ async def test_reserve_stop_notifies_root_once(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(coordinator, "send", _record)
 
-    # Both children stop at the reserve, but only the first notifies.
     await _notify_root_on_budget_reserve(coordinator)
     await _notify_root_on_budget_reserve(coordinator)
 
@@ -43,8 +57,6 @@ async def test_reserve_stop_notifies_root_once(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.asyncio
 async def test_concurrent_reserve_claims_yield_single_root() -> None:
-    # All sub-agents trip the reserve at roughly the same time and race to notify; the
-    # dedup must hand the root id to exactly one of them, no matter the interleaving.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     for i in range(12):
@@ -58,8 +70,6 @@ async def test_concurrent_reserve_claims_yield_single_root() -> None:
 
 @pytest.mark.asyncio
 async def test_claim_reserve_sets_flag_and_wakes_parked_agents() -> None:
-    # The first reserve claim must flip the scan-wide reserve flag and release any parked
-    # sub-agent so it exits instead of sitting idle after the reserve is tripped.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")
@@ -79,36 +89,37 @@ async def test_claim_reserve_sets_flag_and_wakes_parked_agents() -> None:
 
 @pytest.mark.asyncio
 async def test_finish_scan_bypasses_active_agent_guard_after_reserve() -> None:
-    # After the reserve is tripped every sub-agent is force-stopped, so finish_scan must
-    # not be blocked by lingering "running" siblings (each rejection burns reserved budget).
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")
     await coordinator.set_status("child", "running")
 
-    # Before the reserve trips, a running sibling still blocks the root.
-    assert await _blocking_active_agents(coordinator, "root", None) != []
+    blocked = await _call_finish_scan(coordinator, "root", None)
+    assert blocked["scan_completed"] is False
+    assert blocked["active_agents"]
 
-    await coordinator.claim_reserve_notification()  # trips the reserve
+    await coordinator.claim_reserve_notification()
 
-    # After it trips, the same running sibling no longer blocks finishing.
-    assert await _blocking_active_agents(coordinator, "root", None) == []
+    finished = await _call_finish_scan(coordinator, "root", None)
+    assert finished["scan_completed"] is True
+    assert coordinator.statuses["root"] == "completed"
 
 
 @pytest.mark.asyncio
 async def test_finish_scan_gate_ignores_sub_agent_caller() -> None:
-    # Only the root gates on siblings; a sub-agent caller never blocks (it uses agent_finish).
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")
     await coordinator.set_status("child", "running")
 
-    assert await _blocking_active_agents(coordinator, "child", "root") == []
+    result = await _call_finish_scan(coordinator, "child", "root")
+    assert "active_agents" not in result
+    assert result["success"] is False
+    assert "root" in result["error"]
 
 
 @pytest.mark.asyncio
 async def test_reserve_stop_notify_noop_without_root(monkeypatch: pytest.MonkeyPatch) -> None:
-    # With no root registered there is nobody to notify.
     coordinator = AgentCoordinator()
     await coordinator.register("child", "recon", parent_id="missing")
 
@@ -126,8 +137,6 @@ async def test_reserve_stop_notify_noop_without_root(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.asyncio
 async def test_snapshot_round_trip_preserves_stop_flags() -> None:
-    # An interrupted scan that already tripped the cap/reserve must remember that on resume,
-    # or respawned children get another paid response and the finish_scan blocker returns.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.trigger_budget_stop()
@@ -145,7 +154,6 @@ async def test_snapshot_round_trip_preserves_stop_flags() -> None:
 
 @pytest.mark.asyncio
 async def test_legacy_snapshot_without_stop_flags_defaults_to_false() -> None:
-    # Snapshots written before the stop flags existed must restore safely.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     snap = await coordinator.snapshot()
@@ -160,9 +168,6 @@ async def test_legacy_snapshot_without_stop_flags_defaults_to_false() -> None:
 
 @pytest.mark.asyncio
 async def test_randomized_reserve_claim_race_many_interleavings() -> None:
-    # Fuzz the claim dedup across many randomized task interleavings: regardless of who
-    # runs first or how the event loop schedules the claimants, exactly one claimant may
-    # win the root id and every sub-agent must be released from wait_for_message.
     for seed in range(25):
         coordinator = AgentCoordinator()
         await coordinator.register("root", "strix", parent_id=None)
@@ -171,13 +176,12 @@ async def test_randomized_reserve_claim_race_many_interleavings() -> None:
             await coordinator.register(child_id, "recon", parent_id="root")
 
         waiters = [asyncio.create_task(coordinator.wait_for_message(cid)) for cid in child_ids]
-        await asyncio.sleep(0)  # let every waiter park
+        await asyncio.sleep(0)
 
         async def _claim(delay: float, coord: AgentCoordinator = coordinator) -> str | None:
             await asyncio.sleep(delay)
             return await coord.claim_reserve_notification()
 
-        # deterministic pseudo-shuffled delays, different for every seed
         delays = [((seed * 31 + i * 17) % 50) / 10_000 for i in range(len(child_ids))]
         results = await asyncio.gather(*(_claim(delay) for delay in delays))
 
@@ -188,9 +192,6 @@ async def test_randomized_reserve_claim_race_many_interleavings() -> None:
 
 @pytest.mark.asyncio
 async def test_reserve_claim_never_loses_root_wake() -> None:
-    # The claim wakes everyone (including a parked root) before the notice is sent; the
-    # root must re-park and still be woken by the send itself — the wake carrying the
-    # pending message must never be lost regardless of interleaving.
     for _ in range(10):
         coordinator = AgentCoordinator()
         await coordinator.register("root", "strix", parent_id=None)
@@ -201,9 +202,8 @@ async def test_reserve_claim_never_loses_root_wake() -> None:
         assert not root_waiter.done()
 
         await coordinator.claim_reserve_notification()
-        await asyncio.sleep(0)  # root wakes, sees no pending, re-parks
+        await asyncio.sleep(0)
 
-        # simulate the notice delivery bookkeeping (session-less direct increment)
         async with coordinator._lock:
             coordinator.pending_counts["root"] = 1
             coordinator.runtimes["root"].wake.set()
@@ -213,15 +213,12 @@ async def test_reserve_claim_never_loses_root_wake() -> None:
 
 @pytest.mark.asyncio
 async def test_budget_stop_takes_precedence_over_reserve_for_all_roles() -> None:
-    # With both flags set, wait_for_message releases every role and the run-loop guards
-    # classify the stop as the scan-wide budget stop (checked first), not the reserve.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")
     await coordinator.claim_reserve_notification()
     await coordinator.trigger_budget_stop()
 
-    # both roles are released immediately
     await asyncio.wait_for(coordinator.wait_for_message("root"), timeout=1.0)
     await asyncio.wait_for(coordinator.wait_for_message("child"), timeout=1.0)
     assert coordinator.budget_stopped is True
@@ -230,8 +227,6 @@ async def test_budget_stop_takes_precedence_over_reserve_for_all_roles() -> None
 
 @pytest.mark.asyncio
 async def test_root_not_released_by_reserve_alone() -> None:
-    # The reserve releases only sub-agents; the root keeps waiting until its notice (a
-    # pending message) arrives, so it is not spun in a busy loop.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")
@@ -240,7 +235,7 @@ async def test_root_not_released_by_reserve_alone() -> None:
 
     root_waiter = asyncio.create_task(coordinator.wait_for_message("root"))
     await asyncio.sleep(0.02)
-    assert not root_waiter.done()  # still parked: reserve alone must not release the root
+    assert not root_waiter.done()
 
     root_waiter.cancel()
     with contextlib.suppress(asyncio.CancelledError):
@@ -249,8 +244,6 @@ async def test_root_not_released_by_reserve_alone() -> None:
 
 @pytest.mark.asyncio
 async def test_snapshot_during_concurrent_claims_is_consistent() -> None:
-    # Snapshotting while claimants race must always capture a coherent boolean state and
-    # restore to the same flags — never a partially-applied claim.
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     for i in range(6):
@@ -267,7 +260,6 @@ async def test_snapshot_during_concurrent_claims_is_consistent() -> None:
     restored = AgentCoordinator()
     await restored.restore(final_snap)
     assert restored.reserve_stopped is True
-    # a restored coordinator never re-issues the root notification
     assert await restored.claim_reserve_notification() is None
 
 

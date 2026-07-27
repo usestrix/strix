@@ -20,28 +20,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Each warning has three escalating stages: NOTICE -> URGENT -> CRITICAL. A band
-# set is the fraction of the limit at which each stage fires (ascending); the
-# highest crossed stage wins on any given turn. Warnings escalate in urgency as the
-# agent nears its hard stop, which still terminates the run (MaxTurnsExceeded for
-# turns, BudgetExceededError for the root's cost cap).
 _STAGE_LABELS: tuple[str, ...] = ("NOTICE", "URGENT", "CRITICAL")
-
-# Turns are per-agent (hard stop at 100% of max_turns), so both roles use the same
-# bands measured against the full turn budget.
 _TURN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
-
-# Cost is one shared pool. The root's hard stop is the full budget, so its bands
-# span up to 95%. Sub-agents are hard-stopped early at the reserve (below), so their
-# bands are clustered just before it — measured against the full budget, not the
-# reserve, so the numbers are the actual spend percentages the agent sees.
 _ROOT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 _SUBAGENT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.75, 0.80, 0.85)
-
-# Sub-agents are hard-stopped once cumulative cost reaches this fraction of the
-# budget, reserving the remaining slice for the root agent to wind down and write
-# the final report (which itself costs model calls via finish_scan). The root
-# agent's own hard stop stays at the full budget (see ``on_llm_end``).
 _SUBAGENT_BUDGET_RESERVE = 0.90
 
 
@@ -50,16 +32,10 @@ class BudgetExceededError(RuntimeError):
 
 
 class SubagentBudgetReservedError(RuntimeError):
-    """Raised to stop a single sub-agent once the reserve threshold is crossed.
-
-    Distinct from :class:`BudgetExceededError`: this stops only the sub-agent that
-    raised it (the scan-wide fan-out is *not* triggered), leaving the reserved
-    budget for the root agent to finish the scan.
-    """
+    """Raised to stop a single sub-agent once the reserve threshold is crossed."""
 
 
 def _crossed_stage(fraction: float, bands: tuple[float, ...]) -> int | None:
-    """Return the index of the highest band ``fraction`` reached, or ``None`` below all."""
     crossed: int | None = None
     for index, band in enumerate(bands):
         if fraction >= band:
@@ -67,10 +43,6 @@ def _crossed_stage(fraction: float, bands: tuple[float, ...]) -> int | None:
     return crossed
 
 
-# Wind-down guidance that escalates per stage (index 0 = NOTICE, 1 = URGENT, 2 = CRITICAL).
-# The root agent owns the whole scan (finish_scan → compile/deliver the final report); a
-# sub-agent owns only its assigned task (report a confirmed vuln, then agent_finish back to
-# its parent). Tone hardens from a gentle heads-up to a hard "stop everything and finish now".
 _ROOT_DIRECTIVES: tuple[str, ...] = (
     (
         "As the root agent, begin planning your wind-down of the whole scan: avoid "
@@ -108,7 +80,6 @@ _SUBAGENT_DIRECTIVES: tuple[str, ...] = (
 
 
 def _wrapup_directive(context: RunContextWrapper[dict[str, Any]], stage: int) -> str:
-    """Role- and stage-specific wind-down guidance for the crossed ``stage``."""
     is_root = context.context.get("parent_id") is None
     directives = _ROOT_DIRECTIVES if is_root else _SUBAGENT_DIRECTIVES
     return directives[stage]
@@ -145,12 +116,6 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         system_prompt: str | None,  # noqa: ARG002
         input_items: list[TResponseInputItem],
     ) -> None:
-        """Inject graduated wrap-up warnings before the model call when budgets run low.
-
-        Warnings are appended to the per-turn model input only (not persisted to the
-        session), so they nudge the model without cluttering the transcript, and are
-        re-evaluated every turn so the reminder tracks the live remaining budget.
-        """
         try:
             self._maybe_warn_turns(context, input_items)
             self._maybe_warn_budget(context, input_items)
@@ -168,7 +133,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         requests = getattr(usage, "requests", None)
         if not isinstance(requests, int):
             return
-        turns_used = requests + 1  # the turn about to run
+        turns_used = requests + 1
         stage = _crossed_stage(turns_used / self._max_turns, _TURN_WARN_BANDS)
         if stage is None:
             return
@@ -193,10 +158,6 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             return
         cost = report_state.get_total_llm_cost()
         is_root = context.context.get("parent_id") is None
-        # Both roles measure spend against the full budget, so the percentages shown are the
-        # real spend. Only the band set differs: the root's stop is the full budget (bands up
-        # to 95%), while sub-agents are stopped early at the reserve, so their bands sit just
-        # below it — keeping every stage reachable before each role's hard stop.
         bands = _ROOT_BUDGET_WARN_BANDS if is_root else _SUBAGENT_BUDGET_WARN_BANDS
         stage = _crossed_stage(cost / self._max_budget_usd, bands)
         if stage is None:
@@ -250,10 +211,6 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
 
         if self._max_budget_usd is not None:
             cost = report_state.get_total_llm_cost()
-            # The full budget is a scan-wide hard cap for *every* role: if a sub-agent's own
-            # response overshoots straight past it (not just the reserve), it must trigger the
-            # scan-wide stop like the root would, otherwise the coordinator's budget flag stays
-            # unset and the root/other agents could keep spending past the configured cap.
             if cost >= self._max_budget_usd:
                 raise BudgetExceededError(
                     f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"

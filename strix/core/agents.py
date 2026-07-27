@@ -71,14 +71,6 @@ class AgentCoordinator:
         return self._reserve_stopped
 
     async def claim_reserve_notification(self) -> str | None:
-        """Mark the budget reserve as tripped; return the root id on the first call only.
-
-        Sub-agents all trip the budget reserve at roughly the same time. The first call
-        flips ``reserve_stopped`` (so idle/parked sub-agents exit instead of spending),
-        wakes every parked agent, and returns the root agent id so a single scan-wide
-        notice reaches the root instead of one message per stopped child; later calls
-        are no-ops.
-        """
         async with self._lock:
             if self._reserve_stopped:
                 return None
@@ -188,9 +180,6 @@ class AgentCoordinator:
     async def wait_for_message(self, agent_id: str) -> None:
         while True:
             async with self._lock:
-                # Release parked sub-agents once the reserve trips so they exit instead of
-                # idling; the root keeps waiting until it actually receives its notice (a
-                # pending message), so it is not spun in a busy loop.
                 reserve_exit = self._reserve_stopped and self.parent_of.get(agent_id) is not None
                 if self._budget_stopped or reserve_exit or self.pending_counts.get(agent_id, 0) > 0:
                     return
@@ -338,10 +327,6 @@ class AgentCoordinator:
             self.metadata = {aid: dict(md) for aid, md in snap.get("metadata", {}).items()}
             self.pending_counts = dict(snap.get("pending_counts", {}))
             self.errors = dict(snap.get("errors", {}))
-            # Persist the scan-wide stop flags so an interrupted-then-resumed scan does not
-            # forget it had already hit the budget cap / sub-agent reserve — otherwise the
-            # reserve blocker on finish_scan is reinstated and respawned children get to
-            # spend another paid response before the post-response check re-trips it.
             self._budget_stopped = bool(snap.get("budget_stopped", False))
             self._reserve_stopped = bool(snap.get("reserve_stopped", False))
             for aid in self.statuses:
