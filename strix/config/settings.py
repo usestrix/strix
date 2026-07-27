@@ -40,6 +40,10 @@ class LlmSettings(BaseSettings):
         default=False,
         alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
     )
+    skip_tool_call_probe: bool = Field(
+        default=False,
+        alias="STRIX_SKIP_TOOL_CALL_PROBE",
+    )
     prompt_cache: bool = Field(
         default=True,
         alias="STRIX_PROMPT_CACHE",

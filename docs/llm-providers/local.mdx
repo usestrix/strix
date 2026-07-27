@@ -54,3 +54,37 @@ If you use LM Studio, vLLM, or other runners:
 export STRIX_LLM="openai/local-model"
 export LLM_API_BASE="http://localhost:1234/v1"  # Adjust port as needed
 ```
+
+## Tool calling must return structured `tool_calls`
+
+Strix is entirely tool-driven: every working turn must be a **native** function/tool call. If your inference server returns the tool call as plain assistant text instead of a structured `tool_calls` field, Strix cannot execute any action and the scan stalls waiting for input ("Send message to resume").
+
+This is almost always an **inference-server configuration** problem, not a model or Strix problem. Common symptoms are the model printing a call as text such as:
+
+```text
+<tool_call>{"name": "exec_command", "arguments": {"cmd": "nmap ..."}}</tool_call>
+exec_command(cmd="nmap ...", timeout=180)
+{"action": "exec_command", "params": {"cmd": "nmap ..."}}
+```
+
+<Note>
+Strix runs a one-time **preflight tool-calling probe** before each scan on local/self-hosted routes (`ollama/...` or any `LLM_API_BASE`). If the endpoint can't return a structured tool call, the scan aborts immediately with a clear error instead of stalling later. Set `STRIX_SKIP_TOOL_CALL_PROBE=1` to bypass it.
+</Note>
+
+### Fixes by server
+
+**llama.cpp (`llama-server`)**
+- Run with `--jinja` and a correct tool-use chat template (`--chat-template` / `--chat-template-file` matching the model). Recent builds enable `--jinja` by default — **upgrade** if yours doesn't.
+- For thinking models, align or disable reasoning (`--reasoning-format`, `-rea off`) so it doesn't break tool-call parsing.
+- A low temperature (e.g. `--temp 0.2`) improves tool-call reliability.
+
+**Ollama**
+- Use a recent Ollama and a model whose template wires tools. Modern Ollama refuses tools (`tools param requires --jinja flag`) if the template lacks tool support.
+- For reasoning models (e.g. qwen3), disable the model's **thinking** mode — thinking left on frequently pushes the tool call into the text `content` instead of the structured `tool_calls` field. Turn it off on the Ollama side (a non-thinking model variant, or `think: false` in the model's parameters / `Modelfile`).
+
+**vLLM**
+- Start with `--enable-auto-tool-choice`, a matching `--tool-call-parser` (`hermes`, `qwen3_xml`, or `llama3_json`), and a matching `--reasoning-parser` for reasoning models.
+
+<Warning>
+Even correctly configured, small models (< ~30B) emit malformed or text-form tool calls far more often than frontier models. Prefer a capable model for reliable agentic behavior.
+</Warning>

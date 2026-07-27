@@ -40,6 +40,7 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.core.warmup import probe_tool_calling
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
@@ -162,6 +163,16 @@ async def run_strix_scan(
         )
     logger.info("LLM model resolved: %s", resolved_model)
     chat_completions_tools = uses_chat_completions_tool_schema(resolved_model, settings)
+
+    # Fail fast on endpoints that can't return structured tool calls (issue #520)
+    # before spinning up the sandbox, so a misconfigured local server surfaces a
+    # clear error instead of silently parking the scan mid-run.
+    if not is_resume:
+        await probe_tool_calling(
+            resolved_model,
+            settings,
+            request_timeout=settings.llm.timeout,
+        )
 
     if coordinator is None:
         coordinator = AgentCoordinator()
