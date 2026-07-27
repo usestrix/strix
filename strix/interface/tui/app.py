@@ -869,7 +869,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             yield SplashScreen(id="splash_screen")
 
     def watch_show_splash(self, show_splash: bool) -> None:
-        if not show_splash and self.is_mounted:
+        if not show_splash and self.is_running:
             try:
                 splash = self.query_one("#splash_screen")
                 splash.remove()
@@ -941,7 +941,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if len(self.screen_stack) > 1 or self.show_splash:
             return
 
-        if not self.is_mounted:
+        if not self.is_running:
             return
 
         try:
@@ -956,7 +956,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if len(self.screen_stack) > 1 or self.show_splash:
             return
 
-        if not self.is_mounted:
+        if not self.is_running:
             return
 
         try:
@@ -988,7 +988,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if len(self.screen_stack) > 1:
             return
 
-        if not self.is_mounted:
+        if not self.is_running:
             return
 
         try:
@@ -1127,7 +1127,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         return self._get_rendered_events_content(events), "chat-content"
 
     def _update_chat_view(self) -> None:
-        if len(self.screen_stack) > 1 or self.show_splash or not self.is_mounted:
+        if len(self.screen_stack) > 1 or self.show_splash or not self.is_running:
             return
 
         try:
@@ -1491,7 +1491,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if len(self.screen_stack) > 1 or self.show_splash:
             return
 
-        if not self.is_mounted:
+        if not self.is_running:
             return
 
         self._displayed_events.clear()
@@ -1564,7 +1564,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if len(self.screen_stack) > 1 or self.show_splash:
             return
 
-        if not self.is_mounted:
+        if not self.is_running:
             return
 
         agent_id = agent_data["id"]
@@ -1703,7 +1703,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if len(self.screen_stack) > 1 or self.show_splash:
             return
 
-        if not self.is_mounted:
+        if not self.is_running:
             return
 
         node = event.node
@@ -1723,7 +1723,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         if len(self.screen_stack) > 1 or self.show_splash:
             return
 
-        if not self.is_mounted:
+        if not self.is_running:
             return
 
         node = event.node
@@ -1775,7 +1775,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         return "Unknown Agent"
 
     def action_toggle_help(self) -> None:
-        if self.show_splash or not self.is_mounted:
+        if self.show_splash or not self.is_running:
             return
 
         try:
@@ -1793,7 +1793,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.push_screen(HelpScreen())
 
     async def action_request_quit(self) -> None:
-        if self.show_splash or not self.is_mounted:
+        if self.show_splash or not self.is_running:
             await self.action_custom_quit()
             return
 
@@ -1809,7 +1809,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.push_screen(QuitScreen())
 
     def action_stop_selected_agent(self) -> None:
-        if self.show_splash or not self.is_mounted:
+        if self.show_splash or not self.is_running:
             return
 
         if len(self.screen_stack) > 1:
@@ -1968,7 +1968,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return True
 
     def on_resize(self, event: events.Resize) -> None:
-        if self.show_splash or not self.is_mounted:
+        if self.show_splash or not self.is_running:
             return
 
         try:
