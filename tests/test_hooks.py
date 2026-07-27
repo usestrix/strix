@@ -200,6 +200,50 @@ async def test_subagent_critical_budget_warning_reachable_before_reserve() -> No
     assert "[URGENT]" in root_items[0]["content"]
 
 
+# Dense decision table over (role, spend fraction) -> enforcement outcome, hammering the
+# boundaries of the state machine: reserve edge (90%), cap edge (100%), and both sides of each.
+@pytest.mark.parametrize(
+    ("parent_id", "cost", "expected"),
+    [
+        # sub-agent: free below the reserve
+        ("root-1", 0.0, None),
+        ("root-1", 8.9999, None),
+        # sub-agent: reserve stop in the [90%, 100%) window
+        ("root-1", 9.0, SubagentBudgetReservedError),
+        ("root-1", 9.0001, SubagentBudgetReservedError),
+        ("root-1", 9.5, SubagentBudgetReservedError),
+        ("root-1", 9.9999, SubagentBudgetReservedError),
+        # sub-agent: at/over the full cap the scan-wide stop wins over the reserve stop
+        ("root-1", 10.0, BudgetExceededError),
+        ("root-1", 10.0001, BudgetExceededError),
+        ("root-1", 25.0, BudgetExceededError),
+        # root: free through the whole reserve window
+        (None, 0.0, None),
+        (None, 8.9999, None),
+        (None, 9.0, None),
+        (None, 9.5, None),
+        (None, 9.9999, None),
+        # root: scan-wide stop at/over the cap
+        (None, 10.0, BudgetExceededError),
+        (None, 10.0001, BudgetExceededError),
+        (None, 25.0, BudgetExceededError),
+    ],
+)
+@pytest.mark.asyncio
+async def test_budget_enforcement_decision_table(
+    parent_id: str | None, cost: float, expected: type[Exception] | None
+) -> None:
+    hooks = _make_hooks(10.0)
+    state = _make_report_state(cost)
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        if expected is None:
+            await hooks.on_llm_end(_make_context(parent_id=parent_id), MagicMock(), MagicMock())
+        else:
+            with pytest.raises(expected):
+                await hooks.on_llm_end(_make_context(parent_id=parent_id), MagicMock(), MagicMock())
+    state.record_sdk_usage.assert_called_once()  # usage is always recorded before any raise
+
+
 @pytest.mark.asyncio
 async def test_no_raise_when_report_state_none() -> None:
     hooks = _make_hooks(1.0)

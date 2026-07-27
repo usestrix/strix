@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from typing import Any
 
 import pytest
@@ -140,6 +141,134 @@ async def test_snapshot_round_trip_preserves_stop_flags() -> None:
     await restored.restore(snap)
     assert restored.budget_stopped is True
     assert restored.reserve_stopped is True
+
+
+@pytest.mark.asyncio
+async def test_legacy_snapshot_without_stop_flags_defaults_to_false() -> None:
+    # Snapshots written before the stop flags existed must restore safely.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    snap = await coordinator.snapshot()
+    del snap["budget_stopped"]
+    del snap["reserve_stopped"]
+
+    restored = AgentCoordinator()
+    await restored.restore(snap)
+    assert restored.budget_stopped is False
+    assert restored.reserve_stopped is False
+
+
+@pytest.mark.asyncio
+async def test_randomized_reserve_claim_race_many_interleavings() -> None:
+    # Fuzz the claim dedup across many randomized task interleavings: regardless of who
+    # runs first or how the event loop schedules the claimants, exactly one claimant may
+    # win the root id and every sub-agent must be released from wait_for_message.
+    for seed in range(25):
+        coordinator = AgentCoordinator()
+        await coordinator.register("root", "strix", parent_id=None)
+        child_ids = [f"child-{i}" for i in range(8)]
+        for child_id in child_ids:
+            await coordinator.register(child_id, "recon", parent_id="root")
+
+        waiters = [asyncio.create_task(coordinator.wait_for_message(cid)) for cid in child_ids]
+        await asyncio.sleep(0)  # let every waiter park
+
+        async def _claim(delay: float, coord: AgentCoordinator = coordinator) -> str | None:
+            await asyncio.sleep(delay)
+            return await coord.claim_reserve_notification()
+
+        # deterministic pseudo-shuffled delays, different for every seed
+        delays = [((seed * 31 + i * 17) % 50) / 10_000 for i in range(len(child_ids))]
+        results = await asyncio.gather(*(_claim(delay) for delay in delays))
+
+        assert results.count("root") == 1, f"seed {seed}: expected exactly one winner"
+        await asyncio.wait_for(asyncio.gather(*waiters), timeout=1.0)
+        assert coordinator.reserve_stopped is True
+
+
+@pytest.mark.asyncio
+async def test_reserve_claim_never_loses_root_wake() -> None:
+    # The claim wakes everyone (including a parked root) before the notice is sent; the
+    # root must re-park and still be woken by the send itself — the wake carrying the
+    # pending message must never be lost regardless of interleaving.
+    for _ in range(10):
+        coordinator = AgentCoordinator()
+        await coordinator.register("root", "strix", parent_id=None)
+        await coordinator.register("child", "recon", parent_id="root")
+
+        root_waiter = asyncio.create_task(coordinator.wait_for_message("root"))
+        await asyncio.sleep(0)
+        assert not root_waiter.done()
+
+        await coordinator.claim_reserve_notification()
+        await asyncio.sleep(0)  # root wakes, sees no pending, re-parks
+
+        # simulate the notice delivery bookkeeping (session-less direct increment)
+        async with coordinator._lock:
+            coordinator.pending_counts["root"] = 1
+            coordinator.runtimes["root"].wake.set()
+
+        await asyncio.wait_for(root_waiter, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_budget_stop_takes_precedence_over_reserve_for_all_roles() -> None:
+    # With both flags set, wait_for_message releases every role and the run-loop guards
+    # classify the stop as the scan-wide budget stop (checked first), not the reserve.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    await coordinator.claim_reserve_notification()
+    await coordinator.trigger_budget_stop()
+
+    # both roles are released immediately
+    await asyncio.wait_for(coordinator.wait_for_message("root"), timeout=1.0)
+    await asyncio.wait_for(coordinator.wait_for_message("child"), timeout=1.0)
+    assert coordinator.budget_stopped is True
+    assert coordinator.reserve_stopped is True
+
+
+@pytest.mark.asyncio
+async def test_root_not_released_by_reserve_alone() -> None:
+    # The reserve releases only sub-agents; the root keeps waiting until its notice (a
+    # pending message) arrives, so it is not spun in a busy loop.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+
+    await coordinator.claim_reserve_notification()
+
+    root_waiter = asyncio.create_task(coordinator.wait_for_message("root"))
+    await asyncio.sleep(0.02)
+    assert not root_waiter.done()  # still parked: reserve alone must not release the root
+
+    root_waiter.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await root_waiter
+
+
+@pytest.mark.asyncio
+async def test_snapshot_during_concurrent_claims_is_consistent() -> None:
+    # Snapshotting while claimants race must always capture a coherent boolean state and
+    # restore to the same flags — never a partially-applied claim.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    for i in range(6):
+        await coordinator.register(f"child-{i}", "recon", parent_id="root")
+
+    claims = [asyncio.create_task(coordinator.claim_reserve_notification()) for _ in range(6)]
+    snap = await coordinator.snapshot()
+    await asyncio.gather(*claims)
+
+    assert isinstance(snap["reserve_stopped"], bool)
+    final_snap = await coordinator.snapshot()
+    assert final_snap["reserve_stopped"] is True
+
+    restored = AgentCoordinator()
+    await restored.restore(final_snap)
+    assert restored.reserve_stopped is True
+    # a restored coordinator never re-issues the root notification
+    assert await restored.claim_reserve_notification() is None
 
 
 @pytest.mark.asyncio
