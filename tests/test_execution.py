@@ -169,6 +169,55 @@ async def test_spawn_child_agent_respects_child_limit(
 
 
 @pytest.mark.asyncio
+async def test_concurrent_spawn_child_agent_reserves_limit_atomically(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    async def _noop_start(**_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr("strix.core.execution._start_child_runner", _noop_start)
+
+    def _factory(**_kwargs: Any) -> object:
+        return object()
+
+    async def _spawn(name: str) -> dict[str, Any]:
+        return await spawn_child_agent(
+            coordinator=coordinator,
+            factory=_factory,
+            agents_db_path=tmp_path / "agents.db",
+            sessions_to_close=[],
+            run_config=cast("Any", object()),
+            max_turns=1,
+            interactive=False,
+            parent_ctx={"agent_id": "root"},
+            name=name,
+            task="do more recon",
+            skills=[],
+            parent_history=[],
+            max_child_agents=1,
+        )
+
+    async with coordinator._lock:
+        tasks = [
+            asyncio.create_task(_spawn("extra-a")),
+            asyncio.create_task(_spawn("extra-b")),
+        ]
+        await asyncio.sleep(0)
+
+    results = await asyncio.gather(*tasks)
+
+    assert [result["success"] for result in results].count(True) == 1
+    assert _child_count(coordinator) == 1
+
+
+def _child_count(coordinator: AgentCoordinator) -> int:
+    return sum(parent_id is not None for parent_id in coordinator.parent_of.values())
+
+
+@pytest.mark.asyncio
 async def test_concurrent_reserve_claims_yield_single_root() -> None:
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)

@@ -168,6 +168,34 @@ class AgentCoordinator:
         logger.info("agent.register %s (%s) parent=%s", agent_id, name, parent_id or "-")
         await self._maybe_snapshot()
 
+    async def register_child_if_capacity(
+        self,
+        agent_id: str,
+        name: str,
+        parent_id: str,
+        *,
+        max_child_agents: int,
+        task: str | None = None,
+        skills: list[str] | None = None,
+    ) -> tuple[bool, int]:
+        async with self._lock:
+            child_count = sum(parent is not None for parent in self.parent_of.values())
+            if max_child_agents > 0 and child_count >= max_child_agents:
+                return False, child_count
+            self.statuses[agent_id] = "running"
+            self.parent_of[agent_id] = parent_id
+            self.names[agent_id] = name
+            self.pending_counts.setdefault(agent_id, 0)
+            self.metadata[agent_id] = {
+                "task": task or "",
+                "skills": list(skills or []),
+            }
+            self.runtimes.setdefault(agent_id, AgentRuntime())
+            child_count += 1
+        logger.info("agent.register %s (%s) parent=%s", agent_id, name, parent_id)
+        await self._maybe_snapshot()
+        return True, child_count
+
     async def attach_runtime(
         self,
         agent_id: str,

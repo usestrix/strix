@@ -310,8 +310,16 @@ async def spawn_child_agent(
     if not isinstance(parent_id, str):
         raise TypeError("Parent agent_id missing from context")
 
-    child_count = _child_agent_count(coordinator)
-    if max_child_agents > _UNLIMITED_CHILD_AGENTS and child_count >= max_child_agents:
+    child_id = uuid.uuid4().hex[:8]
+    registered, child_count = await coordinator.register_child_if_capacity(
+        child_id,
+        name,
+        parent_id,
+        max_child_agents=max_child_agents,
+        task=task,
+        skills=skills,
+    )
+    if not registered:
         logger.info(
             "refusing to spawn child agent %r: limit %d already reached",
             name,
@@ -328,15 +336,7 @@ async def spawn_child_agent(
             "current_child_agents": child_count,
         }
 
-    child_id = uuid.uuid4().hex[:8]
     child_agent = factory(name=name, skills=skills)
-    await coordinator.register(
-        child_id,
-        name,
-        parent_id,
-        task=task,
-        skills=skills,
-    )
 
     await _start_child_runner(
         parent_ctx=parent_ctx,
@@ -369,10 +369,6 @@ async def spawn_child_agent(
         "parent_id": parent_id,
         "message": f"Spawned '{name}' ({child_id}) running in parallel.",
     }
-
-
-def _child_agent_count(coordinator: AgentCoordinator) -> int:
-    return sum(parent_id is not None for parent_id in coordinator.parent_of.values())
 
 
 async def respawn_subagents(
