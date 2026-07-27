@@ -51,6 +51,8 @@ class AgentCoordinator:
         self._budget_stopped = False
         self._reserve_stopped = False
         self._budget_paused = False
+        self._guardrail_stopped = False
+        self._guardrail_error: str | None = None
         self._extend_budget: Callable[[], None] | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
@@ -73,6 +75,25 @@ class AgentCoordinator:
     @property
     def reserve_stopped(self) -> bool:
         return self._reserve_stopped
+
+    @property
+    def guardrail_stopped(self) -> bool:
+        return self._guardrail_stopped
+
+    @property
+    def guardrail_error(self) -> str | None:
+        return self._guardrail_error
+
+    async def trigger_guardrail_stop(self, error: str) -> None:
+        """Signal a scan-wide stop after the model's content guardrail blocked a
+        request, and wake every parked agent so it can exit. Idempotent."""
+        async with self._lock:
+            if self._guardrail_stopped:
+                return
+            self._guardrail_stopped = True
+            self._guardrail_error = error
+            for runtime in self.runtimes.values():
+                runtime.wake.set()
 
     @property
     def budget_paused(self) -> bool:
@@ -200,8 +221,18 @@ class AgentCoordinator:
         logger.info("agent.status %s=%s", agent_id, status)
         await self._maybe_snapshot()
 
-    async def send(self, target_agent_id: str, message: dict[str, Any]) -> bool:
-        """Deliver a user/peer message by appending it to the target SDK session."""
+    async def send(
+        self, target_agent_id: str, message: dict[str, Any], *, interrupt: bool = True
+    ) -> bool:
+        """Deliver a user/peer message by appending it to the target SDK session.
+
+        ``interrupt`` controls whether a mid-turn target has its in-flight stream
+        cancelled so it picks up the message immediately. Terminal-child notices set
+        ``interrupt=False`` so a dying agent never reaches across into a sibling/parent's
+        live stream — that cross-agent immediate cancel can wedge the shared event loop.
+        The target is still woken (pending + wake) either way; it just processes the
+        message at its next turn boundary.
+        """
         if message.get("from") == "user" and self._budget_paused:
             await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:
@@ -211,7 +242,7 @@ class AgentCoordinator:
             runtime = self.runtimes.setdefault(target_agent_id, AgentRuntime())
             session = runtime.session
             stream = runtime.stream
-            interrupt = runtime.interrupt_on_message
+            interrupt_on_message = runtime.interrupt_on_message
         if session is None:
             logger.warning(
                 "agent.send dropped target=%s because its SDK session is not attached",
@@ -230,7 +261,7 @@ class AgentCoordinator:
         async with self._lock:
             self.pending_counts[target_agent_id] = self.pending_counts.get(target_agent_id, 0) + 1
             self.runtimes.setdefault(target_agent_id, AgentRuntime()).wake.set()
-        if stream is not None and interrupt:
+        if stream is not None and interrupt and interrupt_on_message:
             stream.cancel(mode="immediate")
         await self._maybe_snapshot()
         return True
@@ -239,7 +270,12 @@ class AgentCoordinator:
         while True:
             async with self._lock:
                 reserve_exit = self._reserve_stopped and self.parent_of.get(agent_id) is not None
-                if self._budget_stopped or reserve_exit or self.pending_counts.get(agent_id, 0) > 0:
+                if (
+                    self._budget_stopped
+                    or self._guardrail_stopped
+                    or reserve_exit
+                    or self.pending_counts.get(agent_id, 0) > 0
+                ):
                     return
                 wake = self.runtimes.setdefault(agent_id, AgentRuntime()).wake
                 wake.clear()

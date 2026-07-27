@@ -39,6 +39,12 @@ class BudgetPausedError(RuntimeError):
     """Raised to park one agent when an interactive scan reaches its budget."""
 
 
+class GuardrailStopError(RuntimeError):
+    """Raised to unwind a non-interactive scan after the model's content guardrail
+    blocked a request. The block recurs for every agent on the same model, so the
+    scan fast-aborts with an actionable message instead of limping on."""
+
+
 def recomputed_budget_flags(
     cost: float,
     max_budget_usd: float | None,

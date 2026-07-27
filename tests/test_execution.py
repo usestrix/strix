@@ -11,8 +11,14 @@ import pytest
 from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
 
+from strix.config import codex
 from strix.core.agents import AgentCoordinator
-from strix.core.execution import _notify_parent_on_terminal, _notify_root_on_budget_reserve
+from strix.core.execution import (
+    _handle_content_guardrail,
+    _notify_parent_on_terminal,
+    _notify_root_on_budget_reserve,
+)
+from strix.core.hooks import GuardrailStopError
 from strix.tools.finish.tool import finish_scan
 
 
@@ -465,3 +471,90 @@ async def test_notify_parent_on_terminal_ignores_non_terminal_status(tmp_path: A
 
     assert coordinator.pending_counts.get("root", 0) == 0
     session.close()
+
+
+class _RecordingStream:
+    def __init__(self) -> None:
+        self.cancelled = False
+        self.cancel_mode: str | None = None
+
+    def cancel(self, mode: str = "immediate") -> None:
+        self.cancelled = True
+        self.cancel_mode = mode
+
+
+@pytest.mark.asyncio
+async def test_terminal_notice_does_not_cancel_parent_stream(tmp_path: Any) -> None:
+    # A dying child must NOT reach across and immediate-cancel its parent's in-flight
+    # stream (that cross-agent cancel is what wedged the shared loop). The parent is
+    # still woken; it just picks up the notice at its next turn boundary.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    stream = _RecordingStream()
+    await coordinator.attach_runtime("root", session=session, interrupt_on_message=True)
+    await coordinator.attach_stream("root", stream)
+
+    await _notify_parent_on_terminal(coordinator, "child", "crashed")
+
+    assert stream.cancelled is False
+    assert coordinator.pending_counts.get("root", 0) > 0
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_guardrail_interactive_parks_agent_wakeable(tmp_path: Any) -> None:
+    # A content-guardrail block is recoverable, not a crash: park the agent in a
+    # wakeable "waiting" state with an actionable error, and never trigger a scan stop.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    exc = codex.CodexContentGuardrailError("chatgpt/gpt-5.6-sol")
+
+    result = await _handle_content_guardrail(coordinator, "child", exc, interactive=True)
+
+    assert result is None
+    assert coordinator.statuses["child"] == "waiting"
+    assert "STRIX_LLM" in coordinator.errors["child"]
+    assert coordinator.guardrail_stopped is False
+
+    waiter = asyncio.create_task(coordinator.wait_for_message("child"))
+    await asyncio.sleep(0)
+    assert not waiter.done()
+    session = SQLiteSession("child", tmp_path / "agents.db")
+    await coordinator.attach_runtime("child", session=session)
+    await coordinator.send("child", {"from": "user", "content": "switched model, resume"})
+    await asyncio.wait_for(waiter, timeout=1.0)
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_guardrail_noninteractive_fast_aborts_scan() -> None:
+    # In non-interactive mode the block recurs for every agent on the same model, so
+    # signal a scan-wide guardrail stop and unwind with GuardrailStopError.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    exc = codex.CodexContentGuardrailError("chatgpt/gpt-5.6-sol")
+
+    root_waiter = asyncio.create_task(coordinator.wait_for_message("root"))
+    await asyncio.sleep(0)
+    assert not root_waiter.done()
+
+    with pytest.raises(GuardrailStopError):
+        await _handle_content_guardrail(coordinator, "child", exc, interactive=False)
+
+    assert coordinator.guardrail_stopped is True
+    assert coordinator.statuses["child"] == "failed"
+    await asyncio.wait_for(root_waiter, timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_wait_for_message_returns_immediately_after_guardrail_stop() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("agent", "recon", parent_id="parent")
+    await coordinator.trigger_guardrail_stop("blocked")
+
+    await asyncio.wait_for(coordinator.wait_for_message("agent"), timeout=1.0)
+    assert coordinator.guardrail_error == "blocked"

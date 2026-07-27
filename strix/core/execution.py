@@ -21,9 +21,11 @@ from openai import (
     RateLimitError,
 )
 
+from strix.config import codex
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
+    GuardrailStopError,
     SubagentBudgetReservedError,
 )
 from strix.core.inputs import child_initial_input
@@ -87,6 +89,12 @@ async def _compact_session(
         force=force,
     )
 
+
+_GUARDRAIL_PARK_ERROR = (
+    "Blocked by the model's content guardrail (flagged as a possible cybersecurity risk). "
+    "This agent is parked, not dead — set STRIX_LLM to a model that isn't blocked and send it "
+    "a message (or resume the scan) to continue."
+)
 
 _TRANSIENT_MODEL_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
 _MAX_TRANSIENT_MODEL_RETRIES = 4
@@ -383,6 +391,10 @@ async def _run_noninteractive_until_lifecycle(
             await coordinator.set_status(agent_id, "stopped")
             raise BudgetExceededError("scan budget reached")
 
+        if coordinator.guardrail_stopped:
+            await coordinator.set_status(agent_id, "stopped")
+            raise GuardrailStopError(coordinator.guardrail_error or _GUARDRAIL_PARK_ERROR)
+
         if coordinator.reserve_stopped and context.get("parent_id") is not None:
             await coordinator.set_status(agent_id, "stopped")
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
@@ -572,6 +584,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 if session is not None:
                     input_data = []
                 continue
+            if codex.is_content_guardrail_error(exc):
+                return await _handle_content_guardrail(
+                    coordinator, agent_id, exc, interactive=interactive
+                )
             if not interactive:
                 raise
             if isinstance(exc, MaxTurnsExceeded):
@@ -587,6 +603,31 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
         else:
             await _settle_run_result(coordinator, agent_id, interactive)
             return stream
+
+
+async def _handle_content_guardrail(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    exc: BaseException,
+    *,
+    interactive: bool,
+) -> RunResultBase | None:
+    """A content-guardrail block is terminal for the model but must NOT kill the agent.
+
+    Interactive: park the agent in a wakeable ``waiting`` state with an actionable label,
+    so a user prompt (after switching STRIX_LLM) or a resume can revive it — never
+    ``crashed``, and never a cross-agent stream cancel that could wedge the loop.
+
+    Non-interactive: the block recurs for every agent on the same model, so signal a
+    scan-wide guardrail stop and unwind with an actionable message instead of limping on.
+    """
+    logger.warning("agent %s blocked by the model's content guardrail: %s", agent_id, exc)
+    if interactive:
+        await coordinator.set_status(agent_id, "waiting", error=_GUARDRAIL_PARK_ERROR)
+        return None
+    await coordinator.set_status(agent_id, "failed", error=_GUARDRAIL_PARK_ERROR)
+    await coordinator.trigger_guardrail_stop(_GUARDRAIL_PARK_ERROR)
+    raise GuardrailStopError(str(exc) or _GUARDRAIL_PARK_ERROR) from exc
 
 
 async def _settle_run_result(
@@ -685,6 +726,7 @@ async def _notify_parent_on_terminal(
             "priority": "high",
             "content": template.format(name=name, agent_id=agent_id),
         },
+        interrupt=False,
     )
 
 
