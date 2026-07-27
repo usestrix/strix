@@ -4,9 +4,10 @@ from strix.skills import get_available_skills, load_skills, validate_requested_s
 WEBSOCKET_SKILL_CATEGORY = "protocols"
 WEBSOCKET_SKILL_NAME = "websocket"
 WEBSOCKET_SKILL_PATH = f"{WEBSOCKET_SKILL_CATEGORY}/{WEBSOCKET_SKILL_NAME}"
+VALID_BASELINE_SEC_WEBSOCKET_KEY = "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=="
 WEBSOCKET_COVERAGE_MARKERS = (
     "Upgrade: websocket",
-    "Sec-WebSocket-Key",
+    VALID_BASELINE_SEC_WEBSOCKET_KEY,
     "Sec-WebSocket-Protocol",
     "CSWSH",
     "Origin",

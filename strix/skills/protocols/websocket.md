@@ -55,7 +55,7 @@ GET /ws HTTP/1.1
 Host: target.example
 Upgrade: websocket
 Connection: Upgrade
-Sec-WebSocket-Key: base64nonce==
+Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==
 Sec-WebSocket-Version: 13
 Sec-WebSocket-Protocol: chat, graphql-transport-ws
 Origin: https://target.example
