@@ -164,6 +164,57 @@ async def test_turn_warning_escalates_and_names_subagent_tool() -> None:
 
 
 @pytest.mark.asyncio
+async def test_turn_warning_root_directive_distinct_from_subagent() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_turns=100)
+
+    root_items: list[Any] = []
+    await hooks.on_llm_start(
+        _make_warn_context(requests=85, parent_id=None), MagicMock(), None, root_items
+    )
+    root = root_items[0]["content"]
+
+    sub_items: list[Any] = []
+    await hooks.on_llm_start(
+        _make_warn_context(requests=85, parent_id="root-1"), MagicMock(), None, sub_items
+    )
+    sub = sub_items[0]["content"]
+
+    assert root != sub
+    # root: whole-scan wind-down, finish_scan only
+    assert "root agent" in root
+    assert "finish_scan" in root
+    assert "agent_finish" not in root
+    assert "whole scan" in root
+    # subagent: finish current task, report confirmed vuln, agent_finish only
+    assert "sub-agent" in sub
+    assert "agent_finish" in sub
+    assert "finish_scan" not in sub
+    assert "confirmed" in sub
+
+
+@pytest.mark.asyncio
+async def test_budget_warning_root_directive_distinct_from_subagent() -> None:
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
+    state = _make_report_state(8.6)
+
+    root_items: list[Any] = []
+    sub_items: list[Any] = []
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_start(
+            _make_warn_context(requests=0, parent_id=None), MagicMock(), None, root_items
+        )
+        await hooks.on_llm_start(
+            _make_warn_context(requests=0, parent_id="root-1"), MagicMock(), None, sub_items
+        )
+
+    root = root_items[0]["content"]
+    sub = sub_items[0]["content"]
+    assert "finish_scan" in root and "agent_finish" not in root
+    assert "agent_finish" in sub and "finish_scan" not in sub
+    assert "confirmed" in sub
+
+
+@pytest.mark.asyncio
 async def test_no_turn_warning_when_max_turns_unset() -> None:
     hooks = ReportUsageHooks(model="test-model")
     items: list[Any] = []

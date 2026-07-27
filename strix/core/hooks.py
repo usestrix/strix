@@ -41,8 +41,29 @@ def _crossed_band(fraction: float, bands: tuple[float, ...]) -> float | None:
     return crossed
 
 
-def _finish_tool_for(context: RunContextWrapper[dict[str, Any]]) -> str:
-    return "finish_scan" if context.context.get("parent_id") is None else "agent_finish"
+def _wrapup_directive(context: RunContextWrapper[dict[str, Any]]) -> str:
+    """Role-specific wind-down guidance.
+
+    The root agent owns the whole scan, so it is told to stop opening new work and
+    call ``finish_scan`` to compile and deliver the final report. A sub-agent owns
+    only its assigned task, so it is told to report any confirmed vulnerability it
+    already has, finish work that is nearly done, and hand results back via
+    ``agent_finish``.
+    """
+    is_root = context.context.get("parent_id") is None
+    if is_root:
+        return (
+            "As the root agent, start winding down the whole scan now: stop opening new "
+            "lines of investigation, make sure your required objectives are covered, and "
+            "call finish_scan soon to compile and deliver the final report before you are "
+            "cut off."
+        )
+    return (
+        "As a sub-agent, start wrapping up your current task now: if you already have a "
+        "confirmed, validated vulnerability, report it immediately; finish any work that is "
+        "nearly done rather than starting something new, then call agent_finish to hand your "
+        "results back to your parent before you are cut off."
+    )
 
 
 def _urgency(band: float) -> str:
@@ -109,13 +130,10 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             return
         remaining = max(self._max_turns - turns_used, 0)
         pct = round(100 * turns_used / self._max_turns)
-        finish_tool = _finish_tool_for(context)
         content = (
             f"[{_urgency(band)}] Turn budget: {turns_used}/{self._max_turns} used ({pct}%). "
-            f"About {remaining} turn(s) remain before this agent is force-stopped. "
-            f"Prioritize your highest-value remaining work and call {finish_tool} before the "
-            "limit so your results and report are captured — a forced stop discards "
-            "in-progress work."
+            f"About {remaining} turn(s) remain before this agent is force-stopped and any "
+            f"in-progress work is discarded. {_wrapup_directive(context)}"
         )
         input_items.append({"role": "user", "content": content})
 
@@ -134,12 +152,10 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         if band is None:
             return
         pct = round(100 * cost / self._max_budget_usd)
-        finish_tool = _finish_tool_for(context)
         content = (
             f"[{_urgency(band)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
-            f"spent ({pct}%). This budget is shared across every agent in the scan. Wind down "
-            f"and call {finish_tool} soon — when the budget is reached the whole scan is stopped "
-            "immediately, so finish and hand off your findings while there is budget left."
+            f"spent ({pct}%). This budget is shared across every agent in the scan; when it is "
+            f"reached the whole scan is stopped immediately. {_wrapup_directive(context)}"
         )
         input_items.append({"role": "user", "content": content})
 
