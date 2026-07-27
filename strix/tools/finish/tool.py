@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 from agents import RunContextWrapper, function_tool
 
@@ -13,6 +13,36 @@ from strix.core.agents import coordinator_from_context
 
 
 logger = logging.getLogger(__name__)
+
+
+_COMPLETION_NUDGE_INSTRUCTION = (
+    "The report is a strong draft, but do not finish yet. First, identify concrete leads, "
+    "endpoints, behaviors, trust boundaries, or anomalies you already encountered but did "
+    "not investigate deeply enough, and actively test the most promising ones. Then review "
+    "the remaining scope for plausible areas you have not examined. Use tools and create "
+    "focused subordinate agents when useful, validate findings with evidence, avoid duplicate "
+    "vulnerability reports, and file every newly validated vulnerability with "
+    "create_vulnerability_report. When no worthwhile avenue remains, call finish_scan again "
+    "with a revised comprehensive report covering all prior and new findings."
+)
+
+
+def _finish_validation_errors(
+    executive_summary: str,
+    methodology: str,
+    technical_analysis: str,
+    recommendations: str,
+) -> list[str]:
+    errors: list[str] = []
+    if not executive_summary.strip():
+        errors.append("Executive summary cannot be empty")
+    if not methodology.strip():
+        errors.append("Methodology cannot be empty")
+    if not technical_analysis.strip():
+        errors.append("Technical analysis cannot be empty")
+    if not recommendations.strip():
+        errors.append("Recommendations cannot be empty")
+    return errors
 
 
 def _do_finish(
@@ -32,15 +62,12 @@ def _do_finish(
             ),
         }
 
-    errors: list[str] = []
-    if not executive_summary.strip():
-        errors.append("Executive summary cannot be empty")
-    if not methodology.strip():
-        errors.append("Methodology cannot be empty")
-    if not technical_analysis.strip():
-        errors.append("Technical analysis cannot be empty")
-    if not recommendations.strip():
-        errors.append("Recommendations cannot be empty")
+    errors = _finish_validation_errors(
+        executive_summary,
+        methodology,
+        technical_analysis,
+        recommendations,
+    )
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
 
@@ -247,10 +274,13 @@ async def finish_scan(
         technical_analysis: Consolidated findings + systemic themes.
         recommendations: Prioritized, actionable remediation.
     """
-    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    raw_context: Any = ctx.context
+    inner = cast("dict[str, Any]", raw_context) if isinstance(raw_context, dict) else {}
     coordinator = coordinator_from_context(inner)
-    me = inner.get("agent_id")
-    parent_id = inner.get("parent_id")
+    raw_agent_id = inner.get("agent_id")
+    me = raw_agent_id if isinstance(raw_agent_id, str) else None
+    raw_parent_id = inner.get("parent_id")
+    parent_id = raw_parent_id if isinstance(raw_parent_id, str) else None
     if coordinator is not None and parent_id is None and me is not None:
         active_agents = await coordinator.active_agents_except(me)
     else:
@@ -270,6 +300,40 @@ async def finish_scan(
             ensure_ascii=False,
             default=str,
         )
+
+    validation_errors = _finish_validation_errors(
+        executive_summary,
+        methodology,
+        technical_analysis,
+        recommendations,
+    )
+    if parent_id is None and bool(inner.get("completion_nudge", False)) and not validation_errors:
+        claimed = False
+        if coordinator is not None and isinstance(me, str):
+            claimed = await coordinator.claim_completion_nudge(me)
+        elif not inner.get("completion_nudge_started"):
+            inner["completion_nudge_started"] = True
+            claimed = True
+
+        if claimed:
+            try:
+                from strix.report.state import get_global_report_state
+
+                report_state = get_global_report_state()
+                if report_state is not None:
+                    report_state.notify_completion_nudge()
+            except Exception:
+                logger.exception("finish_scan completion nudge notification failed")
+            return json.dumps(
+                {
+                    "success": True,
+                    "scan_completed": False,
+                    "completion_nudge": True,
+                    "message": _COMPLETION_NUDGE_INSTRUCTION,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
 
     result = await asyncio.to_thread(
         _do_finish,

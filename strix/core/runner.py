@@ -308,6 +308,7 @@ async def run_strix_scan(
             "agent_id": root_id,
             "parent_id": None,
             "interactive": interactive,
+            "completion_nudge": bool(scan_config.get("completion_nudge", False)),
             "spawn_child_agent": spawn_child_agent,
             "max_context_images": settings.runtime.max_context_images,
         }
