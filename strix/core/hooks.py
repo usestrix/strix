@@ -186,27 +186,33 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         if report_state is None:
             return
         cost = report_state.get_total_llm_cost()
-        band = _crossed_band(cost / self._max_budget_usd, _BUDGET_WARN_BANDS)
+        is_root = context.context.get("parent_id") is None
+        # Warn each agent relative to *its own* hard stop so every band stays reachable:
+        # the root spends up to the full budget, a sub-agent only up to the reserve. Bands
+        # measured against the full budget would never fire the 85/95% warnings for a
+        # sub-agent, since it is already stopped at the reserve (90% of the full budget).
+        cap = self._max_budget_usd if is_root else self._max_budget_usd * _SUBAGENT_BUDGET_RESERVE
+        band = _crossed_band(cost / cap, _BUDGET_WARN_BANDS)
         if band is None:
             return
-        pct = round(100 * cost / self._max_budget_usd)
-        is_root = context.context.get("parent_id") is None
+        pct = round(100 * cost / cap)
+        reserve_pct = round(_SUBAGENT_BUDGET_RESERVE * 100)
         if is_root:
-            stop_clause = (
-                "when it is reached the whole scan is stopped immediately, and sub-agents are "
-                f"stopped at {round(_SUBAGENT_BUDGET_RESERVE * 100)}% to reserve the remainder "
-                "for your final report."
+            content = (
+                f"[{_urgency(band)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
+                f"spent ({pct}%). This budget is shared across every agent in the scan; when it "
+                "is reached the whole scan is stopped immediately, and sub-agents are stopped at "
+                f"{reserve_pct}% to reserve the remainder for your final report. "
+                f"{_wrapup_directive(context, band)}"
             )
         else:
-            stop_clause = (
-                f"sub-agents are stopped at {round(_SUBAGENT_BUDGET_RESERVE * 100)}% to reserve "
-                "the remainder for the root agent's final report."
+            content = (
+                f"[{_urgency(band)}] Scan cost budget: ${cost:.2f} spent of your ${cap:.2f} "
+                f"sub-agent limit ({pct}%) — the full scan budget is ${self._max_budget_usd:.2f}, "
+                f"shared across every agent, and sub-agents are stopped at the {reserve_pct}% "
+                "reserve to leave the remainder for the root agent's final report. "
+                f"{_wrapup_directive(context, band)}"
             )
-        content = (
-            f"[{_urgency(band)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
-            f"spent ({pct}%). This budget is shared across every agent in the scan; "
-            f"{stop_clause} {_wrapup_directive(context, band)}"
-        )
         input_items.append({"role": "user", "content": content})
 
     async def on_llm_end(

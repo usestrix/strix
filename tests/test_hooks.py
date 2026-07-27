@@ -162,8 +162,29 @@ async def test_budget_warning_mentions_reserve() -> None:
             _make_warn_context(requests=0, parent_id="root-1"), MagicMock(), None, sub_items
         )
     assert "stopped at 90%" in root_items[0]["content"]
-    assert "stopped at 90%" in sub_items[0]["content"]
+    assert "90% reserve" in sub_items[0]["content"]
+    assert "sub-agent limit" in sub_items[0]["content"]
     assert "root agent's final report" in sub_items[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_subagent_critical_budget_warning_reachable_before_reserve() -> None:
+    # Sub-agents stop at the 90% reserve, so a warning measured against the full budget
+    # would never reach 95%. Warnings are measured against the reserve instead, so the
+    # CRITICAL band fires before the reserve stop while the root is still only URGENT.
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=10.0)
+    state = _make_report_state(8.6)  # 86% of full budget, but ~96% of the 90% reserve
+    sub_items: list[Any] = []
+    root_items: list[Any] = []
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_start(
+            _make_warn_context(requests=0, parent_id="root-1"), MagicMock(), None, sub_items
+        )
+        await hooks.on_llm_start(
+            _make_warn_context(requests=0, parent_id=None), MagicMock(), None, root_items
+        )
+    assert "[CRITICAL]" in sub_items[0]["content"]
+    assert "[URGENT]" in root_items[0]["content"]
 
 
 @pytest.mark.asyncio
