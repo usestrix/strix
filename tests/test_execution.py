@@ -40,6 +40,21 @@ async def test_reserve_stop_notifies_root_once(monkeypatch: pytest.MonkeyPatch) 
 
 
 @pytest.mark.asyncio
+async def test_concurrent_reserve_claims_yield_single_root() -> None:
+    # All sub-agents trip the reserve at roughly the same time and race to notify; the
+    # dedup must hand the root id to exactly one of them, no matter the interleaving.
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    for i in range(12):
+        await coordinator.register(f"child-{i}", "recon", parent_id="root")
+
+    results = await asyncio.gather(*(coordinator.claim_reserve_notification() for _ in range(12)))
+
+    assert results.count("root") == 1
+    assert all(r is None for r in results if r != "root")
+
+
+@pytest.mark.asyncio
 async def test_reserve_stop_notify_noop_without_root(monkeypatch: pytest.MonkeyPatch) -> None:
     # With no root registered there is nobody to notify.
     coordinator = AgentCoordinator()
