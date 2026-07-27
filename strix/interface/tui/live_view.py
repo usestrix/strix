@@ -14,6 +14,12 @@ from strix.core.paths import runtime_state_dir
 from strix.interface.tui.history import load_session_history
 
 
+SCAN_FAILURE_AGENT_ID = "scan"
+SCAN_FAILURE_AGENT_NAME = "Scan"
+SCAN_FAILURE_MESSAGE_PREFIX = "Scan failed"
+SCAN_FAILURE_RECOVERY_HINT = "Fix the cause and start a new scan."
+
+
 class TuiLiveView:
     def __init__(self) -> None:
         self.agents: dict[str, dict[str, Any]] = {}
@@ -94,6 +100,23 @@ class TuiLiveView:
                 "role": "assistant",
                 "content": (f"An error occurred: {error}\nI'm now waiting for new instructions."),
                 "metadata": {"source": "agent_error"},
+            },
+        )
+
+    def record_scan_error(self, error: str) -> None:
+        self.upsert_agent(
+            SCAN_FAILURE_AGENT_ID,
+            name=SCAN_FAILURE_AGENT_NAME,
+            status="failed",
+            error_message=error,
+        )
+        self._append_event(
+            SCAN_FAILURE_AGENT_ID,
+            "chat",
+            {
+                "role": "assistant",
+                "content": f"{SCAN_FAILURE_MESSAGE_PREFIX}: {error}\n{SCAN_FAILURE_RECOVERY_HINT}",
+                "metadata": {"source": "scan_error"},
             },
         )
 

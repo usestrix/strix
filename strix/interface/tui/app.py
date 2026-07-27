@@ -36,7 +36,7 @@ from strix.config.models import is_recommended_or_frontier_model
 from strix.core.hooks import BudgetExceededError
 from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
-from strix.interface.tui.live_view import TuiLiveView
+from strix.interface.tui.live_view import SCAN_FAILURE_AGENT_ID, TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
 from strix.interface.tui.renderers import render_tool_widget
 from strix.interface.tui.renderers.agent_message_renderer import AgentMessageRenderer
@@ -814,6 +814,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._scan_stop_event = threading.Event()
         self._scan_completed = threading.Event()
         self._scan_error: BaseException | None = None
+        self._scan_error_noted = False
         self._error_noted_agents: set[str] = set()
         self._budget_pause_notified = False
 
@@ -1000,6 +1001,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
         except (ValueError, Exception):
             return
 
+        self._record_scan_error_if_needed()
+
         self._sync_agent_graph()
 
         for agent_id, agent_data in list(self.live_view.agents.items()):
@@ -1016,6 +1019,16 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._update_stats_display()
 
         self._update_vulnerabilities_panel()
+
+    def _record_scan_error_if_needed(self) -> None:
+        if self._scan_error is None or self._scan_error_noted:
+            return
+        error_message = str(self._scan_error).strip() or type(self._scan_error).__name__
+        self.live_view.record_scan_error(error_message)
+        self._scan_error_noted = True
+        if not self.selected_agent_id:
+            self.selected_agent_id = SCAN_FAILURE_AGENT_ID
+            self._displayed_events.clear()
 
     def _sync_agent_graph(self) -> None:
         future = self._agent_graph_sync_future
