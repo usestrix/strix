@@ -9,6 +9,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from agents import RunConfig
 from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
 
@@ -576,3 +577,40 @@ async def test_resume_revives_guardrail_parked_child_but_not_plain_waiting(
 
     assert parked["blocked"] is False
     assert parked["peer_waiter"] is True
+
+
+class _StubLlmSettings:
+    def __init__(self, model: str) -> None:
+        self.model = model
+        self.reasoning_effort = None
+        self.force_required_tool_choice = False
+        self.timeout = None
+        self.prompt_cache = False
+
+
+class _StubSettings:
+    def __init__(self, model: str) -> None:
+        self.llm = _StubLlmSettings(model)
+
+
+def test_refresh_run_config_model_adopts_changed_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execution, "reload_settings", lambda: _StubSettings("openai/gpt-5"))
+    monkeypatch.setattr(execution, "configure_sdk_model_defaults", lambda _settings: None)
+    run_config = RunConfig(model="chatgpt/gpt-5.6-sol")
+
+    refreshed = execution.refresh_run_config_model(run_config)
+
+    assert refreshed is not run_config
+    assert refreshed.model == "openai/gpt-5"
+    assert run_config.model == "chatgpt/gpt-5.6-sol"
+
+
+def test_refresh_run_config_model_keeps_unchanged_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(execution, "reload_settings", lambda: _StubSettings("chatgpt/gpt-5.6-sol"))
+    run_config = RunConfig(model="chatgpt/gpt-5.6-sol")
+
+    assert execution.refresh_run_config_model(run_config) is run_config

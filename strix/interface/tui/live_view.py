@@ -82,7 +82,7 @@ class TuiLiveView:
             current["parent_id"] = parent_id
         if status is not None:
             current["status"] = status
-        if error_message:
+        if error_message is not None:
             current["error_message"] = error_message
         current["updated_at"] = now
 

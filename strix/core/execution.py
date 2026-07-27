@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import uuid
 from collections.abc import Callable
@@ -21,13 +22,14 @@ from openai import (
     RateLimitError,
 )
 
-from strix.config import codex
+from strix.config import codex, reload_settings
+from strix.config.models import configure_sdk_model_defaults
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
     SubagentBudgetReservedError,
 )
-from strix.core.inputs import child_initial_input
+from strix.core.inputs import child_initial_input, make_model_settings
 from strix.core.sessions import (
     enforce_image_budget,
     open_agent_session,
@@ -57,6 +59,31 @@ _MAX_COMPACTIONS_PER_CYCLE = 2
 
 def _run_config_model(run_config: RunConfig) -> str | None:
     return run_config.model if isinstance(run_config.model, str) else None
+
+
+def refresh_run_config_model(run_config: RunConfig) -> RunConfig:
+    """Adopt a changed configured model before re-running a woken agent."""
+    current_model = _run_config_model(run_config)
+    if current_model is None:
+        return run_config
+    try:
+        settings = reload_settings()
+    except Exception:
+        logger.exception("settings reload failed; keeping model %s", current_model)
+        return run_config
+    new_model = (settings.llm.model or "").strip()
+    if not new_model or new_model == current_model:
+        return run_config
+    configure_sdk_model_defaults(settings)
+    model_settings = make_model_settings(
+        settings.llm.reasoning_effort,
+        model_name=new_model,
+        force_required_tool_choice=settings.llm.force_required_tool_choice,
+        request_timeout=settings.llm.timeout,
+        prompt_cache=settings.llm.prompt_cache,
+    )
+    logger.info("model switched on wake: %s -> %s", current_model, new_model)
+    return dataclasses.replace(run_config, model=new_model, model_settings=model_settings)
 
 
 def _agent_instructions(agent: Any) -> str:
@@ -91,7 +118,8 @@ async def _compact_session(
 
 _GUARDRAIL_PARK_ERROR = (
     "Blocked by the model's content guardrail (flagged as a possible cybersecurity risk). "
-    "Set STRIX_LLM to a model that isn't blocked and resume the scan to continue."
+    "Switch STRIX_LLM to a model that isn't blocked (update it in ~/.strix/cli-config.json "
+    "and message this agent, or resume the scan with a new STRIX_LLM)."
 )
 
 _TRANSIENT_MODEL_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
@@ -204,6 +232,7 @@ async def run_agent_loop(
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
         await coordinator.consume_pending(agent_id)
+        run_config = refresh_run_config_model(run_config)
         with contextlib.suppress(BudgetPausedError):
             result = await _run_cycle(
                 agent,

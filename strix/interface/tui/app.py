@@ -1040,9 +1040,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
                             name=names.get(agent_id, agent_id),
                             parent_id=parent_of.get(agent_id),
                             status=status,
-                            error_message=error,
+                            error_message=error or "",
                         )
-                        if status in {"failed", "crashed"} and error:
+                        if status in {"failed", "crashed", "waiting"} and error:
                             if agent_id not in self._error_noted_agents:
                                 self._error_noted_agents.add(agent_id)
                                 self.live_view.record_agent_error(agent_id, error)
@@ -1292,6 +1292,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 text.append("Send a message to continue", style="dim")
                 keymap = keymap_styled([("ctrl-q", "quit")])
             else:
+                error_msg = agent_data.get("error_message") or ""
+                if error_msg:
+                    text.append(error_msg, style="red")
+                    text.append(" \u00b7 ", style="dim")
                 text.append("Send message to resume", style="dim")
             return (text, keymap, False)
 
