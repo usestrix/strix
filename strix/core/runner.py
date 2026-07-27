@@ -17,7 +17,7 @@ from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
 from strix.agents.prompt import render_system_prompt
-from strix.config import codex, load_settings
+from strix.config import load_settings
 from strix.config.models import (
     StrixProvider,
     configure_sdk_model_defaults,
@@ -31,12 +31,7 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import (
-    BudgetExceededError,
-    GuardrailStopError,
-    ReportUsageHooks,
-    recomputed_budget_flags,
-)
+from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
     build_root_task,
@@ -423,19 +418,6 @@ async def run_strix_scan(
             await coordinator.cancel_descendants(root_id)
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
-        return None
-    except (GuardrailStopError, codex.CodexContentGuardrailError) as exc:
-        logger.exception(
-            "Scan %s aborted: model %r was blocked by the provider's content guardrail. "
-            "Every agent uses this model, so the block would recur for all of them. Set "
-            "STRIX_LLM to a model that isn't blocked and re-run (or resume).",
-            scan_id,
-            resolved_model,
-        )
-        if root_id is not None:
-            await coordinator.cancel_descendants(root_id)
-            with contextlib.suppress(Exception):
-                await coordinator.set_status(root_id, "failed", error=str(exc))
         return None
     except RateLimitError as exc:
         logger.warning(

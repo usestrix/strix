@@ -25,7 +25,6 @@ from strix.config import codex
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
-    GuardrailStopError,
     SubagentBudgetReservedError,
 )
 from strix.core.inputs import child_initial_input
@@ -92,8 +91,8 @@ async def _compact_session(
 
 _GUARDRAIL_PARK_ERROR = (
     "Blocked by the model's content guardrail (flagged as a possible cybersecurity risk). "
-    "This agent is parked, not dead — set STRIX_LLM to a model that isn't blocked and send it "
-    "a message (or resume the scan) to continue."
+    "Set STRIX_LLM to a model that isn't blocked, then send this agent a message or resume "
+    "the scan to continue."
 )
 
 _TRANSIENT_MODEL_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
@@ -391,10 +390,6 @@ async def _run_noninteractive_until_lifecycle(
             await coordinator.set_status(agent_id, "stopped")
             raise BudgetExceededError("scan budget reached")
 
-        if coordinator.guardrail_stopped:
-            await coordinator.set_status(agent_id, "stopped")
-            raise GuardrailStopError(coordinator.guardrail_error or _GUARDRAIL_PARK_ERROR)
-
         if coordinator.reserve_stopped and context.get("parent_id") is not None:
             await coordinator.set_status(agent_id, "stopped")
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
@@ -618,16 +613,17 @@ async def _handle_content_guardrail(
     so a user prompt (after switching STRIX_LLM) or a resume can revive it — never
     ``crashed``, and never a cross-agent stream cancel that could wedge the loop.
 
-    Non-interactive: the block recurs for every agent on the same model, so signal a
-    scan-wide guardrail stop and unwind with an actionable message instead of limping on.
+    Non-interactive: settle this one agent as ``failed`` with the actionable label and
+    notify its parent. The failure is isolated to the blocked agent; other agents keep
+    running.
     """
     logger.warning("agent %s blocked by the model's content guardrail: %s", agent_id, exc)
     if interactive:
         await coordinator.set_status(agent_id, "waiting", error=_GUARDRAIL_PARK_ERROR)
         return None
     await coordinator.set_status(agent_id, "failed", error=_GUARDRAIL_PARK_ERROR)
-    await coordinator.trigger_guardrail_stop(_GUARDRAIL_PARK_ERROR)
-    raise GuardrailStopError(str(exc) or _GUARDRAIL_PARK_ERROR) from exc
+    await _notify_parent_on_terminal(coordinator, agent_id, "failed")
+    return None
 
 
 async def _settle_run_result(
