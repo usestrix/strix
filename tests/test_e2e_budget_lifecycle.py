@@ -303,3 +303,55 @@ async def test_resumed_parked_root_after_reserve_is_renotified_and_finalizes(
     notices = [item for item in root_items if "Budget reserve" in str(item)]
     assert len(notices) == 1
     root_session.close()
+
+
+@pytest.mark.asyncio
+async def test_interactive_budget_pause_then_user_message_extends_and_resumes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ledger = _FakeLedger()
+    ledger.cost = 9.0
+    hooks = ReportUsageHooks(model="test-model", max_budget_usd=MAX_BUDGET, interactive=True)
+    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger))
+    monkeypatch.setattr(execution, "_compact_session", _noop_compact)
+
+    coordinator = AgentCoordinator()
+    coordinator.set_budget_extender(hooks.extend_budget)
+    await coordinator.register("root", "strix", parent_id=None)
+    root_session = open_agent_session("root", tmp_path / "agents.sqlite")
+
+    with patch("strix.core.hooks.get_global_report_state", return_value=ledger):
+        root_task = asyncio.create_task(
+            run_agent_loop(
+                agent=MagicMock(),
+                initial_input=[],
+                run_config=MagicMock(),
+                context={"agent_id": "root", "parent_id": None},
+                max_turns=500,
+                coordinator=coordinator,
+                agent_id="root",
+                interactive=True,
+                session=root_session,
+                start_parked=True,
+                hooks=hooks,
+            )
+        )
+        await asyncio.sleep(0.05)
+
+        assert await coordinator.send("root", {"from": "user", "content": "go"})
+        await _wait_until(lambda: coordinator.budget_paused)
+        assert coordinator.statuses["root"] == "budget_paused"
+        assert ledger.cost == pytest.approx(MAX_BUDGET)
+        assert not root_task.done()
+        assert coordinator.budget_stopped is False
+
+        assert await coordinator.send("root", {"from": "user", "content": "keep going"})
+        await _wait_until(lambda: not coordinator.budget_paused)
+        await _wait_until(lambda: ledger.cost > MAX_BUDGET)
+        await _wait_until(lambda: coordinator.statuses["root"] == "waiting")
+        assert not root_task.done()
+
+        root_task.cancel()
+        await root_task
+
+    root_session.close()

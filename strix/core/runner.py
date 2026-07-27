@@ -31,7 +31,7 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import BudgetExceededError, ReportUsageHooks
+from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
     build_root_task,
@@ -40,6 +40,7 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
@@ -185,6 +186,18 @@ async def run_strix_scan(
                 f"Cannot resume scan {scan_id}: missing SDK session database at {agents_db}",
             )
         await coordinator.restore(snap)
+        report_state = get_global_report_state()
+        if report_state is not None:
+            budget_stopped, reserve_stopped = recomputed_budget_flags(
+                report_state.get_total_llm_cost(),
+                max_budget_usd,
+                interactive=interactive,
+            )
+            await coordinator.reset_budget_stops(
+                budget_stopped=budget_stopped,
+                reserve_stopped=reserve_stopped,
+                budget_paused=interactive and coordinator.budget_paused,
+            )
         for aid, parent in coordinator.parent_of.items():
             if parent is None:
                 root_id = aid
@@ -248,7 +261,10 @@ async def run_strix_scan(
             model=resolved_model,
             max_budget_usd=max_budget_usd,
             max_turns=max_turns,
+            interactive=interactive,
         )
+        if interactive:
+            coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)

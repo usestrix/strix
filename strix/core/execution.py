@@ -21,7 +21,11 @@ from openai import (
     RateLimitError,
 )
 
-from strix.core.hooks import BudgetExceededError, SubagentBudgetReservedError
+from strix.core.hooks import (
+    BudgetExceededError,
+    BudgetPausedError,
+    SubagentBudgetReservedError,
+)
 from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
     enforce_image_budget,
@@ -148,19 +152,20 @@ async def run_agent_loop(
 
     if not (start_parked and interactive):
         if interactive:
-            result = await _run_cycle(
-                agent,
-                coordinator,
-                agent_id,
-                input_data=initial_input,
-                run_config=run_config,
-                context=context,
-                max_turns=max_turns,
-                session=session,
-                interactive=interactive,
-                event_sink=event_sink,
-                hooks=hooks,
-            )
+            with contextlib.suppress(BudgetPausedError):
+                result = await _run_cycle(
+                    agent,
+                    coordinator,
+                    agent_id,
+                    input_data=initial_input,
+                    run_config=run_config,
+                    context=context,
+                    max_turns=max_turns,
+                    session=session,
+                    interactive=interactive,
+                    event_sink=event_sink,
+                    hooks=hooks,
+                )
         else:
             result = await _run_noninteractive_until_lifecycle(
                 agent,
@@ -193,19 +198,20 @@ async def run_agent_loop(
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
         await coordinator.consume_pending(agent_id)
-        result = await _run_cycle(
-            agent,
-            coordinator,
-            agent_id,
-            input_data=[],
-            run_config=run_config,
-            context=context,
-            max_turns=max_turns,
-            session=session,
-            interactive=interactive,
-            event_sink=event_sink,
-            hooks=hooks,
-        )
+        with contextlib.suppress(BudgetPausedError):
+            result = await _run_cycle(
+                agent,
+                coordinator,
+                agent_id,
+                input_data=[],
+                run_config=run_config,
+                context=context,
+                max_turns=max_turns,
+                session=session,
+                interactive=interactive,
+                event_sink=event_sink,
+                hooks=hooks,
+            )
 
 
 async def spawn_child_agent(
@@ -476,7 +482,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                                 logger.exception("stream event sink failed for %s", agent_id)
                     if stream.run_loop_exception is not None:
                         raise stream.run_loop_exception
-                except (BudgetExceededError, SubagentBudgetReservedError):
+                except (BudgetExceededError, BudgetPausedError, SubagentBudgetReservedError):
                     raise
                 except RuntimeError as stream_exc:
                     if "after shutdown" not in str(stream_exc):
@@ -495,6 +501,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
+        except BudgetPausedError as exc:
+            logger.info("agent %s paused at the scan budget limit: %s", agent_id, exc)
+            await coordinator.pause_for_budget(agent_id)
+            raise
         except SubagentBudgetReservedError as exc:
             logger.info("sub-agent %s stopped at the budget reserve: %s", agent_id, exc)
             await coordinator.set_status(agent_id, "stopped")

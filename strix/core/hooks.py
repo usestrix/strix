@@ -35,6 +35,26 @@ class SubagentBudgetReservedError(RuntimeError):
     """Raised to stop a single sub-agent once the reserve threshold is crossed."""
 
 
+class BudgetPausedError(RuntimeError):
+    """Raised to park one agent when an interactive scan reaches its budget."""
+
+
+def recomputed_budget_flags(
+    cost: float,
+    max_budget_usd: float | None,
+    *,
+    interactive: bool,
+) -> tuple[bool, bool]:
+    """Return the (budget_stopped, reserve_stopped) flags a resumed scan should carry."""
+    if max_budget_usd is None:
+        return False, False
+    if interactive:
+        return False, False
+    budget_stopped = cost >= max_budget_usd
+    reserve_stopped = cost >= max_budget_usd * _SUBAGENT_BUDGET_RESERVE
+    return budget_stopped, reserve_stopped
+
+
 def _crossed_stage(fraction: float, bands: tuple[float, ...]) -> int | None:
     crossed: int | None = None
     for index, band in enumerate(bands):
@@ -98,6 +118,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         model: str,
         max_budget_usd: float | None = None,
         max_turns: int | None = None,
+        interactive: bool = False,
     ) -> None:
         if max_budget_usd is not None and (
             not math.isfinite(max_budget_usd) or max_budget_usd <= 0
@@ -107,7 +128,14 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             raise ValueError("max_turns must be a positive integer")
         self._model = model
         self._max_budget_usd = max_budget_usd
+        self._budget_increment = max_budget_usd
         self._max_turns = max_turns
+        self._interactive = interactive
+
+    def extend_budget(self) -> None:
+        if self._max_budget_usd is None or self._budget_increment is None:
+            return
+        self._max_budget_usd += self._budget_increment
 
     async def on_llm_start(
         self,
@@ -158,13 +186,23 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
             return
         cost = report_state.get_total_llm_cost()
         is_root = context.context.get("parent_id") is None
-        bands = _ROOT_BUDGET_WARN_BANDS if is_root else _SUBAGENT_BUDGET_WARN_BANDS
+        if self._interactive:
+            bands = _ROOT_BUDGET_WARN_BANDS
+        else:
+            bands = _ROOT_BUDGET_WARN_BANDS if is_root else _SUBAGENT_BUDGET_WARN_BANDS
         stage = _crossed_stage(cost / self._max_budget_usd, bands)
         if stage is None:
             return
         pct = round(100 * cost / self._max_budget_usd)
         reserve_pct = round(_SUBAGENT_BUDGET_RESERVE * 100)
-        if is_root:
+        if self._interactive:
+            content = (
+                f"[{_urgency(stage)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
+                f"spent ({pct}%). This budget is shared across every agent in the scan; when it "
+                "is reached all agents are paused until the user chooses to continue. "
+                f"{_wrapup_directive(context, stage)}"
+            )
+        elif is_root:
             content = (
                 f"[{_urgency(stage)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
                 f"spent ({pct}%). This budget is shared across every agent in the scan; when it "
@@ -212,11 +250,16 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         if self._max_budget_usd is not None:
             cost = report_state.get_total_llm_cost()
             if cost >= self._max_budget_usd:
+                if self._interactive:
+                    raise BudgetPausedError(
+                        f"Scan budget of ${self._max_budget_usd:.2f} reached "
+                        f"(spent ${cost:.4f}); pausing until the user continues"
+                    )
                 raise BudgetExceededError(
                     f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"
                 )
             is_root = ctx.get("parent_id") is None
-            if not is_root:
+            if not self._interactive and not is_root:
                 reserve_limit = self._max_budget_usd * _SUBAGENT_BUDGET_RESERVE
                 if cost >= reserve_limit:
                     raise SubagentBudgetReservedError(

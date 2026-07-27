@@ -64,18 +64,25 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
 <ParamField path="--max-budget" type="number">
   Maximum LLM spend in USD for the whole scan, counted cumulatively across the
   root agent and every child agent. The budget is checked after each model
-  response; once the running cost reaches the threshold, the scan stops cleanly
-  with a `stopped` status (not a failure) and the sandbox is torn down.
+  response.
 
-  Sub-agents are stopped early, at 90% of the budget, reserving the final slice
-  for the root agent to wind down and produce the final report.
+  In non-interactive mode (`-n`), once the running cost reaches the threshold,
+  the scan stops cleanly with a `stopped` status (not a failure) and the sandbox
+  is torn down. Sub-agents are stopped early, at 90% of the budget, reserving
+  the final slice for the root agent to wind down and produce the final report.
+
+  In interactive mode, reaching the budget pauses the scan instead of ending
+  it: every agent parks, and sending any message resumes the scan with the cap
+  extended by the original budget amount. There is no sub-agent reserve in
+  interactive mode.
 
   As the budget is approached, graduated wrap-up warnings are surfaced to
   **every** agent so they can finish their work and call their lifecycle tool
   before the hard stop. The bands sit just below each role's own stop point: the
   root is warned at **70%, 85% and 95%** (it stops at 100%), while sub-agents are
-  warned at **75%, 80% and 85%** (they stop at the 90% reserve). Percentages shown
-  in the warnings are the real cumulative spend against the full budget.
+  warned at **75%, 80% and 85%** (they stop at the 90% reserve). In interactive
+  mode every agent uses the **70%, 85% and 95%** bands. Percentages shown in the
+  warnings are the real cumulative spend against the full budget.
 
   Must be greater than `0`. Omit the flag for no limit.
 

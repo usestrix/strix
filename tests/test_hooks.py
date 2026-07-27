@@ -9,8 +9,10 @@ import pytest
 
 from strix.core.hooks import (
     BudgetExceededError,
+    BudgetPausedError,
     ReportUsageHooks,
     SubagentBudgetReservedError,
+    recomputed_budget_flags,
 )
 
 
@@ -393,3 +395,99 @@ async def test_turn_and_budget_warnings_stack() -> None:
     joined = " ".join(i["content"] for i in items)
     assert "Turn budget" in joined
     assert "cost budget" in joined
+
+
+def _make_interactive_hooks(max_budget: float | None) -> ReportUsageHooks:
+    return ReportUsageHooks(model="test-model", max_budget_usd=max_budget, interactive=True)
+
+
+@pytest.mark.asyncio
+async def test_interactive_at_budget_pauses_instead_of_stopping() -> None:
+    hooks = _make_interactive_hooks(10.0)
+    state = _make_report_state(10.0)
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=state),
+        pytest.raises(BudgetPausedError),
+    ):
+        await hooks.on_llm_end(_make_context(parent_id=None), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_interactive_subagent_has_no_reserve() -> None:
+    hooks = _make_interactive_hooks(10.0)
+    state = _make_report_state(9.5)
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_end(_make_context(parent_id="root-1"), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_interactive_subagent_pauses_at_full_budget() -> None:
+    hooks = _make_interactive_hooks(10.0)
+    state = _make_report_state(10.5)
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=state),
+        pytest.raises(BudgetPausedError),
+    ):
+        await hooks.on_llm_end(_make_context(parent_id="root-1"), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_extend_budget_lifts_the_pause() -> None:
+    hooks = _make_interactive_hooks(10.0)
+    state = _make_report_state(10.5)
+    hooks.extend_budget()
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_end(_make_context(parent_id=None), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_extend_budget_adds_original_amount_each_time() -> None:
+    hooks = _make_interactive_hooks(10.0)
+    hooks.extend_budget()
+    hooks.extend_budget()
+    state = _make_report_state(29.9)
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_end(_make_context(parent_id=None), MagicMock(), MagicMock())
+    state = _make_report_state(30.0)
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=state),
+        pytest.raises(BudgetPausedError),
+    ):
+        await hooks.on_llm_end(_make_context(parent_id=None), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
+async def test_interactive_subagent_uses_root_warning_bands() -> None:
+    hooks = _make_interactive_hooks(10.0)
+    state = _make_report_state(7.4)
+    items: list[Any] = []
+    with patch("strix.core.hooks.get_global_report_state", return_value=state):
+        await hooks.on_llm_start(
+            _make_warn_context(requests=0, parent_id="root-1"), MagicMock(), None, items
+        )
+    assert len(items) == 1
+    content = items[0]["content"]
+    assert "[NOTICE]" in content
+    assert "paused until the user chooses to continue" in content
+    assert "reserve" not in content.lower()
+
+
+@pytest.mark.parametrize(
+    ("cost", "max_budget", "interactive", "expected"),
+    [
+        (0.0, None, False, (False, False)),
+        (100.0, None, False, (False, False)),
+        (5.0, 10.0, False, (False, False)),
+        (9.0, 10.0, False, (False, True)),
+        (10.0, 10.0, False, (True, True)),
+        (10.0, 20.0, False, (False, False)),
+        (10.0, 10.0, True, (False, False)),
+    ],
+)
+def test_recomputed_budget_flags(
+    cost: float,
+    max_budget: float | None,
+    interactive: bool,
+    expected: tuple[bool, bool],
+) -> None:
+    assert recomputed_budget_flags(cost, max_budget, interactive=interactive) == expected

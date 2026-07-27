@@ -14,13 +14,15 @@ from strix.core.sessions import session_write_lock
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agents.items import TResponseInputItem
     from agents.memory import Session
 
 
 logger = logging.getLogger(__name__)
 
-Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed"]
+Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed", "budget_paused"]
 
 
 @dataclass(slots=True)
@@ -48,6 +50,8 @@ class AgentCoordinator:
         self.is_shutting_down = False
         self._budget_stopped = False
         self._reserve_stopped = False
+        self._budget_paused = False
+        self._extend_budget: Callable[[], None] | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
@@ -69,6 +73,58 @@ class AgentCoordinator:
     @property
     def reserve_stopped(self) -> bool:
         return self._reserve_stopped
+
+    @property
+    def budget_paused(self) -> bool:
+        return self._budget_paused
+
+    def set_budget_extender(self, extend: Callable[[], None]) -> None:
+        self._extend_budget = extend
+
+    async def pause_for_budget(self, agent_id: str) -> None:
+        async with self._lock:
+            self._budget_paused = True
+        await self.set_status(agent_id, "budget_paused")
+
+    async def resume_from_budget_pause(self, *, exclude: str | None = None) -> None:
+        async with self._lock:
+            if not self._budget_paused:
+                return
+            self._budget_paused = False
+            paused = [aid for aid, status in self.statuses.items() if status == "budget_paused"]
+        if self._extend_budget is not None:
+            self._extend_budget()
+        for aid in paused:
+            await self.set_status(aid, "waiting")
+            if aid != exclude:
+                await self.send(
+                    aid,
+                    {
+                        "from": "system",
+                        "type": "budget_extended",
+                        "content": (
+                            "[Budget] The user extended the scan budget \u2014 continue your "
+                            "current task."
+                        ),
+                    },
+                )
+
+    async def reset_budget_stops(
+        self,
+        *,
+        budget_stopped: bool,
+        reserve_stopped: bool,
+        budget_paused: bool = False,
+    ) -> None:
+        async with self._lock:
+            self._budget_stopped = budget_stopped
+            self._reserve_stopped = reserve_stopped
+            if not budget_paused:
+                self._budget_paused = False
+                for aid, status in self.statuses.items():
+                    if status == "budget_paused":
+                        self.statuses[aid] = "waiting"
+        await self._maybe_snapshot()
 
     async def claim_reserve_notification(self) -> str | None:
         async with self._lock:
@@ -146,6 +202,8 @@ class AgentCoordinator:
 
     async def send(self, target_agent_id: str, message: dict[str, Any]) -> bool:
         """Deliver a user/peer message by appending it to the target SDK session."""
+        if message.get("from") == "user" and self._budget_paused:
+            await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:
             if target_agent_id not in self.statuses:
                 logger.debug("agent.send dropped unknown target=%s", target_agent_id)
@@ -317,6 +375,7 @@ class AgentCoordinator:
                 "errors": dict(self.errors),
                 "budget_stopped": self._budget_stopped,
                 "reserve_stopped": self._reserve_stopped,
+                "budget_paused": self._budget_paused,
             }
 
     async def restore(self, snap: dict[str, Any]) -> None:
@@ -329,6 +388,7 @@ class AgentCoordinator:
             self.errors = dict(snap.get("errors", {}))
             self._budget_stopped = bool(snap.get("budget_stopped", False))
             self._reserve_stopped = bool(snap.get("reserve_stopped", False))
+            self._budget_paused = bool(snap.get("budget_paused", False))
             for aid in self.statuses:
                 self.runtimes.setdefault(aid, AgentRuntime())
 
