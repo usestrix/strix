@@ -250,13 +250,16 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
 
         if self._max_budget_usd is not None:
             cost = report_state.get_total_llm_cost()
+            # The full budget is a scan-wide hard cap for *every* role: if a sub-agent's own
+            # response overshoots straight past it (not just the reserve), it must trigger the
+            # scan-wide stop like the root would, otherwise the coordinator's budget flag stays
+            # unset and the root/other agents could keep spending past the configured cap.
+            if cost >= self._max_budget_usd:
+                raise BudgetExceededError(
+                    f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"
+                )
             is_root = ctx.get("parent_id") is None
-            if is_root:
-                if cost >= self._max_budget_usd:
-                    raise BudgetExceededError(
-                        f"Token budget of ${self._max_budget_usd:.2f} exceeded (spent ${cost:.4f})"
-                    )
-            else:
+            if not is_root:
                 reserve_limit = self._max_budget_usd * _SUBAGENT_BUDGET_RESERVE
                 if cost >= reserve_limit:
                     raise SubagentBudgetReservedError(

@@ -130,6 +130,20 @@ async def test_subagent_below_reserve_does_not_raise() -> None:
 
 
 @pytest.mark.asyncio
+async def test_subagent_overshoot_to_full_budget_triggers_scan_wide_stop() -> None:
+    # A sub-agent whose own response overshoots straight past the *full* budget must raise
+    # the scan-wide BudgetExceededError (which fans out via trigger_budget_stop), not the
+    # child-only reserve exception — otherwise the root/others could keep spending past 100%.
+    hooks = _make_hooks(10.0)
+    state = _make_report_state(10.5)  # past the full budget, not just the reserve
+    with (
+        patch("strix.core.hooks.get_global_report_state", return_value=state),
+        pytest.raises(BudgetExceededError),
+    ):
+        await hooks.on_llm_end(_make_context(parent_id="root-1"), MagicMock(), MagicMock())
+
+
+@pytest.mark.asyncio
 async def test_root_keeps_running_inside_reserve() -> None:
     hooks = _make_hooks(10.0)
     state = _make_report_state(9.5)  # 95%: past the sub reserve, under the full budget
