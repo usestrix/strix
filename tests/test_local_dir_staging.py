@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import TYPE_CHECKING
+
+from agents.sandbox.entries import LocalDir
 
 from strix.runtime.local_dir_staging import stage_symlink_safe_dir, tree_has_symlink
 
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    import pytest
+
+
+UNREADABLE_MODE = 0
+RESTORED_DIR_MODE = 0o755
 
 
 def _make_repo(tmp_path: Path) -> Path:
@@ -108,7 +116,9 @@ def test_nested_symlinks_inside_linked_dir(tmp_path: Path) -> None:
     assert not (staged / "shared" / "escape").exists()
 
 
-def test_staged_path_has_no_symlink_ancestor(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+def test_staged_path_has_no_symlink_ancestor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """The staging directory itself must never sit behind a symlink.
 
     ``tempfile.mkdtemp()`` honors ``$TMPDIR``, and on macOS the default
@@ -131,9 +141,7 @@ def test_staged_path_has_no_symlink_ancestor(tmp_path: Path, monkeypatch) -> Non
         real_dir.mkdir()
         return str(symlinked_tmp_root / real_dir.name)
 
-    monkeypatch.setattr(
-        "strix.runtime.local_dir_staging.tempfile.mkdtemp", fake_mkdtemp
-    )
+    monkeypatch.setattr("strix.runtime.local_dir_staging.tempfile.mkdtemp", fake_mkdtemp)
 
     upload_path, staged = stage_symlink_safe_dir(repo)
 
@@ -141,3 +149,26 @@ def test_staged_path_has_no_symlink_ancestor(tmp_path: Path, monkeypatch) -> Non
     assert upload_path == staged
     for path in (staged, *staged.parents):
         assert not path.is_symlink(), f"staged path has a symlink ancestor: {path}"
+
+
+def test_unreadable_child_is_skipped_before_localdir_upload(tmp_path: Path) -> None:
+    repo = _make_repo(tmp_path)
+    unreadable = repo / "unreadable"
+    unreadable.mkdir()
+    (unreadable / "secret.txt").write_text("secret\n")
+
+    try:
+        unreadable.chmod(UNREADABLE_MODE)
+        upload_path, staged = stage_symlink_safe_dir(repo)
+        local_dir = LocalDir(src=upload_path)
+
+        local_files = local_dir._list_local_dir_files(
+            base_dir=Path(os.curdir),
+            src_root=upload_path,
+        )
+    finally:
+        unreadable.chmod(RESTORED_DIR_MODE)
+
+    assert staged is not None
+    assert Path("README.md") in local_files
+    assert Path("unreadable/secret.txt") not in local_files

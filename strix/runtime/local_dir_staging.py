@@ -36,6 +36,8 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _STAGING_PREFIX = "strix-localdir-"
+_DIR_ACCESS_MODE = os.R_OK | os.X_OK
+_FILE_ACCESS_MODE = os.R_OK
 
 
 def _is_within(target: Path, root: Path) -> bool:
@@ -59,6 +61,29 @@ def tree_has_symlink(root: Path) -> bool:
     return False
 
 
+def _needs_safe_staging(root: Path) -> bool:
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if _entry_needs_safe_staging(entry):
+                    return True
+    except OSError:
+        return True
+    return False
+
+
+def _entry_needs_safe_staging(entry: os.DirEntry[str]) -> bool:
+    entry_path = Path(entry.path)
+    try:
+        if entry.is_symlink():
+            return True
+        if entry.is_dir(follow_symlinks=False):
+            return not os.access(entry_path, _DIR_ACCESS_MODE) or _needs_safe_staging(entry_path)
+        return entry.is_file(follow_symlinks=False) and not os.access(entry_path, _FILE_ACCESS_MODE)
+    except OSError:
+        return True
+
+
 def _link_or_copy(src: Path, dst: Path) -> None:
     """Hard-link ``src`` to ``dst``, falling back to a content copy."""
     try:
@@ -69,32 +94,68 @@ def _link_or_copy(src: Path, dst: Path) -> None:
 
 def _stage_dir(src: Path, dst: Path, root: Path, seen: frozenset[Path]) -> None:
     dst.mkdir(parents=True, exist_ok=True)
-    for entry in os.scandir(src):
-        entry_path = Path(entry.path)
-        dest_path = dst / entry.name
+    try:
+        entries = list(os.scandir(src))
+    except OSError as exc:
+        logger.warning("staging: skipping unreadable directory %s: %s", src, exc)
+        return
 
-        if entry.is_symlink():
-            target = Path(os.path.realpath(entry_path))
-            if not _is_within(target, root):
-                logger.warning("staging: dropping out-of-tree symlink %s -> %s", entry_path, target)
-                continue
-            if not target.exists():
-                logger.warning("staging: dropping dangling symlink %s", entry_path)
-                continue
-            if target in seen:
-                logger.warning("staging: dropping cyclic symlink %s -> %s", entry_path, target)
-                continue
-            if target.is_dir():
-                _stage_dir(target, dest_path, root, seen | {target})
-            else:
-                _link_or_copy(target, dest_path)
-        elif entry.is_dir(follow_symlinks=False):
-            _stage_dir(entry_path, dest_path, root, seen)
-        elif entry.is_file(follow_symlinks=False):
-            _link_or_copy(entry_path, dest_path)
-        else:
-            # Sockets, FIFOs, devices — not part of a source tree; skip.
-            logger.debug("staging: skipping non-regular entry %s", entry_path)
+    for entry in entries:
+        _stage_entry(entry, dst, root, seen)
+
+
+def _stage_entry(entry: os.DirEntry[str], dst: Path, root: Path, seen: frozenset[Path]) -> None:
+    entry_path = Path(entry.path)
+    dest_path = dst / entry.name
+
+    try:
+        is_symlink = entry.is_symlink()
+        is_dir = entry.is_dir(follow_symlinks=False)
+        is_file = entry.is_file(follow_symlinks=False)
+    except OSError as exc:
+        logger.warning("staging: skipping unreadable entry %s: %s", entry_path, exc)
+        return
+
+    if is_symlink:
+        _stage_symlink(entry_path, dest_path, root, seen)
+    elif is_dir:
+        _stage_child_dir(entry_path, dest_path, root, seen)
+    elif is_file:
+        _stage_file(entry_path, dest_path)
+    else:
+        # Sockets, FIFOs, devices — not part of a source tree; skip.
+        logger.debug("staging: skipping non-regular entry %s", entry_path)
+
+
+def _stage_symlink(entry_path: Path, dest_path: Path, root: Path, seen: frozenset[Path]) -> None:
+    target = Path(os.path.realpath(entry_path))
+    if not _is_within(target, root):
+        logger.warning("staging: dropping out-of-tree symlink %s -> %s", entry_path, target)
+        return
+    if not target.exists():
+        logger.warning("staging: dropping dangling symlink %s", entry_path)
+        return
+    if target in seen:
+        logger.warning("staging: dropping cyclic symlink %s -> %s", entry_path, target)
+        return
+    if target.is_dir():
+        _stage_dir(target, dest_path, root, seen | {target})
+        return
+    _stage_file(target, dest_path)
+
+
+def _stage_child_dir(entry_path: Path, dest_path: Path, root: Path, seen: frozenset[Path]) -> None:
+    if not os.access(entry_path, _DIR_ACCESS_MODE):
+        logger.warning("staging: skipping unreadable directory %s", entry_path)
+        return
+    _stage_dir(entry_path, dest_path, root, seen)
+
+
+def _stage_file(entry_path: Path, dest_path: Path) -> None:
+    if not os.access(entry_path, _FILE_ACCESS_MODE):
+        logger.warning("staging: skipping unreadable file %s", entry_path)
+        return
+    _link_or_copy(entry_path, dest_path)
 
 
 def stage_symlink_safe_dir(src_root: Path) -> tuple[Path, Path | None]:
@@ -107,7 +168,7 @@ def stage_symlink_safe_dir(src_root: Path) -> tuple[Path, Path | None]:
     the upload completes.
     """
     root = src_root.resolve()
-    if not tree_has_symlink(root):
+    if not _needs_safe_staging(root):
         return root, None
 
     staged = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX)).resolve()
