@@ -17,6 +17,11 @@ if TYPE_CHECKING:
 
 cli_main: Any = importlib.import_module("strix.interface.main")
 
+BASELINE_RUN_NAME = "baseline-alpha"
+RUNS_DIR_NAME = "strix_runs"
+VULNERABILITIES_FILENAME = "vulnerabilities.json"
+TARGET_URL = "https://test1.com/"
+
 
 def _stub_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
@@ -67,6 +72,26 @@ def test_parse_arguments_combines_target_and_target_list(
         "https://test1.com/",
         "http://test2.com:5789/",
     ]
+
+
+def test_parse_arguments_accepts_baseline_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_run_dir = tmp_path / RUNS_DIR_NAME / BASELINE_RUN_NAME
+    baseline_run_dir.mkdir(parents=True)
+    (baseline_run_dir / VULNERABILITIES_FILENAME).write_text(json.dumps([]), encoding="utf-8")
+    _stub_settings(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--target", TARGET_URL, "--baseline-run", BASELINE_RUN_NAME],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.baseline_run == BASELINE_RUN_NAME
 
 
 def test_parse_arguments_rejects_resume_with_target_list(

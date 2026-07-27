@@ -1,4 +1,3 @@
-import json
 import logging
 import re
 import subprocess
@@ -18,6 +17,7 @@ from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.writer import (
     read_run_record,
+    read_vulnerabilities,
     write_executive_report,
     write_run_record,
     write_vulnerabilities,
@@ -212,6 +212,8 @@ class ReportState:
         self.end_time: str | None = None
 
         self.vulnerability_reports: list[dict[str, Any]] = []
+        self.baseline_vulnerability_reports: list[dict[str, Any]] = []
+        self.baseline_run_name: str | None = None
         self.final_scan_result: str | None = None
 
         self.scan_results: dict[str, Any] | None = None
@@ -295,18 +297,13 @@ class ReportState:
         json_path = run_dir / "vulnerabilities.json"
         if json_path.exists():
             try:
-                data = json.loads(json_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
+                self.vulnerability_reports = read_vulnerabilities(run_dir)
+            except (RuntimeError, TypeError) as exc:
                 raise RuntimeError(
                     f"vulnerabilities.json at {json_path} is corrupt ({exc}); "
                     f"refusing to start fresh — that would overwrite prior "
                     f"vulnerability MDs on disk. Inspect or delete the run dir.",
                 ) from exc
-            if not isinstance(data, list):
-                raise RuntimeError(
-                    f"vulnerabilities.json at {json_path} is not a list",
-                )
-            self.vulnerability_reports = [r for r in data if isinstance(r, dict)]
             for r in self.vulnerability_reports:
                 # A finding written before the class was persisted still carries the
                 # metadata of its class, so name the class it always had.
@@ -328,6 +325,28 @@ class ReportState:
                 "report state hydrated %d vulnerability report(s)",
                 len(self.vulnerability_reports),
             )
+
+    def load_baseline_vulnerabilities(
+        self,
+        baseline_run_name: str,
+        vulnerability_reports: list[dict[str, Any]],
+    ) -> None:
+        self.baseline_run_name = baseline_run_name
+        self.baseline_vulnerability_reports = list(vulnerability_reports)
+        logger.info(
+            "loaded %d baseline vulnerability report(s) from %s",
+            len(self.baseline_vulnerability_reports),
+            baseline_run_name,
+        )
+
+    def hydrate_baseline_run(self, baseline_run_name: str | None) -> None:
+        if not baseline_run_name:
+            return
+        baseline_run_dir = run_dir_for(baseline_run_name)
+        self.load_baseline_vulnerabilities(
+            baseline_run_name,
+            read_vulnerabilities(baseline_run_dir),
+        )
 
     def add_vulnerability_report(
         self,
@@ -637,7 +656,7 @@ class ReportState:
         return report
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
-        return list(self.vulnerability_reports)
+        return [*self.baseline_vulnerability_reports, *self.vulnerability_reports]
 
     def record_sdk_usage(
         self,
@@ -785,6 +804,7 @@ class ReportState:
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
                 "skills": list(config.get("skills") or []),
+                "baseline_run": config.get("baseline_run"),
             }
         )
 
