@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import csv
 import json
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -18,13 +19,10 @@ from strix.report.writer import (
 )
 
 
-if TYPE_CHECKING:
-    from pathlib import Path
-
-
 REPORT_FILENAME = "penetration_test_report.md"
 EXISTING_EXECUTIVE_REPORT = "previous complete report\n"
 TIMESTAMP_FAILURE_MESSAGE = "timestamp unavailable"
+REPLACE_FAILURE_MESSAGE = "replace failed"
 
 
 class FailingTimestamp:
@@ -210,3 +208,22 @@ def test_write_executive_report_preserves_existing_report_on_failure(
         write_executive_report(tmp_path, "replacement report")
 
     assert report_path.read_text(encoding="utf-8") == EXISTING_EXECUTIVE_REPORT
+
+
+def test_write_executive_report_removes_atomic_temp_file_on_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_replace = Path.replace
+
+    def fail_temp_replace(self: Path, target: Path) -> Path:
+        if self.name.startswith(f".{REPORT_FILENAME}.") and self.suffix == ".tmp":
+            raise OSError(REPLACE_FAILURE_MESSAGE)
+        return original_replace(self, target)
+
+    monkeypatch.setattr(Path, "replace", fail_temp_replace)
+
+    with pytest.raises(OSError, match=REPLACE_FAILURE_MESSAGE):
+        write_executive_report(tmp_path, "replacement report")
+
+    assert not list(tmp_path.glob(f".{REPORT_FILENAME}.*.tmp"))
