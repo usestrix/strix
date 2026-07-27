@@ -325,6 +325,9 @@ class ReportState:
         return report_id
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
+        return list(self.vulnerability_reports)
+
+    def get_dedupe_vulnerabilities(self) -> list[dict[str, Any]]:
         return [*self.baseline_vulnerability_reports, *self.vulnerability_reports]
 
     def record_sdk_usage(
