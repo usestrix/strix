@@ -214,6 +214,27 @@ async def test_budget_warning_root_directive_distinct_from_subagent() -> None:
     assert "confirmed" in sub
 
 
+@pytest.mark.parametrize("parent_id", [None, "root-1"])
+@pytest.mark.asyncio
+async def test_turn_warning_directive_escalates_per_stage(parent_id: str | None) -> None:
+    hooks = ReportUsageHooks(model="test-model", max_turns=100)
+    contents: dict[str, str] = {}
+    # requests+1 lands squarely inside each band: 70 -> 0.70, 86 -> 0.85, 96 -> 0.95
+    for label, requests in (("notice", 69), ("urgent", 85), ("critical", 95)):
+        items: list[Any] = []
+        await hooks.on_llm_start(
+            _make_warn_context(requests=requests, parent_id=parent_id), MagicMock(), None, items
+        )
+        contents[label] = items[0]["content"]
+
+    # each stage is worded differently
+    assert len({contents["notice"], contents["urgent"], contents["critical"]}) == 3
+    # tone hardens: gentle -> prioritize -> stop everything
+    assert "[NOTICE]" in contents["notice"] and "begin planning" in contents["notice"]
+    assert "[URGENT]" in contents["urgent"] and "prioritize" in contents["urgent"]
+    assert "[CRITICAL]" in contents["critical"] and "STOP" in contents["critical"]
+
+
 @pytest.mark.asyncio
 async def test_no_turn_warning_when_max_turns_unset() -> None:
     hooks = ReportUsageHooks(model="test-model")

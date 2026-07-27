@@ -41,29 +41,52 @@ def _crossed_band(fraction: float, bands: tuple[float, ...]) -> float | None:
     return crossed
 
 
-def _wrapup_directive(context: RunContextWrapper[dict[str, Any]]) -> str:
-    """Role-specific wind-down guidance.
+# Wind-down guidance that escalates with the crossed band, keyed by (is_root, band).
+# The root agent owns the whole scan (finish_scan → compile/deliver the final report);
+# a sub-agent owns only its assigned task (report a confirmed vuln, then agent_finish
+# back to its parent). Tone hardens from a gentle heads-up (0.70) to a hard "stop
+# everything and finish now" (0.95).
+_ROOT_DIRECTIVES: dict[float, str] = {
+    0.70: (
+        "As the root agent, begin planning your wind-down of the whole scan: avoid "
+        "starting large new lines of investigation, and keep your required objectives on "
+        "track so you can call finish_scan comfortably before the limit."
+    ),
+    0.85: (
+        "As the root agent, prioritize wrapping up the whole scan now: stop opening new "
+        "lines of investigation, close out only what is essential, and move toward calling "
+        "finish_scan to compile and deliver the final report."
+    ),
+    0.95: (
+        "As the root agent, STOP all other work on the whole scan and finish immediately: "
+        "secure your findings and call finish_scan now — anything left unfinished when the "
+        "limit is hit is discarded."
+    ),
+}
+_SUBAGENT_DIRECTIVES: dict[float, str] = {
+    0.70: (
+        "As a sub-agent, begin planning your wind-down: avoid starting large new subtasks, "
+        "and if you are close to a confirmed, validated vulnerability, drive it to a result "
+        "you can report."
+    ),
+    0.85: (
+        "As a sub-agent, prioritize wrapping up your task now: report any confirmed, "
+        "validated vulnerability, finish work that is nearly done rather than starting "
+        "anything new, and prepare to call agent_finish."
+    ),
+    0.95: (
+        "As a sub-agent, STOP all other work and finish immediately: report any confirmed "
+        "vulnerability right now and call agent_finish to hand your results back to your "
+        "parent before you are cut off."
+    ),
+}
 
-    The root agent owns the whole scan, so it is told to stop opening new work and
-    call ``finish_scan`` to compile and deliver the final report. A sub-agent owns
-    only its assigned task, so it is told to report any confirmed vulnerability it
-    already has, finish work that is nearly done, and hand results back via
-    ``agent_finish``.
-    """
+
+def _wrapup_directive(context: RunContextWrapper[dict[str, Any]], band: float) -> str:
+    """Role- and stage-specific wind-down guidance for the crossed ``band``."""
     is_root = context.context.get("parent_id") is None
-    if is_root:
-        return (
-            "As the root agent, start winding down the whole scan now: stop opening new "
-            "lines of investigation, make sure your required objectives are covered, and "
-            "call finish_scan soon to compile and deliver the final report before you are "
-            "cut off."
-        )
-    return (
-        "As a sub-agent, start wrapping up your current task now: if you already have a "
-        "confirmed, validated vulnerability, report it immediately; finish any work that is "
-        "nearly done rather than starting something new, then call agent_finish to hand your "
-        "results back to your parent before you are cut off."
-    )
+    directives = _ROOT_DIRECTIVES if is_root else _SUBAGENT_DIRECTIVES
+    return directives[band]
 
 
 def _urgency(band: float) -> str:
@@ -133,7 +156,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         content = (
             f"[{_urgency(band)}] Turn budget: {turns_used}/{self._max_turns} used ({pct}%). "
             f"About {remaining} turn(s) remain before this agent is force-stopped and any "
-            f"in-progress work is discarded. {_wrapup_directive(context)}"
+            f"in-progress work is discarded. {_wrapup_directive(context, band)}"
         )
         input_items.append({"role": "user", "content": content})
 
@@ -155,7 +178,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         content = (
             f"[{_urgency(band)}] Scan cost budget: ${cost:.2f}/${self._max_budget_usd:.2f} "
             f"spent ({pct}%). This budget is shared across every agent in the scan; when it is "
-            f"reached the whole scan is stopped immediately. {_wrapup_directive(context)}"
+            f"reached the whole scan is stopped immediately. {_wrapup_directive(context, band)}"
         )
         input_items.append({"role": "user", "content": content})
 
