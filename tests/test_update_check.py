@@ -1,7 +1,5 @@
-import hashlib
 import io
 import json
-import platform
 import time
 from pathlib import Path
 
@@ -153,46 +151,15 @@ def test_self_update_already_latest(monkeypatch: pytest.MonkeyPatch) -> None:
     assert update_check.self_update() is True
 
 
-def test_sha256_file(tmp_path: Path) -> None:
-    path = tmp_path / "blob"
-    path.write_bytes(b"strix")
-    assert update_check._sha256_file(path) == hashlib.sha256(b"strix").hexdigest()
+def test_self_update_runs_installer(monkeypatch: pytest.MonkeyPatch) -> None:
+    requested_update: list[str] = []
 
-
-@pytest.mark.parametrize(
-    ("system", "machine", "expected"),
-    [
-        ("Linux", "x86_64", "linux-x86_64"),
-        ("Linux", "aarch64", "linux-arm64"),
-        ("Linux", "arm64", "linux-arm64"),
-        ("Darwin", "arm64", "macos-arm64"),
-        ("Darwin", "riscv64", None),
-    ],
-)
-def test_release_target(
-    monkeypatch: pytest.MonkeyPatch,
-    system: str,
-    machine: str,
-    expected: str | None,
-) -> None:
-    monkeypatch.setattr(platform, "system", lambda: system)
-    monkeypatch.setattr(platform, "machine", lambda: machine)
-
-    assert update_check._release_target() == expected
-
-
-def test_self_update_uses_linux_arm64_release(monkeypatch: pytest.MonkeyPatch) -> None:
-    requested_update: list[tuple[str, str]] = []
-
-    def record_download(version: str, target: str, _console: Console) -> bool:
-        requested_update.append((version, target))
-        return True
+    def record_install(version: str, _console: Console) -> None:
+        requested_update.append(version)
 
     monkeypatch.setattr(update_check, "is_binary_install", lambda: True)
     monkeypatch.setattr(update_check, "get_version", lambda: "1.0.0")
-    monkeypatch.setattr(platform, "system", lambda: "Linux")
-    monkeypatch.setattr(platform, "machine", lambda: "aarch64")
-    monkeypatch.setattr(update_check, "_download_and_replace", record_download)
+    monkeypatch.setattr(update_check, "_run_installer", record_install)
 
     assert update_check.self_update(Console(file=io.StringIO()), version="1.1.0") is True
-    assert requested_update == [("1.1.0", "linux-arm64")]
+    assert requested_update == ["1.1.0"]
