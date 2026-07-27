@@ -45,7 +45,6 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
-from strix.core.watchdog import LoopWatchdog
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
@@ -243,12 +242,8 @@ async def run_strix_scan(
     configure_spill_writer(_spill_to_workspace)
 
     sessions_to_close: list[SQLiteSession] = []
-    watchdog: LoopWatchdog | None = None
 
     try:
-        watchdog = LoopWatchdog(stall_path=run_dir / "loop-stalls.txt")
-        watchdog.start()
-
         targets = scan_config.get("targets") or []
         scan_mode = str(scan_config.get("scan_mode") or "deep")
         is_whitebox = any(t.get("type") == "local_code" for t in targets)
@@ -463,9 +458,6 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "failed")
         raise
     finally:
-        if watchdog is not None:
-            with contextlib.suppress(Exception):
-                await watchdog.stop()
         configure_spill_writer(None)
         for s in sessions_to_close:
             with contextlib.suppress(Exception):

@@ -6,13 +6,12 @@ import logging
 import signal
 import sys
 import threading
-import time
 import webbrowser
 from collections.abc import Callable
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as pkg_version
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, ClassVar, Literal
+from typing import TYPE_CHECKING, Any, ClassVar
 
 
 if TYPE_CHECKING:
@@ -777,10 +776,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
     selected_agent_id: reactive[str | None] = reactive(default=None)
     show_splash: reactive[bool] = reactive(default=True)
 
-    # Flag the engine as unresponsive if a graph-state read stays pending this long.
-    ENGINE_STALE_SECONDS = 10.0
-    ENGINE_STALE_RENOTIFY_SECONDS = 30.0
-
     BINDINGS: ClassVar[list[Binding]] = [
         Binding("f1", "toggle_help", "Help", priority=True),
         Binding("ctrl+q", "request_quit", "Quit", priority=True),
@@ -802,9 +797,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self.live_view = TuiLiveView()
         self.live_view.hydrate_from_run_dir(self.report_state.get_run_dir())
         self._agent_graph_sync_future: Any | None = None
-        self._agent_graph_future_submitted_at: float | None = None
-        self._engine_unresponsive = False
-        self._engine_unresponsive_notified_at: float | None = None
 
         from strix.core.agents import AgentCoordinator
 
@@ -1032,22 +1024,15 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 if self._scan_loop is not None and self._scan_loop.is_closed():
                     future.cancel()
                     self._agent_graph_sync_future = None
-                    self._agent_graph_future_submitted_at = None
                 else:
-                    # The read is still pending: the scan loop hasn't serviced it. If it
-                    # stays pending the loop is wedged, so surface that instead of silently
-                    # re-rendering the last (now stale) snapshot as if everything is fine.
-                    self._check_engine_liveness()
                     return
             else:
                 self._agent_graph_sync_future = None
-                self._agent_graph_future_submitted_at = None
                 try:
                     parent_of, statuses, names, errors = future.result()
                 except Exception:
                     logger.exception("TUI agent graph sync failed")
                 else:
-                    self._clear_engine_unresponsive()
                     for agent_id, status in statuses.items():
                         error = errors.get(agent_id)
                         self.live_view.upsert_agent(
@@ -1057,14 +1042,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
                             status=status,
                             error_message=error,
                         )
-                        if error:
+                        if status in {"failed", "crashed"} and error:
                             if agent_id not in self._error_noted_agents:
                                 self._error_noted_agents.add(agent_id)
-                                if status in {"failed", "crashed"}:
-                                    self.live_view.record_agent_error(agent_id, error)
-                                self._notify_agent_status(
-                                    names.get(agent_id, agent_id), status, error
-                                )
+                                self.live_view.record_agent_error(agent_id, error)
                         else:
                             self._error_noted_agents.discard(agent_id)
                     self._notify_budget_pause(statuses)
@@ -1078,52 +1059,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return await self.coordinator.graph_snapshot()
 
         self._agent_graph_sync_future = asyncio.run_coroutine_threadsafe(collect(), self._scan_loop)
-        self._agent_graph_future_submitted_at = time.monotonic()
-
-    def _check_engine_liveness(self) -> None:
-        submitted = self._agent_graph_future_submitted_at
-        if submitted is None:
-            return
-        stalled_for = time.monotonic() - submitted
-        if stalled_for < self.ENGINE_STALE_SECONDS:
-            return
-        now = time.monotonic()
-        last = self._engine_unresponsive_notified_at
-        if (
-            self._engine_unresponsive
-            and last is not None
-            and now - last < self.ENGINE_STALE_RENOTIFY_SECONDS
-        ):
-            return
-        self._engine_unresponsive = True
-        self._engine_unresponsive_notified_at = now
-        self.notify(
-            f"Engine unresponsive for {stalled_for:.0f}s \u2014 the scan loop stopped "
-            "responding, so the agent state shown may be stale. If it doesn't recover, "
-            "quit with ctrl-q.",
-            title="Engine unresponsive",
-            severity="error",
-            timeout=15,
-        )
-
-    def _clear_engine_unresponsive(self) -> None:
-        if not self._engine_unresponsive:
-            return
-        self._engine_unresponsive = False
-        self._engine_unresponsive_notified_at = None
-        self.notify(
-            "Engine responsive again \u2014 agent state is live.",
-            severity="information",
-            timeout=6,
-        )
-
-    def _notify_agent_status(self, name: str, status: str, error: str) -> None:
-        severity: Literal["warning", "error"]
-        if status in {"failed", "crashed", "stopped"}:
-            title, severity = f"Agent {status}", "error"
-        else:
-            title, severity = "Agent parked", "warning"
-        self.notify(f"{name}: {error}", title=title, severity=severity, timeout=12)
 
     def _notify_budget_pause(self, statuses: dict[str, Any]) -> None:
         paused = any(status == "budget_paused" for status in statuses.values())
