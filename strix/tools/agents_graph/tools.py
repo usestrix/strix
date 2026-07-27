@@ -13,6 +13,7 @@ from typing import Any, Literal, get_args
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agents import Status, coordinator_from_context
+from strix.report.state import get_global_report_state
 from strix.skills import validate_requested_skills
 
 
@@ -573,6 +574,9 @@ async def agent_finish(
         parent_notified,
     )
     await coordinator.set_status(me, "completed")
+
+    if report_state := get_global_report_state():
+        report_state.save_run_data()
 
     return json.dumps(
         {
