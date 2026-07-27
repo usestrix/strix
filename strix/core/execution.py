@@ -667,10 +667,11 @@ async def _notify_root_on_budget_reserve(coordinator: AgentCoordinator) -> None:
             "type": "budget_reserve_stop",
             "priority": "high",
             "content": (
-                "[Budget reserve] All sub-agents have been stopped at the sub-agent budget "
-                "reserve so the remaining budget is preserved for you to finish the scan. "
-                "Their confirmed vulnerabilities are already filed. Stop waiting on any "
-                "sub-agents and wrap up now — call finish_scan."
+                "[Budget reserve] The scan has reached the sub-agent budget reserve: every "
+                "sub-agent is being force-stopped as soon as its in-flight turn completes, and "
+                "none will send a completion report. Their confirmed vulnerabilities are "
+                "already filed as they were found. Do not wait on any sub-agents and do not "
+                "spawn new ones — wrap up now and call finish_scan."
             ),
         },
     )
