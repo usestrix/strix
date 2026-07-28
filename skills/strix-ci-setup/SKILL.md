@@ -48,6 +48,17 @@ jobs:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
           LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
         run: strix -n -t ./ --scan-mode quick --max-budget 10
+
+      # Don't fail open: a budget-truncated run exits 0 but its run.json status
+      # is "stopped", not "completed". Enforce completion explicitly.
+      - name: Fail unless the scan completed
+        run: |
+          run_json=$(ls -t strix_runs/*/run.json | head -1)
+          status=$(jq -r .status "$run_json")
+          if [ "$status" != "completed" ]; then
+            echo "Strix run status is '$status' — the scan did not complete (likely budget exhausted). Raise --max-budget." >&2
+            exit 1
+          fi
 ```
 
 Then tell the user to add two repository secrets: `STRIX_LLM` (model id, e.g. `openai/gpt-5.4`) and `LLM_API_KEY` (the provider key). Do not create these values yourself.
@@ -56,7 +67,7 @@ Notes:
 - In CI/headless runs Strix automatically scopes to the PR's changed files (`--scope-mode auto`). If diff resolution fails, keep `fetch-depth: 0` or set `--diff-base` to the PR's actual base branch — use `origin/${{ github.base_ref }}` in GitHub Actions rather than a hard-coded `origin/main`, since repos use different default branches.
 - Exit codes: `0` pass, `2` vulnerabilities found (fails the job), `1` setup error.
 - The runner needs Docker (default GitHub-hosted Ubuntu runners have it).
-- **Size the budget so the scan completes — don't let it fail open.** A `0` exit means "no validated vulnerabilities in what was analyzed"; if `--max-budget` is hit before the diff is fully covered, the scan wraps up early and can exit `0` on code it never finished testing. For a `quick` diff-scoped PR scan `--max-budget 10` is usually ample, but for large diffs raise it, and don't treat a green build as a guarantee of full coverage. To be strict, fail the build unless `strix_runs/<run>/run.json` reports a completed (non-budget-truncated) status.
+- **Size the budget so the scan completes — don't let it fail open.** A `0` exit means "no validated vulnerabilities in what was analyzed"; if `--max-budget` is hit before the diff is fully covered, the scan wraps up early and can still exit `0`. The "Fail unless the scan completed" step above closes this gap: `strix_runs/<run>/run.json` gets `status: "completed"` only when the scan actually finished (a budget-truncated run is `"stopped"`). Keep that step in any pipeline that gates merges; for a `quick` diff-scoped PR scan `--max-budget 10` is usually ample, raise it for large diffs.
 
 ### Optional: upload findings to GitHub code scanning
 

@@ -44,6 +44,8 @@ After fixing, re-scan scoped to the fixed area and confirm the finding is gone. 
 # Avoid the current branch's own upstream as the base — its merge base with
 # HEAD would be HEAD, giving an empty diff and a falsely clean result.
 DIFF_BASE=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+# origin/HEAD can be a dangling symbolic ref — keep it only if its target exists.
+git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null 2>&1 || DIFF_BASE=""
 if [ -z "$DIFF_BASE" ]; then
   for b in origin/main origin/master origin/develop; do
     git rev-parse --verify --quiet "$b" >/dev/null && DIFF_BASE="$b" && break
