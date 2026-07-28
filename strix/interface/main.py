@@ -681,6 +681,21 @@ Examples:
         ),
     )
 
+    parser.add_argument(
+        "--run-name",
+        type=str,
+        metavar="RUN_NAME",
+        help=(
+            "Force the run directory name (./strix_runs/<RUN_NAME>/) instead of "
+            "auto-generating one. Use for deterministic, resumable runs: a caller "
+            "that must know the run dir before the scan starts (e.g. to restore "
+            "prior state, or to --resume across a credential/wall-clock boundary "
+            "in CI) can key the run at a known name. When both --run-name and "
+            "--resume are given they must match. Must be a single path segment "
+            "(no '/', no '..')."
+        ),
+    )
+
     args = parser.parse_args()
 
     if args.update:
@@ -702,6 +717,39 @@ Examples:
             parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
 
     args.user_explicit_instruction = args.instruction if args.resume else None
+
+    if args.run_name is not None:
+        # run_dir_for() joins the name straight onto ./strix_runs/, so a name
+        # with a path separator or a parent-dir hop would escape the runs tree.
+        # Keep it a single, filesystem-safe segment. Path.parts collapses any
+        # os-specific separator to one element for a clean single-segment name.
+        run_name_parts = Path(args.run_name).parts
+        if not args.run_name.strip() or len(run_name_parts) != 1:
+            parser.error("--run-name must be a single path segment (no '/').")
+        if run_name_parts[0] in {".", ".."}:
+            parser.error("--run-name must not be '.' or '..'.")
+        # A caller that both keys the run (--run-name) and resumes it (--resume)
+        # must name the same dir — otherwise we'd resume one run and persist to
+        # another. Require them to agree rather than silently picking one.
+        if args.resume and args.resume != args.run_name:
+            parser.error(
+                f"--run-name {args.run_name!r} conflicts with --resume "
+                f"{args.resume!r}: they name different run dirs. Pass a single "
+                f"name (they must match), or drop one."
+            )
+        # A FRESH (non-resume) --run-name must not land on an existing run dir:
+        # the fresh path rewrites run.json while leaving the prior run's
+        # findings/state files in place, mixing artifacts from two scans.
+        # (Auto-generated names are collision-free, so this only guards an
+        # explicit name.) Require --resume to continue an existing run.
+        if not args.resume and run_dir_for(args.run_name).exists():
+            parser.error(
+                f"--run-name {args.run_name!r}: run dir already exists at "
+                f"{run_dir_for(args.run_name)}. A fresh scan would overwrite "
+                f"run.json but leave the prior run's findings/state in place. "
+                f"Pass --resume {args.run_name} to continue it, or choose a new "
+                f"--run-name."
+            )
 
     if args.resume:
         if args.target or args.target_list or args.mount:
@@ -1011,7 +1059,11 @@ def main() -> None:
 
     persist_current()
 
-    args.run_name = args.resume or generate_run_name(args.targets_info)
+    # Precedence: an explicit --run-name wins (deterministic, caller-keyed run
+    # dir); else --resume reuses the prior run's name; else auto-generate. The
+    # --run-name/--resume consistency check above guarantees the first two agree
+    # when both are set, so this collapses cleanly.
+    args.run_name = args.run_name or args.resume or generate_run_name(args.targets_info)
 
     if not args.resume:
         for target_info in args.targets_info:
