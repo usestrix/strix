@@ -1,0 +1,52 @@
+---
+title: "Coding Agents"
+description: "Use Strix from Claude Code, Cursor, Codex, and other AI agents"
+---
+
+Strix is built to be driven by AI coding agents. Install the official agent skills and your agent knows how to run pentests, remediate findings, and wire Strix into CI.
+
+## Install the Skills
+
+Works with any agent that supports the open [SKILL.md standard](https://agentskills.io) — Claude Code, Cursor, Codex, Gemini CLI, OpenCode, and dozens more:
+
+```bash
+npx skills add usestrix/strix
+```
+
+| Skill | What your agent learns |
+|-------|------------------------|
+| `strix-pentest` | Run headless scans against code, URLs, domains, or IPs with budget caps, and read the results |
+| `strix-fix-findings` | Triage findings, fix root causes, and re-run Strix to verify each fix |
+| `strix-ci-setup` | Add diff-scoped PR security scanning to GitHub Actions or any CI |
+
+Install a single skill with `npx skills add usestrix/strix --skill strix-pentest`, or use one without installing:
+
+```bash
+npx skills use usestrix/strix@strix-pentest | claude
+```
+
+## Agent-Friendly Interfaces
+
+Everything an agent needs is machine-readable:
+
+- **Headless CLI** — `strix -n` runs without the TUI and exits with `0` (clean), `1` (error), or `2` (vulnerabilities found).
+- **Structured results** — every run writes `vulnerabilities.json`, `vulnerabilities.csv`, `findings.sarif` (SARIF 2.1.0), and per-finding Markdown under `strix_runs/<run-name>/`.
+- **Budget controls** — `--max-budget` and `--max-turns` give agents hard cost/time caps.
+- **`AGENTS.md`** — the [repository's agent guide](https://github.com/usestrix/strix/blob/main/AGENTS.md) with a quick reference.
+- **`llms.txt`** — this documentation is indexed at [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) and fully exported at [docs.strix.ai/llms-full.txt](https://docs.strix.ai/llms-full.txt); every page is also available as Markdown by appending `.md` to its URL.
+
+## Example Prompts
+
+Once the skills are installed, prompts like these just work:
+
+```text
+Pentest this repo with Strix (quick mode, $10 budget) and summarize the findings.
+```
+
+```text
+Fix all critical and high findings from the last Strix run, then re-scan to verify.
+```
+
+```text
+Add Strix security scanning to our GitHub Actions so every PR gets tested.
+```

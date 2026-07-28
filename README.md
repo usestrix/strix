@@ -94,6 +94,18 @@ strix --target ./app-directory
 
 ---
 
+## 🤖 Use Strix from Your Coding Agent
+
+Strix is agent-ready. Give Claude Code, Cursor, Codex, or any [SKILL.md-compatible](https://agentskills.io) agent the ability to run pentests, fix findings, and set up CI scanning:
+
+```bash
+npx skills add usestrix/strix
+```
+
+This installs three skills: **strix-pentest** (run headless scans and read results), **strix-fix-findings** (remediate + re-scan to verify), and **strix-ci-setup** (diff-scoped PR scanning in CI). Agents can also read [`AGENTS.md`](AGENTS.md) for a quick reference and [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) for the full docs index.
+
+---
+
 ## ☁️ Strix Platform
 
 Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai)** - sign up for free, connect your repos and domains, and launch a pentest in minutes.
