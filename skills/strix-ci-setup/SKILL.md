@@ -85,7 +85,12 @@ if [ -z "$BASE_BRANCH" ]; then
   BASE_BRANCH="${BASE_BRANCH#origin/}"
 fi
 DIFF_BASE="origin/${BASE_BRANCH:-main}"
-git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null || DIFF_BASE="HEAD~1"
+# Fail loudly rather than silently narrowing scope (e.g. to HEAD~1, which on a
+# multi-commit branch would scan only the last commit and let earlier ones pass).
+if ! git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null; then
+  echo "Cannot resolve diff base '$DIFF_BASE'. Fetch the base branch (git fetch origin <base>) or set --diff-base explicitly." >&2
+  exit 1
+fi
 strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base "$DIFF_BASE" --max-budget 10
 ```
 

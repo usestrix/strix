@@ -49,7 +49,10 @@ if [ -z "$DIFF_BASE" ]; then
     git rev-parse --verify --quiet "$b" >/dev/null && DIFF_BASE="$b" && break
   done
 fi
-DIFF_BASE="${DIFF_BASE:-HEAD~1}"
+# No silent fallback: a guess like HEAD~1 would cover only the last commit of a
+# multi-commit fix branch. If no base resolves, ask the user for the base branch
+# (or use the focused --instruction verification below, which needs no diff base).
+[ -n "$DIFF_BASE" ] || { echo "Set DIFF_BASE to the branch your fix will merge into." >&2; exit 1; }
 strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base "$DIFF_BASE" --max-budget 5
 
 # Or re-test with the original finding as focus (no diff base needed)
