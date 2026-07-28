@@ -138,7 +138,7 @@ def validate_environment() -> None:
                 error_text.append("STRIX_LLM", style="bold cyan")
                 error_text.append(
                     " - Model name to use (e.g., 'openai/gpt-5.4' or "
-                    "'anthropic/claude-opus-4-7')\n",
+                    "'anthropic/claude-sonnet-4-6')\n",
                     style="white",
                 )
 
@@ -167,14 +167,6 @@ def validate_environment() -> None:
                         " - API key for Perplexity AI web search (enables real-time research)\n",
                         style="white",
                     )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append("• ", style="white")
-                    error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
-                    error_text.append(
-                        " - Reasoning effort level: none, minimal, low, medium, high, xhigh "
-                        "(default: high)\n",
-                        style="white",
-                    )
 
         error_text.append("\nExample setup:\n", style="white")
         error_text.append("export STRIX_LLM='openai/gpt-5.4'\n", style="dim white")
@@ -196,11 +188,6 @@ def validate_environment() -> None:
                 elif var == "PERPLEXITY_API_KEY":
                     error_text.append(
                         "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append(
-                        "export STRIX_REASONING_EFFORT='high'\n",
-                        style="dim white",
                     )
 
         panel = Panel(
@@ -337,7 +324,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             )
             warn_text.append("<provider>/<model>", style="bold cyan")
             warn_text.append(
-                "' form, e.g. 'anthropic/claude-opus-4-7', 'deepseek/deepseek-v4-pro'.",
+                "' form, e.g. 'anthropic/claude-sonnet-4-6', 'deepseek/deepseek-v4-pro'.",
                 style="white",
             )
             console.print(
