@@ -53,9 +53,10 @@ jobs:
 Then tell the user to add two repository secrets: `STRIX_LLM` (model id, e.g. `openai/gpt-5.4`) and `LLM_API_KEY` (the provider key). Do not create these values yourself.
 
 Notes:
-- In CI/headless runs Strix automatically scopes to the PR's changed files (`--scope-mode auto`). If diff resolution fails, keep `fetch-depth: 0` or pass `--diff-base origin/main`.
+- In CI/headless runs Strix automatically scopes to the PR's changed files (`--scope-mode auto`). If diff resolution fails, keep `fetch-depth: 0` or set `--diff-base` to the PR's actual base branch — use `origin/${{ github.base_ref }}` in GitHub Actions rather than a hard-coded `origin/main`, since repos use different default branches.
 - Exit codes: `0` pass, `2` vulnerabilities found (fails the job), `1` setup error.
 - The runner needs Docker (default GitHub-hosted Ubuntu runners have it).
+- **Size the budget so the scan completes — don't let it fail open.** A `0` exit means "no validated vulnerabilities in what was analyzed"; if `--max-budget` is hit before the diff is fully covered, the scan wraps up early and can exit `0` on code it never finished testing. For a `quick` diff-scoped PR scan `--max-budget 10` is usually ample, but for large diffs raise it, and don't treat a green build as a guarantee of full coverage. To be strict, fail the build unless `strix_runs/<run>/run.json` reports a completed (non-budget-truncated) status.
 
 ### Optional: upload findings to GitHub code scanning
 
@@ -75,10 +76,13 @@ Any pipeline works the same way — install, set the two env vars, run headless:
 
 ```bash
 curl -sSL https://strix.ai/install | bash
-strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base origin/main --max-budget 10
+# Resolve the PR's base branch (fall back to the remote default, then main).
+DIFF_BASE="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}"
+DIFF_BASE="origin/${DIFF_BASE:-$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || echo main)}"
+strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base "$DIFF_BASE" --max-budget 10
 ```
 
-Gate the pipeline on the exit code. Schedule `standard` scans nightly and `deep` scans for release candidates.
+Gate the pipeline on the exit code (see the budget/fail-open caveat above — give the scan enough budget to finish). Schedule `standard` scans nightly and `deep` scans for release candidates.
 
 ---
 

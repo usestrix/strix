@@ -39,13 +39,15 @@ After fixing, re-scan scoped to the fixed area and confirm the finding is gone. 
 
 **OSS CLI:**
 ```bash
-# Re-test just the changed files (fast)
-strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base origin/main --max-budget 5
+# Re-test just the changed files (fast). Resolve the repo's real default
+# branch instead of assuming origin/main (many repos use master/develop).
+DIFF_BASE=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo HEAD~1)
+strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base "$DIFF_BASE" --max-budget 5
 
-# Or re-test with the original finding as focus
+# Or re-test with the original finding as focus (no diff base needed)
 strix -n -t ./ --instruction "Verify the SQL injection in app/api/search.py is fixed. Original PoC: <poc>" --max-budget 5
 ```
-Exit code `0` = clean; `2` = findings remain (read the new `strix_runs/<run>/vulnerabilities/` and iterate).
+Exit codes: `2` = findings remain (read the new `strix_runs/<run>/vulnerabilities/` and iterate); `0` = clean **for what was analyzed**. Before trusting a `0`, confirm the run wasn't cut short — check `run.json` for a completed status and that the budget wasn't exhausted mid-scan (a too-low `--max-budget` can end verification early). Give verification enough budget to finish, and prefer re-running the specific PoC as the ground-truth signal.
 
 **Cloud:** rerun with the same config and re-poll, then confirm the finding no longer appears:
 ```bash
