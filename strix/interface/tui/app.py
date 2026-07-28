@@ -1042,7 +1042,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                             status=status,
                             error_message=error or "",
                         )
-                        if status in {"failed", "crashed", "waiting"} and error:
+                        if error:
                             if agent_id not in self._error_noted_agents:
                                 self._error_noted_agents.add(agent_id)
                                 self.live_view.record_agent_error(agent_id, error)

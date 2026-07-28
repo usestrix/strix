@@ -32,6 +32,8 @@ class AgentRuntime:
     stream: Any | None = None
     interrupt_on_message: bool = False
     wake: asyncio.Event = field(default_factory=asyncio.Event)
+    mailbox: list[dict[str, Any]] = field(default_factory=list)
+    user_wake_required: bool = False
 
 
 class AgentCoordinator:
@@ -179,6 +181,7 @@ class AgentCoordinator:
             if agent_id in self.statuses:
                 self.statuses[agent_id] = "running"
                 self.errors.pop(agent_id, None)
+                self.runtimes.setdefault(agent_id, AgentRuntime()).user_wake_required = False
         await self._maybe_snapshot()
 
     async def park_waiting(self, agent_id: str) -> None:
@@ -196,6 +199,7 @@ class AgentCoordinator:
             elif status == "running":
                 self.errors.pop(agent_id, None)
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
+            runtime.user_wake_required = status in {"failed", "crashed"}
             runtime.wake.set()
         logger.info("agent.status %s=%s", agent_id, status)
         await self._maybe_snapshot()
@@ -203,49 +207,56 @@ class AgentCoordinator:
     async def send(
         self, target_agent_id: str, message: dict[str, Any], *, interrupt: bool = True
     ) -> bool:
-        """Deliver a user/peer message by appending it to the target SDK session."""
-        if message.get("from") == "user" and self._budget_paused:
+        """Queue a user/peer message in the target's mailbox and wake it.
+
+        Delivery never blocks: the message lands in an in-memory mailbox and
+        the target agent appends it to its own SDK session when it wakes
+        (``consume_pending``).
+        """
+        from_user = message.get("from") == "user"
+        if from_user and self._budget_paused:
             await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:
             if target_agent_id not in self.statuses:
                 logger.debug("agent.send dropped unknown target=%s", target_agent_id)
                 return False
             runtime = self.runtimes.setdefault(target_agent_id, AgentRuntime())
-            session = runtime.session
+            runtime.mailbox.append(dict(message))
+            self.pending_counts[target_agent_id] = self.pending_counts.get(target_agent_id, 0) + 1
+            if from_user:
+                runtime.user_wake_required = False
+            runtime.wake.set()
             stream = runtime.stream
             interrupt_on_message = runtime.interrupt_on_message
-        if session is None:
-            logger.warning(
-                "agent.send dropped target=%s because its SDK session is not attached",
-                target_agent_id,
-            )
-            return False
-        try:
-            async with session_write_lock(session):
-                await session.add_items([self._message_to_session_item(message)])
-        except Exception:
-            logger.exception(
-                "agent.send failed to append to SDK session target=%s",
-                target_agent_id,
-            )
-            return False
-        async with self._lock:
-            self.pending_counts[target_agent_id] = self.pending_counts.get(target_agent_id, 0) + 1
-            self.runtimes.setdefault(target_agent_id, AgentRuntime()).wake.set()
         if stream is not None and interrupt and interrupt_on_message:
             stream.cancel(mode="immediate")
         await self._maybe_snapshot()
         return True
 
-    async def wait_for_message(self, agent_id: str) -> None:
+    async def wait_for_message(self, agent_id: str, *, timeout: float | None = None) -> bool:
+        """Wait until a message is ready for ``agent_id``; False on ``timeout``.
+
+        An agent parked with an error (``failed``/``crashed``) is only released
+        by a user message; peer messages stay queued until then.
+        """
         while True:
             async with self._lock:
+                runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
                 reserve_exit = self._reserve_stopped and self.parent_of.get(agent_id) is not None
-                if self._budget_stopped or reserve_exit or self.pending_counts.get(agent_id, 0) > 0:
-                    return
-                wake = self.runtimes.setdefault(agent_id, AgentRuntime()).wake
+                pending_ready = (
+                    self.pending_counts.get(agent_id, 0) > 0 and not runtime.user_wake_required
+                )
+                if self._budget_stopped or reserve_exit or pending_ready:
+                    return True
+                wake = runtime.wake
                 wake.clear()
-            await wake.wait()
+            if timeout is None:
+                await wake.wait()
+            else:
+                try:
+                    await asyncio.wait_for(wake.wait(), timeout)
+                except TimeoutError:
+                    return False
 
     async def consume_pending(
         self,
@@ -253,17 +264,42 @@ class AgentCoordinator:
         *,
         include_items: bool = False,
     ) -> tuple[int, list[Any]]:
+        """Drain the agent's mailbox into its own SDK session.
+
+        Runs in the receiving agent's context, so a slow or wedged session
+        write can never block a sender.
+        """
         async with self._lock:
-            count = self.pending_counts.get(agent_id, 0)
+            runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
+            queued = list(runtime.mailbox)
+            runtime.mailbox.clear()
+            count = max(self.pending_counts.get(agent_id, 0), len(queued))
             self.pending_counts[agent_id] = 0
-            session = self.runtimes.get(agent_id, AgentRuntime()).session
+            session = runtime.session
         if count <= 0:
             return 0, []
+        items = [self._message_to_session_item(m) for m in queued]
+        if items:
+            if session is None:
+                logger.warning(
+                    "agent %s has no SDK session attached; %d queued messages were not persisted",
+                    agent_id,
+                    len(items),
+                )
+            else:
+                try:
+                    async with session_write_lock(session):
+                        await session.add_items(items)
+                except Exception:
+                    logger.exception(
+                        "failed to append %d queued messages to the session of %s",
+                        len(items),
+                        agent_id,
+                    )
         await self._maybe_snapshot()
-        if not include_items or session is None:
+        if not include_items:
             return count, []
-        items = await session.get_items()
-        return count, list(items[-count:])
+        return count, items
 
     async def request_stop(self, agent_id: str) -> None:
         async with self._lock:
@@ -374,6 +410,11 @@ class AgentCoordinator:
                 "names": dict(self.names),
                 "metadata": {aid: dict(md) for aid, md in self.metadata.items()},
                 "pending_counts": dict(self.pending_counts),
+                "mailboxes": {
+                    aid: [dict(m) for m in runtime.mailbox]
+                    for aid, runtime in self.runtimes.items()
+                    if runtime.mailbox
+                },
                 "errors": dict(self.errors),
                 "budget_stopped": self._budget_stopped,
                 "reserve_stopped": self._reserve_stopped,
@@ -388,6 +429,12 @@ class AgentCoordinator:
             self.metadata = {aid: dict(md) for aid, md in snap.get("metadata", {}).items()}
             self.pending_counts = dict(snap.get("pending_counts", {}))
             self.errors = dict(snap.get("errors", {}))
+            mailboxes = snap.get("mailboxes", {})
+            if isinstance(mailboxes, dict):
+                for aid, msgs in mailboxes.items():
+                    if isinstance(msgs, list):
+                        runtime = self.runtimes.setdefault(aid, AgentRuntime())
+                        runtime.mailbox = [dict(m) for m in msgs if isinstance(m, dict)]
             self._budget_stopped = bool(snap.get("budget_stopped", False))
             self._reserve_stopped = bool(snap.get("reserve_stopped", False))
             self._budget_paused = bool(snap.get("budget_paused", False))

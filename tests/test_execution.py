@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from typing import Any
+from typing import Any, cast
 
 import pytest
 from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
 
+from strix.core import execution
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
     _notify_parent_on_terminal,
@@ -495,3 +496,99 @@ async def test_terminal_notice_does_not_cancel_parent_stream(tmp_path: Any) -> N
     assert stream.cancelled is False
     assert coordinator.pending_counts.get("root", 0) > 0
     session.close()
+
+
+@pytest.mark.asyncio
+async def test_send_queues_without_session_and_drains_on_consume(tmp_path: Any) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    assert await coordinator.send("root", {"from": "user", "content": "hello"}) is True
+    assert coordinator.pending_counts["root"] == 1
+
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
+
+    count, items = await coordinator.consume_pending("root", include_items=True)
+    assert count == 1
+    assert items[0]["content"] == "hello"
+    stored = await session.get_items()
+    last = cast("dict[str, Any]", stored[-1])
+    assert last["content"] == "hello"
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_error_parked_agent_only_released_by_user_message(tmp_path: Any) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    session = SQLiteSession("child", tmp_path / "agents.db")
+    await coordinator.attach_runtime("child", session=session)
+    await coordinator.set_status("child", "crashed", error="boom")
+
+    await coordinator.send("child", {"from": "root", "content": "peer nudge"})
+    waiter = asyncio.create_task(coordinator.wait_for_message("child"))
+    await asyncio.sleep(0.05)
+    assert not waiter.done()
+
+    await coordinator.send("child", {"from": "user", "content": "wake up"})
+    assert await asyncio.wait_for(waiter, timeout=1.0) is True
+
+    count, items = await coordinator.consume_pending("child", include_items=True)
+    assert count == 2
+    assert items[0]["content"].endswith("peer nudge")
+    assert items[1]["content"] == "wake up"
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_wait_for_message_timeout_returns_false() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("child", "recon", parent_id="root")
+
+    assert await coordinator.wait_for_message("child", timeout=0.05) is False
+
+
+@pytest.mark.asyncio
+async def test_snapshot_round_trip_preserves_mailboxes() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.send("root", {"from": "user", "content": "queued"})
+
+    snap = await coordinator.snapshot()
+    restored = AgentCoordinator()
+    await restored.restore(snap)
+
+    assert restored.pending_counts["root"] == 1
+    assert restored.runtimes["root"].mailbox == [{"from": "user", "content": "queued"}]
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_parked_parks_instead_of_raising(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def _boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("unexpected explosion")
+
+    monkeypatch.setattr(execution, "_run_cycle", _boom)
+
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    result = await execution._run_cycle_parked(
+        object(),
+        coordinator,
+        "root",
+        input_data=[],
+        run_config=None,  # type: ignore[arg-type]
+        context={},
+        max_turns=5,
+        session=None,
+        event_sink=None,
+        hooks=None,
+    )
+
+    assert result is None
+    assert coordinator.statuses["root"] == "failed"
+    assert coordinator.errors["root"] == "unexpected explosion"

@@ -9,6 +9,7 @@ import uuid
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, cast
 
+import litellm
 from agents import RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
@@ -16,11 +17,10 @@ from docker import errors as docker_errors  # type: ignore[import-untyped, unuse
 from openai import (
     APIConnectionError,
     APIError,
-    APIStatusError,
     APITimeoutError,
-    RateLimitError,
 )
 
+from strix.config import codex
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -88,10 +88,9 @@ async def _compact_session(
     )
 
 
-_TRANSIENT_MODEL_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
-_MAX_TRANSIENT_MODEL_RETRIES = 4
+_MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
-_TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 30.0
+_TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
 
 
 def _model_error_status_code(exc: BaseException) -> int | None:
@@ -100,15 +99,16 @@ def _model_error_status_code(exc: BaseException) -> int | None:
 
 
 def _is_transient_model_error(exc: BaseException) -> bool:
-    if isinstance(exc, RateLimitError):
+    if codex.is_content_guardrail_error(exc):
         return False
-    if isinstance(exc, APITimeoutError | APIConnectionError):
+    if isinstance(
+        exc, APITimeoutError | APIConnectionError | TimeoutError | ConnectionError | OSError
+    ):
         return True
-    if isinstance(exc, APIStatusError):
-        return exc.status_code in _TRANSIENT_MODEL_STATUS_CODES
-    if isinstance(exc, APIError):
-        return _model_error_status_code(exc) is None
-    return False
+    code = _model_error_status_code(exc)
+    if code is not None:
+        return bool(litellm._should_retry(code))
+    return isinstance(exc, APIError)
 
 
 def _transient_model_retry_delay(attempt: int) -> float:
@@ -153,7 +153,7 @@ async def run_agent_loop(
     if not (start_parked and interactive):
         if interactive:
             with contextlib.suppress(BudgetPausedError):
-                result = await _run_cycle(
+                result = await _run_cycle_parked(
                     agent,
                     coordinator,
                     agent_id,
@@ -162,7 +162,6 @@ async def run_agent_loop(
                     context=context,
                     max_turns=max_turns,
                     session=session,
-                    interactive=interactive,
                     event_sink=event_sink,
                     hooks=hooks,
                 )
@@ -184,8 +183,9 @@ async def run_agent_loop(
         return result
 
     while True:
+        timeout = await _plain_waiting_timeout(coordinator, agent_id, context)
         try:
-            await coordinator.wait_for_message(agent_id)
+            woke = await coordinator.wait_for_message(agent_id, timeout=timeout)
         except asyncio.CancelledError:
             return result
 
@@ -197,9 +197,21 @@ async def run_agent_loop(
             await coordinator.set_status(agent_id, "stopped")
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
+        if not woke:
+            logger.info("agent %s reached its waiting timeout; auto-resuming", agent_id)
+            await coordinator.send(
+                agent_id,
+                {
+                    "from": "system",
+                    "type": "auto_resume",
+                    "content": "Waiting timeout reached. Resuming execution.",
+                },
+                interrupt=False,
+            )
+
         await coordinator.consume_pending(agent_id)
         with contextlib.suppress(BudgetPausedError):
-            result = await _run_cycle(
+            result = await _run_cycle_parked(
                 agent,
                 coordinator,
                 agent_id,
@@ -208,7 +220,6 @@ async def run_agent_loop(
                 context=context,
                 max_turns=max_turns,
                 session=session,
-                interactive=interactive,
                 event_sink=event_sink,
                 hooks=hooks,
             )
@@ -429,6 +440,64 @@ async def _run_noninteractive_until_lifecycle(
             attempt=invalid_final_outputs,
             limit=invalid_final_output_limit,
         )
+
+
+_WAITING_AUTO_RESUME_TIMEOUT_S = 600.0
+
+
+async def _plain_waiting_timeout(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    context: dict[str, Any],
+) -> float | None:
+    """Auto-resume timeout for a plainly-waiting subagent; None waits forever."""
+    if context.get("parent_id") is None:
+        return None
+    async with coordinator._lock:
+        status = coordinator.statuses.get(agent_id)
+        has_error = agent_id in coordinator.errors
+        runtime = coordinator.runtimes.get(agent_id)
+        gated = runtime.user_wake_required if runtime is not None else False
+    if status == "waiting" and not has_error and not gated:
+        return _WAITING_AUTO_RESUME_TIMEOUT_S
+    return None
+
+
+async def _run_cycle_parked(
+    agent: Any,
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    *,
+    input_data: Any,
+    run_config: RunConfig,
+    context: dict[str, Any],
+    max_turns: int,
+    session: Session | None,
+    event_sink: StreamEventSink | None,
+    hooks: RunHooks[dict[str, Any]] | None,
+) -> RunResultBase | None:
+    """Interactive run cycle that parks on any error instead of killing the runner."""
+    try:
+        return await _run_cycle(
+            agent,
+            coordinator,
+            agent_id,
+            input_data=input_data,
+            run_config=run_config,
+            context=context,
+            max_turns=max_turns,
+            session=session,
+            interactive=True,
+            event_sink=event_sink,
+            hooks=hooks,
+        )
+    except (BudgetExceededError, BudgetPausedError, SubagentBudgetReservedError):
+        raise
+    except Exception as exc:
+        logger.exception("error escaped the run cycle for %s; parking as failed", agent_id)
+        await coordinator.set_status(agent_id, "failed", error=str(exc) or type(exc).__name__)
+        await _notify_parent_on_terminal(coordinator, agent_id, "failed")
+        return None
 
 
 async def _run_cycle(  # noqa: PLR0912, PLR0915
