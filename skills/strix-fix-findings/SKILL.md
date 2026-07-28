@@ -41,7 +41,15 @@ After fixing, re-scan scoped to the fixed area and confirm the finding is gone. 
 ```bash
 # Re-test just the changed files (fast). Resolve the repo's real default
 # branch instead of assuming origin/main (many repos use master/develop).
-DIFF_BASE=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || git rev-parse --abbrev-ref --symbolic-full-name @{u} 2>/dev/null || echo HEAD~1)
+# Avoid the current branch's own upstream as the base — its merge base with
+# HEAD would be HEAD, giving an empty diff and a falsely clean result.
+DIFF_BASE=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+if [ -z "$DIFF_BASE" ]; then
+  for b in origin/main origin/master origin/develop; do
+    git rev-parse --verify --quiet "$b" >/dev/null && DIFF_BASE="$b" && break
+  done
+fi
+DIFF_BASE="${DIFF_BASE:-HEAD~1}"
 strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base "$DIFF_BASE" --max-budget 5
 
 # Or re-test with the original finding as focus (no diff base needed)

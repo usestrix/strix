@@ -76,9 +76,16 @@ Any pipeline works the same way — install, set the two env vars, run headless:
 
 ```bash
 curl -sSL https://strix.ai/install | bash
-# Resolve the PR's base branch (fall back to the remote default, then main).
-DIFF_BASE="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}"
-DIFF_BASE="origin/${DIFF_BASE:-$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##' || echo main)}"
+# Resolve the PR's base branch robustly (use your CI's base-branch variable if it
+# has one, e.g. GitHub Actions: origin/${{ github.base_ref }}). Avoid piping the
+# git lookup into another command — a failed lookup would otherwise be masked.
+BASE_BRANCH="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}"   # GitLab MR target
+if [ -z "$BASE_BRANCH" ]; then
+  BASE_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
+  BASE_BRANCH="${BASE_BRANCH#origin/}"
+fi
+DIFF_BASE="origin/${BASE_BRANCH:-main}"
+git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null || DIFF_BASE="HEAD~1"
 strix -n -t ./ --scan-mode quick --scope-mode diff --diff-base "$DIFF_BASE" --max-budget 10
 ```
 
