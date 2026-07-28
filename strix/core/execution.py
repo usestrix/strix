@@ -30,6 +30,7 @@ from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
     enforce_image_budget,
     open_agent_session,
+    seed_initial_input,
     strip_all_images_from_session,
 )
 from strix.llm.compaction import is_context_overflow, maybe_compact
@@ -116,6 +117,17 @@ def _transient_model_retry_delay(attempt: int) -> float:
     return min(delay, _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
 
 
+async def _seed_and_prepare_first_input(
+    session: Session | None, initial_input: Any, *, start_parked: bool
+) -> Any:
+    """Persist the opening input up front so it survives a first-turn crash."""
+    if initial_input and session is not None and not start_parked:
+        with contextlib.suppress(Exception):
+            if await seed_initial_input(session, initial_input):
+                return []
+    return initial_input
+
+
 async def run_agent_loop(
     *,
     agent: Any,
@@ -138,6 +150,10 @@ async def run_agent_loop(
     )
     result: RunResultBase | None = None
 
+    first_cycle_input = await _seed_and_prepare_first_input(
+        session, initial_input, start_parked=start_parked
+    )
+
     budget_stopped = coordinator.budget_stopped
     reserve_stopped = coordinator.reserve_stopped
     if budget_stopped:
@@ -157,7 +173,7 @@ async def run_agent_loop(
                     agent,
                     coordinator,
                     agent_id,
-                    input_data=initial_input,
+                    input_data=first_cycle_input,
                     run_config=run_config,
                     context=context,
                     max_turns=max_turns,
@@ -170,7 +186,7 @@ async def run_agent_loop(
                 agent,
                 coordinator,
                 agent_id,
-                initial_input=initial_input,
+                initial_input=first_cycle_input,
                 run_config=run_config,
                 context=context,
                 max_turns=max_turns,

@@ -17,6 +17,7 @@ from strix.core.execution import (
     _notify_parent_on_terminal,
     _notify_root_on_budget_reserve,
 )
+from strix.core.sessions import seed_initial_input
 from strix.tools.finish.tool import finish_scan
 
 
@@ -592,3 +593,59 @@ async def test_run_cycle_parked_parks_instead_of_raising(
     assert result is None
     assert coordinator.statuses["root"] == "failed"
     assert coordinator.errors["root"] == "unexpected explosion"
+
+
+@pytest.mark.asyncio
+async def test_seed_initial_input_persists_and_is_idempotent(tmp_path: Any) -> None:
+    session = SQLiteSession("child", tmp_path / "agents.db")
+    identity = [{"role": "user", "content": "You are agent recon (abc); do X."}]
+
+    assert await seed_initial_input(session, identity) is True
+    assert len(await session.get_items()) == 1
+
+    # A populated session is left untouched (no duplicate identity message).
+    assert await seed_initial_input(session, identity) is False
+    assert len(await session.get_items()) == 1
+
+    assert await seed_initial_input(session, []) is False
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_run_agent_loop_seeds_identity_before_first_cycle(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("child", "recon", parent_id="root")
+    session = SQLiteSession("child", tmp_path / "agents.db")
+
+    captured: dict[str, Any] = {}
+
+    async def _crash_first_turn(*_args: Any, **kwargs: Any) -> Any:
+        captured["input_data"] = kwargs.get("input_data")
+        captured["items_at_start"] = await session.get_items()
+        raise RuntimeError("first-turn crash")
+
+    monkeypatch.setattr(execution, "_run_cycle", _crash_first_turn)
+
+    identity = [{"role": "user", "content": "You are agent recon (abc); maintain your identity."}]
+    with pytest.raises(RuntimeError, match="first-turn crash"):
+        await execution.run_agent_loop(
+            agent=object(),
+            initial_input=identity,
+            run_config=None,  # type: ignore[arg-type]
+            context={"agent_id": "child", "parent_id": "root"},
+            max_turns=5,
+            coordinator=coordinator,
+            agent_id="child",
+            interactive=False,
+            session=session,
+        )
+
+    # The first cycle ran with an empty input against the pre-seeded session.
+    assert captured["input_data"] == []
+    assert captured["items_at_start"]
+    # The identity/task survives the first-turn crash, so a revival can resume it.
+    stored = await session.get_items()
+    assert any("recon" in str(cast("dict[str, Any]", i).get("content", "")) for i in stored)
+    session.close()
