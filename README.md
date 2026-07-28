@@ -267,6 +267,20 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 > [!NOTE]
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
 
+#### Sign in with a ChatGPT subscription
+
+Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
+
+```bash
+strix auth login chatgpt      # sign in with your ChatGPT account
+
+export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
+strix --target ./app-directory
+
+strix auth status             # show the active sign-in
+strix auth logout             # forget the sign-in
+```
+
 **Recommended models for best results:**
 
 - [OpenAI GPT-5.4](https://openai.com/api/) - `openai/gpt-5.4`

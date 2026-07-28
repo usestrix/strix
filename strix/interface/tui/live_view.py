@@ -20,7 +20,7 @@ class TuiLiveView:
         self.events: list[dict[str, Any]] = []
         self._next_event_id = 1
         self._open_assistant_event_by_agent: dict[str, dict[str, Any]] = {}
-        self._tool_event_by_call_id: dict[str, dict[str, Any]] = {}
+        self._tool_event_by_agent_and_call_id: dict[tuple[str, str], dict[str, Any]] = {}
 
     def hydrate_from_run_dir(self, run_dir: Path) -> None:
         state_dir = runtime_state_dir(run_dir)
@@ -85,6 +85,17 @@ class TuiLiveView:
         if error_message:
             current["error_message"] = error_message
         current["updated_at"] = now
+
+    def record_agent_error(self, agent_id: str, error: str) -> None:
+        self._append_event(
+            agent_id,
+            "chat",
+            {
+                "role": "assistant",
+                "content": (f"An error occurred: {error}\nI'm now waiting for new instructions."),
+                "metadata": {"source": "agent_error"},
+            },
+        )
 
     def record_user_message(self, agent_id: str, content: str) -> None:
         self._append_event(
@@ -212,7 +223,8 @@ class TuiLiveView:
         timestamp: str | None = None,
     ) -> None:
         call_id = call["call_id"]
-        existing = self._tool_event_by_call_id.get(call_id)
+        event_key = (agent_id, call_id)
+        existing = self._tool_event_by_agent_and_call_id.get(event_key)
         tool_data = {
             "tool_name": call["tool_name"],
             "args": call["args"],
@@ -222,7 +234,7 @@ class TuiLiveView:
         }
         if existing is None:
             event = self._append_event(agent_id, "tool", tool_data, timestamp=timestamp)
-            self._tool_event_by_call_id[call_id] = event
+            self._tool_event_by_agent_and_call_id[event_key] = event
         else:
             existing["data"].update(tool_data)
             self._bump_event(existing, timestamp=timestamp)
@@ -238,7 +250,8 @@ class TuiLiveView:
         timestamp: str | None = None,
     ) -> None:
         call_id = output["call_id"]
-        event = self._tool_event_by_call_id.get(call_id)
+        event_key = (agent_id, call_id)
+        event = self._tool_event_by_agent_and_call_id.get(event_key)
         if event is None:
             event = self._append_event(
                 agent_id,
@@ -252,7 +265,7 @@ class TuiLiveView:
                 },
                 timestamp=timestamp,
             )
-            self._tool_event_by_call_id[call_id] = event
+            self._tool_event_by_agent_and_call_id[event_key] = event
 
         result = _parse_json_value(output["output"])
         event["data"]["result"] = result

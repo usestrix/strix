@@ -26,7 +26,7 @@ for tcss_file in strix_root.rglob('*.tcss'):
     datas.append((str(tcss_file), str(rel_path.parent)))
 
 # Prebuilt local-viewer SPA (served by `strix view`).
-viewer_static = strix_root / 'viewer' / 'static'
+viewer_static = strix_root / 'interface' / 'viewer' / 'static'
 for asset in viewer_static.rglob('*'):
     if asset.is_file():
         rel_path = asset.relative_to(project_root)
@@ -158,12 +158,12 @@ hiddenimports = [
     'strix.report.dedupe',
     'strix.report.state',
     'strix.report.writer',
-    'strix.viewer',
-    'strix.viewer.auth',
-    'strix.viewer.cli',
-    'strix.viewer.report_pdf',
-    'strix.viewer.server',
-    'strix.viewer.transcript',
+    'strix.interface.viewer',
+    'strix.interface.viewer.auth',
+    'strix.interface.viewer.cli',
+    'strix.interface.viewer.report_pdf',
+    'strix.interface.viewer.server',
+    'strix.interface.viewer.transcript',
 
     # PDF report generation + encryption
     'reportlab',

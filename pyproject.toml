@@ -1,6 +1,6 @@
 [project]
 name = "strix-agent"
-version = "1.3.1"
+version = "1.4.1"
 description = "Open-source AI Hackers for your apps"
 readme = "README.md"
 license = "Apache-2.0"
@@ -79,10 +79,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["strix"]
-# The prebuilt viewer bundle under strix/viewer/static/ ships automatically
+# The prebuilt viewer bundle under strix/interface/viewer/static/ ships automatically
 # (hatchling includes non-.py files under the package). The Vite SOURCE lives
-# under the package dir too (strix/viewer/frontend/) but must never ship in the wheel.
-exclude = ["strix/viewer/frontend", "strix/viewer/frontend/**"]
+# under the package dir too (strix/interface/viewer/frontend/) but must never ship in the wheel.
+exclude = ["strix/interface/viewer/frontend", "strix/interface/viewer/frontend/**"]
 
 # ============================================================================
 # Type Checking Configuration
@@ -122,6 +122,7 @@ module = [
     "pydantic_settings.*",
     "reportlab.*",
     "pypdf.*",
+    "pygments.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
@@ -215,12 +216,16 @@ ignore = [
 # Test doubles use fixture tokens/passwords and match a callee signature whose
 # args they intentionally ignore.
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
+"tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
+# Stdlib HTTP handler overrides (do_GET/do_POST).
+"strix/interface/auth_cli.py" = ["N802"]
+"tests/test_codex_streaming.py" = ["N802"]
 "tests/test_report_pdf.py" = ["S105", "S106"]
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
-# circular dependency with strix.telemetry / strix.viewer.report_pdf.
-"strix/viewer/server.py" = ["N802", "PLC0415"]
+# circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.
+"strix/interface/viewer/server.py" = ["N802", "PLC0415"]
 # Lazy telemetry import to avoid importing PostHog before the viewer starts.
-"strix/viewer/cli.py" = ["PLC0415"]
+"strix/interface/viewer/cli.py" = ["PLC0415"]
 # Lazy imports inside functions to avoid circular dependency with
 # strix.telemetry / strix.report.dedupe / cvss.
 "strix/tools/notes/tools.py" = ["PLC0415", "TC002"]
@@ -255,7 +260,14 @@ ignore = [
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
 "strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401", "PLC0415"]
 "strix/report/usage.py" = ["PLC0415"]
+# Lazy import of strix.config.models avoids a circular dependency between the
+# report pipeline and the config layer.
+"strix/report/dedupe.py" = ["PLC0415"]
+"strix/telemetry/logging.py" = ["PLC0415"]
 "strix/config/models.py" = ["PLC0415"]
+# Heavy inference deps (httpx, openai) imported lazily so auth-status checks
+# don't pull them in.
+"strix/config/codex.py" = ["PLC0415"]
 # Interface utility branches per scope-mode / target-type combination;
 # splitting would obscure the decision tree without simplifying it.
 "strix/interface/utils.py" = ["PLR0912", "BLE001", "PLC0415"]

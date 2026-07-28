@@ -6,10 +6,11 @@ import json
 from typing import TYPE_CHECKING
 
 import pytest
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, ValidationError
 from pydantic.fields import FieldInfo
 
 from strix.config import loader
+from strix.config.settings import ContextSettings
 
 
 if TYPE_CHECKING:
@@ -118,6 +119,15 @@ def test_read_json_overrides_uses_json_when_no_alias_in_environ(tmp_path: Path) 
     path = tmp_path / "cli-config.json"
     path.write_text(json.dumps({"env": {"OPENAI_API_KEY": "sk-file"}}), encoding="utf-8")
     assert loader._read_json_overrides(path) == {"llm": {"api_key": "sk-file"}}
+
+
+def test_tool_output_max_bytes_rejects_sub_notice_values() -> None:
+    with pytest.raises(ValidationError):
+        ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=64)
+
+
+def test_tool_output_max_bytes_accepts_floor() -> None:
+    assert ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=1024).tool_output_max_bytes == 1024
 
 
 # --------------------------------------------------------------------------- #

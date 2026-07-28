@@ -271,7 +271,13 @@ def _release_target() -> str | None:
     if os_name is None:
         return None
     target = f"{os_name}-{arch}"
-    supported = {"linux-x86_64", "macos-x86_64", "macos-arm64", "windows-x86_64"}
+    supported = {
+        "linux-x86_64",
+        "linux-arm64",
+        "macos-x86_64",
+        "macos-arm64",
+        "windows-x86_64",
+    }
     return target if target in supported else None
 
 

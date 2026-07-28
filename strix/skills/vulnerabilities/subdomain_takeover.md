@@ -152,7 +152,7 @@ TLS clues: certificate CN/SAN referencing provider default host instead of the c
 
 ## Pro Tips
 
-1. Build a pipeline: enumerate (subfinder/amass) → resolve (dnsx) → probe (httpx) → fingerprint (nuclei/custom) → verify claims
+1. Build a pipeline: enumerate (subfinder) → resolve (dig) → probe (httpx) → fingerprint (nuclei/custom) → verify claims
 2. Maintain a current fingerprint corpus; provider messages change frequently
 3. Prefer minimal PoCs: static "ownership proof" page and, where allowed, DV cert issuance
 4. Monitor CT for unexpected certs on your subdomains

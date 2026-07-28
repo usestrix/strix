@@ -1,8 +1,8 @@
-import json
 import logging
-import urllib.request
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+import requests
 
 from strix.config import load_settings
 from strix.telemetry._common import (
@@ -37,13 +37,7 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
             "distinct_id": SESSION_ID,
             "properties": properties,
         }
-        req = urllib.request.Request(  # noqa: S310
-            f"{_POSTHOG_HOST}/capture/",
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"},
-        )
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
-            pass
+        requests.post(f"{_POSTHOG_HOST}/capture/", json=payload, timeout=10)
     except Exception:  # noqa: BLE001
         logger.debug("posthog send failed for event %s", event, exc_info=True)
         return False
@@ -58,12 +52,14 @@ def start(
     is_whitebox: bool,
     interactive: bool,
     has_instructions: bool,
+    auth_mode: str | None = None,
 ) -> None:
     _send(
         "scan_started",
         {
             **base_props(),
             "model": model or "unknown",
+            "auth_mode": auth_mode or "api_key",
             "scan_mode": scan_mode or "unknown",
             "scan_type": "whitebox" if is_whitebox else "blackbox",
             "interactive": interactive,
@@ -133,6 +129,7 @@ def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
         "scan_ended",
         {
             **base_props(),
+            "auth_mode": report_state.run_record.get("auth_mode") or "api_key",
             "exit_reason": report_state.scan_ended_exit_reason,
             "duration_seconds": round(duration),
             "vulnerabilities_total": len(report_state.vulnerability_reports),

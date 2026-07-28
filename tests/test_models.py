@@ -42,9 +42,11 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
     "model_name",
     [
         "gpt-5.5",
+        "chatgpt/gpt-5.4",
         "litellm/openai/gpt-5.4-pro",
         "azure_ai/gpt-5.5-pro",
         "bedrock_mantle/openai.gpt-5.5",
+        "anthropic/claude-opus-5",
         "anthropic/claude-opus-4-8",
         "anthropic.claude-opus-4-8",
         "anthropic/claude-opus-4-7",
@@ -60,8 +62,10 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
         "deepseek/deepseek-reasoner",
         "dashscope/qwen3-max-2026-01-23",
         "qwen3.7-max",
+        "dashscope/qwen3.8-max",
         "moonshot/kimi-k2.6",
         "kimi-k2.7-code",
+        "moonshot/kimi-k3",
     ],
 )
 def test_frontier_model_families_are_accepted(model_name: str) -> None:

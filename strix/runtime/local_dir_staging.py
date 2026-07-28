@@ -110,7 +110,7 @@ def stage_symlink_safe_dir(src_root: Path) -> tuple[Path, Path | None]:
     if not tree_has_symlink(root):
         return root, None
 
-    staged = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX))
+    staged = Path(tempfile.mkdtemp(prefix=_STAGING_PREFIX)).resolve()
     try:
         _stage_dir(root, staged, root, frozenset({root}))
     except OSError:

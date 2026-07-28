@@ -116,12 +116,16 @@ async def finish_scan(
        / ``crashed`` / ``stopped`` agents are safe to leave behind.
        Calling ``finish_scan`` while children are alive orphans their
        work and produces an incomplete report.
-    2. All vulnerabilities you found are filed via
-       ``create_vulnerability_report`` — or, for known-CVE dependency
-       findings, ``create_dependency_report`` (un-reported findings are
-       not tracked and not credited). A dependency CVE already filed via
-       ``create_dependency_report`` counts as reported; it does NOT need
-       re-filing here and does NOT block finishing.
+    2. It's a good idea to call ``list_reports`` before finishing to
+       review every finding filed in this scan (use ``get_report`` for
+       full detail on any of them) so your ``executive_summary`` /
+       ``technical_analysis`` are grounded in what was actually reported
+       — don't invent or omit findings. All vulnerabilities you found are
+       filed via ``create_vulnerability_report`` — or, for known-CVE
+       dependency findings, ``create_dependency_report`` (un-reported
+       findings are not tracked and not credited). A dependency CVE
+       already filed via ``create_dependency_report`` counts as reported;
+       it does NOT need re-filing here and does NOT block finishing.
     3. Don't double-report — one report per distinct vulnerability.
     4. **Attack-chaining gate.** Do NOT finish until you have genuinely
        considered chaining the confirmed findings into higher-impact,
@@ -249,6 +253,8 @@ async def finish_scan(
     parent_id = inner.get("parent_id")
     if coordinator is not None and parent_id is None and me is not None:
         active_agents = await coordinator.active_agents_except(me)
+        if active_agents and coordinator.reserve_stopped:
+            active_agents = []
     else:
         active_agents = []
 

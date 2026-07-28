@@ -13,19 +13,54 @@ from openai.types.responses import ResponseOutputMessage
 
 from strix.config import load_settings
 from strix.config.models import (
-    DEFAULT_MODEL_RETRY,
     StrixProvider,
     configure_sdk_model_defaults,
-    request_timeout_extra_args,
 )
+from strix.core.inputs import make_model_settings
 from strix.report.state import get_global_report_state
 
 
 if TYPE_CHECKING:
     from agents.items import ModelResponse
 
+    from strix.config.settings import DedupeSettings
+
 
 logger = logging.getLogger(__name__)
+
+
+def _dedupe_extra_args(dedupe: DedupeSettings) -> dict[str, str]:
+    """Per-call credential + endpoint for the dedupe model.
+
+    Provider env vars and the global base URL are process-wide, so a
+    shared-provider dedupe key or a distinct dedupe endpoint can't be installed
+    globally without clobbering (or being clobbered by) the main model's
+    config. Passing them per call keeps the two apart. Only applies when a
+    dedicated dedupe model is configured.
+    """
+    if not dedupe.model:
+        return {}
+    extra: dict[str, str] = {}
+    if dedupe.api_key and dedupe.api_key.strip():
+        extra["api_key"] = dedupe.api_key.strip()
+    if dedupe.api_base and dedupe.api_base.strip():
+        extra["api_base"] = dedupe.api_base.strip()
+    return extra
+
+
+def _dedupe_model_settings(
+    dedupe: DedupeSettings, model_name: str, request_timeout: float | None
+) -> ModelSettings:
+    settings = make_model_settings(
+        dedupe.reasoning_effort,
+        model_name=model_name,
+        force_required_tool_choice=False,
+        request_timeout=request_timeout,
+    )
+    extra = _dedupe_extra_args(dedupe)
+    if extra:
+        settings = settings.resolve(ModelSettings(extra_args=extra))
+    return settings
 
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.
 Your task is to determine if a candidate vulnerability report describes the SAME vulnerability
@@ -286,13 +321,14 @@ async def check_duplicate(
 
     try:
         settings = load_settings()
-        model_name = settings.llm.model
+        dedupe = settings.dedupe
+        model_name = (dedupe.model or "").strip() or settings.llm.model
         if not model_name:
             return {
                 "is_duplicate": False,
                 "duplicate_id": "",
                 "confidence": 0.0,
-                "reason": "STRIX_LLM not configured; skipping dedupe check",
+                "reason": "No LLM model configured; skipping dedupe check",
             }
 
         candidate_cleaned = _prepare_report_for_comparison(candidate)
@@ -311,10 +347,8 @@ async def check_duplicate(
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,
-            model_settings=ModelSettings(
-                retry=DEFAULT_MODEL_RETRY,
-                include_usage=True,
-                extra_args=request_timeout_extra_args(settings.llm.timeout),
+            model_settings=_dedupe_model_settings(
+                dedupe, resolved_model, settings.llm.timeout
             ),
             tools=[],
             output_schema=None,

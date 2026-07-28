@@ -20,6 +20,7 @@ from rich.text import Text
 
 from strix.config import (
     apply_config_override,
+    codex,
     load_settings,
     persist_current,
 )
@@ -30,6 +31,7 @@ from strix.config.models import (
     is_known_openai_bare_model,
     is_recommended_or_frontier_model,
 )
+from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
@@ -91,6 +93,16 @@ def validate_environment() -> None:
     missing_optional_vars = []
 
     settings = load_settings()
+
+    if codex.subscription_model(settings.llm.model):
+        if not codex.is_authenticated():
+            console.print(
+                f"[red]STRIX_LLM={settings.llm.model} uses your ChatGPT subscription, "
+                "but you're not signed in.[/] Run [cyan]strix auth login chatgpt[/] first."
+            )
+            sys.exit(1)
+        logger.info("Environment OK (ChatGPT subscription)")
+        return
 
     if not settings.llm.model:
         missing_required_vars.append("STRIX_LLM")
@@ -199,7 +211,7 @@ def validate_environment() -> None:
             padding=(1, 2),
         )
 
-        logger.error("Missing required env vars: %s", missing_required_vars)
+        logger.debug("Missing required env vars: %s", missing_required_vars)
         console.print("\n")
         console.print(panel)
         console.print()
@@ -212,7 +224,7 @@ def validate_environment() -> None:
 
 def check_docker_installed() -> None:
     if shutil.which("docker") is None:
-        logger.error("Docker CLI not found in PATH")
+        logger.debug("Docker CLI not found in PATH")
         console = Console()
         error_text = Text()
         error_text.append("DOCKER NOT INSTALLED", style="bold red")
@@ -274,6 +286,29 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
     return None
 
 
+def _subscription_error_hint(exc: BaseException) -> str | None:
+    """Return an actionable hint for a known ChatGPT-subscription error, or None."""
+    if not codex.subscription_model(load_settings().llm.model):
+        return None
+    joined = " ".join(_exception_messages(exc)).lower()
+    if "not supported when using codex with a chatgpt account" in joined:
+        return (
+            "This model isn't available on your ChatGPT subscription. "
+            "Set STRIX_LLM to a model your plan includes (e.g. chatgpt/gpt-5.4)."
+        )
+    if (
+        "error code: 401" in joined
+        or "http 401" in joined
+        or "unauthorized" in joined
+        or "invalid_grant" in joined
+    ):
+        return (
+            "Your ChatGPT sign-in has expired or was revoked. Sign in again:\n"
+            "  strix auth login chatgpt"
+        )
+    return None
+
+
 async def warm_up_llm(show_model_warning: bool = True) -> None:
     console = Console()
     logger.info("Warming up LLM connection")
@@ -283,8 +318,8 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         settings = load_settings()
         configure_sdk_model_defaults(settings)
         llm = settings.llm
-
         raw_model = (llm.model or "").strip()
+
         if (
             raw_model
             and "/" not in raw_model
@@ -360,23 +395,63 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         )
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
+        if settings.dedupe.model:
+            from strix.report.dedupe import _dedupe_extra_args
+
+            dedupe_model = settings.dedupe.model.strip()
+            raw_model = dedupe_model
+            deduper = StrixProvider().get_model(dedupe_model)
+            # Match the runtime path: send the dedupe key/endpoint per call so a
+            # separate-provider dedupe model authenticates during warm-up too.
+            deduper_extra = _dedupe_extra_args(settings.dedupe)
+            deduper_settings = ModelSettings(extra_args=deduper_extra or None)
+            await asyncio.wait_for(
+                deduper.get_response(
+                    system_instructions="You are a helpful assistant.",
+                    input="Reply with just 'OK'.",
+                    model_settings=deduper_settings,
+                    tools=[],
+                    output_schema=None,
+                    handoffs=[],
+                    tracing=ModelTracing.DISABLED,
+                    previous_response_id=None,
+                    conversation_id=None,
+                    prompt=None,
+                ),
+                timeout=llm.timeout,
+            )
+            logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
+
     except Exception as e:
-        logger.exception("LLM warm-up failed")
+        logger.debug("LLM warm-up failed", exc_info=True)
         error_text = Text()
-        error_text.append("LLM CONNECTION FAILED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Could not establish connection to the language model.\n", style="white")
-        error_text.append("Please check your configuration and try again.\n", style="white")
-        hint = _provider_import_hint(e, raw_model)
-        if hint is not None:
-            error_text.append(f"\n{hint}\n", style="bold yellow")
-        error_text.append(f"\nError: {e}", style="dim white")
+        sub_hint = _subscription_error_hint(e)
+        if sub_hint is not None:
+            # The model/backend answered with a clear, actionable rejection —
+            # show that instead of a generic "connection failed".
+            border_style = "yellow"
+            error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
+            error_text.append("\n\n", style="white")
+            error_text.append(f"{sub_hint}\n", style="white")
+            error_text.append(f"\nDetails: {e}", style="dim white")
+        else:
+            border_style = "red"
+            error_text.append("LLM CONNECTION FAILED", style="bold red")
+            error_text.append("\n\n", style="white")
+            error_text.append(
+                "Could not establish connection to the language model.\n", style="white"
+            )
+            error_text.append("Please check your configuration and try again.\n", style="white")
+            hint = _provider_import_hint(e, raw_model)
+            if hint is not None:
+                error_text.append(f"\n{hint}\n", style="bold yellow")
+            error_text.append(f"\nError: {e}", style="dim white")
 
         panel = Panel(
             error_text,
             title="[bold white]STRIX",
             title_align="left",
-            border_style="red",
+            border_style=border_style,
             padding=(1, 2),
         )
 
@@ -405,6 +480,16 @@ def _positive_budget(value: str) -> float:
     if not math.isfinite(budget) or budget <= 0:
         raise argparse.ArgumentTypeError("must be a finite number greater than 0")
     return budget
+
+
+def _positive_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be an integer greater than 0")
+    return parsed
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -562,10 +647,27 @@ Examples:
     )
 
     parser.add_argument(
-        "--max-budget-usd",
+        "--max-budget",
+        dest="max_budget_usd",
+        metavar="USD",
         type=_positive_budget,
         default=None,
-        help="Maximum LLM cost in USD (> 0). The scan stops cleanly when this limit is reached.",
+        help=(
+            "Maximum LLM cost in USD (> 0). The scan stops cleanly when this limit is reached. "
+            "Graduated wrap-up warnings are sent to all agents as it is approached."
+        ),
+    )
+
+    parser.add_argument(
+        "--max-turns",
+        dest="max_turns",
+        metavar="N",
+        type=_positive_int,
+        default=DEFAULT_MAX_TURNS,
+        help=(
+            "Maximum turns per agent (> 0, default %(default)s). Each agent is force-stopped "
+            "when it reaches this limit, with graduated wrap-up warnings as it is approached."
+        ),
     )
 
     parser.add_argument(
@@ -686,6 +788,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "status": "running",
         "start_time": datetime.now(UTC).isoformat(),
         "end_time": None,
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,
@@ -785,7 +888,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     view_text = Text()
     view_text.append("\n")
     view_text.append("View", style="dim")
-    view_text.append("         ")
+    view_text.append("    ")
     view_text.append(f"strix view {args.run_name}", style="#22c55e")
     panel_parts.extend(["\n", view_text])
 
@@ -847,7 +950,7 @@ def pull_docker_image() -> None:
                 last_update = process_pull_line(line, layers_info, status, last_update)
 
         except DockerException as e:
-            logger.exception("Failed to pull docker image %s", image)
+            logger.debug("Failed to pull docker image %s", image, exc_info=True)
             console.print()
             error_text = Text()
             error_text.append("FAILED TO PULL IMAGE", style="bold red")
@@ -881,10 +984,17 @@ def main() -> None:
     # `strix view [<run>]` is a viewer-only subcommand, dispatched before the
     # scan argument parser (which requires a target) and before any scan setup.
     if len(sys.argv) > 1 and sys.argv[1] == "view":
-        from strix.viewer.cli import run_view
+        from strix.interface.viewer.cli import run_view
 
         run_view(sys.argv[2:])
         return
+
+    # `strix auth …` manages model-subscription sign-in and exits; it needs no
+    # target, Docker, or scan setup.
+    if len(sys.argv) > 1 and sys.argv[1] == "auth":
+        from strix.interface.auth_cli import run_auth
+
+        sys.exit(run_auth(sys.argv[2:]))
 
     args = parse_arguments()
 
@@ -953,6 +1063,7 @@ def main() -> None:
 
     _telemetry_start_kwargs = {
         "model": load_settings().llm.model,
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
         "scan_mode": args.scan_mode,
         "is_whitebox": is_whitebox_scan(args.targets_info),
         "interactive": not args.non_interactive,

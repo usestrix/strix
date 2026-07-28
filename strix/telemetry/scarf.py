@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import logging
 import urllib.parse
-import urllib.request
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+import requests
 
 from strix.config import load_settings
 from strix.telemetry._common import (
@@ -42,9 +43,7 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
         url = f"{_SCARF_ENDPOINT}{path}"
         if query:
             url = f"{url}?{query}"
-        req = urllib.request.Request(url, method="POST")  # noqa: S310
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
-            pass
+        requests.post(url, timeout=10)
     except Exception:  # noqa: BLE001
         logger.debug("scarf send failed for event %s", event, exc_info=True)
         return False
@@ -59,6 +58,7 @@ def start(
     is_whitebox: bool,
     interactive: bool,
     has_instructions: bool,
+    auth_mode: str | None = None,
 ) -> None:
     _send(
         "scan_started",
@@ -66,6 +66,7 @@ def start(
             **base_props(),
             "session": SESSION_ID,
             "model": model or "unknown",
+            "auth_mode": auth_mode or "api_key",
             "scan_mode": scan_mode or "unknown",
             "scan_type": "whitebox" if is_whitebox else "blackbox",
             "interactive": interactive,
@@ -140,6 +141,7 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
         {
             **base_props(),
             "session": SESSION_ID,
+            "auth_mode": report_state.run_record.get("auth_mode") or "api_key",
             "exit_reason": report_state.scan_ended_exit_reason,
             "duration_seconds": round(duration),
             "vulnerabilities_total": len(report_state.vulnerability_reports),
