@@ -62,6 +62,7 @@ def _dedupe_model_settings(
         settings = settings.resolve(ModelSettings(extra_args=extra))
     return settings
 
+
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.
 Your task is to determine if a candidate vulnerability report describes the SAME vulnerability
 as any existing report.
@@ -347,9 +348,7 @@ async def check_duplicate(
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,
-            model_settings=_dedupe_model_settings(
-                dedupe, resolved_model, settings.llm.timeout
-            ),
+            model_settings=_dedupe_model_settings(dedupe, resolved_model, settings.llm.timeout),
             tools=[],
             output_schema=None,
             handoffs=[],

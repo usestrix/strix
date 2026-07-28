@@ -108,7 +108,7 @@ def test_nested_symlinks_inside_linked_dir(tmp_path: Path) -> None:
     assert not (staged / "shared" / "escape").exists()
 
 
-def test_staged_path_has_no_symlink_ancestor(tmp_path: Path, monkeypatch) -> None:  # noqa: ANN001
+def test_staged_path_has_no_symlink_ancestor(tmp_path: Path, monkeypatch) -> None:
     """The staging directory itself must never sit behind a symlink.
 
     ``tempfile.mkdtemp()`` honors ``$TMPDIR``, and on macOS the default
@@ -131,9 +131,7 @@ def test_staged_path_has_no_symlink_ancestor(tmp_path: Path, monkeypatch) -> Non
         real_dir.mkdir()
         return str(symlinked_tmp_root / real_dir.name)
 
-    monkeypatch.setattr(
-        "strix.runtime.local_dir_staging.tempfile.mkdtemp", fake_mkdtemp
-    )
+    monkeypatch.setattr("strix.runtime.local_dir_staging.tempfile.mkdtemp", fake_mkdtemp)
 
     upload_path, staged = stage_symlink_safe_dir(repo)
 

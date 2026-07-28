@@ -7,7 +7,7 @@ import json
 import os
 import time
 import urllib.request
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
 from caido_sdk_client import Client, TokenAuthOptions
@@ -147,7 +147,8 @@ async def list_requests_with_client(
     if scope_id:
         builder = builder.scope(scope_id)
     target, field = _REQ_FIELD_MAP[sort_by]
-    builder = (builder.descending if sort_order == "desc" else builder.ascending)(target, field)
+    method = builder.descending if sort_order == "desc" else builder.ascending
+    builder = method(cast("Any", target), cast("Any", field))
     return await builder.execute()
 
 

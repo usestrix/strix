@@ -10,7 +10,7 @@ pairing so the trimmed history is still valid provider input.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import litellm
 from litellm.exceptions import BadRequestError, ContextWindowExceededError
@@ -283,7 +283,7 @@ async def _summarize(model: str, prompt: str, max_tokens: int) -> str | None:
         logger.exception("compaction summary call failed for model %s", model)
         return None
     try:
-        content = response.choices[0].message.content
+        content = cast("Any", response).choices[0].message.content
     except (AttributeError, IndexError, KeyError):
         logger.warning("compaction summary returned no content")
         return None

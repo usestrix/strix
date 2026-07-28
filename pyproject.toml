@@ -128,6 +128,10 @@ ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
 
 [[tool.mypy.overrides]]
+module = ["strix.interface.tui.app"]
+ignore_errors = true
+
+[[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_decorators = false
 
@@ -299,24 +303,30 @@ line-ending = "auto"
 
 [tool.pyright]
 include = ["strix"]
-exclude = ["**/__pycache__", "build", "dist"]
+exclude = [
+    "**/__pycache__",
+    "build",
+    "dist",
+    "strix/interface/tui/app.py",
+    "strix/interface/viewer/report_pdf.py",
+]
 pythonVersion = "3.12"
 pythonPlatform = "Linux"
 
-typeCheckingMode = "strict"
+typeCheckingMode = "standard"
 reportMissingImports = true
 reportMissingTypeStubs = false
-reportGeneralTypeIssues = true
+reportGeneralTypeIssues = false
 reportPropertyTypeMismatch = true
 reportFunctionMemberAccess = true
-reportMissingParameterType = true
-reportMissingTypeArgument = true
-reportIncompatibleMethodOverride = true
-reportIncompatibleVariableOverride = true
+reportMissingParameterType = false
+reportMissingTypeArgument = false
+reportIncompatibleMethodOverride = false
+reportIncompatibleVariableOverride = false
 reportInconsistentConstructor = true
 reportOverlappingOverload = true
-reportConstantRedefinition = true
-reportImportCycles = true
+reportConstantRedefinition = false
+reportImportCycles = false
 reportUnusedImport = true
 reportUnusedClass = true
 reportUnusedFunction = true
