@@ -19,6 +19,7 @@ from strix.interface.utils import (
     dedupe_local_targets,
     directory_size_bytes,
     find_oversized_local_targets,
+    read_target_list_file,
 )
 
 
@@ -155,6 +156,66 @@ def test_build_mount_targets_info_rejects_empty_path(empty: str) -> None:
     # and silently bind-mount it into the sandbox.
     with pytest.raises(ValueError, match="must not be empty"):
         build_mount_targets_info([empty])
+
+
+def test_read_target_list_file_strips_blank_lines(tmp_path: Path) -> None:
+    target_list = tmp_path / "targets.txt"
+    target_list.write_text(
+        "\n"
+        " https://test1.com/ \n"
+        "\n"
+        "http://test2.com:5789/\n"
+        "  \n",
+        encoding="utf-8",
+    )
+
+    assert read_target_list_file(str(target_list)) == [
+        "https://test1.com/",
+        "http://test2.com:5789/",
+    ]
+
+
+def test_read_target_list_file_ignores_comment_lines(tmp_path: Path) -> None:
+    target_list = tmp_path / "targets.txt"
+    target_list.write_text(
+        "# production targets\n"
+        "https://test1.com/\n"
+        "  # staging targets\n"
+        "http://test2.com:5789/\n",
+        encoding="utf-8",
+    )
+
+    assert read_target_list_file(str(target_list)) == [
+        "https://test1.com/",
+        "http://test2.com:5789/",
+    ]
+
+
+def test_read_target_list_file_rejects_empty_file(tmp_path: Path) -> None:
+    target_list = tmp_path / "targets.txt"
+    target_list.write_text(" \n# no targets yet\n\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="is empty"):
+        read_target_list_file(str(target_list))
+
+
+def test_read_target_list_file_rejects_missing_path(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not an existing file"):
+        read_target_list_file(str(tmp_path / "missing.txt"))
+
+
+def test_read_target_list_file_rejects_non_utf8_file(tmp_path: Path) -> None:
+    target_list = tmp_path / "targets.txt"
+    target_list.write_bytes(b"https://test1.com/\xff\n")
+
+    with pytest.raises(ValueError, match="must be valid UTF-8 text"):
+        read_target_list_file(str(target_list))
+
+
+@pytest.mark.parametrize("empty", ["", "   "])
+def test_read_target_list_file_rejects_empty_path(empty: str) -> None:
+    with pytest.raises(ValueError, match="must not be empty"):
+        read_target_list_file(empty)
 
 
 def test_dedupe_keeps_distinct_targets_in_order() -> None:

@@ -8,7 +8,16 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY, model_supports_reasoning
+from strix.config.models import (
+    DEFAULT_MODEL_RETRY,
+    bedrock_route_supports_prompt_caching,
+    is_bedrock_route,
+    is_claude_model,
+    is_known_openai_bare_model,
+    model_supports_reasoning,
+    request_timeout_extra_args,
+)
+from strix.core.sessions import scrub_images_from_items
 
 
 if TYPE_CHECKING:
@@ -16,6 +25,15 @@ if TYPE_CHECKING:
 
 
 DEFAULT_MAX_TURNS = 500
+
+
+def _accepts_required_tool_choice(model_name: str | None) -> bool:
+    name = (model_name or "").strip().lower()
+    for prefix in ("litellm/", "any-llm/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    return name.startswith("openai/") or is_known_openai_bare_model(name)
 
 
 def build_root_task(scan_config: dict[str, Any]) -> str:
@@ -111,11 +129,15 @@ def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,
     model_name: str,
+    force_required_tool_choice: bool = False,
+    request_timeout: float | None = None,
+    prompt_cache: bool = True,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
+        extra_args=request_timeout_extra_args(request_timeout),
     )
     if (
         reasoning_effort is not None
@@ -125,7 +147,38 @@ def make_model_settings(
         model_settings = model_settings.resolve(
             ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
         )
+    if force_required_tool_choice and _accepts_required_tool_choice(model_name):
+        model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
+
+    cache_extra_args = _prompt_cache_extra_args(model_name) if prompt_cache else None
+    if cache_extra_args:
+        model_settings = model_settings.resolve(
+            ModelSettings(
+                extra_args={**(model_settings.extra_args or {}), **cache_extra_args},
+            ),
+        )
     return model_settings
+
+
+def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
+    """LiteLLM ``cache_control_injection_points`` for Claude prompt caching.
+
+    System prompt + rolling last-message breakpoint everywhere; ``tool_config``
+    only on Bedrock Converse (the only route whose LiteLLM transform consumes
+    it — elsewhere it leaks onto the wire and native Anthropic 400s). Unmapped
+    Bedrock models get no points at all: Bedrock rejects the passed-through
+    field outright.
+    """
+    if not is_claude_model(model_name):
+        return None
+    if is_bedrock_route(model_name) and not bedrock_route_supports_prompt_caching(model_name):
+        return None
+
+    points: list[dict[str, Any]] = [{"location": "message", "role": "system"}]
+    if is_bedrock_route(model_name):
+        points.append({"location": "tool_config"})
+    points.append({"location": "message", "index": -1})
+    return {"cache_control_injection_points": points}
 
 
 def child_initial_input(
@@ -145,7 +198,11 @@ def child_initial_input(
     """
     parts: list[str] = []
     if parent_history:
-        rendered = json.dumps(parent_history, ensure_ascii=False, default=str)
+        rendered = json.dumps(
+            scrub_images_from_items(parent_history),
+            ensure_ascii=False,
+            default=str,
+        )
         parts.append(
             "== Inherited context from parent (background only) ==\n"
             f"{rendered}\n"

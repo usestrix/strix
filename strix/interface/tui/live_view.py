@@ -20,9 +20,13 @@ class TuiLiveView:
         self.events: list[dict[str, Any]] = []
         self._next_event_id = 1
         self._open_assistant_event_by_agent: dict[str, dict[str, Any]] = {}
+ fix/issue-hellop11
         # Keyed by (agent_id, call_id) so identical call_ids from different
         # agents never collide and overwrite each other's tool events.
         self._tool_event_by_call_id: dict[tuple[str, str], dict[str, Any]] = {}
+
+        self._tool_event_by_agent_and_call_id: dict[tuple[str, str], dict[str, Any]] = {}
+ main
 
     def hydrate_from_run_dir(self, run_dir: Path) -> None:
         state_dir = runtime_state_dir(run_dir)
@@ -98,6 +102,17 @@ class TuiLiveView:
         if error_message:
             current["error_message"] = error_message
         current["updated_at"] = now
+
+    def record_agent_error(self, agent_id: str, error: str) -> None:
+        self._append_event(
+            agent_id,
+            "chat",
+            {
+                "role": "assistant",
+                "content": (f"An error occurred: {error}\nI'm now waiting for new instructions."),
+                "metadata": {"source": "agent_error"},
+            },
+        )
 
     def record_user_message(self, agent_id: str, content: str) -> None:
         self._append_event(
@@ -225,9 +240,21 @@ class TuiLiveView:
         timestamp: str | None = None,
     ) -> None:
         call_id = call["call_id"]
+ fix/issue-hellop11
         key = (agent_id, call_id)
         existing = self._tool_event_by_call_id.get(key)
 
+
+        event_key = (agent_id, call_id)
+        existing = self._tool_event_by_agent_and_call_id.get(event_key)
+        tool_data = {
+            "tool_name": call["tool_name"],
+            "args": call["args"],
+            "status": "running",
+            "agent_id": agent_id,
+            "call_id": call_id,
+        }
+ main
         if existing is None:
             tool_data: dict[str, Any] = {
                 "tool_name": call["tool_name"],
@@ -237,7 +264,11 @@ class TuiLiveView:
                 "call_id": call_id,
             }
             event = self._append_event(agent_id, "tool", tool_data, timestamp=timestamp)
+ fix/issue-hellop11
             self._tool_event_by_call_id[key] = event
+
+            self._tool_event_by_agent_and_call_id[event_key] = event
+ main
         else:
             # Refresh identifying fields only. Never clobber "status" or
             # "result" here -- those are owned by _record_tool_output_data
@@ -259,8 +290,13 @@ class TuiLiveView:
         timestamp: str | None = None,
     ) -> None:
         call_id = output["call_id"]
+ fix/issue-hellop11
         key = (agent_id, call_id)
         event = self._tool_event_by_call_id.get(key)
+
+        event_key = (agent_id, call_id)
+        event = self._tool_event_by_agent_and_call_id.get(event_key)
+ main
         if event is None:
             event = self._append_event(
                 agent_id,
@@ -274,7 +310,11 @@ class TuiLiveView:
                 },
                 timestamp=timestamp,
             )
+ fix/issue-hellop11
             self._tool_event_by_call_id[key] = event
+
+            self._tool_event_by_agent_and_call_id[event_key] = event
+ main
 
         result = _parse_json_value(output["output"])
         event["data"]["result"] = result

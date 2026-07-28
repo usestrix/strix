@@ -25,6 +25,13 @@ for tcss_file in strix_root.rglob('*.tcss'):
     rel_path = tcss_file.relative_to(project_root)
     datas.append((str(tcss_file), str(rel_path.parent)))
 
+# Prebuilt local-viewer SPA (served by `strix view`).
+viewer_static = strix_root / 'interface' / 'viewer' / 'static'
+for asset in viewer_static.rglob('*'):
+    if asset.is_file():
+        rel_path = asset.relative_to(project_root)
+        datas.append((str(asset), str(rel_path.parent)))
+
 datas += collect_data_files('textual')
 
 datas += collect_data_files('tiktoken')
@@ -151,6 +158,21 @@ hiddenimports = [
     'strix.report.dedupe',
     'strix.report.state',
     'strix.report.writer',
+    'strix.interface.viewer',
+    'strix.interface.viewer.auth',
+    'strix.interface.viewer.cli',
+    'strix.interface.viewer.report_pdf',
+    'strix.interface.viewer.server',
+    'strix.interface.viewer.transcript',
+
+    # PDF report generation + encryption
+    'reportlab',
+    'reportlab.pdfgen',
+    'reportlab.pdfbase',
+    'reportlab.lib',
+    'reportlab.platypus',
+    'pypdf',
+    'cryptography',
     'strix.runtime',
     'strix.runtime.backends',
     'strix.runtime.caido_bootstrap',
@@ -178,6 +200,16 @@ hiddenimports += collect_submodules('textual')
 hiddenimports += collect_submodules('rich')
 hiddenimports += collect_submodules('pydantic')
 hiddenimports += collect_submodules('pygments')
+# reportlab loads renderers/fonts dynamically, so pull its whole tree in.
+hiddenimports += collect_submodules('reportlab')
+
+# reportlab ships bundled fonts (.pfb/.afm) it needs at runtime.
+datas += collect_data_files('reportlab')
+
+# reportlab imports PIL (pillow) lazily for image handling, so it must be
+# bundled explicitly and kept out of the excludes list below.
+hiddenimports += collect_submodules('PIL')
+datas += collect_data_files('PIL')
 
 excludes = [
     # Sandbox-only packages
@@ -225,7 +257,6 @@ excludes = [
     'numpy',
     'pandas',
     'scipy',
-    'PIL',
     'cv2',
 ]
 

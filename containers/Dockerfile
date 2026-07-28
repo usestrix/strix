@@ -1,3 +1,26 @@
+# ---------------------------------------------------------------------------
+# Builder stage: compile the Go tools here so the Go toolchain (~225MB) and the
+# module/build caches never reach the runtime image. The resulting binaries are
+# statically linked and copied into the final stage.
+# ---------------------------------------------------------------------------
+FROM kalilinux/kali-rolling:latest AS gobuilder
+
+RUN apt-get update && \
+    apt-get install -y kali-archive-keyring && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends golang-go git ca-certificates
+
+ENV GOBIN=/out/bin
+RUN mkdir -p /out/bin && \
+    go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
+    go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
+    go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
+    go install -v github.com/jaeles-project/gospider@latest && \
+    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest
+
+# ---------------------------------------------------------------------------
+# Runtime stage
+# ---------------------------------------------------------------------------
 FROM kalilinux/kali-rolling:latest
 
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
@@ -19,13 +42,13 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends \
     wget curl git vim nano unzip tar \
     apt-transport-https ca-certificates gnupg lsb-release \
-    build-essential software-properties-common \
-    gcc libc6-dev pkg-config libpcap-dev libssl-dev \
-    python3 python3-pip python3-dev python3-venv python3-setuptools \
-    golang-go \
+    software-properties-common \
+    gcc libc6-dev \
+    python3 python3-pip python3-venv python3-setuptools \
     net-tools dnsutils whois \
+    file xxd \
     jq parallel ripgrep grep \
-    less man-db procps htop \
+    less procps htop \
     iproute2 iputils-ping netcat-traditional \
     nmap ncat ndiff \
     sqlmap nuclei subfinder naabu ffuf \
@@ -65,11 +88,8 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/b
 USER pentester
 WORKDIR /tmp
 
-RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
-    go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
-    go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
-    go install -v github.com/jaeles-project/gospider@latest && \
-    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest
+# Go tools are built in the gobuilder stage; copy the static binaries only.
+COPY --from=gobuilder --chown=pentester:pentester /out/bin/ /home/pentester/go/bin/
 
 RUN nuclei -update-templates
 
@@ -86,7 +106,10 @@ RUN npm install -g retire@latest && \
     npm install -g js-beautify@latest && \
     npm install -g @ast-grep/cli@latest && \
     npm install -g tree-sitter-cli@latest && \
-    npm install -g agent-browser@0.26.0
+    npm install -g agent-browser@0.26.0 && \
+    npm cache clean --force && \
+    # ast-grep ships two identical binaries (`ast-grep` and `sg`); dedupe (~52MB)
+    ln -sf ast-grep /home/pentester/.npm-global/lib/node_modules/@ast-grep/cli/sg
 
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -131,7 +154,14 @@ RUN git clone https://github.com/aravind0x7/JS-Snooper.git && \
 
 USER root
 
-RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /usr/local/bin
+# Install trufflehog into a pentester-owned dir on PATH so its runtime self-update
+# (which replaces the binary in place) succeeds: as non-root `pentester` it cannot
+# overwrite a root-owned binary under /usr/local/bin, which otherwise fails with
+# "cannot move binary" and aborts the scan. Pin the initial version for
+# reproducible builds; self-update then pulls fresh detectors at runtime.
+ARG TRUFFLEHOG_VERSION=3.95.9
+RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /home/pentester/.local/bin "v${TRUFFLEHOG_VERSION}" && \
+    chown -R pentester:pentester /home/pentester/.local
 RUN set -eux; \
     ARCH="$(uname -m)"; \
     case "$ARCH" in \
@@ -144,8 +174,6 @@ RUN set -eux; \
     tar -xzf /tmp/gitleaks.tgz -C /tmp; \
     install -m 0755 /tmp/gitleaks /usr/local/bin/gitleaks; \
     rm -f /tmp/gitleaks /tmp/gitleaks.tgz
-
-RUN apt-get update && apt-get install -y zaproxy
 
 RUN curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b /usr/local/bin
 
@@ -162,7 +190,12 @@ USER root
 
 RUN apt-get autoremove -y && \
     apt-get autoclean && \
-    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
+    # Purge non-English locales (~160MB)
+    find /usr/share/locale -mindepth 1 -maxdepth 1 -type d \
+        ! -name 'en' ! -name 'en_US' ! -name 'C' -exec rm -rf {} + && \
+    # Remove package documentation and man pages not needed at runtime (~95MB)
+    rm -rf /usr/share/doc/* /usr/share/doc-base/* /usr/share/man/*
 
 ENV PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/.venv/bin:$PATH"
 ENV VIRTUAL_ENV="/app/.venv"
@@ -192,6 +225,8 @@ RUN mkdir -p /workspace && chown -R pentester:pentester /workspace /app
 USER pentester
 RUN python3 -m venv /app/.venv && \
     /app/.venv/bin/pip install --no-cache-dir caido-sdk-client && \
+    /app/.venv/bin/pip install --no-cache-dir \
+        requests httpx beautifulsoup4 lxml pyjwt cryptography && \
     /app/.venv/bin/pip install --no-cache-dir -r /home/pentester/tools/jwt_tool/requirements.txt && \
     printf '%s\n' \
         '#!/bin/bash' \
@@ -202,8 +237,13 @@ RUN python3 -m venv /app/.venv && \
 COPY --chown=pentester:pentester strix/tools/proxy/caido_api.py /opt/strix-python/caido_api.py
 ENV PYTHONPATH=/opt/strix-python
 
-RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.bashrc && \
-    echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:$PATH"' >> /home/pentester/.profile
+# Login shells (e.g. `bash -lc`) source /etc/profile, which on Debian/Kali
+# hard-resets PATH and drops the image's ENV PATH entries. Re-add the same
+# directories here — including /app/.venv/bin — so `python3`/`pip` resolve to
+# the venv (which ships requests, httpx, bs4, lxml, pyjwt, cryptography, and the
+# Caido SDK) instead of the externally-managed system interpreter.
+RUN echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/.venv/bin:$PATH"' >> /home/pentester/.bashrc && \
+    echo 'export PATH="/home/pentester/go/bin:/home/pentester/.local/bin:/home/pentester/.npm-global/bin:/app/.venv/bin:$PATH"' >> /home/pentester/.profile
 
 USER root
 COPY containers/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh

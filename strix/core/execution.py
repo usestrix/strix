@@ -13,11 +13,27 @@ from agents import RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
-from openai import APIError
+from openai import (
+    APIConnectionError,
+    APIError,
+    APIStatusError,
+    APITimeoutError,
+    RateLimitError,
+)
 
-from strix.core.hooks import BudgetExceededError
+from strix.config import codex
+from strix.core.hooks import (
+    BudgetExceededError,
+    BudgetPausedError,
+    SubagentBudgetReservedError,
+)
 from strix.core.inputs import child_initial_input
-from strix.core.sessions import open_agent_session, strip_all_images_from_session
+from strix.core.sessions import (
+    enforce_image_budget,
+    open_agent_session,
+    strip_all_images_from_session,
+)
+from strix.llm.compaction import is_context_overflow, maybe_compact
 
 
 if TYPE_CHECKING:
@@ -36,6 +52,74 @@ logger = logging.getLogger(__name__)
 StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
+_MAX_COMPACTIONS_PER_CYCLE = 2
+
+
+def _run_config_model(run_config: RunConfig) -> str | None:
+    return run_config.model if isinstance(run_config.model, str) else None
+
+
+def _agent_instructions(agent: Any) -> str:
+    instructions = getattr(agent, "instructions", None)
+    return instructions if isinstance(instructions, str) else ""
+
+
+def _agent_tools_text(agent: Any) -> str:
+    parts: list[str] = []
+    for tool in getattr(agent, "tools", []) or []:
+        name = getattr(tool, "name", "")
+        description = getattr(tool, "description", "") or ""
+        schema = getattr(tool, "params_json_schema", "") or ""
+        parts.append(f"{name} {description} {schema}")
+    return "\n".join(parts)
+
+
+async def _compact_session(
+    agent: Any, session: Session, run_config: RunConfig, *, force: bool
+) -> bool:
+    model = _run_config_model(run_config)
+    if session is None or model is None:
+        return False
+    return await maybe_compact(
+        session,
+        model=model,
+        instructions=_agent_instructions(agent),
+        tools_text=_agent_tools_text(agent),
+        force=force,
+    )
+
+
+_GUARDRAIL_PARK_ERROR = (
+    "Blocked by the model's content guardrail (flagged as a possible cybersecurity risk). "
+    "Set STRIX_LLM to a model that isn't blocked and resume the scan to continue."
+)
+
+_TRANSIENT_MODEL_STATUS_CODES = frozenset({408, 500, 502, 503, 504})
+_MAX_TRANSIENT_MODEL_RETRIES = 4
+_TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
+_TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 30.0
+
+
+def _model_error_status_code(exc: BaseException) -> int | None:
+    code = getattr(exc, "status_code", None)
+    return code if isinstance(code, int) else None
+
+
+def _is_transient_model_error(exc: BaseException) -> bool:
+    if isinstance(exc, RateLimitError):
+        return False
+    if isinstance(exc, APITimeoutError | APIConnectionError):
+        return True
+    if isinstance(exc, APIStatusError):
+        return exc.status_code in _TRANSIENT_MODEL_STATUS_CODES
+    if isinstance(exc, APIError):
+        return _model_error_status_code(exc) is None
+    return False
+
+
+def _transient_model_retry_delay(attempt: int) -> float:
+    delay = _TRANSIENT_MODEL_RETRY_BASE_DELAY_S * float(2 ** (attempt - 1))
+    return min(delay, _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
 
 
 async def run_agent_loop(
@@ -60,21 +144,34 @@ async def run_agent_loop(
     )
     result: RunResultBase | None = None
 
+    budget_stopped = coordinator.budget_stopped
+    reserve_stopped = coordinator.reserve_stopped
+    if budget_stopped:
+        await coordinator.set_status(agent_id, "stopped")
+        raise BudgetExceededError("scan budget reached")
+    if reserve_stopped and context.get("parent_id") is not None:
+        await coordinator.set_status(agent_id, "stopped")
+        raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
+
+    if reserve_stopped and start_parked and interactive and context.get("parent_id") is None:
+        await coordinator.send(agent_id, _reserve_notice())
+
     if not (start_parked and interactive):
         if interactive:
-            result = await _run_cycle(
-                agent,
-                coordinator,
-                agent_id,
-                input_data=initial_input,
-                run_config=run_config,
-                context=context,
-                max_turns=max_turns,
-                session=session,
-                interactive=interactive,
-                event_sink=event_sink,
-                hooks=hooks,
-            )
+            with contextlib.suppress(BudgetPausedError):
+                result = await _run_cycle(
+                    agent,
+                    coordinator,
+                    agent_id,
+                    input_data=initial_input,
+                    run_config=run_config,
+                    context=context,
+                    max_turns=max_turns,
+                    session=session,
+                    interactive=interactive,
+                    event_sink=event_sink,
+                    hooks=hooks,
+                )
         else:
             result = await _run_noninteractive_until_lifecycle(
                 agent,
@@ -102,20 +199,25 @@ async def run_agent_loop(
             await coordinator.set_status(agent_id, "stopped")
             raise BudgetExceededError("scan budget reached")
 
+        if coordinator.reserve_stopped and context.get("parent_id") is not None:
+            await coordinator.set_status(agent_id, "stopped")
+            raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
+
         await coordinator.consume_pending(agent_id)
-        result = await _run_cycle(
-            agent,
-            coordinator,
-            agent_id,
-            input_data=[],
-            run_config=run_config,
-            context=context,
-            max_turns=max_turns,
-            session=session,
-            interactive=interactive,
-            event_sink=event_sink,
-            hooks=hooks,
-        )
+        with contextlib.suppress(BudgetPausedError):
+            result = await _run_cycle(
+                agent,
+                coordinator,
+                agent_id,
+                input_data=[],
+                run_config=run_config,
+                context=context,
+                max_turns=max_turns,
+                session=session,
+                interactive=interactive,
+                event_sink=event_sink,
+                hooks=hooks,
+            )
 
 
 async def spawn_child_agent(
@@ -208,6 +310,7 @@ async def respawn_subagents(
             if coordinator.parent_of.get(aid) is None or aid == root_id:
                 continue
             md["_restored_status"] = status
+            md["_restored_error"] = coordinator.errors.get(aid)
             candidates.append(
                 (
                     aid,
@@ -220,7 +323,8 @@ async def respawn_subagents(
     for child_id, name, parent_id, md in candidates:
         try:
             restored_status = str(md.get("_restored_status") or "running")
-            start_parked = interactive and restored_status != "running"
+            recoverable_park = restored_status == "waiting" and bool(md.get("_restored_error"))
+            start_parked = interactive and restored_status != "running" and not recoverable_park
 
             if start_parked:
                 logger.warning(
@@ -287,6 +391,10 @@ async def _run_noninteractive_until_lifecycle(
             await coordinator.set_status(agent_id, "stopped")
             raise BudgetExceededError("scan budget reached")
 
+        if coordinator.reserve_stopped and context.get("parent_id") is not None:
+            await coordinator.set_status(agent_id, "stopped")
+            raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
+
         result = await _run_cycle(
             agent,
             coordinator,
@@ -317,7 +425,7 @@ async def _run_noninteractive_until_lifecycle(
 
         if invalid_final_outputs >= invalid_final_output_limit:
             await coordinator.set_status(agent_id, "crashed")
-            await _notify_parent_on_crash(coordinator, agent_id, "crashed")
+            await _notify_parent_on_terminal(coordinator, agent_id, "crashed")
             raise MaxTurnsExceeded(
                 "Agent exhausted non-interactive recovery attempts without calling "
                 "finish_scan or agent_finish."
@@ -346,9 +454,22 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     hooks: RunHooks[dict[str, Any]] | None,
 ) -> RunResultBase | None:
     image_strips = 0
+    compactions = 0
+    model_retries = 0
     while True:
         try:
             await coordinator.mark_running(agent_id)
+            if session is not None:
+                max_images = context.get("max_context_images")
+                if isinstance(max_images, int):
+                    try:
+                        await enforce_image_budget(session, max_images)
+                    except Exception:
+                        logger.exception("image-budget enforcement failed for %s", agent_id)
+                try:
+                    await _compact_session(agent, session, run_config, force=False)
+                except Exception:
+                    logger.exception("proactive compaction failed for %s", agent_id)
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
@@ -369,9 +490,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                                 logger.exception("stream event sink failed for %s", agent_id)
                     if stream.run_loop_exception is not None:
                         raise stream.run_loop_exception
-                except BudgetExceededError:
-                    # A RuntimeError subclass: re-raise explicitly so it is never
-                    # mistaken for the LiteLLM "after shutdown" race below.
+                except (BudgetExceededError, BudgetPausedError, SubagentBudgetReservedError):
                     raise
                 except RuntimeError as stream_exc:
                     if "after shutdown" not in str(stream_exc):
@@ -390,6 +509,15 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
             finally:
                 await coordinator.detach_stream(agent_id, stream)
+        except BudgetPausedError as exc:
+            logger.info("agent %s paused at the scan budget limit: %s", agent_id, exc)
+            await coordinator.pause_for_budget(agent_id)
+            raise
+        except SubagentBudgetReservedError as exc:
+            logger.info("sub-agent %s stopped at the budget reserve: %s", agent_id, exc)
+            await coordinator.set_status(agent_id, "stopped")
+            await _notify_root_on_budget_reserve(coordinator)
+            raise
         except BudgetExceededError as exc:
             logger.info(
                 "agent %s reached the scan budget limit; stopping the scan: %s", agent_id, exc
@@ -417,6 +545,45 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
+            if (
+                compactions < _MAX_COMPACTIONS_PER_CYCLE
+                and session is not None
+                and is_context_overflow(exc)
+            ):
+                try:
+                    compacted = await _compact_session(agent, session, run_config, force=True)
+                except Exception:
+                    logger.exception("overflow compaction recovery failed for %s", agent_id)
+                    compacted = False
+                if compacted:
+                    compactions += 1
+                    logger.info(
+                        "Compacted %s session after context overflow; retrying (%d)",
+                        agent_id,
+                        compactions,
+                    )
+                    input_data = []
+                    continue
+            if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
+                model_retries += 1
+                delay = _transient_model_retry_delay(model_retries)
+                logger.warning(
+                    "transient model/provider error for %s; replaying turn "
+                    "(attempt %d/%d, backoff %.1fs): %r",
+                    agent_id,
+                    model_retries,
+                    _MAX_TRANSIENT_MODEL_RETRIES,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                if session is not None:
+                    input_data = []
+                continue
+            if codex.is_content_guardrail_error(exc):
+                return await _handle_content_guardrail(
+                    coordinator, agent_id, exc, interactive=interactive
+                )
             if not interactive:
                 raise
             if isinstance(exc, MaxTurnsExceeded):
@@ -426,14 +593,28 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             else:
                 status = "crashed"
             logger.exception("agent run failed for %s; parking as %s", agent_id, status)
-            await coordinator.set_status(agent_id, status)
-            await _notify_parent_on_crash(coordinator, agent_id, status)
-            if context.get("parent_id") is None and status in {"failed", "crashed"}:
-                raise
+            await coordinator.set_status(agent_id, status, error=str(exc) or type(exc).__name__)
+            await _notify_parent_on_terminal(coordinator, agent_id, status)
             return None
         else:
             await _settle_run_result(coordinator, agent_id, interactive)
             return stream
+
+
+async def _handle_content_guardrail(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    exc: BaseException,
+    *,
+    interactive: bool,
+) -> RunResultBase | None:
+    logger.warning("agent %s blocked by the model's content guardrail: %s", agent_id, exc)
+    if interactive:
+        await coordinator.set_status(agent_id, "waiting", error=_GUARDRAIL_PARK_ERROR)
+        return None
+    await coordinator.set_status(agent_id, "failed", error=_GUARDRAIL_PARK_ERROR)
+    await _notify_parent_on_terminal(coordinator, agent_id, "failed")
+    return None
 
 
 async def _settle_run_result(
@@ -493,12 +674,31 @@ async def _append_noninteractive_tool_required_message(
     return []
 
 
-async def _notify_parent_on_crash(
+_TERMINAL_NOTICE = {
+    "crashed": (
+        "[Agent crash] {name} ({agent_id}) terminated unexpectedly. "
+        "Stop waiting on this child unless you want to message it again."
+    ),
+    "failed": (
+        "[Agent failed] {name} ({agent_id}) stopped with an error and will not "
+        "send a completion report. Stop waiting on this child unless you want to "
+        "message it again."
+    ),
+    "stopped": (
+        "[Agent capped] {name} ({agent_id}) hit its turn limit and was stopped "
+        "before finishing. It will not send a completion report, so stop waiting "
+        "on this child; account for its capped subtask and continue."
+    ),
+}
+
+
+async def _notify_parent_on_terminal(
     coordinator: AgentCoordinator,
     agent_id: str,
     status: str,
 ) -> None:
-    if status != "crashed":
+    template = _TERMINAL_NOTICE.get(status)
+    if template is None:
         return
     async with coordinator._lock:
         parent = coordinator.parent_of.get(agent_id)
@@ -509,14 +709,34 @@ async def _notify_parent_on_crash(
         parent,
         {
             "from": agent_id,
-            "type": "crash",
+            "type": status,
             "priority": "high",
-            "content": (
-                f"[Agent crash] {name} ({agent_id}) terminated unexpectedly. "
-                "Stop waiting on this child unless you want to message it again."
-            ),
+            "content": template.format(name=name, agent_id=agent_id),
         },
+        interrupt=False,
     )
+
+
+def _reserve_notice() -> dict[str, Any]:
+    return {
+        "from": "system",
+        "type": "budget_reserve_stop",
+        "priority": "high",
+        "content": (
+            "[Budget reserve] The scan has reached the sub-agent budget reserve: every "
+            "sub-agent is being force-stopped as soon as its in-flight turn completes, and "
+            "none will send a completion report. Their confirmed vulnerabilities are "
+            "already filed as they were found. Do not wait on any sub-agents and do not "
+            "spawn new ones — wrap up now and call finish_scan."
+        ),
+    }
+
+
+async def _notify_root_on_budget_reserve(coordinator: AgentCoordinator) -> None:
+    root = await coordinator.claim_reserve_notification()
+    if root is None:
+        return
+    await coordinator.send(root, _reserve_notice())
 
 
 async def _start_child_runner(
@@ -570,6 +790,8 @@ async def _start_child_runner(
             )
         except BudgetExceededError:
             logger.info("child %s stopped after reaching the scan budget limit", child_id)
+        except SubagentBudgetReservedError:
+            logger.info("child %s stopped at the sub-agent budget reserve", child_id)
 
     task_handle = asyncio.create_task(_child_loop(), name=f"agent-{name}-{child_id}")
     await coordinator.attach_runtime(child_id, task=task_handle)

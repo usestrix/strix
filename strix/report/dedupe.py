@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import TYPE_CHECKING, Any
 
 from agents.model_settings import ModelSettings
@@ -12,18 +13,54 @@ from openai.types.responses import ResponseOutputMessage
 
 from strix.config import load_settings
 from strix.config.models import (
-    DEFAULT_MODEL_RETRY,
     StrixProvider,
     configure_sdk_model_defaults,
 )
+from strix.core.inputs import make_model_settings
 from strix.report.state import get_global_report_state
 
 
 if TYPE_CHECKING:
     from agents.items import ModelResponse
 
+    from strix.config.settings import DedupeSettings
+
 
 logger = logging.getLogger(__name__)
+
+
+def _dedupe_extra_args(dedupe: DedupeSettings) -> dict[str, str]:
+    """Per-call credential + endpoint for the dedupe model.
+
+    Provider env vars and the global base URL are process-wide, so a
+    shared-provider dedupe key or a distinct dedupe endpoint can't be installed
+    globally without clobbering (or being clobbered by) the main model's
+    config. Passing them per call keeps the two apart. Only applies when a
+    dedicated dedupe model is configured.
+    """
+    if not dedupe.model:
+        return {}
+    extra: dict[str, str] = {}
+    if dedupe.api_key and dedupe.api_key.strip():
+        extra["api_key"] = dedupe.api_key.strip()
+    if dedupe.api_base and dedupe.api_base.strip():
+        extra["api_base"] = dedupe.api_base.strip()
+    return extra
+
+
+def _dedupe_model_settings(
+    dedupe: DedupeSettings, model_name: str, request_timeout: float | None
+) -> ModelSettings:
+    settings = make_model_settings(
+        dedupe.reasoning_effort,
+        model_name=model_name,
+        force_required_tool_choice=False,
+        request_timeout=request_timeout,
+    )
+    extra = _dedupe_extra_args(dedupe)
+    if extra:
+        settings = settings.resolve(ModelSettings(extra_args=extra))
+    return settings
 
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.
 Your task is to determine if a candidate vulnerability report describes the SAME vulnerability
@@ -50,6 +87,11 @@ CRITICAL DEDUPLICATION RULES:
    - PoC uses different payloads but exploits same issue
    - One report is more thorough than another
    - Minor variations in technical analysis
+
+4. DEPENDENCY-CVE reports use package identity:
+   - Same CVE and same package/ecosystem is a duplicate
+   - Same CVE but different package/ecosystem is NOT a duplicate
+   - Same package/ecosystem but different CVE is NOT a duplicate
 
 COMPARISON GUIDELINES:
 - Focus on the technical root cause, not surface-level similarities
@@ -101,6 +143,8 @@ def _prepare_report_for_comparison(report: dict[str, Any]) -> dict[str, Any]:
         "poc_description",
         "endpoint",
         "method",
+        "cve",
+        "dependency_metadata",
     ]
 
     cleaned = {}
@@ -112,6 +156,112 @@ def _prepare_report_for_comparison(report: dict[str, Any]) -> dict[str, Any]:
             cleaned[field] = value
 
     return cleaned
+
+
+def _dependency_identity(report: dict[str, Any]) -> tuple[str, str, str] | None:
+    metadata = report.get("dependency_metadata")
+    if not isinstance(metadata, dict):
+        return None
+
+    raw_cve = report.get("cve")
+    raw_package = metadata.get("package_name")
+    if not raw_cve or not raw_package:
+        return None
+
+    cve = str(raw_cve).strip().upper()
+    ecosystem = str(metadata.get("package_ecosystem") or "").strip().lower()
+    package_name = str(raw_package).strip().lower()
+    if not cve or not package_name:
+        return None
+    return cve, ecosystem, package_name
+
+
+def _report_cve(report: dict[str, Any]) -> str:
+    return str(report.get("cve") or "").strip().upper()
+
+
+def _legacy_report_mentions_package(
+    report: dict[str, Any],
+    *,
+    ecosystem: str,
+    package_name: str,
+) -> bool:
+    fields = [
+        "title",
+        "description",
+        "impact",
+        "target",
+        "technical_analysis",
+        "poc_description",
+        "evidence",
+    ]
+    haystack = " ".join(str(report.get(field) or "") for field in fields).lower()
+    package_pattern = rf"(?<![\w@./-]){re.escape(package_name)}(?![\w@./-])"
+    if re.search(package_pattern, haystack) is None:
+        return False
+    if not ecosystem:
+        return True
+    ecosystem_pattern = rf"(?<![\w@./-]){re.escape(ecosystem)}(?![\w@./-])"
+    return re.search(ecosystem_pattern, haystack) is not None
+
+
+def _check_dependency_duplicate(
+    candidate: dict[str, Any],
+    existing_reports: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    candidate_identity = _dependency_identity(candidate)
+    if candidate_identity is None:
+        return None
+
+    cve, ecosystem, package_name = candidate_identity
+    found_legacy_same_cve = False
+    for report in existing_reports:
+        report_identity = _dependency_identity(report)
+        if report_identity is not None:
+            report_cve, report_ecosystem, report_package_name = report_identity
+            if (report_cve, report_package_name) != (cve, package_name):
+                continue
+            if report_ecosystem == ecosystem:
+                return {
+                    "is_duplicate": True,
+                    "duplicate_id": str(report.get("id") or "")[:64],
+                    "confidence": 1.0,
+                    "reason": "Same dependency CVE/package identity",
+                }
+            if not report_ecosystem or not ecosystem:
+                return {
+                    "is_duplicate": True,
+                    "duplicate_id": str(report.get("id") or "")[:64],
+                    "confidence": 1.0,
+                    "reason": "Same dependency CVE/package identity with missing ecosystem",
+                }
+            continue
+
+        if _report_cve(report) != cve:
+            continue
+        found_legacy_same_cve = True
+        if _legacy_report_mentions_package(
+            report,
+            ecosystem=ecosystem,
+            package_name=package_name,
+        ):
+            return {
+                "is_duplicate": True,
+                "duplicate_id": str(report.get("id") or "")[:64],
+                "confidence": 1.0,
+                "reason": "Same dependency CVE/package identity in legacy report",
+            }
+
+    if found_legacy_same_cve:
+        return None
+
+    package_label = f"{ecosystem}/{package_name}" if ecosystem else package_name
+    return {
+        "is_duplicate": False,
+        "duplicate_id": "",
+        "confidence": 1.0,
+        "reason": f"No existing dependency report for {cve} in {package_label}",
+    }
 
 
 def _parse_dedupe_response(content: str) -> dict[str, Any]:
@@ -165,15 +315,20 @@ async def check_duplicate(
             "reason": "No existing reports to compare against",
         }
 
+    dependency_duplicate = _check_dependency_duplicate(candidate, existing_reports)
+    if dependency_duplicate is not None:
+        return dependency_duplicate
+
     try:
         settings = load_settings()
-        model_name = settings.llm.model
+        dedupe = settings.dedupe
+        model_name = (dedupe.model or "").strip() or settings.llm.model
         if not model_name:
             return {
                 "is_duplicate": False,
                 "duplicate_id": "",
                 "confidence": 0.0,
-                "reason": "STRIX_LLM not configured; skipping dedupe check",
+                "reason": "No LLM model configured; skipping dedupe check",
             }
 
         candidate_cleaned = _prepare_report_for_comparison(candidate)
@@ -192,7 +347,9 @@ async def check_duplicate(
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,
-            model_settings=ModelSettings(retry=DEFAULT_MODEL_RETRY, include_usage=True),
+            model_settings=_dedupe_model_settings(
+                dedupe, resolved_model, settings.llm.timeout
+            ),
             tools=[],
             output_schema=None,
             handoffs=[],

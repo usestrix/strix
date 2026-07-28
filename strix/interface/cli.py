@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
@@ -184,6 +185,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     local_sources=getattr(args, "local_sources", None) or [],
                     interactive=bool(getattr(args, "interactive", False)),
                     max_budget_usd=getattr(args, "max_budget_usd", None),
+                    max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
                 )
             finally:
                 stop_updates.set()
