@@ -30,6 +30,7 @@ from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
     enforce_image_budget,
     open_agent_session,
+    replace_session_items,
     seed_initial_input,
     strip_all_images_from_session,
 )
@@ -115,6 +116,29 @@ def _is_transient_model_error(exc: BaseException) -> bool:
 def _transient_model_retry_delay(attempt: int) -> float:
     delay = _TRANSIENT_MODEL_RETRY_BASE_DELAY_S * float(2 ** (attempt - 1))
     return min(delay, _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
+
+
+async def _salvage_stream_to_session(
+    session: Session,
+    pre_run_items: list[Any],
+    stream: Any,
+    agent_id: str,
+) -> None:
+    """Persist a crashed run's full history so a revived agent loses no context."""
+    if stream is None:
+        return
+    try:
+        replay = list(stream.to_input_list())
+    except Exception:
+        logger.exception("could not build salvage history for %s", agent_id)
+        return
+    desired = list(pre_run_items) + replay
+    if len(desired) <= len(pre_run_items):
+        return
+    try:
+        await replace_session_items(session, desired)
+    except Exception:
+        logger.exception("salvaging crashed run history failed for %s", agent_id)
 
 
 async def _seed_and_prepare_first_input(
@@ -534,6 +558,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     compactions = 0
     model_retries = 0
     while True:
+        stream: Any = None
+        pre_run_items: list[Any] = []
         try:
             await coordinator.mark_running(agent_id)
             if session is not None:
@@ -547,6 +573,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     await _compact_session(agent, session, run_config, force=False)
                 except Exception:
                     logger.exception("proactive compaction failed for %s", agent_id)
+                with contextlib.suppress(Exception):
+                    pre_run_items = list(await session.get_items())
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
@@ -657,6 +685,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 if session is not None:
                     input_data = []
                 continue
+            if session is not None:
+                await _salvage_stream_to_session(session, pre_run_items, stream, agent_id)
             if not interactive:
                 raise
             if isinstance(exc, MaxTurnsExceeded):
@@ -671,7 +701,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             return None
         else:
             await _settle_run_result(coordinator, agent_id, interactive)
-            return stream
+            return cast("RunResultBase | None", stream)
 
 
 async def _settle_run_result(

@@ -595,6 +595,44 @@ async def test_run_cycle_parked_parks_instead_of_raising(
     assert coordinator.errors["root"] == "unexpected explosion"
 
 
+class _SalvageStream:
+    def __init__(self, replay: list[dict[str, Any]]) -> None:
+        self._replay = replay
+
+    def to_input_list(self) -> list[dict[str, Any]]:
+        return self._replay
+
+
+@pytest.mark.asyncio
+async def test_salvage_stream_to_session_preserves_full_history(tmp_path: Any) -> None:
+    session = SQLiteSession("child", tmp_path / "agents.db")
+    await session.add_items([{"role": "user", "content": "identity + task"}])
+    pre_run = list(await session.get_items())
+
+    # A crash mid-run: the stream produced two turns the SDK never committed.
+    stream = _SalvageStream(
+        [
+            {"role": "assistant", "content": "recon turn 1"},
+            {"role": "assistant", "content": "recon turn 2"},
+        ]
+    )
+    await execution._salvage_stream_to_session(session, pre_run, stream, "child")
+
+    stored = [cast("dict[str, Any]", i) for i in await session.get_items()]
+    assert [i["content"] for i in stored] == [
+        "identity + task",
+        "recon turn 1",
+        "recon turn 2",
+    ]
+
+    # A crash with nothing new to salvage leaves the session untouched.
+    await execution._salvage_stream_to_session(
+        session, list(await session.get_items()), _SalvageStream([]), "child"
+    )
+    assert len(await session.get_items()) == 3
+    session.close()
+
+
 @pytest.mark.asyncio
 async def test_seed_initial_input_persists_and_is_idempotent(tmp_path: Any) -> None:
     session = SQLiteSession("child", tmp_path / "agents.db")
