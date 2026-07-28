@@ -207,12 +207,7 @@ class AgentCoordinator:
     async def send(
         self, target_agent_id: str, message: dict[str, Any], *, interrupt: bool = True
     ) -> bool:
-        """Queue a user/peer message in the target's mailbox and wake it.
-
-        Delivery never blocks: the message lands in an in-memory mailbox and
-        the target agent appends it to its own SDK session when it wakes
-        (``consume_pending``).
-        """
+        """Queue a user/peer message in the target's mailbox and wake it."""
         from_user = message.get("from") == "user"
         if from_user and self._budget_paused:
             await self.resume_from_budget_pause(exclude=target_agent_id)
@@ -234,11 +229,7 @@ class AgentCoordinator:
         return True
 
     async def wait_for_message(self, agent_id: str, *, timeout: float | None = None) -> bool:
-        """Wait until a message is ready for ``agent_id``; False on ``timeout``.
-
-        An agent parked with an error (``failed``/``crashed``) is only released
-        by a user message; peer messages stay queued until then.
-        """
+        """Wait until a message is ready for ``agent_id``; False on ``timeout``."""
         while True:
             async with self._lock:
                 runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
@@ -264,11 +255,7 @@ class AgentCoordinator:
         *,
         include_items: bool = False,
     ) -> tuple[int, list[Any]]:
-        """Drain the agent's mailbox into its own SDK session.
-
-        Runs in the receiving agent's context, so a slow or wedged session
-        write can never block a sender.
-        """
+        """Drain the agent's mailbox into its own SDK session."""
         async with self._lock:
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
             queued = list(runtime.mailbox)
