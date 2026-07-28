@@ -15,9 +15,10 @@ npx skills add usestrix/strix
 
 | Skill | What your agent learns |
 |-------|------------------------|
-| `strix-pentest` | Run headless scans against code, URLs, domains, or IPs with budget caps, and read the results |
+| `strix-pentest` | Run headless scans against code, URLs, domains, or IPs — self-hosted CLI or managed cloud — with budget caps, and read the results |
+| `strix-cloud-api` | Drive the managed [app.strix.ai](https://app.strix.ai) platform over REST — no local Docker or LLM key needed |
 | `strix-fix-findings` | Triage findings, fix root causes, and re-run Strix to verify each fix |
-| `strix-ci-setup` | Add diff-scoped PR security scanning to GitHub Actions or any CI |
+| `strix-ci-setup` | Add PR security scanning to GitHub Actions or any CI (self-hosted CLI or managed app) |
 
 Install a single skill with `npx skills add usestrix/strix --skill strix-pentest`, or use one without installing:
 
@@ -25,12 +26,20 @@ Install a single skill with `npx skills add usestrix/strix --skill strix-pentest
 npx skills use usestrix/strix@strix-pentest | claude
 ```
 
+## Two ways to run — self-hosted or managed
+
+Both use the same engine and produce the same validated findings and SARIF, so agents can pick per situation or combine them:
+
+- **Open-source CLI (self-hosted)** — runs locally in a Docker sandbox with your own LLM key. Free, fully local, air-gap capable. Best for local dev loops and full control.
+- **Managed cloud** — runs on Strix's infrastructure via the [app.strix.ai REST API](https://docs.app.strix.ai). No Docker, no LLM key, no local install; adds team dashboards, scheduling, PR reviews, and PDF reports. Best in sandboxed/CI environments and for teams. Create an API token under **Settings → API Access**; the `strix-cloud-api` skill has the full flow.
+
 ## Agent-Friendly Interfaces
 
 Everything an agent needs is machine-readable:
 
 - **Headless CLI** — `strix -n` runs without the TUI and exits with `0` (clean), `1` (error), or `2` (vulnerabilities found).
-- **Structured results** — every run writes `vulnerabilities.json`, `vulnerabilities.csv`, `findings.sarif` (SARIF 2.1.0), and per-finding Markdown under `strix_runs/<run-name>/`.
+- **REST API** — the managed platform exposes a documented [OpenAPI](https://docs.app.strix.ai/openapi.json) at `https://app.strix.ai/api/v1` (scans, vulnerabilities, assets, PR reviews, schedules, webhooks) with bearer tokens and scopes.
+- **Structured results** — every run writes `vulnerabilities.json`, `vulnerabilities.csv`, `findings.sarif` (SARIF 2.1.0), and per-finding Markdown under `strix_runs/<run-name>/`; the cloud exposes the same as JSON plus SARIF export.
 - **Budget controls** — `--max-budget` and `--max-turns` give agents hard cost/time caps.
 - **`AGENTS.md`** — the [repository's agent guide](https://github.com/usestrix/strix/blob/main/AGENTS.md) with a quick reference.
 - **`llms.txt`** — this documentation is indexed at [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) and fully exported at [docs.strix.ai/llms-full.txt](https://docs.strix.ai/llms-full.txt); every page is also available as Markdown by appending `.md` to its URL.

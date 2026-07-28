@@ -10,23 +10,33 @@ Install the agent skills for step-by-step workflows:
 npx skills add usestrix/strix
 ```
 
-- `strix-pentest` — run a headless pentest against code, URLs, domains, or IPs and read results
+- `strix-pentest` — run a headless pentest against code, URLs, domains, or IPs and read results (covers both run modes below)
+- `strix-cloud-api` — drive the managed app.strix.ai platform via REST (no local Docker/LLM needed)
 - `strix-fix-findings` — remediate findings and re-run Strix to verify
-- `strix-ci-setup` — add diff-scoped PR scanning to CI/CD
+- `strix-ci-setup` — add PR scanning to CI/CD (self-hosted CLI or managed app)
 
-Quick reference (details in the skills and https://docs.strix.ai):
+**Two ways to run, same engine — pick per situation:**
 
-```bash
-curl -sSL https://strix.ai/install | bash        # install
-export STRIX_LLM="openai/gpt-5.4"                 # any LiteLLM model id
-export LLM_API_KEY="<key>"
-strix -n -t ./ --scan-mode quick --max-budget 10  # headless scan; always use -n
-```
+- **Open-source CLI (self-hosted):** free, fully local, BYO LLM key, needs Docker. Best for local dev loops, air-gapped/offline, and full control.
+  ```bash
+  curl -sSL https://strix.ai/install | bash        # install
+  export STRIX_LLM="openai/gpt-5.4"                 # any LiteLLM model id
+  export LLM_API_KEY="<key>"
+  strix -n -t ./ --scan-mode quick --max-budget 10  # headless scan; always use -n
+  ```
+  - Requires Docker running. Scans take minutes (`quick`) to hours (`deep`) — run in the background.
+  - Exit codes (headless): `0` clean, `1` fatal error, `2` vulnerabilities found.
+  - Artifacts in `strix_runs/<run-name>/`: `penetration_test_report.md`, `vulnerabilities/*.md`, `vulnerabilities.json`, `findings.sarif` (SARIF 2.1.0), `run.json`.
 
-- Requires Docker running. Scans take minutes (`quick`) to hours (`deep`) — run in the background.
-- Exit codes (headless): `0` clean, `1` fatal error, `2` vulnerabilities found.
-- Artifacts in `strix_runs/<run-name>/`: `penetration_test_report.md`, `vulnerabilities/*.md`, `vulnerabilities.json`, `findings.sarif` (SARIF 2.1.0), `run.json`.
-- Docs index for LLMs: https://docs.strix.ai/llms.txt (full: https://docs.strix.ai/llms-full.txt).
+- **Managed cloud (app.strix.ai):** no Docker, no LLM key, no local install; adds team dashboards, scheduling, PR reviews, PDF reports. Best in sandboxed/CI environments and for teams. Use it when local infra isn't available.
+  ```bash
+  # token from Settings → API Access; register the target as an asset, then:
+  curl -sS https://app.strix.ai/api/v1/scans -H "Authorization: Bearer $STRIX_API_TOKEN" \
+    -H "Content-Type: application/json" -d '{"engagement_type":"live_test","domain_ids":["<uuid>"]}'
+  ```
+  - API docs: https://docs.app.strix.ai (OpenAPI: https://docs.app.strix.ai/openapi.json).
+
+- CLI docs index for LLMs: https://docs.strix.ai/llms.txt (full: https://docs.strix.ai/llms-full.txt).
 - Only scan targets the user is authorized to test.
 
 ## Contributing to this repo
