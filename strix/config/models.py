@@ -5,7 +5,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import os
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from agents import (
     set_default_openai_api,
@@ -75,7 +75,9 @@ class _CodexResponsesModel(OpenAIResponsesModel):
                 effort = "low"
             elif effort == "xhigh":
                 effort = "high"
-            overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=effort)))
+            overrides = overrides.resolve(
+                ModelSettings(reasoning=Reasoning(effort=cast("Any", effort)))
+            )
         return model_settings.resolve(overrides)
 
     async def _fetch_response(self, *args: Any, stream: bool = False, **kwargs: Any) -> Any:

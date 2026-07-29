@@ -8,7 +8,7 @@ import logging
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
-from typing import Any, Literal, get_args
+from typing import Any, Literal, cast, get_args
 
 from agents import RunContextWrapper, function_tool
 
@@ -441,7 +441,7 @@ async def create_agent(
 
     parent_history = list(ctx.turn_input) if inherit_context and ctx.turn_input else []
     try:
-        result = await spawner(
+        result = await cast("Any", spawner)(
             parent_ctx=inner,
             name=name,
             task=task,
@@ -545,7 +545,7 @@ async def agent_finish(
         async with coordinator._lock:
             agent_name = coordinator.names.get(me, me)
         report = _render_completion_report(
-            agent_name=agent_name,
+            agent_name=agent_name or me,
             agent_id=me,
             task=str(inner.get("task", "")),
             success=success,

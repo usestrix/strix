@@ -9,7 +9,7 @@ import logging
 import re
 from dataclasses import is_dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from agents import RunContextWrapper, function_tool
 
@@ -72,7 +72,7 @@ def _to_tool_json(value: Any) -> Any:
     if is_dataclass(value) and not isinstance(value, type):
         return {k: _to_tool_json(v) for k, v in dataclasses.asdict(value).items()}
     if hasattr(value, "model_dump"):
-        return _to_tool_json(value.model_dump())
+        return _to_tool_json(cast("Any", value).model_dump())
     if isinstance(value, dict):
         return {str(k): _to_tool_json(v) for k, v in value.items()}
     if isinstance(value, list | tuple | set):

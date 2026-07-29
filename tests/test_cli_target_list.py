@@ -30,9 +30,7 @@ def test_parse_arguments_accepts_target_list_file(
 ) -> None:
     target_list = tmp_path / "targets.txt"
     target_list.write_text(
-        "https://test1.com/\n"
-        "\n"
-        "http://test2.com:5789/\n",
+        "https://test1.com/\n\nhttp://test2.com:5789/\n",
         encoding="utf-8",
     )
     _stub_settings(monkeypatch)
@@ -84,7 +82,4 @@ def test_parse_arguments_rejects_resume_with_target_list(
     with pytest.raises(SystemExit):
         cli_main.parse_arguments()
 
-    assert (
-        "Cannot combine --resume with --target/--target-list/--mount"
-        in capsys.readouterr().err
-    )
+    assert "Cannot combine --resume with --target/--target-list/--mount" in capsys.readouterr().err
