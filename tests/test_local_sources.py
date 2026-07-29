@@ -48,7 +48,17 @@ def test_directory_size_sums_flat_and_nested_files(tmp_path: Path) -> None:
 
 def test_directory_size_skips_symlinks(tmp_path: Path) -> None:
     _write_file(tmp_path / "real.txt", 100)
-    (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
+    try:
+        (tmp_path / "link.txt").symlink_to(tmp_path / "real.txt")
+    except OSError as exc:
+        # Windows without Admin / Developer Mode: WinError 1314.
+        # Other OSErrors (read-only FS, etc.) should still fail the test.
+        if getattr(exc, "winerror", None) != 1314:
+            raise
+        pytest.skip(
+            f"symlink creation unavailable ({exc}); on Windows run as "
+            "Administrator or enable Developer Mode"
+        )
     # The symlink target is counted once via the real file, not doubled.
     assert directory_size_bytes(tmp_path) == 100
 
