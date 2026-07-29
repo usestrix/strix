@@ -110,6 +110,24 @@ def _apply_log_limits(create_kwargs: dict[str, Any]) -> None:
     )
 
 
+def _apply_run_labels(create_kwargs: dict[str, Any]) -> None:
+    """Stamp the run's correlation id as a container label so an external control
+    plane can find and tear down this sandbox by run id (mirrors the metadata the
+    managed backends set on their sandboxes). Without it, an abrupt teardown of
+    the parent process orphans this container instead of stopping it with the
+    run. No-op when ``STRIX_RUN_ID`` is unset."""
+    run_id = os.getenv("STRIX_RUN_ID")
+    if not run_id:
+        return
+    labels = create_kwargs.setdefault("labels", {})
+    if not isinstance(labels, dict):
+        return
+    labels["strix-run-id"] = run_id
+    run_type = os.getenv("STRIX_RUN_TYPE")
+    if run_type:
+        labels["strix-run-type"] = run_type
+
+
 class StrixDockerSandboxSession(DockerSandboxSession):
     sandbox_network: str = ""
 
@@ -222,6 +240,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         _apply_sandbox_network(create_kwargs)
         _apply_resource_limits(create_kwargs)
         _apply_log_limits(create_kwargs)
+        _apply_run_labels(create_kwargs)
 
         # Strix injection: host bind mounts (e.g. large repos passed via --mount)
         # that bypass the SDK's file-by-file LocalDir copy.
