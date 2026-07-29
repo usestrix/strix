@@ -111,11 +111,6 @@ def _apply_log_limits(create_kwargs: dict[str, Any]) -> None:
 
 
 def _apply_run_labels(create_kwargs: dict[str, Any]) -> None:
-    """Stamp the run's correlation id as a container label so an external control
-    plane can find and tear down this sandbox by run id (mirrors the metadata the
-    managed backends set on their sandboxes). Without it, an abrupt teardown of
-    the parent process orphans this container instead of stopping it with the
-    run. No-op when ``STRIX_RUN_ID`` is unset."""
     run_id = os.getenv("STRIX_RUN_ID")
     if not run_id:
         return
