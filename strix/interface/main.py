@@ -971,8 +971,35 @@ def pull_docker_image() -> None:
     console.print()
 
 
+def _raise_open_files_limit() -> None:
+    """Raise the soft RLIMIT_NOFILE toward the hard limit.
+
+    A long multi-agent scan accumulates file descriptors (litellm httpx
+    pools, docker socket polling, per-subagent resources). On macOS the
+    default soft limit is just 256, which a long scan blows past and then
+    dies with ``OSError: [Errno 24] Too many open files`` — surfacing at
+    whatever random fd-opening call happens to lose the race. Bumping the
+    soft limit to the hard limit removes that ceiling. Not available on
+    Windows, where ``resource`` is absent.
+    """
+    try:
+        import resource
+    except ImportError:
+        return
+
+    soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    target = hard if hard != resource.RLIM_INFINITY else 1_048_576
+    if soft >= target:
+        return
+    try:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+    except (ValueError, OSError):
+        logger.debug("Could not raise RLIMIT_NOFILE from %s to %s", soft, target, exc_info=True)
+
+
 def main() -> None:
     configure_dependency_logging()
+    _raise_open_files_limit()
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
