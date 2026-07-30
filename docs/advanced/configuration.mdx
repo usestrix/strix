@@ -63,6 +63,12 @@ affecting the agents that do the actual testing.
   model runs on a different endpoint than the main model.
 </ParamField>
 
+<ParamField path="DEDUPE_LLM_EXTRA_HEADERS" type="string">
+  Optional JSON object of extra HTTP headers sent on every deduplication-model
+  request, e.g. `{"X-Feature-Key":"value"}`. A dedicated dedupe model never
+  inherits `LLM_EXTRA_HEADERS`; set this when its endpoint needs custom headers.
+</ParamField>
+
 <ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
   Reasoning effort for the deduplication model. Defaults to the model's own
   baseline when unset.

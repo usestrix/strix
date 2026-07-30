@@ -411,12 +411,14 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             # separate-provider dedupe model authenticates during warm-up too.
             deduper_extra = _dedupe_extra_args(settings.dedupe)
             # A dedicated dedupe model may route to another provider, which must
-            # never receive the main endpoint's headers.
+            # never receive the main endpoint's headers; it has its own
+            # DEDUPE_LLM_EXTRA_HEADERS.
             deduper_settings = make_model_settings(
                 None,
                 model_name=dedupe_model,
                 request_timeout=llm.timeout,
                 prompt_cache=False,
+                extra_headers=settings.dedupe.extra_headers,
             )
             if deduper_extra:
                 merged = {**(deduper_settings.extra_args or {}), **deduper_extra}

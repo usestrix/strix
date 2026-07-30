@@ -61,6 +61,10 @@ class DedupeSettings(BaseSettings):
     )
     api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY")
     api_base: str | None = Field(default=None, alias="DEDUPE_LLM_API_BASE")
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        alias="DEDUPE_LLM_EXTRA_HEADERS",
+    )
 
 
 class ContextSettings(BaseSettings):

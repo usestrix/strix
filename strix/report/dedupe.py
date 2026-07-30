@@ -59,8 +59,9 @@ def _dedupe_model_settings(
         request_timeout=request_timeout,
         # The main model's headers apply only when dedupe falls back to the main
         # model; a dedicated dedupe model may route to another provider, which
-        # must never receive the main endpoint's credentials.
-        extra_headers=None if dedupe.model else llm.extra_headers,
+        # must never receive the main endpoint's credentials. A dedicated model
+        # gets its own DEDUPE_LLM_EXTRA_HEADERS instead.
+        extra_headers=dedupe.extra_headers if dedupe.model else llm.extra_headers,
     )
     extra = _dedupe_extra_args(dedupe)
     if extra:
