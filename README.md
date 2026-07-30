@@ -262,6 +262,7 @@ export LLM_API_KEY="your-api-key"
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
+export LLM_DISABLE_STREAMING="true"  # for OpenAI-compatible endpoints that don't support streaming
 ```
 
 > [!NOTE]

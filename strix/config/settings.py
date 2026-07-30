@@ -48,6 +48,10 @@ class LlmSettings(BaseSettings):
         default=True,
         alias="STRIX_PROMPT_CACHE",
     )
+    disable_streaming: bool = Field(
+        default=False,
+        alias="LLM_DISABLE_STREAMING",
+    )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 
 
