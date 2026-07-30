@@ -284,6 +284,7 @@ def test_stall_timeout_is_configurable() -> None:
     settings = LlmSettings()
     assert settings.codex_stream_stall_timeout == 300.0
     assert LlmSettings(STRIX_CODEX_STREAM_STALL_S="45").codex_stream_stall_timeout == 45.0
+    assert LlmSettings(STRIX_REASONING_EFFORT="max").reasoning_effort == "max"
 
 
 @pytest.mark.asyncio
@@ -302,3 +303,14 @@ async def test_codex_model_self_enforces_backend_requirements(backend_url: str) 
     assert _CAPTURED["store"] is False
     assert _CAPTURED["include"] == ["reasoning.encrypted_content"]
     assert _CAPTURED["reasoning"] == {"effort": "high"}
+
+
+@pytest.mark.asyncio
+async def test_codex_model_forwards_max_reasoning_effort(backend_url: str) -> None:
+    model = _CodexResponsesModel(
+        model="gpt-5.6-luna", openai_client=_client(backend_url), reasoning_effort="max"
+    )
+
+    await model.get_response(**_call_kwargs())
+
+    assert _CAPTURED["reasoning"] == {"effort": "max"}

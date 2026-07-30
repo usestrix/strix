@@ -66,6 +66,13 @@ def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | No
     return {"timeout": timeout_s}
 
 
+def reasoning_for_effort(effort: ReasoningEffort) -> Reasoning:
+    """Build reasoning settings, including values newer than the bundled SDK enum."""
+    if effort == "max":
+        return Reasoning.model_construct(effort=effort)
+    return Reasoning(effort=effort)
+
+
 def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
     """Retry statusless provider errors (e.g. mid-stream quota/billing), but not aborts."""
     normalized = context.normalized
@@ -95,12 +102,9 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         overrides = ModelSettings(store=False, response_include=["reasoning.encrypted_content"])
         effort = self._reasoning_effort
         if effort and effort != "none":
-            # Clamp to efforts the backend accepts.
             if effort == "minimal":
                 effort = "low"
-            elif effort == "xhigh":
-                effort = "high"
-            overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=effort)))
+            overrides = overrides.resolve(ModelSettings(reasoning=reasoning_for_effort(effort)))
         return model_settings.resolve(overrides)
 
     def _stalled(self, phase: str) -> APITimeoutError:

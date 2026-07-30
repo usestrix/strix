@@ -296,6 +296,13 @@ def test_make_model_settings_extra_headers_survive_reasoning_resolve() -> None:
     assert settings.extra_headers == {"X-Feature-Key": "svc"}
 
 
+def test_make_model_settings_supports_max_reasoning() -> None:
+    settings = make_model_settings("max", model_name="openai/o3")
+
+    assert settings.reasoning is not None
+    assert settings.reasoning.effort == "max"
+
+
 def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
     # Reasoning is resolved via ModelSettings.resolve(); the timeout in extra_args
     # must not be dropped when a reasoning override is merged in.

@@ -6,7 +6,6 @@ import json
 from typing import TYPE_CHECKING, Any
 
 from agents.model_settings import ModelSettings
-from openai.types.shared import Reasoning
 
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
@@ -15,6 +14,7 @@ from strix.config.models import (
     is_claude_model,
     is_known_openai_bare_model,
     model_supports_reasoning,
+    reasoning_for_effort,
     request_timeout_extra_args,
 )
 from strix.core.sessions import scrub_images_from_items
@@ -147,7 +147,7 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
+            ModelSettings(reasoning=reasoning_for_effort(reasoning_effort)),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))

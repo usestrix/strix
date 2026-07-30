@@ -17,7 +17,14 @@ logger = logging.getLogger(__name__)
 
 # LiteLLM keys models without the routing prefix users type (``openai/``,
 # ``litellm/``, ``ollama/`` ...). Strip a leading provider segment on lookup.
-_STRIPPABLE_PREFIXES = ("openai/", "litellm/", "any-llm/", "ollama/", "ollama_chat/")
+_STRIPPABLE_PREFIXES = (
+    "openai/",
+    "chatgpt/",
+    "litellm/",
+    "any-llm/",
+    "ollama/",
+    "ollama_chat/",
+)
 
 _DEFAULT_OUTPUT_TOKENS = 8_192
 
@@ -38,7 +45,12 @@ def _safe_get_model_info(model: str) -> dict[str, Any] | None:
 
 @lru_cache(maxsize=128)
 def _model_info(model: str) -> dict[str, int]:
-    for candidate in (model, _lookup_key(model)):
+    lookup_key = _lookup_key(model)
+    # LiteLLM's provider-qualified ``chatgpt/`` metadata path obtains an access
+    # token and may start a synchronous 15-minute device-login poll. Metadata is
+    # keyed by the underlying OpenAI model slug, so never enter that auth path.
+    candidates = (lookup_key,) if model.startswith("chatgpt/") else (model, lookup_key)
+    for candidate in candidates:
         info = _safe_get_model_info(candidate)
         if info is not None:
             return {

@@ -27,6 +27,7 @@ from textual import events, on
 from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Grid, Horizontal, Vertical, VerticalScroll
+from textual.message import Message
 from textual.reactive import reactive
 from textual.screen import ModalScreen
 from textual.widgets import Button, Label, Static, TextArea, Tree
@@ -54,6 +55,13 @@ from strix.runtime import session_manager
 
 
 logger = logging.getLogger(__name__)
+
+
+class SdkStreamEvent(Message):
+    def __init__(self, agent_id: str, event: Any) -> None:
+        super().__init__()
+        self.agent_id = agent_id
+        self.event = event
 
 
 def get_package_version() -> str:
@@ -1549,14 +1557,19 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 logging.exception("Error setting up scan thread")
                 self._scan_completed.set()
 
-        self._scan_thread = threading.Thread(target=scan_target, daemon=True)
+        self._scan_thread = threading.Thread(
+            target=scan_target,
+            daemon=True,
+            name="strix-scan-loop",
+        )
         self._scan_thread.start()
 
     def _capture_sdk_event(self, agent_id: str, event: Any) -> None:
-        try:
-            self.call_from_thread(self._record_sdk_event, agent_id, event)
-        except RuntimeError:
-            self._record_sdk_event(agent_id, event)
+        self.post_message(SdkStreamEvent(agent_id, event))
+
+    @on(SdkStreamEvent)
+    def _on_sdk_stream_event(self, message: SdkStreamEvent) -> None:
+        self._record_sdk_event(message.agent_id, message.event)
 
     def _record_sdk_event(self, agent_id: str, event: Any) -> None:
         self.live_view.ingest_sdk_event(agent_id, event)
