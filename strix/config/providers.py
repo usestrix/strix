@@ -961,8 +961,9 @@ def _external_auth_status(provider: str) -> ProviderAuthStatus:  # noqa: PLR0911
                 "selected model uses ambient Google credentials; not verified",
             )
         return ProviderAuthStatus(
-            ProviderAuthState.EXTERNAL,
-            "Google credentials were not detected locally; ambient ADC is not verified",
+            ProviderAuthState.MISSING,
+            "Google credentials were not detected locally; configure ADC or set "
+            "STRIX_LLM explicitly to use ambient metadata credentials",
         )
 
     if not (_module_available("boto3") and _module_available("botocore")):
@@ -982,8 +983,9 @@ def _external_auth_status(provider: str) -> ProviderAuthStatus:  # noqa: PLR0911
             "selected model uses ambient AWS credentials; not verified",
         )
     return ProviderAuthStatus(
-        ProviderAuthState.EXTERNAL,
-        "AWS credentials were not detected locally; ambient IAM credentials are not verified",
+        ProviderAuthState.MISSING,
+        "AWS credentials were not detected locally; configure AWS credentials or set "
+        "STRIX_LLM explicitly to use ambient instance credentials",
     )
 
 

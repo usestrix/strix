@@ -682,7 +682,8 @@ def test_aws_profile_region_alone_is_not_treated_as_credentials(
     monkeypatch.setattr("strix.config.providers._module_available", lambda _name: True)
 
     status = provider_auth_status("bedrock")
-    assert status.state is ProviderAuthState.EXTERNAL
+    assert status.state is ProviderAuthState.MISSING
+    assert status.ready is False
     assert "not detected locally" in status.detail
 
     config.write_text(
@@ -904,20 +905,81 @@ async def test_openrouter_model_group_is_always_last(monkeypatch: pytest.MonkeyP
 
 
 @pytest.mark.asyncio
-async def test_cloud_sdk_allows_unverified_ambient_provider_models(
+@pytest.mark.parametrize(
+    ("provider", "detector"),
+    [
+        ("bedrock", "_aws_credentials_detected"),
+        ("vertex_ai", "_vertex_credentials_detected"),
+    ],
+)
+async def test_undetected_unselected_cloud_providers_are_hidden_from_models(
+    provider: str,
+    detector: str,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(provider_module, "list_providers", lambda: ["bedrock"])
+    monkeypatch.setattr(provider_module, "list_providers", lambda: [provider])
     monkeypatch.setattr(provider_module, "_module_available", lambda _name: True)
+    monkeypatch.setattr(provider_module, "_effective_model", lambda: None)
+    monkeypatch.setattr(provider_module, detector, lambda **_kwargs: False)
     monkeypatch.setattr(
         provider_module,
         "_catalog_chat_models",
-        lambda _provider: ["bedrock/anthropic.claude"],
+        lambda _provider: pytest.fail("hidden providers must not load their model catalog"),
     )
 
     groups = await configured_provider_model_groups()
 
-    assert [group.provider for group in groups] == ["bedrock"]
+    assert groups == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "detector"),
+    [
+        ("bedrock", "_aws_credentials_detected"),
+        ("vertex_ai", "_vertex_credentials_detected"),
+    ],
+)
+async def test_detected_cloud_credentials_include_provider_models(
+    provider: str,
+    detector: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = f"{provider}/test-model"
+    monkeypatch.setattr(provider_module, "list_providers", lambda: [provider])
+    monkeypatch.setattr(provider_module, "_module_available", lambda _name: True)
+    monkeypatch.setattr(provider_module, "_effective_model", lambda: None)
+    monkeypatch.setattr(provider_module, detector, lambda **_kwargs: True)
+    monkeypatch.setattr(provider_module, "_catalog_chat_models", lambda _provider: [model])
+
+    groups = await configured_provider_model_groups()
+
+    assert [(group.provider, group.models) for group in groups] == [(provider, (model,))]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "detector"),
+    [
+        ("bedrock", "_aws_credentials_detected"),
+        ("vertex_ai", "_vertex_credentials_detected"),
+    ],
+)
+async def test_selected_cloud_models_keep_unverified_ambient_provider_available(
+    provider: str,
+    detector: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = f"{provider}/test-model"
+    monkeypatch.setattr(provider_module, "list_providers", lambda: [provider])
+    monkeypatch.setattr(provider_module, "_module_available", lambda _name: True)
+    monkeypatch.setattr(provider_module, "_effective_model", lambda: model)
+    monkeypatch.setattr(provider_module, detector, lambda **_kwargs: False)
+    monkeypatch.setattr(provider_module, "_catalog_chat_models", lambda _provider: [model])
+
+    groups = await configured_provider_model_groups(current_model=model)
+
+    assert [(group.provider, group.models) for group in groups] == [(provider, (model,))]
 
 
 @pytest.mark.asyncio
