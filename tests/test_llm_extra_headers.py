@@ -73,6 +73,20 @@ def test_extra_headers_applied_to_native_openai_client(monkeypatch: pytest.Monke
     assert str(client.base_url).rstrip("/") == "https://gateway.example/v1"
 
 
+def test_extra_headers_applied_to_native_openai_without_custom_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "openai/gpt-5")
+    monkeypatch.setenv("LLM_API_KEY", "token")
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({"X-Feature-Key": "svc"}))
+
+    configure_sdk_model_defaults(load_settings())
+
+    client = _openai_shared.get_default_openai_client()
+    assert client is not None
+    assert client.default_headers.get("X-Feature-Key") == "svc"
+
+
 def test_no_extra_headers_leaves_litellm_headers_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_LLM", "openai/some-model")
     monkeypatch.setenv("LLM_API_BASE", "https://gateway.example/v1")

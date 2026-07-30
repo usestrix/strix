@@ -362,8 +362,7 @@ def _configure_extra_headers(llm: LlmSettings) -> None:
     if not headers:
         return
     _merge_litellm_headers(headers)
-    if llm.api_base:
-        _register_openai_client_with_headers(llm, headers)
+    _register_openai_client_with_headers(llm, headers)
 
 
 def _merge_litellm_headers(headers: dict[str, str]) -> None:
