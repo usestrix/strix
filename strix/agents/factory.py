@@ -16,6 +16,7 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
+from strix.config import load_settings
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -33,6 +34,7 @@ from strix.tools.notes.tools import (
     list_notes,
     update_note,
 )
+from strix.tools.output_store import bound_and_store, bound_text
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
@@ -41,7 +43,12 @@ from strix.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
-from strix.tools.reporting.tool import create_vulnerability_report
+from strix.tools.reporting.tool import (
+    create_dependency_report,
+    create_vulnerability_report,
+    get_report,
+    list_reports,
+)
 from strix.tools.thinking.tool import think
 from strix.tools.todo.tools import (
     create_todo,
@@ -55,7 +62,7 @@ from strix.tools.web_search.tool import web_search
 
 
 if TYPE_CHECKING:
-    from collections.abc import Awaitable, Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from agents import RunContextWrapper
     from agents.tool import FunctionToolResult
@@ -103,8 +110,36 @@ def _extract_custom_input(tool: CustomTool, raw_input: str | dict[str, Any]) -> 
     return value if isinstance(value, str) else ""
 
 
+def _tool_output_limits() -> tuple[int, int]:
+    context = load_settings().context
+    return context.tool_output_max_lines, context.tool_output_max_bytes
+
+
+async def _bound_result(result: Any) -> Any:
+    if not isinstance(result, str):
+        return result
+    max_lines, max_bytes = _tool_output_limits()
+    return await bound_and_store(result, max_lines=max_lines, max_bytes=max_bytes)
+
+
 def _format_tool_error(exc: Exception) -> str:
-    return str(exc) or exc.__class__.__name__
+    message = str(exc) or exc.__class__.__name__
+    max_lines, max_bytes = _tool_output_limits()
+    return bound_text(message, max_lines=max_lines, max_bytes=max_bytes)
+
+
+def _with_bounded_result(tool: FunctionTool) -> FunctionTool:
+    """Cap a tool's result size before it enters history (idempotent)."""
+    if getattr(tool, "_strix_bounded", False):
+        return tool
+    invoke_tool = tool.on_invoke_tool
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        return await _bound_result(await invoke_tool(ctx, raw_input))
+
+    tool.on_invoke_tool = invoke
+    tool._strix_bounded = True  # type: ignore[attr-defined]
+    return tool
 
 
 def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
@@ -112,7 +147,7 @@ def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
         try:
-            return await invoke_tool(ctx, raw_input)
+            return await _bound_result(await invoke_tool(ctx, raw_input))
         except Exception as exc:  # noqa: BLE001 - tool errors should be model-visible results.
             logger.debug("Tool %s failed; returning error as result", tool.name, exc_info=True)
             return _format_tool_error(exc)
@@ -127,7 +162,7 @@ def _custom_tool_as_function_tool(tool: CustomTool) -> FunctionTool:
         if not custom_input:
             return f"`{_custom_tool_input_field(tool)}` must be a non-empty string."
         try:
-            return await tool.on_invoke_tool(ctx, custom_input)
+            return await _bound_result(await tool.on_invoke_tool(ctx, custom_input))
         except Exception as exc:  # noqa: BLE001 - matches SDK CustomTool error-as-result behavior.
             logger.debug("Tool %s failed; returning error as result", tool.name, exc_info=True)
             return _format_tool_error(exc)
@@ -159,12 +194,35 @@ def _custom_tool_as_function_tool(tool: CustomTool) -> FunctionTool:
     )
 
 
-def _configure_chat_completions_filesystem_tools(toolset: Any) -> None:
+def _bound_custom_tool(tool: CustomTool) -> CustomTool:
+    """Bound a native ``CustomTool`` result in place (Responses path)."""
+    invoke_tool = tool.on_invoke_tool
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        return await _bound_result(await invoke_tool(ctx, raw_input))
+
+    tool.on_invoke_tool = invoke
+    return tool
+
+
+def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None:
     for name, tool in vars(toolset).items():
-        if isinstance(tool, CustomTool):
-            setattr(toolset, name, _custom_tool_as_function_tool(tool))
+        if chat_completions:
+            if isinstance(tool, CustomTool):
+                setattr(toolset, name, _custom_tool_as_function_tool(tool))
+            elif isinstance(tool, FunctionTool):
+                setattr(toolset, name, _function_tool_with_error_result(tool))
+        elif isinstance(tool, CustomTool):
+            setattr(toolset, name, _bound_custom_tool(tool))
         elif isinstance(tool, FunctionTool):
-            setattr(toolset, name, _function_tool_with_error_result(tool))
+            setattr(toolset, name, _with_bounded_result(tool))
+
+
+def _make_filesystem_configurator(*, chat_completions: bool) -> Any:
+    def configure(toolset: Any) -> None:
+        _configure_filesystem_tools(toolset, chat_completions=chat_completions)
+
+    return configure
 
 
 _CHARS_ESCAPE_RE = re.compile(r"\\(?:u[0-9a-fA-F]{4}|x[0-9a-fA-F]{2}|[0abtnvfr\\])")
@@ -205,10 +263,29 @@ def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
     return f"{tool_name}: invalid arguments — " + "; ".join(parts)
 
 
+def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
+    """Clamp the SDK shell tools' ``max_output_tokens`` to the configured
+    ceiling; a smaller explicit value is respected."""
+    ceiling = load_settings().context.tool_output_max_tokens
+    requested = parsed.get("max_output_tokens")
+    parsed["max_output_tokens"] = (
+        ceiling if not isinstance(requested, int) or requested > ceiling else requested
+    )
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
+        try:
+            parsed = json.loads(raw_input)
+        except (json.JSONDecodeError, TypeError):
+            parsed = None
+        if isinstance(parsed, dict):
+            if "shell" not in parsed:
+                parsed["shell"] = "bash"
+            _apply_shell_output_cap(parsed)
+            raw_input = json.dumps(parsed)
         try:
             return await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
@@ -233,8 +310,10 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
             parsed = json.loads(raw_input)
         except json.JSONDecodeError:
             parsed = None
-        if isinstance(parsed, dict) and isinstance(parsed.get("chars"), str):
-            parsed["chars"] = _decode_chars_escape(parsed["chars"])
+        if isinstance(parsed, dict):
+            if isinstance(parsed.get("chars"), str):
+                parsed["chars"] = _decode_chars_escape(parsed["chars"])
+            _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:
             return await invoke_tool(ctx, raw_input)
@@ -335,6 +414,9 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     delete_note,
     web_search,
     create_vulnerability_report,
+    create_dependency_report,
+    list_reports,
+    get_report,
     list_requests,
     view_request,
     repeat_request,
@@ -349,6 +431,48 @@ _BASE_TOOLS: tuple[Tool, ...] = (
 )
 
 
+# Extra tools registered for scan agents. Mirrors
+# ``strix.runtime.backends.register_backend``: register before the first
+# ``build_strix_agent`` call and every agent (root + children) gets them.
+_EXTRA_TOOLS: list[Tool] = []
+
+
+def _ensure_unique_tool_names(tools: Sequence[Tool]) -> None:
+    seen: set[str] = set()
+    duplicates: set[str] = set()
+    for tool in tools:
+        if tool.name in seen:
+            duplicates.add(tool.name)
+        seen.add(tool.name)
+    if duplicates:
+        msg = f"Agent tools must have unique names: {sorted(duplicates)}"
+        raise ValueError(msg)
+
+
+def register_agent_tools(*tools: Tool) -> None:
+    """Register tools for every scan agent built afterwards.
+
+    Tools are added to both root and child agents, after the base set and
+    before the lifecycle tool (``finish_scan`` / ``agent_finish``). Duplicate
+    tool objects are ignored so repeated imports don't double-register.
+    """
+    new_tools: list[Tool] = []
+    for tool in tools:
+        if tool not in _EXTRA_TOOLS and tool not in new_tools:
+            new_tools.append(tool)
+
+    _ensure_unique_tool_names([*_BASE_TOOLS, *_EXTRA_TOOLS, *new_tools, finish_scan, agent_finish])
+
+    for tool in new_tools:
+        _EXTRA_TOOLS.append(tool)
+        logger.info("Registered extra agent tool: %s", getattr(tool, "name", tool))
+
+
+def registered_agent_tools() -> tuple[Tool, ...]:
+    """Return the currently registered scan-agent tools."""
+    return tuple(_EXTRA_TOOLS)
+
+
 def build_strix_agent(
     *,
     name: str = "strix",
@@ -359,26 +483,40 @@ def build_strix_agent(
     interactive: bool = False,
     chat_completions_tools: bool = False,
     system_prompt_context: dict[str, Any] | None = None,
+    extra_tools: Sequence[Tool] | None = None,
+    instructions_override: str | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
     Args:
         chat_completions_tools: Wrap SDK custom tools as function tools
             when the selected backend cannot accept Responses custom tools.
+        extra_tools: Additional tools for this scan agent only, on top of any
+            registered via ``register_agent_tools``.
+        instructions_override: Use this verbatim as the system prompt instead
+            of rendering the built-in scan prompt.
     """
-    instructions = render_system_prompt(
-        skills=skills,
-        scan_mode=scan_mode,
-        is_whitebox=is_whitebox,
-        is_root=is_root,
-        interactive=interactive,
-        system_prompt_context=system_prompt_context,
-    )
-
-    if is_root:
-        tools: list[Tool] = [*_BASE_TOOLS, finish_scan]
+    if instructions_override is not None:
+        instructions = instructions_override
     else:
-        tools = [*_BASE_TOOLS, agent_finish]
+        instructions = render_system_prompt(
+            skills=skills,
+            scan_mode=scan_mode,
+            is_whitebox=is_whitebox,
+            is_root=is_root,
+            interactive=interactive,
+            system_prompt_context=system_prompt_context,
+        )
+
+    agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
+    if is_root:
+        tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
+    else:
+        tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
+    _ensure_unique_tool_names(tools)
+    tools = [
+        _with_bounded_result(tool) if isinstance(tool, FunctionTool) else tool for tool in tools
+    ]
 
     logger.info(
         "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",
@@ -398,8 +536,8 @@ def build_strix_agent(
         model=None,
         capabilities=[
             Filesystem(
-                configure_tools=(
-                    _configure_chat_completions_filesystem_tools if chat_completions_tools else None
+                configure_tools=_make_filesystem_configurator(
+                    chat_completions=chat_completions_tools,
                 ),
             ),
             Shell(

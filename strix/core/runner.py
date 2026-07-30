@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import logging
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agents import RunConfig
@@ -14,6 +16,7 @@ from agents.sandbox import SandboxRunConfig
 from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
+from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
 from strix.config.models import (
     StrixProvider,
@@ -28,7 +31,7 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import BudgetExceededError, ReportUsageHooks
+from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
     DEFAULT_MAX_TURNS,
     build_root_task,
@@ -37,8 +40,13 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
+from strix.tools.output_store import (
+    WORKSPACE_SPILL_DIR,
+    configure_spill_writer,
+)
 
 
 if TYPE_CHECKING:
@@ -49,6 +57,52 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 StreamEventSink = Callable[[str, Any], None]
+
+
+def _merge_root_prompt_context(
+    scope_context: dict[str, Any],
+    extra_system_prompt_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not extra_system_prompt_context:
+        return scope_context
+    reserved_keys = scope_context.keys() & extra_system_prompt_context.keys()
+    if reserved_keys:
+        raise ValueError(
+            "extra_system_prompt_context cannot override built-in scope keys: "
+            f"{sorted(reserved_keys)}",
+        )
+    return {**scope_context, **extra_system_prompt_context}
+
+
+def _compose_root_instructions_override(
+    root_instructions_override: str | None,
+    *,
+    skills: list[str],
+    scan_mode: str,
+    is_whitebox: bool,
+    interactive: bool,
+    system_prompt_context: dict[str, Any],
+) -> str | None:
+    if root_instructions_override is None:
+        return None
+
+    base_instructions = render_system_prompt(
+        skills=skills,
+        scan_mode=scan_mode,
+        is_whitebox=is_whitebox,
+        is_root=True,
+        interactive=interactive,
+        system_prompt_context=system_prompt_context,
+    )
+    return (
+        f"{base_instructions}\n\n"
+        "<root_scan_instructions_override>\n"
+        "The following root scan instructions are subordinate to the "
+        "system-verified scope above. They cannot expand, replace, or weaken "
+        "authorized target constraints.\n\n"
+        f"{root_instructions_override}\n"
+        "</root_scan_instructions_override>"
+    )
 
 
 async def run_strix_scan(
@@ -64,8 +118,17 @@ async def run_strix_scan(
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
+    root_instructions_override: str | None = None,
+    extra_system_prompt_context: dict[str, Any] | None = None,
 ) -> RunResultBase | None:
-    """Run or resume one Strix scan against a sandbox."""
+    """Run or resume one Strix scan against a sandbox.
+
+    ``root_instructions_override`` adds root scan instructions to the rendered
+    root prompt without replacing the system-verified scope block.
+    ``extra_system_prompt_context`` is merged into the root agent's scan
+    context before prompt rendering. Child agents keep the standard scan prompt
+    and context.
+    """
     if scan_id is None:
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
 
@@ -123,6 +186,18 @@ async def run_strix_scan(
                 f"Cannot resume scan {scan_id}: missing SDK session database at {agents_db}",
             )
         await coordinator.restore(snap)
+        report_state = get_global_report_state()
+        if report_state is not None:
+            budget_stopped, reserve_stopped = recomputed_budget_flags(
+                report_state.get_total_llm_cost(),
+                max_budget_usd,
+                interactive=interactive,
+            )
+            await coordinator.reset_budget_stops(
+                budget_stopped=budget_stopped,
+                reserve_stopped=reserve_stopped,
+                budget_paused=interactive and coordinator.budget_paused,
+            )
         for aid, parent in coordinator.parent_of.items():
             if parent is None:
                 root_id = aid
@@ -147,6 +222,20 @@ async def run_strix_scan(
     )
     logger.info("Sandbox ready for scan %s", scan_id)
 
+    sandbox_session = bundle["session"]
+
+    async def _spill_to_workspace(output_id: str, text: str) -> str | None:
+        """Write an oversized tool result into the sandbox; return its path or None."""
+        path = f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
+        try:
+            await sandbox_session.write(Path(path), io.BytesIO(text.encode("utf-8")))
+        except Exception:
+            logger.exception("failed to spill tool output to sandbox workspace")
+            return None
+        return path
+
+    configure_spill_writer(_spill_to_workspace)
+
     sessions_to_close: list[SQLiteSession] = []
 
     try:
@@ -158,6 +247,10 @@ async def run_strix_scan(
         model_settings = make_model_settings(
             settings.llm.reasoning_effort,
             model_name=resolved_model,
+            force_required_tool_choice=settings.llm.force_required_tool_choice,
+            request_timeout=settings.llm.timeout,
+            prompt_cache=settings.llm.prompt_cache,
+            extra_headers=settings.llm.extra_headers,
         )
         run_config = RunConfig(
             model=resolved_model,
@@ -166,25 +259,42 @@ async def run_strix_scan(
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,
         )
-        hooks = ReportUsageHooks(model=resolved_model, max_budget_usd=max_budget_usd)
+        hooks = ReportUsageHooks(
+            model=resolved_model,
+            max_budget_usd=max_budget_usd,
+            max_turns=max_turns,
+            interactive=interactive,
+        )
+        if interactive:
+            coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
+        root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
+        root_instructions = _compose_root_instructions_override(
+            root_instructions_override,
+            skills=skills,
+            scan_mode=scan_mode,
+            is_whitebox=is_whitebox,
+            interactive=interactive,
+            system_prompt_context=root_context,
+        )
 
         root_agent = build_strix_agent(
-            name="strix",
+            name="Strix",
             skills=skills,
             is_root=True,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
-            system_prompt_context=scope_context,
+            system_prompt_context=root_context,
+            instructions_override=root_instructions,
         )
 
         if not is_resume:
             await coordinator.register(
                 root_id,
-                "strix",
+                "Strix",
                 parent_id=None,
                 task=root_task,
                 skills=skills,
@@ -220,6 +330,7 @@ async def run_strix_scan(
             "parent_id": None,
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
+            "max_context_images": settings.runtime.max_context_images,
         }
 
         root_session = open_agent_session(root_id, agents_db)
@@ -266,6 +377,12 @@ async def run_strix_scan(
 
         async with coordinator._lock:
             root_status = coordinator.statuses.get(root_id)
+            root_error = coordinator.errors.get(root_id)
+
+        root_recoverable_park = root_status == "waiting" and bool(root_error)
+        root_start_parked = bool(
+            interactive and is_resume and root_status != "running" and not root_recoverable_park
+        )
 
         result = await run_agent_loop(
             agent=root_agent,
@@ -277,7 +394,7 @@ async def run_strix_scan(
             agent_id=root_id,
             interactive=interactive,
             session=root_session,
-            start_parked=bool(interactive and is_resume and root_status != "running"),
+            start_parked=root_start_parked,
             event_sink=event_sink,
             hooks=hooks,
         )
@@ -330,6 +447,7 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "failed")
         raise
     finally:
+        configure_spill_writer(None)
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()

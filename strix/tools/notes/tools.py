@@ -27,6 +27,21 @@ _NOTE_ID_GENERATION_ATTEMPTS = 1024
 _notes_path: Path | None = None
 
 
+def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
+    """Return the (agent_id, agent_name) of the agent invoking this tool."""
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    raw_agent_id = inner.get("agent_id")
+    agent_id = raw_agent_id if isinstance(raw_agent_id, str) else None
+    agent_name: str | None = None
+    coordinator = inner.get("coordinator")
+    if agent_id is not None and coordinator is not None:
+        names = getattr(coordinator, "names", {})
+        if isinstance(names, dict):
+            raw_agent_name = names.get(agent_id)
+            agent_name = raw_agent_name if isinstance(raw_agent_name, str) else None
+    return agent_id, agent_name
+
+
 def _generate_note_id() -> str | None:
     for _ in range(_NOTE_ID_GENERATION_ATTEMPTS):
         note_id = uuid.uuid4().hex[:6]
@@ -117,10 +132,26 @@ def _filter_notes(
     return filtered
 
 
+def _mark_authorship(
+    entry: dict[str, Any], note: dict[str, Any], caller_agent_id: str | None
+) -> dict[str, Any]:
+    """Attach the note's author and flag whether the caller wrote it."""
+    agent_name = note.get("agent_name")
+    if agent_name:
+        entry["agent_name"] = agent_name
+    agent_id = note.get("agent_id")
+    if agent_id:
+        entry["agent_id"] = agent_id
+    if caller_agent_id is not None and agent_id == caller_agent_id:
+        entry["by_you"] = True
+    return entry
+
+
 def _to_note_listing_entry(
     note: dict[str, Any],
     *,
     include_content: bool = False,
+    caller_agent_id: str | None = None,
 ) -> dict[str, Any]:
     entry = {
         "note_id": note.get("note_id"),
@@ -138,7 +169,7 @@ def _to_note_listing_entry(
             entry["content_preview"] = f"{content[:_DEFAULT_CONTENT_PREVIEW_CHARS].rstrip()}..."
         else:
             entry["content_preview"] = content
-    return entry
+    return _mark_authorship(entry, note, caller_agent_id)
 
 
 def _create_note_impl(
@@ -146,6 +177,8 @@ def _create_note_impl(
     content: str,
     category: str = "general",
     tags: list[str] | None = None,
+    agent_id: str | None = None,
+    agent_name: str | None = None,
 ) -> dict[str, Any]:
     with _notes_lock:
         try:
@@ -179,6 +212,10 @@ def _create_note_impl(
                 "created_at": timestamp,
                 "updated_at": timestamp,
             }
+            if agent_id:
+                note["agent_id"] = agent_id
+            if agent_name:
+                note["agent_name"] = agent_name
             _notes_storage[note_id] = note
         except (ValueError, TypeError) as e:
             return {"success": False, "error": f"Failed to create note: {e}", "note_id": None}
@@ -197,11 +234,17 @@ def _list_notes_impl(
     tags: list[str] | None = None,
     search: str | None = None,
     include_content: bool = False,
+    caller_agent_id: str | None = None,
 ) -> dict[str, Any]:
     with _notes_lock:
         try:
             filtered = _filter_notes(category=category, tags=tags, search_query=search)
-            notes = [_to_note_listing_entry(n, include_content=include_content) for n in filtered]
+            notes = [
+                _to_note_listing_entry(
+                    n, include_content=include_content, caller_agent_id=caller_agent_id
+                )
+                for n in filtered
+            ]
         except (ValueError, TypeError) as e:
             return {
                 "success": False,
@@ -218,7 +261,7 @@ def _list_notes_impl(
         }
 
 
-def _get_note_impl(note_id: str) -> dict[str, Any]:
+def _get_note_impl(note_id: str, caller_agent_id: str | None = None) -> dict[str, Any]:
     with _notes_lock:
         try:
             if not note_id or not note_id.strip():
@@ -232,6 +275,7 @@ def _get_note_impl(note_id: str) -> dict[str, Any]:
                 }
             note_with_id = note.copy()
             note_with_id["note_id"] = note_id
+            _mark_authorship(note_with_id, note, caller_agent_id)
         except (ValueError, TypeError) as e:
             return {"success": False, "error": f"Failed to get note: {e}", "note": None}
         else:
@@ -304,7 +348,9 @@ async def create_note(
 
     Notes are visible to every agent in the same scan for the lifetime
     of the run; they live in-memory only and are cleared when the
-    process exits.
+    process exits. Each note records the agent that wrote it, so
+    ``list_notes`` / ``get_note`` show the author (``agent_name``) and
+    flag your own notes with ``by_you``.
 
     For actionable tasks, use ``todo`` instead — notes are for capturing
     information, todos are for tracking work.
@@ -329,8 +375,11 @@ async def create_note(
         category: One of the categories above. Default ``"general"``.
         tags: Optional free-form tags.
     """
+    agent_id, agent_name = _caller_identity(ctx)
     return json.dumps(
-        await asyncio.to_thread(_create_note_impl, title, content, category, tags),
+        await asyncio.to_thread(
+            _create_note_impl, title, content, category, tags, agent_id, agent_name
+        ),
         ensure_ascii=False,
         default=str,
     )
@@ -355,6 +404,9 @@ async def list_notes(
     when you need to scan many notes; expensive in tokens for large
     notes.
 
+    Each entry also carries the author (``agent_name``) and, for notes
+    you wrote yourself, ``by_you: true``.
+
     Args:
         category: Filter by category.
         tags: Filter to notes that have any of these tags.
@@ -362,6 +414,7 @@ async def list_notes(
         include_content: When False (default) entries have a preview;
             when True the full ``content`` is included.
     """
+    caller_agent_id, _ = _caller_identity(ctx)
     return json.dumps(
         await asyncio.to_thread(
             _list_notes_impl,
@@ -369,6 +422,7 @@ async def list_notes(
             tags=tags,
             search=search,
             include_content=include_content,
+            caller_agent_id=caller_agent_id,
         ),
         ensure_ascii=False,
         default=str,
@@ -382,8 +436,11 @@ async def get_note(ctx: RunContextWrapper, note_id: str) -> str:
     Args:
         note_id: Note id from ``create_note`` or a ``list_notes`` entry.
     """
+    caller_agent_id, _ = _caller_identity(ctx)
     return json.dumps(
-        await asyncio.to_thread(_get_note_impl, note_id), ensure_ascii=False, default=str
+        await asyncio.to_thread(_get_note_impl, note_id, caller_agent_id),
+        ensure_ascii=False,
+        default=str,
     )
 
 

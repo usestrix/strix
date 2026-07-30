@@ -27,6 +27,7 @@
 <a href="https://x.com/strix_ai"><img src="https://github.com/usestrix/.github/raw/main/imgs/X.png" height="40" alt="Follow on X"></a>
 
 
+<a href="https://trendshift.io/repositories/15362?utm_source=trendshift-badge&amp;utm_medium=badge&amp;utm_campaign=badge-trendshift-15362" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/15362/weekly" alt="usestrix%2Fstrix | Trendshift" width="250" height="55"/></a>
 <a href="https://trendshift.io/repositories/15362" target="_blank"><img src="https://trendshift.io/api/badge/repositories/15362" alt="usestrix/strix | Trendshift" width="250" height="55"/></a>
 
 </div>
@@ -142,6 +143,31 @@ Advanced multi-agent orchestration for comprehensive automated penetration testi
 
 ---
 
+## 🖥️ Local Web Viewer
+
+Every scan writes its results to disk as it runs. Bring them up in a local dashboard with a single command:
+
+```bash
+# Open the most recent run
+strix view
+
+# ...or open a specific run by name
+strix view my-run-name
+```
+
+`strix view` starts a lightweight local server (bound to `127.0.0.1` on a random port) and opens your browser to a private, tokened link. Nothing leaves your machine: the dashboard reads the run's files straight off disk, with no cloud account or upload required. The UI ships prebuilt with Strix, so there is no extra install and no JS build step.
+
+### What's in the dashboard
+
+- **Overview**: run status, target, and a severity breakdown of everything found so far.
+- **Vulnerabilities**: each validated finding with its severity, details, and reproduction steps.
+- **Agent graph**: a live map of the multi-agent team, showing which agent is doing what.
+- **Steering**: send instructions to a live scan from the browser to redirect the agents mid-run.
+- **History**: browse past runs on this machine and jump between them.
+- **Reports**: generate a shareable report and email it to yourself or your team.
+
+---
+
 ## Usage Examples
 
 ### Basic Usage
@@ -165,6 +191,9 @@ strix --target https://your-app.com --instruction "Perform authenticated testing
 
 # Multi-target testing (source code + deployed app)
 strix -t https://github.com/org/app -t https://your-app.com
+
+# Targets from a file, one target per non-empty, non-comment line
+strix --target-list ./targets.txt
 
 # White-box source-aware scan (local repository)
 strix --target ./app-directory --scan-mode standard
@@ -237,6 +266,20 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 
 > [!NOTE]
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
+
+#### Sign in with a ChatGPT subscription
+
+Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
+
+```bash
+strix auth login chatgpt      # sign in with your ChatGPT account
+
+export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
+strix --target ./app-directory
+
+strix auth status             # show the active sign-in
+strix auth logout             # forget the sign-in
+```
 
 **Recommended models for best results:**
 

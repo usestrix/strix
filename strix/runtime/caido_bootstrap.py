@@ -10,6 +10,7 @@ exposed-port URL for all subsequent SDK calls.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from typing import TYPE_CHECKING
@@ -93,9 +94,16 @@ async def bootstrap_caido(
     client = Client(host_url, auth=TokenAuthOptions(token=access_token))
     await client.connect()
 
-    project = await client.project.create(
-        CreateProjectOptions(name="sandbox", temporary=True),
-    )
-    await client.project.select(project.id)
+    try:
+        project = await client.project.create(
+            CreateProjectOptions(name="sandbox", temporary=True),
+        )
+        await client.project.select(project.id)
+    except BaseException:
+        # The connected client never reaches the session bundle if project
+        # setup fails, so close it here to avoid leaking the transport.
+        with contextlib.suppress(Exception):
+            await client.aclose()
+        raise
     logger.info("Caido project selected: %s", project.id)
     return client

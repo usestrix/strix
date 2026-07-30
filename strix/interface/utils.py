@@ -11,11 +11,10 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 import docker
+import requests
 from docker.errors import DockerException, ImageNotFound
 from rich.console import Console
 from rich.panel import Panel
@@ -253,6 +252,20 @@ def _llm_usage(report_state: Any) -> dict[str, Any]:
     return usage if isinstance(usage, dict) else {}
 
 
+def _is_subscription(report_state: Any) -> bool:
+    """Whether this run uses a model subscription (no metered cost).
+
+    Prefers the run record so it's correct for hydrated/resumed runs; falls back
+    to current settings.
+    """
+    record = getattr(report_state, "run_record", None)
+    if isinstance(record, dict) and record.get("auth_mode"):
+        return record.get("auth_mode") == "subscription"
+    from strix.config import codex
+
+    return codex.auth_mode(load_settings().llm.model) == "subscription"
+
+
 def _int_stat(usage: dict[str, Any], key: str) -> int:
     try:
         return max(0, int(usage.get(key) or 0))
@@ -283,11 +296,16 @@ def _build_llm_usage_stats(
     *,
     live: bool = False,
 ) -> None:
+    subscription = _is_subscription(report_state)
     usage = _llm_usage(report_state)
     if not usage or _int_stat(usage, "requests") <= 0:
         stats_text.append("\n")
         stats_text.append("Cost ", style="dim")
-        stats_text.append("$0.0000 ", style="#fbbf24")
+        if subscription:
+            stats_text.append("$0.00 ", style="#22c55e")
+            stats_text.append("(subscription) ", style="dim")
+        else:
+            stats_text.append("$0.0000 ", style="#fbbf24")
         stats_text.append("· ", style="dim white")
         stats_text.append("Tokens ", style="dim")
         stats_text.append("0", style="white")
@@ -312,7 +330,12 @@ def _build_llm_usage_stats(
     stats_text.append("Output Tokens ", style="dim")
     stats_text.append(format_token_count(output_tokens), style="white")
 
-    if live or cost > 0:
+    if subscription:
+        stats_text.append("  ·  ", style="dim white")
+        stats_text.append("Cost ", style="dim")
+        stats_text.append("$0.00", style="#22c55e")
+        stats_text.append(" (subscription)", style="dim")
+    elif live or cost > 0:
         stats_text.append("  ·  ", style="dim white")
         stats_text.append("Cost ", style="dim")
         stats_text.append(f"${cost:.4f}", style="#fbbf24")
@@ -337,6 +360,9 @@ def build_live_stats_text(report_state: Any) -> Text:
     model = load_settings().llm.model or "unknown"
     stats_text.append("Model ", style="dim")
     stats_text.append(str(model), style="white")
+    if _is_subscription(report_state):
+        stats_text.append("  ·  ", style="dim white")
+        stats_text.append("ChatGPT subscription", style="#22c55e")
     stats_text.append("\n")
 
     vuln_count = len(report_state.vulnerability_reports)
@@ -379,6 +405,10 @@ def build_tui_stats_text(report_state: Any) -> Text:
 
     model = load_settings().llm.model or "unknown"
     stats_text.append(str(model), style="white")
+    subscription = _is_subscription(report_state)
+    if subscription:
+        stats_text.append("\n")
+        stats_text.append("ChatGPT subscription", style="#22c55e")
 
     usage = _llm_usage(report_state)
     if usage and _int_stat(usage, "total_tokens") > 0:
@@ -388,7 +418,10 @@ def build_tui_stats_text(report_state: Any) -> Text:
             style="white",
         )
         cost = _float_stat(usage, "cost")
-        if cost > 0:
+        if subscription:
+            stats_text.append(" · ", style="white")
+            stats_text.append("$0.00", style="white")
+        elif cost > 0:
             stats_text.append(" · ", style="white")
             stats_text.append(f"${cost:.2f}", style="white")
 
@@ -1054,13 +1087,12 @@ def resolve_diff_scope_context(
 def _is_http_git_repo(url: str) -> bool:
     check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
     try:
-        req = Request(check_url, headers={"User-Agent": "git/strix"})  # noqa: S310
-        with urlopen(req, timeout=10) as resp:  # noqa: S310  # nosec B310
-            return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
-    except HTTPError as e:
-        return e.code == 401
-    except (URLError, OSError, ValueError):
+        resp = requests.get(check_url, headers={"User-Agent": "git/strix"}, timeout=10)
+    except (requests.RequestException, ValueError):
         return False
+    if resp.status_code >= 400:
+        return resp.status_code == 401
+    return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
 
 
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
@@ -1129,6 +1161,32 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         "- A domain name (e.g., example.com)\n"
         "- An IP address (e.g., 192.168.1.10)"
     )
+
+
+def read_target_list_file(path_str: str) -> list[str]:
+    """Read scan targets from a file, one target per non-empty, non-comment line."""
+    if not path_str or not path_str.strip():
+        raise ValueError("--target-list path must not be empty.")
+
+    path = Path(path_str).expanduser()
+    if not path.is_file():
+        raise ValueError(f"Target list file '{path_str}' is not an existing file.")
+
+    try:
+        targets = [
+            target
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if (target := line.strip()) and not target.startswith("#")
+        ]
+    except UnicodeDecodeError as e:
+        raise ValueError(f"Target list file '{path_str}' must be valid UTF-8 text: {e!s}") from e
+    except OSError as e:
+        raise ValueError(f"Failed to read target list file '{path_str}': {e!s}") from e
+
+    targets = [target for target in targets if target]
+    if not targets:
+        raise ValueError(f"Target list file '{path_str}' is empty.")
+    return targets
 
 
 def sanitize_name(name: str) -> str:

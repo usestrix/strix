@@ -191,7 +191,7 @@ class ViewRequestRenderer(BaseToolRenderer):
                         if i < len(lines) - 1:
                             text.append("\n")
 
-                    if has_more or len(lines) > 15:
+                    if has_more or len(content.split("\n")) > 15:
                         text.append("\n")
                         text.append("  ... more content available", style="dim italic")
 
