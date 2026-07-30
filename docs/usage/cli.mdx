@@ -130,6 +130,11 @@ models, and targets. If the Go sidecar cannot activate, Strix can fall back to
 Textual for prepared scans. Failures after Go TUI activation are surfaced rather than switching
 interfaces mid-session.
 
+Setup slash commands also cover the main fresh-run controls: `/budget <USD|off>`,
+`/turns <N>`, `/scope <auto|diff|full> [base]`, `/mount <path>`,
+`/target-list <path>`, and `/prompt-file <path>`. These values are applied before
+the scan starts; they do not mutate an active or resumed scan.
+
 ## Examples
 
 ```bash

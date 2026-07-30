@@ -12,6 +12,7 @@ PROTOCOL_CAPABILITIES = (
     "structured-command-errors",
     "paged-models",
     "agents-collection",
+    "setup-run-controls",
 )
 
 # Commands and control messages are intentionally small. Event and finding

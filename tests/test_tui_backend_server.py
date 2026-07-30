@@ -17,6 +17,7 @@ from strix.interface.tui_backend.protocol import (
     PROTOCOL_CAPABILITIES,
     PROTOCOL_VERSION,
     ProtocolHandshakeError,
+    envelope,
 )
 from strix.interface.tui_backend.server import TuiBackendServer
 
@@ -184,6 +185,29 @@ async def test_server_command_round_trip_over_inherited_socket() -> None:
     finally:
         child.close()
         await server.close()
+
+
+def test_unicode_heavy_setup_state_stays_within_control_frame_limit() -> None:
+    controller = TuiController(args())
+    controller.instruction = "🔒" * 10_000
+    controller.targets = [f"https://例え.{index}/" + "界" * 500 for index in range(20)]
+    controller.mounts = [f"/workspace/{index}/" + "源" * 500 for index in range(20)]
+    controller.error = "失" * 10_000
+    controller.messages = [
+        {"id": str(index), "text": "警" * 10_000, "level": "warning"} for index in range(10)
+    ]
+    controller.report_state = SimpleNamespace(
+        caido_url="https://例え.example/" + "道" * 10_000,
+        get_total_llm_usage=lambda: {f"model-{index}": "費" * 10_000 for index in range(20)},
+    )
+    server = TuiBackendServer(controller)
+
+    snapshot = controller.snapshot()
+    encoded = server._encode(envelope("state", {"revision": 1, "state": snapshot}))
+
+    assert len(encoded) <= MAX_COMMAND_BYTES
+    assert "🔒".encode() in encoded
+    assert snapshot["projection_truncated"] is True
 
 
 @pytest.mark.asyncio
@@ -387,6 +411,11 @@ async def test_agents_collection_has_no_state_cap_and_sends_delete_and_resync() 
 async def test_models_list_command_frames_remain_under_64_kib(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setattr(
+        "strix.interface.tui_backend.controller.load_settings",
+        lambda: SimpleNamespace(llm=SimpleNamespace(model="")),
+    )
+
     async def groups(*, current_model: str | None = None) -> list[ProviderModelGroup]:
         assert current_model == ""
         models = tuple(f"openai/model-{index}-{'x' * 900}" for index in range(180))

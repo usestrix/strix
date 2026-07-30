@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -971,6 +972,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		update.State.Vulnerabilities = m.snapshot.Vulnerabilities
 		update.State.Agents = m.snapshot.Agents
 		m.consumeMessages(update.State.Messages, update.State.SetupMode)
+		wasSetup := m.snapshot.SetupMode
 		m.snapshot = update.State
 		m.stateRevision = update.Revision
 		if m.snapshot.Error != nil {
@@ -979,6 +981,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		if m.snapshot.SetupMode {
 			m.input.Placeholder = "Type / to configure your scan"
 		} else {
+			if wasSetup && m.picker != pickerNone {
+				m.closePicker()
+			}
 			m.input.Placeholder = "Send a message"
 		}
 		m.selectedAgent = selectedAgentIndex(m.snapshot.Agents, selectedAgentID)
@@ -1033,6 +1038,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			} else {
 				m.errorText = message
 			}
+			return nil
+		}
+		if m.snapshot.ScanStarted && !m.snapshot.SetupMode && (strings.HasPrefix(result.Command, "setup.") || result.Command == "providers.list" || result.Command == "models.list") {
 			return nil
 		}
 		m.errorText = ""
@@ -1170,6 +1178,63 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 				m.snapshot.ScanMode = data.Mode
 				m.setupMsg("✓ Scan mode set to "+data.Mode+".", col(green))
 			}
+		case "setup.add_mount":
+			var data struct {
+				Mount string `json:"mount"`
+			}
+			_ = json.Unmarshal(result.Result, &data)
+			if data.Mount != "" {
+				m.setupMsg("✓ Added read-only mount: "+data.Mount, col(green))
+			}
+		case "setup.load_target_list":
+			var data struct {
+				Path  string `json:"path"`
+				Added int    `json:"added"`
+				Total int    `json:"total"`
+			}
+			_ = json.Unmarshal(result.Result, &data)
+			m.setupMsg(fmt.Sprintf("✓ Added %d target(s) from %s (%d total).", data.Added, data.Path, data.Total), col(green))
+		case "setup.load_instruction_file":
+			var data struct {
+				Path       string `json:"path"`
+				Characters int    `json:"characters"`
+			}
+			_ = json.Unmarshal(result.Result, &data)
+			m.setupMsg(fmt.Sprintf("✓ Loaded %d instruction characters from %s.", data.Characters, data.Path), col(green))
+		case "setup.set_budget":
+			var data struct {
+				Budget *float64 `json:"budget"`
+			}
+			_ = json.Unmarshal(result.Result, &data)
+			m.snapshot.MaxBudgetUSD = data.Budget
+			if data.Budget == nil {
+				m.setupMsg("Budget limit disabled.", dimS())
+			} else {
+				m.setupMsg(fmt.Sprintf("✓ Budget set to $%.2f.", *data.Budget), col(green))
+			}
+		case "setup.set_max_turns":
+			var data struct {
+				Turns int `json:"turns"`
+			}
+			_ = json.Unmarshal(result.Result, &data)
+			m.snapshot.MaxTurns = data.Turns
+			m.setupMsg(fmt.Sprintf("✓ Maximum turns set to %d per agent.", data.Turns), col(green))
+		case "setup.set_scope":
+			var data struct {
+				Mode string  `json:"mode"`
+				Base *string `json:"base"`
+			}
+			_ = json.Unmarshal(result.Result, &data)
+			m.snapshot.ScopeMode = data.Mode
+			m.snapshot.DiffBase = ""
+			if data.Base != nil {
+				m.snapshot.DiffBase = *data.Base
+			}
+			message := "✓ Scope mode set to " + data.Mode
+			if m.snapshot.DiffBase != "" {
+				message += " against " + m.snapshot.DiffBase
+			}
+			m.setupMsg(message+".", col(green))
 		case "viewer.open":
 			var data struct {
 				Status string  `json:"status"`
@@ -1931,6 +1996,61 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, send(m.client, "setup.set_mode", map[string]any{"mode": strings.ToLower(arg)})
+	case "/budget":
+		if arg == "" {
+			if m.snapshot.MaxBudgetUSD == nil {
+				m.setupMsg("No budget limit is configured.", dimS())
+			} else {
+				m.setupMsg(fmt.Sprintf("Current budget limit: $%.2f.", *m.snapshot.MaxBudgetUSD), dimS())
+			}
+			return m, nil
+		}
+		if strings.EqualFold(arg, "off") || strings.EqualFold(arg, "none") {
+			return m, send(m.client, "setup.set_budget", map[string]any{"budget": nil})
+		}
+		budget, err := strconv.ParseFloat(arg, 64)
+		if err != nil || budget <= 0 || math.IsNaN(budget) || math.IsInf(budget, 0) {
+			m.setupMsg("Budget must be a number greater than 0, or 'off'.", col(red))
+			return m, nil
+		}
+		return m, send(m.client, "setup.set_budget", map[string]any{"budget": budget})
+	case "/turns", "/max-turns":
+		if arg == "" {
+			m.setupMsg(fmt.Sprintf("Current maximum turns: %d per agent.", m.snapshot.MaxTurns), dimS())
+			return m, nil
+		}
+		turns, err := strconv.Atoi(arg)
+		if err != nil || turns <= 0 {
+			m.setupMsg("Maximum turns must be an integer greater than 0.", col(red))
+			return m, nil
+		}
+		return m, send(m.client, "setup.set_max_turns", map[string]any{"turns": turns})
+	case "/scope", "/scope-mode":
+		fields := strings.Fields(arg)
+		if len(fields) == 0 {
+			message := "Current scope mode: " + m.snapshot.ScopeMode
+			if m.snapshot.DiffBase != "" {
+				message += " against " + m.snapshot.DiffBase
+			}
+			m.setupMsg(message+".", dimS())
+			return m, nil
+		}
+		mode := strings.ToLower(fields[0])
+		if len(fields) > 2 || (mode != "auto" && mode != "diff" && mode != "full") {
+			m.setupMsg("Usage: /scope <auto|diff|full> [base|default]", col(red))
+			return m, nil
+		}
+		payload := map[string]any{"mode": mode}
+		if len(fields) == 2 {
+			if strings.EqualFold(fields[1], "default") {
+				payload["base"] = nil
+			} else {
+				payload["base"] = fields[1]
+			}
+		} else if mode == "full" {
+			payload["base"] = nil
+		}
+		return m, send(m.client, "setup.set_scope", payload)
 	case "/target":
 		if arg == "" {
 			if len(m.snapshot.Targets) > 0 {
@@ -1938,6 +2058,9 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 				b.WriteString(boldC(green).Render("Targets"))
 				for _, t := range m.snapshot.Targets {
 					b.WriteString("\n" + col(white).Render("  "+t))
+				}
+				if hidden := m.snapshot.TargetCount - len(m.snapshot.Targets); hidden > 0 {
+					b.WriteString(fmt.Sprintf("\n  ...and %d more", hidden))
 				}
 				m.setupLogAppend(b.String())
 			} else {
@@ -1953,6 +2076,26 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 		}
 		m.setupMsg("✓ Added target: "+arg, col(green))
 		return m, send(m.client, "setup.add_target", map[string]any{"target": arg})
+	case "/mount":
+		if arg == "" {
+			if len(m.snapshot.Mounts) == 0 {
+				m.setupMsg("No read-only mounts configured. Add one with /mount <path>.", dimS())
+			} else {
+				message := "Read-only mounts:\n  " + strings.Join(m.snapshot.Mounts, "\n  ")
+				if hidden := m.snapshot.MountCount - len(m.snapshot.Mounts); hidden > 0 {
+					message += fmt.Sprintf("\n  ...and %d more", hidden)
+				}
+				m.setupMsg(message, dimS())
+			}
+			return m, nil
+		}
+		return m, send(m.client, "setup.add_mount", map[string]any{"path": arg})
+	case "/target-list":
+		if arg == "" {
+			m.setupMsg("Usage: /target-list <path>", col(red))
+			return m, nil
+		}
+		return m, send(m.client, "setup.load_target_list", map[string]any{"path": arg})
 	case "/prompt", "/instruction":
 		if arg != "" {
 			m.setupMsg("✓ Prompt set.", col(green))
@@ -1960,6 +2103,12 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 			m.setupMsg("Prompt cleared.", dimS())
 		}
 		return m, send(m.client, "setup.set_instruction", map[string]any{"instruction": arg})
+	case "/prompt-file", "/instruction-file":
+		if arg == "" {
+			m.setupMsg("Usage: /prompt-file <path>", col(red))
+			return m, nil
+		}
+		return m, send(m.client, "setup.load_instruction_file", map[string]any{"path": arg})
 	case "/clear":
 		m.setupMsg("Cleared all targets.", dimS())
 		return m, send(m.client, "setup.clear_targets", map[string]any{})
@@ -2092,8 +2241,14 @@ var setupCommands = [][2]string{
 	{"/provider", "Configure or connect an LLM provider"},
 	{"/model", "Search + select a model across configured providers (saved)"},
 	{"/mode [quick|standard|deep]", "Set scan depth (default: deep)"},
+	{"/budget <USD|off>", "Set or disable the scan cost limit"},
+	{"/turns <N>", "Set maximum turns per agent"},
+	{"/scope <auto|diff|full> [base]", "Set code scope and optional diff base"},
 	{"/target <value>", "Add a target: URL, repo, path, domain, or IP"},
+	{"/mount <path>", "Add a read-only local directory mount"},
+	{"/target-list <path>", "Load targets from a file"},
 	{"/prompt <text>", "Set an optional instruction for the scan"},
+	{"/prompt-file <path>", "Load scan instructions from a file"},
 	{"/clear", "Remove all targets"},
 	{"/start", "Launch the scan"},
 	{"/help", "Show this command list"},
@@ -2472,7 +2627,21 @@ func (m Model) setupSummaryView(width int) string {
 	targets := "Not set"
 	targetsSet := len(m.snapshot.Targets) > 0
 	if targetsSet {
-		targets = strings.Join(m.snapshot.Targets, ", ")
+		mounts := make(map[string]bool, len(m.snapshot.Mounts))
+		for _, mount := range m.snapshot.Mounts {
+			mounts[mount] = true
+		}
+		values := make([]string, 0, len(m.snapshot.Targets))
+		for _, target := range m.snapshot.Targets {
+			if mounts[target] {
+				target += " [mount]"
+			}
+			values = append(values, target)
+		}
+		targets = strings.Join(values, ", ")
+		if hidden := m.snapshot.TargetCount - len(m.snapshot.Targets); hidden > 0 {
+			targets += fmt.Sprintf(", ...and %d more", hidden)
+		}
 	}
 	prompt := strings.TrimSpace(m.snapshot.Instruction)
 	promptSet := prompt != ""
@@ -2483,9 +2652,27 @@ func (m Model) setupSummaryView(width int) string {
 	if mode == "" {
 		mode = "deep"
 	}
+	budget := "No limit"
+	if m.snapshot.MaxBudgetUSD != nil {
+		budget = fmt.Sprintf("$%.2f", *m.snapshot.MaxBudgetUSD)
+	}
+	turns := strconv.Itoa(m.snapshot.MaxTurns)
+	if m.snapshot.MaxTurns <= 0 {
+		turns = "500"
+	}
+	scope := m.snapshot.ScopeMode
+	if scope == "" {
+		scope = "auto"
+	}
+	if m.snapshot.DiffBase != "" {
+		scope += " @ " + m.snapshot.DiffBase
+	}
 	return row("model", model, modelSet) + "\n" +
 		row("targets", targets, targetsSet) + "\n" +
 		row("mode", mode, true) + "\n" +
+		row("budget", budget, true) + "\n" +
+		row("turns", turns, true) + "\n" +
+		row("scope", scope, true) + "\n" +
 		row("prompt", prompt, promptSet)
 }
 

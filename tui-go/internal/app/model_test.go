@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -259,7 +260,7 @@ func TestUnknownAndMismatchedCommandResultsCannotClosePersistencePicker(t *testi
 
 func TestSetupCommandsAppearAboveInputAndFilter(t *testing.T) {
 	model := New(nil)
-	model.width, model.height = 100, 30
+	model.width, model.height = 100, 50
 	model.showSplash = false
 	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{SetupMode: true, ScanState: "setup"}))
 
@@ -278,22 +279,50 @@ func TestSetupCommandsAppearAboveInputAndFilter(t *testing.T) {
 	}
 }
 
+func TestSetupCommandListIncludesFreshRunControls(t *testing.T) {
+	commands := make(map[string]bool, len(setupCommands))
+	for _, command := range setupCommands {
+		commands[strings.Fields(command[0])[0]] = true
+	}
+	for _, command := range []string{"/budget", "/turns", "/scope", "/mount", "/target-list", "/prompt-file"} {
+		if !commands[command] {
+			t.Fatalf("setup command list is missing %s", command)
+		}
+	}
+}
+
 func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 130, 34
 	model.showSplash = false
 	state := protocol.Snapshot{
-		SetupMode:   true,
-		ScanState:   "setup",
-		Model:       "openai/gpt-5.4",
-		Targets:     []string{"https://example.com"},
-		Instruction: "focus on access control",
-		Agents:      []protocol.Agent{{ID: "hidden", Name: "SETUP_SHOULD_HIDE_AGENT", Status: "running"}},
+		SetupMode:    true,
+		ScanState:    "setup",
+		Model:        "openai/gpt-5.4",
+		Targets:      []string{"/workspace/source", "https://example.com"},
+		Mounts:       []string{"/workspace/source"},
+		Instruction:  "focus on access control",
+		ScanMode:     "quick",
+		MaxBudgetUSD: floatPointer(12.5),
+		MaxTurns:     275,
+		ScopeMode:    "diff",
+		DiffBase:     "origin/main",
+		Agents:       []protocol.Agent{{ID: "hidden", Name: "SETUP_SHOULD_HIDE_AGENT", Status: "running"}},
 	}
 	model.handleEnvelope(stateEnvelope(t, 1, state))
 
 	view := model.View()
-	for _, want := range []string{"Configure your pentest", "openai/gpt-5.4", "https://example.com", "focus on access control"} {
+	for _, want := range []string{
+		"Configure your pentest",
+		"openai/gpt-5.4",
+		"/workspace/source [mount]",
+		"https://example.com",
+		"quick",
+		"$12.50",
+		"275",
+		"diff @ origin/main",
+		"focus on access control",
+	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("start screen is missing %q: %s", want, view)
 		}
@@ -302,6 +331,8 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 		t.Fatalf("live scan sidebar appeared on the start screen: %s", view)
 	}
 }
+
+func floatPointer(value float64) *float64 { return &value }
 
 func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	model := New(nil)
@@ -313,9 +344,11 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	}
 
 	runningState := protocol.Snapshot{
-		SetupMode: false,
-		ScanState: "running",
+		SetupMode:   false,
+		ScanStarted: true,
+		ScanState:   "running",
 	}
+	model.openPicker(pickerProvider)
 	model.handleEnvelope(stateEnvelope(t, 2, runningState))
 	model.handleEnvelope(bootstrapEnvelope(t, "agents", 1, protocol.Agent{ID: "one", Name: "LIVE_AGENT", Status: "running"}))
 	view := model.View()
@@ -324,6 +357,32 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	}
 	if model.input.Placeholder != "Send a message" {
 		t.Fatalf("live input placeholder was not updated: %q", model.input.Placeholder)
+	}
+	if model.picker != pickerNone {
+		t.Fatalf("setup picker remained open after scan start: %v", model.picker)
+	}
+}
+
+func TestDelayedSetupResultCannotReopenPickerAfterScanStart(t *testing.T) {
+	client := newClient(&recordingConn{})
+	model := New(client)
+	model.snapshot = protocol.Snapshot{ScanStarted: true, ScanState: "running"}
+	client.pending["request-1"] = "models.list"
+	client.pendingByKey["models.list"] = "request-1"
+	client.requestKeyByID["request-1"] = "models.list"
+	result := rawJSON(t, protocol.CommandResult{
+		OK: true, Command: "models.list", Result: rawJSON(t, protocol.ModelsResult{
+			ListingID: "listing", Cursor: 0, NextCursor: 1, Done: true,
+			Groups: []protocol.ModelGroup{{Provider: "openai", Models: []string{"openai/gpt-5"}}},
+		}),
+	})
+
+	model.handleEnvelope(protocol.Envelope{
+		Version: protocol.Version, Type: "command_result", RequestID: "request-1", Payload: result,
+	})
+
+	if model.picker != pickerNone || len(model.options) != 0 {
+		t.Fatalf("delayed setup result reopened picker: picker=%v options=%#v", model.picker, model.options)
 	}
 }
 
@@ -409,6 +468,70 @@ func TestModeCommandAcceptsInlineValue(t *testing.T) {
 
 	if cmd == nil {
 		t.Fatal("/mode quick did not send the mode command")
+	}
+}
+
+func TestAdditionalSetupCommandsSendBackendRequests(t *testing.T) {
+	tests := []struct {
+		input   string
+		command string
+		payload map[string]any
+	}{
+		{"/budget 5.5", "setup.set_budget", map[string]any{"budget": 5.5}},
+		{"/budget off", "setup.set_budget", map[string]any{"budget": nil}},
+		{"/turns 250", "setup.set_max_turns", map[string]any{"turns": float64(250)}},
+		{"/scope diff origin/main", "setup.set_scope", map[string]any{"mode": "diff", "base": "origin/main"}},
+		{"/mount /workspace/source", "setup.add_mount", map[string]any{"path": "/workspace/source"}},
+		{"/target-list targets.txt", "setup.load_target_list", map[string]any{"path": "targets.txt"}},
+		{"/prompt-file prompt.txt", "setup.load_instruction_file", map[string]any{"path": "prompt.txt"}},
+	}
+
+	for _, test := range tests {
+		t.Run(test.command+test.input, func(t *testing.T) {
+			model, connection := newCommandTestModel(t)
+			model.snapshot.SetupMode = true
+			_, cmd := model.submitSetup(test.input)
+			envelope := commandFromCmd(t, cmd, connection)
+			if envelope.Type != test.command {
+				t.Fatalf("command = %q, want %q", envelope.Type, test.command)
+			}
+			var payload map[string]any
+			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+				t.Fatal(err)
+			}
+			if !reflect.DeepEqual(payload, test.payload) {
+				t.Fatalf("payload = %#v, want %#v", payload, test.payload)
+			}
+		})
+	}
+}
+
+func TestAdditionalSetupCommandResultsUpdateSummaryState(t *testing.T) {
+	model := New(nil)
+	handleCommandResult(t, &model, "setup.set_budget", map[string]any{"budget": 7.25})
+	handleCommandResult(t, &model, "setup.set_max_turns", map[string]any{"turns": 333})
+	handleCommandResult(t, &model, "setup.set_scope", map[string]any{"mode": "diff", "base": "origin/main"})
+
+	if model.snapshot.MaxBudgetUSD == nil || *model.snapshot.MaxBudgetUSD != 7.25 {
+		t.Fatalf("budget result was not applied: %#v", model.snapshot.MaxBudgetUSD)
+	}
+	if model.snapshot.MaxTurns != 333 {
+		t.Fatalf("turn result was not applied: %d", model.snapshot.MaxTurns)
+	}
+	if model.snapshot.ScopeMode != "diff" || model.snapshot.DiffBase != "origin/main" {
+		t.Fatalf("scope result was not applied: %q %q", model.snapshot.ScopeMode, model.snapshot.DiffBase)
+	}
+}
+
+func TestAdditionalSetupCommandsRejectInvalidInlineValues(t *testing.T) {
+	for _, command := range []string{"/budget 0", "/budget NaN", "/turns 0", "/turns nope", "/scope invalid"} {
+		model := New(nil)
+		model.snapshot.SetupMode = true
+		updated, cmd := model.submitSetup(command)
+		result := updated.(Model)
+		if cmd != nil || len(result.setupLog) == 0 {
+			t.Fatalf("invalid command %q was sent or did not report an error", command)
+		}
 	}
 }
 

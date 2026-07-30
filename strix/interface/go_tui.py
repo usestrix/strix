@@ -25,7 +25,6 @@ from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.interface.tui_backend import TuiBackendServer, TuiController
 from strix.interface.tui_backend.live_view import TuiLiveView
-from strix.interface.utils import assign_workspace_subdirs
 from strix.report.state import ReportState, set_global_report_state
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -273,12 +272,25 @@ class GoTuiRuntime:
         candidate = deepcopy(self.args)
         candidate.scan_mode = self.controller.scan_mode
         candidate.instruction = self.controller.instruction
+        candidate.max_budget_usd = self.controller.max_budget_usd
+        candidate.max_turns = self.controller.max_turns
+        candidate.scope_mode = self.controller.scope_mode
+        candidate.diff_base = self.controller.diff_base
         existing_targets = [
             str(target["original"])
             for target in getattr(candidate, "targets_info", [])
             if isinstance(target, dict) and target.get("original")
         ]
-        targets_changed = self.controller.targets != existing_targets
+        existing_mounts = [
+            str(target["original"])
+            for target in getattr(candidate, "targets_info", [])
+            if isinstance(target, dict)
+            and target.get("original")
+            and bool(target.get("details", {}).get("mount"))
+        ]
+        targets_changed = (
+            self.controller.targets != existing_targets or self.controller.mounts != existing_mounts
+        )
         model = (load_settings().llm.model or "").strip()
         try:
             await preflight_model_connection(model)
@@ -293,35 +305,16 @@ class GoTuiRuntime:
             raise RuntimeError(message) from exc
         try:
             if targets_changed:
-                # Parse only genuinely new entries, then merge them with the
-                # already-prepared target records. Rebuilding every displayed
-                # target would silently turn --mount records into copied targets
-                # and would discard the source semantics of --target-list.
-                prepared = {
-                    str(target["original"]): target
-                    for target in getattr(candidate, "targets_info", [])
-                    if isinstance(target, dict) and target.get("original")
-                }
-                new_targets = [
-                    target for target in self.controller.targets if target not in prepared
-                ]
-                original_target = getattr(candidate, "target", None)
-                original_target_list = getattr(candidate, "target_list", None)
-                original_mount = getattr(candidate, "mount", None)
-                candidate.target = new_targets
-                candidate.target_list = []
-                candidate.mount = []
-                build_targets_info(candidate)
-                added = dict(zip(new_targets, candidate.targets_info, strict=False))
-                candidate.target = [*(original_target or []), *new_targets]
-                candidate.target_list = original_target_list
-                candidate.mount = original_mount
-                candidate.targets_info = [
-                    item
+                # Rebuild the full typed set so path canonicalization, local
+                # deduplication, and copy-vs-mount precedence match the CLI.
+                candidate.target = [
+                    target
                     for target in self.controller.targets
-                    if (item := prepared.get(target) or added.get(target)) is not None
+                    if target not in self.controller.mounts
                 ]
-                assign_workspace_subdirs(candidate.targets_info)
+                candidate.target_list = []
+                candidate.mount = list(self.controller.mounts)
+                build_targets_info(candidate)
             prepare_run(candidate)
             _telemetry_start(candidate)
         except SystemExit as exc:

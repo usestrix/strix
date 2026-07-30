@@ -259,6 +259,7 @@ class TuiBackendServer:
         raw = json.dumps(
             self._sanitize_wire_value(message),
             default=str,
+            ensure_ascii=False,
             separators=(",", ":"),
         ).encode("utf-8")
         maximum = (

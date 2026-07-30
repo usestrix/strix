@@ -15,7 +15,7 @@ mode.
 Python sends exactly one `hello` immediately after transport connection:
 
 ```json
-{"version":3,"type":"hello","payload":{"capabilities":["state-revisions","collection-deltas","structured-command-errors","paged-models","agents-collection"]}}
+{"version":3,"type":"hello","payload":{"capabilities":["state-revisions","collection-deltas","structured-command-errors","paged-models","agents-collection","setup-run-controls"]}}
 ```
 
 Go validates the version, message type, and exact ordered capability list. It
@@ -23,7 +23,7 @@ then sends the corresponding `ready` before creating the Bubble Tea program or
 entering the terminal alternate screen:
 
 ```json
-{"version":3,"type":"ready","payload":{"capabilities":["state-revisions","collection-deltas","structured-command-errors","paged-models","agents-collection"]}}
+{"version":3,"type":"ready","payload":{"capabilities":["state-revisions","collection-deltas","structured-command-errors","paged-models","agents-collection","setup-run-controls"]}}
 ```
 
 Python does not initialize report/run state or start a scan until it validates
@@ -82,7 +82,9 @@ Client commands are:
 - `providers.list`, `models.list`
 - `setup.select_provider`, `setup.save_api_key`, `setup.disconnect_provider`
 - `setup.add_custom_provider`, `setup.select_model`
-- `setup.add_target`, `setup.clear_targets`, `setup.set_instruction`, `setup.set_mode`, `setup.start`
+- `setup.add_target`, `setup.add_mount`, `setup.load_target_list`, `setup.clear_targets`
+- `setup.set_instruction`, `setup.load_instruction_file`, `setup.set_mode`
+- `setup.set_budget`, `setup.set_max_turns`, `setup.set_scope`, `setup.start`
 - `agent.send_message`, `agent.stop`
 - `viewer.open`, `collection.resync`, `app.quit`
 

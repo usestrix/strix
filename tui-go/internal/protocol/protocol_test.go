@@ -16,6 +16,7 @@ func TestProtocolVersionAndProviderStatusFields(t *testing.T) {
 		"structured-command-errors",
 		"paged-models",
 		"agents-collection",
+		"setup-run-controls",
 	}
 	if !reflect.DeepEqual(Capabilities, wantCapabilities) {
 		t.Fatalf("capabilities = %#v, want %#v", Capabilities, wantCapabilities)

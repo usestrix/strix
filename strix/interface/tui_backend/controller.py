@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import math
 import re
 import secrets
 import time
@@ -12,6 +13,7 @@ import webbrowser
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import (
@@ -35,7 +37,9 @@ from strix.config import (
     set_provider_api_key,
 )
 from strix.config.models import is_recommended_or_frontier_model
+from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.interface.tui_backend.live_view import TuiLiveView
+from strix.interface.utils import build_mount_targets_info, read_target_list_file
 
 
 if TYPE_CHECKING:
@@ -48,6 +52,7 @@ ChangeCallback = Callable[[], None]
 StartCallback = Callable[[], Awaitable[None]]
 QuitCallback = Callable[[], Awaitable[None]]
 SCAN_MODES = ("quick", "standard", "deep")
+SCOPE_MODES = ("auto", "diff", "full")
 _STOPPABLE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
 _MAX_PROJECTION_STRING = 64 * 1024
 _MAX_COLLECTION_ITEM_BYTES = 512 * 1024
@@ -57,6 +62,7 @@ _MODEL_LISTING_TTL_SECONDS = 60.0
 _MAX_MODEL_LISTINGS = 32
 _MODEL_GROUP_TARGET_BYTES = 24 * 1024
 _MODEL_PAGE_TARGET_BYTES = 48 * 1024
+_STATE_TARGET_BYTES = 48 * 1024
 _TERMINAL_ESCAPE_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_][0-?]*[ -/]*[@-~]")
 
 
@@ -162,6 +168,67 @@ def _collection_item_projection(item: dict[str, Any]) -> dict[str, Any]:
     return compact
 
 
+def _bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
+    """Keep mutable control state comfortably below the 64 KiB frame limit."""
+
+    def encoded_size(value: dict[str, Any]) -> int:
+        return len(
+            json.dumps(value, default=str, ensure_ascii=False, separators=(",", ":")).encode()
+        )
+
+    if encoded_size(state) <= _STATE_TARGET_BYTES:
+        return state
+
+    state["projection_truncated"] = True
+    state["targets"] = [
+        _terminal_projection(target, max_string=64) for target in state["targets"][:8]
+    ]
+    state["mounts"] = [_terminal_projection(mount, max_string=64) for mount in state["mounts"][:8]]
+    state["instruction"] = _terminal_projection(state["instruction"], max_string=512)
+    state["messages"] = [
+        {
+            **message,
+            "text": _terminal_projection(message.get("text", ""), max_string=128),
+        }
+        for message in state["messages"][-5:]
+    ]
+    state["usage"] = {}
+    state["error"] = _terminal_projection(state["error"], max_string=512)
+    state["model_warning"] = _terminal_projection(state["model_warning"], max_string=256)
+    state["caido_url"] = _terminal_projection(state["caido_url"], max_string=256)
+    state["viewer_url"] = _terminal_projection(state["viewer_url"], max_string=256)
+    if encoded_size(state) <= _STATE_TARGET_BYTES:
+        return state
+
+    # Defensive final projection: use an explicit schema so future snapshot
+    # fields cannot silently bypass the aggregate byte budget.
+    return {
+        "setup_mode": state["setup_mode"],
+        "scan_started": state["scan_started"],
+        "scan_state": state["scan_state"],
+        "targets": state["targets"][:4],
+        "target_count": state["target_count"],
+        "mounts": state["mounts"][:4],
+        "mount_count": state["mount_count"],
+        "instruction": _terminal_projection(state["instruction"], max_string=128),
+        "scan_mode": state["scan_mode"],
+        "max_budget_usd": state["max_budget_usd"],
+        "max_turns": state["max_turns"],
+        "scope_mode": state["scope_mode"],
+        "diff_base": state["diff_base"],
+        "provider": state["provider"],
+        "model": state["model"],
+        "model_warning": "",
+        "caido_url": None,
+        "messages": [],
+        "usage": {},
+        "viewer_status": state["viewer_status"],
+        "viewer_url": None,
+        "error": _terminal_projection(state["error"], max_string=256),
+        "projection_truncated": True,
+    }
+
+
 def _provider_record(provider: str) -> dict[str, Any]:
     status = provider_auth_status(provider)
     source = provider_credential_source(provider)
@@ -219,10 +286,36 @@ class TuiController:
             for target in getattr(args, "targets_info", [])
             if isinstance(target, dict) and target.get("original")
         ]
+        self.mounts = [
+            str(target["original"])
+            for target in getattr(args, "targets_info", [])
+            if isinstance(target, dict)
+            and target.get("original")
+            and bool(target.get("details", {}).get("mount"))
+        ]
         instruction = getattr(args, "instruction", "")
         self.instruction = instruction.strip() if isinstance(instruction, str) else ""
         requested_scan_mode = str(getattr(args, "scan_mode", "deep"))
         self.scan_mode = requested_scan_mode if requested_scan_mode in SCAN_MODES else "deep"
+        raw_budget = getattr(args, "max_budget_usd", None)
+        self.max_budget_usd = (
+            float(raw_budget)
+            if isinstance(raw_budget, int | float)
+            and not isinstance(raw_budget, bool)
+            and math.isfinite(float(raw_budget))
+            and raw_budget > 0
+            else None
+        )
+        raw_turns = getattr(args, "max_turns", DEFAULT_MAX_TURNS)
+        self.max_turns = (
+            raw_turns
+            if isinstance(raw_turns, int) and not isinstance(raw_turns, bool) and raw_turns > 0
+            else DEFAULT_MAX_TURNS
+        )
+        requested_scope = str(getattr(args, "scope_mode", "auto"))
+        self.scope_mode = requested_scope if requested_scope in SCOPE_MODES else "auto"
+        raw_diff_base = getattr(args, "diff_base", None)
+        self.diff_base = raw_diff_base.strip() if isinstance(raw_diff_base, str) else None
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
         self._model_listings: dict[str, _ModelListing] = {}
@@ -290,34 +383,42 @@ class TuiController:
             model_warning = (
                 f"{model} is not a recommended frontier model; pentest quality could be degraded"
             )
-        return {
+        state = {
             "setup_mode": self.setup_mode,
             "scan_started": self.scan_started,
             "scan_state": self.scan_state,
             "targets": [
-                _terminal_projection(target, max_string=512) for target in self.targets[:16]
+                _terminal_projection(target, max_string=128) for target in self.targets[:16]
             ],
-            "instruction": _terminal_projection(self.instruction, max_string=4 * 1024),
+            "target_count": len(self.targets),
+            "mounts": [_terminal_projection(mount, max_string=128) for mount in self.mounts[:16]],
+            "mount_count": len(self.mounts),
+            "instruction": _terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
-            "provider": _terminal_projection(provider_for_model(model), max_string=512),
-            "model": _terminal_projection(model, max_string=512),
-            "model_warning": _terminal_projection(model_warning, max_string=1024),
+            "max_budget_usd": self.max_budget_usd,
+            "max_turns": self.max_turns,
+            "scope_mode": self.scope_mode,
+            "diff_base": _terminal_projection(self.diff_base, max_string=256),
+            "provider": _terminal_projection(provider_for_model(model), max_string=256),
+            "model": _terminal_projection(model, max_string=256),
+            "model_warning": _terminal_projection(model_warning, max_string=512),
             "caido_url": _terminal_projection(
-                getattr(self.report_state, "caido_url", None), max_string=2 * 1024
+                getattr(self.report_state, "caido_url", None), max_string=1024
             ),
             "messages": [
                 {
                     "id": str(message.get("id", ""))[:64],
-                    "text": _terminal_projection(message.get("text", ""), max_string=512),
+                    "text": _terminal_projection(message.get("text", ""), max_string=256),
                     "level": str(message.get("level", "info"))[:32],
                 }
                 for message in self.messages[-10:]
             ],
             "usage": _terminal_projection(usage, max_string=256, max_items=20),
             "viewer_status": self.viewer_status,
-            "viewer_url": _terminal_projection(self.viewer_url, max_string=2 * 1024),
-            "error": _terminal_projection(self.error, max_string=4 * 1024),
+            "viewer_url": _terminal_projection(self.viewer_url, max_string=1024),
+            "error": _terminal_projection(self.error, max_string=2 * 1024),
         }
+        return _bounded_state_projection(state)
 
     def collection(self, name: str) -> list[dict[str, Any]]:
         """Return one bounded terminal projection with stable item identities."""
@@ -384,9 +485,15 @@ class TuiController:
             "setup.add_custom_provider": self._add_custom_provider,
             "setup.select_model": self._select_model,
             "setup.add_target": self._add_target,
+            "setup.add_mount": self._add_mount,
+            "setup.load_target_list": self._load_target_list,
             "setup.clear_targets": self._clear_targets,
             "setup.set_instruction": self._set_instruction,
+            "setup.load_instruction_file": self._load_instruction_file,
             "setup.set_mode": self._set_mode,
+            "setup.set_budget": self._set_budget,
+            "setup.set_max_turns": self._set_max_turns,
+            "setup.set_scope": self._set_scope,
             "setup.start": self._start,
             "agent.send_message": self._send_message,
             "agent.stop": self._stop_agent,
@@ -401,6 +508,8 @@ class TuiController:
         return result
 
     async def _providers(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+
         def rows() -> list[dict[str, Any]]:
             return [_provider_record(provider) for provider in list_providers()]
 
@@ -422,6 +531,7 @@ class TuiController:
         }
 
     async def _models(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         listing_id = payload.get("listing_id")
         cursor = payload.get("cursor")
         if listing_id is None and cursor is None:
@@ -545,6 +655,7 @@ class TuiController:
         return len(json.dumps(value, default=str, separators=(",", ":")).encode("utf-8"))
 
     async def _select_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         provider = self._required_string(payload, "provider")
         if provider not in list_providers():
             raise ValueError(f"Unknown provider: {provider}")
@@ -570,6 +681,7 @@ class TuiController:
         }
 
     async def _disconnect_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         provider = self._required_string(payload, "provider")
         if provider not in await asyncio.to_thread(list_providers):
             raise ValueError(f"Unknown provider: {provider}")
@@ -577,6 +689,7 @@ class TuiController:
         return await asyncio.to_thread(_provider_record, provider)
 
     async def _save_api_key(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         provider = self._required_string(payload, "provider")
         api_key = self._required_string(payload, "api_key")
         await asyncio.to_thread(set_provider_api_key, provider, api_key)
@@ -592,6 +705,7 @@ class TuiController:
         }
 
     async def _add_custom_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         name = self._required_string(payload, "name")
         api_base = self._required_string(payload, "api_base")
         kind = self._required_string(payload, "kind").lower()
@@ -611,6 +725,7 @@ class TuiController:
         }
 
     async def _select_model(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         provider = self._required_string(payload, "provider")
         model = self._required_string(payload, "model")
         if provider not in await asyncio.to_thread(list_providers):
@@ -629,29 +744,121 @@ class TuiController:
         return {"model": model}
 
     async def _add_target(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         target = self._required_string(payload, "target")
         if target not in self.targets:
             self.targets.append(target)
-        return {"targets": list(self.targets)}
+        return {"target": target, "total": len(self.targets)}
+
+    async def _add_mount(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        raw_path = self._required_string(payload, "path")
+        target = (await asyncio.to_thread(build_mount_targets_info, [raw_path]))[0]
+        mount = str(target["original"])
+        if mount not in self.targets:
+            self.targets.append(mount)
+        if mount not in self.mounts:
+            self.mounts.append(mount)
+        return {"mount": mount, "total": len(self.targets)}
+
+    async def _load_target_list(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        path = self._required_string(payload, "path")
+        targets = await asyncio.to_thread(read_target_list_file, path)
+        added = 0
+        for target in targets:
+            if target in self.targets:
+                continue
+            self.targets.append(target)
+            added += 1
+        return {"path": path, "added": added, "total": len(self.targets)}
 
     async def _clear_targets(self, _payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         self.targets.clear()
+        self.mounts.clear()
         return {"targets": []}
 
     async def _set_instruction(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         instruction = payload.get("instruction", "")
         if not isinstance(instruction, str):
             raise TypeError("instruction must be a string")
         self.instruction = instruction.strip()
         return {"instruction": self.instruction}
 
+    async def _load_instruction_file(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        raw_path = self._required_string(payload, "path")
+        path = Path(raw_path).expanduser()
+
+        def read_instruction() -> str:
+            if not path.is_file():
+                raise ValueError(f"Instruction file '{raw_path}' is not an existing file")
+            try:
+                instruction = path.read_text(encoding="utf-8").strip()
+            except UnicodeDecodeError as exc:
+                raise ValueError(
+                    f"Instruction file '{raw_path}' must be valid UTF-8 text: {exc!s}"
+                ) from exc
+            except OSError as exc:
+                raise ValueError(f"Failed to read instruction file '{raw_path}': {exc!s}") from exc
+            if not instruction:
+                raise ValueError(f"Instruction file '{raw_path}' is empty")
+            return instruction
+
+        self.instruction = await asyncio.to_thread(read_instruction)
+        return {"path": str(path), "characters": len(self.instruction)}
+
     async def _set_mode(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
         scan_mode = self._required_string(payload, "mode").lower()
         if scan_mode not in SCAN_MODES:
             choices = ", ".join(SCAN_MODES)
             raise ValueError(f"mode must be one of: {choices}")
         self.scan_mode = scan_mode
         return {"mode": scan_mode}
+
+    async def _set_budget(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        budget = payload.get("budget")
+        if budget is None:
+            self.max_budget_usd = None
+        elif (
+            isinstance(budget, bool)
+            or not isinstance(budget, int | float)
+            or not math.isfinite(float(budget))
+            or budget <= 0
+        ):
+            raise ValueError("budget must be a finite number greater than 0, or null")
+        else:
+            self.max_budget_usd = float(budget)
+        return {"budget": self.max_budget_usd}
+
+    async def _set_max_turns(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        turns = payload.get("turns")
+        if isinstance(turns, bool) or not isinstance(turns, int) or turns <= 0:
+            raise ValueError("turns must be an integer greater than 0")
+        self.max_turns = turns
+        return {"turns": turns}
+
+    async def _set_scope(self, payload: dict[str, Any]) -> dict[str, Any]:
+        self._require_setup_mutable()
+        scope_mode = self._required_string(payload, "mode").lower()
+        if scope_mode not in SCOPE_MODES:
+            choices = ", ".join(SCOPE_MODES)
+            raise ValueError(f"scope mode must be one of: {choices}")
+        self.scope_mode = scope_mode
+        if "base" in payload:
+            raw_base = payload["base"]
+            if raw_base is not None and not isinstance(raw_base, str):
+                raise TypeError("base must be a string or null")
+            self.diff_base = raw_base.strip() if isinstance(raw_base, str) else None
+            self.diff_base = self.diff_base or None
+        elif scope_mode == "full":
+            self.diff_base = None
+        return {"mode": self.scope_mode, "base": self.diff_base}
 
     async def _start(self, _payload: dict[str, Any]) -> dict[str, Any]:
         if self.scan_started or self._start_in_progress:
@@ -802,3 +1009,7 @@ class TuiController:
         if not isinstance(value, str) or not value.strip():
             raise ValueError(f"{name} must be a non-empty string")
         return value.strip()
+
+    def _require_setup_mutable(self) -> None:
+        if not self.setup_mode or self.scan_started or self._start_in_progress:
+            raise RuntimeError("Setup can no longer be changed after the scan starts")

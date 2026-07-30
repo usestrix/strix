@@ -10,6 +10,7 @@ var Capabilities = []string{
 	"structured-command-errors",
 	"paged-models",
 	"agents-collection",
+	"setup-run-controls",
 }
 
 type Envelope struct {
@@ -47,24 +48,32 @@ type Hello struct {
 }
 
 type Snapshot struct {
-	SetupMode       bool             `json:"setup_mode"`
-	ScanStarted     bool             `json:"scan_started"`
-	ScanState       string           `json:"scan_state"`
-	Targets         []string         `json:"targets"`
-	Instruction     string           `json:"instruction"`
-	ScanMode        string           `json:"scan_mode"`
-	Provider        *string          `json:"provider"`
-	Model           string           `json:"model"`
-	ModelWarning    string           `json:"model_warning"`
-	CaidoURL        string           `json:"caido_url"`
-	Messages        []Message        `json:"messages"`
-	Agents          []Agent          `json:"-"`
-	Events          []Event          `json:"-"`
-	Vulnerabilities []map[string]any `json:"-"`
-	Usage           map[string]any   `json:"usage"`
-	ViewerStatus    string           `json:"viewer_status"`
-	ViewerURL       *string          `json:"viewer_url"`
-	Error           *string          `json:"error"`
+	SetupMode           bool             `json:"setup_mode"`
+	ScanStarted         bool             `json:"scan_started"`
+	ScanState           string           `json:"scan_state"`
+	Targets             []string         `json:"targets"`
+	TargetCount         int              `json:"target_count"`
+	Mounts              []string         `json:"mounts"`
+	MountCount          int              `json:"mount_count"`
+	Instruction         string           `json:"instruction"`
+	ScanMode            string           `json:"scan_mode"`
+	MaxBudgetUSD        *float64         `json:"max_budget_usd"`
+	MaxTurns            int              `json:"max_turns"`
+	ScopeMode           string           `json:"scope_mode"`
+	DiffBase            string           `json:"diff_base"`
+	Provider            *string          `json:"provider"`
+	Model               string           `json:"model"`
+	ModelWarning        string           `json:"model_warning"`
+	CaidoURL            string           `json:"caido_url"`
+	Messages            []Message        `json:"messages"`
+	Agents              []Agent          `json:"-"`
+	Events              []Event          `json:"-"`
+	Vulnerabilities     []map[string]any `json:"-"`
+	Usage               map[string]any   `json:"usage"`
+	ViewerStatus        string           `json:"viewer_status"`
+	ViewerURL           *string          `json:"viewer_url"`
+	Error               *string          `json:"error"`
+	ProjectionTruncated bool             `json:"projection_truncated"`
 }
 
 type StateUpdate struct {
