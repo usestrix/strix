@@ -404,10 +404,9 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             # Match the runtime path: send the dedupe key/endpoint per call so a
             # separate-provider dedupe model authenticates during warm-up too.
             deduper_extra = _dedupe_extra_args(settings.dedupe)
-            deduper_settings = ModelSettings(
-                extra_args=deduper_extra or None,
-                extra_headers=None if settings.dedupe.api_base else llm.extra_headers,
-            )
+            # A dedicated dedupe model may route to another provider, which must
+            # never receive the main endpoint's headers.
+            deduper_settings = ModelSettings(extra_args=deduper_extra or None)
             await asyncio.wait_for(
                 deduper.get_response(
                     system_instructions="You are a helpful assistant.",
