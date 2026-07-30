@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import inspect
+import logging
 import os
 import time
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from agents import (
     set_default_openai_api,
     set_default_openai_key,
@@ -24,6 +27,7 @@ from agents.retry import (
     RetryPolicyContext,
     retry_policies,
 )
+from openai import APITimeoutError
 from openai.types.responses import Response, ResponseCompletedEvent
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
@@ -32,8 +36,15 @@ from strix.config import codex
 from strix.config.loader import load_settings
 
 
+logger = logging.getLogger(__name__)
+
+# Releasing a stalled stream is a local teardown, not a model call; it gets its own
+# short bound so cleanup can never inherit the stall.
+_STREAM_CLOSE_TIMEOUT_S = 30.0
+
+
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncIterator, Awaitable
 
     from agents.agent_output import AgentOutputSchemaBase
     from agents.handoffs import Handoff
@@ -74,9 +85,11 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         openai_client: AsyncOpenAI,
         *,
         reasoning_effort: ReasoningEffort | None = None,
+        stall_timeout: float | None = None,
     ) -> None:
         super().__init__(model, openai_client)
         self._reasoning_effort = reasoning_effort
+        self._stall_timeout = stall_timeout if stall_timeout and stall_timeout > 0 else None
 
     def _codex_settings(self, model_settings: ModelSettings) -> ModelSettings:
         overrides = ModelSettings(store=False, response_include=["reasoning.encrypted_content"])
@@ -90,11 +103,29 @@ class _CodexResponsesModel(OpenAIResponsesModel):
             overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=effort)))
         return model_settings.resolve(overrides)
 
+    def _stalled(self, phase: str) -> APITimeoutError:
+        """A timeout error for a stream that went silent, so retry policy applies.
+
+        ``APITimeoutError`` is what the transient-retry path in
+        ``strix.core.execution`` and the SDK's own network-error policy already
+        act on, so a stall replays the turn instead of failing the agent.
+        """
+        logger.warning(
+            "ChatGPT backend stream stalled during %s: no data for %.0fs. Aborting so the "
+            "turn can be replayed; raise STRIX_CODEX_STREAM_STALL_S to allow longer silences.",
+            phase,
+            self._stall_timeout or 0.0,
+        )
+        return APITimeoutError(httpx.Request("POST", f"{codex.CODEX_BASE_URL}/responses"))
+
     async def _fetch_response(self, *args: Any, stream: bool = False, **kwargs: Any) -> Any:
         if len(args) >= 3:  # model_settings is positional arg 2
             args = (*args[:2], self._codex_settings(args[2]), *args[3:])
         try:
-            events = await super()._fetch_response(*args, stream=True, **kwargs)  # type: ignore[call-overload]
+            opening = super()._fetch_response(*args, stream=True, **kwargs)  # type: ignore[call-overload]
+            events = await self._deadline(opening)
+        except TimeoutError as exc:
+            raise self._stalled("stream open") from exc
         except Exception as exc:
             guardrail = self._as_guardrail(exc)
             if guardrail is not None:
@@ -119,10 +150,30 @@ class _CodexResponsesModel(OpenAIResponsesModel):
             return codex.CodexContentGuardrailError(self.model, exc)
         return None
 
+    async def _deadline(self, awaitable: Awaitable[Any]) -> Any:
+        """Await under the stall deadline, or unbounded when it is disabled."""
+        if self._stall_timeout is None:
+            return await awaitable
+        return await asyncio.wait_for(awaitable, self._stall_timeout)
+
     async def _guarded(self, events: Any) -> AsyncIterator[Any]:
-        """Convert mid-stream guardrail rejections and close the stream on exit."""
+        """Convert mid-stream guardrail rejections and close the stream on exit.
+
+        Each event is pulled under a stall deadline. An httpx read timeout only
+        runs while a read is pending, so a response body that is never consumed
+        cannot expire on its own: the request looks alive, ``LLM_TIMEOUT`` never
+        fires, and the agent waits forever on a connection the backend has
+        already finished with.
+        """
+        iterator = events.__aiter__()
         try:
-            async for event in events:
+            while True:
+                try:
+                    event = await self._deadline(iterator.__anext__())
+                except StopAsyncIteration:
+                    break
+                except TimeoutError as exc:
+                    raise self._stalled("stream read") from exc
                 yield event
         except Exception as exc:
             guardrail = self._as_guardrail(exc)
@@ -134,17 +185,18 @@ class _CodexResponsesModel(OpenAIResponsesModel):
 
     @staticmethod
     async def _aclose(events: Any) -> None:
+        # Bounded: releasing a stalled stream must not become a second place to hang.
         aclose = getattr(events, "aclose", None)
         if callable(aclose):
             with contextlib.suppress(Exception):
-                await aclose()
+                await asyncio.wait_for(aclose(), _STREAM_CLOSE_TIMEOUT_S)
             return
         close = getattr(events, "close", None)
         if callable(close):
             with contextlib.suppress(Exception):
                 result = close()
                 if inspect.isawaitable(result):
-                    await result
+                    await asyncio.wait_for(result, _STREAM_CLOSE_TIMEOUT_S)
 
 
 class _NonStreamingModel(Model):
@@ -299,6 +351,7 @@ class StrixProvider(MultiProvider):
                 slug,
                 codex.get_subscription_client(),
                 reasoning_effort=llm.reasoning_effort,
+                stall_timeout=llm.codex_stream_stall_timeout,
             )
         model = super().get_model(model_name)
         if llm.disable_streaming:

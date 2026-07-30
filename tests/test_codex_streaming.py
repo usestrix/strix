@@ -9,6 +9,7 @@ works where the stock responses model would fail.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -18,11 +19,13 @@ import pytest
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from agents.models.openai_responses import OpenAIResponsesModel
-from openai import AsyncOpenAI, BadRequestError
+from openai import APITimeoutError, AsyncOpenAI, BadRequestError
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from strix.config import codex
 from strix.config.models import _CodexResponsesModel
+from strix.config.settings import LlmSettings
+from strix.core.execution import _is_transient_model_error
 
 
 if TYPE_CHECKING:
@@ -205,6 +208,82 @@ async def test_guarded_yields_all_events_when_clean() -> None:
     stream = _TrackingStream(["a", "b", "c"], None)
     assert await _drain(model._guarded(stream)) == ["a", "b", "c"]
     assert stream.closed is True
+
+
+class _StallingStream:
+    """Yields ``events``, then goes silent forever, like a backend that stops sending."""
+
+    def __init__(self, events: list[Any]) -> None:
+        self._events = iter(events)
+        self.closed = False
+
+    def __aiter__(self) -> _StallingStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return next(self._events)
+        except StopIteration:
+            await asyncio.Event().wait()  # never resolves
+            raise AssertionError from None  # pragma: no cover
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+@pytest.mark.asyncio
+async def test_guarded_aborts_a_stalled_stream() -> None:
+    # A stream that stops sending must not hang the agent forever: no read is
+    # pending, so no httpx read timeout can fire and LLM_TIMEOUT never applies.
+    model = _CodexResponsesModel(
+        model="gpt-5.6-sol",
+        openai_client=_client("http://x/backend-api"),
+        stall_timeout=0.05,
+    )
+    stream = _StallingStream(["a", "b"])
+    with pytest.raises(APITimeoutError):
+        await _drain(model._guarded(stream))
+    assert stream.closed is True  # the dead connection is released, not leaked
+
+
+@pytest.mark.asyncio
+async def test_stalled_stream_error_is_retryable() -> None:
+    # The stall surfaces as the error the transient-retry path already replays on.
+    model = _CodexResponsesModel(
+        model="gpt-5.6-sol",
+        openai_client=_client("http://x/backend-api"),
+        stall_timeout=0.05,
+    )
+    with pytest.raises(APITimeoutError) as exc_info:
+        await _drain(model._guarded(_StallingStream([])))
+    assert _is_transient_model_error(exc_info.value)
+
+
+@pytest.mark.asyncio
+async def test_stall_deadline_off_by_default_for_direct_construction() -> None:
+    # Without an explicit timeout the wrapper stays unbounded, so existing
+    # callers and a zeroed STRIX_CODEX_STREAM_STALL_S keep stock behaviour.
+    model = _CodexResponsesModel(model="gpt-5.5", openai_client=_client("http://x/backend-api"))
+    assert model._stall_timeout is None
+    zeroed = _CodexResponsesModel(
+        model="gpt-5.5", openai_client=_client("http://x/backend-api"), stall_timeout=0
+    )
+    assert zeroed._stall_timeout is None
+
+
+@pytest.mark.asyncio
+async def test_stall_deadline_does_not_disturb_a_healthy_stream(backend_url: str) -> None:
+    model = _CodexResponsesModel(
+        model="gpt-5.5", openai_client=_client(backend_url), stall_timeout=30.0
+    )
+    response = await model.get_response(**_call_kwargs())
+    assert response.usage.total_tokens == 2
+
+
+def test_stall_timeout_is_configurable() -> None:
+    settings = LlmSettings()
+    assert settings.codex_stream_stall_timeout == 300.0
+    assert LlmSettings(STRIX_CODEX_STREAM_STALL_S="45").codex_stream_stall_timeout == 45.0
 
 
 @pytest.mark.asyncio

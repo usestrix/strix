@@ -52,6 +52,11 @@ class LlmSettings(BaseSettings):
         default=False,
         alias="LLM_DISABLE_STREAMING",
     )
+    codex_stream_stall_timeout: float = Field(
+        default=300.0,
+        ge=0.0,
+        alias="STRIX_CODEX_STREAM_STALL_S",
+    )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 
 
