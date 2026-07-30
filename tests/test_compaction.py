@@ -204,6 +204,30 @@ async def test_maybe_compact_updates_previous_summary(monkeypatch: pytest.Monkey
     assert "OLD SUMMARY TEXT" in captured["prompt"]
 
 
+@pytest.mark.asyncio
+async def test_summarize_strips_routing_prefix_for_litellm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
+    captured: dict[str, str] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> Any:
+        captured["model"] = kwargs["model"]
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="S"))])
+
+    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+
+    assert await compaction._summarize("litellm/openai/some-model", "p", 64) == "S"
+    assert captured["model"] == "openai/some-model"
+
+
+def test_litellm_model_name_mappings() -> None:
+    assert compaction._litellm_model_name("litellm/openai/m") == "openai/m"
+    assert compaction._litellm_model_name("any-llm/deepseek/m") == "deepseek/m"
+    assert compaction._litellm_model_name("ollama/llama3") == "ollama_chat/llama3"
+    assert compaction._litellm_model_name("anthropic/claude") == "anthropic/claude"
+
+
 def test_fit_to_tokens_truncates_oversized_text(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(compaction, "count_tokens", lambda _m, t: len(t))
     text = "x" * 10_000

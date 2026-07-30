@@ -268,11 +268,25 @@ def _checkpoint_item(summary: str) -> dict[str, Any]:
     }
 
 
+def _litellm_model_name(model: str) -> str:
+    """Map a Strix routing-prefixed model name to what LiteLLM accepts.
+
+    ``litellm/`` and ``any-llm/`` are Strix routing prefixes unknown to
+    LiteLLM; ``ollama/`` routes as ``ollama_chat/`` (mirrors StrixProvider).
+    """
+    for prefix in ("litellm/", "any-llm/"):
+        if model.startswith(prefix):
+            return model[len(prefix) :]
+    if model.startswith("ollama/"):
+        return f"ollama_chat/{model[len('ollama/') :]}"
+    return model
+
+
 async def _summarize(model: str, prompt: str, max_tokens: int) -> str | None:
     llm = load_settings().llm
     try:
         response = await litellm.acompletion(
-            model=model,
+            model=_litellm_model_name(model),
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
             api_key=llm.api_key,
