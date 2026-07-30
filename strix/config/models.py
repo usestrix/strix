@@ -33,7 +33,7 @@ if TYPE_CHECKING:
     from agents.models.interface import Model, ModelProvider
     from openai import AsyncOpenAI
 
-    from strix.config.settings import ReasoningEffort, Settings
+    from strix.config.settings import LlmSettings, ReasoningEffort, Settings
 
 
 def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
@@ -243,6 +243,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
         set_default_openai_api("chat_completions")
     else:
         set_default_openai_api("responses")
+    _configure_extra_headers(llm)
 
 
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:
@@ -345,6 +346,44 @@ def _configure_openrouter_attribution(model_name: str | None) -> None:
         return
 
     litellm.headers = {**existing, **_OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
+
+
+def _configure_extra_headers(llm: LlmSettings) -> None:
+    """Send user-provided default headers on every LLM request.
+
+    Some OpenAI-compatible endpoints require extra HTTP headers (e.g. request
+    attribution or tenant routing) alongside the bearer token. Users supply
+    them via ``LLM_EXTRA_HEADERS``; they are applied to both routing paths:
+    the LiteLLM route (``litellm.headers``) and the SDK-native OpenAI route
+    (a default client carrying ``default_headers``), so they take effect
+    regardless of the ``STRIX_LLM`` prefix.
+    """
+    headers = llm.extra_headers
+    if not headers:
+        return
+    _merge_litellm_headers(headers)
+    if llm.api_base:
+        _register_openai_client_with_headers(llm, headers)
+
+
+def _merge_litellm_headers(headers: dict[str, str]) -> None:
+    import litellm
+
+    current: object = litellm.headers
+    existing: dict[str, str] = current if isinstance(current, dict) else {}
+    litellm.headers = {**existing, **headers}  # type: ignore[assignment]
+
+
+def _register_openai_client_with_headers(llm: LlmSettings, headers: dict[str, str]) -> None:
+    from agents import set_default_openai_client
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=llm.api_key or "not-needed",
+        base_url=llm.api_base,
+        default_headers=dict(headers),
+    )
+    set_default_openai_client(client, use_for_tracing=False)
 
 
 def _register_litellm_cost_callback() -> None:

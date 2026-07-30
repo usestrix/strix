@@ -19,6 +19,14 @@ Configure Strix using environment variables or a config file.
   Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
 </ParamField>
 
+<ParamField path="LLM_EXTRA_HEADERS" type="string">
+  Extra HTTP headers sent on every LLM request, as a JSON object (e.g.
+  `{"X-Feature-Key":"value","X-Tenant":"acme"}`). Useful for OpenAI-compatible
+  gateways that require attribution or routing headers in addition to the bearer
+  token. The bearer token itself still comes from `LLM_API_KEY`. Applies to both
+  the LiteLLM and native OpenAI routing paths.
+</ParamField>
+
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
   Request timeout in seconds for LLM calls.
 </ParamField>

@@ -35,6 +35,10 @@ class LlmSettings(BaseSettings):
             "OLLAMA_API_BASE",
         ),
     )
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        alias="LLM_EXTRA_HEADERS",
+    )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
     force_required_tool_choice: bool = Field(
         default=False,
