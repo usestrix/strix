@@ -146,7 +146,7 @@ def _patch_budget(monkeypatch: pytest.MonkeyPatch, *, keep_tokens: int, window: 
     context.auto_compact = True
     settings = SimpleNamespace(
         context=context,
-        llm=SimpleNamespace(api_key=None, api_base=None, timeout=1),
+        llm=SimpleNamespace(api_key=None, api_base=None, timeout=1, extra_headers=None),
     )
     monkeypatch.setattr(compaction, "load_settings", lambda: settings)
 

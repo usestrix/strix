@@ -278,6 +278,7 @@ async def _summarize(model: str, prompt: str, max_tokens: int) -> str | None:
             api_key=llm.api_key,
             api_base=llm.api_base,
             timeout=llm.timeout,
+            extra_headers=llm.extra_headers,
         )
     except Exception:
         logger.exception("compaction summary call failed for model %s", model)
