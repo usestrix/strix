@@ -7,6 +7,7 @@ Thank you for your interest in contributing to Strix! This guide will help you g
 ### Prerequisites
 
 - Python 3.12+
+- Latest Go 1.24.x patch (only for Bubble Tea TUI development and release artifacts)
 - Docker (running)
 - [uv](https://docs.astral.sh/uv/) (for dependency management)
 - Git
@@ -31,7 +32,7 @@ Thank you for your interest in contributing to Strix! This guide will help you g
 3. **Configure your LLM provider**
    ```bash
    export STRIX_LLM="openai/gpt-5.4"
-   export LLM_API_KEY="your-api-key"
+   export OPENAI_API_KEY="your-api-key"
    ```
 
 4. **Run Strix in development mode**
@@ -112,6 +113,32 @@ make viewer   # or: cd strix/interface/viewer/frontend && npm ci && npm run buil
 ```
 
 Commit both the source change and the regenerated `strix/interface/viewer/static/`.
+
+## Package builds
+
+Normal source and editable installs do not need Go. Build the universal Python wheel with:
+
+```bash
+make wheel
+```
+
+This produces a pure `py3-none-any` wheel without a bundled TUI sidecar. Strix
+falls back to the legacy Textual scan interface for prepared scans if no compatible
+`strix-tui` executable can activate. Set `STRIX_TEXTUAL_TUI=1` to select Textual
+without attempting the Go TUI. Targetless setup requires the Go sidecar.
+
+`uv build --sdist` also requires no Go. A wheel built from that source archive
+is the same universal, sidecar-free package and uses the same Textual fallback.
+
+Release wheels are platform-specific and must include the matching Go sidecar:
+
+```bash
+make release-wheel
+```
+
+The release target sets `STRIX_REQUIRE_TUI_SIDECAR=1`, requires Go 1.24.x or newer,
+and fails rather than publishing a wheel without the sidecar. `scripts/build.sh`
+and `strix.spec` are likewise strict for frozen PyInstaller releases.
 
 ## 🤝 Community
 

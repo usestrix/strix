@@ -226,8 +226,11 @@ def test_streamed_openrouter_costs_ignores_entries_without_cost() -> None:
 
 def test_streamed_openrouter_costs_cleared_on_new_run() -> None:
     streamed_openrouter_costs.remember("gen-stale", {"cost": 0.7})
-    set_global_report_state(ReportState.__new__(ReportState))
-    assert streamed_openrouter_costs.take(SimpleNamespace(id="gen-stale")) is None
+    try:
+        set_global_report_state(ReportState.__new__(ReportState))
+        assert streamed_openrouter_costs.take(SimpleNamespace(id="gen-stale")) is None
+    finally:
+        set_global_report_state(None)
 
 
 def test_openrouter_stream_handler_records_cost() -> None:

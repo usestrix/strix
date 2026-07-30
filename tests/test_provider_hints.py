@@ -2,7 +2,22 @@
 
 from __future__ import annotations
 
-from strix.interface.main import _provider_import_hint
+import importlib
+from typing import Any
+
+import pytest
+
+from strix.config import (
+    ProviderAuthState,
+    clear_provider_credentials_invalid,
+    provider_auth_status,
+)
+from strix.config.settings import Settings
+from strix.interface.main import (
+    ProviderCredentialRejectedError,
+    _provider_import_hint,
+    preflight_model_connection,
+)
 
 
 VERTEX_MODEL = "vertex_ai/gemini-3-pro-preview"
@@ -12,6 +27,7 @@ BEDROCK_EXTRA_NAME = "bedrock"
 INSTALL_EXTRA_COMMAND_FRAGMENT = 'pipx install "strix-agent['
 WRAPPED_VERTEX_GOOGLE_ERROR = "litellm.APIConnectionError: No module named 'google'"
 WRAPPED_BEDROCK_BOTO3_ERROR = "litellm.APIConnectionError: No module named 'boto3'"
+main_module = importlib.import_module("strix.interface.main")
 
 
 def test_bedrock_boto3_hint() -> None:
@@ -72,3 +88,74 @@ def test_non_import_error_returns_none() -> None:
 def test_unrelated_provider_returns_none() -> None:
     exc = ImportError("No module named 'something'")
     assert _provider_import_hint(exc, "openai/gpt-4") is None
+
+
+@pytest.mark.asyncio
+async def test_preflight_turns_rejected_key_into_actionable_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class RejectingModel:
+        async def get_response(self, **_kwargs: Any) -> None:
+            raise RuntimeError("HTTP 401 Unauthorized")
+
+    class Provider:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def get_model(self, _model: str) -> RejectingModel:
+            return RejectingModel()
+
+    clear_provider_credentials_invalid("anthropic")
+    monkeypatch.setattr(main_module, "StrixProvider", Provider)
+    monkeypatch.setattr(main_module, "configure_sdk_model_defaults", lambda _settings: None)
+
+    with pytest.raises(
+        ProviderCredentialRejectedError,
+        match=r"authentication failed.*was rejected",
+    ) as error:
+        await preflight_model_connection(
+            "anthropic/claude",
+            settings=Settings(llm={"model": "anthropic/claude", "timeout": 1}),
+        )
+
+    assert error.value.provider == "anthropic"
+    assert error.value.credential_role == "primary"
+    assert provider_auth_status("anthropic").state is ProviderAuthState.INVALID
+    clear_provider_credentials_invalid("anthropic")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "error",
+    [
+        TimeoutError("connection timed out"),
+        RuntimeError("429 rate limit exceeded"),
+        RuntimeError("403 model access denied"),
+    ],
+)
+async def test_preflight_does_not_classify_ordinary_connection_errors_as_rejected_keys(
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+) -> None:
+    class FailingModel:
+        async def get_response(self, **_kwargs: Any) -> None:
+            raise error
+
+    class Provider:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def get_model(self, _model: str) -> FailingModel:
+            return FailingModel()
+
+    clear_provider_credentials_invalid("anthropic")
+    monkeypatch.setattr(main_module, "StrixProvider", Provider)
+    monkeypatch.setattr(main_module, "configure_sdk_model_defaults", lambda _settings: None)
+
+    with pytest.raises(type(error), match=str(error)):
+        await preflight_model_connection(
+            "anthropic/claude",
+            settings=Settings(llm={"model": "anthropic/claude", "timeout": 1}),
+        )
+
+    assert provider_auth_status("anthropic").state is not ProviderAuthState.INVALID

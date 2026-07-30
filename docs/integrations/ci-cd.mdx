@@ -36,7 +36,7 @@ security-scan:
     - docker:dind
   variables:
     STRIX_LLM: $STRIX_LLM
-    LLM_API_KEY: $LLM_API_KEY
+    OPENAI_API_KEY: $OPENAI_API_KEY
   script:
     - curl -sSL https://strix.ai/install | bash
     - strix -n -t ./ --scan-mode quick
@@ -49,7 +49,7 @@ pipeline {
     agent any
     environment {
         STRIX_LLM = credentials('strix-llm')
-        LLM_API_KEY = credentials('llm-api-key')
+        OPENAI_API_KEY = credentials('openai-api-key')
     }
     stages {
         stage('Security Scan') {

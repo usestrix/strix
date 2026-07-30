@@ -10,21 +10,56 @@ permissions:
   contents: read
 
 jobs:
+  test-gate:
+    name: Python and Go tests
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version: '1.24.x'
+          check-latest: true
+          cache-dependency-path: tui-go/go.sum
+
+      - name: Run Python tests
+        run: |
+          uv sync --frozen
+          uv run pytest
+
+      - name: Run Go tests
+        working-directory: tui-go
+        run: go test -race ./...
+
   build:
+    needs: test-gate
     strategy:
       fail-fast: false
       matrix:
         include:
           - os: macos-latest
             target: macos-arm64
+            wheel-platform: macosx_11_0_arm64
           - os: macos-15-intel
             target: macos-x86_64
+            wheel-platform: macosx_11_0_x86_64
           - os: ubuntu-22.04
             target: linux-x86_64
+            wheel-platform: manylinux_2_17_x86_64
           - os: ubuntu-22.04-arm
             target: linux-arm64
+            wheel-platform: manylinux_2_17_aarch64
           - os: windows-latest
             target: windows-x86_64
+            wheel-platform: win_amd64
 
     runs-on: ${{ matrix.os }}
 
@@ -39,17 +74,52 @@ jobs:
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
 
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version: '1.24.x'
+          check-latest: true
+          cache-dependency-path: tui-go/go.sum
+
       - name: Build
         shell: bash
+        env:
+          STRIX_REQUIRE_TUI_SIDECAR: '1'
+          STRIX_WHEEL_PLATFORM_TAG: ${{ matrix.wheel-platform }}
         run: |
           uv sync --frozen
+          uv build --wheel
+          uv run python -c 'import glob, os, sys, zipfile; wheels = glob.glob("dist/*.whl"); assert len(wheels) == 1, wheels; archive = zipfile.ZipFile(wheels[0]); tui = "strix/bin/strix-tui.exe" if sys.platform == "win32" else "strix/bin/strix-tui"; assert tui in archive.namelist(); metadata = archive.read(next(name for name in archive.namelist() if name.endswith(".dist-info/WHEEL"))).decode(); assert "Root-Is-Purelib: false" in metadata; assert "Tag: py3-none-" + os.environ["STRIX_WHEEL_PLATFORM_TAG"] in metadata'
+          uv venv --python 3.12 .release-wheel-smoke
+
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
+            WHEEL_PYTHON=".release-wheel-smoke/Scripts/python.exe"
+            WHEEL_STRIX=".release-wheel-smoke/Scripts/strix.exe"
+          else
+            WHEEL_PYTHON=".release-wheel-smoke/bin/python"
+            WHEEL_STRIX=".release-wheel-smoke/bin/strix"
+          fi
+          uv pip install --python "$WHEEL_PYTHON" dist/*.whl
+          "$WHEEL_STRIX" --version
+
+          run_protocol_smoke() {
+            local executable="$1"
+            "$executable" --tui-protocol-smoke
+          }
+          run_protocol_smoke "$WHEEL_STRIX" "Installed wheel"
+
           uv run pyinstaller strix.spec --noconfirm
 
           if [[ "${{ runner.os }}" == "Windows" ]]; then
+            PYI_BINARY="dist/strix.exe"
+            TUI_NAME="strix-tui.exe"
             dist/strix.exe --version
           else
+            PYI_BINARY="dist/strix"
+            TUI_NAME="strix-tui"
             dist/strix --version
           fi
+          run_protocol_smoke "$PYI_BINARY" "Frozen executable"
+          uv run pyi-archive_viewer -l "$PYI_BINARY" | grep "strix/bin/$TUI_NAME" >/dev/null
 
           if [[ "${{ matrix.target }}" == "linux-arm64" ]]; then
             file dist/strix
@@ -77,6 +147,7 @@ jobs:
           path: |
             dist/release/*.tar.gz
             dist/release/*.zip
+            dist/*.whl
           if-no-files-found: error
 
   release:

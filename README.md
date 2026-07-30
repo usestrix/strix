@@ -73,7 +73,7 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 
 **Prerequisites:**
 - Docker (running)
-- An LLM API key from any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
+- Credentials for any [supported provider](https://docs.strix.ai/llm-providers/overview), a ChatGPT subscription sign-in, or a local/ambient-auth model
 
 ### Installation & First Scan
 
@@ -81,9 +81,12 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 # Install Strix
 curl -sSL https://strix.ai/install | bash
 
+# Or install the Python package
+pipx install strix-agent
+
 # Configure your AI provider
 export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
+export OPENAI_API_KEY="your-api-key"
 
 # Run your first security assessment
 strix --target ./app-directory
@@ -242,7 +245,7 @@ jobs:
       - name: Run Strix
         env:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
 
         run: strix -n -t ./ --scan-mode quick
 ```
@@ -256,7 +259,7 @@ jobs:
 
 ```bash
 export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
+export OPENAI_API_KEY="your-api-key"
 
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
@@ -265,7 +268,19 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 ```
 
 > [!NOTE]
-> Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
+> Provider keys and models entered through the interactive setup are saved to
+> `~/.strix/cli-config.json`. Normal scans merge recognized process settings into
+> that file. Credentials are stored as plaintext with permissions restricted to
+> the current user (`0600`).
+
+Interactive scans use the Go TUI when its platform sidecar is installed. Set
+`STRIX_TEXTUAL_TUI=1` to select the legacy Textual interface explicitly. The Go
+interface supports targetless provider, model, credential, and target setup.
+
+Source distributions and universal `py3-none-any` wheels built from source do
+not bundle the platform-specific Go sidecar. Those installs remain fully
+functional for prepared scans through the Textual fallback. Targetless first-run
+setup requires an official platform wheel or a source checkout with Go available.
 
 #### Sign in with a ChatGPT subscription
 

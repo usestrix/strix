@@ -17,8 +17,16 @@ Set your model and API key:
 
 ```bash
 export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
+export OPENAI_API_KEY="your-api-key"
 ```
+
+In interactive setup, `/provider` configures credentials and endpoints; it does
+not select an active provider. `/model` searches models from every configured
+provider, and selecting a model determines which provider Strix uses.
+Providers backed by credentials saved in Strix show a small disconnect action.
+Environment-backed providers must be disconnected by removing the environment
+variable. Disconnecting a custom provider keeps its definition so it can be
+reconnected later.
 
 ## Local Models
 

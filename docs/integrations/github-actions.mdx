@@ -27,7 +27,7 @@ jobs:
       - name: Run Security Scan
         env:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
-          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: strix -n -t ./ --scan-mode quick
 ```
 
@@ -38,7 +38,7 @@ Add these secrets to your repository:
 | Secret | Description |
 |--------|-------------|
 | `STRIX_LLM` | Model name (e.g., `openai/gpt-5.4`) |
-| `LLM_API_KEY` | API key for your LLM provider |
+| `OPENAI_API_KEY` | OpenAI API key; use the canonical variable for another provider |
 
 ## Exit Codes
 

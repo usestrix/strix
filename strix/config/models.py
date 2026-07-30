@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import os
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from agents import (
@@ -12,7 +13,9 @@ from agents import (
     set_default_openai_key,
     set_tracing_disabled,
 )
+from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
+from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
 from agents.models.openai_responses import OpenAIResponsesModel
 from agents.retry import (
@@ -24,16 +27,39 @@ from agents.retry import (
 from openai.types.shared import Reasoning
 
 from strix.config import codex
-from strix.config.loader import load_settings
 
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from agents.models.interface import Model, ModelProvider
     from openai import AsyncOpenAI
 
     from strix.config.settings import ReasoningEffort, Settings
+
+
+@dataclass(frozen=True)
+class ResolvedModelConfig:
+    model: str
+    provider: str
+    api_key: str | None = field(repr=False)
+    api_base: str | None
+    api_version: str | None = None
+
+
+class _ConfiguredLiteLLMProvider(ModelProvider):
+    def __init__(self, api_key: str | None, api_base: str | None) -> None:
+        self._api_key = api_key
+        self._api_base = api_base
+
+    def get_model(self, model_name: str | None) -> Model:
+        return LitellmModel(
+            model_name or "",
+            api_key=self._api_key,
+            base_url=self._api_base,
+        )
+
+    async def aclose(self) -> None:
+        return None
 
 
 def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
@@ -141,6 +167,45 @@ class StrixProvider(MultiProvider):
     ``litellm/deepseek/deepseek-chat``.
     """
 
+    def __init__(
+        self,
+        model_name: str | None = None,
+        settings: Settings | None = None,
+        *,
+        api_key: str | None = None,
+        api_base: str | None = None,
+    ) -> None:
+        if settings is None:
+            from strix.config.loader import load_settings
+
+            settings = load_settings()
+        self._settings = settings
+        self._requested_model = (model_name or settings.llm.model or "").strip()
+        self.config = resolve_model_config(
+            settings,
+            model_name,
+            api_key=api_key,
+            api_base=api_base,
+        )
+        openai_route = self.config.provider == "openai"
+        super().__init__(
+            openai_api_key=self.config.api_key if openai_route else None,
+            openai_base_url=self.config.api_base if openai_route else None,
+            openai_use_responses=not bool(self.config.api_base),
+        )
+        self._configured_litellm_provider = _ConfiguredLiteLLMProvider(
+            self.config.api_key,
+            self.config.api_base,
+        )
+        self._configured_anyllm_provider: ModelProvider | None = None
+        if self.config.model.lower().startswith("any-llm/"):
+            from agents.extensions.models.any_llm_provider import AnyLLMProvider
+
+            self._configured_anyllm_provider = AnyLLMProvider(
+                api_key=self.config.api_key,
+                base_url=self.config.api_base,
+            )
+
     def _resolve_prefixed_model(
         self,
         *,
@@ -148,24 +213,37 @@ class StrixProvider(MultiProvider):
         prefix: str,
         stripped_model_name: str | None,
     ) -> tuple[ModelProvider, str | None]:
-        if prefix in {"openai", "litellm", "any-llm"}:
+        if prefix == "openai":
             return super()._resolve_prefixed_model(
                 original_model_name=original_model_name,
                 prefix=prefix,
                 stripped_model_name=stripped_model_name,
             )
+        if prefix == "litellm":
+            return self._configured_litellm_provider, stripped_model_name
+        if prefix == "any-llm":
+            if self._configured_anyllm_provider is None:
+                raise RuntimeError("AnyLLM provider was not initialized for this model")
+            return self._configured_anyllm_provider, stripped_model_name
         if prefix == "ollama" and stripped_model_name:
-            return self._get_fallback_provider("litellm"), f"ollama_chat/{stripped_model_name}"
-        return self._get_fallback_provider("litellm"), original_model_name
+            return self._configured_litellm_provider, f"ollama_chat/{stripped_model_name}"
+        return self._configured_litellm_provider, original_model_name
 
     def get_model(self, model_name: str | None) -> Model:
+        requested_model = (model_name or "").strip()
+        if requested_model and requested_model != self._requested_model:
+            return type(self)(requested_model, self._settings).get_model(requested_model)
         slug = codex.subscription_model(model_name)
         if slug:
             return _CodexResponsesModel(
                 slug,
                 codex.get_subscription_client(),
-                reasoning_effort=load_settings().llm.reasoning_effort,
+                reasoning_effort=self._settings.llm.reasoning_effort,
             )
+        from strix.config.providers import custom_provider, provider_for_model
+
+        if custom_provider(provider_for_model(model_name) or ""):
+            return self._configured_litellm_provider.get_model(self.config.model)
         return super().get_model(model_name)
 
 
@@ -212,6 +290,25 @@ RECOMMENDED_MODEL_NAMES = (
 
 _RECOMMENDED_MODEL_NAME_SET = frozenset(name.lower() for name in RECOMMENDED_MODEL_NAMES)
 
+
+def recommended_models_by_provider() -> dict[str, list[str]]:
+    """Group the recommended model names by their ``<provider>/`` prefix.
+
+    Used by the interactive home page so ``/provider`` and ``/model`` can offer
+    curated choices without hard-coding a second copy of the list.
+    """
+    grouped: dict[str, list[str]] = {}
+    for name in RECOMMENDED_MODEL_NAMES:
+        provider = name.split("/", 1)[0] if "/" in name else "openai"
+        grouped.setdefault(provider, []).append(name)
+    return grouped
+
+
+def recommended_providers() -> list[str]:
+    """Distinct provider prefixes across the recommended models, in order."""
+    return list(recommended_models_by_provider().keys())
+
+
 FRONTIER_MODEL_FAMILIES = (
     (("azure", "azure_ai", "bedrock_mantle", "chatgpt", "openai"), ("gpt-5",)),
     (
@@ -225,49 +322,214 @@ FRONTIER_MODEL_FAMILIES = (
 )
 
 
+def resolve_model_config(
+    settings: Settings,
+    model_name: str | None = None,
+    *,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> ResolvedModelConfig:
+    """Resolve one model route without mutating process-global credentials."""
+    from strix.config.providers import (
+        normalize_ollama_api_base,
+        provider_for_model,
+        require_provider_enabled,
+        resolve_provider_api_key,
+    )
+
+    configured_model = (getattr(settings.llm, "model", None) or "").strip()
+    model = (model_name or configured_model).strip()
+    provider = provider_for_model(model) or "openai"
+    custom = require_provider_enabled(provider)
+    compatibility_route = not model_name or provider_for_model(configured_model) == provider
+    compatibility_key = _programmatic_compatibility_value(
+        getattr(settings.llm, "api_key", None) if compatibility_route else None,
+        "LLM_API_KEY",
+        "OPENAI_API_KEY",
+    )
+    compatibility_base = _programmatic_compatibility_value(
+        getattr(settings.llm, "api_base", None) if compatibility_route else None,
+        "LLM_API_BASE",
+        "OPENAI_API_BASE",
+        "OPENAI_BASE_URL",
+        "LITELLM_BASE_URL",
+        "OLLAMA_API_BASE",
+    )
+    resolved_key = (
+        api_key
+        or (
+            custom.api_key
+            if custom
+            else resolve_provider_api_key(
+                provider,
+                primary_model=configured_model,
+                model=model,
+            )
+        )
+        or compatibility_key
+    )
+
+    resolved_base: str | None
+    if api_base is not None:
+        resolved_base = api_base
+    elif custom:
+        resolved_base = custom.api_base
+    elif compatibility_base:
+        resolved_base = compatibility_base
+    elif model.lower().startswith("litellm/"):
+        resolved_base = _resolve_route_env_value(provider, configured_model, "LITELLM_BASE_URL")
+    elif provider == "openai":
+        resolved_base = _resolve_route_env_value(
+            provider,
+            configured_model,
+            "OPENAI_API_BASE",
+            "OPENAI_BASE_URL",
+        )
+    elif provider in {"ollama", "ollama_chat"}:
+        raw_base = _resolve_route_env_value(provider, configured_model, "OLLAMA_API_BASE")
+        resolved_base = normalize_ollama_api_base(raw_base) if raw_base else None
+    elif provider.startswith("azure"):
+        resolved_base = _resolve_route_env_value(provider, configured_model, "AZURE_API_BASE")
+    else:
+        resolved_base = _resolve_route_env_value(provider, configured_model)
+
+    resolved_api_version = (
+        _resolve_route_env_value(
+            provider,
+            configured_model,
+            "AZURE_API_VERSION",
+            include_generic=False,
+        )
+        if provider.startswith("azure")
+        else None
+    )
+
+    transport_model = model
+    if custom:
+        _, _, remote_model = model.partition("/")
+        transport_model = f"{custom.transport}/{remote_model}"
+        # OpenAI-compatible clients require a key argument even when the server does not.
+        resolved_key = resolved_key or "not-needed"
+
+    return ResolvedModelConfig(
+        model=transport_model,
+        provider=provider,
+        api_key=resolved_key,
+        api_base=resolved_base,
+        api_version=resolved_api_version,
+    )
+
+
+def _programmatic_compatibility_value(value: str | None, *aliases: str) -> str | None:
+    """Use legacy public Settings fields only when no env/config source supplied them."""
+    if not value:
+        return None
+    from strix.config.loader import read_config_env
+
+    alias_set = {alias.upper() for alias in aliases}
+    if any(key.upper() in alias_set and raw for key, raw in os.environ.items()):
+        return None
+    config_env = read_config_env()
+    if any(key.upper() in alias_set and raw for key, raw in config_env.items()):
+        return None
+    return value
+
+
+def _resolve_route_env_value(
+    provider: str,
+    effective_model: str,
+    *provider_names: str,
+    include_generic: bool = True,
+) -> str | None:
+    """Resolve a route value without carrying a generic base between providers."""
+    from strix.config.loader import read_config_env
+    from strix.config.providers import provider_for_model
+
+    process_env = {key.upper(): value for key, value in os.environ.items() if value}
+    config_env = {key.upper(): value for key, value in read_config_env().items() if value}
+    generic_allowed = include_generic and provider_for_model(effective_model) == provider
+    if generic_allowed and (value := process_env.get("LLM_API_BASE")):
+        return value
+    for name in provider_names:
+        if value := process_env.get(name.upper()):
+            return value
+
+    persisted_model = config_env.get("STRIX_LLM")
+    if (
+        include_generic
+        and provider_for_model(persisted_model) == provider
+        and (value := config_env.get("LLM_API_BASE"))
+    ):
+        return value
+    for name in provider_names:
+        if value := config_env.get(name.upper()):
+            return value
+    return None
+
+
 def configure_sdk_model_defaults(settings: Settings) -> None:
-    """Apply Strix config to SDK-native defaults."""
-    llm = settings.llm
+    """Apply process-level SDK privacy and compatibility settings.
+
+    Credentials, endpoints, and model-specific headers are intentionally bound
+    to :class:`StrixProvider` and request settings instead of global SDK state.
+    """
     set_tracing_disabled(True)
-    if codex.subscription_model(llm.model):
+    if codex.subscription_model(settings.llm.model):
         return
     _configure_litellm_compatibility()
-    _configure_openrouter_attribution(llm.model)
-    if llm.api_key:
-        set_default_openai_key(llm.api_key, use_for_tracing=False)
-        _configure_litellm_default("api_key", llm.api_key)
-        _mirror_api_key_to_provider_env(llm.model, llm.api_key)
-    if llm.api_base:
-        os.environ["OPENAI_BASE_URL"] = llm.api_base
-        _configure_litellm_default("api_base", llm.api_base)
+    _configure_openrouter_attribution(settings.llm.model)
+    route = resolve_model_config(settings)
+    if route.api_key:
+        set_default_openai_key(route.api_key, use_for_tracing=False)
+        import litellm
+
+        litellm.api_key = route.api_key
+    if route.api_base:
+        import litellm
+
+        litellm.api_base = route.api_base
         set_default_openai_api("chat_completions")
     else:
         set_default_openai_api("responses")
 
 
-def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:
-    if not model_name:
-        return
-    import litellm
+def with_model_request_headers(
+    model_settings: ModelSettings,
+    model_name: str,
+) -> ModelSettings:
+    """Attach route-specific request headers without changing LiteLLM globals."""
+    from strix.config.providers import provider_for_model
 
-    name = model_name.strip()
-    for prefix in ("litellm/", "any-llm/"):
-        if name.lower().startswith(prefix):
-            name = name[len(prefix) :]
-            break
-    try:
-        report = litellm.validate_environment(model=name.lower())
-    except Exception:  # noqa: BLE001
-        return
-    for env_key in report.get("missing_keys") or []:
-        if env_key.endswith("_API_KEY"):
-            os.environ.setdefault(env_key, api_key)
+    provider = provider_for_model(model_name)
+    resolved = model_settings
+    if provider == "openrouter":
+        existing = model_settings.extra_headers or {}
+        resolved = resolved.resolve(
+            ModelSettings(extra_headers={**existing, **_OPENROUTER_ATTRIBUTION_HEADERS})
+        )
+    if provider and provider.startswith("azure"):
+        from strix.config.loader import resolve_env_value
+
+        if api_version := resolve_env_value("AZURE_API_VERSION"):
+            resolved = resolved.resolve(
+                ModelSettings(
+                    extra_args={**(resolved.extra_args or {}), "api_version": api_version}
+                )
+            )
+    return resolved
 
 
 def _configure_litellm_compatibility() -> None:
     """Apply LiteLLM compatibility, privacy, and callback settings."""
     import litellm
 
+    # Requests receive credentials, bases, and headers from their provider and
+    # ModelSettings. Clear legacy module defaults so they cannot override those
+    # values after an in-process configuration change.
+    litellm.api_key = None
+    litellm.api_base = None
+    litellm.api_version = None
+    litellm.headers = None
     litellm.drop_params = True
     litellm.modify_params = True
     litellm.turn_off_message_logging = True
@@ -339,7 +601,9 @@ def _configure_openrouter_attribution(model_name: str | None) -> None:
     if not model_name or "openrouter/" not in model_name.strip().lower():
         if any(key in existing for key in _OPENROUTER_ATTRIBUTION_HEADERS):
             remaining = {
-                k: v for k, v in existing.items() if k not in _OPENROUTER_ATTRIBUTION_HEADERS
+                key: value
+                for key, value in existing.items()
+                if key not in _OPENROUTER_ATTRIBUTION_HEADERS
             }
             litellm.headers = remaining or None  # type: ignore[assignment]
         return
@@ -361,13 +625,6 @@ def _register_litellm_cost_callback() -> None:
         bucket.append(litellm_cost_callback)
 
 
-def _configure_litellm_default(name: str, value: str) -> None:
-    """Set LiteLLM's module-level defaults without adding a provider wrapper."""
-    import litellm
-
-    setattr(litellm, name, value)
-
-
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
     if codex.subscription_model(model_name):
@@ -375,7 +632,7 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
         return True
-    if settings.llm.api_base:
+    if resolve_model_config(settings, model_name).api_base:
         return True
     return not model_supports_reasoning(model_name)
 

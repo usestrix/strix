@@ -21,9 +21,12 @@ class LlmSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     model: str | None = Field(default=None, alias="STRIX_LLM")
+    # Compatibility-only views. Runtime model routes resolve credentials and
+    # endpoints through strix.config.models.resolve_model_config instead.
     api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
+        repr=False,
     )
     api_base: str | None = Field(
         default=None,
@@ -55,7 +58,7 @@ class DedupeSettings(BaseSettings):
         default=None,
         alias="STRIX_DEDUPE_REASONING_EFFORT",
     )
-    api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY")
+    api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY", repr=False)
     api_base: str | None = Field(default=None, alias="DEDUPE_LLM_API_BASE")
 
 
@@ -105,7 +108,11 @@ class TelemetrySettings(BaseSettings):
 class IntegrationSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
-    perplexity_api_key: str | None = Field(default=None, alias="PERPLEXITY_API_KEY")
+    perplexity_api_key: str | None = Field(
+        default=None,
+        alias="PERPLEXITY_API_KEY",
+        repr=False,
+    )
 
 
 class ViewerSettings(BaseSettings):

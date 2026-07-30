@@ -11,12 +11,34 @@ Configure Strix using environment variables or a config file.
   Model name in LiteLLM format (e.g., `openai/gpt-5.4`, `anthropic/claude-sonnet-4-6`).
 </ParamField>
 
-<ParamField path="LLM_API_KEY" type="string">
-  API key for your LLM provider. Not required for local models or cloud provider auth (Vertex AI, AWS Bedrock).
-</ParamField>
+Use the provider's canonical credential variable, such as `OPENAI_API_KEY`,
+`ANTHROPIC_API_KEY`, or `OPENROUTER_API_KEY`. Credentials are never reused for
+another provider. API keys are not required for local models or cloud provider
+auth such as Vertex AI and AWS Bedrock.
+
+For backwards compatibility, `LLM_API_KEY` is accepted only for the provider
+identified by `STRIX_LLM`. Legacy keys are resolved at runtime without modifying
+the config file or process environment. Provider-specific credentials always
+take precedence.
+
+If model preflight receives a definite authentication rejection, Strix marks the
+provider credential invalid instead of treating key presence as configured.
+Keys saved by Strix can be replaced from `/provider`. Environment-backed keys
+must be updated in the launching environment and require restarting Strix.
+Timeouts, rate limits, and model-access errors do not invalidate credentials.
+
+The interactive model picker includes every configured provider. For Vertex AI,
+Bedrock, and SageMaker, Strix passively recognizes local ADC, AWS profiles,
+access-key pairs, web identity, and container credential markers. It does not
+contact cloud metadata services merely to populate the picker. An explicitly
+selected cloud model still reaches the provider SDK's normal ambient credential
+chain, and the model preflight remains the authoritative credential and
+permission check.
 
 <ParamField path="LLM_API_BASE" type="string">
-  Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
+  Custom API base URL for the selected model route. `OPENAI_API_BASE` and
+  `OPENAI_BASE_URL` apply only to OpenAI routes, `LITELLM_BASE_URL` to explicit
+  `litellm/` routes, and `OLLAMA_API_BASE` to Ollama routes.
 </ParamField>
 
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
@@ -132,18 +154,25 @@ strix --target ./app --config /path/to/config.json
 {
   "env": {
     "STRIX_LLM": "openai/gpt-5.4",
-    "LLM_API_KEY": "sk-...",
+    "OPENAI_API_KEY": "sk-...",
     "STRIX_REASONING_EFFORT": "high"
   }
 }
 ```
+
+Environment variables take precedence over values in the selected file. Loading
+a file does not export its values into the process environment. Normal scans merge
+recognized process settings into the active config, while interactive setup and
+provider selection may make additional explicit changes. Mutations preserve
+unknown top-level and `env` fields. API keys are stored as plaintext in a file
+with permissions restricted to the current user (`0600`).
 
 ## Example Setup
 
 ```bash
 # Required
 export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="sk-..."
+export OPENAI_API_KEY="sk-..."
 
 # Optional: Enable web search
 export PERPLEXITY_API_KEY="pplx-..."

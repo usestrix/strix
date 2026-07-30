@@ -19,10 +19,16 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import (
+    ProviderAuthState,
+    Settings,
     apply_config_override,
     codex,
     load_settings,
     persist_current,
+    provider_auth_status,
+    provider_authentication_error_message,
+    provider_credential_source,
+    provider_for_model,
 )
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
@@ -30,11 +36,17 @@ from strix.config.models import (
     configure_sdk_model_defaults,
     is_known_openai_bare_model,
     is_recommended_or_frontier_model,
+    resolve_model_config,
+    with_model_request_headers,
 )
 from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
-from strix.interface.tui import run_tui
+from strix.interface.interactive import (
+    InteractiveSetupUnavailableError,
+    run_tui,
+    textual_tui_requested,
+)
 from strix.interface.update_check import (
     is_binary_install,
     notify_update,
@@ -86,6 +98,96 @@ import logging  # noqa: E402
 logger = logging.getLogger(__name__)
 
 
+class ProviderCredentialRejectedError(RuntimeError):
+    """A model provider definitively rejected one set of credentials."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        model_name: str,
+        provider: str,
+        credential_source: str | None,
+        credential_role: str,
+    ) -> None:
+        super().__init__(message)
+        self.model_name = model_name
+        self.provider = provider
+        self.credential_source = credential_source
+        self.credential_role = credential_role
+
+
+class ModelConnectionError(RuntimeError):
+    """An ordinary model preflight failure, annotated with its model route."""
+
+    def __init__(self, model_name: str, cause: BaseException) -> None:
+        super().__init__(str(cause))
+        self.model_name = model_name
+
+
+async def preflight_model_connection(
+    model_name: str,
+    *,
+    settings: Settings | None = None,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> None:
+    """Verify one selected model route before starting interactive setup."""
+    resolved_settings = load_settings() if settings is None else settings
+    configure_sdk_model_defaults(resolved_settings)
+    await _preflight_model_connection(
+        model_name,
+        settings=resolved_settings,
+        api_key=api_key,
+        api_base=api_base,
+    )
+
+
+async def _preflight_model_connection(
+    model_name: str,
+    *,
+    settings: Settings,
+    api_key: str | None,
+    api_base: str | None,
+) -> None:
+    """Verify one resolved model route without changing process credentials."""
+    model = StrixProvider(
+        model_name,
+        settings,
+        api_key=api_key,
+        api_base=api_base,
+    ).get_model(model_name)
+    request_settings = with_model_request_headers(ModelSettings(), model_name)
+    try:
+        await asyncio.wait_for(
+            model.get_response(
+                system_instructions="You are a helpful assistant.",
+                input="Reply with just 'OK'.",
+                model_settings=request_settings,
+                tools=[],
+                output_schema=None,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+                previous_response_id=None,
+                conversation_id=None,
+                prompt=None,
+            ),
+            timeout=settings.llm.timeout,
+        )
+    except Exception as exc:
+        provider = provider_for_model(model_name) or "openai"
+        credential_source = provider_credential_source(provider)
+        if message := provider_authentication_error_message(model_name, exc):
+            raise ProviderCredentialRejectedError(
+                message,
+                model_name=model_name,
+                provider=provider,
+                credential_source=credential_source,
+                credential_role="primary",
+            ) from exc
+        raise
+
+
 def validate_environment() -> None:
     logger.info("Validating environment")
     console = Console()
@@ -107,10 +209,13 @@ def validate_environment() -> None:
     if not settings.llm.model:
         missing_required_vars.append("STRIX_LLM")
 
-    if not settings.llm.api_key:
-        missing_optional_vars.append("LLM_API_KEY")
+    configured_provider = provider_for_model(settings.llm.model)
+    if configured_provider:
+        auth_status = provider_auth_status(configured_provider)
+        if not auth_status.ready:
+            missing_optional_vars.append(auth_status.detail)
 
-    if not settings.llm.api_base:
+    if not resolve_model_config(settings).api_base:
         missing_optional_vars.append("LLM_API_BASE")
 
     if not settings.integrations.perplexity_api_key:
@@ -145,15 +250,7 @@ def validate_environment() -> None:
         if missing_optional_vars:
             error_text.append("\nOptional environment variables:\n", style="white")
             for var in missing_optional_vars:
-                if var == "LLM_API_KEY":
-                    error_text.append("• ", style="white")
-                    error_text.append("LLM_API_KEY", style="bold cyan")
-                    error_text.append(
-                        " - API key for the LLM provider "
-                        "(not needed for local models, Vertex AI, AWS, etc.)\n",
-                        style="white",
-                    )
-                elif var == "LLM_API_BASE":
+                if var == "LLM_API_BASE":
                     error_text.append("• ", style="white")
                     error_text.append("LLM_API_BASE", style="bold cyan")
                     error_text.append(
@@ -181,13 +278,7 @@ def validate_environment() -> None:
 
         if missing_optional_vars:
             for var in missing_optional_vars:
-                if var == "LLM_API_KEY":
-                    error_text.append(
-                        "export LLM_API_KEY='your-api-key-here'  "
-                        "# not needed for local models, Vertex AI, AWS, etc.\n",
-                        style="dim white",
-                    )
-                elif var == "LLM_API_BASE":
+                if var == "LLM_API_BASE":
                     error_text.append(
                         "export LLM_API_BASE='http://localhost:11434'  "
                         "# needed for local models only\n",
@@ -319,12 +410,12 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         configure_sdk_model_defaults(settings)
         llm = settings.llm
         raw_model = (llm.model or "").strip()
-
+        model_config = resolve_model_config(settings, raw_model)
         if (
             raw_model
             and "/" not in raw_model
             and not is_known_openai_bare_model(raw_model)
-            and not llm.api_base
+            and not model_config.api_base
         ):
             warn_text = Text()
             warn_text.append("UNKNOWN MODEL NAME", style="bold yellow")
@@ -377,22 +468,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
                 ),
             )
 
-        model = StrixProvider().get_model(raw_model)
-        await asyncio.wait_for(
-            model.get_response(
-                system_instructions="You are a helpful assistant.",
-                input="Reply with just 'OK'.",
-                model_settings=ModelSettings(),
-                tools=[],
-                output_schema=None,
-                handoffs=[],
-                tracing=ModelTracing.DISABLED,
-                previous_response_id=None,
-                conversation_id=None,
-                prompt=None,
-            ),
-            timeout=llm.timeout,
-        )
+        await preflight_model_connection(raw_model, settings=settings)
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
         if settings.dedupe.model:
@@ -400,9 +476,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
 
             dedupe_model = settings.dedupe.model.strip()
             raw_model = dedupe_model
-            deduper = StrixProvider().get_model(dedupe_model)
-            # Match the runtime path: send the dedupe key/endpoint per call so a
-            # separate-provider dedupe model authenticates during warm-up too.
+            deduper = StrixProvider(settings=settings).get_model(dedupe_model)
             deduper_extra = _dedupe_extra_args(settings.dedupe)
             deduper_settings = ModelSettings(extra_args=deduper_extra or None)
             await asyncio.wait_for(
@@ -422,43 +496,15 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             )
             logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
 
-    except Exception as e:
+    except ProviderCredentialRejectedError:
+        logger.debug("LLM warm-up credentials were rejected", exc_info=True)
+        raise
+    except ModelConnectionError:
+        logger.debug("Model route warm-up failed", exc_info=True)
+        raise
+    except Exception as exc:
         logger.debug("LLM warm-up failed", exc_info=True)
-        error_text = Text()
-        sub_hint = _subscription_error_hint(e)
-        if sub_hint is not None:
-            # The model/backend answered with a clear, actionable rejection —
-            # show that instead of a generic "connection failed".
-            border_style = "yellow"
-            error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
-            error_text.append("\n\n", style="white")
-            error_text.append(f"{sub_hint}\n", style="white")
-            error_text.append(f"\nDetails: {e}", style="dim white")
-        else:
-            border_style = "red"
-            error_text.append("LLM CONNECTION FAILED", style="bold red")
-            error_text.append("\n\n", style="white")
-            error_text.append(
-                "Could not establish connection to the language model.\n", style="white"
-            )
-            error_text.append("Please check your configuration and try again.\n", style="white")
-            hint = _provider_import_hint(e, raw_model)
-            if hint is not None:
-                error_text.append(f"\n{hint}\n", style="bold yellow")
-            error_text.append(f"\nError: {e}", style="dim white")
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style=border_style,
-            padding=(1, 2),
-        )
-
-        console.print("\n")
-        console.print(panel)
-        console.print()
-        sys.exit(1)
+        raise ModelConnectionError(raw_model, exc) from exc
 
 
 def get_version() -> str:
@@ -648,6 +694,7 @@ Examples:
 
     parser.add_argument(
         "--max-budget",
+        "--max-budget-usd",
         dest="max_budget_usd",
         metavar="USD",
         type=_positive_budget,
@@ -680,8 +727,13 @@ Examples:
             "and agent topology. Skips fresh run-name generation."
         ),
     )
+    parser.add_argument("--tui-protocol-smoke", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
+    args.needs_setup = False
+
+    if args.config:
+        apply_config_override(validate_config_file(args.config))
 
     if args.update:
         sys.exit(0 if self_update() else 1)
@@ -721,58 +773,120 @@ Examples:
             )
     else:
         if not args.target and not args.target_list and not args.mount:
-            parser.error(
-                "the following arguments are required: -t/--target, --target-list, or --mount "
-                "(or use --resume <run_name> to continue a prior scan)"
-            )
-        args.targets_info = []
-        targets = list(args.target or [])
-        for target_list_path in args.target_list or []:
-            try:
-                targets.extend(read_target_list_file(target_list_path))
-            except ValueError as e:
-                parser.error(str(e))
-
-        for target in targets:
-            try:
-                target_type, target_dict = infer_target_type(target)
-
-                if target_type == "local_code":
-                    display_target = target_dict.get("target_path", target)
-                else:
-                    display_target = target
-
-                args.targets_info.append(
-                    {"type": target_type, "details": target_dict, "original": display_target}
+            if args.non_interactive or textual_tui_requested():
+                parser.error(
+                    "the following arguments are required: -t/--target, --target-list, "
+                    "or --mount (or use --resume <run_name> to continue a prior scan)"
                 )
-            except ValueError:
-                parser.error(f"Invalid target '{target}'")
+            # Interactive launch with no target: open the normal TUI in setup
+            # mode, where the user provides the target (and optionally
+            # provider/model) via slash commands before the scan starts.
+            args.needs_setup = True
+            args.targets_info = []
+            return args
 
         try:
-            args.targets_info.extend(build_mount_targets_info(args.mount or []))
+            build_targets_info(args)
         except ValueError as e:
             parser.error(str(e))
 
-        args.targets_info = dedupe_local_targets(args.targets_info)
-
-        assign_workspace_subdirs(args.targets_info)
-        rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
-
-        max_local_copy_mb = load_settings().runtime.max_local_copy_mb
-        max_copy_bytes = max_local_copy_mb * 1024 * 1024
-        oversized = find_oversized_local_targets(args.targets_info, max_copy_bytes)
-        if oversized:
-            details = "; ".join(
-                f"{path} ({size / (1024 * 1024):.0f} MB)" for path, size in oversized
-            )
-            parser.error(
-                f"Local target too large to stream into the sandbox: {details}. "
-                f"The limit is {max_local_copy_mb} MB "
-                "(set STRIX_MAX_LOCAL_COPY_MB to change it). Re-run with "
-                "--mount <path> to bind-mount the directory instead of copying it."
-            )
-
     return args
+
+
+def build_targets_info(args: argparse.Namespace) -> None:
+    """Populate ``args.targets_info`` from target/target-list/mount inputs.
+
+    Raises :class:`ValueError` with a user-facing message on any bad input so
+    callers can surface it via ``parser.error`` (CLI) or a console panel (home
+    page).
+    """
+    args.targets_info = []
+    targets = list(args.target or [])
+    for target_list_path in args.target_list or []:
+        targets.extend(read_target_list_file(target_list_path))
+
+    for target in targets:
+        try:
+            target_type, target_dict = infer_target_type(target)
+        except ValueError:
+            raise ValueError(f"Invalid target '{target}'") from None
+
+        if target_type == "local_code":
+            display_target = target_dict.get("target_path", target)
+        else:
+            display_target = target
+
+        args.targets_info.append(
+            {"type": target_type, "details": target_dict, "original": display_target}
+        )
+
+    args.targets_info.extend(build_mount_targets_info(args.mount or []))
+    args.targets_info = dedupe_local_targets(args.targets_info)
+
+    assign_workspace_subdirs(args.targets_info)
+    rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+
+    max_local_copy_mb = load_settings().runtime.max_local_copy_mb
+    max_copy_bytes = max_local_copy_mb * 1024 * 1024
+    oversized = find_oversized_local_targets(args.targets_info, max_copy_bytes)
+    if oversized:
+        details = "; ".join(f"{path} ({size / (1024 * 1024):.0f} MB)" for path, size in oversized)
+        raise ValueError(
+            f"Local target too large to stream into the sandbox: {details}. "
+            f"The limit is {max_local_copy_mb} MB "
+            "(set STRIX_MAX_LOCAL_COPY_MB to change it). Re-run with "
+            "--mount <path> to bind-mount the directory instead of copying it."
+        )
+
+
+def prepare_run(args: argparse.Namespace) -> None:
+    """Resolve the run name, clone repos, compute diff-scope, and persist state.
+
+    Shared by the CLI startup path and the interactive TUI setup phase (once the
+    user has supplied a target via ``/target``). Mutates *args* in place and
+    raises :class:`ValueError` on a diff-scope resolution failure.
+    """
+    args.run_name = args.resume or generate_run_name(args.targets_info)
+
+    if args.resume:
+        return
+
+    for target_info in args.targets_info:
+        if target_info["type"] == "repository":
+            repo_url = target_info["details"]["target_repo"]
+            dest_name = target_info["details"].get("workspace_subdir")
+            cloned_path = clone_repository(repo_url, args.run_name, dest_name)
+            target_info["details"]["cloned_repo_path"] = cloned_path
+
+    args.local_sources = collect_local_sources(args.targets_info)
+    diff_scope = resolve_diff_scope_context(
+        local_sources=args.local_sources,
+        scope_mode=args.scope_mode,
+        diff_base=args.diff_base,
+        non_interactive=args.non_interactive,
+    )
+    args.diff_scope = diff_scope.metadata
+    if diff_scope.instruction_block:
+        if args.instruction:
+            args.instruction = f"{diff_scope.instruction_block}\n\n{args.instruction}"
+        else:
+            args.instruction = diff_scope.instruction_block
+
+    _persist_run_record(args)
+
+
+def _telemetry_start(args: argparse.Namespace) -> None:
+    model = load_settings().llm.model
+    kwargs = {
+        "model": model,
+        "auth_mode": codex.auth_mode(model),
+        "scan_mode": args.scan_mode,
+        "is_whitebox": is_whitebox_scan(args.targets_info),
+        "interactive": not args.non_interactive,
+        "has_instructions": bool(args.instruction),
+    }
+    posthog.start(**kwargs)
+    scarf.start(**kwargs)
 
 
 def _persist_run_record(args: argparse.Namespace) -> None:
@@ -971,6 +1085,75 @@ def pull_docker_image() -> None:
     console.print()
 
 
+def _print_error_panel(title: str, message: str) -> None:
+    console = Console()
+    error_text = Text()
+    error_text.append(title, style="bold red")
+    error_text.append("\n\n", style="white")
+    error_text.append(message, style="white")
+    panel = Panel(
+        error_text,
+        title="[bold white]STRIX",
+        title_align="left",
+        border_style="red",
+        padding=(1, 2),
+    )
+    console.print("\n")
+    console.print(panel)
+    console.print()
+
+
+def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
+    console = Console()
+    error_text = Text()
+    sub_hint = _subscription_error_hint(exc)
+    if sub_hint is not None:
+        border_style = "yellow"
+        error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
+        error_text.append("\n\n", style="white")
+        error_text.append(f"{sub_hint}\n", style="white")
+        error_text.append(f"\nDetails: {exc}", style="dim white")
+    else:
+        border_style = "red"
+        error_text.append("LLM CONNECTION FAILED", style="bold red")
+        error_text.append("\n\n", style="white")
+        error_text.append("Could not establish connection to the language model.\n", style="white")
+        error_text.append("Please check your configuration and try again.\n", style="white")
+        hint = _provider_import_hint(exc, model_name)
+        if hint is not None:
+            error_text.append(f"\n{hint}\n", style="bold yellow")
+        error_text.append(f"\nError: {exc}", style="dim white")
+
+    panel = Panel(
+        error_text,
+        title="[bold white]STRIX",
+        title_align="left",
+        border_style=border_style,
+        padding=(1, 2),
+    )
+    console.print("\n")
+    console.print(panel)
+    console.print()
+
+
+def _enter_setup_for_rejected_saved_key(
+    args: argparse.Namespace,
+    exc: ProviderCredentialRejectedError,
+) -> bool:
+    if (
+        args.non_interactive
+        or args.resume
+        or textual_tui_requested()
+        or exc.credential_role != "primary"
+        or exc.credential_source not in {"config", "custom"}
+    ):
+        return False
+    args.needs_setup = True
+    args.setup_invalid_provider = exc.provider
+    args.setup_guidance = str(exc)
+    return True
+
+
 def main() -> None:
     configure_dependency_logging()
 
@@ -994,8 +1177,35 @@ def main() -> None:
 
     args = parse_arguments()
 
-    if args.config:
-        apply_config_override(validate_config_file(args.config))
+    if getattr(args, "tui_protocol_smoke", False):
+        from strix.interface.go_tui import run_tui_protocol_smoke
+
+        asyncio.run(run_tui_protocol_smoke(args))
+        return
+
+    if (
+        not args.non_interactive
+        and not args.resume
+        and not args.needs_setup
+        and not textual_tui_requested()
+    ):
+        model = (load_settings().llm.model or "").strip()
+        if not model:
+            args.needs_setup = True
+        else:
+            provider = provider_for_model(model)
+            auth_status = provider_auth_status(provider) if provider is not None else None
+            rejected_environment_key = bool(
+                provider
+                and auth_status
+                and auth_status.state is ProviderAuthState.INVALID
+                and provider_credential_source(provider) == "env"
+            )
+            if auth_status is None or (not auth_status.ready and not rejected_environment_key):
+                args.needs_setup = True
+                if provider and auth_status and auth_status.state is ProviderAuthState.INVALID:
+                    args.setup_invalid_provider = provider
+                    args.setup_guidance = auth_status.detail
 
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
@@ -1006,67 +1216,35 @@ def main() -> None:
     check_docker_installed()
     pull_docker_image()
 
-    validate_environment()
-    asyncio.run(warm_up_llm(show_model_warning=args.non_interactive))
+    setup_mode = getattr(args, "needs_setup", False)
 
-    persist_current()
-
-    args.run_name = args.resume or generate_run_name(args.targets_info)
-
-    if not args.resume:
-        for target_info in args.targets_info:
-            if target_info["type"] == "repository":
-                repo_url = target_info["details"]["target_repo"]
-                dest_name = target_info["details"].get("workspace_subdir")
-                cloned_path = clone_repository(repo_url, args.run_name, dest_name)
-                target_info["details"]["cloned_repo_path"] = cloned_path
-
-        args.local_sources = collect_local_sources(args.targets_info)
+    if not setup_mode:
+        validate_environment()
         try:
-            diff_scope = resolve_diff_scope_context(
-                local_sources=args.local_sources,
-                scope_mode=args.scope_mode,
-                diff_base=args.diff_base,
-                non_interactive=args.non_interactive,
-            )
-        except ValueError as e:
-            console = Console()
-            error_text = Text()
-            error_text.append("DIFF SCOPE RESOLUTION FAILED", style="bold red")
-            error_text.append("\n\n", style="white")
-            error_text.append(str(e), style="white")
-
-            panel = Panel(
-                error_text,
-                title="[bold white]STRIX",
-                title_align="left",
-                border_style="red",
-                padding=(1, 2),
-            )
-            console.print("\n")
-            console.print(panel)
-            console.print()
-            sys.exit(1)
-
-        args.diff_scope = diff_scope.metadata
-        if diff_scope.instruction_block:
-            if args.instruction:
-                args.instruction = f"{diff_scope.instruction_block}\n\n{args.instruction}"
+            asyncio.run(warm_up_llm(show_model_warning=args.non_interactive))
+        except ProviderCredentialRejectedError as exc:
+            if _enter_setup_for_rejected_saved_key(args, exc):
+                setup_mode = True
             else:
-                args.instruction = diff_scope.instruction_block
+                _print_model_connection_error(exc, exc.model_name)
+                sys.exit(1)
+        except ModelConnectionError as exc:
+            _print_model_connection_error(exc, exc.model_name)
+            sys.exit(1)
+        if not setup_mode:
+            persist_current()
 
-        _persist_run_record(args)
-
-    _telemetry_start_kwargs = {
-        "model": load_settings().llm.model,
-        "auth_mode": codex.auth_mode(load_settings().llm.model),
-        "scan_mode": args.scan_mode,
-        "is_whitebox": is_whitebox_scan(args.targets_info),
-        "interactive": not args.non_interactive,
-        "has_instructions": bool(args.instruction),
-    }
-    posthog.start(**_telemetry_start_kwargs)
-    scarf.start(**_telemetry_start_kwargs)
+    if not setup_mode:
+        try:
+            prepare_run(args)
+        except ValueError as e:
+            _print_error_panel("DIFF SCOPE RESOLUTION FAILED", str(e))
+            sys.exit(1)
+        _telemetry_start(args)
+    else:
+        # Setup mode: the TUI collects the target via slash commands, then calls
+        # prepare_run()/warm-up/telemetry itself once the user runs /start.
+        args.run_name = None
 
     exit_reason = "user_exit"
     try:
@@ -1074,6 +1252,10 @@ def main() -> None:
             asyncio.run(run_cli(args))
         else:
             asyncio.run(run_tui(args))
+    except InteractiveSetupUnavailableError as exc:
+        exit_reason = "error"
+        _print_error_panel("INTERACTIVE SETUP UNAVAILABLE", str(exc))
+        sys.exit(1)
     except KeyboardInterrupt:
         exit_reason = "interrupted"
     except Exception:
@@ -1091,6 +1273,10 @@ def main() -> None:
             report_state.cleanup(status=status)
             posthog.end(report_state, exit_reason=exit_reason)
             scarf.end(report_state, exit_reason=exit_reason)
+
+    if not getattr(args, "run_name", None):
+        # Setup mode where the user quit before starting a scan: nothing ran.
+        return
 
     results_path = run_dir_for(args.run_name)
 

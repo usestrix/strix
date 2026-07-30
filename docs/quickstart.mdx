@@ -23,13 +23,17 @@ description: "Install Strix and run your first security scan"
   </Tab>
 </Tabs>
 
+Official platform wheels include the Go TUI. Source distributions and universal
+wheels built from source omit that platform binary and use Textual for prepared
+scans. Targetless first-run setup requires the Go sidecar.
+
 ## Configuration
 
 Set your LLM provider:
 
 ```bash
 export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
+export OPENAI_API_KEY="your-api-key"
 ```
 
 <Tip>

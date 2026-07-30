@@ -1,0 +1,571 @@
+"""Launch and supervise the Bubble Tea TUI."""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import hmac
+import json
+import logging
+import os
+import secrets
+import shutil
+import socket
+import subprocess
+import sys
+from copy import deepcopy
+from importlib.metadata import PackageNotFoundError, version
+from pathlib import Path
+from typing import TYPE_CHECKING, Any
+
+from strix.config import load_settings, provider_authentication_error_message
+from strix.core.agents import AgentCoordinator
+from strix.core.hooks import BudgetExceededError
+from strix.core.inputs import DEFAULT_MAX_TURNS
+from strix.core.runner import run_strix_scan
+from strix.interface.tui_backend import TuiBackendServer, TuiController
+from strix.interface.tui_backend.live_view import TuiLiveView
+from strix.interface.utils import assign_workspace_subdirs
+from strix.report.state import ReportState, set_global_report_state
+from strix.utils.resource_paths import get_strix_resource_path
+
+
+if TYPE_CHECKING:
+    import argparse
+
+logger = logging.getLogger(__name__)
+
+_WINDOWS_AUTH_TIMEOUT = 10.0
+_PROCESS_EXIT_TIMEOUT = 5.0
+_SENSITIVE_ENV_SUFFIXES = ("_API_KEY", "_ACCESS_KEY")
+_SENSITIVE_ENV_PARTS = frozenset(
+    {"CREDENTIAL", "CREDENTIALS", "PASSWORD", "SECRET", "SECRETS", "TOKEN", "TOKENS"}
+)
+_SENSITIVE_ENV_NAMES = {
+    "AWS_ACCESS_KEY_ID",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "LLM_API_KEY",
+    "STRIX_TUI_ADDR",
+    "STRIX_TUI_FD",
+    "STRIX_TUI_TOKEN",
+}
+
+
+class GoTuiPreActivationError(RuntimeError):
+    """A sidecar failure that a prepared scan may recover from with Textual."""
+
+
+def _tui_executable() -> str:
+    return "strix-tui.exe" if os.name == "nt" else "strix-tui"
+
+
+def _project_root() -> Path:
+    return Path(__file__).resolve().parents[2]
+
+
+def _child_environment() -> dict[str, str]:
+    """Copy only non-secret process state needed by the terminal sidecar."""
+    child: dict[str, str] = {}
+    for key, value in os.environ.items():
+        normalized = key.upper()
+        if normalized in _SENSITIVE_ENV_NAMES:
+            continue
+        if normalized.endswith(_SENSITIVE_ENV_SUFFIXES):
+            continue
+        if set(normalized.split("_")) & _SENSITIVE_ENV_PARTS:
+            continue
+        child[key] = value
+    return child
+
+
+def _recv_exactly(connection: socket.socket, size: int) -> bytes:
+    chunks: list[bytes] = []
+    remaining = size
+    while remaining:
+        chunk = connection.recv(remaining)
+        if not chunk:
+            raise ConnectionError("TUI IPC peer closed during authentication")
+        chunks.append(chunk)
+        remaining -= len(chunk)
+    return b"".join(chunks)
+
+
+def _authenticate_connection(
+    connection: socket.socket,
+    address: tuple[Any, ...],
+    expected_token: str,
+) -> None:
+    if address[0] not in {"127.0.0.1", "::1"}:
+        raise ConnectionError("TUI IPC connection did not originate from loopback")
+    connection.settimeout(_WINDOWS_AUTH_TIMEOUT)
+    supplied = _recv_exactly(connection, len(expected_token)).decode("ascii")
+    if not hmac.compare_digest(supplied, expected_token):
+        raise PermissionError("TUI IPC authentication failed")
+    connection.settimeout(None)
+
+
+def _accept_authenticated_connection(
+    listener: socket.socket,
+    expected_token: str,
+) -> socket.socket:
+    """Accept and authenticate the one Windows loopback connection."""
+    listener.settimeout(_WINDOWS_AUTH_TIMEOUT)
+    connection, address = listener.accept()
+    try:
+        _authenticate_connection(connection, address, expected_token)
+    except BaseException:
+        connection.close()
+        raise
+    return connection
+
+
+async def _wait_process(
+    process: asyncio.subprocess.Process | subprocess.Popen[bytes],
+) -> int:
+    if isinstance(process, asyncio.subprocess.Process):
+        return await process.wait()
+    return await asyncio.to_thread(process.wait)
+
+
+async def _terminate_process(
+    process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None,
+) -> None:
+    if process is None or process.returncode is not None:
+        return
+    with contextlib.suppress(ProcessLookupError):
+        process.terminate()
+    wait_task = asyncio.create_task(_wait_process(process))
+    try:
+        await asyncio.wait_for(asyncio.shield(wait_task), _PROCESS_EXIT_TIMEOUT)
+    except TimeoutError:
+        with contextlib.suppress(ProcessLookupError):
+            process.kill()
+        await asyncio.wait_for(asyncio.shield(wait_task), _PROCESS_EXIT_TIMEOUT)
+
+
+async def _launch_tui_process(
+    command: list[str],
+    env: dict[str, str],
+    cwd: str | None,
+) -> tuple[asyncio.subprocess.Process | subprocess.Popen[bytes], socket.socket]:
+    if os.name == "nt":
+        return await _launch_windows_tui_process(command, env, cwd)
+    return await _launch_posix_tui_process(command, env, cwd)
+
+
+async def _launch_posix_tui_process(
+    command: list[str],
+    env: dict[str, str],
+    cwd: str | None,
+) -> tuple[asyncio.subprocess.Process, socket.socket]:
+    backend_socket, child_socket = socket.socketpair()
+    try:
+        env["STRIX_TUI_FD"] = str(child_socket.fileno())
+        process = await asyncio.create_subprocess_exec(
+            *command, env=env, cwd=cwd, pass_fds=(child_socket.fileno(),)
+        )
+    except BaseException:
+        backend_socket.close()
+        raise
+    finally:
+        child_socket.close()
+    return process, backend_socket
+
+
+async def _launch_windows_tui_process(
+    command: list[str],
+    env: dict[str, str],
+    cwd: str | None,
+) -> tuple[subprocess.Popen[bytes], socket.socket]:
+    listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    windows_process: subprocess.Popen[bytes] | None = None
+    connection: socket.socket | None = None
+    try:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        token = secrets.token_hex(32)
+        host, port = listener.getsockname()[:2]
+        env.update({"STRIX_TUI_ADDR": f"{host}:{port}", "STRIX_TUI_TOKEN": token})
+        windows_process = subprocess.Popen(command, env=env, cwd=cwd)  # noqa: S603
+        connection = await asyncio.to_thread(_accept_authenticated_connection, listener, token)
+    except BaseException:
+        await _terminate_process(windows_process)
+        raise
+    finally:
+        listener.close()
+    assert windows_process is not None and connection is not None
+    return windows_process, connection
+
+
+def _check_return_code(return_code: int) -> None:
+    if return_code != 0:
+        raise RuntimeError(f"Bubble Tea TUI exited with status {return_code}")
+
+
+def _package_version() -> str:
+    """Mirror tui/app.py get_package_version so the Go splash/stats show the same
+    value ("dev" when metadata is unavailable)."""
+    try:
+        return version("strix-agent")
+    except PackageNotFoundError:
+        return "dev"
+
+
+class GoTuiRuntime:
+    def __init__(self, args: argparse.Namespace) -> None:
+        self.args = args
+        self.live_view = TuiLiveView()
+        self.coordinator = AgentCoordinator()
+        self.report_state: ReportState | None = None
+        self.scan_config: dict[str, Any] = {}
+        self.scan_task: asyncio.Task[None] | None = None
+        self.scan_error: BaseException | None = None
+        self._last_sync_fingerprint = ""
+        self._error_noted_agents: set[str] = set()
+        self.controller = TuiController(
+            args,
+            live_view=self.live_view,
+            coordinator=self.coordinator,
+            on_start=self.start_from_setup,
+            on_quit=self.quit,
+        )
+        self.server = TuiBackendServer(self.controller)
+
+    def init_run_state(self) -> None:
+        self.scan_config = {
+            "scan_id": self.args.run_name,
+            "targets": self.args.targets_info,
+            "user_instructions": self.args.instruction or "",
+            "run_name": self.args.run_name,
+            "diff_scope": getattr(self.args, "diff_scope", {"active": False}),
+            "scan_mode": getattr(self.args, "scan_mode", "deep"),
+            "non_interactive": False,
+            "local_sources": getattr(self.args, "local_sources", None) or [],
+            "scope_mode": getattr(self.args, "scope_mode", "auto"),
+            "diff_base": getattr(self.args, "diff_base", None),
+            "resume_instruction": getattr(self.args, "user_explicit_instruction", None) or "",
+        }
+        self.report_state = ReportState(self.scan_config["run_name"])
+        self.report_state.hydrate_from_run_dir()
+        self.report_state.set_scan_config(self.scan_config)
+        self.report_state.save_run_data()
+        set_global_report_state(self.report_state)
+        self.live_view.hydrate_from_run_dir(self.report_state.get_run_dir())
+        self.controller.set_runtime(
+            report_state=self.report_state,
+            scan_loop=asyncio.get_running_loop(),
+        )
+        self.report_state.vulnerability_found_callback = lambda _report: (
+            self.controller.notify_changed()
+        )
+        self.controller.notify_changed()
+
+    async def start_from_setup(self) -> None:
+        # Delayed to avoid the main entry point importing its TUI implementation.
+        from strix.interface.main import (  # noqa: PLC0415
+            _telemetry_start,
+            build_targets_info,
+            preflight_model_connection,
+            prepare_run,
+        )
+
+        candidate = deepcopy(self.args)
+        candidate.scan_mode = self.controller.scan_mode
+        candidate.instruction = self.controller.instruction
+        existing_targets = [
+            str(target["original"])
+            for target in getattr(candidate, "targets_info", [])
+            if isinstance(target, dict) and target.get("original")
+        ]
+        targets_changed = self.controller.targets != existing_targets
+        model = (load_settings().llm.model or "").strip()
+        try:
+            await preflight_model_connection(model)
+        except SystemExit as exc:
+            detail = str(exc).strip() or "model preflight exited"
+            raise RuntimeError(f"Model connection failed: {detail}") from exc
+        except Exception as exc:
+            logger.exception("Go TUI setup model preflight failed")
+            message = provider_authentication_error_message(model, exc)
+            if message is None:
+                message = f"Model connection failed: {exc}"
+            raise RuntimeError(message) from exc
+        try:
+            if targets_changed:
+                # Parse only genuinely new entries, then merge them with the
+                # already-prepared target records. Rebuilding every displayed
+                # target would silently turn --mount records into copied targets
+                # and would discard the source semantics of --target-list.
+                prepared = {
+                    str(target["original"]): target
+                    for target in getattr(candidate, "targets_info", [])
+                    if isinstance(target, dict) and target.get("original")
+                }
+                new_targets = [
+                    target for target in self.controller.targets if target not in prepared
+                ]
+                original_target = getattr(candidate, "target", None)
+                original_target_list = getattr(candidate, "target_list", None)
+                original_mount = getattr(candidate, "mount", None)
+                candidate.target = new_targets
+                candidate.target_list = []
+                candidate.mount = []
+                build_targets_info(candidate)
+                added = dict(zip(new_targets, candidate.targets_info, strict=False))
+                candidate.target = [*(original_target or []), *new_targets]
+                candidate.target_list = original_target_list
+                candidate.mount = original_mount
+                candidate.targets_info = [
+                    item
+                    for target in self.controller.targets
+                    if (item := prepared.get(target) or added.get(target)) is not None
+                ]
+                assign_workspace_subdirs(candidate.targets_info)
+            prepare_run(candidate)
+            _telemetry_start(candidate)
+        except SystemExit as exc:
+            detail = str(exc).strip() or "setup preparation exited"
+            raise RuntimeError(f"Failed to prepare scan: {detail}") from exc
+
+        vars(self.args).update(vars(candidate))
+        self.init_run_state()
+        self.start_scan()
+
+    def start_scan(self) -> None:
+        if self.scan_task is None:
+            self.scan_task = asyncio.create_task(self._run_scan())
+
+    async def _run_scan(self) -> None:
+        image = str(load_settings().runtime.image or "strix-sandbox:latest")
+        try:
+            await run_strix_scan(
+                scan_config=self.scan_config,
+                scan_id=self.scan_config["run_name"],
+                image=image,
+                local_sources=getattr(self.args, "local_sources", None) or [],
+                coordinator=self.coordinator,
+                interactive=True,
+                max_turns=getattr(self.args, "max_turns", DEFAULT_MAX_TURNS),
+                max_budget_usd=getattr(self.args, "max_budget_usd", None),
+                event_sink=self.capture_event,
+            )
+            await self._sync_agent_state()
+            if self.controller.scan_state == "running":
+                self.controller.scan_state = "stopped"
+        except (asyncio.CancelledError, BudgetExceededError):
+            report_status = (
+                self.report_state.run_record.get("status")
+                if self.report_state is not None
+                else None
+            )
+            self.controller.scan_state = "completed" if report_status == "completed" else "stopped"
+        except Exception as exc:
+            logger.exception("Go TUI scan failed")
+            self.scan_error = exc
+            self.controller.error = str(exc)
+            self.controller.scan_state = "failed"
+        finally:
+            with contextlib.suppress(Exception):
+                await self._sync_agent_state()
+            self.controller.notify_changed()
+
+    def capture_event(self, agent_id: str, event: Any) -> None:
+        self.live_view.ingest_sdk_event(agent_id, event)
+        self.controller.notify_changed()
+
+    async def _sync_agent_state(self) -> bool:
+        parent_of, statuses, names, errors = await self.coordinator.graph_snapshot()
+        changed = False
+        for agent_id, status in statuses.items():
+            error = errors.get(agent_id)
+            changed = (
+                self.live_view.upsert_agent(
+                    agent_id,
+                    name=names.get(agent_id, agent_id),
+                    parent_id=parent_of.get(agent_id),
+                    status=str(status),
+                    error_message=error,
+                )
+                or changed
+            )
+            if status in {"failed", "crashed"} and error:
+                if agent_id not in self._error_noted_agents:
+                    self._error_noted_agents.add(agent_id)
+                    self.live_view.record_agent_error(agent_id, error)
+                    changed = True
+            else:
+                self._error_noted_agents.discard(agent_id)
+
+        roots = [agent_id for agent_id, parent_id in parent_of.items() if parent_id is None]
+        root_id = roots[0] if roots else None
+        root_status = statuses.get(root_id) if root_id is not None else None
+        report_status = (
+            self.report_state.run_record.get("status") if self.report_state is not None else None
+        )
+        scan_state = self.controller.scan_state
+        if root_status in {"failed", "crashed"}:
+            scan_state = "failed"
+            if root_id is not None and errors.get(root_id):
+                self.controller.error = errors[root_id]
+        elif scan_state != "failed":
+            if report_status == "completed":
+                scan_state = "completed"
+            elif root_status == "stopped":
+                scan_state = "stopped"
+            elif root_status == "completed":
+                scan_state = "failed"
+                self.controller.error = "Scan ended without a completed report"
+        if scan_state != self.controller.scan_state:
+            self.controller.scan_state = scan_state
+            changed = True
+        return changed
+
+    def _runtime_sync_fingerprint(self) -> str:
+        usage: dict[str, Any] = {}
+        vulnerabilities: list[object] = []
+        if self.report_state is not None:
+            usage = dict(self.report_state.get_total_llm_usage())
+            vulnerabilities = [
+                report.get("id", index) if isinstance(report, dict) else index
+                for index, report in enumerate(self.report_state.vulnerability_reports)
+            ]
+        return json.dumps(
+            {
+                "scan_state": self.controller.scan_state,
+                "usage": usage,
+                "vulnerabilities": vulnerabilities,
+            },
+            default=str,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    async def sync_state(self) -> None:
+        while True:
+            if self.scan_task is not None and not self.scan_task.done():
+                try:
+                    changed = await self._sync_agent_state()
+                except Exception as exc:
+                    logger.exception("Go TUI agent-state sync failed")
+                    self.controller.error = f"Agent-state sync failed: {exc}"
+                    changed = True
+                fingerprint = self._runtime_sync_fingerprint()
+                if fingerprint != self._last_sync_fingerprint:
+                    self._last_sync_fingerprint = fingerprint
+                    changed = True
+                if changed:
+                    self.controller.notify_changed()
+            await asyncio.sleep(0.5)
+
+    async def quit(self) -> None:
+        self.controller.close_viewer()
+        self.coordinator.mark_shutting_down()
+        scan_task = self.scan_task
+        if scan_task is not None:
+            if not scan_task.done():
+                scan_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await scan_task
+
+    @staticmethod
+    def binary_command() -> list[str]:
+        override = os.environ.get("STRIX_TUI_BINARY")
+        if override:
+            return [override]
+        root = _project_root()
+        source = root / "tui-go"
+        # A checkout may also contain a stale wheel/build sidecar. Running the
+        # current source is the deterministic development choice.
+        if (source / "go.mod").is_file() and shutil.which("go"):
+            return ["go", "run", "./cmd/strix-tui"]
+        executable = _tui_executable()
+        packaged = get_strix_resource_path("bin", executable)
+        if packaged.is_file():
+            return [str(packaged)]
+        development = root / "build" / "sidecar" / executable
+        if development.is_file():
+            return [str(development)]
+        raise RuntimeError(
+            "Bubble Tea TUI binary not found. Reinstall Strix, set STRIX_TUI_BINARY, "
+            "or set STRIX_TEXTUAL_TUI=1 to use the Python TUI for a configured scan."
+        )
+
+    async def run(self) -> None:
+        # Textual redirects the process's sys.stdout/sys.stderr while its app runs,
+        # so logging handlers created during the scan never reach the tty. Mirror
+        # that here or they paint over the Go TUI's alt screen. The child still
+        # inherits the real terminal fds; only the Python-level bindings change.
+        original_stdout = sys.stdout
+        original_stderr = sys.stderr
+        log_path = os.environ.get("STRIX_TUI_LOG")
+        output_sink = Path(log_path or os.devnull).open("a", buffering=1)  # noqa: SIM115
+        sys.stdout = output_sink
+        sys.stderr = output_sink
+        backend_socket: socket.socket | None = None
+        sync_task: asyncio.Task[None] | None = None
+        process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None = None
+        try:
+            env = _child_environment()
+            env["STRIX_VERSION"] = _package_version()
+            command = self.binary_command()
+            cwd = str(_project_root() / "tui-go") if command[:2] == ["go", "run"] else None
+            process, backend_socket = await _launch_tui_process(command, env, cwd)
+            await self.server.start(backend_socket)
+            if not self.controller.setup_mode:
+                self.init_run_state()
+                self.start_scan()
+            sync_task = asyncio.create_task(self.sync_state())
+            return_code = await _wait_process(process)
+            _check_return_code(return_code)
+        except Exception as exc:
+            await _terminate_process(process)
+            if not self.server.activated:
+                raise GoTuiPreActivationError(str(exc)) from exc
+            raise
+        except BaseException:
+            await _terminate_process(process)
+            raise
+        finally:
+            try:
+                if backend_socket is not None:
+                    backend_socket.close()
+                if sync_task is not None:
+                    sync_task.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await sync_task
+                await self.quit()
+                await self.server.close()
+            finally:
+                sys.stdout = original_stdout
+                sys.stderr = original_stderr
+                output_sink.close()
+        # Mirror run_tui: surface the captured scan failure once the app has
+        # exited cleanly so the CLI reports it instead of exiting 0.
+        if self.scan_error is not None:
+            raise self.scan_error
+
+
+async def run_go_tui(args: argparse.Namespace) -> None:
+    await GoTuiRuntime(args).run()
+
+
+async def run_tui_protocol_smoke(args: argparse.Namespace) -> None:
+    """Launch the resolved sidecar and complete a real protocol handshake."""
+    runtime = GoTuiRuntime(args)
+    env = _child_environment()
+    env["STRIX_VERSION"] = _package_version()
+    command = [*runtime.binary_command(), "--handshake-smoke"]
+    cwd = str(_project_root() / "tui-go") if command[:2] == ["go", "run"] else None
+    process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None = None
+    connection: socket.socket | None = None
+    try:
+        process, connection = await _launch_tui_process(command, env, cwd)
+        await runtime.server.start(connection)
+        return_code = await asyncio.wait_for(_wait_process(process), timeout=15)
+        _check_return_code(return_code)
+    finally:
+        await _terminate_process(process)
+        await runtime.server.close()
+        if connection is not None:
+            connection.close()

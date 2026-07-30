@@ -22,6 +22,7 @@ from strix.config.models import (
     StrixProvider,
     configure_sdk_model_defaults,
     uses_chat_completions_tool_schema,
+    with_model_request_headers,
 )
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
@@ -161,6 +162,7 @@ async def run_strix_scan(
             "No LLM model configured. Set STRIX_LLM env or pass model= to run_strix_scan().",
         )
     logger.info("LLM model resolved: %s", resolved_model)
+    model_provider = StrixProvider(resolved_model, settings)
     chat_completions_tools = uses_chat_completions_tool_schema(resolved_model, settings)
 
     if coordinator is None:
@@ -251,9 +253,10 @@ async def run_strix_scan(
             request_timeout=settings.llm.timeout,
             prompt_cache=settings.llm.prompt_cache,
         )
+        model_settings = with_model_request_headers(model_settings, resolved_model)
         run_config = RunConfig(
             model=resolved_model,
-            model_provider=StrixProvider(),
+            model_provider=model_provider,
             model_settings=model_settings,
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,

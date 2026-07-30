@@ -7,6 +7,14 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 project_root = Path(SPECPATH)
 strix_root = project_root / 'strix'
 
+tui_name = 'strix-tui.exe' if sys.platform == 'win32' else 'strix-tui'
+tui_binary = project_root / 'build' / 'sidecar' / tui_name
+if not tui_binary.is_file():
+    raise FileNotFoundError(
+        f'Missing Go TUI sidecar at {tui_binary}; run `make tui-build` first'
+    )
+binaries = [(str(tui_binary), 'strix/bin')]
+
 datas = []
 
 for md_file in strix_root.rglob('skills/**/*.md'):
@@ -124,6 +132,7 @@ hiddenimports = [
     'strix.interface',
     'strix.interface.main',
     'strix.interface.cli',
+    'strix.interface.go_tui',
     'strix.interface.tui',
     'strix.interface.tui.app',
     'strix.interface.tui.history',
@@ -142,11 +151,16 @@ hiddenimports = [
     'strix.interface.tui.renderers.todo_renderer',
     'strix.interface.tui.renderers.user_message_renderer',
     'strix.interface.tui.renderers.web_search_renderer',
+    'strix.interface.tui_backend',
+    'strix.interface.tui_backend.controller',
+    'strix.interface.tui_backend.protocol',
+    'strix.interface.tui_backend.server',
     'strix.interface.utils',
     'strix.agents',
     'strix.agents.factory',
     'strix.agents.prompt',
     'strix.config.models',
+    'strix.config.providers',
     'strix.core',
     'strix.core.agents',
     'strix.core.execution',
@@ -263,7 +277,7 @@ excludes = [
 a = Analysis(
     ['strix/interface/main.py'],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

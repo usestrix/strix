@@ -1,0 +1,144 @@
+package protocol
+
+import "encoding/json"
+
+const Version = 3
+
+var Capabilities = []string{
+	"state-revisions",
+	"collection-deltas",
+	"structured-command-errors",
+	"paged-models",
+	"agents-collection",
+}
+
+type Envelope struct {
+	Version   int             `json:"version"`
+	Type      string          `json:"type"`
+	RequestID string          `json:"request_id,omitempty"`
+	Payload   json.RawMessage `json:"payload"`
+}
+
+type Message struct {
+	ID    string `json:"id"`
+	Text  string `json:"text"`
+	Level string `json:"level"`
+}
+
+type Agent struct {
+	ID           string  `json:"id"`
+	Name         string  `json:"name"`
+	ParentID     *string `json:"parent_id"`
+	Status       string  `json:"status"`
+	ErrorMessage string  `json:"error_message"`
+}
+
+type Event struct {
+	ID        string         `json:"id"`
+	Type      string         `json:"type"`
+	AgentID   string         `json:"agent_id"`
+	Timestamp string         `json:"timestamp"`
+	Version   int            `json:"version"`
+	Data      map[string]any `json:"data"`
+}
+
+type Hello struct {
+	Capabilities []string `json:"capabilities"`
+}
+
+type Snapshot struct {
+	SetupMode       bool             `json:"setup_mode"`
+	ScanStarted     bool             `json:"scan_started"`
+	ScanState       string           `json:"scan_state"`
+	Targets         []string         `json:"targets"`
+	Instruction     string           `json:"instruction"`
+	ScanMode        string           `json:"scan_mode"`
+	Provider        *string          `json:"provider"`
+	Model           string           `json:"model"`
+	ModelWarning    string           `json:"model_warning"`
+	CaidoURL        string           `json:"caido_url"`
+	Messages        []Message        `json:"messages"`
+	Agents          []Agent          `json:"-"`
+	Events          []Event          `json:"-"`
+	Vulnerabilities []map[string]any `json:"-"`
+	Usage           map[string]any   `json:"usage"`
+	ViewerStatus    string           `json:"viewer_status"`
+	ViewerURL       *string          `json:"viewer_url"`
+	Error           *string          `json:"error"`
+}
+
+type StateUpdate struct {
+	Revision int      `json:"revision"`
+	State    Snapshot `json:"state"`
+}
+
+type CollectionBootstrap struct {
+	Collection string            `json:"collection"`
+	Revision   int               `json:"revision"`
+	Cursor     int               `json:"cursor"`
+	NextCursor int               `json:"next_cursor"`
+	Done       bool              `json:"done"`
+	Items      []json.RawMessage `json:"items"`
+}
+
+type CollectionOperation struct {
+	Op   string          `json:"op"`
+	ID   string          `json:"id,omitempty"`
+	Item json.RawMessage `json:"item"`
+}
+
+type CollectionDelta struct {
+	Collection   string                `json:"collection"`
+	BaseRevision int                   `json:"base_revision"`
+	Revision     int                   `json:"revision"`
+	Cursor       int                   `json:"cursor"`
+	NextCursor   int                   `json:"next_cursor"`
+	Done         bool                  `json:"done"`
+	Operations   []CollectionOperation `json:"operations"`
+}
+
+type CommandError struct {
+	Code      string `json:"code"`
+	Message   string `json:"message"`
+	Retryable bool   `json:"retryable"`
+}
+
+type CommandResult struct {
+	OK      bool            `json:"ok"`
+	Command string          `json:"command"`
+	Result  json.RawMessage `json:"result"`
+	Error   *CommandError   `json:"error"`
+}
+
+type ProvidersResult struct {
+	Providers []Provider `json:"providers"`
+}
+
+type Provider struct {
+	Name           string  `json:"name"`
+	Label          string  `json:"label"`
+	Configured     bool    `json:"configured"`
+	KeyEnv         *string `json:"key_env"`
+	Custom         bool    `json:"custom"`
+	State          string  `json:"state"`
+	Detail         string  `json:"detail"`
+	Source         string  `json:"source"`
+	Disconnectable bool    `json:"disconnectable"`
+}
+
+type ModelsResult struct {
+	ListingID  string       `json:"listing_id"`
+	Cursor     int          `json:"cursor"`
+	NextCursor int          `json:"next_cursor"`
+	Done       bool         `json:"done"`
+	Groups     []ModelGroup `json:"groups"`
+	Providers  []Provider   `json:"providers"`
+}
+
+type ModelGroup struct {
+	Provider    string   `json:"provider"`
+	Label       string   `json:"label"`
+	Models      []string `json:"models"`
+	AllowManual bool     `json:"allow_manual"`
+	Error       string   `json:"error"`
+}
