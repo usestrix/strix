@@ -983,6 +983,92 @@ async def test_selected_cloud_models_keep_unverified_ambient_provider_available(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "provider",
+    [
+        "anyscale",
+        "azure_ai",
+        "azure_text",
+        "clarifai",
+        "cohere",
+        "databricks",
+        "friendliai",
+        "gigachat",
+        "github",
+        "github_copilot",
+        "gradient_ai",
+        "heroku",
+        "hyperbolic",
+        "lamda_ai",
+        "lambda_ai",
+        "maritalk",
+        "meta_llama",
+        "minimax",
+        "morph",
+        "nscale",
+        "oci",
+        "ovhcloud",
+        "palm",
+        "publicai",
+        "sambanova",
+        "snowflake",
+        "text-completion-openai",
+        "v0",
+        "vllm",
+        "watsonx",
+        "zai",
+    ],
+)
+async def test_unselected_implicit_routes_are_hidden_from_model_groups(
+    provider: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    state = ProviderAuthState.LOCAL if provider == "vllm" else ProviderAuthState.EXTERNAL
+    monkeypatch.setattr(provider_module, "list_providers", lambda: [provider])
+    monkeypatch.setattr(provider_module, "_effective_model", lambda: None)
+    monkeypatch.setattr(
+        provider_module,
+        "provider_auth_status",
+        lambda _provider: provider_module.ProviderAuthStatus(state, "unverified"),
+    )
+    monkeypatch.setattr(
+        provider_module,
+        "_catalog_chat_models",
+        lambda _provider: pytest.fail("hidden route must not load its model catalog"),
+    )
+
+    assert await configured_provider_model_groups() == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider", "state"),
+    [
+        ("publicai", ProviderAuthState.EXTERNAL),
+        ("vllm", ProviderAuthState.LOCAL),
+    ],
+)
+async def test_selected_implicit_route_remains_available(
+    provider: str,
+    state: ProviderAuthState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    model = f"{provider}/manual-model"
+    monkeypatch.setattr(provider_module, "list_providers", lambda: [provider])
+    monkeypatch.setattr(provider_module, "_effective_model", lambda: model)
+    monkeypatch.setattr(
+        provider_module,
+        "provider_auth_status",
+        lambda _provider: provider_module.ProviderAuthStatus(state, "unverified"),
+    )
+    monkeypatch.setattr(provider_module, "_catalog_chat_models", lambda _provider: [])
+
+    groups = await configured_provider_model_groups(current_model=model)
+
+    assert [(group.provider, group.models) for group in groups] == [(provider, (model,))]
+
+
+@pytest.mark.asyncio
 async def test_failed_custom_discovery_keeps_manual_model_entry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

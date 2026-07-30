@@ -806,6 +806,41 @@ func TestMouseSelectsProviderOption(t *testing.T) {
 	}
 }
 
+func TestRapidWheelEventsDoNotMutateProviderOrModelSearch(t *testing.T) {
+	for _, picker := range []pickerMode{pickerProvider, pickerModel} {
+		t.Run(pickerPlaceholderForTest(picker), func(t *testing.T) {
+			model := New(nil)
+			for index := range 40 {
+				model.options = append(model.options, fmt.Sprintf("option-%02d", index))
+			}
+			model.openPicker(picker)
+
+			for range 1_000 {
+				updated, _ := model.updateMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
+				model = updated.(Model)
+			}
+			if model.cursor != len(model.filtered)-1 || model.pickerInput.Value() != "" {
+				t.Fatalf("wheel down changed search or failed to clamp: cursor=%d search=%q", model.cursor, model.pickerInput.Value())
+			}
+
+			for range 1_000 {
+				updated, _ := model.updateMouse(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
+				model = updated.(Model)
+			}
+			if model.cursor != 0 || model.pickerInput.Value() != "" {
+				t.Fatalf("wheel up changed search or failed to clamp: cursor=%d search=%q", model.cursor, model.pickerInput.Value())
+			}
+		})
+	}
+}
+
+func pickerPlaceholderForTest(picker pickerMode) string {
+	if picker == pickerProvider {
+		return "provider"
+	}
+	return "model"
+}
+
 func TestProviderDisconnectButtonSendsDisconnectCommand(t *testing.T) {
 	model, connection := newCommandTestModel(t)
 	model.width, model.height = 100, 30

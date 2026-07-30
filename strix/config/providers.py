@@ -1118,6 +1118,7 @@ async def configured_provider_model_groups(
 ) -> list[ProviderModelGroup]:
     """Discover models for every configured provider without serial endpoint waits."""
     selected = (current_model if current_model is not None else _effective_model() or "").strip()
+    selected_provider = provider_for_model(selected)
 
     async def load_group(  # noqa: PLR0911,PLR0912 - discovery strategies intentionally branch
         provider: str,
@@ -1175,6 +1176,12 @@ async def configured_provider_model_groups(
 
         status = await asyncio.to_thread(provider_auth_status, provider)
         if not status.ready:
+            return None
+        if (
+            provider != selected_provider
+            and status.state is not ProviderAuthState.CONFIGURED
+            and provider not in _EXTERNAL_AUTH_PROVIDERS
+        ):
             return None
         try:
             models = await asyncio.to_thread(_catalog_chat_models, provider)
