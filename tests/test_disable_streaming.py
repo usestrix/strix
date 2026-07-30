@@ -16,9 +16,11 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import TYPE_CHECKING, Any
 
 import pytest
+from agents import Agent, Runner, function_tool
 from agents.model_settings import ModelSettings
-from agents.models.interface import Model, ModelTracing
+from agents.models.interface import Model, ModelProvider, ModelTracing
 from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from agents.run import RunConfig
 from openai import AsyncOpenAI, BadRequestError
 from openai.types.responses import (
     ResponseCompletedEvent,
@@ -203,6 +205,72 @@ async def test_wrapper_get_response_stays_non_streaming(gateway_url: str) -> Non
     tool_call = response.output[0]
     assert isinstance(tool_call, ResponseFunctionToolCall)
     assert tool_call.name == "do_thing"
+
+
+_TURN_STREAM_FLAGS: list[bool] = []
+
+
+class _MultiTurnHandler(BaseHTTPRequestHandler):
+    """Non-streaming gateway: a tool call on turn 1, a final answer on turn 2."""
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", 0))
+        body = json.loads(self.rfile.read(length) or b"{}")
+        _TURN_STREAM_FLAGS.append(bool(body.get("stream")))
+        completion = _tool_call_completion() if len(_TURN_STREAM_FLAGS) == 1 else _text_completion()
+        if len(_TURN_STREAM_FLAGS) > 1:
+            completion["choices"][0]["message"]["content"] = "all done"
+        payload = json.dumps(completion).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
+
+@pytest.fixture
+def multiturn_url() -> Iterator[str]:
+    _TURN_STREAM_FLAGS.clear()
+    server = HTTPServer(("127.0.0.1", 0), _MultiTurnHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/v1"
+    finally:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.asyncio
+async def test_run_loop_executes_tool_and_completes_without_streaming(multiturn_url: str) -> None:
+    # The whole streamed agent loop runs against a non-streaming gateway: the
+    # synthetic terminal event feeds the runner, which executes the tool and
+    # continues the turn until a final answer.
+    calls: list[int] = []
+
+    @function_tool
+    def do_thing(n: int) -> str:
+        calls.append(n)
+        return f"did {n}"
+
+    class _Provider(ModelProvider):
+        def get_model(self, model_name: str | None) -> Model:  # noqa: ARG002
+            return _NonStreamingModel(_model(multiturn_url))
+
+    agent = Agent(name="t", instructions="use the tool", tools=[do_thing], model="gw-model")
+    result = Runner.run_streamed(
+        agent, input="please", run_config=RunConfig(model_provider=_Provider())
+    )
+    async for _ in result.stream_events():
+        pass
+
+    assert calls == [1]  # tool executed with the streamed tool-call args
+    assert result.final_output == "all done"
+    assert len(_TURN_STREAM_FLAGS) == 2  # two turns, both...
+    assert not any(_TURN_STREAM_FLAGS)  # ...issued as non-streaming requests
 
 
 class _DummyModel(Model):
