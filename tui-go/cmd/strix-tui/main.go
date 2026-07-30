@@ -27,7 +27,7 @@ func main() {
 		}
 		return
 	}
-	program := tea.NewProgram(app.New(client), programOptions()...)
+	program := tea.NewProgram(app.New(client), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	finalModel, err := program.Run()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "run TUI:", err)
@@ -37,10 +37,4 @@ func main() {
 		fmt.Fprintln(os.Stderr, "run TUI:", model.FatalError())
 		os.Exit(1)
 	}
-}
-
-func programOptions() []tea.ProgramOption {
-	// Bubble Tea v1 can split rapid SGR mouse reports into printable key events,
-	// especially over SSH. Keyboard navigation remains available in every view.
-	return []tea.ProgramOption{tea.WithAltScreen()}
 }
