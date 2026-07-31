@@ -41,6 +41,15 @@ permission check.
   `litellm/` routes, and `OLLAMA_API_BASE` to Ollama routes.
 </ParamField>
 
+<ParamField path="LLM_EXTRA_HEADERS" type="string">
+  Extra HTTP headers sent on every LLM request, as a JSON object (e.g.
+  `{"X-Feature-Key":"value","X-Tenant":"acme"}`). Useful for OpenAI-compatible
+  gateways that require attribution or routing headers in addition to the bearer
+  token. The bearer token comes from the selected provider's canonical credential
+  variable. Headers are bound to the active `STRIX_LLM` provider route and are not
+  reused when interactive setup switches providers.
+</ParamField>
+
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
   Request timeout in seconds for LLM calls.
 </ParamField>
@@ -75,6 +84,12 @@ affecting the agents that do the actual testing.
 <ParamField path="DEDUPE_LLM_API_BASE" type="string">
   Optional custom API base URL for the deduplication model. Use when the dedupe
   model runs on a different endpoint than the main model.
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_EXTRA_HEADERS" type="string">
+  Optional JSON object of extra HTTP headers sent on every deduplication-model
+  request, e.g. `{"X-Feature-Key":"value"}`. A dedicated dedupe model never
+  inherits `LLM_EXTRA_HEADERS`; set this when its endpoint needs custom headers.
 </ParamField>
 
 <ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">

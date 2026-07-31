@@ -55,6 +55,23 @@ _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
 _MAX_COMPACTIONS_PER_CYCLE = 2
 
 
+class ProviderRefusalError(AgentsException):
+    """Raised when a provider returns a structured refusal instead of an exception."""
+
+
+def _structured_provider_refusal(result: Any) -> str | None:
+    for item in getattr(result, "new_items", ()) or ():
+        raw_item = getattr(item, "raw_item", None)
+        for content in getattr(raw_item, "content", ()) or ():
+            if getattr(content, "type", None) != "refusal":
+                continue
+            refusal = getattr(content, "refusal", None)
+            if isinstance(refusal, str) and refusal.strip():
+                return refusal.strip()
+            return "The model provider refused this request."
+    return None
+
+
 def _run_config_model(run_config: RunConfig) -> str | None:
     return run_config.model if isinstance(run_config.model, str) else None
 
@@ -490,6 +507,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                                 logger.exception("stream event sink failed for %s", agent_id)
                     if stream.run_loop_exception is not None:
                         raise stream.run_loop_exception
+                    if refusal := _structured_provider_refusal(stream):
+                        raise ProviderRefusalError(refusal)
                 except (BudgetExceededError, BudgetPausedError, SubagentBudgetReservedError):
                     raise
                 except RuntimeError as stream_exc:
@@ -584,6 +603,11 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 return await _handle_content_guardrail(
                     coordinator, agent_id, exc, interactive=interactive
                 )
+            if isinstance(exc, ProviderRefusalError):
+                logger.warning("agent %s refused by the model provider: %s", agent_id, exc)
+                await coordinator.set_status(agent_id, "failed", error=str(exc))
+                await _notify_parent_on_terminal(coordinator, agent_id, "failed")
+                return None
             if not interactive:
                 raise
             if isinstance(exc, MaxTurnsExceeded):

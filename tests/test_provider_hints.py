@@ -159,3 +159,45 @@ async def test_preflight_does_not_classify_ordinary_connection_errors_as_rejecte
         )
 
     assert provider_auth_status("anthropic").state is not ProviderAuthState.INVALID
+
+
+@pytest.mark.asyncio
+async def test_preflight_uses_route_bound_headers_and_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class Model:
+        async def get_response(self, **kwargs: Any) -> None:
+            captured.update(kwargs)
+
+    class Provider:
+        def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+            pass
+
+        def get_model(self, _model: str) -> Model:
+            return Model()
+
+    monkeypatch.setattr(main_module, "StrixProvider", Provider)
+    monkeypatch.setattr(main_module, "configure_sdk_model_defaults", lambda _settings: None)
+    settings = Settings(
+        llm={
+            "model": "openrouter/openai/gpt-5",
+            "timeout": 17,
+            "extra_headers": {
+                "X-Feature-Key": "svc",
+                "X-Title": "Custom title",
+            },
+        }
+    )
+
+    await preflight_model_connection("openrouter/openai/gpt-5", settings=settings)
+
+    model_settings = captured["model_settings"]
+    assert model_settings.extra_args == {"timeout": 17}
+    assert model_settings.extra_headers == {
+        "HTTP-Referer": "https://strix.ai",
+        "X-Title": "Custom title",
+        "X-OpenRouter-Categories": "cli-agent",
+        "X-Feature-Key": "svc",
+    }

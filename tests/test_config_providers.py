@@ -62,6 +62,7 @@ def _isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "ANTHROPIC_API_KEY",
         "LLM_API_KEY",
         "LLM_API_BASE",
+        "LLM_EXTRA_HEADERS",
         "FIREWORKS_API_KEY",
         "FIREWORKS_AI_API_KEY",
         "AZURE_API_KEY",
@@ -793,6 +794,45 @@ def test_switching_provider_rejects_environment_generic_base() -> None:
         persist_selected_model("anthropic/claude-sonnet-4-6")
 
     assert os.environ["STRIX_LLM"] == "openai/local-model"
+
+
+def test_switching_provider_rejects_environment_extra_headers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "openai/gpt-5.4")
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", '{"X-Tenant":"primary"}')
+    reset_settings_cache()
+
+    with pytest.raises(ValueError, match="unset it before switching"):
+        persist_selected_model("anthropic/claude-sonnet-4-6")
+
+    assert os.environ["STRIX_LLM"] == "openai/gpt-5.4"
+
+
+def test_switching_provider_clears_persisted_extra_headers() -> None:
+    update_config_env(
+        {
+            "STRIX_LLM": "openai/gpt-5.4",
+            "LLM_EXTRA_HEADERS": '{"X-Tenant":"primary"}',
+        }
+    )
+
+    persist_selected_model("anthropic/claude-sonnet-4-6")
+
+    assert read_config_env() == {"STRIX_LLM": "anthropic/claude-sonnet-4-6"}
+
+
+def test_same_provider_model_change_keeps_persisted_extra_headers() -> None:
+    update_config_env(
+        {
+            "STRIX_LLM": "openai/gpt-5.4",
+            "LLM_EXTRA_HEADERS": '{"X-Tenant":"primary"}',
+        }
+    )
+
+    persist_selected_model("openai/gpt-5-mini")
+
+    assert read_config_env()["LLM_EXTRA_HEADERS"] == '{"X-Tenant":"primary"}'
 
 
 def test_first_model_selection_rejects_environment_base_before_mutation() -> None:

@@ -20,6 +20,7 @@ from strix.config import (
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
     StrixProvider,
+    _NonStreamingModel,
     configure_sdk_model_defaults,
     is_recommended_or_frontier_model,
     request_timeout_extra_args,
@@ -41,6 +42,8 @@ def isolated_model_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         "ANTHROPIC_API_KEY",
         "OPENROUTER_API_KEY",
         "LLM_API_BASE",
+        "LLM_EXTRA_HEADERS",
+        "LLM_DISABLE_STREAMING",
         "OPENAI_BASE_URL",
         "OLLAMA_API_BASE",
         "AZURE_API_BASE",
@@ -346,6 +349,22 @@ def test_custom_provider_key_is_bound_to_model_client() -> None:
     assert model.model == "openai/private-model"  # type: ignore[attr-defined]
     assert model.api_key == "custom-secret"  # type: ignore[attr-defined]
     assert model.base_url == "https://models.example/v1"  # type: ignore[attr-defined]
+
+
+@pytest.mark.usefixtures("isolated_model_config")
+def test_custom_provider_can_disable_streaming() -> None:
+    item = save_custom_provider("Gateway", "https://models.example/v1", "custom-secret")
+    settings = Settings(
+        llm={
+            "model": f"{item.id}/private-model",
+            "disable_streaming": True,
+        }
+    )
+
+    model = StrixProvider(settings=settings).get_model(f"{item.id}/private-model")
+
+    assert isinstance(model, _NonStreamingModel)
+    assert model._inner.model == "openai/private-model"  # type: ignore[attr-defined]
 
 
 @pytest.mark.usefixtures("isolated_model_config")

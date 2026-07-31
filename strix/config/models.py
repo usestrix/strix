@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import os
+import time
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
@@ -15,6 +16,7 @@ from agents import (
 )
 from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
+from agents.models.fake_id import FAKE_RESPONSES_ID
 from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
 from agents.models.openai_responses import OpenAIResponsesModel
@@ -24,6 +26,8 @@ from agents.retry import (
     RetryPolicyContext,
     retry_policies,
 )
+from openai.types.responses import Response, ResponseCompletedEvent
+from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
 
 from strix.config import codex
@@ -32,7 +36,15 @@ from strix.config import codex
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
+    from agents.agent_output import AgentOutputSchemaBase
+    from agents.handoffs import Handoff
+    from agents.items import ModelResponse, TResponseInputItem, TResponseStreamEvent
+    from agents.models.interface import ModelTracing
+    from agents.retry import ModelRetryAdvice, ModelRetryAdviceRequest
+    from agents.tool import Tool
+    from agents.usage import Usage
     from openai import AsyncOpenAI
+    from openai.types.responses.response_prompt_param import ResponsePromptParam
 
     from strix.config.settings import ReasoningEffort, Settings
 
@@ -161,6 +173,124 @@ class _CodexResponsesModel(OpenAIResponsesModel):
                     await result
 
 
+class _NonStreamingModel(Model):
+    """Serve the SDK's streamed run loop from a single non-streaming request.
+
+    Some OpenAI-compatible gateways do not support Server-Sent Events, or
+    deliver them unreliably (dropping structured tool-call deltas, or stalling
+    mid-stream so the whole turn waits out the read timeout). The SDK run loop
+    Strix uses only issues streamed requests, so such a gateway fails every
+    turn. Opt in with ``LLM_DISABLE_STREAMING=true`` to wrap the resolved model
+    so each turn makes one non-streaming ``get_response`` (``stream:false`` on
+    the wire) and the completed result is replayed as a single terminal stream
+    event. The run loop then executes tools and emits run items from that final
+    response exactly as it would for a real stream, so nothing else changes.
+    """
+
+    def __init__(self, inner: Model) -> None:
+        self._inner = inner
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+    def get_retry_advice(self, request: ModelRetryAdviceRequest) -> ModelRetryAdvice | None:
+        return self._inner.get_retry_advice(request)
+
+    async def get_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> ModelResponse:
+        return await self._inner.get_response(
+            system_instructions,
+            input,
+            model_settings,
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )
+
+    async def stream_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> AsyncIterator[TResponseStreamEvent]:
+        response = await self._inner.get_response(
+            system_instructions,
+            input,
+            model_settings,
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )
+        yield _completed_stream_event(response, getattr(self._inner, "model", None))
+
+
+def _completed_stream_event(
+    model_response: ModelResponse, model_name: object | None
+) -> TResponseStreamEvent:
+    """Wrap a non-streamed ``ModelResponse`` as the terminal event of a stream.
+
+    The run loop builds its authoritative per-turn response solely from the
+    ``response.completed`` event, so a single event carrying the full output
+    and usage is all it needs.
+    """
+    response = Response(
+        id=model_response.response_id or FAKE_RESPONSES_ID,
+        created_at=time.time(),
+        model=str(model_name) if model_name else "",
+        object="response",
+        output=list(model_response.output),
+        tool_choice="auto",
+        tools=[],
+        parallel_tool_calls=False,
+        usage=_response_usage(model_response.usage),
+    )
+    return ResponseCompletedEvent(
+        response=response,
+        sequence_number=0,
+        type="response.completed",
+    )
+
+
+def _response_usage(usage: Usage | None) -> ResponseUsage | None:
+    if usage is None:
+        return None
+    return ResponseUsage(
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        total_tokens=usage.total_tokens,
+        input_tokens_details=usage.input_tokens_details,
+        output_tokens_details=usage.output_tokens_details,
+    )
+
+
 class StrixProvider(MultiProvider):
     """Route any non-OpenAI prefix through LiteLLM with the prefix preserved,
     so users type ``deepseek/deepseek-chat`` rather than
@@ -235,6 +365,9 @@ class StrixProvider(MultiProvider):
             return type(self)(requested_model, self._settings).get_model(requested_model)
         slug = codex.subscription_model(model_name)
         if slug:
+            # The ChatGPT subscription backend is always streamed; it has no
+            # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
+            # does not apply here.
             return _CodexResponsesModel(
                 slug,
                 codex.get_subscription_client(),
@@ -243,8 +376,12 @@ class StrixProvider(MultiProvider):
         from strix.config.providers import custom_provider, provider_for_model
 
         if custom_provider(provider_for_model(model_name) or ""):
-            return self._configured_litellm_provider.get_model(self.config.model)
-        return super().get_model(model_name)
+            model = self._configured_litellm_provider.get_model(self.config.model)
+        else:
+            model = super().get_model(model_name)
+        if self._settings.llm.disable_streaming:
+            return _NonStreamingModel(model)
+        return model
 
 
 DEFAULT_MODEL_RETRY = ModelRetrySettings(
@@ -477,7 +614,6 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     if codex.subscription_model(settings.llm.model):
         return
     _configure_litellm_compatibility()
-    _configure_openrouter_attribution(settings.llm.model)
     route = resolve_model_config(settings)
     if route.api_key:
         set_default_openai_key(route.api_key, use_for_tracing=False)
@@ -493,6 +629,23 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
         set_default_openai_api("responses")
 
 
+def model_extra_headers(settings: Settings, model_name: str) -> dict[str, str] | None:
+    """Return generic headers only for the configured model's provider route."""
+    headers = settings.llm.extra_headers
+    if not headers:
+        return None
+    from strix.config.providers import provider_for_model
+
+    configured_model = getattr(settings.llm, "model", None)
+    configured_provider = provider_for_model(configured_model)
+    requested_provider = provider_for_model(model_name)
+    if configured_provider is None:
+        return dict(headers)
+    if configured_provider != requested_provider:
+        return None
+    return dict(headers)
+
+
 def with_model_request_headers(
     model_settings: ModelSettings,
     model_name: str,
@@ -505,7 +658,7 @@ def with_model_request_headers(
     if provider == "openrouter":
         existing = model_settings.extra_headers or {}
         resolved = resolved.resolve(
-            ModelSettings(extra_headers={**existing, **_OPENROUTER_ATTRIBUTION_HEADERS})
+            ModelSettings(extra_headers={**_OPENROUTER_ATTRIBUTION_HEADERS, **existing})
         )
     if provider and provider.startswith("azure"):
         from strix.config.loader import resolve_env_value
@@ -591,24 +744,6 @@ _OPENROUTER_ATTRIBUTION_HEADERS = {
     "X-Title": "Strix",
     "X-OpenRouter-Categories": "cli-agent",
 }
-
-
-def _configure_openrouter_attribution(model_name: str | None) -> None:
-    import litellm
-
-    current: object = litellm.headers
-    existing: dict[str, str] = current if isinstance(current, dict) else {}
-    if not model_name or "openrouter/" not in model_name.strip().lower():
-        if any(key in existing for key in _OPENROUTER_ATTRIBUTION_HEADERS):
-            remaining = {
-                key: value
-                for key, value in existing.items()
-                if key not in _OPENROUTER_ATTRIBUTION_HEADERS
-            }
-            litellm.headers = remaining or None  # type: ignore[assignment]
-        return
-
-    litellm.headers = {**existing, **_OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
 
 
 def _register_litellm_cost_callback() -> None:

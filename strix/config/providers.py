@@ -1252,6 +1252,11 @@ def persist_selected_model(model: str) -> None:
             "LLM_API_BASE is set in the environment for the current provider; "
             "unset it before switching providers"
         )
+    if changing_provider and _process_environment_value("LLM_EXTRA_HEADERS"):
+        raise ValueError(
+            "LLM_EXTRA_HEADERS is set in the environment for the current provider; "
+            "unset it before switching providers"
+        )
     updates: dict[str, str | None] = {"STRIX_LLM": clean_model}
     config_env = {key.upper(): value for key, value in read_config_env().items()}
     legacy_model = (config_env.get("STRIX_LLM") or previous_model).strip()
@@ -1267,6 +1272,8 @@ def persist_selected_model(model: str) -> None:
         )
     if changing_provider and config_env.get("LLM_API_BASE") is not None:
         updates["LLM_API_BASE"] = None
+    if changing_provider and config_env.get("LLM_EXTRA_HEADERS") is not None:
+        updates["LLM_EXTRA_HEADERS"] = None
     update_config_env(updates)
     os.environ["STRIX_LLM"] = clean_model
 

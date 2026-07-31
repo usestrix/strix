@@ -44,14 +44,26 @@ jobs:
           uv run ruff check \
             hatch_build.py \
             strix/config \
+            strix/core/execution.py \
+            strix/core/inputs.py \
             strix/core/runner.py \
             strix/interface/main.py \
             strix/interface/interactive.py \
             strix/interface/go_tui.py \
             strix/interface/tui_backend \
+            strix/llm/compaction.py \
+            strix/llm/context_budget.py \
+            strix/report/dedupe.py \
+            tests/test_compaction.py \
             tests/test_config_loader.py \
             tests/test_config_providers.py \
+            tests/test_context_budget.py \
+            tests/test_dedupe_model.py \
+            tests/test_disable_streaming.py \
+            tests/test_execution.py \
             tests/test_go_tui_runtime.py \
+            tests/test_inputs.py \
+            tests/test_llm_extra_headers.py \
             tests/test_main_startup_recovery.py \
             tests/test_models.py \
             tests/test_packaging.py \
@@ -66,14 +78,26 @@ jobs:
           uv run ruff format --check \
             hatch_build.py \
             strix/config \
+            strix/core/execution.py \
+            strix/core/inputs.py \
             strix/core/runner.py \
             strix/interface/main.py \
             strix/interface/interactive.py \
             strix/interface/go_tui.py \
             strix/interface/tui_backend \
+            strix/llm/compaction.py \
+            strix/llm/context_budget.py \
+            strix/report/dedupe.py \
+            tests/test_compaction.py \
             tests/test_config_loader.py \
             tests/test_config_providers.py \
+            tests/test_context_budget.py \
+            tests/test_dedupe_model.py \
+            tests/test_disable_streaming.py \
+            tests/test_execution.py \
             tests/test_go_tui_runtime.py \
+            tests/test_inputs.py \
+            tests/test_llm_extra_headers.py \
             tests/test_main_startup_recovery.py \
             tests/test_models.py \
             tests/test_packaging.py \

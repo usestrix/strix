@@ -9,8 +9,10 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+from agents.items import MessageOutputItem
 from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
+from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal
 
 from strix.config import codex
 from strix.core import execution
@@ -22,6 +24,30 @@ from strix.core.execution import (
     respawn_subagents,
 )
 from strix.tools.finish.tool import finish_scan
+
+
+class _StructuredRefusalStream:
+    def __init__(self, refusal: str) -> None:
+        self.run_loop_exception: BaseException | None = None
+        self.new_items = [
+            MessageOutputItem(
+                agent=MagicMock(),
+                raw_item=ResponseOutputMessage(
+                    id="msg-refusal",
+                    content=[ResponseOutputRefusal(type="refusal", refusal=refusal)],
+                    role="assistant",
+                    status="completed",
+                    type="message",
+                ),
+            )
+        ]
+
+    async def stream_events(self) -> Any:
+        if False:
+            yield None
+
+    def cancel(self, mode: str = "immediate") -> None:  # noqa: ARG002
+        return
 
 
 async def _call_finish_scan(
@@ -540,6 +566,70 @@ async def test_guardrail_noninteractive_fails_only_blocked_agent(tmp_path: Any) 
     assert coordinator.statuses["child"] == "failed"
     assert "STRIX_LLM" in coordinator.errors["child"]
     assert coordinator.statuses["root"] == "running"
+    assert coordinator.pending_counts.get("root", 0) > 0
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_structured_provider_refusal_fails_interactive_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refusal = "This request was blocked under the provider's usage policy."
+    stream = _StructuredRefusalStream(refusal)
+    monkeypatch.setattr(execution.Runner, "run_streamed", lambda *_args, **_kwargs: stream)
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    result = await execution._run_cycle(
+        MagicMock(),
+        coordinator,
+        "root",
+        input_data="task",
+        run_config=MagicMock(),
+        context={},
+        max_turns=5,
+        session=None,
+        interactive=True,
+        event_sink=None,
+        hooks=None,
+    )
+
+    assert result is None
+    assert coordinator.statuses["root"] == "failed"
+    assert coordinator.errors["root"] == refusal
+
+
+@pytest.mark.asyncio
+async def test_structured_provider_refusal_fails_noninteractive_child(
+    tmp_path: Any,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    refusal = "This request was blocked under the provider's usage policy."
+    stream = _StructuredRefusalStream(refusal)
+    monkeypatch.setattr(execution.Runner, "run_streamed", lambda *_args, **_kwargs: stream)
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
+
+    result = await execution._run_cycle(
+        MagicMock(),
+        coordinator,
+        "child",
+        input_data="task",
+        run_config=MagicMock(),
+        context={"parent_id": "root"},
+        max_turns=5,
+        session=None,
+        interactive=False,
+        event_sink=None,
+        hooks=None,
+    )
+
+    assert result is None
+    assert coordinator.statuses["child"] == "failed"
+    assert coordinator.errors["child"] == refusal
     assert coordinator.pending_counts.get("root", 0) > 0
     session.close()
 
