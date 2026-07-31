@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
 import json
 import logging
@@ -19,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 
 if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
+
     from caido_sdk_client import Client
 
     from strix.tools.proxy.caido_api import (
@@ -38,10 +41,21 @@ else:
 
 ScopeAction = Literal["get", "list", "create", "update", "delete"]
 
+# All agents in a scan share one host-side Caido client whose GraphQL transport
+# is not concurrency-safe (parallel calls raise "Transport is already
+# connected"). Serialize every host-side proxy call through this lock.
+_CAIDO_CALL_LOCK = asyncio.Lock()
+
 
 def _ctx_client(ctx: RunContextWrapper) -> Client | None:
     inner = ctx.context if isinstance(ctx.context, dict) else {}
     return inner.get("caido_client")
+
+
+async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
+    """Run ``fn`` against the shared client, serialized under ``_CAIDO_CALL_LOCK``."""
+    async with _CAIDO_CALL_LOCK:
+        return await fn(client)
 
 
 def _to_tool_json(value: Any) -> Any:
@@ -146,14 +160,17 @@ async def list_requests(
         return _no_client()
 
     try:
-        connection = await caido_api.list_requests_with_client(
+        connection = await _call(
             client,
-            httpql_filter=httpql_filter,
-            first=first,
-            after=after,
-            sort_by=sort_by,
-            sort_order=sort_order,
-            scope_id=scope_id,
+            lambda client: caido_api.list_requests_with_client(
+                client,
+                httpql_filter=httpql_filter,
+                first=first,
+                after=after,
+                sort_by=sort_by,
+                sort_order=sort_order,
+                scope_id=scope_id,
+            ),
         )
 
         entries = []
@@ -249,7 +266,10 @@ async def view_request(
         return _no_client()
 
     try:
-        result = await caido_api.get_request_with_client(client, request_id, part=part)
+        result = await _call(
+            client,
+            lambda client: caido_api.get_request_with_client(client, request_id, part=part),
+        )
         if result is None:
             return json.dumps(
                 {"success": False, "error": f"Request {request_id} not found"},
@@ -364,15 +384,10 @@ async def repeat_request(
         return _no_client()
     mods = modifications or {}
 
-    try:
+    async def _do(client: Client) -> dict[str, Any] | None:
         result = await caido_api.get_request_with_client(client, request_id, part="request")
         if result is None or result.request.raw is None:
-            return json.dumps(
-                {"success": False, "error": f"Request {request_id} not found"},
-                ensure_ascii=False,
-                default=str,
-            )
-
+            return None
         original = result.request
         raw_str = result.request.raw.decode("utf-8", errors="replace")
         components = caido_api.parse_raw_request(raw_str)
@@ -384,7 +399,16 @@ async def repeat_request(
             headers=modified["headers"],
             body=modified["body"],
         )
-        replay = await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+        return await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+
+    try:
+        replay = await _call(client, _do)
+        if replay is None:
+            return json.dumps(
+                {"success": False, "error": f"Request {request_id} not found"},
+                ensure_ascii=False,
+                default=str,
+            )
         return _format_replay_tool_result(replay)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
@@ -441,12 +465,15 @@ async def list_sitemap(
     if client is None:
         return _no_client()
     try:
-        payload = await caido_api.list_sitemap_with_client(
+        payload = await _call(
             client,
-            scope_id=scope_id,
-            parent_id=parent_id,
-            depth=depth,
-            page=page,
+            lambda client: caido_api.list_sitemap_with_client(
+                client,
+                scope_id=scope_id,
+                parent_id=parent_id,
+                depth=depth,
+                page=page,
+            ),
         )
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
@@ -472,7 +499,10 @@ async def view_sitemap_entry(
     if client is None:
         return _no_client()
     try:
-        payload = await caido_api.view_sitemap_entry_with_client(client, entry_id)
+        payload = await _call(
+            client,
+            lambda client: caido_api.view_sitemap_entry_with_client(client, entry_id),
+        )
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("view_sitemap_entry", exc)
@@ -530,7 +560,7 @@ async def scope_rules(
 
     try:
         if action == "list":
-            scopes = await caido_api.scope_list(client)
+            scopes = await _call(client, caido_api.scope_list)
             return json.dumps(
                 {"success": True, "scopes": [_to_tool_json(s) for s in scopes]},
                 ensure_ascii=False,
@@ -543,9 +573,11 @@ async def scope_rules(
                     ensure_ascii=False,
                     default=str,
                 )
-            scope = await caido_api.scope_get(client, scope_id)
+            scope = await _call(client, lambda client: caido_api.scope_get(client, scope_id))
             return json.dumps(
-                {"success": True, "scope": _to_tool_json(scope)}, ensure_ascii=False, default=str
+                {"success": True, "scope": _to_tool_json(scope)},
+                ensure_ascii=False,
+                default=str,
             )
         if action == "create":
             if not scope_name:
@@ -554,11 +586,16 @@ async def scope_rules(
                     ensure_ascii=False,
                     default=str,
                 )
-            scope = await caido_api.scope_create(
-                client, name=scope_name, allowlist=allowlist, denylist=denylist
+            scope = await _call(
+                client,
+                lambda client: caido_api.scope_create(
+                    client, name=scope_name, allowlist=allowlist, denylist=denylist
+                ),
             )
             return json.dumps(
-                {"success": True, "scope": _to_tool_json(scope)}, ensure_ascii=False, default=str
+                {"success": True, "scope": _to_tool_json(scope)},
+                ensure_ascii=False,
+                default=str,
             )
         if action == "update":
             if not scope_id or not scope_name:
@@ -570,11 +607,16 @@ async def scope_rules(
                     ensure_ascii=False,
                     default=str,
                 )
-            scope = await caido_api.scope_update(
-                client, scope_id, name=scope_name, allowlist=allowlist, denylist=denylist
+            scope = await _call(
+                client,
+                lambda client: caido_api.scope_update(
+                    client, scope_id, name=scope_name, allowlist=allowlist, denylist=denylist
+                ),
             )
             return json.dumps(
-                {"success": True, "scope": _to_tool_json(scope)}, ensure_ascii=False, default=str
+                {"success": True, "scope": _to_tool_json(scope)},
+                ensure_ascii=False,
+                default=str,
             )
         if not scope_id:
             return json.dumps(
@@ -582,7 +624,7 @@ async def scope_rules(
                 ensure_ascii=False,
                 default=str,
             )
-        await caido_api.scope_delete(client, scope_id)
+        await _call(client, lambda client: caido_api.scope_delete(client, scope_id))
         return json.dumps(
             {
                 "success": True,

@@ -2,7 +2,7 @@
 
 To help make Strix better for everyone, we collect anonymized data that helps us understand how to better improve our AI security agent for our users, guide the addition of new features, and fix common errors and bugs. This feedback loop is crucial for improving Strix's capabilities and user experience.
 
-We use [PostHog](https://posthog.com), an open-source analytics platform, for data collection and analysis. Our telemetry implementation is fully transparent - you can review the [source code](https://github.com/usestrix/strix/blob/main/strix/telemetry/posthog.py) to see exactly what we track.
+We use [PostHog](https://posthog.com), an open-source analytics platform, for data collection and analysis, along with [Scarf](https://scarf.sh). Our telemetry implementation is fully transparent - you can review the source code ([posthog.py](https://github.com/usestrix/strix/blob/main/strix/telemetry/posthog.py), [scarf.py](https://github.com/usestrix/strix/blob/main/strix/telemetry/scarf.py)) to see exactly what we track.
 
 ### Telemetry Policy
 
@@ -15,8 +15,9 @@ We collect only very **basic** usage data including:
 **Session Errors:** Duration and error types (not messages or stack traces)\
 **System Context:** OS type, architecture, Strix version\
 **Scan Context:** Scan mode (quick/standard/deep), scan type (whitebox/blackbox)\
-**Model Usage:** Which LLM model is being used (not prompts or responses)\
-**Aggregate Metrics:** Vulnerability counts by severity
+**Model Usage:** Which LLM model is being used and whether it runs via an API key or a model subscription (not prompts or responses)\
+**Feature Usage:** Which built-in skills are loaded\
+**Aggregate Metrics:** Vulnerability counts by severity and weakness category (CWE)
 
 ### What We **Never** Collect
 

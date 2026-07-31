@@ -11,7 +11,7 @@ repos:
 
   # MyPy for static type checking
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.16.0
+    rev: v1.17.1
     hooks:
       - id: mypy
         additional_dependencies: [
@@ -19,6 +19,7 @@ repos:
           types-python-dateutil,
           pydantic,
           fastapi,
+          pytest,
           "openai-agents[litellm]==0.14.6",
         ]
         args: [--install-types, --non-interactive]
@@ -46,7 +47,7 @@ repos:
 
   # Additional Python code quality checks
   - repo: https://github.com/asottile/pyupgrade
-    rev: v3.20.0
+    rev: v3.21.2
     hooks:
       - id: pyupgrade
         args: [--py312-plus]

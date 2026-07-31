@@ -24,14 +24,26 @@ def load_session_history(run_dir: Path, agent_ids: Any) -> list[tuple[str, dict[
     if not agents_db.exists() or not session_ids:
         return []
     session_id_set = set(session_ids)
+    # Open read-only: the scan process may be actively writing this WAL database
+    # from another process (the local viewer tails it live), and a reader must
+    # never lock or mutate it. mode=ro (not immutable=1) still reads the latest
+    # committed WAL state; WAL permits concurrent readers alongside the writer.
+    conn: sqlite3.Connection | None = None
     try:
-        with sqlite3.connect(agents_db) as conn:
-            rows = conn.execute(
-                "select id, session_id, message_data, created_at from agent_messages order by id"
-            ).fetchall()
+        conn = sqlite3.connect(
+            f"file:{agents_db}?mode=ro",
+            uri=True,
+            check_same_thread=False,
+        )
+        rows = conn.execute(
+            "select id, session_id, message_data, created_at from agent_messages order by id"
+        ).fetchall()
     except sqlite3.Error:
         logger.exception("Failed to hydrate TUI history from %s", agents_db)
         return []
+    finally:
+        if conn is not None:
+            conn.close()
 
     items: list[tuple[str, dict[str, Any], str]] = []
     for row_id, agent_id, message_data, created_at in rows:

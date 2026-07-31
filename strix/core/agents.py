@@ -10,15 +10,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
+from strix.core.sessions import session_write_lock
+
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from agents.items import TResponseInputItem
     from agents.memory import Session
 
 
 logger = logging.getLogger(__name__)
 
-Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed"]
+Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed", "budget_paused"]
 
 
 @dataclass(slots=True)
@@ -39,12 +43,97 @@ class AgentCoordinator:
         self.names: dict[str, str] = {}
         self.metadata: dict[str, dict[str, Any]] = {}
         self.pending_counts: dict[str, int] = {}
+        self.errors: dict[str, str] = {}
         self.runtimes: dict[str, AgentRuntime] = {}
         self._lock = asyncio.Lock()
         self._snapshot_path: Path | None = None
+        self.is_shutting_down = False
+        self._budget_stopped = False
+        self._reserve_stopped = False
+        self._budget_paused = False
+        self._extend_budget: Callable[[], None] | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
+
+    def mark_shutting_down(self) -> None:
+        self.is_shutting_down = True
+
+    @property
+    def budget_stopped(self) -> bool:
+        return self._budget_stopped
+
+    async def trigger_budget_stop(self) -> None:
+        """Signal a scan-wide budget stop and wake every parked agent so it exits."""
+        async with self._lock:
+            self._budget_stopped = True
+            for runtime in self.runtimes.values():
+                runtime.wake.set()
+
+    @property
+    def reserve_stopped(self) -> bool:
+        return self._reserve_stopped
+
+    @property
+    def budget_paused(self) -> bool:
+        return self._budget_paused
+
+    def set_budget_extender(self, extend: Callable[[], None]) -> None:
+        self._extend_budget = extend
+
+    async def pause_for_budget(self, agent_id: str) -> None:
+        async with self._lock:
+            self._budget_paused = True
+        await self.set_status(agent_id, "budget_paused")
+
+    async def resume_from_budget_pause(self, *, exclude: str | None = None) -> None:
+        async with self._lock:
+            if not self._budget_paused:
+                return
+            self._budget_paused = False
+            paused = [aid for aid, status in self.statuses.items() if status == "budget_paused"]
+        if self._extend_budget is not None:
+            self._extend_budget()
+        for aid in paused:
+            await self.set_status(aid, "waiting")
+            if aid != exclude:
+                await self.send(
+                    aid,
+                    {
+                        "from": "system",
+                        "type": "budget_extended",
+                        "content": (
+                            "[Budget] The user extended the scan budget \u2014 continue your "
+                            "current task."
+                        ),
+                    },
+                )
+
+    async def reset_budget_stops(
+        self,
+        *,
+        budget_stopped: bool,
+        reserve_stopped: bool,
+        budget_paused: bool = False,
+    ) -> None:
+        async with self._lock:
+            self._budget_stopped = budget_stopped
+            self._reserve_stopped = reserve_stopped
+            if not budget_paused:
+                self._budget_paused = False
+                for aid, status in self.statuses.items():
+                    if status == "budget_paused":
+                        self.statuses[aid] = "waiting"
+        await self._maybe_snapshot()
+
+    async def claim_reserve_notification(self) -> str | None:
+        async with self._lock:
+            if self._reserve_stopped:
+                return None
+            self._reserve_stopped = True
+            for runtime in self.runtimes.values():
+                runtime.wake.set()
+            return next((aid for aid, parent in self.parent_of.items() if parent is None), None)
 
     async def register(
         self,
@@ -89,23 +178,34 @@ class AgentCoordinator:
         async with self._lock:
             if agent_id in self.statuses:
                 self.statuses[agent_id] = "running"
+                self.errors.pop(agent_id, None)
         await self._maybe_snapshot()
 
     async def park_waiting(self, agent_id: str) -> None:
         await self.set_status(agent_id, "waiting")
 
-    async def set_status(self, agent_id: str, status: Status | str) -> None:
+    async def set_status(
+        self, agent_id: str, status: Status | str, *, error: str | None = None
+    ) -> None:
         async with self._lock:
             if agent_id not in self.statuses:
                 return
             self.statuses[agent_id] = status  # type: ignore[assignment]
+            if error is not None:
+                self.errors[agent_id] = error
+            elif status == "running":
+                self.errors.pop(agent_id, None)
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
             runtime.wake.set()
         logger.info("agent.status %s=%s", agent_id, status)
         await self._maybe_snapshot()
 
-    async def send(self, target_agent_id: str, message: dict[str, Any]) -> bool:
+    async def send(
+        self, target_agent_id: str, message: dict[str, Any], *, interrupt: bool = True
+    ) -> bool:
         """Deliver a user/peer message by appending it to the target SDK session."""
+        if message.get("from") == "user" and self._budget_paused:
+            await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:
             if target_agent_id not in self.statuses:
                 logger.debug("agent.send dropped unknown target=%s", target_agent_id)
@@ -113,7 +213,7 @@ class AgentCoordinator:
             runtime = self.runtimes.setdefault(target_agent_id, AgentRuntime())
             session = runtime.session
             stream = runtime.stream
-            interrupt = runtime.interrupt_on_message
+            interrupt_on_message = runtime.interrupt_on_message
         if session is None:
             logger.warning(
                 "agent.send dropped target=%s because its SDK session is not attached",
@@ -121,7 +221,8 @@ class AgentCoordinator:
             )
             return False
         try:
-            await session.add_items([self._message_to_session_item(message)])
+            async with session_write_lock(session):
+                await session.add_items([self._message_to_session_item(message)])
         except Exception:
             logger.exception(
                 "agent.send failed to append to SDK session target=%s",
@@ -131,7 +232,7 @@ class AgentCoordinator:
         async with self._lock:
             self.pending_counts[target_agent_id] = self.pending_counts.get(target_agent_id, 0) + 1
             self.runtimes.setdefault(target_agent_id, AgentRuntime()).wake.set()
-        if stream is not None and interrupt:
+        if stream is not None and interrupt and interrupt_on_message:
             stream.cancel(mode="immediate")
         await self._maybe_snapshot()
         return True
@@ -139,7 +240,8 @@ class AgentCoordinator:
     async def wait_for_message(self, agent_id: str) -> None:
         while True:
             async with self._lock:
-                if self.pending_counts.get(agent_id, 0) > 0:
+                reserve_exit = self._reserve_stopped and self.parent_of.get(agent_id) is not None
+                if self._budget_stopped or reserve_exit or self.pending_counts.get(agent_id, 0) > 0:
                     return
                 wake = self.runtimes.setdefault(agent_id, AgentRuntime()).wake
                 wake.clear()
@@ -227,9 +329,14 @@ class AgentCoordinator:
 
     async def graph_snapshot(
         self,
-    ) -> tuple[dict[str, str | None], dict[str, Status], dict[str, str]]:
+    ) -> tuple[dict[str, str | None], dict[str, Status], dict[str, str], dict[str, str]]:
         async with self._lock:
-            return dict(self.parent_of), dict(self.statuses), dict(self.names)
+            return (
+                dict(self.parent_of),
+                dict(self.statuses),
+                dict(self.names),
+                dict(self.errors),
+            )
 
     def _message_to_session_item(self, message: dict[str, Any]) -> TResponseInputItem:
         sender = str(message.get("from", "unknown"))
@@ -267,6 +374,10 @@ class AgentCoordinator:
                 "names": dict(self.names),
                 "metadata": {aid: dict(md) for aid, md in self.metadata.items()},
                 "pending_counts": dict(self.pending_counts),
+                "errors": dict(self.errors),
+                "budget_stopped": self._budget_stopped,
+                "reserve_stopped": self._reserve_stopped,
+                "budget_paused": self._budget_paused,
             }
 
     async def restore(self, snap: dict[str, Any]) -> None:
@@ -276,6 +387,10 @@ class AgentCoordinator:
             self.names = dict(snap.get("names", {}))
             self.metadata = {aid: dict(md) for aid, md in snap.get("metadata", {}).items()}
             self.pending_counts = dict(snap.get("pending_counts", {}))
+            self.errors = dict(snap.get("errors", {}))
+            self._budget_stopped = bool(snap.get("budget_stopped", False))
+            self._reserve_stopped = bool(snap.get("reserve_stopped", False))
+            self._budget_paused = bool(snap.get("budget_paused", False))
             for aid in self.statuses:
                 self.runtimes.setdefault(aid, AgentRuntime())
 

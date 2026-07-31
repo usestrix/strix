@@ -7,6 +7,13 @@ from .base_renderer import BaseToolRenderer
 from .registry import register_tool_renderer
 
 
+def _author_label(note: dict[str, Any]) -> str:
+    if note.get("by_you"):
+        return "you"
+    agent_name = note.get("agent_name")
+    return str(agent_name).strip() if agent_name else ""
+
+
 @register_tool_renderer
 class CreateNoteRenderer(BaseToolRenderer):
     tool_name: ClassVar[str] = "create_note"
@@ -123,6 +130,9 @@ class ListNotesRenderer(BaseToolRenderer):
                     text.append("\n  - ")
                     text.append(title)
                     text.append(f" ({category})", style="dim")
+                    author = _author_label(note)
+                    if author:
+                        text.append(f" by {author}", style="dim")
 
                     if note_content:
                         text.append("\n    ")
@@ -156,6 +166,9 @@ class GetNoteRenderer(BaseToolRenderer):
             text.append("\n  ")
             text.append(title)
             text.append(f" ({category})", style="dim")
+            author = _author_label(note)
+            if author:
+                text.append(f" by {author}", style="dim")
             if content:
                 text.append("\n  ")
                 text.append(content, style="dim")

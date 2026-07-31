@@ -8,7 +8,16 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
-from strix.config.models import DEFAULT_MODEL_RETRY
+from strix.config.models import (
+    DEFAULT_MODEL_RETRY,
+    bedrock_route_supports_prompt_caching,
+    is_bedrock_route,
+    is_claude_model,
+    is_known_openai_bare_model,
+    model_supports_reasoning,
+    request_timeout_extra_args,
+)
+from strix.core.sessions import scrub_images_from_items
 
 
 if TYPE_CHECKING:
@@ -16,6 +25,15 @@ if TYPE_CHECKING:
 
 
 DEFAULT_MAX_TURNS = 500
+
+
+def _accepts_required_tool_choice(model_name: str | None) -> bool:
+    name = (model_name or "").strip().lower()
+    for prefix in ("litellm/", "any-llm/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    return name.startswith("openai/") or is_known_openai_bare_model(name)
 
 
 def build_root_task(scan_config: dict[str, Any]) -> str:
@@ -44,7 +62,8 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
-            sections["Local Codebases"].append(f"- {path} (available at: {workspace_path})")
+            suffix = ", read-only mount" if details.get("mount") else ""
+            sections["Local Codebases"].append(f"- {path} (available at: {workspace_path}{suffix})")
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":
@@ -108,24 +127,60 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
 
 def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
+    *,
+    model_name: str,
+    force_required_tool_choice: bool = False,
+    request_timeout: float | None = None,
+    prompt_cache: bool = True,
+    extra_headers: dict[str, str] | None = None,
 ) -> ModelSettings:
-    # Anthropic + DeepSeek thinking reject ``tool_choice="required"`` outright
-    # when reasoning is enabled; OpenAI o-series accepts both but doesn't need
-    # the safety net. When reasoning is on we let the model self-select tools
-    # and rely on the system prompt + the ``_finish_tool_use_behavior`` callback
-    # to keep the loop converging on a lifecycle tool.
-    use_reasoning = reasoning_effort is not None and reasoning_effort != "none"
     model_settings = ModelSettings(
         parallel_tool_calls=False,
-        tool_choice=None if use_reasoning else "required",
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
+        extra_args=request_timeout_extra_args(request_timeout),
+        extra_headers=dict(extra_headers) if extra_headers else None,
     )
-    if use_reasoning:
+    if (
+        reasoning_effort is not None
+        and reasoning_effort != "none"
+        and model_supports_reasoning(model_name)
+    ):
         model_settings = model_settings.resolve(
             ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
         )
+    if force_required_tool_choice and _accepts_required_tool_choice(model_name):
+        model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
+
+    cache_extra_args = _prompt_cache_extra_args(model_name) if prompt_cache else None
+    if cache_extra_args:
+        model_settings = model_settings.resolve(
+            ModelSettings(
+                extra_args={**(model_settings.extra_args or {}), **cache_extra_args},
+            ),
+        )
     return model_settings
+
+
+def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
+    """LiteLLM ``cache_control_injection_points`` for Claude prompt caching.
+
+    System prompt + rolling last-message breakpoint everywhere; ``tool_config``
+    only on Bedrock Converse (the only route whose LiteLLM transform consumes
+    it — elsewhere it leaks onto the wire and native Anthropic 400s). Unmapped
+    Bedrock models get no points at all: Bedrock rejects the passed-through
+    field outright.
+    """
+    if not is_claude_model(model_name):
+        return None
+    if is_bedrock_route(model_name) and not bedrock_route_supports_prompt_caching(model_name):
+        return None
+
+    points: list[dict[str, Any]] = [{"location": "message", "role": "system"}]
+    if is_bedrock_route(model_name):
+        points.append({"location": "tool_config"})
+    points.append({"location": "message", "index": -1})
+    return {"cache_control_injection_points": points}
 
 
 def child_initial_input(
@@ -136,30 +191,31 @@ def child_initial_input(
     task: str,
     parent_history: list[Any],
 ) -> list[dict[str, Any]]:
-    initial_input: list[dict[str, Any]] = []
+    """Build the initial input for a child agent as a single user message.
+
+    Collapsing the inherited-context block, the identity line, and the task into
+    one ``{"role": "user"}`` message keeps providers that require strictly
+    alternating roles (e.g. Perplexity, llama.cpp) from rejecting consecutive
+    user messages.
+    """
+    parts: list[str] = []
     if parent_history:
-        rendered = json.dumps(parent_history, ensure_ascii=False, default=str)
-        initial_input.append(
-            {
-                "role": "user",
-                "content": (
-                    "== Inherited context from parent (background only) ==\n"
-                    f"{rendered}\n"
-                    "== End of inherited context ==\n"
-                    "Use the above as background only; do not continue the "
-                    "parent's work. Your task follows."
-                ),
-            },
+        rendered = json.dumps(
+            scrub_images_from_items(parent_history),
+            ensure_ascii=False,
+            default=str,
         )
-    initial_input.append(
-        {
-            "role": "user",
-            "content": (
-                f"You are agent {name} ({child_id}); your parent is {parent_id}. "
-                "Maintain your own identity. Call agent_finish when your task "
-                "is complete."
-            ),
-        }
+        parts.append(
+            "== Inherited context from parent (background only) ==\n"
+            f"{rendered}\n"
+            "== End of inherited context ==\n"
+            "Use the above as background only; do not continue the "
+            "parent's work. Your task follows.",
+        )
+    parts.append(
+        f"You are agent {name} ({child_id}); your parent is {parent_id}. "
+        "Maintain your own identity. Call agent_finish when your task "
+        "is complete.",
     )
-    initial_input.append({"role": "user", "content": task})
-    return initial_input
+    parts.append(task)
+    return [{"role": "user", "content": "\n\n".join(parts)}]

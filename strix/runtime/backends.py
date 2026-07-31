@@ -22,6 +22,7 @@ async def _docker_backend(
     image: str,
     manifest: Manifest,
     exposed_ports: tuple[int, ...],
+    bind_mounts: list[dict[str, Any]] | None = None,
 ) -> tuple[Any, Any]:
     """Bring up a session backed by the local Docker daemon.
 
@@ -31,11 +32,15 @@ async def _docker_backend(
     backend don't need the docker-py library installed.
 
     ``session.start()`` is what materializes the manifest entries
-    (LocalDir copies, mount setup, etc.) into the running container —
-    the SDK's ``client.create()`` only builds the inner session object
-    without applying the manifest. ``async with session:`` would call it
-    too, but Strix manages session lifetime explicitly via
+    (LocalDir copies and manifest-declared volume/FUSE mounts) into the
+    running container — the SDK's ``client.create()`` only builds the inner
+    session object without applying the manifest. ``async with session:``
+    would call it too, but Strix manages session lifetime explicitly via
     ``client.delete()`` so we trigger ``start()`` ourselves.
+
+    ``bind_mounts`` are host directories (e.g. large repos passed via
+    ``--mount``) bind-mounted read-only; unlike manifest entries they are
+    applied by Docker at container-create time, not by ``start()``.
     """
     import docker
     from agents.sandbox.sandboxes.docker import DockerSandboxClientOptions
@@ -43,6 +48,7 @@ async def _docker_backend(
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
     client = StrixDockerSandboxClient(docker.from_env())
+    client.strix_bind_mounts = bind_mounts or []
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)
     await session.start()

@@ -13,5 +13,5 @@ returns it as an image content block for vision-capable models.
   `containers/docker-entrypoint.sh`).
 - **Skill:** screenshot workflow lives in `strix/skills/tooling/agent_browser.md`.
 - **Recovery:** vision-not-supported model rejections are auto-recovered
-  via `strix.core.sessions.strip_latest_image_from_session`, invoked from
+  via `strix.core.sessions.strip_all_images_from_session`, invoked from
   `strix/core/execution.py`.

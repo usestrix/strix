@@ -365,6 +365,23 @@ agent-browser dialog accept "text"    # accept with prompt input
 agent-browser dialog dismiss          # cancel
 ```
 
+## Readiness & recovery
+
+The first `agent-browser open` in a session launches the headless-Chrome
+daemon; later commands reuse it. Distinguish the two failure modes and react
+differently — do **not** blindly re-run the same failing command in a loop:
+
+- **Daemon / connection failure** (`Failed to connect`, `connection refused`,
+  socket missing, `browser not running`): the daemon isn't up or has died. Run
+  `agent-browser doctor` (add `--fix` if it reports repairable problems), then
+  re-open the page. Retrying the original command unchanged will keep failing.
+- **Malformed command** (`Unknown command`, `Ref not found`, bad flag): fix the
+  command itself — re-snapshot for fresh refs, or correct the syntax.
+
+Invoke `agent-browser` directly through `exec_command`; there is no need to wrap
+it in an extra `sh -c "..."` / `bash -lc "..."` layer, which only adds shell
+quoting and startup-file pitfalls.
+
 ## Diagnosing install issues
 
 If a command fails unexpectedly (`Unknown command`, `Failed to connect`,

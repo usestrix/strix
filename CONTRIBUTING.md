@@ -99,6 +99,20 @@ We welcome feature ideas! Please:
 - Consider implementation approach
 - Be open to discussion
 
+## 🖥️ Local viewer SPA
+
+`strix view` serves a prebuilt web UI whose source lives in
+`strix/interface/viewer/frontend/` (a Vite + React project) and whose built output is
+committed to `strix/interface/viewer/static/` and shipped in the package. End users never
+run a JS build. If you change anything under `strix/interface/viewer/frontend/`, rebuild
+and commit the output:
+
+```bash
+make viewer   # or: cd strix/interface/viewer/frontend && npm ci && npm run build
+```
+
+Commit both the source change and the regenerated `strix/interface/viewer/static/`.
+
 ## 🤝 Community
 
 - **Discord**: [Join our community](https://discord.gg/strix-ai)

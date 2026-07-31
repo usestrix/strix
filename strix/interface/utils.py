@@ -1,5 +1,6 @@
 import ipaddress
 import json
+import logging
 import os
 import re
 import secrets
@@ -10,17 +11,19 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 import docker
+import requests
 from docker.errors import DockerException, ImageNotFound
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+
+
+logger = logging.getLogger(__name__)
 
 
 def get_severity_color(severity: str) -> str:
@@ -249,6 +252,20 @@ def _llm_usage(report_state: Any) -> dict[str, Any]:
     return usage if isinstance(usage, dict) else {}
 
 
+def _is_subscription(report_state: Any) -> bool:
+    """Whether this run uses a model subscription (no metered cost).
+
+    Prefers the run record so it's correct for hydrated/resumed runs; falls back
+    to current settings.
+    """
+    record = getattr(report_state, "run_record", None)
+    if isinstance(record, dict) and record.get("auth_mode"):
+        return record.get("auth_mode") == "subscription"
+    from strix.config import codex
+
+    return codex.auth_mode(load_settings().llm.model) == "subscription"
+
+
 def _int_stat(usage: dict[str, Any], key: str) -> int:
     try:
         return max(0, int(usage.get(key) or 0))
@@ -279,11 +296,16 @@ def _build_llm_usage_stats(
     *,
     live: bool = False,
 ) -> None:
+    subscription = _is_subscription(report_state)
     usage = _llm_usage(report_state)
     if not usage or _int_stat(usage, "requests") <= 0:
         stats_text.append("\n")
         stats_text.append("Cost ", style="dim")
-        stats_text.append("$0.0000 ", style="#fbbf24")
+        if subscription:
+            stats_text.append("$0.00 ", style="#22c55e")
+            stats_text.append("(subscription) ", style="dim")
+        else:
+            stats_text.append("$0.0000 ", style="#fbbf24")
         stats_text.append("· ", style="dim white")
         stats_text.append("Tokens ", style="dim")
         stats_text.append("0", style="white")
@@ -308,7 +330,12 @@ def _build_llm_usage_stats(
     stats_text.append("Output Tokens ", style="dim")
     stats_text.append(format_token_count(output_tokens), style="white")
 
-    if live or cost > 0:
+    if subscription:
+        stats_text.append("  ·  ", style="dim white")
+        stats_text.append("Cost ", style="dim")
+        stats_text.append("$0.00", style="#22c55e")
+        stats_text.append(" (subscription)", style="dim")
+    elif live or cost > 0:
         stats_text.append("  ·  ", style="dim white")
         stats_text.append("Cost ", style="dim")
         stats_text.append(f"${cost:.4f}", style="#fbbf24")
@@ -333,6 +360,9 @@ def build_live_stats_text(report_state: Any) -> Text:
     model = load_settings().llm.model or "unknown"
     stats_text.append("Model ", style="dim")
     stats_text.append(str(model), style="white")
+    if _is_subscription(report_state):
+        stats_text.append("  ·  ", style="dim white")
+        stats_text.append("ChatGPT subscription", style="#22c55e")
     stats_text.append("\n")
 
     vuln_count = len(report_state.vulnerability_reports)
@@ -375,6 +405,10 @@ def build_tui_stats_text(report_state: Any) -> Text:
 
     model = load_settings().llm.model or "unknown"
     stats_text.append(str(model), style="white")
+    subscription = _is_subscription(report_state)
+    if subscription:
+        stats_text.append("\n")
+        stats_text.append("ChatGPT subscription", style="#22c55e")
 
     usage = _llm_usage(report_state)
     if usage and _int_stat(usage, "total_tokens") > 0:
@@ -384,7 +418,10 @@ def build_tui_stats_text(report_state: Any) -> Text:
             style="white",
         )
         cost = _float_stat(usage, "cost")
-        if cost > 0:
+        if subscription:
+            stats_text.append(" · ", style="white")
+            stats_text.append("$0.00", style="white")
+        elif cost > 0:
             stats_text.append(" · ", style="white")
             stats_text.append(f"${cost:.2f}", style="white")
 
@@ -1050,13 +1087,12 @@ def resolve_diff_scope_context(
 def _is_http_git_repo(url: str) -> bool:
     check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
     try:
-        req = Request(check_url, headers={"User-Agent": "git/strix"})  # noqa: S310
-        with urlopen(req, timeout=10) as resp:  # noqa: S310  # nosec B310
-            return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
-    except HTTPError as e:
-        return e.code == 401
-    except (URLError, OSError, ValueError):
+        resp = requests.get(check_url, headers={"User-Agent": "git/strix"}, timeout=10)
+    except (requests.RequestException, ValueError):
         return False
+    if resp.status_code >= 400:
+        return resp.status_code == 401
+    return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
 
 
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
@@ -1127,6 +1163,32 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
     )
 
 
+def read_target_list_file(path_str: str) -> list[str]:
+    """Read scan targets from a file, one target per non-empty, non-comment line."""
+    if not path_str or not path_str.strip():
+        raise ValueError("--target-list path must not be empty.")
+
+    path = Path(path_str).expanduser()
+    if not path.is_file():
+        raise ValueError(f"Target list file '{path_str}' is not an existing file.")
+
+    try:
+        targets = [
+            target
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if (target := line.strip()) and not target.startswith("#")
+        ]
+    except UnicodeDecodeError as e:
+        raise ValueError(f"Target list file '{path_str}' must be valid UTF-8 text: {e!s}") from e
+    except OSError as e:
+        raise ValueError(f"Failed to read target list file '{path_str}': {e!s}") from e
+
+    targets = [target for target in targets if target]
+    if not targets:
+        raise ValueError(f"Target list file '{path_str}' is empty.")
+    return targets
+
+
 def sanitize_name(name: str) -> str:
     sanitized = re.sub(r"[^A-Za-z0-9._-]", "-", name.strip())
     return sanitized or "target"
@@ -1185,8 +1247,8 @@ def is_whitebox_scan(targets_info: list[dict[str, Any]]) -> bool:
     return any(t.get("type") == "local_code" for t in targets_info or [])
 
 
-def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, str]]:
-    local_sources: list[dict[str, str]] = []
+def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    local_sources: list[dict[str, Any]] = []
 
     for target_info in targets_info:
         details = target_info["details"]
@@ -1197,6 +1259,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
+                    "mount": bool(details.get("mount", False)),
                 }
             )
 
@@ -1205,10 +1268,124 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["cloned_repo_path"],
                     "workspace_subdir": workspace_subdir,
+                    "mount": False,
                 }
             )
 
     return local_sources
+
+
+def directory_size_bytes(path: Path) -> int:
+    """Total size in bytes of regular files under ``path`` (symlinks not followed).
+
+    Best-effort: files that disappear or can't be stat'd mid-walk are skipped.
+    Used as a cheap (stat-only) pre-flight to estimate the cost of streaming a
+    local target into the sandbox before we actually try to copy it.
+
+    Directories that can't be listed (e.g. permission denied) are logged and
+    skipped rather than silently dropped — so an under-count is at least
+    visible — but the returned total then excludes their contents.
+    """
+
+    def _on_walk_error(error: OSError) -> None:
+        logger.warning("Could not read %s while measuring size: %s", error.filename, error)
+
+    total = 0
+    for root, _dirs, files in os.walk(path, followlinks=False, onerror=_on_walk_error):
+        for name in files:
+            file_path = os.path.join(root, name)  # noqa: PTH118
+            try:
+                if os.path.islink(file_path):  # noqa: PTH114
+                    continue
+                total += os.path.getsize(file_path)  # noqa: PTH202
+            except OSError:
+                continue
+    return total
+
+
+def find_oversized_local_targets(
+    targets_info: list[dict[str, Any]], max_bytes: int
+) -> list[tuple[str, int]]:
+    """Return ``(path, size_bytes)`` for non-mounted local targets over ``max_bytes``.
+
+    Mounted targets are bind-mounted rather than copied, so their size is
+    irrelevant and they are excluded. A ``max_bytes`` of zero or less disables
+    the check entirely (returns no targets).
+    """
+    if max_bytes <= 0:
+        return []
+    oversized: list[tuple[str, int]] = []
+    for target in targets_info:
+        if target.get("type") != "local_code":
+            continue
+        details = target.get("details") or {}
+        if details.get("mount"):
+            continue
+        target_path = details.get("target_path")
+        if not target_path:
+            continue
+        size = directory_size_bytes(Path(target_path))
+        if size > max_bytes:
+            oversized.append((target_path, size))
+    return oversized
+
+
+def build_mount_targets_info(mount_paths: list[str]) -> list[dict[str, Any]]:
+    """Build ``targets_info`` entries for ``--mount`` directories.
+
+    Each path must be an existing local directory; it is bind-mounted into the
+    sandbox (read-only) instead of being copied file-by-file. Raises
+    ``ValueError`` for an empty path, or one that does not exist or is not a
+    directory.
+    """
+    targets_info: list[dict[str, Any]] = []
+    for raw in mount_paths:
+        if not raw or not raw.strip():
+            raise ValueError("--mount path must not be empty.")
+        path = Path(raw).expanduser()
+        try:
+            resolved = path.resolve()
+            is_dir = resolved.is_dir()
+        except (OSError, RuntimeError) as e:
+            raise ValueError(f"Invalid mount path '{raw}': {e!s}") from e
+        if not is_dir:
+            raise ValueError(
+                f"Mount path '{raw}' is not an existing directory. "
+                "--mount requires a path to a local directory."
+            )
+        targets_info.append(
+            {
+                "type": "local_code",
+                "details": {"target_path": str(resolved), "mount": True},
+                "original": str(resolved),
+            }
+        )
+    return targets_info
+
+
+def dedupe_local_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Collapse local_code targets that resolve to the same path.
+
+    When a directory is supplied both as a copied ``--target`` and via
+    ``--mount`` (or as duplicate values of either), keep one entry and prefer
+    the bind-mounted one — so the same tree is never both streamed in and
+    mounted. Order is preserved; non-local targets pass through untouched.
+    """
+    result: list[dict[str, Any]] = []
+    index_by_path: dict[str, int] = {}
+    for target in targets_info:
+        details = target.get("details") or {}
+        path = details.get("target_path")
+        if target.get("type") != "local_code" or not path:
+            result.append(target)
+            continue
+        existing = index_by_path.get(path)
+        if existing is None:
+            index_by_path[path] = len(result)
+            result.append(target)
+        elif details.get("mount") and not (result[existing].get("details") or {}).get("mount"):
+            result[existing] = target  # bind mount supersedes the copied entry
+    return result
 
 
 def _is_localhost_host(host: str) -> bool:

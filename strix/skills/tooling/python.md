@@ -7,9 +7,9 @@ description: Run Python through exec_command in the SDK sandbox. Use the image-b
 
 Use `exec_command` for Python. There is no separate Strix Python executor.
 
-Prefer writing reusable scripts to `/workspace/scratch/<name>.py` and
-running them with `python3 /workspace/scratch/<name>.py`. For short
-one-off transformations, `python3 -c` or a small here-document is fine.
+Prefer writing reusable scripts to a `.py` file and running them with
+`python3 <name>.py`. For short one-off transformations, `python3 -c` or a
+small here-document is fine.
 
 The `shell` parameter on `exec_command` is for swapping POSIX shells
 (`bash`/`zsh`/`sh`), not for picking interpreters. Put the interpreter
@@ -84,17 +84,26 @@ automatically, so it shows up in `list_requests` and you can use
 For iterative exploit work, put code in a file:
 
 ```text
-1. Create or edit `/workspace/scratch/exploit.py` with `apply_patch`.
-2. Run it with `exec_command`: `python3 /workspace/scratch/exploit.py`.
+1. Create or edit a task-unique script (e.g. `poc_<task-id>.py`, so it can't
+   clobber a project file or another agent's script) with `apply_patch`.
+2. Run it with `exec_command`: `python3 poc_<task-id>.py`.
 3. Edit and rerun until the proof-of-concept is reliable.
 ```
 
 ## Installing extra packages
 
-The sandbox's Python lives in `/app/.venv`. To add a one-off dependency
-for an exploit script, use `uv` (already in the image and much faster
-than pip):
+The sandbox's Python lives in `/app/.venv`, and it is the active virtualenv
+(`python3` / `pip` already resolve to it). The following common libraries are
+**pre-installed** — import them directly, no install step needed:
+`requests`, `httpx`, `beautifulsoup4` (`bs4`), `lxml`, `pyjwt` (`jwt`),
+`cryptography`.
+
+To add a one-off dependency for an exploit script, use `uv` (already in the
+image and much faster than pip):
 
 ```bash
 uv pip install --python /app/.venv/bin/python <package>
 ```
+
+Plain `pip install <package>` also works because the venv is active. Install
+before you import, so scripts don't fail with `ModuleNotFoundError`.

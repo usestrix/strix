@@ -67,6 +67,16 @@ Toast.-information .toast--title {
     display: none;
 }
 
+#viewer_cta {
+    height: auto;
+    background: transparent;
+    border: round #333333;
+    color: #60a5fa;
+    padding: 0 1;
+    margin-bottom: 1;
+    text-align: center;
+}
+
 #agents_tree {
     height: 1fr;
     background: transparent;
