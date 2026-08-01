@@ -147,6 +147,7 @@ async def probe_tool_calling(
     )
 
     last_error: BaseException | None = None
+    reached_model = False
     for attempt in range(1, _PROBE_ATTEMPTS + 1):
         try:
             response = await model.get_response(
@@ -175,6 +176,7 @@ async def probe_tool_calling(
             )
             continue
 
+        reached_model = True
         if _response_has_tool_call(response.output):
             logger.info("Preflight: endpoint returned a structured tool call (ok).")
             return
@@ -184,9 +186,10 @@ async def probe_tool_calling(
             _PROBE_ATTEMPTS,
         )
 
-    if last_error is not None and not _looks_like_tool_config_error(last_error):
-        # The probe never produced a tool call and the last failure was an
-        # unrelated error (connectivity/auth); surface the config guidance but
-        # keep the original cause attached for debugging.
-        raise ToolCallingUnsupportedError(_GUIDANCE) from last_error
+    if not reached_model and last_error is not None:
+        # Every attempt failed before we saw a response, and none of the errors
+        # pointed at tool configuration. This is a connectivity/auth/provider
+        # problem, not a missing capability — surface it as-is rather than
+        # sending the user off to change chat templates.
+        raise last_error
     raise ToolCallingUnsupportedError(_GUIDANCE)

@@ -128,13 +128,29 @@ async def test_probe_maps_jinja_error_to_config_error(monkeypatch: pytest.Monkey
 
 
 @pytest.mark.asyncio
-async def test_probe_wraps_unrelated_error_after_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_probe_surfaces_unrelated_error_after_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Connectivity/auth failures must not be reported as missing tool support."""
     err = RuntimeError("connection reset by peer")
     model = _FakeModel([err, err])
     _patch_model(monkeypatch, model)
+    with pytest.raises(RuntimeError) as excinfo:
+        await probe_tool_calling("ollama/qwen3:8b", _settings())
+    assert not isinstance(excinfo.value, ToolCallingUnsupportedError)
+    assert "connection reset by peer" in str(excinfo.value)
+    assert model.calls == warmup._PROBE_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_probe_reports_unsupported_when_a_response_arrived(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A text-only response after a transient error is still a capability failure."""
+    model = _FakeModel([RuntimeError("connection reset by peer"), _text_response()])
+    _patch_model(monkeypatch, model)
     with pytest.raises(ToolCallingUnsupportedError):
         await probe_tool_calling("ollama/qwen3:8b", _settings())
-    assert model.calls == warmup._PROBE_ATTEMPTS
 
 
 @pytest.mark.asyncio
