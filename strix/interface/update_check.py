@@ -312,14 +312,38 @@ def _download_and_replace(version: str, target: str, console: Console) -> bool:
                     f"expected sha256 {expected_digest}, got {actual_digest}"
                 )
         else:
-            console.print("[dim yellow]No published checksum available; skipping verification[/]")
+            raise RuntimeError(
+                f"No published checksum available for {filename}; "
+                f"refusing to install an unverified binary. "
+                f"Please ensure the release includes asset digests."
+            )
 
         if is_windows:
             with zipfile.ZipFile(archive_path) as zf:
-                zf.extract(binary_name, tmp_dir)
+                # Zip-slip guard: verify the member does not escape tmp_dir.
+                member = zf.getinfo(binary_name)
+                extracted = (tmp_dir / member.filename).resolve()
+                if not str(extracted).startswith(str(tmp_dir.resolve())):
+                    raise RuntimeError(
+                        f"Zip member {member.filename!r} would escape "
+                        f"the staging directory (zip-slip)"
+                    )
+                zf.extract(member, tmp_dir)
         else:
             with tarfile.open(archive_path, "r:gz") as tf:
-                tf.extract(binary_name, tmp_dir, filter="data")
+                # Tar-slip guard: verify the member does not escape tmp_dir.
+                member = tf.getmember(binary_name)
+                extracted = (tmp_dir / member.name).resolve()
+                if not str(extracted).startswith(str(tmp_dir.resolve())):
+                    raise RuntimeError(
+                        f"Tar member {member.name!r} would escape "
+                        f"the staging directory (tar-slip)"
+                    )
+                try:
+                    tf.extract(member, tmp_dir, filter="data")
+                except TypeError:
+                    # Python <3.12 does not support the filter parameter.
+                    tf.extract(member, tmp_dir)
 
         new_binary = tmp_dir / binary_name
         new_binary.chmod(new_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
