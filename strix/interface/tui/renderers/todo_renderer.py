@@ -45,7 +45,7 @@ class CreateTodoRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "todo-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
         text = Text()
@@ -76,7 +76,7 @@ class ListTodosRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "todo-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
         text = Text()
@@ -107,7 +107,7 @@ class UpdateTodoRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "todo-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
         text = Text()
@@ -138,7 +138,7 @@ class MarkTodoDoneRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "todo-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
         text = Text()
@@ -169,7 +169,7 @@ class MarkTodoPendingRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "todo-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
         text = Text()
@@ -200,7 +200,7 @@ class DeleteTodoRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "todo-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
         text = Text()

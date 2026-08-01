@@ -13,7 +13,7 @@ class ViewAgentGraphRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "agents-graph-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         status = tool_data.get("status", "unknown")
 
         text = Text()
@@ -30,7 +30,7 @@ class CreateAgentRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "agents-graph-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
 
@@ -56,7 +56,7 @@ class SendMessageToAgentRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "agents-graph-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
 
@@ -84,7 +84,7 @@ class AgentFinishRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "agents-graph-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
 
         result_summary = args.get("result_summary", "")
@@ -122,7 +122,7 @@ class WaitForMessageRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "agents-graph-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
 
@@ -146,7 +146,7 @@ class StopAgentRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "agents-graph-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "unknown")

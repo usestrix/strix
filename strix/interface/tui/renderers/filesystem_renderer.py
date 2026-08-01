@@ -173,7 +173,7 @@ class ApplyPatchRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "file-edit-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "completed")
@@ -239,7 +239,7 @@ class ViewImageRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "file-edit-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "completed")

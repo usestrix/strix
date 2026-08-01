@@ -13,7 +13,7 @@ class WebSearchRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "web-search-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         query = args.get("query", "")
 

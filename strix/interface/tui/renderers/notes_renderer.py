@@ -20,7 +20,7 @@ class CreateNoteRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "notes-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
 
         title = args.get("title", "")
@@ -55,7 +55,7 @@ class DeleteNoteRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "notes-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: ARG003
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: ARG003
         text = Text()
         text.append("◇ ", style="#fbbf24")
         text.append("note removed", style="dim")
@@ -70,7 +70,7 @@ class UpdateNoteRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "notes-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
 
         title = args.get("title")
@@ -102,7 +102,7 @@ class ListNotesRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "notes-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
         text = Text()
@@ -151,7 +151,7 @@ class GetNoteRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "notes-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = tool_data.get("result")
 
         text = Text()
