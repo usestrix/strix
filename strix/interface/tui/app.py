@@ -808,8 +808,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._displayed_agents: set[str] = set()
         self._displayed_events: list[str] = []
 
-        self._event_render_cache: dict[str, Any] = {}
-
         self._scan_thread: threading.Thread | None = None
         self._viewer_httpd: Any = None
         self._viewer_url: str | None = None
@@ -1233,24 +1231,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         for event in events:
             content: Any = None
-            event_id = event["id"]
 
             if event["type"] == "chat":
-                if event_id in self._event_render_cache:
-                    content = self._event_render_cache[event_id]
-                else:
-                    content = self._render_chat_content(event["data"])
-                    if content is not None:
-                        self._event_render_cache[event_id] = content
+                content = self._render_chat_content(event["data"])
             elif event["type"] == "tool":
-                status = event["data"].get("status", "")
-                cache_key = f"{event_id}_{status}"
-                if cache_key in self._event_render_cache:
-                    content = self._event_render_cache[cache_key]
-                else:
-                    content = render_tool_widget(event["data"])
-                    if content is not None and status in ("completed", "failed", "error"):
-                        self._event_render_cache[cache_key] = content
+                content = render_tool_widget(event["data"])
 
             if content:
                 if renderables:
@@ -1513,7 +1498,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
             return
 
         self._displayed_events.clear()
-        self._event_render_cache.clear()
 
         self.call_later(self._update_chat_view)
         self._update_agent_status_display()
