@@ -91,7 +91,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             if deleted:
                 parts.append(f"- {label}: {deleted} deleted file(s) are context-only")
 
-    task = " ".join(parts)
+    task = "\n".join(parts)
     if user_instructions:
         task = f"{task}\n\nSpecial instructions: {user_instructions}"
     return task
