@@ -134,9 +134,11 @@ async def probe_tool_calling(
     extra_args: dict[str, Any] = {}
     if request_timeout and request_timeout > 0:
         extra_args["timeout"] = request_timeout
+    headers = settings.llm.extra_headers
     model_settings = ModelSettings(
         max_tokens=_PROBE_MAX_TOKENS,
         parallel_tool_calls=False,
+        extra_headers=dict(headers) if headers else None,
         extra_args=extra_args or None,
     )
     instructions = (

@@ -27,7 +27,7 @@ if TYPE_CHECKING:
 
 
 def _settings(*, api_base: str | None = None, skip: bool = False) -> Settings:
-    llm = types.SimpleNamespace(api_base=api_base, skip_tool_call_probe=skip)
+    llm = types.SimpleNamespace(api_base=api_base, skip_tool_call_probe=skip, extra_headers=None)
     return cast("Settings", types.SimpleNamespace(llm=llm))
 
 

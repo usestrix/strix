@@ -15,11 +15,11 @@ import base64
 import contextlib
 import json
 import logging
-import urllib.error
-import urllib.request
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+
+import requests
 
 from strix.config.loader import load_settings
 
@@ -147,21 +147,17 @@ def _post_json(path: str, payload: dict[str, Any], *, timeout: int) -> tuple[int
     map, not raised.
     """
     url = f"{_app_url()}{path}"
-    body = json.dumps(payload).encode("utf-8")
-    request = urllib.request.Request(  # noqa: S310 - fixed https relay URL
-        url,
-        data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:  # noqa: S310  # nosec B310
-            return response.status, _parse_body(response.read())
-    except urllib.error.HTTPError as exc:
-        return exc.code, _parse_body(exc.read())
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        response = requests.post(
+            url,
+            json=payload,
+            headers={"Accept": "application/json"},
+            timeout=timeout,
+        )
+    except requests.RequestException as exc:
         logger.warning("relay request to %s failed: %s", path, exc)
         raise RelayError("unavailable") from exc
+    return response.status_code, _parse_body(response.content)
 
 
 def _parse_body(raw: bytes) -> dict[str, Any]:

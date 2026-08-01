@@ -55,6 +55,23 @@ export STRIX_LLM="openai/local-model"
 export LLM_API_BASE="http://localhost:1234/v1"  # Adjust port as needed
 ```
 
+### Gateways that require custom headers
+
+Some OpenAI-compatible gateways require extra HTTP headers (for attribution or
+tenant routing) alongside the bearer token. Set them with `LLM_EXTRA_HEADERS` as
+a JSON object — they are sent on every request:
+
+```bash
+export STRIX_LLM="openai/your-model"
+export LLM_API_BASE="https://your-gateway.example/v1"
+export LLM_API_KEY="your-bearer-token"          # sent as Authorization: Bearer ...
+export LLM_EXTRA_HEADERS='{"X-Feature-Key":"value","X-Tenant":"acme"}'
+```
+
+For endpoints behind a private CA, point Strix at your certificate bundle with
+the standard `SSL_CERT_FILE=/path/to/ca-bundle.pem` — never disable TLS
+verification against a real endpoint.
+
 ## Tool calling must return structured `tool_calls`
 
 Strix is entirely tool-driven: every working turn must be a **native** function/tool call. If your inference server returns the tool call as plain assistant text instead of a structured `tool_calls` field, Strix cannot execute any action and the scan stalls waiting for input ("Send message to resume").

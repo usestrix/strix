@@ -44,6 +44,38 @@ def test_dedupe_endpoint_sent_per_call() -> None:
     assert (settings.extra_args or {})["api_key"] == "dedupe-key"
 
 
+def test_dedicated_dedupe_model_uses_own_headers_not_main() -> None:
+    dedupe = DedupeSettings(
+        STRIX_DEDUPE_MODEL="deepseek/cheap",
+        DEDUPE_LLM_EXTRA_HEADERS={"X-Dedupe": "yes"},
+    )
+    settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
+    assert settings.extra_headers == {"X-Dedupe": "yes"}
+
+
+def test_dedicated_dedupe_model_gets_no_main_headers_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({"X-Main": "secret"}))
+    loader._cached = None
+    try:
+        dedupe = DedupeSettings(STRIX_DEDUPE_MODEL="deepseek/cheap")
+        settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
+        assert settings.extra_headers is None
+    finally:
+        loader._cached = None
+
+
+def test_fallback_dedupe_inherits_main_headers(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({"X-Main": "svc"}))
+    loader._cached = None
+    try:
+        settings = _dedupe_model_settings(DedupeSettings(), "openai/main-model", 300)
+        assert settings.extra_headers == {"X-Main": "svc"}
+    finally:
+        loader._cached = None
+
+
 def test_dedupe_defaults_are_empty() -> None:
     settings = DedupeSettings()
     assert settings.model is None

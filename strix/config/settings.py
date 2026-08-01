@@ -35,6 +35,10 @@ class LlmSettings(BaseSettings):
             "OLLAMA_API_BASE",
         ),
     )
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        alias="LLM_EXTRA_HEADERS",
+    )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
     force_required_tool_choice: bool = Field(
         default=False,
@@ -47,6 +51,10 @@ class LlmSettings(BaseSettings):
     prompt_cache: bool = Field(
         default=True,
         alias="STRIX_PROMPT_CACHE",
+    )
+    disable_streaming: bool = Field(
+        default=False,
+        alias="LLM_DISABLE_STREAMING",
     )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 
@@ -61,6 +69,10 @@ class DedupeSettings(BaseSettings):
     )
     api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY")
     api_base: str | None = Field(default=None, alias="DEDUPE_LLM_API_BASE")
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        alias="DEDUPE_LLM_EXTRA_HEADERS",
+    )
 
 
 class ContextSettings(BaseSettings):

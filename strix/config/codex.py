@@ -18,11 +18,11 @@ import logging
 import secrets
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import requests
 
 
 if TYPE_CHECKING:
@@ -221,26 +221,19 @@ def _first(query: dict[str, list[str]], key: str) -> str | None:
 
 
 def _post_form(payload: dict[str, str]) -> dict[str, Any]:
-    body = urllib.parse.urlencode(payload).encode("ascii")
-    request = urllib.request.Request(  # noqa: S310 - fixed https OAuth endpoint
-        TOKEN_URL,
-        data=body,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
     try:
-        with urllib.request.urlopen(  # noqa: S310  # nosec B310 - fixed https endpoint
-            request, timeout=_TOKEN_TIMEOUT
-        ) as response:
-            data = json.loads(response.read() or b"{}")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        raise CodexAuthError("token_http_error", f"HTTP {exc.code}: {detail}") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+        response = requests.post(
+            TOKEN_URL,
+            data=payload,
+            headers={"Accept": "application/json"},
+            timeout=_TOKEN_TIMEOUT,
+        )
+    except requests.RequestException as exc:
         raise CodexAuthError("unavailable", str(exc)) from exc
+    if response.status_code >= 400:
+        detail = response.text[:300]
+        raise CodexAuthError("token_http_error", f"HTTP {response.status_code}: {detail}")
+    data = json.loads(response.content or b"{}")
     if not isinstance(data, dict):
         raise CodexAuthError("bad_response", "token endpoint returned non-object")
     return data

@@ -12,15 +12,20 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
-import litellm
+from agents.model_settings import ModelSettings
+from agents.models.interface import ModelTracing
 from litellm.exceptions import BadRequestError, ContextWindowExceededError
+from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from strix.config import load_settings
+from strix.config.models import StrixProvider
+from strix.core.inputs import make_model_settings
 from strix.core.sessions import replace_session_items, session_write_lock
 from strix.llm.context_budget import context_window, count_tokens, output_limit
 
 
 if TYPE_CHECKING:
+    from agents.items import ModelResponse
     from agents.memory import Session
 
 
@@ -268,26 +273,53 @@ def _checkpoint_item(summary: str) -> dict[str, Any]:
     }
 
 
+def _extract_text(response: ModelResponse) -> str:
+    parts: list[str] = []
+    for item in response.output:
+        if not isinstance(item, ResponseOutputMessage):
+            continue
+        parts.extend(
+            chunk.text
+            for chunk in item.content
+            if isinstance(chunk, ResponseOutputText) and chunk.text
+        )
+    return "".join(parts)
+
+
 async def _summarize(model: str, prompt: str, max_tokens: int) -> str | None:
     llm = load_settings().llm
+    model_settings = make_model_settings(
+        None,
+        model_name=model,
+        request_timeout=llm.timeout,
+        prompt_cache=False,
+        extra_headers=llm.extra_headers,
+    ).resolve(ModelSettings(max_tokens=max_tokens))
     try:
-        response = await litellm.acompletion(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_tokens=max_tokens,
-            api_key=llm.api_key,
-            api_base=llm.api_base,
-            timeout=llm.timeout,
+        response = (
+            await StrixProvider()
+            .get_model(model)
+            .get_response(
+                system_instructions=None,
+                input=prompt,
+                model_settings=model_settings,
+                tools=[],
+                output_schema=None,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+                previous_response_id=None,
+                conversation_id=None,
+                prompt=None,
+            )
         )
     except Exception:
         logger.exception("compaction summary call failed for model %s", model)
         return None
-    try:
-        content = response.choices[0].message.content
-    except (AttributeError, IndexError, KeyError):
+    content = _extract_text(response).strip()
+    if not content:
         logger.warning("compaction summary returned no content")
         return None
-    return content.strip() if isinstance(content, str) and content.strip() else None
+    return content
 
 
 async def maybe_compact(

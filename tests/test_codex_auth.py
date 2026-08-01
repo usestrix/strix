@@ -7,8 +7,10 @@ import hashlib
 import json
 import time
 from typing import TYPE_CHECKING, Any
+from unittest import mock
 
 import pytest
+import requests
 
 from strix.config import codex
 
@@ -50,6 +52,18 @@ def test_authorize_url_carries_pkce_and_client() -> None:
     assert "code_challenge_method=S256" in url
     assert f"client_id={codex.CLIENT_ID}" in url
     assert "state=st8" in url
+
+
+def test_post_form_returns_parsed_body() -> None:
+    resp = mock.MagicMock()
+    resp.status_code = 200
+    resp.content = b'{"access_token": "tok"}'
+
+    with mock.patch.object(requests, "post", return_value=resp) as post:
+        data = codex._post_form({"grant_type": "refresh_token"})
+
+    assert data == {"access_token": "tok"}
+    assert post.call_args.kwargs["timeout"] == codex._TOKEN_TIMEOUT
 
 
 @pytest.mark.parametrize(

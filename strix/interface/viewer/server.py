@@ -107,8 +107,11 @@ def resolve_run_dir(base_dir: Path, run_param: str | None, default_run_dir: Path
     return candidate
 
 
-# Name of the cookie carrying the per-process session capability.
-SESSION_COOKIE = "strix_viewer_session"
+# Prefix of the cookie carrying the per-process session capability. The bound
+# port is appended (``strix_viewer_session_<port>``) because browsers scope
+# cookies by host only, never by port: concurrent viewers on 127.0.0.1 would
+# otherwise share one cookie slot and clobber each other's session.
+SESSION_COOKIE_PREFIX = "strix_viewer_session"
 
 
 class _ViewerState:
@@ -135,6 +138,9 @@ class _ViewerState:
         # enough to steer a live scan, trigger a report, or browse history --
         # the token is never handed to a caller who merely reaches ``/``.
         self.session_token = secrets.token_urlsafe(32)
+        # Finalized in ``serve()`` once the port is known (the server binds
+        # after this state is constructed); see SESSION_COOKIE_PREFIX.
+        self.cookie_name = SESSION_COOKIE_PREFIX
 
 
 def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
@@ -476,7 +482,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             the browser this process handed the page to can pass. A direct
             caller on an exposed port has no cookie and is rejected.
             """
-            supplied = self._cookies().get(SESSION_COOKIE, "")
+            supplied = self._cookies().get(state.cookie_name, "")
             return bool(supplied) and secrets.compare_digest(supplied, state.session_token)
 
         def _token_presented(self, query: dict[str, list[str]]) -> bool:
@@ -512,7 +518,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 # SameSite=Strict (never sent from a cross-site context).
                 self.send_header(
                     "Set-Cookie",
-                    f"{SESSION_COOKIE}={state.session_token}; Path=/; HttpOnly; SameSite=Strict",
+                    f"{state.cookie_name}={state.session_token}; Path=/; HttpOnly; SameSite=Strict",
                 )
             self.end_headers()
             self.wfile.write(content)
@@ -586,6 +592,7 @@ def serve(
 
     httpd.daemon_threads = True
     bound_port = int(httpd.server_address[1])
+    state.cookie_name = f"{SESSION_COOKIE_PREFIX}_{bound_port}"
     url = f"http://{host}:{bound_port}"
 
     thread = threading.Thread(target=httpd.serve_forever, name="strix-viewer", daemon=True)

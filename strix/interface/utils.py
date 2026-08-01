@@ -11,11 +11,10 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlparse
-from urllib.request import Request, urlopen
 
 import docker
+import requests
 from docker.errors import DockerException, ImageNotFound
 from rich.console import Console
 from rich.panel import Panel
@@ -1088,13 +1087,12 @@ def resolve_diff_scope_context(
 def _is_http_git_repo(url: str) -> bool:
     check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
     try:
-        req = Request(check_url, headers={"User-Agent": "git/strix"})  # noqa: S310
-        with urlopen(req, timeout=10) as resp:  # noqa: S310  # nosec B310
-            return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
-    except HTTPError as e:
-        return e.code == 401
-    except (URLError, OSError, ValueError):
+        resp = requests.get(check_url, headers={"User-Agent": "git/strix"}, timeout=10)
+    except (requests.RequestException, ValueError):
         return False
+    if resp.status_code >= 400:
+        return resp.status_code == 401
+    return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
 
 
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
