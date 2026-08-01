@@ -220,6 +220,7 @@ ignore = [
 # Stdlib HTTP handler overrides (do_GET/do_POST).
 "strix/interface/auth_cli.py" = ["N802"]
 "tests/test_codex_streaming.py" = ["N802"]
+"tests/test_disable_streaming.py" = ["N802"]
 "tests/test_report_pdf.py" = ["S105", "S106"]
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
 # circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.

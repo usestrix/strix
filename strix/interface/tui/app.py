@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, ClassVar
 
 
 if TYPE_CHECKING:
+    from pygments.token import _TokenType
     from textual.timer import Timer
 
 from rich.align import Align
@@ -352,7 +353,7 @@ class VulnerabilityDetailScreen(ModalScreen):  # type: ignore[misc]
                 if not token_value:
                     continue
                 color = None
-                tt = token_type
+                tt: _TokenType | None = token_type
                 while tt:
                     if tt in colors:
                         color = colors[tt]

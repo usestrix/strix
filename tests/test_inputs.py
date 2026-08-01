@@ -272,6 +272,30 @@ def test_make_model_settings_omits_timeout_when_unset() -> None:
     assert settings.extra_args is None
 
 
+def test_make_model_settings_sets_extra_headers() -> None:
+    settings = make_model_settings(
+        "none",
+        model_name="openai/some-model",
+        extra_headers={"X-Feature-Key": "svc", "X-Tenant": "acme"},
+    )
+
+    assert settings.extra_headers == {"X-Feature-Key": "svc", "X-Tenant": "acme"}
+
+
+def test_make_model_settings_omits_extra_headers_when_unset() -> None:
+    assert make_model_settings("none", model_name="gpt-4o").extra_headers is None
+
+
+def test_make_model_settings_extra_headers_survive_reasoning_resolve() -> None:
+    settings = make_model_settings(
+        "high",
+        model_name="openai/o3",
+        extra_headers={"X-Feature-Key": "svc"},
+    )
+
+    assert settings.extra_headers == {"X-Feature-Key": "svc"}
+
+
 def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
     # Reasoning is resolved via ModelSettings.resolve(); the timeout in extra_args
     # must not be dropped when a reasoning override is merged in.

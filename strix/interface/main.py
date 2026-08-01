@@ -31,7 +31,7 @@ from strix.config.models import (
     is_known_openai_bare_model,
     is_recommended_or_frontier_model,
 )
-from strix.core.inputs import DEFAULT_MAX_TURNS
+from strix.core.inputs import DEFAULT_MAX_TURNS, make_model_settings
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.cli import run_cli
 from strix.interface.tui import run_tui
@@ -382,7 +382,13 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             model.get_response(
                 system_instructions="You are a helpful assistant.",
                 input="Reply with just 'OK'.",
-                model_settings=ModelSettings(),
+                model_settings=make_model_settings(
+                    None,
+                    model_name=raw_model,
+                    request_timeout=llm.timeout,
+                    prompt_cache=False,
+                    extra_headers=llm.extra_headers,
+                ),
                 tools=[],
                 output_schema=None,
                 handoffs=[],
@@ -404,7 +410,19 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             # Match the runtime path: send the dedupe key/endpoint per call so a
             # separate-provider dedupe model authenticates during warm-up too.
             deduper_extra = _dedupe_extra_args(settings.dedupe)
-            deduper_settings = ModelSettings(extra_args=deduper_extra or None)
+            # A dedicated dedupe model may route to another provider, which must
+            # never receive the main endpoint's headers; it has its own
+            # DEDUPE_LLM_EXTRA_HEADERS.
+            deduper_settings = make_model_settings(
+                None,
+                model_name=dedupe_model,
+                request_timeout=llm.timeout,
+                prompt_cache=False,
+                extra_headers=settings.dedupe.extra_headers,
+            )
+            if deduper_extra:
+                merged = {**(deduper_settings.extra_args or {}), **deduper_extra}
+                deduper_settings = deduper_settings.resolve(ModelSettings(extra_args=merged))
             await asyncio.wait_for(
                 deduper.get_response(
                     system_instructions="You are a helpful assistant.",

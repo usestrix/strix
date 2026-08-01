@@ -54,3 +54,20 @@ If you use LM Studio, vLLM, or other runners:
 export STRIX_LLM="openai/local-model"
 export LLM_API_BASE="http://localhost:1234/v1"  # Adjust port as needed
 ```
+
+### Gateways that require custom headers
+
+Some OpenAI-compatible gateways require extra HTTP headers (for attribution or
+tenant routing) alongside the bearer token. Set them with `LLM_EXTRA_HEADERS` as
+a JSON object — they are sent on every request:
+
+```bash
+export STRIX_LLM="openai/your-model"
+export LLM_API_BASE="https://your-gateway.example/v1"
+export LLM_API_KEY="your-bearer-token"          # sent as Authorization: Bearer ...
+export LLM_EXTRA_HEADERS='{"X-Feature-Key":"value","X-Tenant":"acme"}'
+```
+
+For endpoints behind a private CA, point Strix at your certificate bundle with
+the standard `SSL_CERT_FILE=/path/to/ca-bundle.pem` — never disable TLS
+verification against a real endpoint.
