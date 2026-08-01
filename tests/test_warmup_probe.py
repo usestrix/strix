@@ -5,9 +5,11 @@ from __future__ import annotations
 import types
 from typing import TYPE_CHECKING, Any, cast
 
+import httpx
 import pytest
 from agents.items import ModelResponse
 from agents.usage import Usage
+from openai import AuthenticationError
 from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputMessage,
@@ -140,6 +142,35 @@ async def test_probe_surfaces_unrelated_error_after_retries(
     assert not isinstance(excinfo.value, ToolCallingUnsupportedError)
     assert "connection reset by peer" in str(excinfo.value)
     assert model.calls == warmup._PROBE_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_auth_error_is_never_a_capability_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A gateway that echoes the request payload back must not look unsupported.
+
+    Some gateways include the whole request (tool schemas and all) in their error
+    body, so a bare substring match on the error text can mistake a 401 for a
+    missing-tool-calling endpoint and send the user off to edit chat templates.
+    """
+    echoed = AuthenticationError(
+        message="Error code: 401 - missing header; request was: tool calling tool_use --jinja",
+        response=httpx.Response(401, request=httpx.Request("POST", "http://gw/v1")),
+        body=None,
+    )
+    model = _FakeModel([echoed, echoed])
+    _patch_model(monkeypatch, model)
+    with pytest.raises(AuthenticationError):
+        await probe_tool_calling("openai/local", _settings(api_base="http://gw/v1"))
+
+
+def test_probe_request_contains_no_capability_markers() -> None:
+    """Guard: our own payload must not contain the words we scan errors for."""
+    tool = warmup._build_probe_tool()
+    payload = f"{tool.name} {tool.description} {tool.params_json_schema}".lower()
+    matched = [m for m in warmup._TOOL_CONFIG_ERROR_MARKERS if m in payload]
+    assert not matched, f"probe payload would self-trigger markers: {matched}"
 
 
 @pytest.mark.asyncio

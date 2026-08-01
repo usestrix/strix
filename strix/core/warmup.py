@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Any
 from agents import FunctionTool
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
+from openai import AuthenticationError, PermissionDeniedError, RateLimitError
 from openai.types.responses import ResponseFunctionToolCall
 
 from strix.config.models import StrixProvider
@@ -35,8 +36,22 @@ _PROBE_TOOL_NAME = "strix_preflight_check"
 _PROBE_MAX_TOKENS = 2048
 _PROBE_ATTEMPTS = 2
 
+# Errors that are never a capability problem, however they happen to be worded.
+# Some gateways echo the whole request payload back in an error body, so a plain
+# substring match alone can be fooled; these take precedence over the markers.
+# Connection/timeout errors are deliberately *not* listed: LiteLLM reports an
+# Ollama HTTP 500 ("tools param requires --jinja flag") as APIConnectionError,
+# and that one is a genuine capability failure.
+_NON_CAPABILITY_ERRORS = (
+    AuthenticationError,
+    PermissionDeniedError,
+    RateLimitError,
+)
+
 # Substrings in a provider error that indicate a tool-calling *capability* problem
 # (as opposed to auth/connectivity), so we can attach the config guidance.
+# Keep the probe's own request payload free of these words: an endpoint that
+# echoes the request in its error body must not look like a capability failure.
 _TOOL_CONFIG_ERROR_MARKERS = (
     "jinja",
     "tool use",
@@ -89,10 +104,7 @@ def _build_probe_tool() -> FunctionTool:
 
     return FunctionTool(
         name=_PROBE_TOOL_NAME,
-        description=(
-            "Connectivity self-check. Call this tool with ok=true to confirm "
-            "tool calling is available."
-        ),
+        description="Endpoint self-check. Invoke with ok=true to confirm the route works.",
         params_json_schema={
             "type": "object",
             "properties": {"ok": {"type": "boolean"}},
@@ -109,6 +121,8 @@ def _response_has_tool_call(output: list[Any]) -> bool:
 
 
 def _looks_like_tool_config_error(exc: BaseException) -> bool:
+    if isinstance(exc, _NON_CAPABILITY_ERRORS):
+        return False
     text = str(exc).lower()
     return any(marker in text for marker in _TOOL_CONFIG_ERROR_MARKERS)
 
