@@ -21,9 +21,10 @@ import time
 import urllib.parse
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-from strix.utils.secret_files import write_secret_text
 
 import requests
+
+from strix.utils.secret_files import write_secret_text
 
 
 if TYPE_CHECKING:

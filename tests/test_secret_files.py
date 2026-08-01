@@ -6,11 +6,15 @@ import json
 import os
 import stat
 import sys
-from pathlib import Path
+from typing import TYPE_CHECKING
 
 import pytest
 
 from strix.utils.secret_files import SECRET_DIR_MODE, SECRET_FILE_MODE, write_secret_text
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 # Windows does not model POSIX permission bits.
@@ -23,7 +27,7 @@ def test_content_round_trips(tmp_path: Path) -> None:
     target = tmp_path / "nested" / "auth.json"
     payload = json.dumps({"token": "s3cret", "refresh": "r3fresh"})
     write_secret_text(target, payload)
-    assert json.loads(target.read_text(encoding="utf-8"))["token"] == "s3cret"
+    assert json.loads(target.read_text(encoding="utf-8"))["token"] == "s3cret"  # noqa: S105
 
 
 @posix_only
