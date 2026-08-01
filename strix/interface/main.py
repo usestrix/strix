@@ -171,8 +171,8 @@ def validate_environment() -> None:
                     error_text.append("• ", style="white")
                     error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
                     error_text.append(
-                        " - Reasoning effort level: none, minimal, low, medium, high, xhigh "
-                        "(default: high)\n",
+                        " - Reasoning effort level: none, minimal, low, medium, high, xhigh, "
+                        "max (default: high)\n",
                         style="white",
                     )
 

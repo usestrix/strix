@@ -36,7 +36,7 @@ Configure Strix using environment variables or a config file.
 </ParamField>
 
 <ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
-  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults to `medium` for quick scan mode.
+  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Defaults to `medium` for quick scan mode. `max` only reaches providers that accept it (e.g. DeepSeek V4, OpenRouter); OpenAI routes cap it at `xhigh`.
 </ParamField>
 
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
