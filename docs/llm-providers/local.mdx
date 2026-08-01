@@ -98,6 +98,7 @@ Strix runs a one-time **preflight tool-calling probe** before each scan on local
 **Ollama**
 - Use a recent Ollama and a model whose template wires tools. Modern Ollama refuses tools (`tools param requires --jinja flag`) if the template lacks tool support.
 - For reasoning models (e.g. qwen3), disable the model's **thinking** mode — thinking left on frequently pushes the tool call into the text `content` instead of the structured `tool_calls` field. Turn it off on the Ollama side (a non-thinking model variant, or `think: false` in the model's parameters / `Modelfile`).
+- Raise **`num_ctx`** to at least 16k–32k. Strix sends a large system prompt plus many tool schemas; at Ollama's small default context the tool definitions are truncated out of the prompt and the model stops emitting valid calls. Note the preflight probe sends a single tiny tool, so it **passes** even when `num_ctx` is too small for a real scan — set this explicitly.
 
 **vLLM**
 - Start with `--enable-auto-tool-choice`, a matching `--tool-call-parser` (`hermes`, `qwen3_xml`, or `llama3_json`), and a matching `--reasoning-parser` for reasoning models.
@@ -105,3 +106,24 @@ Strix runs a one-time **preflight tool-calling probe** before each scan on local
 <Warning>
 Even correctly configured, small models (< ~30B) emit malformed or text-form tool calls far more often than frontier models. Prefer a capable model for reliable agentic behavior.
 </Warning>
+
+### Sampling defaults
+
+Several open-weight families emit malformed tool calls at their stock temperature, so Strix applies known-good sampling defaults automatically:
+
+| Model family | Temperature | Top-p |
+| --- | --- | --- |
+| `qwen` | 0.55 | 1.0 |
+| `kimi-k2` | 0.6 | provider default |
+| `glm-4` | 1.0 | provider default |
+| `minimax-m2` | 1.0 | 0.95 |
+
+Everything else keeps the provider default, and reasoning models (which reject an explicit temperature) are never touched. Override with `STRIX_TEMPERATURE`:
+
+```bash
+export STRIX_TEMPERATURE=0.2
+```
+
+### Invalid tool calls
+
+If a model calls a tool that doesn't exist, gets the name's casing wrong, or emits unparseable arguments, Strix feeds the rejection back to the model with the list of valid tool names and retries the turn (twice) instead of failing the agent.

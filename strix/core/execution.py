@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import litellm
 from agents import RunConfig, Runner
-from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
+from agents.exceptions import AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError
 from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import (
@@ -110,6 +110,25 @@ async def _compact_session(
 _MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
+
+_MAX_TOOL_REPAIRS_PER_CYCLE = 2
+
+
+def _tool_repair_message(exc: ModelBehaviorError, agent: Any) -> str:
+    """Feed a bad tool call back to the model instead of killing the agent.
+
+    Weaker (usually local) models hallucinate tool names, get the casing wrong,
+    or emit unparseable arguments. The SDK raises ``ModelBehaviorError`` for all
+    of these, which would otherwise end the run; naming the mistake and listing
+    the real tools lets the next turn correct itself.
+    """
+    names = sorted(tool.name for tool in getattr(agent, "tools", []) or [])
+    available = ", ".join(names) if names else "the tools listed above"
+    return (
+        f"Your last tool call was rejected: {exc}\n\n"
+        "Call one of the available tools using its exact name (names are "
+        f"case-sensitive) with valid JSON arguments. Available tools: {available}."
+    )
 
 
 def _model_error_status_code(exc: BaseException) -> int | None:
@@ -574,6 +593,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     image_strips = 0
     compactions = 0
     model_retries = 0
+    tool_repairs = 0
     while True:
         stream: Any = None
         pre_run_items: list[Any] = []
@@ -703,6 +723,22 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 await asyncio.sleep(delay)
                 if session is not None:
                     input_data = []
+                continue
+            if isinstance(exc, ModelBehaviorError) and tool_repairs < _MAX_TOOL_REPAIRS_PER_CYCLE:
+                tool_repairs += 1
+                logger.warning(
+                    "agent %s produced an invalid tool call; replaying with a "
+                    "correction (attempt %d/%d): %s",
+                    agent_id,
+                    tool_repairs,
+                    _MAX_TOOL_REPAIRS_PER_CYCLE,
+                    exc,
+                )
+                if session is not None:
+                    await _salvage_stream_to_session(session, pre_run_items, stream, agent_id)
+                input_data = [
+                    cast("Any", {"role": "user", "content": _tool_repair_message(exc, agent)})
+                ]
                 continue
             if session is not None:
                 await _salvage_stream_to_session(session, pre_run_items, stream, agent_id)

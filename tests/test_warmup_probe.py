@@ -9,7 +9,7 @@ import httpx
 import pytest
 from agents.items import ModelResponse
 from agents.usage import Usage
-from openai import AuthenticationError
+from openai import APIStatusError, AuthenticationError
 from openai.types.responses import (
     ResponseFunctionToolCall,
     ResponseOutputMessage,
@@ -198,3 +198,35 @@ async def test_probe_skipped_by_setting(monkeypatch: pytest.MonkeyPatch) -> None
     _patch_model(monkeypatch, model)
     await probe_tool_calling("ollama/qwen3:8b", _settings(skip=True))
     assert model.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_gateway_html_401_is_not_a_capability_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A proxy's HTML 401 body must be classified by status, not by its words."""
+    blocked = APIStatusError(
+        message="<html><body>denied: tool calling --jinja</body></html>",
+        response=httpx.Response(401, request=httpx.Request("POST", "http://gw/v1")),
+        body=None,
+    )
+    model = _FakeModel([blocked, blocked])
+    _patch_model(monkeypatch, model)
+    with pytest.raises(APIStatusError):
+        await probe_tool_calling("openai/local", _settings(api_base="http://gw/v1"))
+
+
+@pytest.mark.asyncio
+async def test_server_500_mentioning_jinja_is_still_a_capability_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Status gating must not swallow the genuine Ollama capability failure."""
+    broken = APIStatusError(
+        message="500: tools param requires --jinja flag",
+        response=httpx.Response(500, request=httpx.Request("POST", "http://localhost:11434")),
+        body=None,
+    )
+    model = _FakeModel([broken])
+    _patch_model(monkeypatch, model)
+    with pytest.raises(ToolCallingUnsupportedError):
+        await probe_tool_calling("ollama/llama3.2:3b", _settings())

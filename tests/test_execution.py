@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from agents.exceptions import ModelBehaviorError
 from agents.items import MessageOutputItem
 from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
@@ -785,3 +787,95 @@ async def test_run_agent_loop_seeds_identity_before_first_cycle(
     stored = await session.get_items()
     assert any("recon" in str(cast("dict[str, Any]", i).get("content", "")) for i in stored)
     session.close()
+
+
+class _ToolErrorStream:
+    """Stream whose run loop failed with a bad tool call (SDK ModelBehaviorError)."""
+
+    def __init__(self, exc: BaseException | None) -> None:
+        self.run_loop_exception = exc
+        self.new_items: list[Any] = []
+
+    async def stream_events(self) -> Any:
+        for event in _NO_STREAM_EVENTS:
+            yield event
+
+    def cancel(self, mode: str = "immediate") -> None:  # noqa: ARG002
+        return
+
+
+def _agent_with_tools(*names: str) -> Any:
+    return SimpleNamespace(tools=[SimpleNamespace(name=name) for name in names])
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_call_is_repaired_instead_of_failing_the_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A hallucinated tool name feeds the error back and replays the turn."""
+    streams = [
+        _ToolErrorStream(ModelBehaviorError("Tool Exec_Command not found in agent strix")),
+        _ToolErrorStream(None),
+    ]
+    seen_inputs: list[Any] = []
+
+    def run_streamed(_agent: Any, **kwargs: Any) -> Any:
+        seen_inputs.append(kwargs["input"])
+        return streams.pop(0)
+
+    monkeypatch.setattr("strix.core.execution.Runner.run_streamed", run_streamed)
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    result = await execution._run_cycle(
+        _agent_with_tools("exec_command", "finish_scan"),
+        coordinator,
+        "root",
+        input_data="task",
+        run_config=MagicMock(),
+        context={},
+        max_turns=5,
+        session=None,
+        interactive=True,
+        event_sink=None,
+        hooks=None,
+    )
+
+    assert result is not None
+    assert coordinator.statuses["root"] != "failed"
+    correction = seen_inputs[1][0]["content"]
+    assert "Exec_Command" in correction
+    assert "exec_command, finish_scan" in correction
+
+
+@pytest.mark.asyncio
+async def test_invalid_tool_call_repair_is_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A model that never recovers still terminates instead of looping forever."""
+    attempts = 0
+
+    def run_streamed(_agent: Any, **_kwargs: Any) -> Any:
+        nonlocal attempts
+        attempts += 1
+        return _ToolErrorStream(ModelBehaviorError("invalid JSON arguments"))
+
+    monkeypatch.setattr("strix.core.execution.Runner.run_streamed", run_streamed)
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    result = await execution._run_cycle(
+        _agent_with_tools("exec_command"),
+        coordinator,
+        "root",
+        input_data="task",
+        run_config=MagicMock(),
+        context={},
+        max_turns=5,
+        session=None,
+        interactive=True,
+        event_sink=None,
+        hooks=None,
+    )
+
+    assert result is None
+    assert attempts == execution._MAX_TOOL_REPAIRS_PER_CYCLE + 1
+    assert coordinator.statuses["root"] == "failed"

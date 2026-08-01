@@ -48,6 +48,7 @@ def _patch_engine_scaffold(
             reasoning_effort="high",
             force_required_tool_choice=False,
             skip_tool_call_probe=False,
+            temperature=None,
             timeout=300,
             prompt_cache=True,
             extra_headers=None,

@@ -20,7 +20,12 @@ from typing import TYPE_CHECKING, Any
 from agents import FunctionTool
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
-from openai import AuthenticationError, PermissionDeniedError, RateLimitError
+from openai import (
+    APIStatusError,
+    AuthenticationError,
+    PermissionDeniedError,
+    RateLimitError,
+)
 from openai.types.responses import ResponseFunctionToolCall
 
 from strix.config.models import StrixProvider
@@ -48,6 +53,10 @@ _NON_CAPABILITY_ERRORS = (
     RateLimitError,
 )
 
+# Same idea, by status: a gateway or proxy in front of the endpoint can reject a
+# request with a bare HTML page that never maps to a typed SDK error.
+_NON_CAPABILITY_STATUS = frozenset({401, 402, 403, 407, 429})
+
 # Substrings in a provider error that indicate a tool-calling *capability* problem
 # (as opposed to auth/connectivity), so we can attach the config guidance.
 # Keep the probe's own request payload free of these words: an endpoint that
@@ -74,7 +83,8 @@ _GUIDANCE = (
     "recent build. Disable/align reasoning for thinking models.\n"
     "  - Ollama: use a recent Ollama and a model whose template wires tools; for "
     "reasoning models (e.g. qwen3) disable thinking (STRIX_REASONING_EFFORT=none, "
-    "which sends think=false).\n"
+    "which sends think=false). Raise num_ctx to at least 16k so the tool "
+    "schemas are not truncated out of the prompt.\n"
     "  - vLLM: start with --enable-auto-tool-choice, a matching --tool-call-parser "
     "(hermes / qwen3_xml / llama3_json), and a matching --reasoning-parser.\n\n"
     "See the Strix docs (Local & self-hosted models) for the full matrix. "
@@ -122,6 +132,9 @@ def _response_has_tool_call(output: list[Any]) -> bool:
 
 def _looks_like_tool_config_error(exc: BaseException) -> bool:
     if isinstance(exc, _NON_CAPABILITY_ERRORS):
+        return False
+    status = exc.status_code if isinstance(exc, APIStatusError) else None
+    if status in _NON_CAPABILITY_STATUS:
         return False
     text = str(exc).lower()
     return any(marker in text for marker in _TOOL_CONFIG_ERROR_MARKERS)

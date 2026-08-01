@@ -262,6 +262,7 @@ async def run_strix_scan(
             request_timeout=settings.llm.timeout,
             prompt_cache=settings.llm.prompt_cache,
             extra_headers=settings.llm.extra_headers,
+            temperature=settings.llm.temperature,
         )
         run_config = RunConfig(
             model=resolved_model,

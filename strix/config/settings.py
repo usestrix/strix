@@ -56,6 +56,10 @@ class LlmSettings(BaseSettings):
         default=False,
         alias="LLM_DISABLE_STREAMING",
     )
+    temperature: float | None = Field(
+        default=None,
+        alias="STRIX_TEMPERATURE",
+    )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 
 

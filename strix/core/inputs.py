@@ -36,6 +36,29 @@ def _accepts_required_tool_choice(model_name: str | None) -> bool:
     return name.startswith("openai/") or is_known_openai_bare_model(name)
 
 
+# Sampling defaults for model families that emit malformed or plain-text tool
+# calls at their stock temperature. Only families with a known-good published
+# value are listed; everything else keeps the provider default (``None``), so
+# reasoning models that reject an explicit temperature are untouched.
+_SAMPLING_DEFAULTS: tuple[tuple[str, float, float | None], ...] = (
+    ("qwen", 0.55, 1.0),
+    ("kimi-k2", 0.6, None),
+    ("glm-4", 1.0, None),
+    ("minimax-m2", 1.0, 0.95),
+)
+
+
+def _sampling_defaults(model_name: str) -> tuple[float, float | None] | None:
+    """Family-specific ``(temperature, top_p)``, or ``None`` to leave it alone."""
+    name = (model_name or "").strip().lower()
+    if is_claude_model(name) or model_supports_reasoning(name):
+        return None
+    for marker, temperature, top_p in _SAMPLING_DEFAULTS:
+        if marker in name:
+            return temperature, top_p
+    return None
+
+
 def build_root_task(scan_config: dict[str, Any]) -> str:
     targets = scan_config.get("targets", []) or []
     diff_scope = scan_config.get("diff_scope") or {}
@@ -133,6 +156,7 @@ def make_model_settings(
     request_timeout: float | None = None,
     prompt_cache: bool = True,
     extra_headers: dict[str, str] | None = None,
+    temperature: float | None = None,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
@@ -151,6 +175,13 @@ def make_model_settings(
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
+
+    if temperature is not None:
+        model_settings = model_settings.resolve(ModelSettings(temperature=temperature))
+    elif (defaults := _sampling_defaults(model_name)) is not None:
+        model_settings = model_settings.resolve(
+            ModelSettings(temperature=defaults[0], top_p=defaults[1]),
+        )
 
     cache_extra_args = _prompt_cache_extra_args(model_name) if prompt_cache else None
     if cache_extra_args:
