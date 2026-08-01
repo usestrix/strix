@@ -388,6 +388,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
                     request_timeout=llm.timeout,
                     prompt_cache=False,
                     extra_headers=llm.extra_headers,
+                    with_tools=False,
                 ),
                 tools=[],
                 output_schema=None,
@@ -419,6 +420,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
                 request_timeout=llm.timeout,
                 prompt_cache=False,
                 extra_headers=settings.dedupe.extra_headers,
+                with_tools=False,
             )
             if deduper_extra:
                 merged = {**(deduper_settings.extra_args or {}), **deduper_extra}
