@@ -13,7 +13,7 @@ class ThinkRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "thinking-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         thought = args.get("thought", "")
 

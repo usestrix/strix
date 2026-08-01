@@ -41,7 +41,7 @@ class ListRequestsRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "proxy-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "running")
@@ -118,7 +118,7 @@ class ViewRequestRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "proxy-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "running")
@@ -205,7 +205,7 @@ class RepeatRequestRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "proxy-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "running")
@@ -303,7 +303,7 @@ class ListSitemapRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "proxy-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "running")
@@ -387,7 +387,7 @@ class ViewSitemapEntryRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "proxy-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "running")
@@ -452,7 +452,7 @@ class ScopeRulesRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "proxy-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result")
         status = tool_data.get("status", "running")

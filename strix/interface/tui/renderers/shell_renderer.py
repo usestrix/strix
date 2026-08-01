@@ -207,7 +207,7 @@ class ExecCommandRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "terminal-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
         result = tool_data.get("result")
@@ -243,7 +243,7 @@ class WriteStdinRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "terminal-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         args = tool_data.get("args", {})
         status = tool_data.get("status", "unknown")
         result = tool_data.get("result")

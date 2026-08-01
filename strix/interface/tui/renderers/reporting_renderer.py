@@ -87,7 +87,7 @@ class CreateVulnerabilityReportRenderer(BaseToolRenderer):
         return "#6b7280"
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result", {})
 
@@ -319,7 +319,7 @@ class CreateDependencyReportRenderer(BaseToolRenderer):
         return Static(padded, classes=cls.get_css_classes("failed"))
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
+    def _build(cls, tool_data: dict[str, Any]) -> Static:  # noqa: PLR0912, PLR0915
         args = tool_data.get("args", {})
         result = tool_data.get("result", {})
 
@@ -460,7 +460,7 @@ class ListReportsRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "reporting-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = _coerce_dict(tool_data.get("result"))
 
         text = Text()
@@ -512,7 +512,7 @@ class GetReportRenderer(BaseToolRenderer):
     css_classes: ClassVar[list[str]] = ["tool-call", "reporting-tool"]
 
     @classmethod
-    def render(cls, tool_data: dict[str, Any]) -> Static:
+    def _build(cls, tool_data: dict[str, Any]) -> Static:
         result = _coerce_dict(tool_data.get("result"))
 
         text = Text()
