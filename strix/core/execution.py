@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import litellm
 from agents import RunConfig, Runner
-from agents.exceptions import AgentsException, MaxTurnsExceeded, ModelBehaviorError, UserError
+from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
 from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import (
@@ -111,25 +111,6 @@ _MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
 
-_MAX_TOOL_REPAIRS_PER_CYCLE = 2
-
-
-def _tool_repair_message(exc: ModelBehaviorError, agent: Any) -> str:
-    """Feed a bad tool call back to the model instead of killing the agent.
-
-    Weaker (usually local) models hallucinate tool names, get the casing wrong,
-    or emit unparseable arguments. The SDK raises ``ModelBehaviorError`` for all
-    of these, which would otherwise end the run; naming the mistake and listing
-    the real tools lets the next turn correct itself.
-    """
-    names = sorted(tool.name for tool in getattr(agent, "tools", []) or [])
-    available = ", ".join(names) if names else "the tools listed above"
-    return (
-        f"Your last tool call was rejected: {exc}\n\n"
-        "Call one of the available tools using its exact name (names are "
-        f"case-sensitive) with valid JSON arguments. Available tools: {available}."
-    )
-
 
 def _model_error_status_code(exc: BaseException) -> int | None:
     code = getattr(exc, "status_code", None)
@@ -227,22 +208,8 @@ async def run_agent_loop(
         await coordinator.send(agent_id, _reserve_notice())
 
     if not (start_parked and interactive):
-        if interactive:
-            with contextlib.suppress(BudgetPausedError):
-                result = await _run_cycle_parked(
-                    agent,
-                    coordinator,
-                    agent_id,
-                    input_data=first_cycle_input,
-                    run_config=run_config,
-                    context=context,
-                    max_turns=max_turns,
-                    session=session,
-                    event_sink=event_sink,
-                    hooks=hooks,
-                )
-        else:
-            result = await _run_noninteractive_until_lifecycle(
+        with contextlib.suppress(BudgetPausedError):
+            result = await _run_until_lifecycle(
                 agent,
                 coordinator,
                 agent_id,
@@ -251,6 +218,7 @@ async def run_agent_loop(
                 context=context,
                 max_turns=max_turns,
                 session=session,
+                interactive=interactive,
                 event_sink=event_sink,
                 hooks=hooks,
             )
@@ -259,7 +227,7 @@ async def run_agent_loop(
         return result
 
     while True:
-        timeout = await _plain_waiting_timeout(coordinator, agent_id, context)
+        timeout = await _plain_waiting_timeout(coordinator, agent_id)
         try:
             woke = await coordinator.wait_for_message(agent_id, timeout=timeout)
         except asyncio.CancelledError:
@@ -273,7 +241,23 @@ async def run_agent_loop(
             await coordinator.set_status(agent_id, "stopped")
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
-        if not woke:
+        if woke:
+            # Real input is real progress, so the nudge budget starts over. A bare
+            # auto-resume is not: it must not hand a wedged agent a fresh budget.
+            await coordinator.reset_recovery(agent_id)
+            await coordinator.reset_idle_resumes(agent_id)
+        else:
+            idle_resumes = await coordinator.record_idle_resume(agent_id)
+            if idle_resumes >= _MAX_IDLE_AUTO_RESUMES:
+                logger.warning(
+                    "agent %s auto-resumed %d times without hearing from anyone; "
+                    "leaving it parked until a real message arrives",
+                    agent_id,
+                    idle_resumes,
+                )
+                await coordinator.park_waiting(agent_id, wait_kind="stalled")
+                await _notify_parent_on_stall(coordinator, agent_id)
+                continue
             logger.info("agent %s reached its waiting timeout; auto-resuming", agent_id)
             await coordinator.send(
                 agent_id,
@@ -287,15 +271,16 @@ async def run_agent_loop(
 
         await coordinator.consume_pending(agent_id)
         with contextlib.suppress(BudgetPausedError):
-            result = await _run_cycle_parked(
+            result = await _run_until_lifecycle(
                 agent,
                 coordinator,
                 agent_id,
-                input_data=[],
+                initial_input=[],
                 run_config=run_config,
                 context=context,
                 max_turns=max_turns,
                 session=session,
+                interactive=True,
                 event_sink=event_sink,
                 hooks=hooks,
             )
@@ -446,7 +431,10 @@ async def respawn_subagents(
                 await coordinator.set_status(child_id, "crashed")
 
 
-async def _run_noninteractive_until_lifecycle(
+_INTERACTIVE_TOOL_RECOVERY_LIMIT = 3
+
+
+async def _run_until_lifecycle(
     agent: Any,
     coordinator: AgentCoordinator,
     agent_id: str,
@@ -456,14 +444,20 @@ async def _run_noninteractive_until_lifecycle(
     context: dict[str, Any],
     max_turns: int,
     session: Session | None,
+    interactive: bool,
     event_sink: StreamEventSink | None,
     hooks: RunHooks[dict[str, Any]] | None,
 ) -> RunResultBase | None:
-    """Non-chat mode keeps running until finish_scan / agent_finish settles status."""
+    """Drive an agent until an explicit lifecycle tool settles its status.
+
+    A turn that ends without ``finish_scan``, ``agent_finish``,
+    ``respond_to_user``, or ``wait_for_agents`` leaves the agent ``running``:
+    plain text never terminates a run and never yields to the user. Such a turn
+    is nudged back into a tool call, bounded by a recovery limit.
+    """
     result: RunResultBase | None = None
     input_data: Any = initial_input
-    invalid_final_outputs = 0
-    invalid_final_output_limit = max(1, max_turns)
+    recovery_limit = _INTERACTIVE_TOOL_RECOVERY_LIMIT if interactive else max(1, max_turns)
 
     while True:
         if coordinator.budget_stopped:
@@ -474,69 +468,125 @@ async def _run_noninteractive_until_lifecycle(
             await coordinator.set_status(agent_id, "stopped")
             raise SubagentBudgetReservedError("scan reached the sub-agent budget reserve")
 
-        result = await _run_cycle(
-            agent,
-            coordinator,
-            agent_id,
-            input_data=input_data,
-            run_config=run_config,
-            context=context,
-            max_turns=max_turns,
-            session=session,
-            interactive=False,
-            event_sink=event_sink,
-            hooks=hooks,
-        )
+        if interactive:
+            result = await _run_cycle_parked(
+                agent,
+                coordinator,
+                agent_id,
+                input_data=input_data,
+                run_config=run_config,
+                context=context,
+                max_turns=max_turns,
+                session=session,
+                event_sink=event_sink,
+                hooks=hooks,
+            )
+        else:
+            result = await _run_cycle(
+                agent,
+                coordinator,
+                agent_id,
+                input_data=input_data,
+                run_config=run_config,
+                context=context,
+                max_turns=max_turns,
+                session=session,
+                interactive=False,
+                event_sink=event_sink,
+                hooks=hooks,
+            )
 
         status = await _agent_status(coordinator, agent_id)
         if status != "running":
+            await coordinator.reset_recovery(agent_id)
             return result
 
-        invalid_final_outputs += 1
+        recoveries = await coordinator.record_recovery(agent_id)
         logger.warning(
-            "agent %s produced non-lifecycle final output in non-interactive mode; "
+            "agent %s ended a turn without a lifecycle tool call (interactive=%s); "
             "forcing tool continuation (%d/%d): %s",
             agent_id,
-            invalid_final_outputs,
-            invalid_final_output_limit,
+            interactive,
+            recoveries,
+            recovery_limit,
             _final_output_preview(result),
         )
 
-        if invalid_final_outputs >= invalid_final_output_limit:
-            await coordinator.set_status(agent_id, "crashed")
-            await _notify_parent_on_terminal(coordinator, agent_id, "crashed")
-            raise MaxTurnsExceeded(
-                "Agent exhausted non-interactive recovery attempts without calling "
-                "finish_scan or agent_finish."
-            )
+        if recoveries >= recovery_limit:
+            return await _exhausted_recovery(coordinator, agent_id, result, interactive=interactive)
 
-        input_data = await _append_noninteractive_tool_required_message(
+        input_data = await _append_tool_required_message(
             session=session,
             context=context,
-            attempt=invalid_final_outputs,
-            limit=invalid_final_output_limit,
+            attempt=recoveries,
+            limit=recovery_limit,
+            interactive=interactive,
         )
 
 
-_WAITING_AUTO_RESUME_TIMEOUT_S = 600.0
+async def _exhausted_recovery(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+    result: RunResultBase | None,
+    *,
+    interactive: bool,
+) -> RunResultBase | None:
+    """Settle an agent that never recovered into a tool call.
+
+    Interactive runs park instead of dying: a human is attached and can message
+    any agent, so the scan stays resumable. Autonomous runs have nobody to
+    resume them, so they fail loudly.
+    """
+    if not interactive:
+        await coordinator.set_status(agent_id, "crashed")
+        await _notify_parent_on_terminal(coordinator, agent_id, "crashed")
+        raise MaxTurnsExceeded(
+            "Agent exhausted recovery attempts without calling finish_scan or agent_finish."
+        )
+
+    logger.warning(
+        "agent %s exhausted tool-call recovery attempts; parking until a message arrives",
+        agent_id,
+    )
+    await coordinator.park_waiting(agent_id, wait_kind="stalled")
+    # A parked child owes its parent a completion report it can no longer send. The
+    # parent is an agent, not a watching human, so nothing else tells it to stop
+    # waiting and it burns its full timeout on a message that is never coming.
+    await _notify_parent_on_stall(coordinator, agent_id)
+    return result
+
+
+_WAITING_AUTO_RESUME_TIMEOUT_S = 300.0
+
+# An agent that parks again after every auto-resume makes no progress, so stop
+# spending a model turn per timeout and leave it parked for a real message.
+_MAX_IDLE_AUTO_RESUMES = 3
 
 
 async def _plain_waiting_timeout(
     coordinator: AgentCoordinator,
     agent_id: str,
-    context: dict[str, Any],
 ) -> float | None:
-    """Auto-resume timeout for a plainly-waiting subagent; None waits forever."""
-    if context.get("parent_id") is None:
-        return None
+    """Auto-resume timeout for a parked agent; None waits until a message arrives.
+
+    Driven by what the agent is waiting on, not by where it sits in the graph:
+    the user can message any agent, so an agent awaiting a human parks
+    indefinitely whether or not it is the root. Only an agent awaiting other
+    agents is re-checked on a timer, and only until it has spent its idle
+    budget re-parking without hearing anything.
+    """
     async with coordinator._lock:
         status = coordinator.statuses.get(agent_id)
         has_error = agent_id in coordinator.errors
         runtime = coordinator.runtimes.get(agent_id)
         gated = runtime.user_wake_required if runtime is not None else False
-    if status == "waiting" and not has_error and not gated:
-        return _WAITING_AUTO_RESUME_TIMEOUT_S
-    return None
+        wait_kind = coordinator.wait_kinds.get(agent_id)
+        idle_resumes = coordinator.idle_resume_counts.get(agent_id, 0)
+    if status != "waiting" or has_error or gated:
+        return None
+    if wait_kind != "agents" or idle_resumes >= _MAX_IDLE_AUTO_RESUMES:
+        return None
+    return _WAITING_AUTO_RESUME_TIMEOUT_S
 
 
 async def _run_cycle_parked(
@@ -593,7 +643,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     image_strips = 0
     compactions = 0
     model_retries = 0
-    tool_repairs = 0
     while True:
         stream: Any = None
         pre_run_items: list[Any] = []
@@ -724,22 +773,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 if session is not None:
                     input_data = []
                 continue
-            if isinstance(exc, ModelBehaviorError) and tool_repairs < _MAX_TOOL_REPAIRS_PER_CYCLE:
-                tool_repairs += 1
-                logger.warning(
-                    "agent %s produced an invalid tool call; replaying with a "
-                    "correction (attempt %d/%d): %s",
-                    agent_id,
-                    tool_repairs,
-                    _MAX_TOOL_REPAIRS_PER_CYCLE,
-                    exc,
-                )
-                if session is not None:
-                    await _salvage_stream_to_session(session, pre_run_items, stream, agent_id)
-                input_data = [
-                    cast("Any", {"role": "user", "content": _tool_repair_message(exc, agent)})
-                ]
-                continue
             if session is not None:
                 await _salvage_stream_to_session(session, pre_run_items, stream, agent_id)
             if isinstance(exc, ProviderRefusalError):
@@ -760,25 +793,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             await _notify_parent_on_terminal(coordinator, agent_id, status)
             return None
         else:
-            await _settle_run_result(coordinator, agent_id, interactive)
             return cast("RunResultBase | None", stream)
-
-
-async def _settle_run_result(
-    coordinator: AgentCoordinator,
-    agent_id: str,
-    interactive: bool,
-) -> None:
-    async with coordinator._lock:
-        current_status = coordinator.statuses.get(agent_id)
-
-    if current_status != "running":
-        return
-
-    if not interactive:
-        return
-
-    await coordinator.set_status(agent_id, "waiting")
 
 
 async def _agent_status(coordinator: AgentCoordinator, agent_id: str) -> Status | None:
@@ -796,23 +811,37 @@ def _final_output_preview(result: RunResultBase | None) -> str:
     return text[:300]
 
 
-async def _append_noninteractive_tool_required_message(
+async def _append_tool_required_message(
     *,
     session: Session | None,
     context: dict[str, Any],
     attempt: int,
     limit: int,
+    interactive: bool,
 ) -> list[dict[str, str]]:
     finish_tool = "finish_scan" if context.get("parent_id") is None else "agent_finish"
-    message = (
-        "Your previous response ended the autonomous Strix run without a lifecycle tool call. "
-        "That is invalid in non-interactive mode; plain text final answers are ignored. "
-        "Continue immediately and call exactly one tool. "
-        f"If your work is complete, call {finish_tool}. "
-        "If you are blocked waiting for another agent, call wait_for_message. "
-        "Otherwise use the appropriate execution or planning tool. "
-        f"This is recovery attempt {attempt}/{limit}."
-    )
+    if interactive:
+        message = (
+            "Your previous message ended a turn without a tool call. Plain text never ends "
+            "execution and never hands control to the user: it is shown to the user, and the "
+            "run continues. Continue immediately and call exactly one tool. "
+            "If you have something to tell the user and nothing to do until they reply, "
+            "call respond_to_user. "
+            "If you are blocked waiting for another agent, call wait_for_agents. "
+            f"If the whole engagement is complete, call {finish_tool}. "
+            "Otherwise use the appropriate execution or planning tool. "
+            f"This is recovery attempt {attempt}/{limit}."
+        )
+    else:
+        message = (
+            "Your previous response ended the autonomous Strix run without a lifecycle tool "
+            "call. That is invalid in non-interactive mode; plain text final answers are "
+            "ignored. Continue immediately and call exactly one tool. "
+            f"If your work is complete, call {finish_tool}. "
+            "If you are blocked waiting for another agent, call wait_for_agents. "
+            "Otherwise use the appropriate execution or planning tool. "
+            f"This is recovery attempt {attempt}/{limit}."
+        )
     item = {"role": "user", "content": message}
     if session is None:
         return [item]
@@ -837,6 +866,36 @@ _TERMINAL_NOTICE = {
         "on this child; account for its capped subtask and continue."
     ),
 }
+
+
+_STALL_NOTICE = (
+    "[Agent stalled] {name} ({agent_id}) kept ending turns without a tool call and is "
+    "parked until it receives a message. It will not send a completion report on its "
+    "own: either message it with a concrete next step to unblock it, or stop waiting on "
+    "it and account for its unfinished subtask."
+)
+
+
+async def _notify_parent_on_stall(
+    coordinator: AgentCoordinator,
+    agent_id: str,
+) -> None:
+    """Tell the parent that a child parked mid-task, so it stops waiting blindly."""
+    async with coordinator._lock:
+        parent = coordinator.parent_of.get(agent_id)
+        name = coordinator.names.get(agent_id, agent_id)
+    if parent is None:
+        return
+    await coordinator.send(
+        parent,
+        {
+            "from": agent_id,
+            "type": "stalled",
+            "priority": "high",
+            "content": _STALL_NOTICE.format(name=name, agent_id=agent_id),
+        },
+        interrupt=False,
+    )
 
 
 async def _notify_parent_on_terminal(

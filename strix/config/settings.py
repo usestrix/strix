@@ -44,10 +44,6 @@ class LlmSettings(BaseSettings):
         default=False,
         alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
     )
-    skip_tool_call_probe: bool = Field(
-        default=False,
-        alias="STRIX_SKIP_TOOL_CALL_PROBE",
-    )
     prompt_cache: bool = Field(
         default=True,
         alias="STRIX_PROMPT_CACHE",
@@ -55,10 +51,6 @@ class LlmSettings(BaseSettings):
     disable_streaming: bool = Field(
         default=False,
         alias="LLM_DISABLE_STREAMING",
-    )
-    temperature: float | None = Field(
-        default=None,
-        alias="STRIX_TEMPERATURE",
     )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 

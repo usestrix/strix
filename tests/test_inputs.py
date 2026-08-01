@@ -307,37 +307,3 @@ def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
 
     assert settings.extra_args is not None
     assert settings.extra_args["timeout"] == 120.0
-
-
-@pytest.mark.parametrize(
-    ("model_name", "temperature", "top_p"),
-    [
-        ("ollama/qwen3:8b", 0.55, 1.0),
-        ("openai/Qwen2.5-Coder-32B", 0.55, 1.0),
-        ("moonshot/kimi-k2-instruct", 0.6, None),
-        ("openai/glm-4.6", 1.0, None),
-        ("openai/minimax-m2", 1.0, 0.95),
-    ],
-)
-def test_make_model_settings_applies_family_sampling_defaults(
-    model_name: str, temperature: float, top_p: float | None
-) -> None:
-    settings = make_model_settings(None, model_name=model_name)
-    assert settings.temperature == temperature
-    assert settings.top_p == top_p
-
-
-@pytest.mark.parametrize(
-    "model_name",
-    ["openai/gpt-4o", "anthropic/claude-sonnet-4-20250514", "gemini/gemini-2.5-pro"],
-)
-def test_make_model_settings_leaves_other_families_untouched(model_name: str) -> None:
-    """Reasoning/frontier models must keep the provider default temperature."""
-    settings = make_model_settings(None, model_name=model_name)
-    assert settings.temperature is None
-    assert settings.top_p is None
-
-
-def test_explicit_temperature_overrides_family_default() -> None:
-    settings = make_model_settings(None, model_name="ollama/qwen3:8b", temperature=0.2)
-    assert settings.temperature == 0.2

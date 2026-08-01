@@ -24,6 +24,11 @@ logger = logging.getLogger(__name__)
 
 Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed", "budget_paused"]
 
+# Why an agent parked. The user can message any agent, so this - not the agent's
+# position in the tree - decides whether waiting is bounded: only an agent waiting
+# on other agents is re-checked on a timer.
+WaitKind = Literal["user", "agents", "stalled"]
+
 
 @dataclass(slots=True)
 class AgentRuntime:
@@ -46,6 +51,9 @@ class AgentCoordinator:
         self.metadata: dict[str, dict[str, Any]] = {}
         self.pending_counts: dict[str, int] = {}
         self.errors: dict[str, str] = {}
+        self.recovery_counts: dict[str, int] = {}
+        self.idle_resume_counts: dict[str, int] = {}
+        self.wait_kinds: dict[str, WaitKind] = {}
         self.runtimes: dict[str, AgentRuntime] = {}
         self._lock = asyncio.Lock()
         self._snapshot_path: Path | None = None
@@ -181,11 +189,57 @@ class AgentCoordinator:
             if agent_id in self.statuses:
                 self.statuses[agent_id] = "running"
                 self.errors.pop(agent_id, None)
+                self.wait_kinds.pop(agent_id, None)
                 self.runtimes.setdefault(agent_id, AgentRuntime()).user_wake_required = False
         await self._maybe_snapshot()
 
-    async def park_waiting(self, agent_id: str) -> None:
+    async def park_waiting(self, agent_id: str, *, wait_kind: WaitKind) -> None:
+        """Park an agent, recording what it is waiting on so the driver can time it."""
+        async with self._lock:
+            if agent_id in self.statuses:
+                self.wait_kinds[agent_id] = wait_kind
         await self.set_status(agent_id, "waiting")
+
+    async def wait_kind_of(self, agent_id: str) -> WaitKind | None:
+        async with self._lock:
+            return self.wait_kinds.get(agent_id)
+
+    async def record_recovery(self, agent_id: str) -> int:
+        """Count a turn that ended without a lifecycle tool call; return the new total.
+
+        Persisted so a resumed agent cannot earn a fresh nudge budget on every
+        auto-resume and loop forever.
+        """
+        async with self._lock:
+            count = self.recovery_counts.get(agent_id, 0) + 1
+            self.recovery_counts[agent_id] = count
+        await self._maybe_snapshot()
+        return count
+
+    async def reset_recovery(self, agent_id: str) -> None:
+        """Clear the nudge budget after real progress (new message or a lifecycle tool)."""
+        async with self._lock:
+            if self.recovery_counts.pop(agent_id, None) is None:
+                return
+        await self._maybe_snapshot()
+
+    async def record_idle_resume(self, agent_id: str) -> int:
+        """Count an auto-resume that no message triggered; return the new total.
+
+        An agent that parks again after every auto-resume would otherwise burn a
+        model turn per timeout for the rest of the scan.
+        """
+        async with self._lock:
+            count = self.idle_resume_counts.get(agent_id, 0) + 1
+            self.idle_resume_counts[agent_id] = count
+        await self._maybe_snapshot()
+        return count
+
+    async def reset_idle_resumes(self, agent_id: str) -> None:
+        async with self._lock:
+            if self.idle_resume_counts.pop(agent_id, None) is None:
+                return
+        await self._maybe_snapshot()
 
     async def set_status(
         self, agent_id: str, status: Status | str, *, error: str | None = None
@@ -397,6 +451,9 @@ class AgentCoordinator:
                 "names": dict(self.names),
                 "metadata": {aid: dict(md) for aid, md in self.metadata.items()},
                 "pending_counts": dict(self.pending_counts),
+                "recovery_counts": dict(self.recovery_counts),
+                "idle_resume_counts": dict(self.idle_resume_counts),
+                "wait_kinds": dict(self.wait_kinds),
                 "mailboxes": {
                     aid: [dict(m) for m in runtime.mailbox]
                     for aid, runtime in self.runtimes.items()
@@ -416,6 +473,9 @@ class AgentCoordinator:
             self.metadata = {aid: dict(md) for aid, md in snap.get("metadata", {}).items()}
             self.pending_counts = dict(snap.get("pending_counts", {}))
             self.errors = dict(snap.get("errors", {}))
+            self.recovery_counts = dict(snap.get("recovery_counts", {}))
+            self.idle_resume_counts = dict(snap.get("idle_resume_counts", {}))
+            self.wait_kinds = dict(snap.get("wait_kinds", {}))
             mailboxes = snap.get("mailboxes", {})
             if isinstance(mailboxes, dict):
                 for aid, msgs in mailboxes.items():
