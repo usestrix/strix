@@ -448,30 +448,17 @@ PROXY & INTERCEPTION:
 - HTTPQL filters (for `list_requests`): quote string values, leave integers unquoted (`resp.code.eq:200`, not `"200"`); combine terms with `AND`/`OR` (there is no `NOT` — use the negated operator `ne`/`ncont`/`nregex`). Numeric fields (`resp.code`, `req.port`) use `eq`/`ne`/`gt`/`gte`/`lt`/`lte`; text fields (`req.host`, `req.path`, `req.method`, `req.raw`) use `cont`/`ncont`/`eq`/`regex`. Example: `resp.code.gte:200 AND resp.code.lt:300 AND req.host.cont:"api"`.
 
 CAIDO PROXY ERROR PAGES — NOT RESPONSES FROM THE TARGET:
-Every process in the sandbox is proxied through Caido (`http_proxy`/`https_proxy`), so when a
-target cannot be reached the *proxy* answers instead of the server. Caido replies with a large
-(~9KB) branded HTML page under a 502 (or 500) status, which curl, python, wget, and the browser
-all print as if it were page content. It is not: the request never reached a server, and nothing
-in that page describes the target.
-- Recognize it by `<title>Caido</title>` plus a `<div class="c-title">` heading of
-  "Encountered an error when communicating with the destination server" or "Proxy encountered an
-  unhandled error", with the real cause in `<pre class="c-details">`. The page is mostly an inline
-  SVG logo and CSS — dumping it wastes your context, so extract just the cause with
-  `curl -s ... | grep -A8 'c-title"'` instead of printing the body whole.
-- Read the `c-details` cause; it tells you exactly what to fix:
-  - "Failed to query DNS" / "failed to lookup address information" — the hostname does not
-    resolve. Typo, a host that does not exist, or an internal-only name. Confirm with
-    `dig +short <host>` and correct or drop the target; do not keep re-requesting it.
-  - "Failed to connect ... Connection refused" — the host resolves but nothing listens on that
-    port. Check the port with `nc -z -v <host> <port>` or a quick `nmap` before continuing.
-  - "Failed to perform TLS handshake" / "wrong version number" — scheme/port mismatch, e.g.
-    `https://` against a plaintext port or `http://` against a TLS port. Flip the scheme.
-  - Timeouts — the host is filtered or unreachable from the sandbox, not necessarily down.
-- Confirm it was proxy-level: the attempt appears in `list_requests` with NO response at all
-  (`resp` is null). A real 502 from the target would have a stored response.
-- NEVER treat these pages as target behavior. They are not findings, not evidence, not a WAF, not
-  a server error, and not something to report or to base further exploitation on. Fix the
-  url/host/port/scheme, verify reachability, then retry — or move on to another target.
+Everything is proxied through Caido, so an unreachable target makes the *proxy* answer: a ~9KB
+`<title>Caido</title>` HTML page under 502/500, which curl/python/browser print as if it were the
+target's content. The request never reached a server. It also appears in `list_requests` with no
+response at all (`resp` null), unlike a real 502.
+- Don't dump it; extract the cause with `curl -s ... | grep -A8 'c-title"'`.
+- The `c-details` cause says what to fix: "Failed to query DNS" — host doesn't resolve, check
+  `dig +short <host>`, then correct or drop it; "Connection refused" — nothing on that port, check
+  `nc -z -v <host> <port>`; "TLS handshake"/"wrong version number" — scheme/port mismatch, flip
+  http/https; timeout — filtered or unreachable from the sandbox.
+- NEVER treat these as target behavior: not a finding, not evidence, not a WAF, not a server
+  error. Fix the url/host/port/scheme and retry, or move on — do not keep re-requesting a dead host.
 
 PROGRAMMING:
 - Python 3, uv, Node.js/npm
