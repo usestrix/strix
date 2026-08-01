@@ -11,19 +11,22 @@ STRIX_ALLOW_DESTRUCTIVE=1.
 from __future__ import annotations
 
 import re
+from typing import Optional
 
 # SQL statements that are almost always destructive in a pentest context.
 _SQL_DESTRUCTIVE = re.compile(
     r"\b(DROP\s+(TABLE|DATABASE|SCHEMA|VIEW|INDEX|TRIGGER|FUNCTION|PROCEDURE)"
     r"|TRUNCATE\s+(TABLE\s+)?\w+"
-    r"|DELETE\s+FROM\s+\w+\s*;?\s*$"
+    r"|DELETE\s+FROM\s+\w+"
     r"|ALTER\s+(TABLE|DATABASE|SCHEMA)\s+\w+\s+(DROP|DELETE|TRUNCATE))",
     re.IGNORECASE,
 )
 
-# Shell patterns that are destructive regardless of arguments.
+# Shell patterns that are destructive regardless of arguments.  The `rm -rf`
+# branch matches any target (absolute path, home dir, `/*`, wildcard, …) —
+# a recursive force delete is destructive no matter where it points.
 _SHELL_DESTRUCTIVE = re.compile(
-    r"\brm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+(/|/\*|~\s*/\*)"
+    r"\brm\s+(-[a-z]*r[a-z]*f[a-z]*|-[a-z]*f[a-z]*r[a-z]*)\s+\S+"
     r"|\bmkfs(\.\w+)?\b"
     r"|\bdd\b[^|;]*\bof=/dev/"
     r"|:\(\)\s*\{\s*:\|\:&\s*\}\s*;:"
@@ -33,7 +36,7 @@ _SHELL_DESTRUCTIVE = re.compile(
 )
 
 
-def check_destructive(cmd: str) -> str | None:
+def check_destructive(cmd: str) -> Optional[str]:
     """Return a human-readable reason if *cmd* is destructive, else None.
 
     The check is intentionally conservative: it only flags commands whose
@@ -46,5 +49,5 @@ def check_destructive(cmd: str) -> str | None:
     if _SQL_DESTRUCTIVE.search(cmd):
         return "SQL statement may modify or destroy data (DROP/TRUNCATE/DELETE)"
     if _SHELL_DESTRUCTIVE.search(cmd):
-        return "shell command may destroy data or affect the host (rm -rf /, mkfs, dd to /dev/, force push)"
+        return "shell command may destroy data or affect the host (rm -rf, mkfs, dd to /dev/, force push)"
     return None
