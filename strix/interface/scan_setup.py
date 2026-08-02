@@ -1,0 +1,261 @@
+"""Scan bootstrap shared by the CLI entry point and the TUI setup flow.
+
+Target resolution, run preparation, model preflight, and start-of-run
+telemetry live here so ``strix.interface.main`` (the CLI) and
+``strix.interface.tui.runtime`` (interactive setup) depend on one module
+instead of each other. Everything raises ordinary exceptions; rendering
+errors and exiting the process is the caller's job.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import logging
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from strix.config import (
+    Settings,
+    codex,
+    load_settings,
+    provider_authentication_error_message,
+    provider_credential_source,
+    provider_for_model,
+)
+from strix.core.paths import run_dir_for
+from strix.interface.utils import (
+    assign_workspace_subdirs,
+    clone_repository,
+    collect_local_sources,
+    dedupe_local_targets,
+    generate_run_name,
+    infer_target_type,
+    is_whitebox_scan,
+    read_target_list_file,
+    resolve_diff_scope_context,
+    rewrite_localhost_targets,
+)
+from strix.telemetry import posthog, scarf
+
+
+if TYPE_CHECKING:
+    import argparse
+
+logger = logging.getLogger(__name__)
+
+HOST_GATEWAY_HOSTNAME = "host.docker.internal"
+
+
+class ProviderCredentialRejectedError(RuntimeError):
+    """A model provider definitively rejected one set of credentials."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        model_name: str,
+        provider: str,
+        credential_source: str | None,
+        credential_role: str,
+    ) -> None:
+        super().__init__(message)
+        self.model_name = model_name
+        self.provider = provider
+        self.credential_source = credential_source
+        self.credential_role = credential_role
+
+
+class ModelConnectionError(RuntimeError):
+    """An ordinary model preflight failure, annotated with its model route."""
+
+    def __init__(self, model_name: str, cause: BaseException) -> None:
+        super().__init__(str(cause))
+        self.model_name = model_name
+
+
+async def preflight_model_connection(
+    model_name: str,
+    *,
+    settings: Settings | None = None,
+    api_key: str | None = None,
+    api_base: str | None = None,
+) -> None:
+    """Verify one selected model route before starting interactive setup."""
+    from strix.config.models import configure_sdk_model_defaults
+
+    resolved_settings = load_settings() if settings is None else settings
+    configure_sdk_model_defaults(resolved_settings)
+    await _preflight_model_connection(
+        model_name,
+        settings=resolved_settings,
+        api_key=api_key,
+        api_base=api_base,
+    )
+
+
+async def _preflight_model_connection(
+    model_name: str,
+    *,
+    settings: Settings,
+    api_key: str | None,
+    api_base: str | None,
+) -> None:
+    """Verify one resolved model route without changing process credentials."""
+    from agents.models.interface import ModelTracing
+
+    from strix.config.models import (
+        StrixProvider,
+        model_extra_headers,
+        with_model_request_headers,
+    )
+    from strix.core.inputs import make_model_settings
+
+    model = StrixProvider(
+        model_name,
+        settings,
+        api_key=api_key,
+        api_base=api_base,
+    ).get_model(model_name)
+    request_settings = make_model_settings(
+        None,
+        model_name=model_name,
+        request_timeout=settings.llm.timeout,
+        prompt_cache=False,
+        extra_headers=model_extra_headers(settings, model_name),
+    )
+    request_settings = with_model_request_headers(request_settings, model_name)
+    try:
+        await asyncio.wait_for(
+            model.get_response(
+                system_instructions="You are a helpful assistant.",
+                input="Reply with just 'OK'.",
+                model_settings=request_settings,
+                tools=[],
+                output_schema=None,
+                handoffs=[],
+                tracing=ModelTracing.DISABLED,
+                previous_response_id=None,
+                conversation_id=None,
+                prompt=None,
+            ),
+            timeout=settings.llm.timeout,
+        )
+    except Exception as exc:
+        provider = provider_for_model(model_name) or "openai"
+        credential_source = provider_credential_source(provider)
+        if message := provider_authentication_error_message(model_name, exc):
+            raise ProviderCredentialRejectedError(
+                message,
+                model_name=model_name,
+                provider=provider,
+                credential_source=credential_source,
+                credential_role="primary",
+            ) from exc
+        raise
+
+
+def build_targets_info(args: argparse.Namespace) -> None:
+    """Populate ``args.targets_info`` from target/target-list inputs.
+
+    Raises :class:`ValueError` with a user-facing message on any bad input so
+    callers can surface it via ``parser.error`` (CLI) or a console panel (home
+    page).
+    """
+    args.targets_info = []
+    targets = list(args.target or [])
+    for target_list_path in args.target_list or []:
+        targets.extend(read_target_list_file(target_list_path))
+
+    for target in targets:
+        try:
+            target_type, target_dict = infer_target_type(target)
+        except ValueError as e:
+            raise ValueError(f"Invalid target '{target}': {e}") from None
+
+        if target_type == "local_code":
+            display_target = target_dict.get("target_path", target)
+        else:
+            display_target = target
+
+        args.targets_info.append(
+            {"type": target_type, "details": target_dict, "original": display_target}
+        )
+
+    args.targets_info = dedupe_local_targets(args.targets_info)
+
+    assign_workspace_subdirs(args.targets_info)
+    rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+
+
+def prepare_run(args: argparse.Namespace) -> None:
+    """Resolve the run name, clone repos, compute diff-scope, and persist state.
+
+    Shared by the CLI startup path and the interactive TUI setup phase (once the
+    user has supplied a target via ``/target``). Mutates *args* in place and
+    raises :class:`ValueError` on any preparation failure.
+    """
+    args.run_name = args.resume or generate_run_name(args.targets_info)
+
+    if args.resume:
+        return
+
+    for target_info in args.targets_info:
+        if target_info["type"] == "repository":
+            repo_url = target_info["details"]["target_repo"]
+            dest_name = target_info["details"].get("workspace_subdir")
+            cloned_path = clone_repository(repo_url, args.run_name, dest_name)
+            target_info["details"]["cloned_repo_path"] = cloned_path
+
+    args.local_sources = collect_local_sources(args.targets_info)
+    diff_scope = resolve_diff_scope_context(
+        local_sources=args.local_sources,
+        scope_mode=args.scope_mode,
+        diff_base=args.diff_base,
+        non_interactive=args.non_interactive,
+    )
+    args.diff_scope = diff_scope.metadata
+    if diff_scope.instruction_block:
+        if args.instruction:
+            args.instruction = f"{diff_scope.instruction_block}\n\n{args.instruction}"
+        else:
+            args.instruction = diff_scope.instruction_block
+
+    _persist_run_record(args)
+
+
+def telemetry_start(args: argparse.Namespace) -> None:
+    model = load_settings().llm.model
+    kwargs = {
+        "model": model,
+        "auth_mode": codex.auth_mode(model),
+        "scan_mode": args.scan_mode,
+        "is_whitebox": is_whitebox_scan(args.targets_info),
+        "interactive": not args.non_interactive,
+        "has_instructions": bool(args.instruction),
+    }
+    posthog.start(**kwargs)
+    scarf.start(**kwargs)
+
+
+def _persist_run_record(args: argparse.Namespace) -> None:
+    from strix.report.writer import write_run_record
+
+    run_dir = run_dir_for(args.run_name)
+    run_dir.mkdir(parents=True, exist_ok=True)
+    run_record = {
+        "run_id": args.run_name,
+        "run_name": args.run_name,
+        "status": "running",
+        "start_time": datetime.now(UTC).isoformat(),
+        "end_time": None,
+        "auth_mode": codex.auth_mode(load_settings().llm.model),
+        "targets_info": args.targets_info,
+        "scan_mode": args.scan_mode,
+        "instruction": args.instruction,
+        "non_interactive": args.non_interactive,
+        "local_sources": getattr(args, "local_sources", []),
+        "diff_scope": getattr(args, "diff_scope", {"active": False}),
+        "scope_mode": args.scope_mode,
+        "diff_base": args.diff_base,
+    }
+    write_run_record(run_dir, run_record)

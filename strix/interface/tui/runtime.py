@@ -23,6 +23,12 @@ from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
+from strix.interface.scan_setup import (
+    build_targets_info,
+    preflight_model_connection,
+    prepare_run,
+    telemetry_start,
+)
 from strix.interface.tui.backend import TuiBackendServer, TuiController
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.report.state import ReportState, set_global_report_state
@@ -265,14 +271,6 @@ class GoTuiRuntime:
         self.controller.notify_changed()
 
     async def start_from_setup(self) -> None:
-        # Delayed to avoid the main entry point importing its TUI implementation.
-        from strix.interface.main import (
-            _telemetry_start,
-            build_targets_info,
-            preflight_model_connection,
-            prepare_run,
-        )
-
         candidate = deepcopy(self.args)
         candidate.scan_mode = self.controller.scan_mode
         candidate.instruction = self.controller.instruction
@@ -289,27 +287,20 @@ class GoTuiRuntime:
         model = (load_settings().llm.model or "").strip()
         try:
             await preflight_model_connection(model)
-        except SystemExit as exc:
-            detail = str(exc).strip() or "model preflight exited"
-            raise RuntimeError(f"Model connection failed: {detail}") from exc
         except Exception as exc:
             logger.exception("Go TUI setup model preflight failed")
             message = provider_authentication_error_message(model, exc)
             if message is None:
                 message = f"Model connection failed: {exc}"
             raise RuntimeError(message) from exc
-        try:
-            if targets_changed:
-                # Rebuild the full typed set so path canonicalization and local
-                # deduplication match the CLI.
-                candidate.target = list(self.controller.targets)
-                candidate.target_list = []
-                build_targets_info(candidate)
-            prepare_run(candidate)
-            _telemetry_start(candidate)
-        except SystemExit as exc:
-            detail = str(exc).strip() or "setup preparation exited"
-            raise RuntimeError(f"Failed to prepare scan: {detail}") from exc
+        if targets_changed:
+            # Rebuild the full typed set so path canonicalization and local
+            # deduplication match the CLI.
+            candidate.target = list(self.controller.targets)
+            candidate.target_list = []
+            build_targets_info(candidate)
+        prepare_run(candidate)
+        telemetry_start(candidate)
 
         vars(self.args).update(vars(candidate))
         self.init_run_state()

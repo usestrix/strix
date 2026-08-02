@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import importlib
 import json
 import os
 import shutil
@@ -22,9 +21,6 @@ from strix.config import (
 )
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui.runtime import GoTuiRuntime
-
-
-main_module = importlib.import_module("strix.interface.main")
 
 
 def args() -> argparse.Namespace:
@@ -90,6 +86,7 @@ def test_binary_command_reports_missing_sidecar(
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     monkeypatch.setattr(go_tui, "_tui_source_dir", lambda: tmp_path / "tui-src")
+    monkeypatch.setattr(go_tui, "_project_root", lambda: tmp_path)
 
     with pytest.raises(RuntimeError, match="Bubble Tea TUI binary not found"):
         GoTuiRuntime.binary_command()
@@ -102,6 +99,7 @@ def test_binary_command_ignores_unconstrained_path_sidecar(
     monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
     monkeypatch.setattr(go_tui, "_tui_source_dir", lambda: tmp_path / "tui-src")
+    monkeypatch.setattr(go_tui, "_project_root", lambda: tmp_path)
     monkeypatch.setattr(shutil, "which", lambda _name: "/untrusted/path/strix-tui")
 
     with pytest.raises(RuntimeError, match="Bubble Tea TUI binary not found"):
@@ -327,7 +325,7 @@ async def test_setup_preflights_model_before_starting(
         "load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
-    monkeypatch.setattr(main_module, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
 
     def build(candidate: argparse.Namespace) -> None:
         calls.append("targets")
@@ -352,9 +350,9 @@ async def test_setup_preflights_model_before_starting(
         assert candidate.scope_mode == "diff"
         assert candidate.diff_base == "origin/main"
 
-    monkeypatch.setattr(main_module, "build_targets_info", build)
-    monkeypatch.setattr(main_module, "prepare_run", prepare)
-    monkeypatch.setattr(main_module, "_telemetry_start", lambda _args: calls.append("telemetry"))
+    monkeypatch.setattr(go_tui, "build_targets_info", build)
+    monkeypatch.setattr(go_tui, "prepare_run", prepare)
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
     monkeypatch.setattr(runtime, "init_run_state", lambda: calls.append("state"))
     monkeypatch.setattr(runtime, "start_scan", lambda: calls.append("scan"))
 
@@ -394,14 +392,14 @@ async def test_setup_preserves_prepared_cli_targets(
         "load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
-    monkeypatch.setattr(main_module, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
     monkeypatch.setattr(
-        main_module,
+        go_tui,
         "build_targets_info",
         lambda _args: pytest.fail("prepared targets should not be rebuilt"),
     )
-    monkeypatch.setattr(main_module, "prepare_run", lambda _args: calls.append("prepare"))
-    monkeypatch.setattr(main_module, "_telemetry_start", lambda _args: calls.append("telemetry"))
+    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: calls.append("prepare"))
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
     monkeypatch.setattr(runtime, "init_run_state", lambda: calls.append("state"))
     monkeypatch.setattr(runtime, "start_scan", lambda: calls.append("scan"))
 
@@ -452,10 +450,10 @@ async def test_setup_target_change_preserves_local_targets(
         "load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
-    monkeypatch.setattr(main_module, "preflight_model_connection", preflight)
-    monkeypatch.setattr(main_module, "build_targets_info", build)
-    monkeypatch.setattr(main_module, "prepare_run", lambda _args: None)
-    monkeypatch.setattr(main_module, "_telemetry_start", lambda _args: None)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "build_targets_info", build)
+    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: None)
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
     monkeypatch.setattr(runtime, "init_run_state", lambda: None)
     monkeypatch.setattr(runtime, "start_scan", lambda: None)
 
@@ -532,10 +530,10 @@ async def test_setup_same_basename_uses_combined_workspace_names_on_retry(
         "load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
-    monkeypatch.setattr(main_module, "preflight_model_connection", preflight)
-    monkeypatch.setattr(main_module, "build_targets_info", build)
-    monkeypatch.setattr(main_module, "prepare_run", prepare)
-    monkeypatch.setattr(main_module, "_telemetry_start", lambda _args: None)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "build_targets_info", build)
+    monkeypatch.setattr(go_tui, "prepare_run", prepare)
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
     monkeypatch.setattr(runtime, "init_run_state", lambda: started.append("state"))
     monkeypatch.setattr(runtime, "start_scan", lambda: started.append("scan"))
 
@@ -593,8 +591,8 @@ async def test_setup_target_rebuild_restores_all_target_fields_on_failure(
         "load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
-    monkeypatch.setattr(main_module, "preflight_model_connection", preflight)
-    monkeypatch.setattr(main_module, "build_targets_info", fail_rebuild)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "build_targets_info", fail_rebuild)
 
     with pytest.raises(ValueError, match="bad target"):
         await runtime.start_from_setup()
@@ -633,9 +631,9 @@ async def test_setup_rebuild_canonicalizes_relative_local_target(
         "load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
-    monkeypatch.setattr(main_module, "preflight_model_connection", preflight)
-    monkeypatch.setattr(main_module, "prepare_run", prepare)
-    monkeypatch.setattr(main_module, "_telemetry_start", lambda _args: None)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "prepare_run", prepare)
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
     monkeypatch.setattr(runtime, "init_run_state", lambda: None)
     monkeypatch.setattr(runtime, "start_scan", lambda: None)
 
@@ -675,7 +673,7 @@ async def test_setup_prepare_system_exit_is_recoverable_and_transactional(
         assert candidate is not runtime.args
         candidate.run_name = "mutated-run"
         candidate.targets_info[0]["details"]["url"] = "https://mutated.example"
-        raise SystemExit("invalid diff scope")
+        raise ValueError("invalid diff scope")
 
     def telemetry(_candidate: argparse.Namespace) -> None:
         nonlocal telemetry_started
@@ -686,11 +684,11 @@ async def test_setup_prepare_system_exit_is_recoverable_and_transactional(
         "load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
-    monkeypatch.setattr(main_module, "preflight_model_connection", preflight)
-    monkeypatch.setattr(main_module, "prepare_run", fail_prepare)
-    monkeypatch.setattr(main_module, "_telemetry_start", telemetry)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "prepare_run", fail_prepare)
+    monkeypatch.setattr(go_tui, "telemetry_start", telemetry)
 
-    with pytest.raises(RuntimeError, match="invalid diff scope"):
+    with pytest.raises(ValueError, match="invalid diff scope"):
         await runtime.start_from_setup()
 
     assert vars(runtime.args) == original_args
@@ -747,8 +745,8 @@ async def test_setup_preflight_failure_does_not_start_scan(
         "load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
-    monkeypatch.setattr(main_module, "preflight_model_connection", preflight)
-    monkeypatch.setattr(main_module, "build_targets_info", mark_started)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "build_targets_info", mark_started)
     monkeypatch.setattr(runtime, "init_run_state", mark_started)
     monkeypatch.setattr(runtime, "start_scan", mark_started)
 

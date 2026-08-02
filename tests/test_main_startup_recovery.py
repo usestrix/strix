@@ -105,7 +105,7 @@ def _install_startup_doubles(
     monkeypatch.setattr(main_module, "pull_docker_image", lambda: None)
     monkeypatch.setattr(main_module, "validate_environment", lambda: None)
     monkeypatch.setattr(main_module, "prepare_run", count("prepare"))
-    monkeypatch.setattr(main_module, "_telemetry_start", count("telemetry"))
+    monkeypatch.setattr(main_module, "telemetry_start", count("telemetry"))
     monkeypatch.setattr(
         main_module,
         "persist_current",
