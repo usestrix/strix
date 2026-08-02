@@ -276,10 +276,8 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 Interactive scans use the Go TUI. It supports targetless provider, model,
 credential, and target setup.
 
-Source distributions and universal `py3-none-any` wheels built from source do
-not bundle the platform-specific Go sidecar. Those installs run the TUI from
-source (requires Go 1.24+). Official platform wheels bundle the sidecar and
-work out of the box.
+Wheels are platform-specific and bundle the Go sidecar, so installs work out of
+the box. A source checkout runs the TUI directly from source and needs Go 1.24+.
 
 #### Sign in with a ChatGPT subscription
 

@@ -116,28 +116,19 @@ Commit both the source change and the regenerated `strix/interface/viewer/static
 
 ## Package builds
 
-Normal source and editable installs do not need Go. Build the universal Python wheel with:
+Editable installs do not need Go; they run the TUI from source (`go run`).
+
+Wheels always bundle the matching Go sidecar and are platform-specific:
 
 ```bash
 make wheel
 ```
 
-This produces a pure `py3-none-any` wheel without a bundled TUI sidecar. The Go
-TUI is the only interactive interface: installs without a bundled `strix-tui`
-sidecar run it from source (`go run`, requires Go 1.24+).
-
-`uv build --sdist` also requires no Go. A wheel built from that source archive
-is the same universal, sidecar-free package with the same requirements.
-
-Release wheels are platform-specific and must include the matching Go sidecar:
-
-```bash
-make release-wheel
-```
-
-The release target sets `STRIX_REQUIRE_TUI_SIDECAR=1`, requires Go 1.24.x or newer,
-and fails rather than publishing a wheel without the sidecar. `scripts/build.sh`
-and `strix.spec` are likewise strict for frozen PyInstaller releases.
+The build hook (`build_hooks/tui_sidecar.py`) compiles the sidecar, embeds it as
+`strix/bin/strix-tui`, and assigns the current platform tag. It requires Go
+1.24.x or newer and fails rather than producing a wheel without the sidecar.
+`scripts/build.sh` and `strix.spec` are likewise strict for frozen PyInstaller
+releases.
 
 ## 🤝 Community
 

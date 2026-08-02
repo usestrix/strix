@@ -1,3 +1,5 @@
+"""Hatchling build hook that compiles and bundles the Go TUI sidecar."""
+
 from __future__ import annotations
 
 import os
@@ -11,11 +13,16 @@ from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
 class CustomBuildHook(BuildHookInterface[Any]):
-    """Build and package the platform-native Bubble Tea sidecar for releases."""
+    """Compile the Bubble Tea sidecar and ship it inside the wheel.
+
+    The sidecar is the only interactive interface, so every wheel is a
+    platform wheel and a missing Go toolchain is a build failure.
+    """
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
-        del version
-        if os.environ.get("STRIX_REQUIRE_TUI_SIDECAR") != "1":
+        # Editable installs run from the checkout, where the TUI is started
+        # with ``go run``; there is nothing to bundle.
+        if version == "editable":
             return
 
         root = Path(self.root)
