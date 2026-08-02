@@ -345,6 +345,14 @@ class GoTuiRuntime:
             env["STRIX_VERSION"] = package_version()
             command = self.binary_command()
             cwd = str(tui_source_dir()) if command[:2] == ["go", "run"] else None
+            if cwd is not None:
+                # go run compiles the sidecar when the build cache is cold, so
+                # tell the terminal why nothing is on screen yet.
+                print(
+                    "\x1b[2mCompiling the TUI from source (cached after the first run)...\x1b[0m",
+                    file=original_stdout,
+                    flush=True,
+                )
             process, backend_socket = await launch_tui_process(command, env, cwd)
             await self.server.start(backend_socket)
             if not self.controller.setup_mode:
