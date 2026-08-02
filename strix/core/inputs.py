@@ -16,7 +16,6 @@ from strix.config.models import (
     is_known_openai_bare_model,
     model_supports_reasoning,
     request_timeout_extra_args,
-    routes_through_litellm,
 )
 from strix.core.sessions import scrub_images_from_items
 
@@ -148,7 +147,7 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            _reasoning_settings(reasoning_effort, model_name, model_settings.extra_args),
+            _reasoning_settings(reasoning_effort, model_settings.extra_args),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
@@ -165,20 +164,15 @@ def make_model_settings(
 
 def _reasoning_settings(
     effort: ReasoningEffort,
-    model_name: str,
     extra_args: dict[str, Any] | None,
 ) -> ModelSettings:
-    """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum.
-
-    Providers that do accept it (DeepSeek V4, OpenRouter) speak Chat
-    Completions through LiteLLM, so send it as a raw body field there — LiteLLM's
-    own DeepSeek mapping would otherwise collapse every level to plain thinking.
-    OpenAI's own routes top out at ``xhigh``.
+    """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
+    a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
+    which collapses every ``reasoning_effort`` level to plain thinking-enabled.
+    Providers that don't support ``max`` reject the request.
     """
     if effort != "max":
         return ModelSettings(reasoning=Reasoning(effort=effort))
-    if not routes_through_litellm(model_name):
-        return ModelSettings(reasoning=Reasoning(effort="xhigh"))
     return ModelSettings(
         extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
     )

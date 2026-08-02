@@ -6,7 +6,7 @@ import contextlib
 import inspect
 import os
 import time
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from agents import (
     set_default_openai_api,
@@ -65,17 +65,6 @@ def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
     return normalized.status_code is None
 
 
-# Efforts the ChatGPT subscription backend accepts, per configured effort.
-_CODEX_EFFORTS: dict[str, Literal["low", "medium", "high"]] = {
-    "minimal": "low",
-    "low": "low",
-    "medium": "medium",
-    "high": "high",
-    "xhigh": "high",
-    "max": "high",
-}
-
-
 class _CodexResponsesModel(OpenAIResponsesModel):
     """Responses model for the ChatGPT subscription backend (always streamed, stateless)."""
 
@@ -93,9 +82,15 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         overrides = ModelSettings(store=False, response_include=["reasoning.encrypted_content"])
         effort = self._reasoning_effort
         if effort and effort != "none":
-            overrides = overrides.resolve(
-                ModelSettings(reasoning=Reasoning(effort=_CODEX_EFFORTS[effort])),
-            )
+            # Clamp to efforts the backend accepts.
+            match effort:
+                case "minimal":
+                    effort = "low"
+                case "xhigh" | "max":
+                    effort = "high"
+                case _:
+                    pass
+            overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=effort)))
         return model_settings.resolve(overrides)
 
     async def _fetch_response(self, *args: Any, stream: bool = False, **kwargs: Any) -> Any:
@@ -561,14 +556,6 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     if settings.llm.api_base:
         return True
     return not model_supports_reasoning(model_name)
-
-
-def routes_through_litellm(model_name: str) -> bool:
-    """Return whether ``StrixProvider`` resolves this model to the LiteLLM route."""
-    if codex.subscription_model(model_name):
-        return False
-    prefix, separator, _ = model_name.strip().lower().partition("/")
-    return bool(separator) and prefix != "openai"
 
 
 def model_supports_reasoning(model_name: str) -> bool:
