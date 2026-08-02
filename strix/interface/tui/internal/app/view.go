@@ -209,7 +209,7 @@ func (m Model) toastOverlay(view string) string {
 	}
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(dark).
+		BorderForeground(green).
 		Background(black).
 		Foreground(textColor).
 		Padding(0, 1).
