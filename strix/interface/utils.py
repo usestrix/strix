@@ -1311,7 +1311,10 @@ _FORBIDDEN_MOUNT_ROOTS = frozenset(
         "/private",
         "/var",
         "/opt",
-        # Roots neither sandbox can be pointed at, but a --target can.
+        # Roots neither sandbox can be pointed at, but a --target can. ``/home``
+        # and ``/Users`` matter beyond the caller's own home: they hold every
+        # account's files, not one project.
+        "/home",
         "/boot",
         "/proc",
         "/root",

@@ -53,6 +53,30 @@ def test_agent_instruction_dirs_are_protected_too(tmp_path: Path) -> None:
     ]
 
 
+def test_worktree_git_pointer_file_is_protected(tmp_path: Path) -> None:
+    gitdir = tmp_path / "nested" / "gitdir"
+    gitdir.mkdir(parents=True)
+    (tmp_path / ".git").write_text(f"gitdir: {gitdir}\n", encoding="utf-8")
+
+    mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_metadata=True)])
+
+    assert [(m["target"], m["read_only"]) for m in mounts] == [
+        ("/workspace/repo", False),
+        ("/workspace/repo/.git", True),
+        ("/workspace/repo/nested/gitdir", True),
+    ]
+
+
+def test_git_pointer_outside_the_tree_needs_no_nested_mount(tmp_path: Path) -> None:
+    tree = tmp_path / "worktree"
+    tree.mkdir()
+    (tree / ".git").write_text(f"gitdir: {tmp_path / 'main' / '.git'}\n", encoding="utf-8")
+
+    mounts = build_bind_mounts([_source("repo", str(tree), protect_metadata=True)])
+
+    assert [m["target"] for m in mounts] == ["/workspace/repo", "/workspace/repo/.git"]
+
+
 def test_no_git_guard_without_a_git_dir(tmp_path: Path) -> None:
     mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_metadata=True)])
     assert [m["target"] for m in mounts] == ["/workspace/repo"]

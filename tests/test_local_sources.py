@@ -74,6 +74,14 @@ def test_check_mountable_dir_rejects_system_root() -> None:
         check_mountable_dir(etc)
 
 
+def test_check_mountable_dir_rejects_the_shared_home_root() -> None:
+    home_root = Path("/home")
+    if not home_root.is_dir():
+        pytest.skip("no /home on this platform")
+    with pytest.raises(ValueError, match="Refusing to mount"):
+        check_mountable_dir(home_root)
+
+
 def test_check_mountable_dir_rejects_credential_dirs(tmp_path: Path) -> None:
     ssh_dir = tmp_path / ".ssh"
     ssh_dir.mkdir()

@@ -76,19 +76,46 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
         resolved = Path(host_path).expanduser().resolve()
         target = f"{_WORKSPACE_ROOT}/{ws_subdir}"
         bind_mounts.append({"source": str(resolved), "target": target, "read_only": False})
-        if not src.get("protect_metadata"):
-            continue
-        for name in _PROTECTED_METADATA_NAMES:
-            metadata_dir = resolved / name
-            if metadata_dir.is_dir():
-                bind_mounts.append(
-                    {
-                        "source": str(metadata_dir),
-                        "target": f"{target}/{name}",
-                        "read_only": True,
-                    }
-                )
+        if src.get("protect_metadata"):
+            bind_mounts.extend(_metadata_mounts(resolved, target))
     return bind_mounts
+
+
+def _metadata_mounts(tree: Path, target: str) -> list[dict[str, Any]]:
+    """Read-only binds for the protected metadata present in ``tree``."""
+    mounts: list[dict[str, Any]] = []
+    for name in _PROTECTED_METADATA_NAMES:
+        metadata = tree / name
+        if not metadata.is_dir() and not metadata.is_file():
+            continue
+        # A linked worktree or submodule carries ``.git`` as a pointer file
+        # rather than a directory; binding the file keeps the checkout from
+        # being repointed, and the gitdir it names is protected as well when
+        # it lives inside the same tree.
+        mounts.append({"source": str(metadata), "target": f"{target}/{name}", "read_only": True})
+        gitdir = _gitdir_from_pointer(metadata) if metadata.is_file() else None
+        if gitdir is not None and gitdir.is_relative_to(tree):
+            relative = gitdir.relative_to(tree).as_posix()
+            mounts.append(
+                {"source": str(gitdir), "target": f"{target}/{relative}", "read_only": True}
+            )
+    return mounts
+
+
+def _gitdir_from_pointer(git_file: Path) -> Path | None:
+    """Resolve the ``gitdir:`` path a ``.git`` pointer file names, if any."""
+    try:
+        content = git_file.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    for line in content.splitlines():
+        prefix, _, value = line.partition(":")
+        if prefix.strip() == "gitdir" and value.strip():
+            candidate = Path(value.strip()).expanduser()
+            if not candidate.is_absolute():
+                candidate = git_file.parent / candidate
+            return candidate.resolve()
+    return None
 
 
 async def create_or_reuse(

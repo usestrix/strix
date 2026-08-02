@@ -46,6 +46,7 @@ from strix.interface.utils import (
     assign_workspace_subdirs,
     build_final_stats_text,
     check_docker_connection,
+    check_mountable_dir,
     clone_repository,
     collect_local_sources,
     dedupe_local_targets,
@@ -805,6 +806,12 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         if not isinstance(target, dict):
             continue
         details = target.get("details") or {}
+        if target.get("type") == "local_code" and details.get("target_path"):
+            try:
+                check_mountable_dir(Path(details["target_path"]).expanduser())
+            except ValueError as exc:
+                parser.error(f"--resume {args.resume}: {exc}")
+            continue
         if target.get("type") != "repository":
             continue
         cloned = details.get("cloned_repo_path")
@@ -819,8 +826,10 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
 
     if args.instruction is None:
         args.instruction = state.get("instruction")
-    if state.get("local_sources"):
-        args.local_sources = state.get("local_sources")
+    # Rebuild rather than trust the persisted records: a run.json written by an
+    # older version describes the source in that version's terms, and the mount
+    # policy applied to it must be the current one.
+    args.local_sources = collect_local_sources(args.targets_info)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
     persisted_scan_mode = state.get("scan_mode")
