@@ -300,7 +300,6 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 		ScanState:    "setup",
 		Model:        "openai/gpt-5.4",
 		Targets:      []string{"/workspace/source", "https://example.com"},
-		Mounts:       []string{"/workspace/source"},
 		Instruction:  "focus on access control",
 		ScanMode:     "quick",
 		MaxBudgetUSD: floatPointer(12.5),
@@ -315,7 +314,7 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 	for _, want := range []string{
 		"Configure your pentest",
 		"openai/gpt-5.4",
-		"/workspace/source [mount]",
+		"/workspace/source",
 		"https://example.com",
 		"quick",
 		"$12.50",
@@ -868,7 +867,7 @@ func TestProviderConfigurationUsesBackendStatusWithoutChangingSelection(t *testi
 	}
 
 	handleCommandResult(t, &model, "setup.select_provider", map[string]any{
-		"provider": "openai", "label": "OpenAI", "configured": true,
+		"name": "openai", "label": "OpenAI", "configured": true,
 		"state": "external", "detail": "authenticated by environment",
 	})
 	if message := ansi.Strip(model.setupContent()); !strings.Contains(message, "authenticated by environment") {
@@ -883,7 +882,7 @@ func TestInvalidSavedProviderKeyOpensReplacementPrompt(t *testing.T) {
 	model := New(nil)
 	keyEnv := "ANTHROPIC_API_KEY"
 	handleCommandResult(t, &model, "setup.select_provider", map[string]any{
-		"provider": "anthropic", "label": "Anthropic", "configured": false,
+		"name": "anthropic", "label": "Anthropic", "configured": false,
 		"key_env": &keyEnv, "state": "invalid", "detail": "ANTHROPIC_API_KEY was rejected",
 	})
 
@@ -898,7 +897,7 @@ func TestInvalidSavedProviderKeyOpensReplacementPrompt(t *testing.T) {
 func TestInvalidEnvironmentKeyShowsGuidanceWithoutPrompt(t *testing.T) {
 	model := New(nil)
 	handleCommandResult(t, &model, "setup.select_provider", map[string]any{
-		"provider": "anthropic", "label": "Anthropic", "configured": false,
+		"name": "anthropic", "label": "Anthropic", "configured": false,
 		"key_env": nil, "state": "invalid", "detail": "update it in the environment and restart Strix",
 	})
 

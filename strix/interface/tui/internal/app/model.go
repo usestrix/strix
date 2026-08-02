@@ -1073,28 +1073,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			}
 			return m.handleModelListingPage(data)
 		case "setup.select_provider":
-			var data struct {
-				Provider       string  `json:"provider"`
-				Label          string  `json:"label"`
-				Configured     bool    `json:"configured"`
-				KeyEnv         *string `json:"key_env"`
-				State          string  `json:"state"`
-				Detail         string  `json:"detail"`
-				Disconnectable bool    `json:"disconnectable"`
-			}
+			var data protocol.Provider
 			_ = json.Unmarshal(result.Result, &data)
-			if data.Provider != "" {
-				m.configProvider = data.Provider
-			}
-			if data.Label != "" {
-				m.configProviderLabel = data.Label
-			}
-			m.configProviderState, m.configProviderDetail = data.State, data.Detail
-			m.providerConfigured[data.Provider] = data.Configured
-			m.providerLabels[data.Provider] = data.Label
-			m.providerStates[data.Provider] = data.State
-			m.providerDetails[data.Provider] = data.Detail
-			m.providerDisconnectable[data.Provider] = data.Disconnectable
+			m.applyProviderRecord(data)
 			if data.Configured {
 				m.setupMsg("✓ "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail)+" Use /model to pick a model.", render.Col(green))
 			} else if data.KeyEnv != nil {
@@ -1104,27 +1085,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 				m.setupMsg(m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), render.Col(red))
 			}
 		case "setup.save_api_key":
-			var data struct {
-				Provider       string `json:"provider"`
-				Label          string `json:"label"`
-				Configured     bool   `json:"configured"`
-				State          string `json:"state"`
-				Detail         string `json:"detail"`
-				Disconnectable bool   `json:"disconnectable"`
-			}
+			var data protocol.Provider
 			_ = json.Unmarshal(result.Result, &data)
-			if data.Provider != "" {
-				m.configProvider = data.Provider
-			}
-			if data.Label != "" {
-				m.configProviderLabel = data.Label
-			}
-			m.configProviderState, m.configProviderDetail = data.State, data.Detail
-			m.providerConfigured[data.Provider] = data.Configured
-			m.providerLabels[data.Provider] = data.Label
-			m.providerStates[data.Provider] = data.State
-			m.providerDetails[data.Provider] = data.Detail
-			m.providerDisconnectable[data.Provider] = data.Disconnectable
+			m.applyProviderRecord(data)
 			if m.picker == pickerAPIKey {
 				m.closePicker()
 			}
@@ -1142,22 +1105,14 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.providerDisconnectable[data.Name] = data.Disconnectable
 			m.setupMsg("Disconnected "+data.Label+".", render.Col(amber))
 		case "setup.add_custom_provider":
-			var data struct {
-				Provider       string `json:"provider"`
-				Label          string `json:"label"`
-				State          string `json:"state"`
-				Detail         string `json:"detail"`
-				Disconnectable bool   `json:"disconnectable"`
-			}
+			var data protocol.Provider
 			_ = json.Unmarshal(result.Result, &data)
 			if m.picker == pickerCustomAPIKey {
 				m.closePicker()
 			}
 			m.customKind, m.customName, m.customURL = "", "", ""
-			m.configProvider, m.configProviderLabel = data.Provider, data.Label
-			m.configProviderState, m.configProviderDetail = data.State, data.Detail
-			m.providerDisconnectable[data.Provider] = data.Disconnectable
-			m.setupMsg("✓ Added custom provider. "+m.providerStatusText(data.Provider, data.Label, data.Detail)+" Use /model to pick a model.", render.Col(green))
+			m.applyProviderRecord(data)
+			m.setupMsg("✓ Added custom provider. "+m.providerStatusText(data.Name, data.Label, data.Detail)+" Use /model to pick a model.", render.Col(green))
 		case "setup.select_model":
 			var data struct {
 				Model string `json:"model"`
@@ -1762,6 +1717,23 @@ func (m Model) providerRowLabel(name string, width int) string {
 	return label + strings.Repeat(" ", gap) + button
 }
 
+// applyProviderRecord folds one provider status record from the backend
+// into the setup screen's provider catalog and current selection.
+func (m *Model) applyProviderRecord(data protocol.Provider) {
+	if data.Name != "" {
+		m.configProvider = data.Name
+	}
+	if data.Label != "" {
+		m.configProviderLabel = data.Label
+	}
+	m.configProviderState, m.configProviderDetail = data.State, data.Detail
+	m.providerConfigured[data.Name] = data.Configured
+	m.providerLabels[data.Name] = data.Label
+	m.providerStates[data.Name] = data.State
+	m.providerDetails[data.Name] = data.Detail
+	m.providerDisconnectable[data.Name] = data.Disconnectable
+}
+
 func (m Model) providerStatusText(provider, label, detail string) string {
 	if label == "" {
 		label = provider
@@ -2079,15 +2051,7 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 		return m, send(m.client, "setup.add_target", map[string]any{"target": arg})
 	case "/mount":
 		if arg == "" {
-			if len(m.snapshot.Mounts) == 0 {
-				m.setupMsg("No read-only mounts configured. Add one with /mount <path>.", render.Dim())
-			} else {
-				message := "Read-only mounts:\n  " + strings.Join(m.snapshot.Mounts, "\n  ")
-				if hidden := m.snapshot.MountCount - len(m.snapshot.Mounts); hidden > 0 {
-					message += fmt.Sprintf("\n  ...and %d more", hidden)
-				}
-				m.setupMsg(message, render.Dim())
-			}
+			m.setupMsg("/mount <path> adds a local directory as a target.", render.Dim())
 			return m, nil
 		}
 		return m, send(m.client, "setup.add_mount", map[string]any{"path": arg})
@@ -2596,18 +2560,7 @@ func (m Model) setupSummaryView(width int) string {
 	targets := "Not set"
 	targetsSet := len(m.snapshot.Targets) > 0
 	if targetsSet {
-		mounts := make(map[string]bool, len(m.snapshot.Mounts))
-		for _, mount := range m.snapshot.Mounts {
-			mounts[mount] = true
-		}
-		values := make([]string, 0, len(m.snapshot.Targets))
-		for _, target := range m.snapshot.Targets {
-			if mounts[target] {
-				target += " [mount]"
-			}
-			values = append(values, target)
-		}
-		targets = strings.Join(values, ", ")
+		targets = strings.Join(m.snapshot.Targets, ", ")
 		if hidden := m.snapshot.TargetCount - len(m.snapshot.Targets); hidden > 0 {
 			targets += fmt.Sprintf(", ...and %d more", hidden)
 		}

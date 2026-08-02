@@ -60,7 +60,6 @@ async def test_setup_state_is_serializable() -> None:
     assert snapshot["max_turns"] == 500
     assert snapshot["scope_mode"] == "auto"
     assert snapshot["diff_base"] is None
-    assert snapshot["mounts"] == []
 
 
 @pytest.mark.asyncio
@@ -150,7 +149,6 @@ async def test_setup_loads_mount_target_list_and_instruction_file(tmp_path: Path
     assert loaded_targets == {"path": str(target_list), "added": 2, "total": 3}
     assert loaded_prompt == {"path": str(prompt_file), "characters": 34}
     snapshot = controller.snapshot()
-    assert snapshot["mounts"] == [resolved_mount]
     assert snapshot["targets"] == [
         resolved_mount,
         "https://one.example",
@@ -159,7 +157,7 @@ async def test_setup_loads_mount_target_list_and_instruction_file(tmp_path: Path
     assert snapshot["instruction"] == "Focus on authorization boundaries."
 
     assert await controller.handle("setup.clear_targets", {}) == {"targets": []}
-    assert controller.snapshot()["mounts"] == []
+    assert controller.snapshot()["targets"] == []
 
 
 @pytest.mark.asyncio

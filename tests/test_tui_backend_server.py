@@ -191,7 +191,6 @@ def test_unicode_heavy_setup_state_stays_within_control_frame_limit() -> None:
     controller = TuiController(args())
     controller.instruction = "🔒" * 10_000
     controller.targets = [f"https://例え.{index}/" + "界" * 500 for index in range(20)]
-    controller.mounts = [f"/workspace/{index}/" + "源" * 500 for index in range(20)]
     controller.error = "失" * 10_000
     controller.messages = [
         {"id": str(index), "text": "警" * 10_000, "level": "warning"} for index in range(10)

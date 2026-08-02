@@ -183,7 +183,6 @@ def _bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
     state["targets"] = [
         _terminal_projection(target, max_string=64) for target in state["targets"][:8]
     ]
-    state["mounts"] = [_terminal_projection(mount, max_string=64) for mount in state["mounts"][:8]]
     state["instruction"] = _terminal_projection(state["instruction"], max_string=512)
     state["messages"] = [
         {
@@ -208,8 +207,6 @@ def _bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "scan_state": state["scan_state"],
         "targets": state["targets"][:4],
         "target_count": state["target_count"],
-        "mounts": state["mounts"][:4],
-        "mount_count": state["mount_count"],
         "instruction": _terminal_projection(state["instruction"], max_string=128),
         "scan_mode": state["scan_mode"],
         "max_budget_usd": state["max_budget_usd"],
@@ -285,13 +282,6 @@ class TuiController:
             str(target["original"])
             for target in getattr(args, "targets_info", [])
             if isinstance(target, dict) and target.get("original")
-        ]
-        self.mounts = [
-            str(target["original"])
-            for target in getattr(args, "targets_info", [])
-            if isinstance(target, dict)
-            and target.get("original")
-            and target.get("type") == "local_code"
         ]
         instruction = getattr(args, "instruction", "")
         self.instruction = instruction.strip() if isinstance(instruction, str) else ""
@@ -391,8 +381,6 @@ class TuiController:
                 _terminal_projection(target, max_string=128) for target in self.targets[:16]
             ],
             "target_count": len(self.targets),
-            "mounts": [_terminal_projection(mount, max_string=128) for mount in self.mounts[:16]],
-            "mount_count": len(self.mounts),
             "instruction": _terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
             "max_budget_usd": self.max_budget_usd,
@@ -662,23 +650,7 @@ class TuiController:
         item = custom_provider(provider)
         if item and item.disabled:
             await asyncio.to_thread(set_custom_provider_enabled, provider, enabled=True)
-        status = await asyncio.to_thread(provider_auth_status, provider)
-        source = provider_credential_source(provider)
-        key_env = provider_api_key_env(provider)
-        if source == "env" or (
-            status.state is not ProviderAuthState.INVALID and resolve_provider_api_key(provider)
-        ):
-            key_env = None
-        return {
-            "provider": provider,
-            "label": provider_display_name(provider),
-            "configured": status.ready,
-            "key_env": key_env,
-            "state": status.state.value,
-            "detail": status.detail,
-            "source": source,
-            "disconnectable": provider_can_disconnect(provider),
-        }
+        return await asyncio.to_thread(_provider_record, provider)
 
     async def _disconnect_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
@@ -693,16 +665,7 @@ class TuiController:
         provider = self._required_string(payload, "provider")
         api_key = self._required_string(payload, "api_key")
         await asyncio.to_thread(set_provider_api_key, provider, api_key)
-        status = await asyncio.to_thread(provider_auth_status, provider)
-        return {
-            "provider": provider,
-            "label": provider_display_name(provider),
-            "configured": status.ready,
-            "state": status.state.value,
-            "detail": status.detail,
-            "source": provider_credential_source(provider),
-            "disconnectable": provider_can_disconnect(provider),
-        }
+        return await asyncio.to_thread(_provider_record, provider)
 
     async def _add_custom_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
@@ -713,16 +676,7 @@ class TuiController:
         if not isinstance(raw_key, str):
             raise TypeError("api_key must be a string")
         item = await asyncio.to_thread(save_custom_provider, name, api_base, raw_key, kind)
-        return {
-            "provider": item.id,
-            "label": item.name,
-            "configured": True,
-            "custom": True,
-            "state": "configured",
-            "detail": f"{item.kind.replace('_', '.')} endpoint at {item.api_base}",
-            "source": "custom",
-            "disconnectable": True,
-        }
+        return await asyncio.to_thread(_provider_record, item.id)
 
     async def _select_model(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
@@ -772,8 +726,6 @@ class TuiController:
         mount = await asyncio.to_thread(resolve_mount_path)
         if mount not in self.targets:
             self.targets.append(mount)
-        if mount not in self.mounts:
-            self.mounts.append(mount)
         return {"mount": mount, "total": len(self.targets)}
 
     async def _load_target_list(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -791,7 +743,6 @@ class TuiController:
     async def _clear_targets(self, _payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
         self.targets.clear()
-        self.mounts.clear()
         return {"targets": []}
 
     async def _set_instruction(self, payload: dict[str, Any]) -> dict[str, Any]:
