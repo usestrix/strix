@@ -1,8 +1,11 @@
 package render
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 func tool(name string, args map[string]any, result any, status string) map[string]any {
@@ -188,5 +191,43 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			requireContains(t, Tool(tc.data), tc.wants...)
 		})
+	}
+}
+
+func TestCollapseToolShellPreviewAndExpand(t *testing.T) {
+	lines := make([]string, 16)
+	for i := range lines {
+		lines[i] = fmt.Sprintf("line %d", i)
+	}
+	full := strings.Join(lines, "\n")
+
+	collapsed, expandable := CollapseTool(full, "exec_command", false)
+	if !expandable {
+		t.Fatal("long shell output should be expandable")
+	}
+	got := strings.Split(ansi.Strip(collapsed), "\n")
+	if len(got) != 11 || !strings.Contains(got[10], "+6 lines — click to expand") {
+		t.Fatalf("collapsed shell preview wrong: %q", got)
+	}
+
+	expanded, expandable := CollapseTool(full, "exec_command", true)
+	if !expandable || !strings.Contains(ansi.Strip(expanded), full) ||
+		!strings.Contains(ansi.Strip(expanded), "click to collapse") {
+		t.Fatalf("expanded render wrong: %q", expanded)
+	}
+}
+
+func TestCollapseToolInlineRowAndFullTools(t *testing.T) {
+	full := "🧠 Thinking\n  a long private thought\n  spanning lines"
+	collapsed, expandable := CollapseTool(full, "think", false)
+	if !expandable || strings.Count(ansi.Strip(collapsed), "\n") != 1 {
+		t.Fatalf("think should collapse to one row plus hint: %q", collapsed)
+	}
+
+	if _, expandable := CollapseTool("short", "exec_command", false); expandable {
+		t.Fatal("short output must not be expandable")
+	}
+	if out, expandable := CollapseTool(full, "respond_to_user", false); expandable || out != full {
+		t.Fatal("respond_to_user must never collapse")
 	}
 }

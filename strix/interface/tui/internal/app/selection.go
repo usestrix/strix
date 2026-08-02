@@ -117,11 +117,17 @@ func (m *Model) extendSelection(line, col int) {
 }
 
 // finishSelection ends the drag and copies the highlighted text; a plain
-// click (no movement) just clears any previous highlight.
+// click (no movement) clears any previous highlight and, in the chat trace,
+// toggles the clicked tool's collapsed state.
 func (m *Model) finishSelection() tea.Cmd {
 	m.selection.dragging = false
 	if m.selection.anchorLine == m.selection.headLine && m.selection.anchorCol == m.selection.headCol {
+		region := m.selection.region
+		line := m.selection.anchorLine
 		m.selection.active = false
+		if region == regionChat {
+			m.toggleEventAtLine(line)
+		}
 		return nil
 	}
 	text := m.selectedText()
@@ -177,6 +183,18 @@ func cleanCopiedText(text string) string {
 		cleaned = append(cleaned, out)
 	}
 	return strings.Join(cleaned, "\n")
+}
+
+// toggleEventAtLine expands or collapses the tool event rendered at the given
+// chat content line.
+func (m *Model) toggleEventAtLine(line int) {
+	for _, span := range m.eventSpans {
+		if line >= span.start && line <= span.end {
+			m.expandedEvents[span.eventID] = !m.expandedEvents[span.eventID]
+			m.refreshViewport()
+			return
+		}
+	}
 }
 
 func (m Model) selectedText() string {

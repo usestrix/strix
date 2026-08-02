@@ -139,6 +139,8 @@ type Model struct {
 	customName             string
 	customURL              string
 	collapsedAgents        map[string]bool
+	expandedEvents         map[string]bool
+	eventSpans             []eventSpan
 	setupLog               []string
 	errorText              string
 	fatalError             error
@@ -260,7 +262,7 @@ func New(client *Client) Model {
 	input.Focus()
 	return Model{
 		client: client, input: input, pickerInput: newInput(), viewport: viewport.New(80, 20), vulnViewport: viewport.New(80, 20),
-		collapsedAgents: map[string]bool{}, providerConfigured: map[string]bool{}, providerLabels: map[string]string{}, providerStates: map[string]string{}, providerDetails: map[string]string{}, providerDisconnectable: map[string]bool{}, showSplash: true, splashStarted: time.Now(), followOutput: true,
+		collapsedAgents: map[string]bool{}, expandedEvents: map[string]bool{}, providerConfigured: map[string]bool{}, providerLabels: map[string]string{}, providerStates: map[string]string{}, providerDetails: map[string]string{}, providerDisconnectable: map[string]bool{}, showSplash: true, splashStarted: time.Now(), followOutput: true,
 		collectionRevisions: map[string]int{}, collectionAssemblies: map[string]*collectionAssembly{}, resyncRequested: map[string]bool{}, resyncRequests: map[string]string{},
 		seenMessages: map[string]bool{},
 	}

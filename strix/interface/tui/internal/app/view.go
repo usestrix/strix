@@ -13,7 +13,14 @@ import (
 	"github.com/usestrix/strix/tui/internal/render"
 )
 
-func (m Model) chatContent() string {
+// eventSpan records which content lines of the chat trace belong to an
+// expandable tool event, so clicks can toggle its collapsed state.
+type eventSpan struct {
+	start, end int
+	eventID    string
+}
+
+func (m *Model) chatContent() string {
 	if len(m.snapshot.Agents) == 0 {
 		switch m.snapshot.ScanState {
 		case "failed":
@@ -49,21 +56,35 @@ func (m Model) chatContent() string {
 	// to width-2 and indent every line by one cell.
 	contentWidth := max(1, m.viewport.Width-2)
 	var blocks []string
+	var spans []eventSpan
+	line := 0
 	for _, event := range events {
 		if event.AgentID != agentID {
 			continue
 		}
 		var block string
+		expandable := false
 		if event.Type == "chat" {
 			block = render.Chat(event.Data)
 		} else if event.Type == "tool" {
-			block = render.Tool(event.Data)
+			name := render.StringValue(event.Data["tool_name"])
+			block, expandable = render.CollapseTool(render.Tool(event.Data), name, m.expandedEvents[event.ID])
 		}
 		if block == "" {
 			continue
 		}
-		blocks = append(blocks, wrapBlock(block, contentWidth))
+		wrapped := wrapBlock(block, contentWidth)
+		if len(blocks) > 0 {
+			line++ // blank separator line between blocks
+		}
+		height := strings.Count(wrapped, "\n") + 1
+		if expandable {
+			spans = append(spans, eventSpan{start: line, end: line + height - 1, eventID: event.ID})
+		}
+		line += height
+		blocks = append(blocks, wrapped)
 	}
+	m.eventSpans = spans
 	if len(blocks) == 0 {
 		return centeredPlaceholder("Starting agent...", m.viewport.Width, m.viewport.Height)
 	}

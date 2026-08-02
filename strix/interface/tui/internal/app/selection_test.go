@@ -145,3 +145,41 @@ func TestCleanCopiedTextStripsDecorations(t *testing.T) {
 		t.Fatalf("cleaned %q, want %q", got, want)
 	}
 }
+
+func TestClickTogglesToolExpansion(t *testing.T) {
+	model := New(nil)
+	model.showSplash = false
+	model.ready = true
+	model.width, model.height = 130, 40
+	model.snapshot.Agents = []protocol.Agent{{ID: "root", Name: "Strix", Status: "running"}}
+	var output []string
+	for i := 0; i < 20; i++ {
+		output = append(output, "output line")
+	}
+	model.snapshot.Events = []protocol.Event{{
+		ID: "ev-1", Type: "tool", AgentID: "root", Timestamp: "1",
+		Data: map[string]any{
+			"tool_name": "exec_command",
+			"status":    "completed",
+			"args":      map[string]any{"cmd": "seq 20"},
+			"result":    strings.Join(output, "\n"),
+		},
+	}}
+	model.resizeViewport()
+
+	if !strings.Contains(model.viewportContent, "click to expand") {
+		t.Fatalf("long tool output should start collapsed:\n%s", model.viewportContent)
+	}
+	if len(model.eventSpans) != 1 || model.eventSpans[0].eventID != "ev-1" {
+		t.Fatalf("expected one expandable span, got %+v", model.eventSpans)
+	}
+
+	model.toggleEventAtLine(model.eventSpans[0].start)
+	if !strings.Contains(model.viewportContent, "click to collapse") {
+		t.Fatalf("click should expand the tool:\n%s", model.viewportContent)
+	}
+	model.toggleEventAtLine(model.eventSpans[0].start)
+	if !strings.Contains(model.viewportContent, "click to expand") {
+		t.Fatal("second click should collapse again")
+	}
+}
