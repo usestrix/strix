@@ -279,7 +279,10 @@ func (m Model) mainView() string {
 	}
 	traceHeight := chatHeight - 2
 	trace := withVerticalScrollbar(
-		visibleContent(m.viewportContent, m.viewport.YOffset, traceHeight),
+		m.highlightSelection(
+			visibleContent(m.viewportContent, m.viewport.YOffset, traceHeight),
+			m.viewport.YOffset,
+		),
 		chatWidth-2,
 		traceHeight,
 		m.viewport.TotalLineCount(),
@@ -503,6 +506,9 @@ func (m Model) statusView(width int) string {
 	}
 	if m.errorText != "" {
 		left = lipgloss.NewStyle().Foreground(red).Render(m.errorText)
+	}
+	if m.selectionNotice != "" {
+		left = lipgloss.NewStyle().Foreground(mid).Render(m.selectionNotice)
 	}
 	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
 	return " " + left + strings.Repeat(" ", max(1, gap-1)) + right

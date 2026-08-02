@@ -173,6 +173,22 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	) {
 		return m, nil
 	}
+	if m.selection.dragging {
+		switch msg.Action {
+		case tea.MouseActionMotion:
+			// Clamp to the trace pane so dragging past an edge keeps
+			// extending the selection.
+			traceHeight := chatHeight - 2
+			cx := min(max(x, 1), max(1, chatWidth-2))
+			cy := min(max(y, 1), max(1, traceHeight))
+			if line, col, ok := m.chatContentCell(cx, cy); ok {
+				m.extendSelection(line, col)
+			}
+			return m, nil
+		case tea.MouseActionRelease:
+			return m, m.finishSelection()
+		}
+	}
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if showSidebar && x >= chatWidth+1 {
@@ -241,6 +257,13 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		case y < chatHeight:
 			m.focus = focusChat
 			m.input.Blur()
+			if line, col, ok := m.chatContentCell(x, y); ok {
+				m.beginSelection(line, col)
+			} else {
+				m.selection.active = false
+			}
+		default:
+			m.selection.active = false
 		}
 		return m, nil
 	}

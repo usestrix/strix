@@ -153,6 +153,8 @@ type Model struct {
 	splashFrame            int
 	sweepFrame             int
 	followOutput           bool
+	selection              selectionState
+	selectionNotice        string
 	draggingScrollbar      scrollbarTarget
 	stateRevision          int
 	collectionRevisions    map[string]int
@@ -294,6 +296,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else if msg.command == "collection.resync" && msg.requestID != "" && msg.collection != "" {
 			m.resyncRequests[msg.requestID] = msg.collection
 		}
+	case selectionCopiedMsg:
+		m.selectionNotice = "Selection copied"
+		if msg.err != nil {
+			m.selectionNotice = "Copy failed: " + msg.err.Error()
+		}
+		return m, nil
 	case vulnerabilityCopiedMsg:
 		m.vulnerabilityCopied = msg.err == nil
 		m.vulnerabilityCopyError = ""
