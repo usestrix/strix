@@ -1,0 +1,29 @@
+<!doctype html>
+<!--
+  CSPT POSITIVE — direct traversal
+  Source: URL fragment (location.hash)
+  Sink:   fetch()
+  The fragment segment is concatenated straight into the request path with no
+  validation. With a hash of `#/orders/../../admin/keys`, orderId becomes
+  `../../admin/keys` and the request URL is built as
+  `/api/orders/../../admin/keys/detail`. The browser normalizes that outbound
+  path to /admin/keys/detail (the two `../` segments pop `orders` then `api`),
+  sent with the page's ambient session.
+-->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Order detail</title></head>
+<body>
+<h1>Order detail</h1>
+<pre id="out">loading…</pre>
+<script>
+  // SOURCE: attacker-controlled fragment, e.g. #/orders/../../admin/keys
+  const orderId = location.hash.replace(/^#\/orders\//, "");
+
+  // SINK: order id joined directly into the request path — CSPT.
+  fetch("/api/orders/" + orderId + "/detail", { credentials: "include" })
+    .then((r) => r.text())
+    .then((t) => { document.getElementById("out").textContent = t; })
+    .catch((e) => { document.getElementById("out").textContent = String(e); });
+</script>
+</body>
+</html>
