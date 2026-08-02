@@ -147,6 +147,10 @@ func (m *Model) finishSelection() tea.Cmd {
 
 // iconPrefixes and decorativeLines port StrixTUIApp._ICON_PREFIXES and
 // _DECORATIVE_LINES: UI ornaments dropped from copied chat text.
+// kittyPlaceholderRune marks kitty graphics placeholder cells, which carry no
+// copyable text.
+const kittyPlaceholderRune = 0x10eeee
+
 var iconPrefixes = []string{
 	"🐞 ", "🌐 ", "📋 ", "🧠 ", "◆ ", "◇ ", "◈ ", "→ ", "○ ", "● ", "✓ ", "✗ ",
 	"⚠ ", "▍ ", "▍", "┃ ", "• ", ">_ ", "</> ", "<~> ", "[ ] ", "[~] ", "[•] ",
@@ -170,6 +174,9 @@ func cleanCopiedText(text string) string {
 			continue
 		}
 		if stripped != "" && strings.Trim(stripped, "─") == "" {
+			continue
+		}
+		if strings.ContainsRune(stripped, kittyPlaceholderRune) {
 			continue
 		}
 		out := line

@@ -3,6 +3,7 @@ package app
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -198,7 +199,13 @@ func fixedPanelBody(content string, width, height int) string {
 }
 
 func (m Model) View() string {
-	return fillBackground(m.viewInner())
+	view := fillBackground(m.viewInner())
+	// Kitty graphics transmissions ride out of band: they carry no visible
+	// cells, so writing them directly keeps the Bubble Tea frame diff clean.
+	for _, seq := range render.DrainImageTransmissions() {
+		_, _ = os.Stdout.WriteString(seq)
+	}
+	return view
 }
 
 func (m Model) viewInner() string {

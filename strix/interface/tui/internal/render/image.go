@@ -1,6 +1,7 @@
 package render
 
 import (
+	"regexp"
 	"strings"
 )
 
@@ -25,13 +26,41 @@ func renderViewImage(args map[string]any, result any) string {
 	}
 	if isImageSuccess(result) {
 		b.WriteString("  " + Col(Green).Render("✓"))
-		if mime, payload := extractImageDataURI(result); mime != "" && mime != "webp" {
-			if mosaic := renderImageMosaic(payload); mosaic != "" {
-				b.WriteString("\n" + mosaic)
+		if KittyGraphicsSupported() {
+			if mime, payload := extractImageDataURI(result); mime != "" {
+				if block := kittyImageBlock(mime, payload); block != "" {
+					b.WriteString("\n" + block)
+				}
 			}
 		}
 	}
 	return b.String()
+}
+
+var imageDataURIRE = regexp.MustCompile(`data:image/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/]+={0,2})`)
+
+// extractImageDataURI pulls a base64 image payload out of a view_image tool
+// result: a raw data URI or a structured map with an image_url/url field.
+func extractImageDataURI(result any) (mime, payload string) {
+	var s string
+	switch v := result.(type) {
+	case string:
+		s = v
+	case map[string]any:
+		if u := StringValue(v["image_url"]); u != "" {
+			s = u
+		} else if u := StringValue(v["url"]); u != "" {
+			s = u
+		}
+	}
+	if s == "" {
+		return "", ""
+	}
+	m := imageDataURIRE.FindStringSubmatch(s)
+	if m == nil || len(m[2]) < 100 || len(m[2])%4 != 0 {
+		return "", ""
+	}
+	return m[1], m[2]
 }
 
 func isImageSuccess(result any) bool {
