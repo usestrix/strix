@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import shutil
 from pathlib import Path
@@ -126,16 +128,32 @@ async def create_or_reuse(
         for staged in staged_dirs:
             shutil.rmtree(staged, ignore_errors=True)
 
-    caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
-    scheme = "https" if caido_endpoint.tls else "http"
-    host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
-    logger.debug("Caido host endpoint resolved: %s", host_caido_url)
+    # The container is running from here on, but it is not in ``_SESSION_CACHE``
+    # yet -- and ``cleanup`` only tears down what it finds there. If port
+    # resolution or the Caido bootstrap fails, nothing would ever reap it, so
+    # delete it here before propagating.
+    try:
+        caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
+        scheme = "https" if caido_endpoint.tls else "http"
+        host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
+        logger.debug("Caido host endpoint resolved: %s", host_caido_url)
 
-    caido_client = await bootstrap_caido(
-        session,
-        host_url=host_caido_url,
-        container_url=container_caido_url,
-    )
+        caido_client = await bootstrap_caido(
+            session,
+            host_url=host_caido_url,
+            container_url=container_caido_url,
+        )
+    except BaseException:
+        logger.exception(
+            "Sandbox bootstrap failed for scan %s; deleting the container it started",
+            scan_id,
+        )
+        # Shielded: a second cancellation arriving while we await the delete
+        # would otherwise escape and abandon the container mid-teardown, and
+        # since it was never cached no later cleanup() could retry it.
+        with contextlib.suppress(BaseException):
+            await asyncio.shield(_delete_quietly(client, session, scan_id))
+        raise
 
     bundle = {
         "client": client,
@@ -167,9 +185,17 @@ async def cleanup(scan_id: str) -> None:
         except Exception:  # noqa: BLE001
             logger.debug("cleanup(%s): caido_client.aclose() raised", scan_id, exc_info=True)
 
-    client = bundle["client"]
+    await _delete_quietly(bundle["client"], bundle["session"], scan_id)
+
+
+async def _delete_quietly(client: Any, session: Any, scan_id: str) -> None:
+    """Delete ``session``'s container and release ``client``, swallowing errors.
+
+    Shared by ``cleanup`` and by ``create_or_reuse``'s bootstrap-failure path,
+    where a teardown error must not mask the original exception.
+    """
     try:
-        await client.delete(bundle["session"])
+        await client.delete(session)
         logger.info("Cleaned up sandbox session for scan %s", scan_id)
     except Exception:
         logger.exception(
