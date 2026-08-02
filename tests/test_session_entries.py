@@ -67,6 +67,14 @@ def test_worktree_git_pointer_file_is_protected(tmp_path: Path) -> None:
     ]
 
 
+def test_git_pointer_to_a_missing_gitdir_is_not_mounted(tmp_path: Path) -> None:
+    (tmp_path / ".git").write_text(f"gitdir: {tmp_path / 'gone'}\n", encoding="utf-8")
+
+    mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_metadata=True)])
+
+    assert [m["target"] for m in mounts] == ["/workspace/repo", "/workspace/repo/.git"]
+
+
 def test_git_pointer_outside_the_tree_needs_no_nested_mount(tmp_path: Path) -> None:
     tree = tmp_path / "worktree"
     tree.mkdir()

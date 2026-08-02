@@ -94,7 +94,7 @@ def _metadata_mounts(tree: Path, target: str) -> list[dict[str, Any]]:
         # it lives inside the same tree.
         mounts.append({"source": str(metadata), "target": f"{target}/{name}", "read_only": True})
         gitdir = _gitdir_from_pointer(metadata) if metadata.is_file() else None
-        if gitdir is not None and gitdir.is_relative_to(tree):
+        if gitdir is not None and gitdir.exists() and gitdir.is_relative_to(tree):
             relative = gitdir.relative_to(tree).as_posix()
             mounts.append(
                 {"source": str(gitdir), "target": f"{target}/{relative}", "read_only": True}
