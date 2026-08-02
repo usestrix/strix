@@ -86,7 +86,7 @@ are platform-specific.
 make wheel
 ```
 
-The build hook (`build_hooks/tui_sidecar.py`) requires Go 1.24.x or newer, embeds
+The build hook (`scripts/tui_sidecar_hook.py`) requires Go 1.24.x or newer, embeds
 the sidecar as `strix/bin/strix-tui`, and assigns the current platform tag.
 Frozen releases built by `scripts/build.sh` and `strix.spec` also require the
 sidecar.

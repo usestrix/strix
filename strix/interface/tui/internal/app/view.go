@@ -27,6 +27,8 @@ func (m Model) chatContent() string {
 			return centeredPlaceholder("Scan stopped", m.viewport.Width, m.viewport.Height)
 		case "completed":
 			return centeredPlaceholder("Scan completed", m.viewport.Width, m.viewport.Height)
+		case "preparing":
+			return centeredPlaceholder("Preparing scan...", m.viewport.Width, m.viewport.Height)
 		default:
 			return centeredPlaceholder("Loading...", m.viewport.Width, m.viewport.Height)
 		}

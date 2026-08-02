@@ -400,23 +400,6 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
     console.print()
 
 
-def _enter_setup_for_rejected_saved_key(
-    args: argparse.Namespace,
-    exc: ProviderCredentialRejectedError,
-) -> bool:
-    if (
-        args.non_interactive
-        or args.resume
-        or exc.credential_role != "primary"
-        or exc.credential_source not in {"config", "custom"}
-    ):
-        return False
-    args.needs_setup = True
-    args.setup_invalid_provider = exc.provider
-    args.setup_guidance = str(exc)
-    return True
-
-
 def _detect_provider_setup_need(args: argparse.Namespace) -> None:
     """Route fresh interactive launches with no usable provider into setup."""
     if args.non_interactive or args.resume or args.needs_setup:
@@ -441,20 +424,18 @@ def _detect_provider_setup_need(args: argparse.Namespace) -> None:
 
 
 def _bootstrap_scan(args: argparse.Namespace) -> None:
-    """Warm up the model and prepare the run for a directly-launched scan.
+    """Warm up the model and prepare the run for a non-interactive scan.
 
-    A rejected saved key on an interactive launch flips ``args.needs_setup``
-    instead of exiting, dropping the launch into the TUI setup flow.
+    Interactive launches only validate the environment here; the model
+    preflight and run preparation happen inside the TUI so the interface
+    paints immediately instead of waiting on a model round trip.
     """
     validate_environment()
+    if not args.non_interactive:
+        return
     try:
-        asyncio.run(warm_up_llm(show_model_warning=args.non_interactive))
-    except ProviderCredentialRejectedError as exc:
-        if _enter_setup_for_rejected_saved_key(args, exc):
-            return
-        _print_model_connection_error(exc, exc.model_name)
-        sys.exit(1)
-    except ModelConnectionError as exc:
+        asyncio.run(warm_up_llm(show_model_warning=True))
+    except (ProviderCredentialRejectedError, ModelConnectionError) as exc:
         _print_model_connection_error(exc, exc.model_name)
         sys.exit(1)
     persist_current()

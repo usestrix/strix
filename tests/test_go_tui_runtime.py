@@ -20,6 +20,7 @@ from strix.config import (
     provider_auth_status,
 )
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.interface.scan_setup import ProviderCredentialRejectedError
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui import sidecar
 from strix.interface.tui.runtime import GoTuiRuntime
@@ -229,9 +230,16 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
         calls.append("scan")
         scan_started.set()
 
+    async def preflight(_model: str) -> None:
+        calls.append("preflight")
+
     monkeypatch.setattr(runtime, "binary_command", lambda: ["test-sidecar"])
     monkeypatch.setattr(go_tui, "launch_tui_process", launch)
     monkeypatch.setattr(go_tui, "wait_process", wait_process)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "persist_current", lambda: None)
+    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: None)
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
     monkeypatch.setattr(runtime, "init_run_state", init_state)
     monkeypatch.setattr(runtime, "start_scan", start_scan)
 
@@ -258,7 +266,7 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
             },
         )
         await asyncio.wait_for(run_task, timeout=2)
-        assert calls == ["state", "scan"]
+        assert calls == ["preflight", "state", "scan"]
     finally:
         child.close()
         if not run_task.done():
@@ -793,3 +801,80 @@ async def test_agent_state_sync_does_not_mask_root_failure_with_completed_report
 
     assert runtime.controller.scan_state == "failed"
     assert runtime.controller.error == "finalization failed"
+
+
+def _direct_launch_args() -> argparse.Namespace:
+    launch_args = args()
+    launch_args.needs_setup = False
+    return launch_args
+
+
+@pytest.mark.asyncio
+async def test_prepare_and_start_enters_setup_on_rejected_saved_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(_direct_launch_args())
+    started: list[str] = []
+
+    async def preflight(_model: str) -> None:
+        raise ProviderCredentialRejectedError(
+            "anthropic authentication failed: saved key was rejected",
+            model_name="anthropic/claude-opus-4-7",
+            provider="anthropic",
+            credential_source="config",
+            credential_role="primary",
+        )
+
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(runtime, "start_scan", lambda: started.append("scan"))
+
+    await runtime.prepare_and_start()
+
+    assert started == []
+    assert runtime.controller.setup_mode is True
+    assert runtime.controller.scan_state == "setup"
+    assert any("anthropic" in message["text"] for message in runtime.controller.messages)
+
+
+@pytest.mark.asyncio
+async def test_prepare_and_start_reports_ordinary_connection_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(_direct_launch_args())
+    started: list[str] = []
+
+    async def preflight(_model: str) -> None:
+        raise TimeoutError("connection timed out")
+
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(runtime, "start_scan", lambda: started.append("scan"))
+
+    await runtime.prepare_and_start()
+
+    assert started == []
+    assert runtime.controller.setup_mode is False
+    assert runtime.controller.scan_state == "failed"
+    assert "connection timed out" in (runtime.controller.error or "")
+
+
+@pytest.mark.asyncio
+async def test_prepare_and_start_runs_the_scan_after_preparation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(_direct_launch_args())
+    order: list[str] = []
+
+    async def preflight(_model: str) -> None:
+        order.append("preflight")
+
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "persist_current", lambda: order.append("persist"))
+    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: order.append("prepare"))
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: order.append("telemetry"))
+    monkeypatch.setattr(runtime, "init_run_state", lambda: order.append("state"))
+    monkeypatch.setattr(runtime, "start_scan", lambda: order.append("scan"))
+
+    await runtime.prepare_and_start()
+
+    assert order == ["preflight", "persist", "prepare", "telemetry", "state", "scan"]
+    assert runtime.controller.scan_state == "running"

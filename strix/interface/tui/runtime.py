@@ -13,11 +13,12 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strix.config import load_settings, provider_authentication_error_message
+from strix.config import load_settings, persist_current, provider_authentication_error_message
 from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
 from strix.interface.scan_setup import (
+    ProviderCredentialRejectedError,
     build_targets_info,
     preflight_model_connection,
     prepare_run,
@@ -133,6 +134,36 @@ class GoTuiRuntime:
         telemetry_start(candidate)
 
         vars(self.args).update(vars(candidate))
+        self.init_run_state()
+        self.start_scan()
+
+    async def prepare_and_start(self) -> None:
+        """Prepare a directly-launched scan once the TUI is on screen.
+
+        The model round trip and run preparation run here rather than before
+        launch so the interface appears immediately. A rejected saved key
+        drops the session into the setup flow instead of failing the run.
+        """
+        model = (load_settings().llm.model or "").strip()
+        try:
+            await preflight_model_connection(model)
+            persist_current()
+            prepare_run(self.args)
+            telemetry_start(self.args)
+        except ProviderCredentialRejectedError as exc:
+            if exc.credential_role == "primary" and exc.credential_source in {"config", "custom"}:
+                self.controller.enter_setup(provider=exc.provider, guidance=str(exc))
+                return
+            self.controller.fail_preparation(
+                provider_authentication_error_message(model, exc) or str(exc)
+            )
+            return
+        except Exception as exc:
+            logger.exception("Go TUI scan preparation failed")
+            message = provider_authentication_error_message(model, exc)
+            self.controller.fail_preparation(message or str(exc))
+            return
+        self.controller.scan_state = "running"
         self.init_run_state()
         self.start_scan()
 
@@ -286,6 +317,15 @@ class GoTuiRuntime:
             "Bubble Tea TUI binary not found. Reinstall Strix from an official platform wheel."
         )
 
+    @staticmethod
+    async def _cancel_tasks(*tasks: asyncio.Task[None] | None) -> None:
+        for task in tasks:
+            if task is None:
+                continue
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
     async def run(self) -> None:
         # Redirect the process's sys.stdout/sys.stderr while the TUI runs so
         # logging handlers created during the scan never paint over the Go
@@ -298,6 +338,7 @@ class GoTuiRuntime:
         sys.stderr = output_sink
         backend_socket: socket.socket | None = None
         sync_task: asyncio.Task[None] | None = None
+        prepare_task: asyncio.Task[None] | None = None
         process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None = None
         try:
             env = child_environment()
@@ -307,8 +348,8 @@ class GoTuiRuntime:
             process, backend_socket = await launch_tui_process(command, env, cwd)
             await self.server.start(backend_socket)
             if not self.controller.setup_mode:
-                self.init_run_state()
-                self.start_scan()
+                self.controller.begin_preparation()
+                prepare_task = asyncio.create_task(self.prepare_and_start())
             sync_task = asyncio.create_task(self.sync_state())
             return_code = await wait_process(process)
             check_return_code(return_code)
@@ -324,10 +365,7 @@ class GoTuiRuntime:
             try:
                 if backend_socket is not None:
                     backend_socket.close()
-                if sync_task is not None:
-                    sync_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await sync_task
+                await self._cancel_tasks(prepare_task, sync_task)
                 await self.quit()
                 await self.server.close()
             finally:

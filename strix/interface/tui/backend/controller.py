@@ -153,6 +153,27 @@ class TuiController:
         if scan_loop is not None:
             self.scan_loop = scan_loop
 
+    def begin_preparation(self) -> None:
+        """Mark a directly-launched run as preparing behind the live TUI."""
+        self.scan_state = "preparing"
+        self.notify_changed()
+
+    def fail_preparation(self, detail: str) -> None:
+        self.scan_state = "failed"
+        self.error = detail
+        self.notify_changed()
+
+    def enter_setup(self, *, provider: str | None = None, guidance: str | None = None) -> None:
+        """Drop a live session into the setup flow, e.g. on a rejected key."""
+        self.setup_mode = True
+        self.scan_started = False
+        self.scan_state = "setup"
+        if provider and provider.strip():
+            self._append_message(f"Provider requiring setup: {provider.strip()}", "warning")
+        if guidance and guidance.strip():
+            self._append_message(guidance.strip(), "warning")
+        self.notify_changed()
+
     def add_message(self, text: str, level: str = "info") -> None:
         self._append_message(text, level)
         self.notify_changed()

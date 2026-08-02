@@ -95,7 +95,7 @@ def _install_startup_doubles(
 
         return record
 
-    async def run_tui(run_args: argparse.Namespace) -> None:
+    async def run_interface(run_args: argparse.Namespace) -> None:
         tui_args.append(run_args)
 
     monkeypatch.setattr(main_module, "parse_arguments", lambda: args)
@@ -114,14 +114,15 @@ def _install_startup_doubles(
         "persist_current",
         lambda **_kwargs: calls.__setitem__("persist", calls["persist"] + 1),
     )
-    monkeypatch.setattr(main_module, "run_tui", run_tui)
+    monkeypatch.setattr(main_module, "run_tui", run_interface)
+    monkeypatch.setattr("strix.interface.cli.run_cli", run_interface)
     return calls, tui_args
 
 
 def test_successful_startup_persists_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    args = _args()
+    args = _args(non_interactive=True)
     settings = Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}})
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
@@ -149,63 +150,11 @@ def test_successful_startup_persists_configuration(
     assert calls == {"prepare": 1, "telemetry": 1, "persist": 1}
 
 
-def test_interactive_rejected_saved_key_enters_setup_with_prepared_targets(
+def test_interactive_startup_defers_preparation_to_the_tui(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    config.set_provider_api_key("anthropic", "rejected-saved-key")
-    args = _args()
-    original_targets = args.targets_info
-    settings = Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}})
-    calls, tui_args = _install_startup_doubles(
-        monkeypatch,
-        args=args,
-        settings=settings,
-        failures={MODEL: RuntimeError("HTTP 401 Unauthorized")},
-    )
-
-    main_module.main()
-
-    assert tui_args == [args]
-    assert args.needs_setup is True
-    assert args.run_name is None
-    assert args.targets_info is original_targets
-    assert args.setup_invalid_provider == "anthropic"
-    assert "select this provider to replace it" in args.setup_guidance
-    assert config.provider_auth_status("anthropic").state is ProviderAuthState.INVALID
-    assert calls == {"prepare": 0, "telemetry": 0, "persist": 0}
-
-
-def test_interactive_rejected_custom_key_enters_setup(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    custom = config.save_custom_provider(
-        "Rejected custom",
-        "https://custom.example/v1",
-        "wrong-key",
-    )
-    model = f"{custom.id}/private-model"
-    args = _args()
-    calls, tui_args = _install_startup_doubles(
-        monkeypatch,
-        args=args,
-        settings=Settings.model_validate({"llm": {"model": model, "timeout": 1}}),
-        failures={model: RuntimeError("HTTP 401 Unauthorized")},
-    )
-
-    main_module.main()
-
-    assert tui_args == [args]
-    assert args.needs_setup is True
-    assert args.setup_invalid_provider == custom.id
-    assert "disconnect and re-add" in args.setup_guidance
-    assert calls == {"prepare": 0, "telemetry": 0, "persist": 0}
-
-
-def test_interactive_rejected_environment_key_is_fatal_with_restart_guidance(
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    monkeypatch.setenv("ANTHROPIC_API_KEY", "rejected-environment-key")
+    """Interactive launches paint the TUI before any model round trip."""
+    config.set_provider_api_key("anthropic", "configured-key")
     args = _args()
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
@@ -214,13 +163,11 @@ def test_interactive_rejected_environment_key_is_fatal_with_restart_guidance(
         failures={MODEL: RuntimeError("HTTP 401 Unauthorized")},
     )
 
-    with pytest.raises(SystemExit, match="1"):
-        main_module.main()
+    main_module.main()
 
-    output = capsys.readouterr().out
-    assert "LLM CONNECTION FAILED" in output
-    assert "update it in the environment and restart Strix" in output
-    assert tui_args == []
+    assert tui_args == [args]
+    assert args.needs_setup is False
+    assert args.run_name is None
     assert calls == {"prepare": 0, "telemetry": 0, "persist": 0}
 
 
@@ -258,7 +205,7 @@ def test_ordinary_model_connection_failures_do_not_enter_setup(
     failure: BaseException,
 ) -> None:
     config.set_provider_api_key("anthropic", "configured-key")
-    args = _args()
+    args = _args(non_interactive=True)
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
         args=args,

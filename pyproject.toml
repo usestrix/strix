@@ -93,7 +93,7 @@ exclude = [
 ]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
-path = "build_hooks/tui_sidecar.py"
+path = "scripts/tui_sidecar_hook.py"
 
 # ============================================================================
 # Type Checking Configuration
@@ -228,7 +228,7 @@ ignore = [
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
-"build_hooks/tui_sidecar.py" = ["INP001"]
+"scripts/tui_sidecar_hook.py" = ["INP001"]
 # Stdlib HTTP handler overrides (do_GET/do_POST).
 "strix/interface/auth_cli.py" = ["N802"]
 "tests/test_codex_streaming.py" = ["N802"]

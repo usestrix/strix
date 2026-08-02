@@ -1559,6 +1559,7 @@ func TestTerminalSnapshotWithoutAgentsDoesNotKeepLoading(t *testing.T) {
 		{state: "failed", error: "authentication rejected", want: "Scan failed"},
 		{state: "stopped", want: "Scan stopped"},
 		{state: "completed", want: "Scan completed"},
+		{state: "preparing", want: "Preparing scan..."},
 	}
 
 	for _, tt := range tests {

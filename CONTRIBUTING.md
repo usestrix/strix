@@ -124,7 +124,7 @@ Wheels always bundle the matching Go sidecar and are platform-specific:
 make wheel
 ```
 
-The build hook (`build_hooks/tui_sidecar.py`) compiles the sidecar, embeds it as
+The build hook (`scripts/tui_sidecar_hook.py`) compiles the sidecar, embeds it as
 `strix/bin/strix-tui`, and assigns the current platform tag. It requires Go
 1.24.x or newer and fails rather than producing a wheel without the sidecar.
 `scripts/build.sh` and `strix.spec` are likewise strict for frozen PyInstaller
