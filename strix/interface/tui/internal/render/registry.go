@@ -99,10 +99,10 @@ const outputPreviewLines = 10
 
 // ToolPreviewLines returns how many lines of a tool's render are shown before
 // it is collapsed; 0 means the tool is never collapsed. Only tools whose
-// output can grow unbounded (terminal, proxy) collapse.
+// output can grow unbounded (terminal, patches, proxy) collapse.
 func ToolPreviewLines(name string) int {
 	switch name {
-	case "exec_command", "write_stdin",
+	case "exec_command", "write_stdin", "apply_patch",
 		"view_request", "repeat_request", "view_sitemap_entry":
 		return outputPreviewLines
 	}
