@@ -25,6 +25,11 @@ func renderViewImage(args map[string]any, result any) string {
 	}
 	if isImageSuccess(result) {
 		b.WriteString("  " + Col(Green).Render("✓"))
+		if mime, payload := extractImageDataURI(result); mime != "" && mime != "webp" {
+			if mosaic := renderImageMosaic(payload); mosaic != "" {
+				b.WriteString("\n" + mosaic)
+			}
+		}
 	}
 	return b.String()
 }
