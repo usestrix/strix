@@ -144,7 +144,6 @@ def _with_bounded_result(tool: FunctionTool) -> FunctionTool:
 
 
 def _schema_types(spec: dict[str, Any]) -> set[str]:
-    """Types a property accepts, flattening ``anyOf`` unions and dropping null."""
     types: set[str] = set()
     raw = spec.get("type")
     if isinstance(raw, str):
@@ -159,14 +158,6 @@ def _schema_types(spec: dict[str, Any]) -> set[str]:
 
 
 def _decode_structured(value: str, types: set[str]) -> Any:
-    """Decode a string the model sent where the schema wants an array/object.
-
-    Only an unambiguous JSON container is accepted. Never infer structure from
-    a free-form string: splitting prose on commas or newlines would silently
-    fragment a single narrative item (an ``agent_finish`` finding, say) into
-    several corrupted ones. Anything else is passed through so the model gets
-    a validation error it can correct.
-    """
     stripped = value.strip()
     if not stripped:
         return value
@@ -179,7 +170,6 @@ def _decode_structured(value: str, types: set[str]) -> Any:
 
 
 def _coerce_argument(value: Any, spec: dict[str, Any]) -> Any:
-    """Reshape one argument between the string and structured forms."""
     types = _schema_types(spec)
     if not types or value is None:
         return value
@@ -191,13 +181,6 @@ def _coerce_argument(value: Any, spec: dict[str, Any]) -> Any:
 
 
 def _coerce_arguments(raw_input: str, schema: dict[str, Any]) -> str:
-    """Best-effort realignment of tool arguments with the tool's JSON schema.
-
-    Models routinely send a structured array where the schema declares a
-    JSON-encoded string (and vice versa). Pydantic validation rejects both
-    before the tool body runs, so normalize the payload first and leave
-    anything we can't confidently reshape untouched.
-    """
     properties = schema.get("properties")
     if not isinstance(properties, dict) or not properties:
         return raw_input
@@ -224,7 +207,6 @@ def _coerce_arguments(raw_input: str, schema: dict[str, Any]) -> str:
 
 
 def _with_coerced_arguments(tool: FunctionTool) -> FunctionTool:
-    """Accept both the string and structured form of every argument."""
     if getattr(tool, "_strix_coerced", False):
         return tool
     invoke_tool = tool.on_invoke_tool

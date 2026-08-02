@@ -74,7 +74,6 @@ async def test_encoded_list_is_decoded_for_an_array_parameter(schema: dict[str, 
     ],
 )
 async def test_free_form_strings_are_never_split_into_an_array(value: str) -> None:
-    """Splitting prose would fragment one narrative item into several corrupted ones."""
     parsed = await _roundtrip(_ARRAY, {"tags": value})
 
     assert parsed["tags"] == value
