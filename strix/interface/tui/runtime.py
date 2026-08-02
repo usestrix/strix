@@ -275,9 +275,6 @@ class GoTuiRuntime:
 
     @staticmethod
     def binary_command() -> list[str]:
-        override = os.environ.get("STRIX_TUI_BINARY")
-        if override:
-            return [override]
         source = tui_source_dir()
         # A checkout may also contain a stale wheel/build sidecar. Running the
         # current source is the deterministic development choice.
@@ -291,7 +288,7 @@ class GoTuiRuntime:
         if development.is_file():
             return [str(development)]
         raise RuntimeError(
-            "Bubble Tea TUI binary not found. Reinstall Strix or set STRIX_TUI_BINARY."
+            "Bubble Tea TUI binary not found. Reinstall Strix from an official platform wheel."
         )
 
     async def run(self) -> None:

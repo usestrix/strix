@@ -44,24 +44,12 @@ def args() -> argparse.Namespace:
     )
 
 
-def test_binary_command_prefers_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("STRIX_TUI_BINARY", "/custom/strix-tui")
-    monkeypatch.setattr(
-        go_tui,
-        "get_strix_resource_path",
-        lambda *_parts: pytest.fail("packaged lookup should not run"),
-    )
-
-    assert GoTuiRuntime.binary_command() == ["/custom/strix-tui"]
-
-
 def test_binary_command_prefers_packaged_sidecar(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
     sidecar = tmp_path / "strix-tui"
     sidecar.write_text("binary")
-    monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
     monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: sidecar)
     monkeypatch.setattr(
@@ -82,7 +70,6 @@ def test_binary_command_prefers_current_source_over_packaged_sidecar(
     (source / "go.mod").write_text("module test\n")
     sidecar = tmp_path / "strix-tui"
     sidecar.write_text("stale")
-    monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
     monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: sidecar)
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/go" if name == "go" else None)
@@ -94,7 +81,6 @@ def test_binary_command_reports_missing_sidecar(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
-    monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
@@ -108,7 +94,6 @@ def test_binary_command_ignores_unconstrained_path_sidecar(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
-    monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
     monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
     monkeypatch.setattr(go_tui, "project_root", lambda: tmp_path)

@@ -124,8 +124,7 @@ make wheel
 
 This produces a pure `py3-none-any` wheel without a bundled TUI sidecar. The Go
 TUI is the only interactive interface: installs without a bundled `strix-tui`
-sidecar run it from source (`go run`, requires Go 1.24+) or from an explicit
-`STRIX_TUI_BINARY` path.
+sidecar run it from source (`go run`, requires Go 1.24+).
 
 `uv build --sdist` also requires no Go. A wheel built from that source archive
 is the same universal, sidecar-free package with the same requirements.
