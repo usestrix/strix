@@ -27,10 +27,9 @@ entering the terminal alternate screen:
 ```
 
 Python does not initialize report/run state or start a scan until it validates
-`ready`. A version/capability mismatch makes the Go sidecar exit nonzero. Python
-may fall back to the Textual scan interface for prepared scans only while this
-pre-activation handshake has not completed. Failures after `ready` are surfaced
-and never start a second UI.
+`ready`. A version/capability mismatch makes the Go sidecar exit nonzero and
+the launch fails with guidance. Failures after `ready` are surfaced and never
+start a second UI.
 
 ## State and collections
 

@@ -36,7 +36,6 @@ def _isolated_config(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         "ANTHROPIC_API_KEY",
         "OPENAI_API_KEY",
         "LLM_API_KEY",
-        "STRIX_TEXTUAL_TUI",
     ):
         monkeypatch.delenv(key, raising=False)
     config.apply_config_override(tmp_path / "cli-config.json")
@@ -242,28 +241,6 @@ def test_noninteractive_rejected_saved_key_is_fatal(
     assert calls == {"prepare": 0, "telemetry": 0, "persist": 0}
 
 
-def test_textual_rejected_saved_key_keeps_main_style_fatal_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("STRIX_TEXTUAL_TUI", "1")
-    monkeypatch.setattr(main_module, "textual_tui_requested", lambda: True)
-    config.set_provider_api_key("anthropic", "rejected-saved-key")
-    args = _args()
-    calls, tui_args = _install_startup_doubles(
-        monkeypatch,
-        args=args,
-        settings=Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}}),
-        failures={MODEL: RuntimeError("HTTP 401 Unauthorized")},
-    )
-
-    with pytest.raises(SystemExit, match="1"):
-        main_module.main()
-
-    assert args.needs_setup is False
-    assert tui_args == []
-    assert calls == {"prepare": 0, "telemetry": 0, "persist": 0}
-
-
 @pytest.mark.parametrize(
     "failure",
     [
@@ -317,16 +294,6 @@ def test_parse_arguments_still_requires_target_noninteractively(
         main_module.parse_arguments()
 
     assert "the following arguments are required" in capsys.readouterr().err
-
-
-def test_parse_arguments_rejects_targetless_textual_opt_out(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("STRIX_TEXTUAL_TUI", "1")
-    monkeypatch.setattr(sys, "argv", ["strix"])
-
-    with pytest.raises(SystemExit, match="2"):
-        main_module.parse_arguments()
 
 
 def test_legacy_max_budget_flag_remains_accepted(monkeypatch: pytest.MonkeyPatch) -> None:

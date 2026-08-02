@@ -82,7 +82,7 @@ def test_binary_command_prefers_current_source_over_packaged_sidecar(
     assert GoTuiRuntime.binary_command() == ["go", "run", "./cmd/strix-tui"]
 
 
-def test_binary_command_reports_textual_fallback(
+def test_binary_command_reports_missing_sidecar(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
 ) -> None:
@@ -91,7 +91,7 @@ def test_binary_command_reports_textual_fallback(
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     monkeypatch.setattr(go_tui, "_project_root", lambda: tmp_path)
 
-    with pytest.raises(RuntimeError, match="STRIX_TEXTUAL_TUI=1"):
+    with pytest.raises(RuntimeError, match="Bubble Tea TUI binary not found"):
         GoTuiRuntime.binary_command()
 
 
@@ -287,7 +287,7 @@ async def test_pre_activation_failure_propagates_to_dispatcher(
 
 
 @pytest.mark.asyncio
-async def test_post_activation_failure_never_uses_textual_fallback(
+async def test_post_activation_failure_is_surfaced(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class ActivatedRuntime:

@@ -84,12 +84,12 @@ Normal source and editable installs do not require Go. Build a universal
 make wheel
 ```
 
-Strix falls back to the legacy Textual scan interface for prepared scans when no compatible
-`strix-tui` executable can activate. Set `STRIX_TEXTUAL_TUI=1` to select Textual
-without attempting the Go TUI. Targetless setup requires the Go sidecar.
+The Go TUI is the only interactive interface. Installs without a bundled
+`strix-tui` sidecar run it from source (`go run`, requires Go 1.24+) or from an
+explicit `STRIX_TUI_BINARY` path.
 
 `uv build --sdist` also requires no Go. Wheels built from that source archive
-are universal, sidecar-free packages with the same Textual fallback.
+are universal, sidecar-free packages with the same requirements.
 
 Release wheels are intentionally strict and platform-specific:
 

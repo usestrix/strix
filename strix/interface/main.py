@@ -32,7 +32,6 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.interactive import (
     InteractiveSetupUnavailableError,
     run_tui,
-    textual_tui_requested,
 )
 from strix.interface.update_check import (
     is_binary_install,
@@ -793,7 +792,7 @@ Examples:
             )
     else:
         if not args.target and not args.target_list:
-            if args.non_interactive or textual_tui_requested():
+            if args.non_interactive:
                 parser.error(
                     "the following arguments are required: -t/--target or --target-list "
                     "(or use --resume <run_name> to continue a prior scan)"
@@ -1163,7 +1162,6 @@ def _enter_setup_for_rejected_saved_key(
     if (
         args.non_interactive
         or args.resume
-        or textual_tui_requested()
         or exc.credential_role != "primary"
         or exc.credential_source not in {"config", "custom"}
     ):
@@ -1203,12 +1201,7 @@ def main() -> None:
         asyncio.run(run_tui_protocol_smoke(args))
         return
 
-    if (
-        not args.non_interactive
-        and not args.resume
-        and not args.needs_setup
-        and not textual_tui_requested()
-    ):
+    if not args.non_interactive and not args.resume and not args.needs_setup:
         model = (load_settings().llm.model or "").strip()
         if not model:
             args.needs_setup = True

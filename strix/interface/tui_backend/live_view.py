@@ -1,18 +1,18 @@
-"""Go-TUI event projection layered on the unchanged Textual projection."""
+"""Go-TUI event projection layered on the shared base projection."""
 
 from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
 
-from strix.interface.tui.live_view import TuiLiveView as TextualLiveView
+from strix.interface.tui.live_view import TuiLiveView as BaseLiveView
 
 
 _MAX_LIVE_EVENTS = 10_000
 
 
-class TuiLiveView(TextualLiveView):
-    """Add protocol cursors and bounds without changing legacy Textual state."""
+class TuiLiveView(BaseLiveView):
+    """Add protocol cursors and bounds on top of the shared projection state."""
 
     def __init__(self) -> None:
         super().__init__()

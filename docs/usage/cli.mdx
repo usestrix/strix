@@ -108,17 +108,10 @@ strix (--target <target> | --target-list <path>) [options]
 
 ## Interactive Interface
 
-Interactive scans use the Go/Bubble Tea interface by default. Select the
-Textual interface explicitly with:
-
-```bash
-STRIX_TEXTUAL_TUI=1 strix
-```
-
-The Go interface supports targetless interactive setup for providers, credentials,
-models, and targets. If the Go sidecar cannot activate, Strix can fall back to
-Textual for prepared scans. Failures after Go TUI activation are surfaced rather than switching
-interfaces mid-session.
+Interactive scans use the Go/Bubble Tea interface. It supports targetless
+interactive setup for providers, credentials, models, and targets. If the Go
+sidecar cannot activate, Strix exits with guidance; failures after Go TUI
+activation are surfaced rather than switching interfaces mid-session.
 
 Setup slash commands also cover the main fresh-run controls: `/budget <USD|off>`,
 `/turns <N>`, `/scope <auto|diff|full> [base]`, `/mount <path>`,

@@ -273,14 +273,13 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 > that file. Credentials are stored as plaintext with permissions restricted to
 > the current user (`0600`).
 
-Interactive scans use the Go TUI when its platform sidecar is installed. Set
-`STRIX_TEXTUAL_TUI=1` to select the legacy Textual interface explicitly. The Go
-interface supports targetless provider, model, credential, and target setup.
+Interactive scans use the Go TUI. It supports targetless provider, model,
+credential, and target setup.
 
 Source distributions and universal `py3-none-any` wheels built from source do
-not bundle the platform-specific Go sidecar. Those installs remain fully
-functional for prepared scans through the Textual fallback. Targetless first-run
-setup requires an official platform wheel or a source checkout with Go available.
+not bundle the platform-specific Go sidecar. Those installs run the TUI from
+source (requires Go 1.24+) or from an explicit `STRIX_TUI_BINARY` path.
+Official platform wheels bundle the sidecar and work out of the box.
 
 #### Sign in with a ChatGPT subscription
 
@@ -326,7 +325,7 @@ Have questions? Found a bug? Want to contribute? **[Join our Discord!](https://d
 
 ## Acknowledgements
 
-Strix builds on the incredible work of open-source projects like [LiteLLM](https://github.com/BerriAI/litellm), [Caido](https://github.com/caido/caido), [Nuclei](https://github.com/projectdiscovery/nuclei), [Playwright](https://github.com/microsoft/playwright), and [Textual](https://github.com/Textualize/textual). Huge thanks to their maintainers!
+Strix builds on the incredible work of open-source projects like [LiteLLM](https://github.com/BerriAI/litellm), [Caido](https://github.com/caido/caido), [Nuclei](https://github.com/projectdiscovery/nuclei), [Playwright](https://github.com/microsoft/playwright), and [Bubble Tea](https://github.com/charmbracelet/bubbletea). Huge thanks to their maintainers!
 
 
 > [!WARNING]

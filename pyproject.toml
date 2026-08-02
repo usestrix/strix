@@ -40,7 +40,6 @@ dependencies = [
   "pydantic-settings>=2.13.0",
   "rich",
   "docker>=7.1.0",
-  "textual>=6.0.0",
   "requests>=2.32.0",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
@@ -118,7 +117,6 @@ module = [
     "litellm.*",
     "rich.*",
     "jinja2.*",
-    "textual.*",
     "cvss.*",
     "docker.*",
     "caido_sdk_client.*",
@@ -281,13 +279,12 @@ ignore = [
 # CLI / TUI / main keep extensive lazy imports + broad exception
 # swallows for resilience around terminal-rendering errors.
 "strix/interface/cli.py" = ["BLE001", "PLC0415"]
-"strix/interface/tui/app.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915", "SIM105"]
 "strix/interface/main.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
 # The Go TUI runtime and backend controller import interface modules lazily so
 # the sidecar entry point stays fast and avoids circular imports.
+"strix/interface/interactive.py" = ["PLC0415"]
 "strix/interface/go_tui.py" = ["PLC0415"]
 "strix/interface/tui_backend/controller.py" = ["PLC0415"]
-"strix/interface/tui/renderers/agent_message_renderer.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
 force-single-line = false

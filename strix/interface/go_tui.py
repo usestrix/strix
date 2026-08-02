@@ -51,7 +51,7 @@ _SENSITIVE_ENV_NAMES = {
 
 
 class GoTuiPreActivationError(RuntimeError):
-    """A sidecar failure that a prepared scan may recover from with Textual."""
+    """A sidecar failure raised before the Go TUI activates."""
 
 
 def _tui_executable() -> str:
@@ -203,8 +203,8 @@ def _check_return_code(return_code: int) -> None:
 
 
 def _package_version() -> str:
-    """Mirror tui/app.py get_package_version so the Go splash/stats show the same
-    value ("dev" when metadata is unavailable)."""
+    """Report the installed package version for the Go splash/stats
+    ("dev" when metadata is unavailable)."""
     try:
         return version("strix-agent")
     except PackageNotFoundError:
@@ -466,15 +466,14 @@ class GoTuiRuntime:
         if development.is_file():
             return [str(development)]
         raise RuntimeError(
-            "Bubble Tea TUI binary not found. Reinstall Strix, set STRIX_TUI_BINARY, "
-            "or set STRIX_TEXTUAL_TUI=1 to use the Python TUI for a configured scan."
+            "Bubble Tea TUI binary not found. Reinstall Strix or set STRIX_TUI_BINARY."
         )
 
     async def run(self) -> None:
-        # Textual redirects the process's sys.stdout/sys.stderr while its app runs,
-        # so logging handlers created during the scan never reach the tty. Mirror
-        # that here or they paint over the Go TUI's alt screen. The child still
-        # inherits the real terminal fds; only the Python-level bindings change.
+        # Redirect the process's sys.stdout/sys.stderr while the TUI runs so
+        # logging handlers created during the scan never paint over the Go
+        # TUI's alt screen. The child still inherits the real terminal fds;
+        # only the Python-level bindings change.
         original_stdout = sys.stdout
         original_stderr = sys.stderr
         log_path = os.environ.get("STRIX_TUI_LOG")

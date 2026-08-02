@@ -122,13 +122,13 @@ Normal source and editable installs do not need Go. Build the universal Python w
 make wheel
 ```
 
-This produces a pure `py3-none-any` wheel without a bundled TUI sidecar. Strix
-falls back to the legacy Textual scan interface for prepared scans if no compatible
-`strix-tui` executable can activate. Set `STRIX_TEXTUAL_TUI=1` to select Textual
-without attempting the Go TUI. Targetless setup requires the Go sidecar.
+This produces a pure `py3-none-any` wheel without a bundled TUI sidecar. The Go
+TUI is the only interactive interface: installs without a bundled `strix-tui`
+sidecar run it from source (`go run`, requires Go 1.24+) or from an explicit
+`STRIX_TUI_BINARY` path.
 
 `uv build --sdist` also requires no Go. A wheel built from that source archive
-is the same universal, sidecar-free package and uses the same Textual fallback.
+is the same universal, sidecar-free package with the same requirements.
 
 Release wheels are platform-specific and must include the matching Go sidecar:
 

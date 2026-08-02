@@ -35,8 +35,7 @@ def test_source_wheel_build_does_not_require_go(tmp_path: Path) -> None:
         names = archive.namelist()
         assert "strix/bin/strix-tui" not in names
         assert "strix/bin/strix-tui.exe" not in names
-        assert "strix/interface/tui/app.py" in names
-        assert "strix/interface/assets/tui_styles.tcss" in names
+        assert "strix/interface/go_tui.py" in names
         wheel_metadata = archive.read(
             next(name for name in names if name.endswith(".dist-info/WHEEL"))
         ).decode()
