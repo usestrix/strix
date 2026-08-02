@@ -674,7 +674,7 @@ def _representative_model(provider: str, selected_model: str | None = None) -> s
     return models[0] if models else None
 
 
-def _litellm_environment_requirements(
+def _litellm_environment_requirements(  # noqa: PLR0911 - inspection failure modes differ
     provider: str,
     selected_model: str | None = None,
 ) -> tuple[tuple[str, ...] | None, str | None]:
@@ -700,7 +700,10 @@ def _litellm_environment_requirements(
             contextlib.redirect_stderr(io.StringIO()),
         ):
             report: object = litellm.validate_environment(model=model)
-    except (Exception, SystemExit) as exc:
+    except SystemExit as exc:
+        logger.info("Could not inspect LiteLLM requirements for %s", model, exc_info=True)
+        return None, f"could not inspect LiteLLM requirements: {exc}"
+    except Exception as exc:  # noqa: BLE001 - third-party provider inspection
         logger.info("Could not inspect LiteLLM requirements for %s", model, exc_info=True)
         return None, f"could not inspect LiteLLM requirements: {exc}"
     if not isinstance(report, dict):
