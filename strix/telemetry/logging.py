@@ -87,6 +87,33 @@ def configure_dependency_logging() -> None:
     logging.getLogger("asyncio").setLevel(logging.CRITICAL)
     logging.getLogger("asyncio").propagate = False
     warnings.filterwarnings("ignore", category=RuntimeWarning, module="asyncio")
+    _silence_urllib3_finalizer_noise()
+
+
+_unraisable_hook_installed = False
+
+
+def _is_urllib3_closed_file_noise(unraisable: sys.UnraisableHookArgs) -> bool:
+    return (
+        isinstance(unraisable.exc_value, ValueError)
+        and "I/O operation on closed file" in str(unraisable.exc_value)
+        and type(unraisable.object).__module__.split(".")[0] == "urllib3"
+    )
+
+
+def _silence_urllib3_finalizer_noise() -> None:
+    global _unraisable_hook_installed  # noqa: PLW0603
+    if _unraisable_hook_installed:
+        return
+    _unraisable_hook_installed = True
+    previous = sys.unraisablehook
+
+    def hook(unraisable: sys.UnraisableHookArgs) -> None:
+        if _is_urllib3_closed_file_noise(unraisable):
+            return
+        previous(unraisable)
+
+    sys.unraisablehook = hook
 
 
 def setup_scan_logging(run_dir: Path, *, debug: bool | None = None) -> Callable[[], None]:
