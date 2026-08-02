@@ -133,9 +133,18 @@ def make_model_settings(
     request_timeout: float | None = None,
     prompt_cache: bool = True,
     extra_headers: dict[str, str] | None = None,
+    with_tools: bool = True,
 ) -> ModelSettings:
+    """Build the per-request ``ModelSettings`` for one model call.
+
+    ``with_tools`` must be False for the tool-less calls (warm-up, compaction,
+    dedupe). ``parallel_tool_calls`` is only meaningful alongside a tool list,
+    and Azure OpenAI rejects the request outright when it is sent without one —
+    the native OpenAI route silently tolerates it, so the difference only shows
+    up on Azure deployments.
+    """
     model_settings = ModelSettings(
-        parallel_tool_calls=False,
+        parallel_tool_calls=False if with_tools else None,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),

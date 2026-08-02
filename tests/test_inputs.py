@@ -318,3 +318,20 @@ def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
 
     assert settings.extra_args is not None
     assert settings.extra_args["timeout"] == 120.0
+
+
+def test_make_model_settings_sets_parallel_tool_calls_when_tools_are_sent() -> None:
+    settings = make_model_settings(None, model_name="openai/gpt-5.4")
+
+    assert settings.parallel_tool_calls is False
+
+
+def test_make_model_settings_omits_parallel_tool_calls_without_tools() -> None:
+    """Azure OpenAI 400s on ``parallel_tool_calls`` sent without a tool list.
+
+    The tool-less calls (warm-up, compaction, dedupe) must leave it unset so the
+    field is dropped from the request rather than sent as ``false``.
+    """
+    settings = make_model_settings(None, model_name="azure/gpt-5.4", with_tools=False)
+
+    assert settings.parallel_tool_calls is None
