@@ -129,12 +129,14 @@ def make_model_settings(
     force_required_tool_choice: bool = False,
     request_timeout: float | None = None,
     prompt_cache: bool = True,
+    extra_headers: dict[str, str] | None = None,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),
+        extra_headers=dict(extra_headers) if extra_headers else None,
     )
     if (
         reasoning_effort is not None
@@ -142,7 +144,7 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
+            _reasoning_settings(reasoning_effort, model_settings.extra_args),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
@@ -155,6 +157,22 @@ def make_model_settings(
             ),
         )
     return model_settings
+
+
+def _reasoning_settings(
+    effort: ReasoningEffort,
+    extra_args: dict[str, Any] | None,
+) -> ModelSettings:
+    """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
+    a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
+    which collapses every ``reasoning_effort`` level to plain thinking-enabled.
+    Providers that don't support ``max`` reject the request.
+    """
+    if effort != "max":
+        return ModelSettings(reasoning=Reasoning(effort=effort))
+    return ModelSettings(
+        extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
+    )
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:

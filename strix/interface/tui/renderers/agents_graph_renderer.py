@@ -117,8 +117,8 @@ class AgentFinishRenderer(BaseToolRenderer):
 
 
 @register_tool_renderer
-class WaitForMessageRenderer(BaseToolRenderer):
-    tool_name: ClassVar[str] = "wait_for_message"
+class WaitForAgentsRenderer(BaseToolRenderer):
+    tool_name: ClassVar[str] = "wait_for_agents"
     css_classes: ClassVar[list[str]] = ["tool-call", "agents-graph-tool"]
 
     @classmethod

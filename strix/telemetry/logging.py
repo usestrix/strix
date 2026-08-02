@@ -79,8 +79,6 @@ class _StdoutQuietFilter(logging.Filter):
 
 def configure_dependency_logging() -> None:
     """Quiet dependency logging/warnings that obscure Strix scan logs."""
-    # Only quiet litellm when it is already loaded: importing it here would
-    # pull the whole package in (~1s+) even for paths that never use it.
     litellm = sys.modules.get("litellm")
     if litellm is not None:
         with contextlib.suppress(Exception):

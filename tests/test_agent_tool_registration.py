@@ -2,18 +2,29 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Any
+
 import pytest
 from agents.tool import FunctionTool
 
 from strix.agents import factory
 
 
+if TYPE_CHECKING:
+    from agents.tool_context import ToolContext
+
+
 def _tool(name: str) -> FunctionTool:
+    # A per-tool closure keeps two same-named tools unequal, which is what the
+    # duplicate-name tests exercise.
+    async def invoke(_ctx: ToolContext[Any], _input: str) -> str:
+        return "ok"
+
     return FunctionTool(
         name=name,
         description="test tool",
         params_json_schema={"type": "object", "properties": {}, "additionalProperties": False},
-        on_invoke_tool=lambda _ctx, _inp: "ok",
+        on_invoke_tool=invoke,
     )
 
 
@@ -86,3 +97,18 @@ def test_no_override_renders_builtin_prompt() -> None:
 
     assert isinstance(agent.instructions, str)
     assert agent.instructions != ""
+
+
+def test_respond_to_user_is_interactive_only() -> None:
+    """Yielding to the user is meaningless when no user is attached."""
+    interactive = factory.build_strix_agent(is_root=True, interactive=True)
+    autonomous = factory.build_strix_agent(is_root=True, interactive=False)
+
+    assert "respond_to_user" in [t.name for t in interactive.tools]
+    assert "respond_to_user" not in [t.name for t in autonomous.tools]
+
+
+def test_wait_for_agents_is_available_in_both_modes() -> None:
+    for interactive in (True, False):
+        agent = factory.build_strix_agent(is_root=True, interactive=interactive)
+        assert "wait_for_agents" in [t.name for t in agent.tools]

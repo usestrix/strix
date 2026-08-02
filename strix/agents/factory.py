@@ -23,7 +23,7 @@ from strix.tools.agents_graph.tools import (
     send_message_to_agent,
     stop_agent,
     view_agent_graph,
-    wait_for_message,
+    wait_for_agents,
 )
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
@@ -49,6 +49,7 @@ from strix.tools.reporting.tool import (
     get_report,
     list_reports,
 )
+from strix.tools.respond.tool import respond_to_user
 from strix.tools.thinking.tool import think
 from strix.tools.todo.tools import (
     create_todo,
@@ -142,6 +143,83 @@ def _with_bounded_result(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
+def _schema_types(spec: dict[str, Any]) -> set[str]:
+    types: set[str] = set()
+    raw = spec.get("type")
+    if isinstance(raw, str):
+        types.add(raw)
+    elif isinstance(raw, list):
+        types.update(t for t in raw if isinstance(t, str))
+    for variant in spec.get("anyOf") or ():
+        if isinstance(variant, dict):
+            types |= _schema_types(variant)
+    types.discard("null")
+    return types
+
+
+def _decode_structured(value: str, types: set[str]) -> Any:
+    stripped = value.strip()
+    if not stripped:
+        return value
+    try:
+        decoded = json.loads(stripped)
+    except json.JSONDecodeError:
+        return value
+    wanted = list if "array" in types else dict
+    return decoded if isinstance(decoded, wanted) else value
+
+
+def _coerce_argument(value: Any, spec: dict[str, Any]) -> Any:
+    types = _schema_types(spec)
+    if not types or value is None:
+        return value
+    if isinstance(value, list | dict) and "string" in types and not types & {"array", "object"}:
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, str) and types & {"array", "object"} and "string" not in types:
+        return _decode_structured(value, types)
+    return value
+
+
+def _coerce_arguments(raw_input: str, schema: dict[str, Any]) -> str:
+    properties = schema.get("properties")
+    if not isinstance(properties, dict) or not properties:
+        return raw_input
+    try:
+        payload = json.loads(raw_input) if raw_input else None
+    except json.JSONDecodeError:
+        return raw_input
+    if not isinstance(payload, dict):
+        return raw_input
+
+    changed = False
+    for key, value in payload.items():
+        spec = properties.get(key)
+        if not isinstance(spec, dict):
+            continue
+        coerced = _coerce_argument(value, spec)
+        if coerced is not value:
+            payload[key] = coerced
+            changed = True
+
+    if not changed:
+        return raw_input
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _with_coerced_arguments(tool: FunctionTool) -> FunctionTool:
+    if getattr(tool, "_strix_coerced", False):
+        return tool
+    invoke_tool = tool.on_invoke_tool
+    schema = tool.params_json_schema
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        return await invoke_tool(ctx, _coerce_arguments(raw_input, schema))
+
+    tool.on_invoke_tool = invoke
+    tool._strix_coerced = True  # type: ignore[attr-defined]
+    return tool
+
+
 def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
@@ -211,11 +289,13 @@ def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None
             if isinstance(tool, CustomTool):
                 setattr(toolset, name, _custom_tool_as_function_tool(tool))
             elif isinstance(tool, FunctionTool):
-                setattr(toolset, name, _function_tool_with_error_result(tool))
+                setattr(
+                    toolset, name, _function_tool_with_error_result(_with_coerced_arguments(tool))
+                )
         elif isinstance(tool, CustomTool):
             setattr(toolset, name, _bound_custom_tool(tool))
         elif isinstance(tool, FunctionTool):
-            setattr(toolset, name, _with_bounded_result(tool))
+            setattr(toolset, name, _with_bounded_result(_with_coerced_arguments(tool)))
 
 
 def _make_filesystem_configurator(*, chat_completions: bool) -> Any:
@@ -328,7 +408,7 @@ def _configure_shell_tools(toolset: Any, *, chat_completions: bool) -> None:
     for name, tool in vars(toolset).items():
         if not isinstance(tool, FunctionTool):
             continue
-        wrapped = tool
+        wrapped = _with_coerced_arguments(tool)
         if tool.name == "exec_command":
             wrapped = _wrap_exec_command(wrapped)
         elif tool.name == "write_stdin":
@@ -343,6 +423,10 @@ def _make_shell_configurator(*, chat_completions: bool) -> Any:
         _configure_shell_tools(toolset, chat_completions=chat_completions)
 
     return configure
+
+
+# Tools that hand control away by parking the agent rather than ending the scan.
+_PARKING_TOOLS: frozenset[str] = frozenset({"respond_to_user", "wait_for_agents"})
 
 
 def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
@@ -363,7 +447,7 @@ def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
 
 
 def _wait_tool_parked(tool_name: str, output: Any) -> bool:
-    if tool_name != "wait_for_message" or not isinstance(output, str):
+    if tool_name not in _PARKING_TOOLS or not isinstance(output, str):
         return False
     try:
         parsed = json.loads(output)
@@ -425,7 +509,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     scope_rules,
     view_agent_graph,
     send_message_to_agent,
-    wait_for_message,
+    wait_for_agents,
     create_agent,
     stop_agent,
 )
@@ -509,13 +593,19 @@ def build_strix_agent(
         )
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
+    if interactive:
+        # Yielding to the user is only meaningful when one is attached.
+        agent_tools.append(respond_to_user)
     if is_root:
         tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
     else:
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        _with_bounded_result(tool) if isinstance(tool, FunctionTool) else tool for tool in tools
+        _with_bounded_result(_with_coerced_arguments(tool))
+        if isinstance(tool, FunctionTool)
+        else tool
+        for tool in tools
     ]
 
     logger.info(
