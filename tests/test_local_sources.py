@@ -98,6 +98,32 @@ def test_check_mountable_dir_rejects_credential_dirs(tmp_path: Path) -> None:
         check_mountable_dir(ssh_dir)
 
 
+def test_check_mountable_dir_rejects_credential_subdirs(tmp_path: Path) -> None:
+    keys = tmp_path / ".ssh" / "keys"
+    keys.mkdir(parents=True)
+
+    with pytest.raises(ValueError, match="holds credentials"):
+        check_mountable_dir(keys)
+
+
+def test_check_mountable_dir_rejects_system_subdirs() -> None:
+    system_subdir = next((p for p in (Path("/etc/ssl"), Path("/usr/bin")) if p.is_dir()), None)
+    if system_subdir is None:
+        pytest.skip("no system subdirectory on this platform")
+    with pytest.raises(ValueError, match="Refusing to mount"):
+        check_mountable_dir(system_subdir)
+
+
+def test_check_mountable_dir_accepts_a_project_under_the_home_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "home" / "dev" / "project"
+    project.mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "home" / "dev"))
+
+    check_mountable_dir(project)
+
+
 def test_infer_target_type_applies_the_mount_policy() -> None:
     with pytest.raises(ValueError, match="Refusing to mount"):
         infer_target_type("/etc")

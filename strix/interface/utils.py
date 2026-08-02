@@ -1281,9 +1281,9 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
     return local_sources
 
 
-_FORBIDDEN_MOUNT_ROOTS = frozenset(
+# Refused along with everything under them.
+_FORBIDDEN_MOUNT_TREES = frozenset(
     {
-        "/",
         "/bin",
         "/sbin",
         "/usr",
@@ -1296,22 +1296,29 @@ _FORBIDDEN_MOUNT_ROOTS = frozenset(
         "/Library",
         "/System",
         "/dev",
+        "/boot",
+        "/proc",
+        "/sys",
+    }
+)
+
+# Refused themselves, but they hold projects too, so their contents are fine.
+_FORBIDDEN_MOUNT_ROOTS = frozenset(
+    {
+        "/",
         "/private",
         "/var",
         "/opt",
         "/home",
-        "/boot",
-        "/proc",
         "/root",
         "/srv",
-        "/sys",
         "/Users",
         "/Volumes",
     }
 )
 
-_FORBIDDEN_WINDOWS_DIR_NAMES = frozenset(
-    {"windows", "program files", "program files (x86)", "programdata", "users"}
+_FORBIDDEN_WINDOWS_TREE_NAMES = frozenset(
+    {"windows", "program files", "program files (x86)", "programdata"}
 )
 
 _FORBIDDEN_MOUNT_DIR_NAMES = frozenset(
@@ -1332,29 +1339,41 @@ _FORBIDDEN_MOUNT_DIR_NAMES = frozenset(
 )
 
 
+def _is_within(path: Path, ancestor: Path) -> bool:
+    ancestor_parts = [part.casefold() for part in ancestor.parts]
+    path_parts = [part.casefold() for part in path.parts]
+    return path_parts[: len(ancestor_parts)] == ancestor_parts
+
+
 def check_mountable_dir(path: Path) -> None:
     resolved = path.resolve()
     if not resolved.is_dir():
         raise ValueError(f"'{path}' is not an existing directory.")
 
-    resolved_key = str(resolved).casefold()
-    forbidden = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
-    forbidden.add(str(Path.home().resolve()).casefold())
-    is_windows_system_dir = (
-        os.name == "nt"
-        and len(resolved.parts) == 2
-        and resolved.name.casefold() in _FORBIDDEN_WINDOWS_DIR_NAMES
-    )
-    if resolved_key in forbidden or resolved.parent == resolved or is_windows_system_dir:
+    exact = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
+    exact.add(str(Path.home().resolve()).casefold())
+    trees = [Path(root) for root in _FORBIDDEN_MOUNT_TREES]
+    if os.name == "nt":
+        drive = Path(resolved.anchor)
+        trees += [drive / name for name in _FORBIDDEN_WINDOWS_TREE_NAMES]
+        exact.add(str(drive / "Users").casefold())
+    if (
+        str(resolved).casefold() in exact
+        or resolved.parent == resolved
+        or any(_is_within(resolved, tree) for tree in trees)
+    ):
         raise ValueError(
             f"Refusing to mount '{resolved}' into the sandbox: it is a system "
             "or home directory, not a codebase. Point the target at the "
             "project directory you want tested."
         )
 
-    if resolved.name.casefold() in _FORBIDDEN_MOUNT_DIR_NAMES:
+    credential = next(
+        (part for part in resolved.parts if part.casefold() in _FORBIDDEN_MOUNT_DIR_NAMES), None
+    )
+    if credential is not None:
         raise ValueError(
-            f"Refusing to mount '{resolved}' into the sandbox: '{resolved.name}' "
+            f"Refusing to mount '{resolved}' into the sandbox: '{credential}' "
             "holds credentials, not code."
         )
 

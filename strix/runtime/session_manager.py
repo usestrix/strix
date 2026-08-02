@@ -73,6 +73,8 @@ def _metadata_mounts(tree: Path, target: str) -> list[dict[str, Any]]:
         metadata = tree / name
         if not metadata.is_dir() and not metadata.is_file():
             continue
+        if not metadata.resolve().is_relative_to(tree):
+            continue
         mounts.append({"source": str(metadata), "target": f"{target}/{name}", "read_only": True})
         gitdir = _gitdir_from_pointer(metadata) if metadata.is_file() else None
         if gitdir is not None and gitdir.exists() and gitdir.is_relative_to(tree):

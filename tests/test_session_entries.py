@@ -93,6 +93,18 @@ def test_git_pointer_outside_the_tree_needs_no_nested_mount(tmp_path: Path) -> N
     assert [m["target"] for m in mounts] == ["/workspace/repo", "/workspace/repo/.git"]
 
 
+def test_metadata_symlinked_outside_the_tree_is_not_mounted(tmp_path: Path) -> None:
+    outside = tmp_path / "elsewhere"
+    outside.mkdir()
+    tree = tmp_path / "repo"
+    tree.mkdir()
+    (tree / ".git").symlink_to(outside, target_is_directory=True)
+
+    mounts = build_bind_mounts([_source("repo", str(tree), protect_metadata=True)])
+
+    assert [m["target"] for m in mounts] == ["/workspace/repo"]
+
+
 def test_no_git_guard_without_a_git_dir(tmp_path: Path) -> None:
     mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_metadata=True)])
     assert [m["target"] for m in mounts] == ["/workspace/repo"]
