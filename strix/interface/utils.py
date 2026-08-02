@@ -1363,22 +1363,25 @@ def check_mountable_dir(path: Path) -> None:
     if not resolved.is_dir():
         raise ValueError(f"'{path}' is not an existing directory.")
 
-    forbidden = {Path(root) for root in _FORBIDDEN_MOUNT_ROOTS}
-    forbidden.add(Path.home().resolve())
+    # Compared casefolded: the default macOS and Windows filesystems are
+    # case-insensitive, so ``/uSeRs`` names the same directory as ``/Users``.
+    resolved_key = str(resolved).casefold()
+    forbidden = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
+    forbidden.add(str(Path.home().resolve()).casefold())
     is_windows_system_dir = (
         os.name == "nt"
         and len(resolved.parts) == 2  # drive plus one component
-        and resolved.name.lower() in _FORBIDDEN_WINDOWS_DIR_NAMES
+        and resolved.name.casefold() in _FORBIDDEN_WINDOWS_DIR_NAMES
     )
     # ``parent == self`` is the filesystem/drive root on every platform.
-    if resolved in forbidden or resolved.parent == resolved or is_windows_system_dir:
+    if resolved_key in forbidden or resolved.parent == resolved or is_windows_system_dir:
         raise ValueError(
             f"Refusing to mount '{resolved}' into the sandbox: it is a system "
             "or home directory, not a codebase. Point the target at the "
             "project directory you want tested."
         )
 
-    if resolved.name in _FORBIDDEN_MOUNT_DIR_NAMES:
+    if resolved.name.casefold() in _FORBIDDEN_MOUNT_DIR_NAMES:
         raise ValueError(
             f"Refusing to mount '{resolved}' into the sandbox: '{resolved.name}' "
             "holds credentials, not code."

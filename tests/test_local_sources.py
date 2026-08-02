@@ -82,6 +82,14 @@ def test_check_mountable_dir_rejects_the_shared_home_root() -> None:
         check_mountable_dir(home_root)
 
 
+def test_check_mountable_dir_matches_forbidden_names_case_insensitively(tmp_path: Path) -> None:
+    ssh_dir = tmp_path / ".SSH"
+    ssh_dir.mkdir()
+
+    with pytest.raises(ValueError, match="holds credentials"):
+        check_mountable_dir(ssh_dir)
+
+
 def test_check_mountable_dir_rejects_credential_dirs(tmp_path: Path) -> None:
     ssh_dir = tmp_path / ".ssh"
     ssh_dir.mkdir()
