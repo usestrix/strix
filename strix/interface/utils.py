@@ -1308,6 +1308,12 @@ _FORBIDDEN_MOUNT_ROOTS = frozenset(
     }
 )
 
+# The Windows equivalents, matched by name against the path's parts so they hold
+# on any drive (``D:\Windows`` as much as ``C:\Windows``).
+_FORBIDDEN_WINDOWS_DIR_NAMES = frozenset(
+    {"windows", "program files", "program files (x86)", "programdata", "users"}
+)
+
 
 def check_mountable_dir(path: Path) -> None:
     """Raise ``ValueError`` unless ``path`` is a safe directory to mount.
@@ -1323,7 +1329,13 @@ def check_mountable_dir(path: Path) -> None:
 
     forbidden = {Path(root) for root in _FORBIDDEN_MOUNT_ROOTS}
     forbidden.add(Path.home().resolve())
-    if resolved in forbidden or resolved.parent == resolved:
+    is_windows_system_dir = (
+        os.name == "nt"
+        and len(resolved.parts) == 2  # drive plus one component
+        and resolved.name.lower() in _FORBIDDEN_WINDOWS_DIR_NAMES
+    )
+    # ``parent == self`` is the filesystem/drive root on every platform.
+    if resolved in forbidden or resolved.parent == resolved or is_windows_system_dir:
         raise ValueError(
             f"Refusing to mount '{resolved}' into the sandbox: it is a system "
             "or home directory, not a codebase. Point the target at the "
