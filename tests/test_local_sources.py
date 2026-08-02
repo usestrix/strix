@@ -26,7 +26,9 @@ def _local_target(target_path: str) -> dict[str, Any]:
 
 def test_collect_local_sources_protects_the_users_own_git() -> None:
     sources = collect_local_sources([_local_target("/code")])
-    assert sources == [{"source_path": "/code", "workspace_subdir": "repo", "protect_git": True}]
+    assert sources == [
+        {"source_path": "/code", "workspace_subdir": "repo", "protect_metadata": True}
+    ]
 
 
 def test_collect_local_sources_leaves_a_clone_writable() -> None:
@@ -35,7 +37,9 @@ def test_collect_local_sources_leaves_a_clone_writable() -> None:
         "details": {"cloned_repo_path": "/clone", "workspace_subdir": "clone"},
     }
     sources = collect_local_sources([repo])
-    assert sources == [{"source_path": "/clone", "workspace_subdir": "clone", "protect_git": False}]
+    assert sources == [
+        {"source_path": "/clone", "workspace_subdir": "clone", "protect_metadata": False}
+    ]
 
 
 def test_check_mountable_dir_accepts_a_project_dir(tmp_path: Path) -> None:
@@ -68,6 +72,14 @@ def test_check_mountable_dir_rejects_system_root() -> None:
         pytest.skip("no /etc on this platform")
     with pytest.raises(ValueError, match="Refusing to mount"):
         check_mountable_dir(etc)
+
+
+def test_check_mountable_dir_rejects_credential_dirs(tmp_path: Path) -> None:
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+
+    with pytest.raises(ValueError, match="holds credentials"):
+        check_mountable_dir(ssh_dir)
 
 
 def test_infer_target_type_applies_the_mount_policy() -> None:

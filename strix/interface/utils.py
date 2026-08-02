@@ -1260,9 +1260,9 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
-                    # The user's own tree: its history is theirs, so ``.git``
-                    # goes in read-only.
-                    "protect_git": True,
+                    # The user's own tree: its history and agent instructions
+                    # are theirs, so those go in read-only.
+                    "protect_metadata": True,
                 }
             )
 
@@ -1273,7 +1273,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                     "workspace_subdir": workspace_subdir,
                     # A throwaway clone Strix made for this run — nothing to
                     # protect, and the agent may want to branch or commit.
-                    "protect_git": False,
+                    "protect_metadata": False,
                 }
             )
 
@@ -1283,35 +1283,68 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
 # Directories that must never be handed to the sandbox wholesale: mounting one
 # writable would expose (and let an autonomous agent rewrite) the user's whole
 # machine rather than the code under test. ``$HOME`` is added at call time.
+#
+# The lists below are the paths Codex's sandboxes treat as platform-owned rather
+# than user code, taken from its per-OS implementations
+# (``LINUX_PLATFORM_DEFAULT_READ_ROOTS`` in ``linux-sandbox/src/bwrap.rs``,
+# ``sandboxing/src/restricted_read_only_platform_defaults.sbpl``, and
+# ``WINDOWS_PLATFORM_DEFAULT_READ_ROOTS`` in ``windows-sandbox-rs/src/setup.rs``).
+# Codex keeps them readable but never writable; a mount is all we hand the
+# sandbox, so the equivalent here is refusing to mount them at all.
 _FORBIDDEN_MOUNT_ROOTS = frozenset(
     {
         "/",
+        # Linux platform defaults.
         "/bin",
-        "/boot",
-        "/dev",
+        "/sbin",
+        "/usr",
         "/etc",
         "/lib",
         "/lib64",
-        "/opt",
-        "/proc",
-        "/root",
-        "/sbin",
-        "/srv",
-        "/sys",
-        "/usr",
-        "/var",
+        "/nix/store",
+        "/run/current-system/sw",
+        # macOS platform defaults.
         "/Applications",
         "/Library",
         "/System",
+        "/dev",
+        "/private",
+        "/var",
+        "/opt",
+        # Roots neither sandbox can be pointed at, but a --target can.
+        "/boot",
+        "/proc",
+        "/root",
+        "/srv",
+        "/sys",
         "/Users",
         "/Volumes",
     }
 )
 
-# The Windows equivalents, matched by name against the path's parts so they hold
-# on any drive (``D:\Windows`` as much as ``C:\Windows``).
+# ``WINDOWS_PLATFORM_DEFAULT_READ_ROOTS``, matched by name so the rule holds on
+# any drive (``D:\Windows`` as much as ``C:\Windows``).
 _FORBIDDEN_WINDOWS_DIR_NAMES = frozenset(
     {"windows", "program files", "program files (x86)", "programdata", "users"}
+)
+
+# Codex's ``USERPROFILE_ROOT_EXCLUSIONS``: home subdirectories it keeps out of
+# the sandbox because they hold credentials rather than code.
+_FORBIDDEN_MOUNT_DIR_NAMES = frozenset(
+    {
+        ".ssh",
+        ".tsh",
+        ".brev",
+        ".gnupg",
+        ".aws",
+        ".azure",
+        ".kube",
+        ".docker",
+        ".config",
+        ".npm",
+        ".pki",
+        ".terraform.d",
+    }
 )
 
 
@@ -1340,6 +1373,12 @@ def check_mountable_dir(path: Path) -> None:
             f"Refusing to mount '{resolved}' into the sandbox: it is a system "
             "or home directory, not a codebase. Point the target at the "
             "project directory you want tested."
+        )
+
+    if resolved.name in _FORBIDDEN_MOUNT_DIR_NAMES:
+        raise ValueError(
+            f"Refusing to mount '{resolved}' into the sandbox: '{resolved.name}' "
+            "holds credentials, not code."
         )
 
 

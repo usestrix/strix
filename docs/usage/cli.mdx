@@ -17,7 +17,7 @@ strix (--target <target> | --target-list <path>) [options]
   A local directory is bind-mounted into the sandbox at `/workspace/<name>` rather than copied, so start-up is instant regardless of repository size.
 
   <Note>
-    The mount is **writable** — the agent edits your real files, the same way a local coding agent does. Its `.git` is re-mounted read-only so your history cannot be rewritten, and system/home directories are refused as targets. Commit or stash anything you care about before scanning, and treat the mount as "scan my own code", not as isolation from untrusted code.
+    The mount is **writable** — the agent edits your real files, the same way a local coding agent does. Project metadata (`.git`, `.agents`, `.codex`) is re-mounted read-only so your history and agent instructions cannot be rewritten, and system, credential (`.ssh`, `.aws`, …) and home directories are refused as targets. Commit or stash anything you care about before scanning, and treat the mount as "scan my own code", not as isolation from untrusted code.
   </Note>
 </ParamField>
 

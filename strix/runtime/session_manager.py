@@ -31,6 +31,12 @@ _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 # Manifest root inside the container; entry keys hang off this path.
 _WORKSPACE_ROOT = "/workspace"
 
+# Project metadata that stays read-only inside an otherwise writable source
+# tree. Same set Codex protects inside a writable root
+# (``default_read_only_subpaths_for_writable_root``): version-control history
+# plus the on-disk instructions other agents will read back.
+_PROTECTED_METADATA_NAMES = (".git", ".agents", ".codex")
+
 
 def _host_identity_env() -> dict[str, str]:
     """Return the host uid/gid for the container to adopt, when it applies.
@@ -54,11 +60,12 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
     regardless of tree size (the alternative — streaming the tree in file by
     file — stalls for minutes on real repositories).
 
-    Writable does not mean unguarded. A source that carries its own history
-    (``protect_git``) gets a second, nested read-only bind over ``.git``, so
-    reads (``status``, ``diff``, ``log``, ``grep``) keep working while nothing
-    the agent runs can rewrite the user's history. Docker applies mounts
-    parent-first, so the nested entry lands on top of the tree mount.
+    Writable does not mean unguarded. A source the user owns
+    (``protect_metadata``) gets nested read-only binds over the directories in
+    ``_PROTECTED_METADATA_NAMES``, so reads (``status``, ``diff``, ``log``,
+    ``grep``) keep working while nothing the agent runs can rewrite the user's
+    history or the instructions their other agents will read. Docker applies
+    mounts parent-first, so the nested entries land on top of the tree mount.
     """
     bind_mounts: list[dict[str, Any]] = []
     for src in local_sources:
@@ -69,11 +76,18 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
         resolved = Path(host_path).expanduser().resolve()
         target = f"{_WORKSPACE_ROOT}/{ws_subdir}"
         bind_mounts.append({"source": str(resolved), "target": target, "read_only": False})
-        git_dir = resolved / ".git"
-        if src.get("protect_git") and git_dir.is_dir():
-            bind_mounts.append(
-                {"source": str(git_dir), "target": f"{target}/.git", "read_only": True}
-            )
+        if not src.get("protect_metadata"):
+            continue
+        for name in _PROTECTED_METADATA_NAMES:
+            metadata_dir = resolved / name
+            if metadata_dir.is_dir():
+                bind_mounts.append(
+                    {
+                        "source": str(metadata_dir),
+                        "target": f"{target}/{name}",
+                        "read_only": True,
+                    }
+                )
     return bind_mounts
 
 
@@ -88,8 +102,8 @@ async def create_or_reuse(
 
     Each ``local_sources`` entry exposes its host ``source_path`` at
     ``/workspace/<workspace_subdir>`` inside the container as a writable bind
-    mount, with ``.git`` re-bound read-only for sources that opt into
-    ``protect_git``.
+    mount, with project metadata (``.git`` and friends) re-bound read-only for
+    sources that opt into ``protect_metadata``.
 
     ``status_sink`` receives short human-readable phase labels so a frontend
     can show what startup is waiting on instead of an opaque spinner.

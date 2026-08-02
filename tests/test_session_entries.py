@@ -11,8 +11,8 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-def _source(subdir: str, path: str, *, protect_git: bool = False) -> dict[str, Any]:
-    return {"source_path": path, "workspace_subdir": subdir, "protect_git": protect_git}
+def _source(subdir: str, path: str, *, protect_metadata: bool = False) -> dict[str, Any]:
+    return {"source_path": path, "workspace_subdir": subdir, "protect_metadata": protect_metadata}
 
 
 def test_source_becomes_writable_bind_mount(tmp_path: Path) -> None:
@@ -28,7 +28,7 @@ def test_source_becomes_writable_bind_mount(tmp_path: Path) -> None:
 def test_git_dir_is_remounted_read_only_when_protected(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
 
-    mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_git=True)])
+    mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_metadata=True)])
 
     assert mounts == [
         {"source": str(tmp_path.resolve()), "target": "/workspace/repo", "read_only": False},
@@ -40,14 +40,27 @@ def test_git_dir_is_remounted_read_only_when_protected(tmp_path: Path) -> None:
     ]
 
 
+def test_agent_instruction_dirs_are_protected_too(tmp_path: Path) -> None:
+    (tmp_path / ".agents").mkdir()
+    (tmp_path / ".codex").mkdir()
+
+    mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_metadata=True)])
+
+    assert [(m["target"], m["read_only"]) for m in mounts] == [
+        ("/workspace/repo", False),
+        ("/workspace/repo/.agents", True),
+        ("/workspace/repo/.codex", True),
+    ]
+
+
 def test_no_git_guard_without_a_git_dir(tmp_path: Path) -> None:
-    mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_git=True)])
+    mounts = build_bind_mounts([_source("repo", str(tmp_path), protect_metadata=True)])
     assert [m["target"] for m in mounts] == ["/workspace/repo"]
 
 
 def test_clone_keeps_its_git_writable(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
-    mounts = build_bind_mounts([_source("clone", str(tmp_path), protect_git=False)])
+    mounts = build_bind_mounts([_source("clone", str(tmp_path), protect_metadata=False)])
     assert [m["target"] for m in mounts] == ["/workspace/clone"]
 
 

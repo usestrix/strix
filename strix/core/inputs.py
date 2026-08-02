@@ -65,7 +65,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             sections["Local Codebases"].append(
                 f"- {path} (available at: {workspace_path}; "
                 "this is the user's real directory, mounted live and writable — "
-                "its .git is read-only)"
+                ".git/.agents/.codex are read-only)"
             )
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
