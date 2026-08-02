@@ -1350,13 +1350,17 @@ def check_mountable_dir(path: Path) -> None:
     if not resolved.is_dir():
         raise ValueError(f"'{path}' is not an existing directory.")
 
+    # Both the literal and the resolved form: macOS reaches /etc through the
+    # /private/etc symlink, and only the resolved path is compared below.
     exact = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
+    exact |= {str(Path(root).resolve()).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
     exact.add(str(Path.home().resolve()).casefold())
-    trees = [Path(root) for root in _FORBIDDEN_MOUNT_TREES]
+    tree_roots = set(_FORBIDDEN_MOUNT_TREES)
     if os.name == "nt":
         drive = Path(resolved.anchor)
-        trees += [drive / name for name in _FORBIDDEN_WINDOWS_TREE_NAMES]
+        tree_roots |= {str(drive / name) for name in _FORBIDDEN_WINDOWS_TREE_NAMES}
         exact.add(str(drive / "Users").casefold())
+    trees = [Path(root) for root in tree_roots] + [Path(root).resolve() for root in tree_roots]
     if (
         str(resolved).casefold() in exact
         or resolved.parent == resolved
