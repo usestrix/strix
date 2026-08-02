@@ -43,7 +43,8 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
         url = f"{_SCARF_ENDPOINT}{path}"
         if query:
             url = f"{url}?{query}"
-        requests.post(url, timeout=10)
+        with requests.post(url, timeout=10):
+            pass
     except Exception:  # noqa: BLE001
         logger.debug("scarf send failed for event %s", event, exc_info=True)
         return False

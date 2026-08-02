@@ -148,16 +148,16 @@ def _post_json(path: str, payload: dict[str, Any], *, timeout: int) -> tuple[int
     """
     url = f"{_app_url()}{path}"
     try:
-        response = requests.post(
+        with requests.post(
             url,
             json=payload,
             headers={"Accept": "application/json"},
             timeout=timeout,
-        )
+        ) as response:
+            return response.status_code, _parse_body(response.content)
     except requests.RequestException as exc:
         logger.warning("relay request to %s failed: %s", path, exc)
         raise RelayError("unavailable") from exc
-    return response.status_code, _parse_body(response.content)
 
 
 def _parse_body(raw: bytes) -> dict[str, Any]:

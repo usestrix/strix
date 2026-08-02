@@ -37,7 +37,8 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
             "distinct_id": SESSION_ID,
             "properties": properties,
         }
-        requests.post(f"{_POSTHOG_HOST}/capture/", json=payload, timeout=10)
+        with requests.post(f"{_POSTHOG_HOST}/capture/", json=payload, timeout=10):
+            pass
     except Exception:  # noqa: BLE001
         logger.debug("posthog send failed for event %s", event, exc_info=True)
         return False

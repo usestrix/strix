@@ -1092,12 +1092,12 @@ def resolve_diff_scope_context(
 def _is_http_git_repo(url: str) -> bool:
     check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
     try:
-        resp = requests.get(check_url, headers={"User-Agent": "git/strix"}, timeout=10)
+        with requests.get(check_url, headers={"User-Agent": "git/strix"}, timeout=10) as resp:
+            if resp.status_code >= 400:
+                return resp.status_code == 401
+            return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
     except (requests.RequestException, ValueError):
         return False
-    if resp.status_code >= 400:
-        return resp.status_code == 401
-    return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
 
 
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911

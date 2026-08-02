@@ -58,6 +58,7 @@ def test_post_form_returns_parsed_body() -> None:
     resp = mock.MagicMock()
     resp.status_code = 200
     resp.content = b'{"access_token": "tok"}'
+    resp.__enter__.return_value = resp
 
     with mock.patch.object(requests, "post", return_value=resp) as post:
         data = codex._post_form({"grant_type": "refresh_token"})

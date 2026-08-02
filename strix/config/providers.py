@@ -521,13 +521,13 @@ def _discover_custom_models(  # noqa: PLR0912 - success, cache, and failure path
 
     headers = {"Authorization": f"Bearer {item.api_key}"} if item.api_key else {}
     try:
-        response = requests.get(
+        with requests.get(
             f"{item.api_base.rstrip('/')}/models",
             headers=headers,
             timeout=_CUSTOM_MODEL_TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = cast("object", response.json())
+        ) as response:
+            response.raise_for_status()
+            payload = cast("object", response.json())
     except requests.Timeout:
         logger.info("Model discovery timed out for custom provider %s", item.id)
         detail = "Model discovery timed out; enter a model ID manually"
@@ -622,13 +622,13 @@ def _discover_ollama_models() -> tuple[list[str], str | None]:
     key = os.environ.get("OLLAMA_API_KEY", "").strip()
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     try:
-        response = requests.get(
+        with requests.get(
             tags_url,
             headers=headers,
             timeout=_OLLAMA_TIMEOUT,
-        )
-        response.raise_for_status()
-        payload = cast("object", response.json())
+        ) as response:
+            response.raise_for_status()
+            payload = cast("object", response.json())
     except (requests.RequestException, ValueError):
         if base == _OLLAMA_DEFAULT_BASE and shutil.which("ollama") is None:
             return [], "Ollama is not installed or its server is not running"

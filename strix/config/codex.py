@@ -221,19 +221,23 @@ def _first(query: dict[str, list[str]], key: str) -> str | None:
 
 
 def _post_form(payload: dict[str, str]) -> dict[str, Any]:
+    detail = ""
     try:
-        response = requests.post(
+        with requests.post(
             TOKEN_URL,
             data=payload,
             headers={"Accept": "application/json"},
             timeout=_TOKEN_TIMEOUT,
-        )
+        ) as response:
+            status_code = response.status_code
+            body = response.content
+            if status_code >= 400:
+                detail = response.text[:300]
     except requests.RequestException as exc:
         raise CodexAuthError("unavailable", str(exc)) from exc
-    if response.status_code >= 400:
-        detail = response.text[:300]
-        raise CodexAuthError("token_http_error", f"HTTP {response.status_code}: {detail}")
-    data = json.loads(response.content or b"{}")
+    if status_code >= 400:
+        raise CodexAuthError("token_http_error", f"HTTP {status_code}: {detail}")
+    data = json.loads(body or b"{}")
     if not isinstance(data, dict):
         raise CodexAuthError("bad_response", "token endpoint returned non-object")
     return data

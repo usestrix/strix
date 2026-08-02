@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import json
 import os
-from types import SimpleNamespace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Self
 
 import litellm
 import pytest
@@ -49,6 +48,31 @@ from strix.config import (
 
 if TYPE_CHECKING:
     from pathlib import Path
+    from types import TracebackType
+
+
+class _FakeResponse:
+    """Context-managed stand-in for requests.Response in discovery tests."""
+
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def raise_for_status(self) -> None:
+        return None
+
+    def json(self) -> dict[str, object]:
+        return self._payload
+
+    def __enter__(self) -> Self:
+        return self
+
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> None:
+        return None
 
 
 @pytest.fixture(autouse=True)
@@ -569,12 +593,9 @@ def test_custom_provider_discovers_openai_models(
         *,
         headers: dict[str, str],
         timeout: tuple[float, float],
-    ) -> SimpleNamespace:
+    ) -> _FakeResponse:
         calls.append((url, headers, timeout))
-        return SimpleNamespace(
-            raise_for_status=lambda: None,
-            json=lambda: {"data": [{"id": "z-model"}, {"id": "a/model"}]},
-        )
+        return _FakeResponse({"data": [{"id": "z-model"}, {"id": "a/model"}]})
 
     monkeypatch.setattr("strix.config.providers.requests.get", get)
 
@@ -590,12 +611,9 @@ def test_ollama_uses_live_installed_model_inventory(monkeypatch: pytest.MonkeyPa
         *,
         headers: dict[str, str],
         timeout: tuple[float, float],
-    ) -> SimpleNamespace:
+    ) -> _FakeResponse:
         calls.append((url, headers, timeout))
-        return SimpleNamespace(
-            raise_for_status=lambda: None,
-            json=lambda: {"models": [{"name": "qwen3:8b"}, {"model": "llama3.3"}]},
-        )
+        return _FakeResponse({"models": [{"name": "qwen3:8b"}, {"model": "llama3.3"}]})
 
     monkeypatch.setattr("strix.config.providers.requests.get", get)
 
@@ -607,9 +625,9 @@ def test_ollama_normalizes_openai_compatible_base(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setenv("OLLAMA_API_BASE", "http://[::1]:11434/v1/")
     calls: list[str] = []
 
-    def get(url: str, **_kwargs: object) -> SimpleNamespace:
+    def get(url: str, **_kwargs: object) -> _FakeResponse:
         calls.append(url)
-        return SimpleNamespace(raise_for_status=lambda: None, json=lambda: {"models": []})
+        return _FakeResponse({"models": []})
 
     monkeypatch.setattr("strix.config.providers.requests.get", get)
 
@@ -1179,13 +1197,10 @@ def test_custom_model_cache_avoids_repeated_discovery(monkeypatch: pytest.Monkey
     item = save_custom_provider("Cached", "http://localhost:9997/v1")
     calls = 0
 
-    def get(*_args: object, **_kwargs: object) -> SimpleNamespace:
+    def get(*_args: object, **_kwargs: object) -> _FakeResponse:
         nonlocal calls
         calls += 1
-        return SimpleNamespace(
-            raise_for_status=lambda: None,
-            json=lambda: {"data": [{"id": "cached-model"}]},
-        )
+        return _FakeResponse({"data": [{"id": "cached-model"}]})
 
     monkeypatch.setattr(requests, "get", get)
 
