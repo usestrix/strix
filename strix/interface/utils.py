@@ -290,6 +290,12 @@ def _detail_value(usage: dict[str, Any], detail_key: str, value_key: str) -> int
     return _int_stat(details, value_key)
 
 
+def has_model_response(report_state: Any) -> bool:
+    """True once the model has answered at least once in this run."""
+    usage = _llm_usage(report_state)
+    return bool(usage) and _int_stat(usage, "requests") > 0
+
+
 def _build_llm_usage_stats(
     stats_text: Text,
     report_state: Any,

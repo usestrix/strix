@@ -21,6 +21,7 @@ from strix.runtime import session_manager
 from .utils import (
     build_live_stats_text,
     format_vulnerability_report,
+    has_model_response,
 )
 
 
@@ -142,12 +143,16 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         status_text.append("Penetration test in progress", style="bold #22c55e")
         status_text.append("\n\n")
 
+        # The stats panel is populated from the start (model name, zeroed
+        # counters), so it cannot double as the "still starting" signal: lead
+        # with the current phase until the model has actually answered.
+        if not has_model_response(report_state):
+            status_text.append(f"{startup_phase[0]}...", style="dim")
+            status_text.append("\n\n")
+
         stats_text = build_live_stats_text(report_state)
         if stats_text:
             status_text.append(stats_text)
-        else:
-            # Nothing has come back from the model yet: say what we're waiting on.
-            status_text.append(f"{startup_phase[0]}...", style="dim")
 
         return Panel(
             status_text,
