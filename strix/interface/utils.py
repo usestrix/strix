@@ -1131,6 +1131,7 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
     try:
         if path.exists():
             if path.is_dir():
+                check_mountable_dir(path)
                 return "local_code", {"target_path": str(path.resolve())}
             raise ValueError(f"Path exists but is not a directory: {target}")
     except (OSError, RuntimeError) as e:
@@ -1259,7 +1260,9 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
-                    "mount": bool(details.get("mount", False)),
+                    # The user's own tree: its history is theirs, so ``.git``
+                    # goes in read-only.
+                    "protect_git": True,
                 }
             )
 
@@ -1268,123 +1271,82 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["cloned_repo_path"],
                     "workspace_subdir": workspace_subdir,
-                    "mount": False,
+                    # A throwaway clone Strix made for this run — nothing to
+                    # protect, and the agent may want to branch or commit.
+                    "protect_git": False,
                 }
             )
 
     return local_sources
 
 
-def directory_size_bytes(path: Path) -> int:
-    """Total size in bytes of regular files under ``path`` (symlinks not followed).
+# Directories that must never be handed to the sandbox wholesale: mounting one
+# writable would expose (and let an autonomous agent rewrite) the user's whole
+# machine rather than the code under test. ``$HOME`` is added at call time.
+_FORBIDDEN_MOUNT_ROOTS = frozenset(
+    {
+        "/",
+        "/bin",
+        "/boot",
+        "/dev",
+        "/etc",
+        "/lib",
+        "/lib64",
+        "/opt",
+        "/proc",
+        "/root",
+        "/sbin",
+        "/srv",
+        "/sys",
+        "/usr",
+        "/var",
+        "/Applications",
+        "/Library",
+        "/System",
+        "/Users",
+        "/Volumes",
+    }
+)
 
-    Best-effort: files that disappear or can't be stat'd mid-walk are skipped.
-    Used as a cheap (stat-only) pre-flight to estimate the cost of streaming a
-    local target into the sandbox before we actually try to copy it.
 
-    Directories that can't be listed (e.g. permission denied) are logged and
-    skipped rather than silently dropped — so an under-count is at least
-    visible — but the returned total then excludes their contents.
+def check_mountable_dir(path: Path) -> None:
+    """Raise ``ValueError`` unless ``path`` is a safe directory to mount.
+
+    Local targets are bind-mounted writable into a sandbox that runs
+    attacker-influenced code, so the blast radius is exactly the mounted tree.
+    A system root or the bare home directory makes that blast radius the whole
+    machine; scanning those is never the intent.
     """
+    resolved = path.resolve()
+    if not resolved.is_dir():
+        raise ValueError(f"'{path}' is not an existing directory.")
 
-    def _on_walk_error(error: OSError) -> None:
-        logger.warning("Could not read %s while measuring size: %s", error.filename, error)
-
-    total = 0
-    for root, _dirs, files in os.walk(path, followlinks=False, onerror=_on_walk_error):
-        for name in files:
-            file_path = os.path.join(root, name)  # noqa: PTH118
-            try:
-                if os.path.islink(file_path):  # noqa: PTH114
-                    continue
-                total += os.path.getsize(file_path)  # noqa: PTH202
-            except OSError:
-                continue
-    return total
-
-
-def find_oversized_local_targets(
-    targets_info: list[dict[str, Any]], max_bytes: int
-) -> list[tuple[str, int]]:
-    """Return ``(path, size_bytes)`` for non-mounted local targets over ``max_bytes``.
-
-    Mounted targets are bind-mounted rather than copied, so their size is
-    irrelevant and they are excluded. A ``max_bytes`` of zero or less disables
-    the check entirely (returns no targets).
-    """
-    if max_bytes <= 0:
-        return []
-    oversized: list[tuple[str, int]] = []
-    for target in targets_info:
-        if target.get("type") != "local_code":
-            continue
-        details = target.get("details") or {}
-        if details.get("mount"):
-            continue
-        target_path = details.get("target_path")
-        if not target_path:
-            continue
-        size = directory_size_bytes(Path(target_path))
-        if size > max_bytes:
-            oversized.append((target_path, size))
-    return oversized
-
-
-def build_mount_targets_info(mount_paths: list[str]) -> list[dict[str, Any]]:
-    """Build ``targets_info`` entries for ``--mount`` directories.
-
-    Each path must be an existing local directory; it is bind-mounted into the
-    sandbox (read-only) instead of being copied file-by-file. Raises
-    ``ValueError`` for an empty path, or one that does not exist or is not a
-    directory.
-    """
-    targets_info: list[dict[str, Any]] = []
-    for raw in mount_paths:
-        if not raw or not raw.strip():
-            raise ValueError("--mount path must not be empty.")
-        path = Path(raw).expanduser()
-        try:
-            resolved = path.resolve()
-            is_dir = resolved.is_dir()
-        except (OSError, RuntimeError) as e:
-            raise ValueError(f"Invalid mount path '{raw}': {e!s}") from e
-        if not is_dir:
-            raise ValueError(
-                f"Mount path '{raw}' is not an existing directory. "
-                "--mount requires a path to a local directory."
-            )
-        targets_info.append(
-            {
-                "type": "local_code",
-                "details": {"target_path": str(resolved), "mount": True},
-                "original": str(resolved),
-            }
+    forbidden = {Path(root) for root in _FORBIDDEN_MOUNT_ROOTS}
+    forbidden.add(Path.home().resolve())
+    if resolved in forbidden or resolved.parent == resolved:
+        raise ValueError(
+            f"Refusing to mount '{resolved}' into the sandbox: it is a system "
+            "or home directory, not a codebase. Point the target at the "
+            "project directory you want tested."
         )
-    return targets_info
 
 
 def dedupe_local_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Collapse local_code targets that resolve to the same path.
 
-    When a directory is supplied both as a copied ``--target`` and via
-    ``--mount`` (or as duplicate values of either), keep one entry and prefer
-    the bind-mounted one — so the same tree is never both streamed in and
-    mounted. Order is preserved; non-local targets pass through untouched.
+    Order is preserved; non-local targets pass through untouched.
     """
     result: list[dict[str, Any]] = []
-    index_by_path: dict[str, int] = {}
+    seen_paths: set[str] = set()
     for target in targets_info:
         details = target.get("details") or {}
         path = details.get("target_path")
         if target.get("type") != "local_code" or not path:
             result.append(target)
             continue
-        existing = index_by_path.get(path)
-        if existing is None:
-            index_by_path[path] = len(result)
+        if path not in seen_paths:
+            seen_paths.add(path)
             result.append(target)
-        elif details.get("mount") and not (result[existing].get("details") or {}).get("mount"):
-            result[existing] = target  # bind mount supersedes the copied entry
     return result
 
 

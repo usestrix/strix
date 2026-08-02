@@ -815,6 +815,11 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._scan_stop_event = threading.Event()
         self._scan_completed = threading.Event()
         self._scan_error: BaseException | None = None
+        # What startup is currently waiting on, shown until the first agent
+        # appears; the step counter keeps the placeholder from being cached
+        # across a phase change.
+        self._startup_status = "Starting up"
+        self._startup_status_step = 0
         self._error_noted_agents: set[str] = set()
         self._budget_pause_notified = False
 
@@ -1111,7 +1116,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self,
     ) -> tuple[Any, str | None]:
         if not self.selected_agent_id:
-            return self._get_chat_placeholder_content("Loading...", "placeholder-no-agent")
+            return self._get_chat_placeholder_content(
+                f"{self._startup_status}...", f"placeholder-no-agent-{self._startup_status_step}"
+            )
 
         events = self._gather_agent_events(self.selected_agent_id)
 
@@ -1525,6 +1532,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                                 max_budget_usd=getattr(self.args, "max_budget_usd", None),
                                 max_turns=getattr(self.args, "max_turns", DEFAULT_MAX_TURNS),
                                 event_sink=self._capture_sdk_event,
+                                status_sink=self._capture_startup_status,
                             ),
                         )
 
@@ -1555,6 +1563,18 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._scan_thread = threading.Thread(target=scan_target, daemon=True)
         self._scan_thread.start()
+
+    def _capture_startup_status(self, phase: str) -> None:
+        try:
+            self.call_from_thread(self._record_startup_status, phase)
+        except RuntimeError:
+            self._record_startup_status(phase)
+
+    def _record_startup_status(self, phase: str) -> None:
+        self._startup_status = phase
+        self._startup_status_step += 1
+        if not self.show_splash and not self.selected_agent_id:
+            self.call_later(self._update_chat_view)
 
     def _capture_sdk_event(self, agent_id: str, event: Any) -> None:
         try:

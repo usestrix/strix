@@ -33,7 +33,6 @@ _LLM_ENV_KEYS = [
     # RuntimeSettings
     "STRIX_IMAGE",
     "STRIX_RUNTIME_BACKEND",
-    "STRIX_MAX_LOCAL_COPY_MB",
     # TelemetrySettings
     "STRIX_TELEMETRY",
 ]

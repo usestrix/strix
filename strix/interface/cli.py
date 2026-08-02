@@ -135,6 +135,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     set_global_report_state(report_state)
 
+    startup_phase: list[str] = ["Starting up"]
+
     def create_live_status() -> Panel:
         status_text = Text()
         status_text.append("Penetration test in progress", style="bold #22c55e")
@@ -143,6 +145,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         stats_text = build_live_stats_text(report_state)
         if stats_text:
             status_text.append(stats_text)
+        else:
+            # Nothing has come back from the model yet: say what we're waiting on.
+            status_text.append(f"{startup_phase[0]}...", style="dim")
 
         return Panel(
             status_text,
@@ -151,6 +156,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             border_style="#22c55e",
             padding=(1, 2),
         )
+
+    def _note_startup_phase(phase: str) -> None:
+        startup_phase[:] = [phase]
 
     try:
         console.print()
@@ -186,6 +194,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     interactive=bool(getattr(args, "interactive", False)),
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
+                    status_sink=_note_startup_phase,
                 )
             finally:
                 stop_updates.set()

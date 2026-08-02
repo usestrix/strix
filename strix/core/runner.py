@@ -53,6 +53,8 @@ if TYPE_CHECKING:
     from agents.memory import SQLiteSession
     from agents.result import RunResultBase
 
+    from strix.runtime.status import StatusSink
+
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +122,7 @@ async def run_strix_scan(
     event_sink: StreamEventSink | None = None,
     root_instructions_override: str | None = None,
     extra_system_prompt_context: dict[str, Any] | None = None,
+    status_sink: StatusSink | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -127,8 +130,14 @@ async def run_strix_scan(
     root prompt without replacing the system-verified scope block.
     ``extra_system_prompt_context`` is merged into the root agent's scan
     context before prompt rendering. Child agents keep the standard scan prompt
-    and context.
+    and context. ``status_sink`` receives startup phase labels until the first
+    agent event arrives.
     """
+
+    def report(phase: str) -> None:
+        if status_sink is not None:
+            status_sink(phase)
+
     if scan_id is None:
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
 
@@ -219,7 +228,9 @@ async def run_strix_scan(
         scan_id,
         image=image,
         local_sources=local_sources or [],
+        status_sink=status_sink,
     )
+    report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
 
     sandbox_session = bundle["session"]

@@ -1,6 +1,23 @@
 #!/bin/bash
 set -e
 
+# Local source trees are bind-mounted from the host, so they keep the host's
+# ownership. When the host user's uid differs from ours the agent cannot write
+# to the code it is testing, so adopt the host identity (passed as
+# STRIX_HOST_UID/GID by the Linux host only) before anything else runs. The
+# passwd/group edit is what `docker exec -u pentester` resolves later, so every
+# tool the agent runs inherits it. /workspace subdirectories are deliberately
+# left alone: chowning through a bind mount would rewrite ownership of the
+# user's real files on the host.
+if [ -n "${STRIX_HOST_UID:-}" ] && [ "${STRIX_HOST_UID}" != "0" ] && [ "${STRIX_HOST_UID}" != "$(id -u)" ]; then
+  _host_gid="${STRIX_HOST_GID:-$STRIX_HOST_UID}"
+  sudo sed -i "s|^pentester:x:$(id -u):$(id -g):|pentester:x:${STRIX_HOST_UID}:${_host_gid}:|" /etc/passwd
+  sudo sed -i "s|^pentester:x:$(id -g):|pentester:x:${_host_gid}:|" /etc/group
+  sudo chown -R "${STRIX_HOST_UID}:${_host_gid}" /home/pentester /app/certs
+  sudo chown "${STRIX_HOST_UID}:${_host_gid}" /workspace
+  exec sudo -E -u pentester -- "$0" "$@"
+fi
+
 CAIDO_PORT=48080
 CAIDO_LOG="/tmp/caido_startup.log"
 
