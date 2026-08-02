@@ -57,6 +57,8 @@ bedrock = ["boto3>=1.28.0"]
 
 [project.scripts]
 strix = "strix.interface.main:main"
+strix-mcp = "strix.mcp.server:main"
+strix-skill-path = "strix.mcp.install:print_skill_path"
 
 [dependency-groups]
 dev = [
@@ -68,6 +70,7 @@ dev = [
   "pyinstaller>=6.17.0; python_version >= '3.12' and python_version < '3.15'",
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
+  "types-pygments>=2.20.0.20260518",
 ]
 
 [tool.pytest.ini_options]
@@ -83,6 +86,9 @@ packages = ["strix"]
 # (hatchling includes non-.py files under the package). The Vite SOURCE lives
 # under the package dir too (strix/interface/viewer/frontend/) but must never ship in the wheel.
 exclude = ["strix/interface/viewer/frontend", "strix/interface/viewer/frontend/**"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"skills/strix-security" = "strix/agent_skills/strix-security"
 
 # ============================================================================
 # Type Checking Configuration
@@ -130,6 +136,16 @@ disable_error_code = ["import-untyped"]
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_decorators = false
+# Tests intentionally monkeypatch imported module collaborators that are not
+# part of those modules' public export surface.
+disable_error_code = ["attr-defined"]
+
+# Textual's runtime-defined widget/event APIs do not currently match its strict
+# type surface. Keep the legacy TUI isolated until it receives a dedicated
+# typing migration; all other Strix modules remain under strict checking.
+[[tool.mypy.overrides]]
+module = ["strix.interface.tui.app"]
+ignore_errors = true
 
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)

@@ -687,6 +687,16 @@ Examples:
     )
 
     parser.add_argument(
+        "--agent",
+        choices=["auto", "codex", "claude", "legacy"],
+        default="auto",
+        help=(
+            "Reasoning runtime. 'auto' uses STRIX_LLM when configured, otherwise an installed "
+            "Codex or Claude Code CLI. Agent mode needs no separate model API key."
+        ),
+    )
+
+    parser.add_argument(
         "--resume",
         type=str,
         metavar="RUN_NAME",
@@ -728,7 +738,7 @@ Examples:
             )
         _load_resume_state(args, parser)
         agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"
-        if not agents_path.exists():
+        if args.agent == "legacy" and not agents_path.exists():
             parser.error(
                 f"--resume {args.resume}: missing {agents_path}. The run was "
                 f"persisted but never reached its first agent snapshot — "
