@@ -31,15 +31,11 @@ async def _docker_backend(
     ``docker`` lazily so deployments that target a non-Docker
     backend don't need the docker-py library installed.
 
-    ``session.start()`` is what materializes the manifest (environment and any
-    manifest-declared volume/FUSE mounts) into the running container — the
-    SDK's ``client.create()`` only builds the inner session object without
-    applying it. ``async with session:`` would call it too, but Strix manages
-    session lifetime explicitly via ``client.delete()`` so we trigger
-    ``start()`` ourselves.
-
-    ``bind_mounts`` are the local source trees; unlike manifest entries they
-    are applied by Docker at container-create time, not by ``start()``.
+    ``session.start()`` is what materializes the manifest into the running
+    container — the SDK's ``client.create()`` only builds the inner session
+    object without applying it. ``async with session:`` would call it too, but
+    Strix manages session lifetime explicitly via ``client.delete()`` so we
+    trigger ``start()`` ourselves.
     """
     import docker
     from agents.sandbox.sandboxes.docker import DockerSandboxClientOptions
@@ -58,9 +54,6 @@ _BACKENDS: dict[str, SandboxBackend] = {
     "docker": _docker_backend,
 }
 
-# Backends able to expose a host directory to the sandbox as a live bind mount.
-# Remote runtimes (E2B, Daytona, ...) have no access to the caller's filesystem,
-# so their sources have to be uploaded through the manifest instead.
 _BIND_MOUNT_BACKENDS: set[str] = {"docker"}
 
 
@@ -92,12 +85,9 @@ def register_backend(
 
     Intended for downstream users who ship their own runtime — register
     before any ``session_manager.create_or_reuse`` call. Re-registering
-    an existing name overwrites the prior entry.
-
-    ``supports_bind_mounts`` declares that the backend can mount a host
-    directory into the sandbox. It defaults to False because a remote runtime
-    cannot see the caller's filesystem; such backends are handed local sources
-    as manifest entries to upload instead.
+    an existing name overwrites the prior entry. ``supports_bind_mounts``
+    defaults to False: a remote runtime cannot see the caller's filesystem, so
+    it is handed local sources as manifest entries to upload instead.
     """
     _BACKENDS[name] = backend
     if supports_bind_mounts:
@@ -108,7 +98,6 @@ def register_backend(
 
 
 def backend_supports_bind_mounts(name: str) -> bool:
-    """Whether ``name`` can expose host directories as bind mounts."""
     return name in _BIND_MOUNT_BACKENDS
 
 

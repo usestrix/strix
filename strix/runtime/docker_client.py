@@ -164,7 +164,6 @@ class StrixDockerSandboxSession(DockerSandboxSession):
 class StrixDockerSandboxClient(DockerSandboxClient):
     # Host directories to bind-mount into the container, set by the docker
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
-    # May include nested entries (``<tree>`` plus ``<tree>/.git``).
     strix_bind_mounts: list[dict[str, Any]] | None = None
 
     async def _create_container(
@@ -238,10 +237,8 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         _apply_log_limits(create_kwargs)
         _apply_run_labels(create_kwargs)
 
-        # Strix injection: local source trees, bind-mounted instead of streamed
-        # into the container file by file. Sorted shallowest-first so a nested
-        # spec (the read-only ``.git`` guard) is applied after the tree it
-        # covers rather than being swallowed by it.
+        # Strix injection: local source trees, sorted shallowest-first so a
+        # nested spec lands on top of the tree it covers.
         bind_mounts = self.strix_bind_mounts or ()
         if bind_mounts:
             mounts = create_kwargs.setdefault("mounts", [])

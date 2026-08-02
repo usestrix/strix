@@ -815,9 +815,6 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._scan_stop_event = threading.Event()
         self._scan_completed = threading.Event()
         self._scan_error: BaseException | None = None
-        # What startup is currently waiting on, shown until the first agent
-        # appears; the step counter keeps the placeholder from being cached
-        # across a phase change.
         self._startup_status = "Starting up"
         self._startup_status_step = 0
         self._error_noted_agents: set[str] = set()

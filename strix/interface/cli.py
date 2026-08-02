@@ -143,9 +143,6 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         status_text.append("Penetration test in progress", style="bold #22c55e")
         status_text.append("\n\n")
 
-        # The stats panel is populated from the start (model name, zeroed
-        # counters), so it cannot double as the "still starting" signal: lead
-        # with the current phase until the model has actually answered.
         if not has_model_response(report_state):
             status_text.append(f"{startup_phase[0]}...", style="dim")
             status_text.append("\n\n")

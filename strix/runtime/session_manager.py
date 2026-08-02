@@ -32,42 +32,16 @@ _SESSION_CACHE: dict[str, dict[str, Any]] = {}
 # Manifest root inside the container; entry keys hang off this path.
 _WORKSPACE_ROOT = "/workspace"
 
-# Project metadata that stays read-only inside an otherwise writable source
-# tree. Same set Codex protects inside a writable root
-# (``default_read_only_subpaths_for_writable_root``): version-control history
-# plus the on-disk instructions other agents will read back.
 _PROTECTED_METADATA_NAMES = (".git", ".agents", ".codex")
 
 
 def _host_identity_env() -> dict[str, str]:
-    """Return the host uid/gid for the container to adopt, when it applies.
-
-    Bind mounts keep the host's ownership, so on Linux a container user whose
-    uid differs from the host user's cannot write into the mounted tree. The
-    image's entrypoint remaps its own user to these ids when they are present.
-    Docker Desktop (macOS/Windows) already translates ownership at the
-    virtiofs/gRPC-FUSE layer, so the remap is neither needed nor correct there.
-    """
     if sys.platform != "linux":
         return {}
     return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
 
 
 def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Map local sources onto ``/workspace/<workspace_subdir>`` bind mounts.
-
-    Every source is bind-mounted writable: the agent needs to patch files and
-    drop PoC scripts next to the code it is testing, and a bind costs nothing
-    regardless of tree size (the alternative — streaming the tree in file by
-    file — stalls for minutes on real repositories).
-
-    Writable does not mean unguarded. A source the user owns
-    (``protect_metadata``) gets nested read-only binds over the directories in
-    ``_PROTECTED_METADATA_NAMES``, so reads (``status``, ``diff``, ``log``,
-    ``grep``) keep working while nothing the agent runs can rewrite the user's
-    history or the instructions their other agents will read. Docker applies
-    mounts parent-first, so the nested entries land on top of the tree mount.
-    """
     bind_mounts: list[dict[str, Any]] = []
     for src in local_sources:
         ws_subdir = src.get("workspace_subdir") or ""
@@ -83,13 +57,6 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
 
 
 def build_manifest_entries(local_sources: list[dict[str, Any]]) -> dict[str | Path, BaseEntry]:
-    """Upload local sources as manifest entries, for backends that cannot mount.
-
-    A remote runtime (E2B, Daytona, ...) has no access to the host filesystem,
-    so its sources have to be shipped to it. The sandbox then works on its own
-    copy, which is also why the metadata guards do not apply: nothing the agent
-    writes can reach the user's tree in the first place.
-    """
     entries: dict[str | Path, BaseEntry] = {}
     for src in local_sources:
         ws_subdir = src.get("workspace_subdir") or ""
@@ -101,16 +68,11 @@ def build_manifest_entries(local_sources: list[dict[str, Any]]) -> dict[str | Pa
 
 
 def _metadata_mounts(tree: Path, target: str) -> list[dict[str, Any]]:
-    """Read-only binds for the protected metadata present in ``tree``."""
     mounts: list[dict[str, Any]] = []
     for name in _PROTECTED_METADATA_NAMES:
         metadata = tree / name
         if not metadata.is_dir() and not metadata.is_file():
             continue
-        # A linked worktree or submodule carries ``.git`` as a pointer file
-        # rather than a directory; binding the file keeps the checkout from
-        # being repointed, and the gitdir it names is protected as well when
-        # it lives inside the same tree.
         mounts.append({"source": str(metadata), "target": f"{target}/{name}", "read_only": True})
         gitdir = _gitdir_from_pointer(metadata) if metadata.is_file() else None
         if gitdir is not None and gitdir.exists() and gitdir.is_relative_to(tree):
@@ -122,7 +84,6 @@ def _metadata_mounts(tree: Path, target: str) -> list[dict[str, Any]]:
 
 
 def _gitdir_from_pointer(git_file: Path) -> Path | None:
-    """Resolve the ``gitdir:`` path a ``.git`` pointer file names, if any."""
     try:
         content = git_file.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -147,13 +108,7 @@ async def create_or_reuse(
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
     Each ``local_sources`` entry exposes its host ``source_path`` at
-    ``/workspace/<workspace_subdir>`` inside the container as a writable bind
-    mount, with project metadata (``.git`` and friends) re-bound read-only for
-    sources that opt into ``protect_metadata``. Backends that cannot bind-mount
-    the host filesystem get the same trees uploaded through the manifest.
-
-    ``status_sink`` receives short human-readable phase labels so a frontend
-    can show what startup is waiting on instead of an opaque spinner.
+    ``/workspace/<workspace_subdir>`` inside the container.
     """
 
     def report(phase: str) -> None:
@@ -187,9 +142,6 @@ async def create_or_reuse(
             value={
                 "PYTHONUNBUFFERED": "1",
                 "HOST_GATEWAY": "host.docker.internal",
-                # Lets the image's entrypoint align its ``pentester`` user with
-                # the owner of the bind-mounted sources, so writes into them
-                # are not blocked by a host/container uid mismatch.
                 **_host_identity_env(),
                 "http_proxy": container_caido_url,
                 "https_proxy": container_caido_url,

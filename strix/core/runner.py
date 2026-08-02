@@ -130,8 +130,7 @@ async def run_strix_scan(
     root prompt without replacing the system-verified scope block.
     ``extra_system_prompt_context`` is merged into the root agent's scan
     context before prompt rendering. Child agents keep the standard scan prompt
-    and context. ``status_sink`` receives startup phase labels until the first
-    agent event arrives.
+    and context.
     """
 
     def report(phase: str) -> None:

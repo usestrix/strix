@@ -291,7 +291,6 @@ def _detail_value(usage: dict[str, Any], detail_key: str, value_key: str) -> int
 
 
 def has_model_response(report_state: Any) -> bool:
-    """True once the model has answered at least once in this run."""
     usage = _llm_usage(report_state)
     return bool(usage) and _int_stat(usage, "requests") > 0
 
@@ -1266,8 +1265,6 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
-                    # The user's own tree: its history and agent instructions
-                    # are theirs, so those go in read-only.
                     "protect_metadata": True,
                 }
             )
@@ -1277,8 +1274,6 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["cloned_repo_path"],
                     "workspace_subdir": workspace_subdir,
-                    # A throwaway clone Strix made for this run — nothing to
-                    # protect, and the agent may want to branch or commit.
                     "protect_metadata": False,
                 }
             )
@@ -1286,21 +1281,9 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
     return local_sources
 
 
-# Directories that must never be handed to the sandbox wholesale: mounting one
-# writable would expose (and let an autonomous agent rewrite) the user's whole
-# machine rather than the code under test. ``$HOME`` is added at call time.
-#
-# The lists below are the paths Codex's sandboxes treat as platform-owned rather
-# than user code, taken from its per-OS implementations
-# (``LINUX_PLATFORM_DEFAULT_READ_ROOTS`` in ``linux-sandbox/src/bwrap.rs``,
-# ``sandboxing/src/restricted_read_only_platform_defaults.sbpl``, and
-# ``WINDOWS_PLATFORM_DEFAULT_READ_ROOTS`` in ``windows-sandbox-rs/src/setup.rs``).
-# Codex keeps them readable but never writable; a mount is all we hand the
-# sandbox, so the equivalent here is refusing to mount them at all.
 _FORBIDDEN_MOUNT_ROOTS = frozenset(
     {
         "/",
-        # Linux platform defaults.
         "/bin",
         "/sbin",
         "/usr",
@@ -1309,7 +1292,6 @@ _FORBIDDEN_MOUNT_ROOTS = frozenset(
         "/lib64",
         "/nix/store",
         "/run/current-system/sw",
-        # macOS platform defaults.
         "/Applications",
         "/Library",
         "/System",
@@ -1317,9 +1299,6 @@ _FORBIDDEN_MOUNT_ROOTS = frozenset(
         "/private",
         "/var",
         "/opt",
-        # Roots neither sandbox can be pointed at, but a --target can. ``/home``
-        # and ``/Users`` matter beyond the caller's own home: they hold every
-        # account's files, not one project.
         "/home",
         "/boot",
         "/proc",
@@ -1331,14 +1310,10 @@ _FORBIDDEN_MOUNT_ROOTS = frozenset(
     }
 )
 
-# ``WINDOWS_PLATFORM_DEFAULT_READ_ROOTS``, matched by name so the rule holds on
-# any drive (``D:\Windows`` as much as ``C:\Windows``).
 _FORBIDDEN_WINDOWS_DIR_NAMES = frozenset(
     {"windows", "program files", "program files (x86)", "programdata", "users"}
 )
 
-# Codex's ``USERPROFILE_ROOT_EXCLUSIONS``: home subdirectories it keeps out of
-# the sandbox because they hold credentials rather than code.
 _FORBIDDEN_MOUNT_DIR_NAMES = frozenset(
     {
         ".ssh",
@@ -1358,28 +1333,18 @@ _FORBIDDEN_MOUNT_DIR_NAMES = frozenset(
 
 
 def check_mountable_dir(path: Path) -> None:
-    """Raise ``ValueError`` unless ``path`` is a safe directory to mount.
-
-    Local targets are bind-mounted writable into a sandbox that runs
-    attacker-influenced code, so the blast radius is exactly the mounted tree.
-    A system root or the bare home directory makes that blast radius the whole
-    machine; scanning those is never the intent.
-    """
     resolved = path.resolve()
     if not resolved.is_dir():
         raise ValueError(f"'{path}' is not an existing directory.")
 
-    # Compared casefolded: the default macOS and Windows filesystems are
-    # case-insensitive, so ``/uSeRs`` names the same directory as ``/Users``.
     resolved_key = str(resolved).casefold()
     forbidden = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
     forbidden.add(str(Path.home().resolve()).casefold())
     is_windows_system_dir = (
         os.name == "nt"
-        and len(resolved.parts) == 2  # drive plus one component
+        and len(resolved.parts) == 2
         and resolved.name.casefold() in _FORBIDDEN_WINDOWS_DIR_NAMES
     )
-    # ``parent == self`` is the filesystem/drive root on every platform.
     if resolved_key in forbidden or resolved.parent == resolved or is_windows_system_dir:
         raise ValueError(
             f"Refusing to mount '{resolved}' into the sandbox: it is a system "
@@ -1395,10 +1360,6 @@ def check_mountable_dir(path: Path) -> None:
 
 
 def dedupe_local_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse local_code targets that resolve to the same path.
-
-    Order is preserved; non-local targets pass through untouched.
-    """
     result: list[dict[str, Any]] = []
     seen_paths: set[str] = set()
     for target in targets_info:

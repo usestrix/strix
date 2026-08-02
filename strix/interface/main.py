@@ -826,9 +826,6 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
 
     if args.instruction is None:
         args.instruction = state.get("instruction")
-    # Rebuild rather than trust the persisted records: a run.json written by an
-    # older version describes the source in that version's terms, and the mount
-    # policy applied to it must be the current one.
     args.local_sources = collect_local_sources(args.targets_info)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
