@@ -18,9 +18,18 @@ import (
 // mirroring what the web app's ViewImageRenderer shows inline.
 
 const (
-	mosaicMaxCols = 60
-	mosaicMaxRows = 20 // cell rows; two pixel rows per cell
+	mosaicMinCols     = 20
+	mosaicMaxCols     = 200
+	mosaicDefaultCols = 76
+	mosaicMaxRows     = 45 // cell rows; two pixel rows per cell
 )
+
+var mosaicCols = mosaicDefaultCols
+
+// SetImageWidth sizes image mosaics to the chat content width in cells.
+func SetImageWidth(cells int) {
+	mosaicCols = min(max(cells, mosaicMinCols), mosaicMaxCols)
+}
 
 var imageDataURIRE = regexp.MustCompile(`data:image/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/]+={0,2})`)
 
@@ -65,7 +74,7 @@ func renderImageMosaic(payload string) string {
 	if w <= 0 || h <= 0 {
 		return ""
 	}
-	cols := min(mosaicMaxCols, w)
+	cols := min(mosaicCols, w)
 	// One cell is roughly 1x2 pixels; preserve aspect in cell space.
 	rows := (h*cols + w - 1) / (w * 2)
 	rows = min(max(1, rows), mosaicMaxRows)

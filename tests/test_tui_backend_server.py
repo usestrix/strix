@@ -597,7 +597,7 @@ def test_image_data_uri_survives_terminal_projection() -> None:
     assert terminal_projection(uri) == uri
     assert terminal_projection({"type": "image", "image_url": uri})["image_url"] == uri
 
-    oversized = "data:image/png;base64," + "A" * (600 * 1024)
+    oversized = "data:image/png;base64," + "A" * (3 * 1024 * 1024)
     assert terminal_projection(oversized) == "[image omitted from terminal projection]"
 
 

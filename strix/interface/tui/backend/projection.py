@@ -22,7 +22,7 @@ from strix.config import (
 SCAN_MODES = ("quick", "standard", "deep")
 SCOPE_MODES = ("auto", "diff", "full")
 MAX_PROJECTION_STRING = 64 * 1024
-MAX_IMAGE_DATA_URI_BYTES = 384 * 1024
+MAX_IMAGE_DATA_URI_BYTES = 2 * 1024 * 1024
 MAX_COLLECTION_ITEM_BYTES = 512 * 1024
 MAX_TERMINAL_EVENTS = 5_000
 MAX_TERMINAL_VULNERABILITIES = 1_000
@@ -105,19 +105,18 @@ def terminal_projection(  # noqa: PLR0911
 
 
 def collection_item_projection(item: dict[str, Any]) -> dict[str, Any]:
+    # Image data URIs are exempt from string truncation, so grant them their
+    # own byte budget on top of the regular per-item budget.
+    item_budget = MAX_COLLECTION_ITEM_BYTES + MAX_IMAGE_DATA_URI_BYTES
     projected = terminal_projection(item)
     assert isinstance(projected, dict)
-    if len(json.dumps(projected, default=str, separators=(",", ":")).encode()) <= (
-        MAX_COLLECTION_ITEM_BYTES
-    ):
+    if len(json.dumps(projected, default=str, separators=(",", ":")).encode()) <= item_budget:
         return projected
 
     projected = terminal_projection(item, max_string=8 * 1024, max_items=40)
     assert isinstance(projected, dict)
     projected["projection_truncated"] = True
-    if len(json.dumps(projected, default=str, separators=(",", ":")).encode()) <= (
-        MAX_COLLECTION_ITEM_BYTES
-    ):
+    if len(json.dumps(projected, default=str, separators=(",", ":")).encode()) <= item_budget:
         return projected
 
     # Preserve identity and useful summary fields even for pathological nested

@@ -38,7 +38,7 @@ func TestViewImageRendersMosaic(t *testing.T) {
 	for _, line := range lines {
 		if strings.Contains(line, "▀") {
 			mosaic++
-			if w := ansi.StringWidth(line); w > mosaicMaxCols {
+			if w := ansi.StringWidth(line); w > mosaicCols {
 				t.Fatalf("mosaic row too wide: %d", w)
 			}
 		}

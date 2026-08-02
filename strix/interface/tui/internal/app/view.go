@@ -55,6 +55,7 @@ func (m *Model) chatContent() string {
 	// .chat-content has padding: 0 1 — one column of horizontal padding, so wrap
 	// to width-2 and indent every line by one cell.
 	contentWidth := max(1, m.viewport.Width-2)
+	render.SetImageWidth(contentWidth - 2)
 	var blocks []string
 	var spans []eventSpan
 	line := 0
