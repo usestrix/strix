@@ -1,10 +1,18 @@
-"""Tests for build_bind_mounts: how local sources reach the sandbox."""
+"""Tests for how local sources reach the sandbox: bind mounts or manifest upload."""
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
-from strix.runtime.session_manager import build_bind_mounts
+from agents.sandbox.entries import LocalDir
+
+from strix.runtime.backends import (
+    _BACKENDS,
+    _BIND_MOUNT_BACKENDS,
+    backend_supports_bind_mounts,
+    register_backend,
+)
+from strix.runtime.session_manager import build_bind_mounts, build_manifest_entries
 
 
 if TYPE_CHECKING:
@@ -118,3 +126,43 @@ def test_incomplete_sources_are_skipped() -> None:
         )
         == []
     )
+
+
+def test_manifest_entries_upload_sources_for_backends_without_bind_mounts(
+    tmp_path: Path,
+) -> None:
+    entries = build_manifest_entries([_source("repo", str(tmp_path), protect_metadata=True)])
+
+    assert set(entries) == {"repo"}
+    entry = entries["repo"]
+    assert isinstance(entry, LocalDir)
+    assert entry.src == tmp_path.resolve()
+
+
+def test_manifest_entries_skip_incomplete_sources() -> None:
+    assert (
+        build_manifest_entries(
+            [
+                {"source_path": "", "workspace_subdir": "x"},
+                {"source_path": "/p", "workspace_subdir": ""},
+            ]
+        )
+        == {}
+    )
+
+
+def test_only_bind_mount_capable_backends_are_registered_as_such() -> None:
+    assert backend_supports_bind_mounts("docker")
+    assert not backend_supports_bind_mounts("e2b")
+
+    async def _remote_backend(**_kwargs: Any) -> tuple[Any, Any]:
+        return object(), object()
+
+    try:
+        register_backend("e2b", _remote_backend)
+        assert not backend_supports_bind_mounts("e2b")
+        register_backend("e2b", _remote_backend, supports_bind_mounts=True)
+        assert backend_supports_bind_mounts("e2b")
+    finally:
+        _BACKENDS.pop("e2b", None)
+        _BIND_MOUNT_BACKENDS.discard("e2b")

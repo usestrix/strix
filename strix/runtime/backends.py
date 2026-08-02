@@ -58,6 +58,11 @@ _BACKENDS: dict[str, SandboxBackend] = {
     "docker": _docker_backend,
 }
 
+# Backends able to expose a host directory to the sandbox as a live bind mount.
+# Remote runtimes (E2B, Daytona, ...) have no access to the caller's filesystem,
+# so their sources have to be uploaded through the manifest instead.
+_BIND_MOUNT_BACKENDS: set[str] = {"docker"}
+
 
 def get_backend(name: str) -> SandboxBackend:
     """Return the backend factory for ``name`` or raise.
@@ -77,15 +82,34 @@ def get_backend(name: str) -> SandboxBackend:
     return backend
 
 
-def register_backend(name: str, backend: SandboxBackend) -> None:
+def register_backend(
+    name: str,
+    backend: SandboxBackend,
+    *,
+    supports_bind_mounts: bool = False,
+) -> None:
     """Register a custom backend under ``name``.
 
     Intended for downstream users who ship their own runtime — register
     before any ``session_manager.create_or_reuse`` call. Re-registering
     an existing name overwrites the prior entry.
+
+    ``supports_bind_mounts`` declares that the backend can mount a host
+    directory into the sandbox. It defaults to False because a remote runtime
+    cannot see the caller's filesystem; such backends are handed local sources
+    as manifest entries to upload instead.
     """
     _BACKENDS[name] = backend
-    logger.info("Registered sandbox backend: %s", name)
+    if supports_bind_mounts:
+        _BIND_MOUNT_BACKENDS.add(name)
+    else:
+        _BIND_MOUNT_BACKENDS.discard(name)
+    logger.info("Registered sandbox backend: %s (bind mounts: %s)", name, supports_bind_mounts)
+
+
+def backend_supports_bind_mounts(name: str) -> bool:
+    """Whether ``name`` can expose host directories as bind mounts."""
+    return name in _BIND_MOUNT_BACKENDS
 
 
 def supported_backends() -> list[str]:

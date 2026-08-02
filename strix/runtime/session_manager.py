@@ -8,10 +8,11 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
-from strix.runtime.backends import get_backend
+from strix.runtime.backends import backend_supports_bind_mounts, get_backend
 from strix.runtime.caido_bootstrap import bootstrap_caido
 
 
@@ -81,6 +82,24 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
     return bind_mounts
 
 
+def build_manifest_entries(local_sources: list[dict[str, Any]]) -> dict[str | Path, BaseEntry]:
+    """Upload local sources as manifest entries, for backends that cannot mount.
+
+    A remote runtime (E2B, Daytona, ...) has no access to the host filesystem,
+    so its sources have to be shipped to it. The sandbox then works on its own
+    copy, which is also why the metadata guards do not apply: nothing the agent
+    writes can reach the user's tree in the first place.
+    """
+    entries: dict[str | Path, BaseEntry] = {}
+    for src in local_sources:
+        ws_subdir = src.get("workspace_subdir") or ""
+        host_path = src.get("source_path") or ""
+        if not ws_subdir or not host_path:
+            continue
+        entries[ws_subdir] = LocalDir(src=Path(host_path).expanduser().resolve())
+    return entries
+
+
 def _metadata_mounts(tree: Path, target: str) -> list[dict[str, Any]]:
     """Read-only binds for the protected metadata present in ``tree``."""
     mounts: list[dict[str, Any]] = []
@@ -130,7 +149,8 @@ async def create_or_reuse(
     Each ``local_sources`` entry exposes its host ``source_path`` at
     ``/workspace/<workspace_subdir>`` inside the container as a writable bind
     mount, with project metadata (``.git`` and friends) re-bound read-only for
-    sources that opt into ``protect_metadata``.
+    sources that opt into ``protect_metadata``. Backends that cannot bind-mount
+    the host filesystem get the same trees uploaded through the manifest.
 
     ``status_sink`` receives short human-readable phase labels so a frontend
     can show what startup is waiting on instead of an opaque spinner.
@@ -145,7 +165,15 @@ async def create_or_reuse(
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
-    bind_mounts = build_bind_mounts(local_sources)
+    backend_name = load_settings().runtime.backend
+    backend = get_backend(backend_name)
+
+    if backend_supports_bind_mounts(backend_name):
+        bind_mounts = build_bind_mounts(local_sources)
+        entries: dict[str | Path, BaseEntry] = {}
+    else:
+        bind_mounts = []
+        entries = build_manifest_entries(local_sources)
 
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
@@ -154,7 +182,7 @@ async def create_or_reuse(
     # through Caido.
     container_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
     manifest = Manifest(
-        entries={},
+        entries=entries,
         environment=Environment(
             value={
                 "PYTHONUNBUFFERED": "1",
@@ -170,9 +198,6 @@ async def create_or_reuse(
             },
         ),
     )
-
-    backend_name = load_settings().runtime.backend
-    backend = get_backend(backend_name)
 
     logger.info(
         "Creating sandbox session for scan %s (backend=%s, image=%s)",
