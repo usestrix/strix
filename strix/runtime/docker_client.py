@@ -15,10 +15,6 @@ deltas:
    other raw-socket tools).
 3. Add ``host.docker.internal`` → host-gateway to ``extra_hosts`` so the
    agent can reach host-served apps.
-4. Wrap the image's entrypoint so the container user can adopt the host
-   uid/gid before it runs (see ``_HOST_IDENTITY_ENTRYPOINT``). Injecting this
-   host-side rather than baking it into the image keeps bind-mounted sources
-   writable on already-published images.
 
 Pinned to ``openai-agents==0.14.6``. Bumping the SDK requires
 re-merging the parent body. Track upstream for an injection hook.
@@ -57,44 +53,6 @@ logger = logging.getLogger(__name__)
 
 _SANDBOX_NETWORK_ENV = "STRIX_DOCKER_SANDBOX_NETWORK"
 
-# Wrapper around the image's own entrypoint, injected at container-create time
-# so it works with images that are already published.
-#
-# Local source trees are bind-mounted from the host and keep the host's
-# ownership, so when the host user's uid differs from the image user's the agent
-# cannot write to the code it is testing. Adopting the host identity here — in
-# the passwd/group entries every later ``docker exec -u pentester`` resolves —
-# fixes that for every tool the agent runs. ``/workspace`` subdirectories are
-# deliberately left alone: chowning through a bind mount would rewrite ownership
-# of the user's real files on the host.
-#
-# The remap runs inside a single ``sudo`` shell: rewriting our own uid in
-# ``/etc/passwd`` first would leave the shell with a uid no longer mapped to a
-# name, which ``sudo`` refuses to run for ("unknown uid ...: who are you?").
-_HOST_IDENTITY_ENTRYPOINT = r"""
-set -e
-if [ -z "${STRIX_HOST_UID:-}" ] || [ "${STRIX_HOST_UID}" = "0" ] \
-   || [ "${STRIX_HOST_UID}" = "$(id -u)" ]; then
-  exec /usr/local/bin/docker-entrypoint.sh "$@"
-fi
-exec sudo -E -- bash -c '
-  set -e
-  gid="${STRIX_HOST_GID:-$STRIX_HOST_UID}"
-  old_uid="$1"
-  old_gid="$2"
-  # sudo resets PATH to its secure_path; the image puts the agent tooling on
-  # PATH, so restore what the container actually started with.
-  export PATH="$3"
-  shift 3
-  sed -i "s|^pentester:x:${old_uid}:${old_gid}:|pentester:x:${STRIX_HOST_UID}:${gid}:|" /etc/passwd
-  sed -i "s|^pentester:x:${old_gid}:|pentester:x:${gid}:|" /etc/group
-  chown -R "${STRIX_HOST_UID}:${gid}" /home/pentester /app/certs
-  chown "${STRIX_HOST_UID}:${gid}" /workspace
-  exec setpriv --reuid "${STRIX_HOST_UID}" --regid "${gid}" --init-groups \
-    /usr/local/bin/docker-entrypoint.sh "$@"
-' bash "$(id -u)" "$(id -g)" "$PATH" "$@"
-"""
-
 
 def _sandbox_network() -> str | None:
     value = os.environ.get(_SANDBOX_NETWORK_ENV, "").strip()
@@ -106,20 +64,6 @@ def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
     if network:
         create_kwargs["network"] = network
         create_kwargs.pop("ports", None)
-
-
-def _apply_host_identity_entrypoint(
-    create_kwargs: dict[str, Any], environment: dict[str, str] | None
-) -> None:
-    """Wrap the image entrypoint with the host uid/gid remap when it applies."""
-    if not environment or not environment.get("STRIX_HOST_UID"):
-        return
-    create_kwargs["entrypoint"] = [
-        "/bin/bash",
-        "-c",
-        _HOST_IDENTITY_ENTRYPOINT,
-        "strix-host-identity",
-    ]
 
 
 def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
@@ -253,7 +197,6 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             "command": ["tail", "-f", "/dev/null"],
             "environment": environment,
         }
-        _apply_host_identity_entrypoint(create_kwargs, environment)
         if manifest is not None:
             docker_mounts = _build_docker_volume_mounts(
                 manifest,

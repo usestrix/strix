@@ -1,6 +1,35 @@
 #!/bin/bash
 set -e
 
+# Local source trees are bind-mounted from the host, so they keep the host's
+# ownership. When the host user's uid differs from ours the agent cannot write
+# to the code it is testing, so adopt the host identity (passed as
+# STRIX_HOST_UID/GID by the Linux host only) before anything else runs. The
+# passwd/group edit is what `docker exec -u pentester` resolves later, so every
+# tool the agent runs inherits it. /workspace subdirectories are deliberately
+# left alone: chowning through a bind mount would rewrite ownership of the
+# user's real files on the host.
+#
+# The rewrite happens inside a single `sudo` shell because a process whose uid
+# is no longer listed in /etc/passwd cannot invoke sudo again ("unknown uid N:
+# who are you?"), and `setpriv` — not `sudo -u` — drops back to the user, since
+# sudo would replace PATH with its secure_path and lose the image's tooling.
+if [ -n "${STRIX_HOST_UID:-}" ] && [ "${STRIX_HOST_UID}" != "0" ] && [ "${STRIX_HOST_UID}" != "$(id -u)" ]; then
+  exec sudo -E -- bash -c '
+    set -e
+    gid="${STRIX_HOST_GID:-$STRIX_HOST_UID}"
+    old_uid="$1"
+    old_gid="$2"
+    export PATH="$3"
+    shift 3
+    sed -i "s|^pentester:x:${old_uid}:${old_gid}:|pentester:x:${STRIX_HOST_UID}:${gid}:|" /etc/passwd
+    sed -i "s|^pentester:x:${old_gid}:|pentester:x:${gid}:|" /etc/group
+    chown -R "${STRIX_HOST_UID}:${gid}" /home/pentester /app/certs
+    chown "${STRIX_HOST_UID}:${gid}" /workspace
+    exec setpriv --reuid "${STRIX_HOST_UID}" --regid "${gid}" --init-groups "$0" "$@"
+  ' "$0" "$(id -u)" "$(id -g)" "$PATH" "$@"
+fi
+
 CAIDO_PORT=48080
 CAIDO_LOG="/tmp/caido_startup.log"
 
