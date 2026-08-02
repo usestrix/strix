@@ -22,6 +22,7 @@ from strix.config import (
 SCAN_MODES = ("quick", "standard", "deep")
 SCOPE_MODES = ("auto", "diff", "full")
 MAX_PROJECTION_STRING = 64 * 1024
+MAX_IMAGE_DATA_URI_BYTES = 384 * 1024
 MAX_COLLECTION_ITEM_BYTES = 512 * 1024
 MAX_TERMINAL_EVENTS = 5_000
 MAX_TERMINAL_VULNERABILITIES = 1_000
@@ -51,6 +52,10 @@ def terminal_projection(  # noqa: PLR0911
 ) -> Any:
     """Copy and bound terminal-only data without changing durable history."""
     if isinstance(value, str):
+        if value.startswith("data:image/"):
+            if len(value) <= MAX_IMAGE_DATA_URI_BYTES:
+                return value
+            return "[image omitted from terminal projection]"
         clean = sanitize_terminal_text(value)
         if len(clean) <= max_string:
             return clean

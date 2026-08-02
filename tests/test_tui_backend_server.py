@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 
 import pytest
+from agents.tool import ToolOutputImage
 
 from strix.config import ProviderModelGroup
 from strix.config.settings import DEFAULT_MAX_TURNS
@@ -22,6 +23,7 @@ from strix.interface.tui.backend.protocol import (
     envelope,
 )
 from strix.interface.tui.backend.server import TuiBackendServer
+from strix.interface.tui.live_view import TuiLiveView
 
 
 def args() -> argparse.Namespace:
@@ -588,3 +590,35 @@ async def test_server_stops_when_peer_closes() -> None:
         await asyncio.wait_for(server._reader_task, timeout=1)
     finally:
         await server.close()
+
+
+def test_image_data_uri_survives_terminal_projection() -> None:
+    uri = "data:image/png;base64," + "A" * 100_000
+    assert terminal_projection(uri) == uri
+    assert terminal_projection({"type": "image", "image_url": uri})["image_url"] == uri
+
+    oversized = "data:image/png;base64," + "A" * (600 * 1024)
+    assert terminal_projection(oversized) == "[image omitted from terminal projection]"
+
+
+def test_view_image_tool_output_is_normalized_to_image_dict() -> None:
+    uri = "data:image/png;base64," + "B" * 4000
+    view = TuiLiveView()
+    view._record_tool_output_data(
+        "agent",
+        {
+            "call_id": "c1",
+            "tool_name": "view_image",
+            "output": ToolOutputImage(type="image", image_url=uri),
+        },
+    )
+    view._record_tool_output_data(
+        "agent",
+        {
+            "call_id": "c2",
+            "tool_name": "view_image",
+            "output": [{"type": "input_image", "image_url": uri}],
+        },
+    )
+    for event in view.events:
+        assert event["data"]["result"] == {"type": "image", "image_url": uri}

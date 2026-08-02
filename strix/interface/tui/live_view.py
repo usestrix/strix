@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+from agents.tool import ToolOutputImage
+
 from strix.core.paths import runtime_state_dir
 from strix.interface.tui.history import load_session_history
 
@@ -267,7 +269,7 @@ class TuiLiveView:
             )
             self._tool_event_by_agent_and_call_id[event_key] = event
 
-        result = _parse_json_value(output["output"])
+        result = _normalize_image_result(_parse_json_value(output["output"]))
         event["data"]["result"] = result
         event["data"]["status"] = _tool_status_from_result(result)
         self._bump_event(event, timestamp=timestamp)
@@ -361,6 +363,30 @@ def _parse_json_value(value: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return value
+
+
+def _normalize_image_result(result: Any) -> Any:
+    image_url = _image_url_from_result(result)
+    if image_url is None:
+        return result
+    return {"type": "image", "image_url": image_url}
+
+
+def _image_url_from_result(result: Any) -> str | None:
+    if isinstance(result, list):
+        for block in result:
+            url = _image_url_from_result(block)
+            if url is not None:
+                return url
+        return None
+    if isinstance(result, dict):
+        if result.get("type") in {"image", "input_image", "output_image"}:
+            url = result.get("image_url")
+            return url if isinstance(url, str) and url.startswith("data:image/") else None
+        return None
+    if isinstance(result, ToolOutputImage) and isinstance(result.image_url, str):
+        return result.image_url if result.image_url.startswith("data:image/") else None
+    return None
 
 
 def _tool_status_from_result(result: Any) -> str:
