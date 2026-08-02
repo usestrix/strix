@@ -154,7 +154,8 @@ type Model struct {
 	sweepFrame             int
 	followOutput           bool
 	selection              selectionState
-	selectionNotice        string
+	toast                  string
+	toastID                int
 	draggingScrollbar      scrollbarTarget
 	stateRevision          int
 	collectionRevisions    map[string]int
@@ -297,9 +298,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.resyncRequests[msg.requestID] = msg.collection
 		}
 	case selectionCopiedMsg:
-		m.selectionNotice = "Selection copied"
+		text := "Copied to clipboard"
 		if msg.err != nil {
-			m.selectionNotice = "Copy failed: " + msg.err.Error()
+			text = "Copy failed: " + msg.err.Error()
+		}
+		return m, m.showToast(text)
+	case toastExpiredMsg:
+		if msg.id == m.toastID {
+			m.toast = ""
+			if !m.selection.dragging {
+				m.selection.active = false
+			}
 		}
 		return m, nil
 	case vulnerabilityCopiedMsg:

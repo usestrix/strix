@@ -192,14 +192,44 @@ func (m Model) viewInner() string {
 	}
 	if m.picker != pickerNone {
 		// Picker screens use a transparent backdrop (background: $background 0%).
-		return m.overlay(main, m.pickerView(), false)
-	}
-	if m.modal != modalNone {
+		main = m.overlay(main, m.pickerView(), false)
+	} else if m.modal != modalNone {
 		// Only the vulnerability detail dims its backdrop (#000000 80%); Help,
 		// Quit and Stop are transparent.
-		return m.overlay(main, m.modalView(), m.modal == modalVulnerability)
+		main = m.overlay(main, m.modalView(), m.modal == modalVulnerability)
 	}
-	return main
+	return m.toastOverlay(main)
+}
+
+// toastOverlay splices a transient notification into the bottom-right corner,
+// where Textual's notify() toasts appeared.
+func (m Model) toastOverlay(view string) string {
+	if m.toast == "" {
+		return view
+	}
+	box := lipgloss.NewStyle().
+		Border(lipgloss.RoundedBorder()).
+		BorderForeground(dark).
+		Background(black).
+		Foreground(textColor).
+		Padding(0, 1).
+		Render(m.toast)
+	fg := strings.Split(box, "\n")
+	bg := strings.Split(view, "\n")
+	boxWidth := lipgloss.Width(box)
+	left := max(0, m.width-boxWidth-2)
+	top := max(0, m.height-len(fg)-1)
+	for row := top; row < min(len(bg), top+len(fg)); row++ {
+		fgLine := fg[row-top]
+		rightStart := left + boxWidth
+		leftPart := padToWidth(ansi.Truncate(bg[row], left, ""), left)
+		rightPart := ""
+		if lipgloss.Width(bg[row]) > rightStart {
+			rightPart = ansi.TruncateLeft(bg[row], rightStart, "")
+		}
+		bg[row] = leftPart + fgLine + rightPart
+	}
+	return strings.Join(bg, "\n")
 }
 
 // blackBG is the SGR that selects a solid black background.
@@ -506,9 +536,6 @@ func (m Model) statusView(width int) string {
 	}
 	if m.errorText != "" {
 		left = lipgloss.NewStyle().Foreground(red).Render(m.errorText)
-	}
-	if m.selectionNotice != "" {
-		left = lipgloss.NewStyle().Foreground(mid).Render(m.selectionNotice)
 	}
 	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
 	return " " + left + strings.Repeat(" ", max(1, gap-1)) + right

@@ -7,12 +7,27 @@ package app
 
 import (
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
 
 type selectionCopiedMsg struct{ err error }
+
+type toastExpiredMsg struct{ id int }
+
+// toastDuration matches the old Textual notify("Copied to clipboard", timeout=2).
+const toastDuration = 2 * time.Second
+
+// showToast displays a transient notification and schedules its dismissal;
+// the copy highlight is cleared together with the toast.
+func (m *Model) showToast(text string) tea.Cmd {
+	m.toastID++
+	m.toast = text
+	id := m.toastID
+	return tea.Tick(toastDuration, func(time.Time) tea.Msg { return toastExpiredMsg{id: id} })
+}
 
 type selectionState struct {
 	active   bool
@@ -55,7 +70,7 @@ func (m *Model) beginSelection(line, col int) {
 		anchorLine: line, anchorCol: col,
 		headLine: line, headCol: col,
 	}
-	m.selectionNotice = ""
+	m.toast = ""
 }
 
 func (m *Model) extendSelection(line, col int) {

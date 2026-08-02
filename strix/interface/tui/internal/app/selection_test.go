@@ -64,6 +64,23 @@ func TestDragSelectionCopiesPlainText(t *testing.T) {
 	if model.selection.dragging || !model.selection.active {
 		t.Fatalf("selection state after release: %+v", model.selection)
 	}
+
+	updated, tick := model.Update(msg)
+	model = updated.(Model)
+	if model.toast != "Copied to clipboard" {
+		t.Fatalf("toast %q after copy", model.toast)
+	}
+	if !strings.Contains(model.View(), "Copied to clipboard") {
+		t.Fatal("toast is not rendered")
+	}
+	if tick == nil {
+		t.Fatal("toast was not scheduled to expire")
+	}
+	updated, _ = model.Update(toastExpiredMsg{id: model.toastID})
+	model = updated.(Model)
+	if model.toast != "" || model.selection.active {
+		t.Fatalf("toast expiry left toast=%q selection=%+v", model.toast, model.selection)
+	}
 }
 
 func TestPlainClickClearsSelectionWithoutCopying(t *testing.T) {
