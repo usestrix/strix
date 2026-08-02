@@ -217,13 +217,11 @@ func TestCollapseToolShellPreviewAndExpand(t *testing.T) {
 	}
 }
 
-func TestCollapseToolInlineRowAndFullTools(t *testing.T) {
+func TestCollapseToolOnlyOutputHeavyTools(t *testing.T) {
 	full := "🧠 Thinking\n  a long private thought\n  spanning lines"
-	collapsed, expandable := CollapseTool(full, "think", false)
-	if !expandable || strings.Count(ansi.Strip(collapsed), "\n") != 1 {
-		t.Fatalf("think should collapse to one row plus hint: %q", collapsed)
+	if out, expandable := CollapseTool(full, "think", false); expandable || out != full {
+		t.Fatal("think must never collapse")
 	}
-
 	if _, expandable := CollapseTool("short", "exec_command", false); expandable {
 		t.Fatal("short output must not be expandable")
 	}

@@ -91,36 +91,22 @@ func Tool(data map[string]any) string {
 }
 
 // ---------------------------------------------------------------------------
-// Two-tier collapsing (opencode-style): quiet tools render as one-line inline
-// rows, output-heavy tools as short block previews; clicking a tool in the
-// trace expands it to the full render.
+// Collapsing: output-heavy tools (terminal, proxy) render as short block
+// previews; clicking a tool in the trace expands it to the full render.
 // ---------------------------------------------------------------------------
 
-const (
-	shellPreviewLines   = 10
-	genericPreviewLines = 3
-	inlinePreviewLines  = 1
-)
+const outputPreviewLines = 10
 
 // ToolPreviewLines returns how many lines of a tool's render are shown before
-// it is collapsed; 0 means the tool is never collapsed.
+// it is collapsed; 0 means the tool is never collapsed. Only tools whose
+// output can grow unbounded (terminal, proxy) collapse.
 func ToolPreviewLines(name string) int {
 	switch name {
-	case "exec_command", "write_stdin":
-		return shellPreviewLines
-	case "apply_patch", "view_request", "view_sitemap_entry", "repeat_request",
-		"get_report", "create_vulnerability_report", "create_dependency_report":
-		return genericPreviewLines
-	case "respond_to_user", "finish_scan":
-		return 0
-	case "view_image", "think", "web_search", "load_skill", "list_reports",
-		"create_note", "delete_note", "update_note", "list_notes", "get_note",
-		"create_todo", "list_todos", "update_todo", "mark_todo_done", "mark_todo_pending", "delete_todo",
-		"view_agent_graph", "create_agent", "send_message_to_agent", "agent_finish", "wait_for_agents", "stop_agent",
-		"list_requests", "list_sitemap", "scope_rules":
-		return inlinePreviewLines
+	case "exec_command", "write_stdin",
+		"view_request", "repeat_request", "view_sitemap_entry":
+		return outputPreviewLines
 	}
-	return genericPreviewLines
+	return 0
 }
 
 // CollapseTool clips a full tool render to its preview size, appending a
