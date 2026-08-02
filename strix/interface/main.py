@@ -522,7 +522,7 @@ Examples:
   strix --target https://github.com/user/repo
   strix --target git@github.com:user/repo.git
 
-  # Local code analysis (bind-mounted into the sandbox, any size)
+  # Local code analysis
   strix --target ./my-project
 
   # Domain penetration test
@@ -568,8 +568,8 @@ Examples:
         type=str,
         action="append",
         help="Target to test (URL, repository, local directory path, domain name, or IP address). "
-        "Local directories are bind-mounted into the sandbox (writable, with .git "
-        "kept read-only). Can be specified multiple times for multi-target scans. "
+        "Local directories are mounted into the sandbox writable. "
+        "Can be specified multiple times for multi-target scans. "
         "Fresh runs require --target or --target-list.",
     )
     parser.add_argument(

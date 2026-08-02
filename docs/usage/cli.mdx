@@ -14,10 +14,8 @@ strix (--target <target> | --target-list <path>) [options]
 <ParamField path="--target, -t" type="string">
   Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times. Fresh runs require at least one target source: `--target` or `--target-list`.
 
-  A local directory is bind-mounted into the sandbox at `/workspace/<name>` rather than copied, so start-up is instant regardless of repository size.
-
   <Note>
-    The mount is **writable** — the agent edits your real files, the same way a local coding agent does. Project metadata (`.git`, `.agents`, `.codex`) is re-mounted read-only so your history and agent instructions cannot be rewritten, and system, credential (`.ssh`, `.aws`, …) and home directories are refused as targets. Commit or stash anything you care about before scanning, and treat the mount as "scan my own code", not as isolation from untrusted code.
+    A local directory is mounted into the sandbox live and **writable**, so the agent edits your real files (`.git` excepted). Commit or stash first.
   </Note>
 </ParamField>
 
@@ -132,9 +130,6 @@ strix -t https://github.com/org/app -t https://staging.example.com
 
 # Targets from a file
 strix --target-list ./targets.txt
-
-# Large local repository — mounted, not copied, so size does not matter
-strix --target ./huge-monorepo
 ```
 
 ## Exit Codes
