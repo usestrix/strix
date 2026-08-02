@@ -158,25 +158,24 @@ def _schema_types(spec: dict[str, Any]) -> set[str]:
     return types
 
 
-def _split_scalar_list(value: str) -> list[str]:
-    separator = "\n" if "\n" in value else ","
-    return [part.strip() for part in value.split(separator) if part.strip()]
-
-
 def _decode_structured(value: str, types: set[str]) -> Any:
-    """Decode a string the model sent where the schema wants an array/object."""
+    """Decode a string the model sent where the schema wants an array/object.
+
+    Only an unambiguous JSON container is accepted. Never infer structure from
+    a free-form string: splitting prose on commas or newlines would silently
+    fragment a single narrative item (an ``agent_finish`` finding, say) into
+    several corrupted ones. Anything else is passed through so the model gets
+    a validation error it can correct.
+    """
     stripped = value.strip()
     if not stripped:
         return value
     try:
         decoded = json.loads(stripped)
     except json.JSONDecodeError:
-        decoded = None
-    if "array" not in types:
-        return decoded if isinstance(decoded, dict) else value
-    if isinstance(decoded, list):
-        return decoded
-    return _split_scalar_list(stripped) if decoded is None else [decoded]
+        return value
+    wanted = list if "array" in types else dict
+    return decoded if isinstance(decoded, wanted) else value
 
 
 def _coerce_argument(value: Any, spec: dict[str, Any]) -> Any:

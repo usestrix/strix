@@ -63,13 +63,21 @@ async def test_encoded_list_is_decoded_for_an_array_parameter(schema: dict[str, 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("value", "expected"),
-    [("auth, idor", ["auth", "idor"]), ("auth\nidor", ["auth", "idor"]), ("auth", ["auth"])],
+    "value",
+    [
+        "auth, idor",
+        "auth\nidor",
+        "auth",
+        "Endpoint /admin leaks user data, and session tokens never expire",
+        '"auth"',
+        "",
+    ],
 )
-async def test_scalar_string_is_split_into_an_array(value: str, expected: list[str]) -> None:
+async def test_free_form_strings_are_never_split_into_an_array(value: str) -> None:
+    """Splitting prose would fragment one narrative item into several corrupted ones."""
     parsed = await _roundtrip(_ARRAY, {"tags": value})
 
-    assert parsed["tags"] == expected
+    assert parsed["tags"] == value
 
 
 @pytest.mark.asyncio
@@ -77,6 +85,13 @@ async def test_encoded_mapping_is_decoded_for_an_object_parameter() -> None:
     parsed = await _roundtrip(_OBJECT, {"modifications": '{"method": "POST"}'})
 
     assert parsed["modifications"] == {"method": "POST"}
+
+
+@pytest.mark.asyncio
+async def test_a_decoded_container_of_the_wrong_kind_is_not_substituted() -> None:
+    parsed = await _roundtrip(_OBJECT, {"modifications": '["POST"]'})
+
+    assert parsed["modifications"] == '["POST"]'
 
 
 @pytest.mark.asyncio
