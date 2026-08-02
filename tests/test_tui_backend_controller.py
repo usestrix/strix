@@ -371,7 +371,7 @@ async def test_custom_provider_flow_accepts_manual_model_and_optional_key() -> N
             "kind": "vllm",
         },
     )
-    provider = added["provider"]
+    provider = added["name"]
     selected = await controller.handle(
         "setup.select_model",
         {"provider": provider, "model": f"{provider}/local-model"},
@@ -399,10 +399,10 @@ async def test_disconnected_custom_provider_remains_listable() -> None:
 
     disconnected = await controller.handle(
         "setup.disconnect_provider",
-        {"provider": added["provider"]},
+        {"provider": added["name"]},
     )
     providers = await controller.handle("providers.list", {})
-    row = next(item for item in providers["providers"] if item["name"] == added["provider"])
+    row = next(item for item in providers["providers"] if item["name"] == added["name"])
 
     assert disconnected == row
     assert row["configured"] is False
