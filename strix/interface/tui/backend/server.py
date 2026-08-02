@@ -11,8 +11,8 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from strix.interface.tui_backend.controller import sanitize_terminal_text
-from strix.interface.tui_backend.protocol import (
+from strix.interface.tui.backend.controller import sanitize_terminal_text
+from strix.interface.tui.backend.protocol import (
     MAX_COLLECTION_FRAME_BYTES,
     MAX_COMMAND_BYTES,
     PROTOCOL_CAPABILITIES,
@@ -25,7 +25,7 @@ from strix.interface.tui_backend.protocol import (
 if TYPE_CHECKING:
     import socket
 
-    from strix.interface.tui_backend.controller import TuiController
+    from strix.interface.tui.backend.controller import TuiController
 
 logger = logging.getLogger(__name__)
 
@@ -190,10 +190,7 @@ class TuiBackendServer:
     def _structured_error(exc: Exception) -> dict[str, object]:
         if isinstance(exc, OSError):
             return {"code": "persistence_error", "message": str(exc), "retryable": True}
-        if isinstance(
-            exc,
-            (TypeError, ValueError, json.JSONDecodeError, UnicodeDecodeError),
-        ):
+        if isinstance(exc, TypeError | ValueError | json.JSONDecodeError | UnicodeDecodeError):
             return {"code": "invalid_request", "message": str(exc), "retryable": False}
         if isinstance(exc, RuntimeError):
             return {"code": "command_failed", "message": str(exc), "retryable": False}

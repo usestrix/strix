@@ -19,7 +19,7 @@ class InteractiveSetupUnavailableError(RuntimeError):
 
 async def run_tui(args: argparse.Namespace) -> None:
     """Run the Bubble Tea TUI."""
-    from strix.interface.go_tui import (
+    from strix.interface.tui.runtime import (
         GoTuiPreActivationError,
         run_go_tui,
     )

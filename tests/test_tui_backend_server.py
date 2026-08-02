@@ -6,20 +6,20 @@ import json
 import socket
 import struct
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
 from strix.config import ProviderModelGroup
-from strix.interface.tui_backend.controller import TuiController, _terminal_projection
-from strix.interface.tui_backend.protocol import (
+from strix.interface.tui.backend.controller import TuiController, _terminal_projection
+from strix.interface.tui.backend.protocol import (
     MAX_COMMAND_BYTES,
     PROTOCOL_CAPABILITIES,
     PROTOCOL_VERSION,
     ProtocolHandshakeError,
     envelope,
 )
-from strix.interface.tui_backend.server import TuiBackendServer
+from strix.interface.tui.backend.server import TuiBackendServer
 
 
 def args() -> argparse.Namespace:
@@ -196,9 +196,12 @@ def test_unicode_heavy_setup_state_stays_within_control_frame_limit() -> None:
     controller.messages = [
         {"id": str(index), "text": "警" * 10_000, "level": "warning"} for index in range(10)
     ]
-    controller.report_state = SimpleNamespace(
-        caido_url="https://例え.example/" + "道" * 10_000,
-        get_total_llm_usage=lambda: {f"model-{index}": "費" * 10_000 for index in range(20)},
+    controller.report_state = cast(
+        "Any",
+        SimpleNamespace(
+            caido_url="https://例え.example/" + "道" * 10_000,
+            get_total_llm_usage=lambda: {f"model-{index}": "費" * 10_000 for index in range(20)},
+        ),
     )
     server = TuiBackendServer(controller)
 
@@ -300,7 +303,7 @@ async def test_collection_bootstrap_is_chunked_deltas_are_incremental_and_idle_i
         caido_url=None,
         get_total_llm_usage=dict,
     )
-    controller.report_state = report_state
+    controller.report_state = cast("Any", report_state)
     content = "x" * (64 * 1024)
     for index in range(80):
         controller.live_view.record_user_message(f"agent-{index}", content)
@@ -412,7 +415,7 @@ async def test_models_list_command_frames_remain_under_64_kib(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        "strix.interface.tui_backend.controller.load_settings",
+        "strix.interface.tui.backend.controller.load_settings",
         lambda: SimpleNamespace(llm=SimpleNamespace(model="")),
     )
 
@@ -422,7 +425,7 @@ async def test_models_list_command_frames_remain_under_64_kib(
         return [ProviderModelGroup("openai", "OpenAI", models)]
 
     monkeypatch.setattr(
-        "strix.interface.tui_backend.controller.configured_provider_model_groups",
+        "strix.interface.tui.backend.controller.configured_provider_model_groups",
         groups,
     )
     backend, child = socket.socketpair()

@@ -1196,7 +1196,7 @@ def main() -> None:
     args = parse_arguments()
 
     if getattr(args, "tui_protocol_smoke", False):
-        from strix.interface.go_tui import run_tui_protocol_smoke
+        from strix.interface.tui.runtime import run_tui_protocol_smoke
 
         asyncio.run(run_tui_protocol_smoke(args))
         return

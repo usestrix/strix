@@ -16,7 +16,7 @@ from strix.config import (
     read_config_env,
     reset_settings_cache,
 )
-from strix.interface.tui_backend.controller import TuiController
+from strix.interface.tui.backend.controller import TuiController
 
 
 if TYPE_CHECKING:
@@ -518,7 +518,7 @@ async def test_models_list_returns_aggregate_groups(monkeypatch: pytest.MonkeyPa
     os.environ["STRIX_LLM"] = "openai/gpt-5.4"
     reset_settings_cache()
     monkeypatch.setattr(
-        "strix.interface.tui_backend.controller.configured_provider_model_groups",
+        "strix.interface.tui.backend.controller.configured_provider_model_groups",
         groups,
     )
     controller = TuiController(args())
@@ -561,7 +561,7 @@ async def test_models_list_pages_one_immutable_snapshot_under_command_limit(
         return [ProviderModelGroup("openai", "OpenAI", models)]
 
     monkeypatch.setattr(
-        "strix.interface.tui_backend.controller.configured_provider_model_groups",
+        "strix.interface.tui.backend.controller.configured_provider_model_groups",
         groups,
     )
     controller = TuiController(args())
@@ -606,10 +606,10 @@ async def test_models_list_rejects_expired_snapshot(monkeypatch: pytest.MonkeyPa
 
     now = 100.0
     monkeypatch.setattr(
-        "strix.interface.tui_backend.controller.configured_provider_model_groups",
+        "strix.interface.tui.backend.controller.configured_provider_model_groups",
         groups,
     )
-    monkeypatch.setattr("strix.interface.tui_backend.controller.time.monotonic", lambda: now)
+    monkeypatch.setattr("strix.interface.tui.backend.controller.time.monotonic", lambda: now)
     controller = TuiController(args())
     first = await controller.handle("models.list", {})
     now += 61
@@ -659,7 +659,7 @@ async def test_models_list_returns_provider_rows_when_none_are_connected(
         }
 
     monkeypatch.setattr(
-        "strix.interface.tui_backend.controller.configured_provider_model_groups",
+        "strix.interface.tui.backend.controller.configured_provider_model_groups",
         groups,
     )
     controller = TuiController(args())
@@ -722,7 +722,7 @@ async def test_existing_viewer_is_reopened_and_closed(
     controller.viewer_url = "http://127.0.0.1:1234/?token=test"
     server = ViewerServer()
     controller._viewer_httpd = server
-    monkeypatch.setattr("strix.interface.tui_backend.controller.webbrowser.open", opened.append)
+    monkeypatch.setattr("strix.interface.tui.backend.controller.webbrowser.open", opened.append)
 
     result = await controller.handle("viewer.open", {})
     controller.close_viewer()

@@ -1,4 +1,4 @@
-"""Textual-free TUI event projection shared by the Go TUI backend and viewer."""
+"""Terminal user interface: Go/Bubble Tea frontend plus its Python runtime and backend."""
 
 from strix.interface.tui.live_view import TuiLiveView
 

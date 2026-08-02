@@ -23,8 +23,8 @@ from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
-from strix.interface.tui_backend import TuiBackendServer, TuiController
-from strix.interface.tui_backend.live_view import TuiLiveView
+from strix.interface.tui.backend import TuiBackendServer, TuiController
+from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.report.state import ReportState, set_global_report_state
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -59,7 +59,11 @@ def _tui_executable() -> str:
 
 
 def _project_root() -> Path:
-    return Path(__file__).resolve().parents[2]
+    return Path(__file__).resolve().parents[3]
+
+
+def _tui_source_dir() -> Path:
+    return Path(__file__).resolve().parent
 
 
 def _child_environment() -> dict[str, str]:
@@ -452,8 +456,7 @@ class GoTuiRuntime:
         override = os.environ.get("STRIX_TUI_BINARY")
         if override:
             return [override]
-        root = _project_root()
-        source = root / "tui-go"
+        source = _tui_source_dir()
         # A checkout may also contain a stale wheel/build sidecar. Running the
         # current source is the deterministic development choice.
         if (source / "go.mod").is_file() and shutil.which("go"):
@@ -462,7 +465,7 @@ class GoTuiRuntime:
         packaged = get_strix_resource_path("bin", executable)
         if packaged.is_file():
             return [str(packaged)]
-        development = root / "build" / "sidecar" / executable
+        development = _project_root() / "build" / "sidecar" / executable
         if development.is_file():
             return [str(development)]
         raise RuntimeError(
@@ -487,7 +490,7 @@ class GoTuiRuntime:
             env = _child_environment()
             env["STRIX_VERSION"] = _package_version()
             command = self.binary_command()
-            cwd = str(_project_root() / "tui-go") if command[:2] == ["go", "run"] else None
+            cwd = str(_tui_source_dir()) if command[:2] == ["go", "run"] else None
             process, backend_socket = await _launch_tui_process(command, env, cwd)
             await self.server.start(backend_socket)
             if not self.controller.setup_mode:
@@ -534,7 +537,7 @@ async def run_tui_protocol_smoke(args: argparse.Namespace) -> None:
     env = _child_environment()
     env["STRIX_VERSION"] = _package_version()
     command = [*runtime.binary_command(), "--handshake-smoke"]
-    cwd = str(_project_root() / "tui-go") if command[:2] == ["go", "run"] else None
+    cwd = str(_tui_source_dir()) if command[:2] == ["go", "run"] else None
     process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None = None
     connection: socket.socket | None = None
     try:

@@ -10,7 +10,7 @@ from typing import Any
 from hatchling.builders.hooks.plugin.interface import BuildHookInterface
 
 
-class CustomBuildHook(BuildHookInterface):
+class CustomBuildHook(BuildHookInterface[Any]):
     """Build and package the platform-native Bubble Tea sidecar for releases."""
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
@@ -38,7 +38,7 @@ class CustomBuildHook(BuildHookInterface):
                 str(output),
                 "./cmd/strix-tui",
             ],
-            cwd=root / "tui-go",
+            cwd=root / "strix" / "interface" / "tui",
             env=env,
             check=True,
         )

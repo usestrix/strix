@@ -48,7 +48,7 @@ jobs:
         with:
           go-version: '1.24.x'
           check-latest: true
-          cache-dependency-path: tui-go/go.sum
+          cache-dependency-path: strix/interface/tui/go.sum
 
       - name: Build
         shell: bash

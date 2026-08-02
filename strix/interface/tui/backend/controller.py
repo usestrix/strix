@@ -38,7 +38,7 @@ from strix.config import (
 )
 from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
-from strix.interface.tui_backend.live_view import TuiLiveView
+from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.utils import check_mountable_dir, read_target_list_file
 
 
@@ -954,7 +954,7 @@ class TuiController:
             self.viewer_status = "failed"
             return {"status": self.viewer_status, "error": "Scan output is not ready"}
         try:
-            from strix.interface.tui_backend.messages import (
+            from strix.interface.tui.backend.messages import (
                 send_user_message_to_agent,
             )
             from strix.interface.viewer.server import (

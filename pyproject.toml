@@ -81,7 +81,16 @@ packages = ["strix"]
 # The prebuilt viewer bundle under strix/interface/viewer/static/ ships automatically
 # (hatchling includes non-.py files under the package). The Vite SOURCE lives
 # under the package dir too (strix/interface/viewer/frontend/) but must never ship in the wheel.
-exclude = ["strix/interface/viewer/frontend", "strix/interface/viewer/frontend/**"]
+exclude = [
+  "strix/interface/viewer/frontend",
+  "strix/interface/viewer/frontend/**",
+  # Go TUI SOURCE lives under the package dir but must never ship in the wheel;
+  # the compiled sidecar is force-included as strix/bin/strix-tui instead.
+  "strix/interface/tui/cmd/**",
+  "strix/interface/tui/internal/**",
+  "strix/interface/tui/go.mod",
+  "strix/interface/tui/go.sum",
+]
 
 [tool.hatch.build.targets.wheel.hooks.custom]
 path = "hatch_build.py"
@@ -283,8 +292,8 @@ ignore = [
 # The Go TUI runtime and backend controller import interface modules lazily so
 # the sidecar entry point stays fast and avoids circular imports.
 "strix/interface/interactive.py" = ["PLC0415"]
-"strix/interface/go_tui.py" = ["PLC0415"]
-"strix/interface/tui_backend/controller.py" = ["PLC0415"]
+"strix/interface/tui/runtime.py" = ["PLC0415"]
+"strix/interface/tui/backend/controller.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
 force-single-line = false

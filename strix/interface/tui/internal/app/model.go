@@ -16,6 +16,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/usestrix/strix/tui/internal/protocol"
+	"github.com/usestrix/strix/tui/internal/render"
 )
 
 type wireMsg protocol.Envelope
@@ -1034,7 +1035,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			// Setup-mode errors live in the scrollback (red), like Python; during
 			// a scan they surface on the status line.
 			if m.snapshot.SetupMode {
-				m.setupMsg(message, col(red))
+				m.setupMsg(message, render.Col(red))
 			} else {
 				m.errorText = message
 			}
@@ -1066,7 +1067,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		case "models.list":
 			var data protocol.ModelsResult
 			if err := json.Unmarshal(result.Result, &data); err != nil {
-				m.setupMsg(err.Error(), col(red))
+				m.setupMsg(err.Error(), render.Col(red))
 				m.modelListing = nil
 				return nil
 			}
@@ -1095,12 +1096,12 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.providerDetails[data.Provider] = data.Detail
 			m.providerDisconnectable[data.Provider] = data.Disconnectable
 			if data.Configured {
-				m.setupMsg("✓ "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail)+" Use /model to pick a model.", col(green))
+				m.setupMsg("✓ "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail)+" Use /model to pick a model.", render.Col(green))
 			} else if data.KeyEnv != nil {
 				m.keyEnv = *data.KeyEnv
 				m.openPicker(pickerAPIKey)
 			} else {
-				m.setupMsg(m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), col(red))
+				m.setupMsg(m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), render.Col(red))
 			}
 		case "setup.save_api_key":
 			var data struct {
@@ -1128,9 +1129,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 				m.closePicker()
 			}
 			if data.Configured {
-				m.setupMsg("✓ Saved credentials. "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail)+" Use /model to pick a model.", col(green))
+				m.setupMsg("✓ Saved credentials. "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail)+" Use /model to pick a model.", render.Col(green))
 			} else {
-				m.setupMsg("Saved the API key, but more configuration is required. "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), col(amber))
+				m.setupMsg("Saved the API key, but more configuration is required. "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), render.Col(amber))
 			}
 		case "setup.disconnect_provider":
 			var data protocol.Provider
@@ -1139,7 +1140,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.providerStates[data.Name] = data.State
 			m.providerDetails[data.Name] = data.Detail
 			m.providerDisconnectable[data.Name] = data.Disconnectable
-			m.setupMsg("Disconnected "+data.Label+".", col(amber))
+			m.setupMsg("Disconnected "+data.Label+".", render.Col(amber))
 		case "setup.add_custom_provider":
 			var data struct {
 				Provider       string `json:"provider"`
@@ -1156,7 +1157,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.configProvider, m.configProviderLabel = data.Provider, data.Label
 			m.configProviderState, m.configProviderDetail = data.State, data.Detail
 			m.providerDisconnectable[data.Provider] = data.Disconnectable
-			m.setupMsg("✓ Added custom provider. "+m.providerStatusText(data.Provider, data.Label, data.Detail)+" Use /model to pick a model.", col(green))
+			m.setupMsg("✓ Added custom provider. "+m.providerStatusText(data.Provider, data.Label, data.Detail)+" Use /model to pick a model.", render.Col(green))
 		case "setup.select_model":
 			var data struct {
 				Model string `json:"model"`
@@ -1166,7 +1167,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 				m.closePicker()
 			}
 			if data.Model != "" {
-				m.setupMsg("✓ Model set to "+data.Model+" (saved to your config).", col(green))
+				m.setupMsg("✓ Model set to "+data.Model+" (saved to your config).", render.Col(green))
 			}
 		case "setup.set_mode":
 			var data struct {
@@ -1176,7 +1177,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			if data.Mode != "" {
 				m.closePicker()
 				m.snapshot.ScanMode = data.Mode
-				m.setupMsg("✓ Scan mode set to "+data.Mode+".", col(green))
+				m.setupMsg("✓ Scan mode set to "+data.Mode+".", render.Col(green))
 			}
 		case "setup.add_mount":
 			var data struct {
@@ -1184,7 +1185,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			}
 			_ = json.Unmarshal(result.Result, &data)
 			if data.Mount != "" {
-				m.setupMsg("✓ Added read-only mount: "+data.Mount, col(green))
+				m.setupMsg("✓ Added read-only mount: "+data.Mount, render.Col(green))
 			}
 		case "setup.load_target_list":
 			var data struct {
@@ -1193,14 +1194,14 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 				Total int    `json:"total"`
 			}
 			_ = json.Unmarshal(result.Result, &data)
-			m.setupMsg(fmt.Sprintf("✓ Added %d target(s) from %s (%d total).", data.Added, data.Path, data.Total), col(green))
+			m.setupMsg(fmt.Sprintf("✓ Added %d target(s) from %s (%d total).", data.Added, data.Path, data.Total), render.Col(green))
 		case "setup.load_instruction_file":
 			var data struct {
 				Path       string `json:"path"`
 				Characters int    `json:"characters"`
 			}
 			_ = json.Unmarshal(result.Result, &data)
-			m.setupMsg(fmt.Sprintf("✓ Loaded %d instruction characters from %s.", data.Characters, data.Path), col(green))
+			m.setupMsg(fmt.Sprintf("✓ Loaded %d instruction characters from %s.", data.Characters, data.Path), render.Col(green))
 		case "setup.set_budget":
 			var data struct {
 				Budget *float64 `json:"budget"`
@@ -1208,9 +1209,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			_ = json.Unmarshal(result.Result, &data)
 			m.snapshot.MaxBudgetUSD = data.Budget
 			if data.Budget == nil {
-				m.setupMsg("Budget limit disabled.", dimS())
+				m.setupMsg("Budget limit disabled.", render.Dim())
 			} else {
-				m.setupMsg(fmt.Sprintf("✓ Budget set to $%.2f.", *data.Budget), col(green))
+				m.setupMsg(fmt.Sprintf("✓ Budget set to $%.2f.", *data.Budget), render.Col(green))
 			}
 		case "setup.set_max_turns":
 			var data struct {
@@ -1218,7 +1219,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			}
 			_ = json.Unmarshal(result.Result, &data)
 			m.snapshot.MaxTurns = data.Turns
-			m.setupMsg(fmt.Sprintf("✓ Maximum turns set to %d per agent.", data.Turns), col(green))
+			m.setupMsg(fmt.Sprintf("✓ Maximum turns set to %d per agent.", data.Turns), render.Col(green))
 		case "setup.set_scope":
 			var data struct {
 				Mode string  `json:"mode"`
@@ -1234,7 +1235,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			if m.snapshot.DiffBase != "" {
 				message += " against " + m.snapshot.DiffBase
 			}
-			m.setupMsg(message+".", col(green))
+			m.setupMsg(message+".", render.Col(green))
 		case "viewer.open":
 			var data struct {
 				Status string  `json:"status"`
@@ -1264,12 +1265,12 @@ func (m *Model) consumeMessages(messages []protocol.Message, setupMode bool) {
 		if !setupMode || strings.TrimSpace(message.Text) == "" {
 			continue
 		}
-		style := dimS()
+		style := render.Dim()
 		switch message.Level {
 		case "error":
-			style = col(red)
+			style = render.Col(red)
 		case "warning":
-			style = col(amber)
+			style = render.Col(amber)
 		}
 		m.setupMsg(message.Text, style)
 	}
@@ -1278,7 +1279,7 @@ func (m *Model) consumeMessages(messages []protocol.Message, setupMode bool) {
 func (m *Model) handleModelListingPage(data protocol.ModelsResult) tea.Cmd {
 	if data.ListingID == "" || data.Cursor < 0 || data.NextCursor != data.Cursor+1 {
 		m.modelListing = nil
-		m.setupMsg("Invalid paged model listing received from backend.", col(red))
+		m.setupMsg("Invalid paged model listing received from backend.", render.Col(red))
 		return nil
 	}
 	if data.Cursor == 0 {
@@ -1289,7 +1290,7 @@ func (m *Model) handleModelListingPage(data protocol.ModelsResult) tea.Cmd {
 	listing := m.modelListing
 	if listing == nil || listing.listingID != data.ListingID || listing.cursor != data.Cursor {
 		m.modelListing = nil
-		m.setupMsg("Model listing page mismatch; run /model again.", col(red))
+		m.setupMsg("Model listing page mismatch; run /model again.", render.Col(red))
 		return nil
 	}
 	for _, group := range data.Groups {
@@ -1350,7 +1351,7 @@ func (m *Model) installModelListing(groups []protocol.ModelGroup, providers []pr
 			label = group.Provider
 		}
 		if strings.TrimSpace(group.Error) != "" {
-			m.setupMsg(label+": "+strings.TrimSpace(group.Error), col(amber))
+			m.setupMsg(label+": "+strings.TrimSpace(group.Error), render.Col(amber))
 		}
 		for modelIndex, model := range group.Models {
 			token := fmt.Sprintf("model:%d:%d", groupIndex, modelIndex)
@@ -1364,7 +1365,7 @@ func (m *Model) installModelListing(groups []protocol.ModelGroup, providers []pr
 		}
 	}
 	if len(m.options) == 0 {
-		m.setupMsg("No configured providers or models are available. Run /provider to connect one.", dimS())
+		m.setupMsg("No configured providers or models are available. Run /provider to connect one.", render.Dim())
 		return
 	}
 	m.openPicker(pickerModel)
@@ -1804,7 +1805,7 @@ func (m Model) updatePicker(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
 	case "esc":
 		if m.picker == pickerAPIKey && m.configProvider != "" {
-			m.setupMsg(m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), col(red))
+			m.setupMsg(m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), render.Col(red))
 		}
 		m.closePicker()
 		return m, nil
@@ -1969,7 +1970,7 @@ func (m Model) submit(value string) (tea.Model, tea.Cmd) {
 // copied into the output pane; only useful results and errors are recorded.
 func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 	if !strings.HasPrefix(value, "/") {
-		m.setupMsg("Commands start with '/'. Type /help to see them.", col(red))
+		m.setupMsg("Commands start with '/'. Type /help to see them.", render.Col(red))
 		return m, nil
 	}
 	parts := strings.SplitN(value, " ", 2)
@@ -1999,9 +2000,9 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 	case "/budget":
 		if arg == "" {
 			if m.snapshot.MaxBudgetUSD == nil {
-				m.setupMsg("No budget limit is configured.", dimS())
+				m.setupMsg("No budget limit is configured.", render.Dim())
 			} else {
-				m.setupMsg(fmt.Sprintf("Current budget limit: $%.2f.", *m.snapshot.MaxBudgetUSD), dimS())
+				m.setupMsg(fmt.Sprintf("Current budget limit: $%.2f.", *m.snapshot.MaxBudgetUSD), render.Dim())
 			}
 			return m, nil
 		}
@@ -2010,18 +2011,18 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 		}
 		budget, err := strconv.ParseFloat(arg, 64)
 		if err != nil || budget <= 0 || math.IsNaN(budget) || math.IsInf(budget, 0) {
-			m.setupMsg("Budget must be a number greater than 0, or 'off'.", col(red))
+			m.setupMsg("Budget must be a number greater than 0, or 'off'.", render.Col(red))
 			return m, nil
 		}
 		return m, send(m.client, "setup.set_budget", map[string]any{"budget": budget})
 	case "/turns", "/max-turns":
 		if arg == "" {
-			m.setupMsg(fmt.Sprintf("Current maximum turns: %d per agent.", m.snapshot.MaxTurns), dimS())
+			m.setupMsg(fmt.Sprintf("Current maximum turns: %d per agent.", m.snapshot.MaxTurns), render.Dim())
 			return m, nil
 		}
 		turns, err := strconv.Atoi(arg)
 		if err != nil || turns <= 0 {
-			m.setupMsg("Maximum turns must be an integer greater than 0.", col(red))
+			m.setupMsg("Maximum turns must be an integer greater than 0.", render.Col(red))
 			return m, nil
 		}
 		return m, send(m.client, "setup.set_max_turns", map[string]any{"turns": turns})
@@ -2032,12 +2033,12 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 			if m.snapshot.DiffBase != "" {
 				message += " against " + m.snapshot.DiffBase
 			}
-			m.setupMsg(message+".", dimS())
+			m.setupMsg(message+".", render.Dim())
 			return m, nil
 		}
 		mode := strings.ToLower(fields[0])
 		if len(fields) > 2 || (mode != "auto" && mode != "diff" && mode != "full") {
-			m.setupMsg("Usage: /scope <auto|diff|full> [base|default]", col(red))
+			m.setupMsg("Usage: /scope <auto|diff|full> [base|default]", render.Col(red))
 			return m, nil
 		}
 		payload := map[string]any{"mode": mode}
@@ -2055,68 +2056,68 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 		if arg == "" {
 			if len(m.snapshot.Targets) > 0 {
 				var b strings.Builder
-				b.WriteString(boldC(green).Render("Targets"))
+				b.WriteString(render.Bold(green).Render("Targets"))
 				for _, t := range m.snapshot.Targets {
-					b.WriteString("\n" + col(white).Render("  "+t))
+					b.WriteString("\n" + render.Col(white).Render("  "+t))
 				}
 				if hidden := m.snapshot.TargetCount - len(m.snapshot.Targets); hidden > 0 {
 					b.WriteString(fmt.Sprintf("\n  ...and %d more", hidden))
 				}
 				m.setupLogAppend(b.String())
 			} else {
-				m.setupMsg("No targets yet. Add one with /target <url|repo|path|domain|ip>", dimS())
+				m.setupMsg("No targets yet. Add one with /target <url|repo|path|domain|ip>", render.Dim())
 			}
 			return m, nil
 		}
 		for _, t := range m.snapshot.Targets {
 			if t == arg {
-				m.setupMsg("'"+arg+"' is already in the target list.", dimS())
+				m.setupMsg("'"+arg+"' is already in the target list.", render.Dim())
 				return m, nil
 			}
 		}
-		m.setupMsg("✓ Added target: "+arg, col(green))
+		m.setupMsg("✓ Added target: "+arg, render.Col(green))
 		return m, send(m.client, "setup.add_target", map[string]any{"target": arg})
 	case "/mount":
 		if arg == "" {
 			if len(m.snapshot.Mounts) == 0 {
-				m.setupMsg("No read-only mounts configured. Add one with /mount <path>.", dimS())
+				m.setupMsg("No read-only mounts configured. Add one with /mount <path>.", render.Dim())
 			} else {
 				message := "Read-only mounts:\n  " + strings.Join(m.snapshot.Mounts, "\n  ")
 				if hidden := m.snapshot.MountCount - len(m.snapshot.Mounts); hidden > 0 {
 					message += fmt.Sprintf("\n  ...and %d more", hidden)
 				}
-				m.setupMsg(message, dimS())
+				m.setupMsg(message, render.Dim())
 			}
 			return m, nil
 		}
 		return m, send(m.client, "setup.add_mount", map[string]any{"path": arg})
 	case "/target-list":
 		if arg == "" {
-			m.setupMsg("Usage: /target-list <path>", col(red))
+			m.setupMsg("Usage: /target-list <path>", render.Col(red))
 			return m, nil
 		}
 		return m, send(m.client, "setup.load_target_list", map[string]any{"path": arg})
 	case "/prompt", "/instruction":
 		if arg != "" {
-			m.setupMsg("✓ Prompt set.", col(green))
+			m.setupMsg("✓ Prompt set.", render.Col(green))
 		} else {
-			m.setupMsg("Prompt cleared.", dimS())
+			m.setupMsg("Prompt cleared.", render.Dim())
 		}
 		return m, send(m.client, "setup.set_instruction", map[string]any{"instruction": arg})
 	case "/prompt-file", "/instruction-file":
 		if arg == "" {
-			m.setupMsg("Usage: /prompt-file <path>", col(red))
+			m.setupMsg("Usage: /prompt-file <path>", render.Col(red))
 			return m, nil
 		}
 		return m, send(m.client, "setup.load_instruction_file", map[string]any{"path": arg})
 	case "/clear":
-		m.setupMsg("Cleared all targets.", dimS())
+		m.setupMsg("Cleared all targets.", render.Dim())
 		return m, send(m.client, "setup.clear_targets", map[string]any{})
 	case "/start", "/run":
-		m.setupMsg("Verifying model connection...", col(amber))
+		m.setupMsg("Verifying model connection...", render.Col(amber))
 		return m, send(m.client, "setup.start", map[string]any{})
 	default:
-		m.setupMsg("Unknown command '"+command+"'. Type /help.", col(red))
+		m.setupMsg("Unknown command '"+command+"'. Type /help.", render.Col(red))
 		return m, nil
 	}
 }
@@ -2166,8 +2167,8 @@ func (m Model) commandMenuViewLimit(width, limit int) string {
 	for i := start; i < end; i++ {
 		command := matches[i]
 		prefix := "  "
-		commandStyle := col(cInfoBlue)
-		descriptionStyle := dimS()
+		commandStyle := render.Col(render.InfoBlue)
+		descriptionStyle := render.Dim()
 		if i == m.commandCursor {
 			prefix = "› "
 			commandStyle = lipgloss.NewStyle().Bold(true).Foreground(brightGreen)
@@ -2259,7 +2260,7 @@ var scanModes = []string{"quick", "standard", "deep"}
 
 func (m Model) setupContent() string {
 	if len(m.setupLog) == 0 {
-		return dimS().Render("Type / to see setup commands.")
+		return render.Dim().Render("Type / to see setup commands.")
 	}
 	var b strings.Builder
 	for _, line := range m.setupLog {
@@ -2316,9 +2317,9 @@ func (m Model) chatContent() string {
 		}
 		var block string
 		if event.Type == "chat" {
-			block = renderChat(event.Data, contentWidth)
+			block = render.Chat(event.Data, contentWidth)
 		} else if event.Type == "tool" {
-			block = renderTool(event.Data, contentWidth)
+			block = render.Tool(event.Data, contentWidth)
 		}
 		if block == "" {
 			continue
@@ -2342,38 +2343,6 @@ func indentLines(s, pad string) string {
 
 func centeredPlaceholder(text string, width, height int) string {
 	return lipgloss.Place(width, height, lipgloss.Center, lipgloss.Center, lipgloss.NewStyle().Foreground(dim).Italic(true).Render(text))
-}
-
-func sortedKeys(values map[string]any) []string {
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-	return keys
-}
-
-func stringValue(value any) string {
-	if value == nil {
-		return ""
-	}
-	if text, ok := value.(string); ok {
-		return text
-	}
-	raw, err := json.Marshal(value)
-	if err == nil {
-		return string(raw)
-	}
-	return fmt.Sprint(value)
-}
-
-func stripControls(value string) string {
-	return strings.Map(func(r rune) rune {
-		if r == '\n' || r == '\t' || r >= 32 {
-			return r
-		}
-		return -1
-	}, value)
 }
 
 // truncate clips to a display-cell width, honoring wide runes and ANSI styling.
@@ -2558,7 +2527,7 @@ func (m Model) splashView() string {
 func splashModelWarning(model string) string {
 	yellow := lipgloss.Color("#eab308")
 	return lipgloss.NewStyle().Bold(true).Foreground(yellow).Render("⚠ ") +
-		lipgloss.NewStyle().Bold(true).Foreground(cCyan).Render(model) +
+		lipgloss.NewStyle().Bold(true).Foreground(render.Cyan).Render(model) +
 		lipgloss.NewStyle().Foreground(yellow).Render(" is not a recommended frontier model - pentest quality could be degraded")
 }
 
@@ -2605,18 +2574,18 @@ func (m Model) setupHeaderView(width int) string {
 		logo = lipgloss.NewStyle().Foreground(green).Render(banner)
 	}
 	title := lipgloss.NewStyle().Bold(true).Foreground(brightWhite).Render("Configure your pentest")
-	subtitle := dimS().Render("Choose a model and target, then type /start")
+	subtitle := render.Dim().Render("Choose a model and target, then type /start")
 	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(logo + "\n\n" + title + "\n" + subtitle)
 }
 
 func (m Model) setupSummaryView(width int) string {
 	valueWidth := max(8, width-12)
 	row := func(label, value string, configured bool) string {
-		valueStyle := col(white)
+		valueStyle := render.Col(white)
 		if !configured {
-			valueStyle = col(amber)
+			valueStyle = render.Col(amber)
 		}
-		return dimS().Render(fmt.Sprintf("%-9s", label)) + valueStyle.Render(truncate(value, valueWidth))
+		return render.Dim().Render(fmt.Sprintf("%-9s", label)) + valueStyle.Render(truncate(value, valueWidth))
 	}
 
 	model := strings.TrimSpace(m.snapshot.Model)
@@ -2679,10 +2648,10 @@ func (m Model) setupSummaryView(width int) string {
 func (m Model) setupView() string {
 	contentWidth, _, menuRows, showSummary := m.setupGeometry()
 	inputBorder := dark
-	prompt := col(dim).Render("> ")
+	prompt := render.Col(dim).Render("> ")
 	if m.focus == focusInput {
 		inputBorder = green
-		prompt = boldC(green).Render("> ")
+		prompt = render.Bold(green).Render("> ")
 	}
 	composer := lipgloss.NewStyle().Width(contentWidth - 2).Height(1).
 		Border(lipgloss.RoundedBorder()).BorderForeground(inputBorder).PaddingLeft(1).
@@ -3020,7 +2989,7 @@ func (m Model) agentsView(width, height int) string {
 func (m Model) agentVulnCount(agentID string) int {
 	count := 0
 	for _, vuln := range m.snapshot.Vulnerabilities {
-		if stringValue(vuln["agent_id"]) == agentID {
+		if render.StringValue(vuln["agent_id"]) == agentID {
 			count++
 		}
 	}
@@ -3028,7 +2997,7 @@ func (m Model) agentVulnCount(agentID string) int {
 }
 
 var panelSeverityColors = map[string]lipgloss.Color{
-	"critical": cSevCrit, "high": cSevHigh, "medium": cSevMed, "low": green, "info": blue,
+	"critical": render.SevCrit, "high": render.SevHigh, "medium": render.SevMed, "low": green, "info": blue,
 }
 
 func (m Model) vulnerabilitiesView(width, height int) string {
@@ -3036,7 +3005,7 @@ func (m Model) vulnerabilitiesView(width, height int) string {
 	start := min(max(0, m.vulnOffset), max(0, len(m.snapshot.Vulnerabilities)-1))
 	for i := start; i < len(m.snapshot.Vulnerabilities) && len(lines) < height; i++ {
 		vuln := m.snapshot.Vulnerabilities[i]
-		severity := strings.ToLower(stringValue(vuln["severity"]))
+		severity := strings.ToLower(render.StringValue(vuln["severity"]))
 		color, ok := panelSeverityColors[severity]
 		if !ok {
 			color = blue // matches SEVERITY_COLORS.get(severity, "#3b82f6")
@@ -3066,7 +3035,7 @@ func (m Model) vulnerabilityListWidth() int {
 }
 
 func (m Model) vulnerabilityTitleLines(index, width int) []string {
-	title := stringValue(m.snapshot.Vulnerabilities[index]["title"])
+	title := render.StringValue(m.snapshot.Vulnerabilities[index]["title"])
 	if title == "" {
 		title = "Unknown Vulnerability"
 	}
@@ -3492,42 +3461,42 @@ func (m Model) confirmView(title string, width int, border, titleColor lipgloss.
 // vulnerabilityBody ports VulnerabilityDetailScreen._render_vulnerability:
 // the exact field order, labels, colors, and dict keys.
 func vulnerabilityBody(v map[string]any) string {
-	fieldStyle := boldC(cField)
+	fieldStyle := render.Bold(render.Field)
 	var b strings.Builder
-	b.WriteString("🐞 " + boldC(cReportHdr).Render("Vulnerability Report"))
+	b.WriteString("🐞 " + render.Bold(render.ReportHdr).Render("Vulnerability Report"))
 
 	field := func(label, value string) {
 		if value != "" {
 			b.WriteString("\n\n" + fieldStyle.Render(label+": ") + value)
 		}
 	}
-	field("Agent", stringValue(v["agent_name"]))
-	field("Title", stringValue(v["title"]))
-	if sev := stringValue(v["severity"]); sev != "" {
+	field("Agent", render.StringValue(v["agent_name"]))
+	field("Title", render.StringValue(v["title"]))
+	if sev := render.StringValue(v["severity"]); sev != "" {
 		b.WriteString("\n\n" + fieldStyle.Render("Severity: ") +
-			lipgloss.NewStyle().Bold(true).Foreground(severityColor(sev)).Render(strings.ToUpper(sev)))
+			lipgloss.NewStyle().Bold(true).Foreground(render.SeverityColor(sev)).Render(strings.ToUpper(sev)))
 	}
-	if score, ok := numericValue(v["cvss"]); ok {
+	if score, ok := render.NumericValue(v["cvss"]); ok {
 		b.WriteString("\n\n" + fieldStyle.Render("CVSS Score: ") +
-			lipgloss.NewStyle().Bold(true).Foreground(cvssColor(score)).Render(stringValue(v["cvss"])))
+			lipgloss.NewStyle().Bold(true).Foreground(render.CVSSColor(score)).Render(render.StringValue(v["cvss"])))
 	}
-	field("Target", stringValue(v["target"]))
+	field("Target", render.StringValue(v["target"]))
 	if dep, ok := v["dependency_metadata"].(map[string]any); ok {
-		field("Package", stringValue(dep["package_name"]))
-		field("Ecosystem", stringValue(dep["package_ecosystem"]))
-		field("Installed Version", stringValue(dep["installed_version"]))
-		field("Fixed Version", stringValue(dep["fixed_version"]))
+		field("Package", render.StringValue(dep["package_name"]))
+		field("Ecosystem", render.StringValue(dep["package_ecosystem"]))
+		field("Installed Version", render.StringValue(dep["installed_version"]))
+		field("Fixed Version", render.StringValue(dep["fixed_version"]))
 	}
-	field("Endpoint", stringValue(v["endpoint"]))
-	field("Method", stringValue(v["method"]))
-	field("CVE", stringValue(v["cve"]))
-	field("CWE", stringValue(v["cwe"]))
-	if fe := stringValue(v["fix_effort"]); fe != "" {
+	field("Endpoint", render.StringValue(v["endpoint"]))
+	field("Method", render.StringValue(v["method"]))
+	field("CVE", render.StringValue(v["cve"]))
+	field("CWE", render.StringValue(v["cwe"]))
+	if fe := render.StringValue(v["fix_effort"]); fe != "" {
 		field("Fix Effort", titleCase(fe))
 	}
 	if bd, ok := v["cvss_breakdown"].(map[string]any); ok && len(bd) > 0 {
-		if parts := cvssVectorParts(bd); len(parts) > 0 {
-			b.WriteString("\n\n" + fieldStyle.Render("CVSS Vector: ") + dimS().Render(strings.Join(parts, "/")))
+		if parts := render.CVSSVectorParts(bd); len(parts) > 0 {
+			b.WriteString("\n\n" + fieldStyle.Render("CVSS Vector: ") + render.Dim().Render(strings.Join(parts, "/")))
 		}
 	}
 
@@ -3536,16 +3505,16 @@ func vulnerabilityBody(v map[string]any) string {
 			b.WriteString("\n\n" + fieldStyle.Render(label) + "\n" + value)
 		}
 	}
-	section("Description", stringValue(v["description"]))
-	section("Impact", stringValue(v["impact"]))
-	section("Technical Analysis", stringValue(v["technical_analysis"]))
-	section("Evidence", stringValue(v["evidence"]))
-	section("PoC Description", stringValue(v["poc_description"]))
-	if poc := stringValue(v["poc_script_code"]); poc != "" {
-		b.WriteString("\n\n" + fieldStyle.Render("PoC Code") + "\n" + col(textColor).Render(poc))
+	section("Description", render.StringValue(v["description"]))
+	section("Impact", render.StringValue(v["impact"]))
+	section("Technical Analysis", render.StringValue(v["technical_analysis"]))
+	section("Evidence", render.StringValue(v["evidence"]))
+	section("PoC Description", render.StringValue(v["poc_description"]))
+	if poc := render.StringValue(v["poc_script_code"]); poc != "" {
+		b.WriteString("\n\n" + fieldStyle.Render("PoC Code") + "\n" + render.Col(textColor).Render(poc))
 	}
-	section("Remediation", stringValue(v["remediation_steps"]))
-	section("Assumptions", stringValue(v["assumptions"]))
+	section("Remediation", render.StringValue(v["remediation_steps"]))
+	section("Assumptions", render.StringValue(v["assumptions"]))
 	return b.String()
 }
 

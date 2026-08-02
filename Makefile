@@ -91,13 +91,13 @@ dev: format lint type-check
 
 tui-build:
 	mkdir -p build/sidecar
-	cd tui-go && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../$(TUI_BINARY) ./cmd/strix-tui
+	cd strix/interface/tui && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../../../$(TUI_BINARY) ./cmd/strix-tui
 
 tui-test:
-	cd tui-go && go test -race ./...
+	cd strix/interface/tui && go test -race ./...
 
 tui-lint:
-	cd tui-go && test -z "$$(gofmt -l .)" && go vet ./...
+	cd strix/interface/tui && test -z "$$(gofmt -l .)" && go vet ./...
 
 tui-run:
 	uv run strix
