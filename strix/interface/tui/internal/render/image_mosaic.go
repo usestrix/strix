@@ -7,21 +7,23 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	_ "image/png"
+	"math"
 	"regexp"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Half-block image preview: each terminal cell shows two vertically stacked
-// pixels using "▀" with truecolor foreground (top) and background (bottom),
-// mirroring what the web app's ViewImageRenderer shows inline.
+// Quadrant-block image preview: each terminal cell shows a 2x2 pixel block
+// using the Unicode quadrant characters with truecolor foreground/background,
+// picked per cell to minimize color error (the chafa/viu approach). This is
+// the densest rendering available in terminals without a graphics protocol.
 
 const (
 	mosaicMinCols     = 20
-	mosaicMaxCols     = 200
-	mosaicDefaultCols = 76
-	mosaicMaxRows     = 45 // cell rows; two pixel rows per cell
+	mosaicMaxCols     = 100
+	mosaicDefaultCols = 72
+	mosaicMaxRows     = 28 // cell rows; two pixel rows per cell
 )
 
 var mosaicCols = mosaicDefaultCols
@@ -58,8 +60,8 @@ func extractImageDataURI(result any) (mime, payload string) {
 	return m[1], m[2]
 }
 
-// renderImageMosaic decodes the base64 payload and renders it as half-block
-// truecolor rows; returns "" when the image cannot be decoded.
+// renderImageMosaic decodes the base64 payload and renders it as truecolor
+// quadrant-block rows; returns "" when the image cannot be decoded.
 func renderImageMosaic(payload string) string {
 	raw, err := base64.StdEncoding.DecodeString(payload)
 	if err != nil {
@@ -75,7 +77,8 @@ func renderImageMosaic(payload string) string {
 		return ""
 	}
 	cols := min(mosaicCols, w)
-	// One cell is roughly 1x2 pixels; preserve aspect in cell space.
+	// A cell holds a 2x2 pixel quadrant; terminal cells are ~1:2, so this
+	// stretches pixels slightly but doubles horizontal detail.
 	rows := (h*cols + w - 1) / (w * 2)
 	rows = min(max(1, rows), mosaicMaxRows)
 
@@ -85,20 +88,79 @@ func renderImageMosaic(payload string) string {
 			b.WriteString("\n")
 		}
 		for col := range cols {
-			top := averageColor(img, bounds, col, row*2, cols, rows*2)
-			bottom := averageColor(img, bounds, col, row*2+1, cols, rows*2)
-			style := lipgloss.NewStyle().
-				Foreground(lipgloss.Color(top)).
-				Background(lipgloss.Color(bottom))
-			b.WriteString(style.Render("▀"))
+			b.WriteString(renderQuadrantCell(img, bounds, col, row, cols, rows))
 		}
 	}
 	return b.String()
 }
 
-// averageColor box-samples the source region mapped to grid cell (cx, cy) of
-// a gridW x gridH pixel grid, returning a hex color.
-func averageColor(img image.Image, bounds image.Rectangle, cx, cy, gridW, gridH int) string {
+// Quadrant characters indexed by a bitmask of lit sub-pixels:
+// bit 0 = top-left, bit 1 = top-right, bit 2 = bottom-left, bit 3 = bottom-right.
+var quadrantChars = [16]string{
+	" ", "▘", "▝", "▀", "▖", "▌", "▞", "▛",
+	"▗", "▚", "▐", "▜", "▄", "▙", "▟", "█",
+}
+
+func renderQuadrantCell(img image.Image, bounds image.Rectangle, col, row, gridW, gridH int) string {
+	var px [4][3]float64
+	px[0] = averageLinear(img, bounds, col*2, row*2, gridW*2, gridH*2)
+	px[1] = averageLinear(img, bounds, col*2+1, row*2, gridW*2, gridH*2)
+	px[2] = averageLinear(img, bounds, col*2, row*2+1, gridW*2, gridH*2)
+	px[3] = averageLinear(img, bounds, col*2+1, row*2+1, gridW*2, gridH*2)
+
+	// Try every fg/bg split of the four sub-pixels and keep the one that
+	// minimizes squared color error against the group averages.
+	bestMask, bestErr := 0, -1.0
+	var bestFg, bestBg [3]float64
+	for mask := range 16 {
+		fg, bg, count := [3]float64{}, [3]float64{}, 0
+		for i := range 4 {
+			if mask&(1<<i) != 0 {
+				count++
+				for c := range 3 {
+					fg[c] += px[i][c]
+				}
+			} else {
+				for c := range 3 {
+					bg[c] += px[i][c]
+				}
+			}
+		}
+		for c := range 3 {
+			if count > 0 {
+				fg[c] /= float64(count)
+			}
+			if count < 4 {
+				bg[c] /= float64(4 - count)
+			}
+		}
+		errSum := 0.0
+		for i := range 4 {
+			target := bg
+			if mask&(1<<i) != 0 {
+				target = fg
+			}
+			for c := range 3 {
+				d := px[i][c] - target[c]
+				errSum += d * d
+			}
+		}
+		if bestErr < 0 || errSum < bestErr {
+			bestErr, bestMask, bestFg, bestBg = errSum, mask, fg, bg
+		}
+	}
+
+	style := lipgloss.NewStyle().Background(lipgloss.Color(linearToHex(bestBg)))
+	if bestMask != 0 {
+		style = style.Foreground(lipgloss.Color(linearToHex(bestFg)))
+	}
+	return style.Render(quadrantChars[bestMask])
+}
+
+// averageLinear box-samples the source region mapped to grid cell (cx, cy) of
+// a gridW x gridH pixel grid, averaging in linear light for correct
+// downsampling of fine detail like text.
+func averageLinear(img image.Image, bounds image.Rectangle, cx, cy, gridW, gridH int) [3]float64 {
 	w, h := bounds.Dx(), bounds.Dy()
 	x0 := bounds.Min.X + cx*w/gridW
 	x1 := bounds.Min.X + (cx+1)*w/gridW
@@ -110,20 +172,46 @@ func averageColor(img image.Image, bounds image.Rectangle, cx, cy, gridW, gridH 
 	if y1 <= y0 {
 		y1 = y0 + 1
 	}
-	var r, g, bl, n uint64
+	var sum [3]float64
+	n := 0
 	for y := y0; y < y1; y++ {
 		for x := x0; x < x1; x++ {
 			pr, pg, pb, _ := img.At(x, y).RGBA()
-			r += uint64(pr >> 8)
-			g += uint64(pg >> 8)
-			bl += uint64(pb >> 8)
+			sum[0] += srgbToLinear(float64(pr>>8) / 255)
+			sum[1] += srgbToLinear(float64(pg>>8) / 255)
+			sum[2] += srgbToLinear(float64(pb>>8) / 255)
 			n++
 		}
 	}
 	if n == 0 {
-		return "#000000"
+		return [3]float64{}
 	}
-	return hexColor(byte(r/n), byte(g/n), byte(bl/n))
+	for c := range 3 {
+		sum[c] /= float64(n)
+	}
+	return sum
+}
+
+func srgbToLinear(v float64) float64 {
+	if v <= 0.04045 {
+		return v / 12.92
+	}
+	return math.Pow((v+0.055)/1.055, 2.4)
+}
+
+func linearToSrgb(v float64) float64 {
+	if v <= 0.0031308 {
+		return v * 12.92
+	}
+	return 1.055*math.Pow(v, 1/2.4) - 0.055
+}
+
+func linearToHex(c [3]float64) string {
+	var out [3]byte
+	for i := range 3 {
+		out[i] = byte(min(max(linearToSrgb(c[i])*255+0.5, 0), 255))
+	}
+	return hexColor(out[0], out[1], out[2])
 }
 
 const hexDigits = "0123456789abcdef"

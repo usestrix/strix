@@ -27,16 +27,25 @@ func testImageDataURI(t *testing.T, w, h int) string {
 	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
 }
 
+func containsQuadrant(s string) bool {
+	for _, q := range quadrantChars[1:] {
+		if strings.Contains(s, q) {
+			return true
+		}
+	}
+	return false
+}
+
 func TestViewImageRendersMosaic(t *testing.T) {
 	uri := testImageDataURI(t, 120, 80)
 	out := Tool(tool("view_image", map[string]any{"path": "/tmp/shot.png"}, uri, "completed"))
-	if !strings.Contains(out, "▀") {
-		t.Fatalf("expected half-block mosaic in render:\n%s", out)
+	if !containsQuadrant(out) {
+		t.Fatalf("expected quadrant mosaic in render:\n%s", out)
 	}
 	lines := strings.Split(out, "\n")
 	mosaic := 0
 	for _, line := range lines {
-		if strings.Contains(line, "▀") {
+		if containsQuadrant(line) {
 			mosaic++
 			if w := ansi.StringWidth(line); w > mosaicCols {
 				t.Fatalf("mosaic row too wide: %d", w)
