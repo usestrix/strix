@@ -5,7 +5,6 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/usestrix/strix/tui/internal/render"
 )
 
@@ -317,7 +316,7 @@ func (m *Model) startVulnerabilityCopy() tea.Cmd {
 	if m.selectedVuln < 0 || m.selectedVuln >= len(m.snapshot.Vulnerabilities) {
 		return nil
 	}
-	report := ansi.Strip(vulnerabilityBody(m.snapshot.Vulnerabilities[m.selectedVuln])) + "\n"
+	report := vulnerabilityMarkdownReport(m.snapshot.Vulnerabilities[m.selectedVuln])
 	return func() tea.Msg {
 		return vulnerabilityCopiedMsg{err: writeClipboard(report)}
 	}

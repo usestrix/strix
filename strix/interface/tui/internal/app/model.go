@@ -154,6 +154,7 @@ type Model struct {
 	splashStarted          time.Time
 	splashFrame            int
 	sweepFrame             int
+	budgetPauseNotified    bool
 	followOutput           bool
 	selection              selectionState
 	toast                  string

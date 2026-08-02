@@ -68,6 +68,7 @@ type Snapshot struct {
 	Events              []Event          `json:"-"`
 	Vulnerabilities     []map[string]any `json:"-"`
 	Usage               map[string]any   `json:"usage"`
+	Subscription        bool             `json:"subscription"`
 	ViewerStatus        string           `json:"viewer_status"`
 	ViewerURL           *string          `json:"viewer_url"`
 	Error               *string          `json:"error"`

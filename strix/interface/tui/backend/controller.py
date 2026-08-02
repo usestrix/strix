@@ -47,7 +47,7 @@ from strix.interface.tui.backend.projection import (
     sanitize_terminal_text,
     terminal_projection,
 )
-from strix.interface.utils import check_mountable_dir, read_target_list_file
+from strix.interface.utils import check_mountable_dir, is_subscription_run, read_target_list_file
 
 
 if TYPE_CHECKING:
@@ -197,6 +197,9 @@ class TuiController:
         usage: dict[str, Any] = {}
         if self.report_state is not None:
             usage = dict(self.report_state.get_total_llm_usage())
+        subscription = False
+        with contextlib.suppress(Exception):
+            subscription = is_subscription_run(self.report_state)
         model_warning = ""
         if model and not is_recommended_or_frontier_model(model):
             model_warning = (
@@ -231,6 +234,7 @@ class TuiController:
                 for message in self.messages[-10:]
             ],
             "usage": terminal_projection(usage, max_string=256, max_items=20),
+            "subscription": subscription,
             "viewer_status": self.viewer_status,
             "viewer_url": terminal_projection(self.viewer_url, max_string=1024),
             "error": terminal_projection(self.error, max_string=2 * 1024),

@@ -440,13 +440,21 @@ func (m Model) statsView() string {
 	if model := m.snapshot.Model; model != "" {
 		b.WriteString(w.Render(model))
 	}
+	if m.snapshot.Subscription {
+		if b.Len() > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(lipgloss.NewStyle().Foreground(green).Render("ChatGPT subscription"))
+	}
 	total := numberValue(m.snapshot.Usage["total_tokens"])
 	if total > 0 {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
 		b.WriteString(w.Render(fmt.Sprintf("%s tokens", formatCount(total))))
-		if cost := floatValue(m.snapshot.Usage["cost"]); cost > 0 {
+		if m.snapshot.Subscription {
+			b.WriteString(w.Render(" · $0.00"))
+		} else if cost := floatValue(m.snapshot.Usage["cost"]); cost > 0 {
 			b.WriteString(w.Render(fmt.Sprintf(" · $%.2f", cost)))
 		}
 	}
@@ -516,6 +524,10 @@ func (m Model) statusView(width int) string {
 			right = quitHint
 		case "waiting":
 			left = lipgloss.NewStyle().Foreground(dim).Render("Send message to resume")
+			if msg := agent.ErrorMessage; msg != "" {
+				left = lipgloss.NewStyle().Foreground(red).Render(msg) +
+					lipgloss.NewStyle().Foreground(dim).Render(" · Send message to resume")
+			}
 		case "budget_paused":
 			left = lipgloss.NewStyle().Foreground(amber).Render("Budget limit reached") +
 				lipgloss.NewStyle().Foreground(dim).Render(" · Send a message to continue")

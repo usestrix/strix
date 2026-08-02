@@ -23,10 +23,14 @@ const toastDuration = 2 * time.Second
 // showToast displays a transient notification and schedules its dismissal;
 // the copy highlight is cleared together with the toast.
 func (m *Model) showToast(text string) tea.Cmd {
+	return m.showToastFor(text, toastDuration)
+}
+
+func (m *Model) showToastFor(text string, duration time.Duration) tea.Cmd {
 	m.toastID++
 	m.toast = text
 	id := m.toastID
-	return tea.Tick(toastDuration, func(time.Time) tea.Msg { return toastExpiredMsg{id: id} })
+	return tea.Tick(duration, func(time.Time) tea.Msg { return toastExpiredMsg{id: id} })
 }
 
 type selectionRegion int
@@ -125,9 +129,54 @@ func (m *Model) finishSelection() tea.Cmd {
 		m.selection.active = false
 		return nil
 	}
+	if m.selection.region == regionChat {
+		if cleaned := cleanCopiedText(text); strings.TrimSpace(cleaned) != "" {
+			text = cleaned
+		}
+	}
 	return func() tea.Msg {
 		return selectionCopiedMsg{err: writeClipboard(text)}
 	}
+}
+
+// iconPrefixes and decorativeLines port StrixTUIApp._ICON_PREFIXES and
+// _DECORATIVE_LINES: UI ornaments dropped from copied chat text.
+var iconPrefixes = []string{
+	"🐞 ", "🌐 ", "📋 ", "🧠 ", "◆ ", "◇ ", "◈ ", "→ ", "○ ", "● ", "✓ ", "✗ ",
+	"⚠ ", "▍ ", "▍", "┃ ", "• ", ">_ ", "</> ", "<~> ", "[ ] ", "[~] ", "[•] ",
+}
+
+var decorativeLines = map[string]bool{
+	"● In progress...": true,
+	"✓ Done":           true,
+	"✗ Failed":         true,
+	"✗ Error":          true,
+	"○ Unknown":        true,
+}
+
+// cleanCopiedText ports _clean_copied_text: drop decorative status lines and
+// horizontal rules, and strip leading UI icons while keeping indentation.
+func cleanCopiedText(text string) string {
+	var cleaned []string
+	for _, line := range strings.Split(text, "\n") {
+		stripped := strings.TrimLeft(line, " \t")
+		if decorativeLines[stripped] {
+			continue
+		}
+		if stripped != "" && strings.Trim(stripped, "─") == "" {
+			continue
+		}
+		out := line
+		for _, prefix := range iconPrefixes {
+			if strings.HasPrefix(stripped, prefix) {
+				leading := line[:len(line)-len(stripped)]
+				out = leading + stripped[len(prefix):]
+				break
+			}
+		}
+		cleaned = append(cleaned, out)
+	}
+	return strings.Join(cleaned, "\n")
 }
 
 func (m Model) selectedText() string {

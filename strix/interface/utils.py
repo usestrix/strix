@@ -252,7 +252,7 @@ def _llm_usage(report_state: Any) -> dict[str, Any]:
     return usage if isinstance(usage, dict) else {}
 
 
-def _is_subscription(report_state: Any) -> bool:
+def is_subscription_run(report_state: Any) -> bool:
     """Whether this run uses a model subscription (no metered cost).
 
     Prefers the run record so it's correct for hydrated/resumed runs; falls back
@@ -301,7 +301,7 @@ def _build_llm_usage_stats(
     *,
     live: bool = False,
 ) -> None:
-    subscription = _is_subscription(report_state)
+    subscription = is_subscription_run(report_state)
     usage = _llm_usage(report_state)
     if not usage or _int_stat(usage, "requests") <= 0:
         stats_text.append("\n")
@@ -365,7 +365,7 @@ def build_live_stats_text(report_state: Any) -> Text:
     model = load_settings().llm.model or "unknown"
     stats_text.append("Model ", style="dim")
     stats_text.append(str(model), style="white")
-    if _is_subscription(report_state):
+    if is_subscription_run(report_state):
         stats_text.append("  ·  ", style="dim white")
         stats_text.append("ChatGPT subscription", style="#22c55e")
     stats_text.append("\n")
@@ -410,7 +410,7 @@ def build_tui_stats_text(report_state: Any) -> Text:
 
     model = load_settings().llm.model or "unknown"
     stats_text.append(str(model), style="white")
-    subscription = _is_subscription(report_state)
+    subscription = is_subscription_run(report_state)
     if subscription:
         stats_text.append("\n")
         stats_text.append("ChatGPT subscription", style="#22c55e")

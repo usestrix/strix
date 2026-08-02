@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/usestrix/strix/tui/internal/protocol"
@@ -482,8 +483,7 @@ func (m *Model) handleCollectionBootstrap(payload json.RawMessage) tea.Cmd {
 	m.collectionRevisions[chunk.Collection] = chunk.Revision
 	delete(m.collectionAssemblies, chunk.Collection)
 	m.clearCollectionResync(chunk.Collection)
-	m.refreshAfterCollection(chunk.Collection)
-	return nil
+	return m.refreshAfterCollection(chunk.Collection)
 }
 
 func (m *Model) handleCollectionDelta(payload json.RawMessage) tea.Cmd {
@@ -523,8 +523,7 @@ func (m *Model) handleCollectionDelta(payload json.RawMessage) tea.Cmd {
 	m.collectionRevisions[chunk.Collection] = chunk.Revision
 	delete(m.collectionAssemblies, chunk.Collection)
 	m.clearCollectionResync(chunk.Collection)
-	m.refreshAfterCollection(chunk.Collection)
-	return nil
+	return m.refreshAfterCollection(chunk.Collection)
 }
 
 func (m *Model) applyCollectionOperations(name string, operations []protocol.CollectionOperation) bool {
@@ -671,17 +670,42 @@ func collectionItemID(item map[string]any) string {
 	return id
 }
 
-func (m *Model) refreshAfterCollection(name string) {
+func (m *Model) refreshAfterCollection(name string) tea.Cmd {
 	if name == "agents" {
 		m.ensureAgentVisible()
 		m.refreshViewport()
-		return
+		return m.notifyBudgetPause()
 	}
 	if name == "events" {
 		m.refreshViewport()
-		return
+		return nil
 	}
 	m.selectedVuln = min(m.selectedVuln, max(0, len(m.snapshot.Vulnerabilities)-1))
 	m.ensureVulnerabilityVisible()
 	m.resizeVulnerabilityViewport()
+	return nil
+}
+
+// notifyBudgetPause ports _notify_budget_pause: a one-shot warning toast when
+// any agent hits the budget limit, re-armed once no agent is paused.
+func (m *Model) notifyBudgetPause() tea.Cmd {
+	paused := false
+	for _, agent := range m.snapshot.Agents {
+		if agent.Status == "budget_paused" {
+			paused = true
+			break
+		}
+	}
+	if paused && !m.budgetPauseNotified {
+		m.budgetPauseNotified = true
+		return m.showToastFor(
+			"Budget limit reached — agents paused. Send a message to continue "+
+				"(this extends the budget), or ctrl-q to quit.",
+			15*time.Second,
+		)
+	}
+	if !paused {
+		m.budgetPauseNotified = false
+	}
+	return nil
 }

@@ -1639,3 +1639,58 @@ func TestStopDialogAndCommandAreLimitedToActiveAgents(t *testing.T) {
 		t.Fatal("terminal status submitted a stale agent.stop command")
 	}
 }
+
+func TestBudgetPauseShowsOneWarningToastUntilResumed(t *testing.T) {
+	model := New(nil)
+	model.snapshot.Agents = []protocol.Agent{{ID: "root", Name: "Strix", Status: "budget_paused"}}
+	if cmd := model.notifyBudgetPause(); cmd == nil {
+		t.Fatal("expected a toast command on first budget pause")
+	}
+	if !strings.Contains(model.toast, "Budget limit reached") {
+		t.Fatalf("toast %q missing budget warning", model.toast)
+	}
+	if cmd := model.notifyBudgetPause(); cmd != nil {
+		t.Fatal("budget toast should fire once per pause")
+	}
+	model.snapshot.Agents[0].Status = "running"
+	if cmd := model.notifyBudgetPause(); cmd != nil {
+		t.Fatal("no toast expected while running")
+	}
+	model.snapshot.Agents[0].Status = "budget_paused"
+	if cmd := model.notifyBudgetPause(); cmd == nil {
+		t.Fatal("expected the toast to re-arm after resuming")
+	}
+}
+
+func TestStatsViewShowsSubscription(t *testing.T) {
+	model := New(nil)
+	model.snapshot.Model = "gpt-5"
+	model.snapshot.Subscription = true
+	model.snapshot.Usage = map[string]any{"total_tokens": float64(1200), "cost": 3.5}
+	stats := ansi.Strip(model.statsView())
+	if !strings.Contains(stats, "ChatGPT subscription") {
+		t.Fatalf("stats missing subscription line: %q", stats)
+	}
+	if !strings.Contains(stats, "$0.00") || strings.Contains(stats, "$3.50") {
+		t.Fatalf("subscription runs must show $0.00: %q", stats)
+	}
+}
+
+func TestVulnerabilityMarkdownReport(t *testing.T) {
+	report := vulnerabilityMarkdownReport(map[string]any{
+		"title":             "SQLi in login",
+		"severity":          "high",
+		"cvss":              8.1,
+		"description":       "Injectable parameter.",
+		"poc_script_code":   "```python\nprint('x')\n```",
+		"remediation_steps": "Use bound parameters.",
+	})
+	for _, want := range []string{
+		"# SQLi in login", "**Severity:** HIGH", "**CVSS:** 8.1",
+		"## Description", "```python\nprint('x')\n```", "## Remediation",
+	} {
+		if !strings.Contains(report, want) {
+			t.Fatalf("report missing %q:\n%s", want, report)
+		}
+	}
+}

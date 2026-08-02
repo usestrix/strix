@@ -137,3 +137,11 @@ func TestSelectedTextSpansReversedDrag(t *testing.T) {
 		t.Fatalf("selected text %q, want %q", got, want)
 	}
 }
+
+func TestCleanCopiedTextStripsDecorations(t *testing.T) {
+	in := "✓ Done\n  🐞 SQL injection found\n────────\n>_ curl -s http://x\nplain line"
+	want := "  SQL injection found\ncurl -s http://x\nplain line"
+	if got := cleanCopiedText(in); got != want {
+		t.Fatalf("cleaned %q, want %q", got, want)
+	}
+}
