@@ -22,7 +22,7 @@ func renderUserMessage(content string) string {
 }
 
 // renderChat renders a chat event (assistant markdown or user message).
-func Chat(data map[string]any, width int) string {
+func Chat(data map[string]any) string {
 	role, _ := data["role"].(string)
 	content := StripControls(StringValue(data["content"]))
 	if role == "user" {

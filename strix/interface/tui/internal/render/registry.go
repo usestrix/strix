@@ -41,7 +41,7 @@ func renderGenericTool(name string, args map[string]any, result any, status stri
 // Dispatch
 // ---------------------------------------------------------------------------
 
-func Tool(data map[string]any, width int) string {
+func Tool(data map[string]any) string {
 	name := StringValue(data["tool_name"])
 	status := StringValue(data["status"])
 	args, _ := data["args"].(map[string]any)
@@ -63,6 +63,12 @@ func Tool(data map[string]any, width int) string {
 		return renderVulnerabilityReport(args, result)
 	case "create_dependency_report":
 		return renderDependencyReport(args, result)
+	case "list_reports":
+		return renderListReports(result)
+	case "get_report":
+		return renderGetReport(result)
+	case "respond_to_user":
+		return renderRespondToUser(args)
 	case "finish_scan":
 		return renderFinishScan(args)
 	case "think":
@@ -75,7 +81,7 @@ func Tool(data map[string]any, width int) string {
 		return renderNote(name, args, result)
 	case "create_todo", "list_todos", "update_todo", "mark_todo_done", "mark_todo_pending", "delete_todo":
 		return renderTodo(name, result)
-	case "view_agent_graph", "create_agent", "send_message_to_agent", "agent_finish", "wait_for_message", "stop_agent":
+	case "view_agent_graph", "create_agent", "send_message_to_agent", "agent_finish", "wait_for_agents", "stop_agent":
 		return renderAgentGraphTool(name, args, result)
 	case "list_requests", "view_request", "repeat_request", "list_sitemap", "view_sitemap_entry", "scope_rules":
 		return renderProxyTool(name, args, result, status)

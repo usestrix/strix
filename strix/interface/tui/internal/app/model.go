@@ -2317,9 +2317,9 @@ func (m Model) chatContent() string {
 		}
 		var block string
 		if event.Type == "chat" {
-			block = render.Chat(event.Data, contentWidth)
+			block = render.Chat(event.Data)
 		} else if event.Type == "tool" {
-			block = render.Tool(event.Data, contentWidth)
+			block = render.Tool(event.Data)
 		}
 		if block == "" {
 			continue

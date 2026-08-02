@@ -54,7 +54,7 @@ func renderAgentGraphTool(name string, args map[string]any, result any) string {
 		} else {
 			b.WriteString("\n  " + Dim().Render("Completing task..."))
 		}
-	case "wait_for_message":
+	case "wait_for_agents":
 		b.WriteString(Col(Gray).Render("○ ") + Dim().Render("waiting"))
 		if reason := StringValue(args["reason"]); reason != "" {
 			b.WriteString("\n  " + Dim().Render(reason))
