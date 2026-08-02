@@ -159,16 +159,12 @@ download_and_install() {
     fi
 
     echo -e "${MUTED}Extracting...${NC}"
-    # Archive contains an app bundle dir: strix-{version}-{target}/ (strix + _internal/).
-    local extracted="strix-${specific_version}-${target}"
     if [ "$os" = "windows" ]; then
         unzip -q "$filename"
-        rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/strix.exe"
-        cp -R "$extracted/." "$INSTALL_DIR/"
+        mv "strix-${specific_version}-${target}.exe" "$INSTALL_DIR/strix.exe"
     else
         tar -xzf "$filename"
-        rm -rf "$INSTALL_DIR/_internal" "$INSTALL_DIR/strix"
-        cp -R "$extracted/." "$INSTALL_DIR/"
+        mv "strix-${specific_version}-${target}" "$INSTALL_DIR/strix"
         chmod 755 "$INSTALL_DIR/strix"
     fi
 

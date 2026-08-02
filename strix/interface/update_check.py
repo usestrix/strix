@@ -9,13 +9,20 @@ path for the standalone binary install.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
+import platform
+import shutil
+import stat
 import subprocess
 import sys
+import tarfile
+import tempfile
 import threading
 import time
+import zipfile
 from pathlib import Path
 from typing import cast
 
@@ -30,7 +37,6 @@ logger = logging.getLogger(__name__)
 
 GITHUB_REPO = "usestrix/strix"
 PYPI_PACKAGE = "strix-agent"
-INSTALL_SCRIPT_URL = "https://strix.ai/install"
 CHECK_INTERVAL_SECONDS = 24 * 60 * 60
 REQUEST_TIMEOUT_SECONDS = 5
 
@@ -108,6 +114,32 @@ def _fetch_latest_version() -> str | None:
     except Exception:  # noqa: BLE001
         logger.debug("update check failed", exc_info=True)
         return None
+
+
+def _fetch_asset_digest(version: str, filename: str) -> str | None:
+    """Return the expected sha256 (hex) for a release asset, if the API provides one."""
+    try:
+        response = requests.get(
+            f"https://api.github.com/repos/{GITHUB_REPO}/releases/tags/v{version}",
+            timeout=REQUEST_TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        for asset in response.json().get("assets", []):
+            if asset.get("name") == filename:
+                digest = asset.get("digest") or ""
+                if digest.startswith("sha256:"):
+                    return digest.removeprefix("sha256:")
+    except Exception:  # noqa: BLE001
+        logger.debug("release asset digest lookup failed", exc_info=True)
+    return None
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 20), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def _read_cache() -> dict[str, object]:
@@ -231,28 +263,90 @@ def prompt_update_if_available(console: Console) -> bool:
     return run_package_upgrade(console, method)
 
 
-def _run_installer(version: str, console: Console) -> None:
-    """Update the binary install by re-running the hosted install script."""
-    response = requests.get(  # nosec B113
-        INSTALL_SCRIPT_URL,
-        timeout=REQUEST_TIMEOUT_SECONDS * 12,
-    )
-    response.raise_for_status()
-    console.print(f"[dim]Running[/] [#60a5fa]VERSION={version} curl {INSTALL_SCRIPT_URL} | bash[/]")
-    command = ["bash", "-s"]
-    result = subprocess.run(  # noqa: S603
-        command,
-        input=response.text,
-        text=True,
-        env={**os.environ, "VERSION": version},
-        check=False,
-    )
-    if result.returncode != 0:
-        raise RuntimeError(f"install script exited with code {result.returncode}")
+def _release_target() -> str | None:
+    raw_os = platform.system().lower()
+    os_name = {"darwin": "macos", "linux": "linux", "windows": "windows"}.get(raw_os)
+    arch = platform.machine().lower()
+    arch = {"aarch64": "arm64", "amd64": "x86_64"}.get(arch, arch)
+    if os_name is None:
+        return None
+    target = f"{os_name}-{arch}"
+    supported = {
+        "linux-x86_64",
+        "linux-arm64",
+        "macos-x86_64",
+        "macos-arm64",
+        "windows-x86_64",
+    }
+    return target if target in supported else None
+
+
+def _download_and_replace(version: str, target: str, console: Console) -> bool:
+    is_windows = target.startswith("windows")
+    archive_ext = ".zip" if is_windows else ".tar.gz"
+    filename = f"strix-{version}-{target}{archive_ext}"
+    url = f"https://github.com/{GITHUB_REPO}/releases/download/v{version}/{filename}"
+    binary_name = f"strix-{version}-{target}" + (".exe" if is_windows else "")
+    current_exe = Path(sys.executable).resolve()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_dir = Path(tmp)
+        archive_path = tmp_dir / filename
+        console.print(f"[dim]Downloading[/] {url}")
+        with requests.get(  # nosec B113
+            url,
+            stream=True,
+            timeout=REQUEST_TIMEOUT_SECONDS * 12,
+        ) as response:
+            response.raise_for_status()
+            with archive_path.open("wb") as f:
+                for chunk in response.iter_content(chunk_size=1 << 20):
+                    f.write(chunk)
+
+        expected_digest = _fetch_asset_digest(version, filename)
+        if expected_digest:
+            actual_digest = _sha256_file(archive_path)
+            if actual_digest != expected_digest:
+                raise RuntimeError(
+                    f"checksum mismatch for {filename}: "
+                    f"expected sha256 {expected_digest}, got {actual_digest}"
+                )
+        else:
+            console.print("[dim yellow]No published checksum available; skipping verification[/]")
+
+        if is_windows:
+            with zipfile.ZipFile(archive_path) as zf:
+                zf.extract(binary_name, tmp_dir)
+        else:
+            with tarfile.open(archive_path, "r:gz") as tf:
+                tf.extract(binary_name, tmp_dir, filter="data")
+
+        new_binary = tmp_dir / binary_name
+        new_binary.chmod(new_binary.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+
+        staged = current_exe.with_name(current_exe.name + ".new")
+        try:
+            shutil.copy2(new_binary, staged)
+            if is_windows:
+                # Windows can't replace a running executable in place; move it aside first.
+                old = current_exe.with_name(current_exe.name + ".old")
+                old.unlink(missing_ok=True)
+                current_exe.rename(old)
+                try:
+                    staged.replace(current_exe)
+                except Exception:
+                    old.rename(current_exe)
+                    raise
+            else:
+                staged.replace(current_exe)
+        except Exception:
+            staged.unlink(missing_ok=True)
+            raise
+    return True
 
 
 def self_update(console: Console | None = None, version: str | None = None) -> bool:
-    """Update the standalone binary install by re-running the install script.
+    """Replace the running standalone binary with the latest release.
 
     Returns True on success. For package-manager installs this only
     prints the right upgrade command and returns False.
@@ -277,14 +371,22 @@ def self_update(console: Console | None = None, version: str | None = None) -> b
         console.print(f"[#22c55e]strix {current} is already the latest version.[/]")
         return True
 
+    target = _release_target()
+    if not target:
+        console.print(
+            f"[bold red]No prebuilt binary for this platform "
+            f"({platform.system()}/{platform.machine()}).[/]"
+        )
+        return False
+
     try:
-        _run_installer(latest, console)
+        _download_and_replace(latest, target, console)
     except Exception as e:  # noqa: BLE001
         logger.debug("self-update failed", exc_info=True)
         console.print(f"[bold red]Update failed:[/] {e}")
         console.print(
             "[dim]You can reinstall manually with:[/] "
-            f"[#60a5fa]curl -sSL {INSTALL_SCRIPT_URL} | bash[/]"
+            "[#60a5fa]curl -sSL https://strix.ai/install | bash[/]"
         )
         return False
 
