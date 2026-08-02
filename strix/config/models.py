@@ -109,10 +109,13 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         effort = self._reasoning_effort
         if effort and effort != "none":
             # Clamp to efforts the backend accepts.
-            if effort == "minimal":
-                effort = "low"
-            elif effort == "xhigh":
-                effort = "high"
+            match effort:
+                case "minimal":
+                    effort = "low"
+                case "xhigh" | "max":
+                    effort = "high"
+                case _:
+                    pass
             overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=effort)))
         return model_settings.resolve(overrides)
 

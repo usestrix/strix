@@ -24,9 +24,6 @@ if TYPE_CHECKING:
     from strix.config.settings import ReasoningEffort
 
 
-DEFAULT_MAX_TURNS = 500
-
-
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
     name = (model_name or "").strip().lower()
     for prefix in ("litellm/", "any-llm/"):
@@ -62,8 +59,11 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
-            suffix = ", read-only mount" if details.get("mount") else ""
-            sections["Local Codebases"].append(f"- {path} (available at: {workspace_path}{suffix})")
+            sections["Local Codebases"].append(
+                f"- {path} (available at: {workspace_path}; "
+                "this is the user's real directory, mounted live and writable — "
+                ".git/.agents/.codex are read-only)"
+            )
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":
@@ -147,7 +147,7 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
+            _reasoning_settings(reasoning_effort, model_settings.extra_args),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
@@ -160,6 +160,22 @@ def make_model_settings(
             ),
         )
     return model_settings
+
+
+def _reasoning_settings(
+    effort: ReasoningEffort,
+    extra_args: dict[str, Any] | None,
+) -> ModelSettings:
+    """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
+    a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
+    which collapses every ``reasoning_effort`` level to plain thinking-enabled.
+    Providers that don't support ``max`` reject the request.
+    """
+    if effort != "max":
+        return ModelSettings(reasoning=Reasoning(effort=effort))
+    return ModelSettings(
+        extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
+    )
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:

@@ -13,6 +13,7 @@ from typing import Any, Literal, get_args
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agents import Status, coordinator_from_context
+from strix.core.execution import notify_parent_on_terminal
 from strix.skills import validate_requested_skills
 
 
@@ -218,25 +219,43 @@ def _session_items_payload(items: list[Any]) -> list[dict[str, Any]]:
     return payload
 
 
-@function_tool(timeout=601)
-async def wait_for_message(  # noqa: PLR0911
+_WAIT_DEFAULT_TIMEOUT_S = 300
+# Enforced by the SDK around the whole tool call, so it caps an oversized
+# ``timeout_seconds`` the model asks for. One second of headroom lets the
+# tool's own timeout fire first and return a clean result.
+_WAIT_HARD_CEILING_S = _WAIT_DEFAULT_TIMEOUT_S + 1
+
+
+@function_tool(timeout=_WAIT_HARD_CEILING_S)
+async def wait_for_agents(  # noqa: PLR0911
     ctx: RunContextWrapper,
     reason: str = "Waiting for messages from other agents",
-    timeout_seconds: int = 600,
+    timeout_seconds: int = _WAIT_DEFAULT_TIMEOUT_S,
 ) -> str:
-    """Pause this agent until a message lands in its inbox (or timeout).
+    """Pause until another AGENT messages you (or the timeout elapses).
 
-    Use when you have nothing useful to do until a child/peer responds
-    — typically after spawning subagents and you want to wait for
-    their completion reports. The agent automatically resumes when any
-    message arrives, so pick a ``timeout_seconds`` proportional to the
-    work you're awaiting.
+    Use when you have nothing useful to do until a child or peer
+    responds — typically after spawning subagents and you want their
+    completion reports. You resume the instant any message arrives, so
+    size ``timeout_seconds`` to the work you're awaiting.
+
+    **This tool is only for waiting on other agents.** Two things it is
+    NOT for:
+
+    - **Talking to the user.** Use ``respond_to_user``, which delivers
+      your message and hands control back in one call.
+    - **Waiting for a long-running command.** This tool does not watch
+      processes at all — it sleeps until a *message* arrives, so it
+      burns the full timeout even if your command finished a second
+      later. Poll the process instead: ``exec_command`` returns a
+      session/process id, and ``write_stdin`` with ``chars=""`` returns
+      as soon as there is new output or the process exits.
 
     **Critical caveats:**
 
-    - **Never** call this if you finished your own task and have **no**
-      child agents running — that's a permanent stall. Call
-      ``finish_scan`` (root) or ``agent_finish`` (subagent) instead.
+    - **Never** call this if you have no agents left to hear from —
+      that just strands you until the timeout. Call ``finish_scan``
+      (root) or ``agent_finish`` (subagent) instead.
     - If you're waiting on an agent that **isn't your child**, message
       it first asking it to ping you when done — otherwise it has no
       reason to send to your inbox and you'll wait the full timeout.
@@ -247,7 +266,8 @@ async def wait_for_message(  # noqa: PLR0911
         reason: One-line note shown in graph snapshots while you're
             waiting (helps a human or sibling agent debug who's stuck
             on what).
-        timeout_seconds: Max seconds to wait (default 600). This is only
+        timeout_seconds: Max seconds to wait (default 300, and values above
+            that are cut short by a hard ceiling). This is only
             a cap — the tool returns the INSTANT a message arrives, so a
             larger value never makes you wait longer when the reply does
             come. Right-size it to what you're waiting on: a short wait
@@ -257,9 +277,7 @@ async def wait_for_message(  # noqa: PLR0911
             bites when the expected message never arrives — so an oversized
             timeout on a trivial wait just strands you idle until it
             elapses. On timeout the tool returns and you decide whether to
-            keep working or wait again. (Applies to autonomous multi-agent
-            runs; in interactive/chat sessions the agent instead parks until
-            a message arrives and this cap is not enforced.)
+            keep working or wait again.
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
@@ -302,7 +320,7 @@ async def wait_for_message(  # noqa: PLR0911
         )
 
     if interactive:
-        await coordinator.park_waiting(me)
+        await coordinator.park_waiting(me, wait_kind="agents")
         return json.dumps(
             {
                 "success": True,
@@ -314,7 +332,7 @@ async def wait_for_message(  # noqa: PLR0911
             default=str,
         )
 
-    await coordinator.park_waiting(me)
+    await coordinator.park_waiting(me, wait_kind="agents")
     try:
         await asyncio.wait_for(coordinator.wait_for_message(me), timeout_seconds)
     except TimeoutError:
@@ -373,7 +391,7 @@ async def create_agent(
 
     Decompose complex pentests by handing focused subtasks to dedicated
     children. The child runs asynchronously — the parent continues
-    immediately and can ``wait_for_message`` later (or just keep
+    immediately and can ``wait_for_agents`` later (or just keep
     working in parallel). When the child calls ``agent_finish``, its
     completion report lands in the parent's inbox.
 
@@ -541,7 +559,7 @@ async def agent_finish(
         )
 
     parent_notified = False
-    if report_to_parent:
+    if report_to_parent and await coordinator.claim_parent_notice(me):
         async with coordinator._lock:
             agent_name = coordinator.names.get(me, me)
         report = _render_completion_report(
@@ -565,6 +583,11 @@ async def agent_finish(
         )
         parent_notified = True
 
+    await coordinator.set_status(me, "completed")
+    if not parent_notified:
+        # Silence here would leave a parent waiting on a report that is never coming.
+        await notify_parent_on_terminal(coordinator, me, "completed")
+
     logger.info(
         "agent_finish: %s success=%s findings=%d parent_notified=%s",
         me,
@@ -572,7 +595,6 @@ async def agent_finish(
         len(findings or []),
         parent_notified,
     )
-    await coordinator.set_status(me, "completed")
 
     return json.dumps(
         {
@@ -663,9 +685,16 @@ async def stop_agent(
         )
 
     if cascade:
-        await coordinator.cancel_descendants_graceful(target_agent_id)
+        stopped = await coordinator.cancel_descendants_graceful(target_agent_id)
     else:
         await coordinator.request_stop(target_agent_id)
+        stopped = [target_agent_id]
+
+    # The stopper knows what it just did; anyone else waiting on those agents does not.
+    async with coordinator._lock:
+        orphaned = [aid for aid in stopped if coordinator.parent_of.get(aid) not in (None, me)]
+    for aid in orphaned:
+        await notify_parent_on_terminal(coordinator, aid, "stopped")
 
     logger.info(
         "stop_agent: target=%s cascade=%s reason=%r",

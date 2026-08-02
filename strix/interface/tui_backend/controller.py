@@ -37,9 +37,9 @@ from strix.config import (
     set_provider_api_key,
 )
 from strix.config.models import is_recommended_or_frontier_model
-from strix.core.inputs import DEFAULT_MAX_TURNS
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui_backend.live_view import TuiLiveView
-from strix.interface.utils import build_mount_targets_info, read_target_list_file
+from strix.interface.utils import check_mountable_dir, read_target_list_file
 
 
 if TYPE_CHECKING:
@@ -89,7 +89,7 @@ def _terminal_projection(  # noqa: PLR0911
             return clean
         omitted = len(clean) - max_string
         return f"{clean[:max_string]}\n...[{omitted} characters omitted from terminal projection]"
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, bool | int | float):
         return value
     if depth >= 8:
         return "[nested value omitted from terminal projection]"
@@ -109,7 +109,7 @@ def _terminal_projection(  # noqa: PLR0911
                 f"{len(items) - max_items} fields omitted from terminal projection"
             )
         return projected
-    if isinstance(value, (list, tuple)):
+    if isinstance(value, list | tuple):
         projected_items = [
             _terminal_projection(
                 item,
@@ -291,7 +291,7 @@ class TuiController:
             for target in getattr(args, "targets_info", [])
             if isinstance(target, dict)
             and target.get("original")
-            and bool(target.get("details", {}).get("mount"))
+            and target.get("type") == "local_code"
         ]
         instruction = getattr(args, "instruction", "")
         self.instruction = instruction.strip() if isinstance(instruction, str) else ""
@@ -753,8 +753,23 @@ class TuiController:
     async def _add_mount(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
         raw_path = self._required_string(payload, "path")
-        target = (await asyncio.to_thread(build_mount_targets_info, [raw_path]))[0]
-        mount = str(target["original"])
+
+        def resolve_mount_path() -> str:
+            path = Path(raw_path).expanduser()
+            try:
+                resolved = path.resolve()
+                is_dir = resolved.is_dir()
+            except (OSError, RuntimeError) as e:
+                raise ValueError(f"Invalid mount path '{raw_path}': {e!s}") from e
+            if not is_dir:
+                raise ValueError(
+                    f"Mount path '{raw_path}' is not an existing directory. "
+                    "/mount requires a path to a local directory."
+                )
+            check_mountable_dir(resolved)
+            return str(resolved)
+
+        mount = await asyncio.to_thread(resolve_mount_path)
         if mount not in self.targets:
             self.targets.append(mount)
         if mount not in self.mounts:
@@ -939,10 +954,10 @@ class TuiController:
             self.viewer_status = "failed"
             return {"status": self.viewer_status, "error": "Scan output is not ready"}
         try:
-            from strix.interface.tui_backend.messages import (  # noqa: PLC0415
+            from strix.interface.tui_backend.messages import (
                 send_user_message_to_agent,
             )
-            from strix.interface.viewer.server import (  # noqa: PLC0415
+            from strix.interface.viewer.server import (
                 authorized_url,
                 bundle_is_built,
                 serve,
@@ -972,7 +987,7 @@ class TuiController:
             self.viewer_url = authorized_url(url, token)
             self.viewer_status = "running"
             with contextlib.suppress(Exception):
-                from strix.telemetry import posthog  # noqa: PLC0415
+                from strix.telemetry import posthog
 
                 live = self.report_state.run_record.get("status") not in {
                     "completed",

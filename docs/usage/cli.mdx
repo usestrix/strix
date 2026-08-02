@@ -6,31 +6,21 @@ description: "Command-line options for Strix"
 ## Basic Usage
 
 ```bash
-strix (--target <target> | --target-list <path> | --mount <path>) [options]
+strix (--target <target> | --target-list <path>) [options]
 ```
 
 ## Options
 
 <ParamField path="--target, -t" type="string">
-  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times. Fresh runs require at least one target source: `--target`, `--target-list`, or `--mount`.
+  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times. Fresh runs require at least one target source: `--target` or `--target-list`.
+
+  <Note>
+    A local directory is mounted into the sandbox live and **writable**, so the agent edits your real files (`.git` excepted). Commit or stash first.
+  </Note>
 </ParamField>
 
 <ParamField path="--target-list" type="string">
   Path to a file containing targets, one per non-empty, non-comment line. Lines starting with `#` are ignored. Can be specified multiple times and combined with `--target`.
-</ParamField>
-
-<ParamField path="--mount" type="string">
-  Bind-mount a local directory into the sandbox (read-only) instead of copying it in file-by-file. Use this for large repositories that are too big to stream into the container. Can be specified multiple times.
-
-  Strix copies local `--target` directories into the sandbox one file at a time, which stalls on very large trees. When a local target exceeds the copy limit (see `STRIX_MAX_LOCAL_COPY_MB`, default 1024 MB) Strix exits early and asks you to re-run with `--mount`.
-
-  <Note>
-    The mount is read-only to protect your source from accidental modification. This is not a hard security boundary: a root process inside the container can remount it writable, so treat `--mount` as "scan my own code", not as isolation from untrusted code.
-  </Note>
-
-  <Note>
-    The size pre-flight only covers local directory targets. Remote repositories (cloned at scan time) are not size-checked.
-  </Note>
 </ParamField>
 
 <ParamField path="--instruction" type="string">
@@ -161,9 +151,6 @@ strix -t https://github.com/org/app -t https://staging.example.com
 
 # Targets from a file
 strix --target-list ./targets.txt
-
-# Large local repository — bind-mount instead of copying it in
-strix --mount ./huge-monorepo
 ```
 
 ## Exit Codes

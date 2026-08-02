@@ -25,6 +25,7 @@ from strix.config.models import (
     uses_chat_completions_tool_schema,
     with_model_request_headers,
 )
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
     respawn_subagents,
@@ -35,7 +36,6 @@ from strix.core.execution import (
 )
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
-    DEFAULT_MAX_TURNS,
     build_root_task,
     build_scope_context,
     make_model_settings,
@@ -54,6 +54,8 @@ from strix.tools.output_store import (
 if TYPE_CHECKING:
     from agents.memory import SQLiteSession
     from agents.result import RunResultBase
+
+    from strix.runtime.status import StatusSink
 
 
 logger = logging.getLogger(__name__)
@@ -122,6 +124,7 @@ async def run_strix_scan(
     event_sink: StreamEventSink | None = None,
     root_instructions_override: str | None = None,
     extra_system_prompt_context: dict[str, Any] | None = None,
+    status_sink: StatusSink | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -131,6 +134,11 @@ async def run_strix_scan(
     context before prompt rendering. Child agents keep the standard scan prompt
     and context.
     """
+
+    def report(phase: str) -> None:
+        if status_sink is not None:
+            status_sink(phase)
+
     if scan_id is None:
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
 
@@ -222,7 +230,9 @@ async def run_strix_scan(
         scan_id,
         image=image,
         local_sources=local_sources or [],
+        status_sink=status_sink,
     )
+    report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
 
     sandbox_session = bundle["session"]
@@ -381,12 +391,6 @@ async def run_strix_scan(
 
         async with coordinator._lock:
             root_status = coordinator.statuses.get(root_id)
-            root_error = coordinator.errors.get(root_id)
-
-        root_recoverable_park = root_status == "waiting" and bool(root_error)
-        root_start_parked = bool(
-            interactive and is_resume and root_status != "running" and not root_recoverable_park
-        )
 
         result = await run_agent_loop(
             agent=root_agent,
@@ -398,7 +402,7 @@ async def run_strix_scan(
             agent_id=root_id,
             interactive=interactive,
             session=root_session,
-            start_parked=root_start_parked,
+            start_parked=bool(interactive and is_resume and root_status != "running"),
             event_sink=event_sink,
             hooks=hooks,
         )

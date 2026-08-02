@@ -19,9 +19,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings, provider_authentication_error_message
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
-from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.interface.tui_backend import TuiBackendServer, TuiController
 from strix.interface.tui_backend.live_view import TuiLiveView
@@ -262,7 +262,7 @@ class GoTuiRuntime:
 
     async def start_from_setup(self) -> None:
         # Delayed to avoid the main entry point importing its TUI implementation.
-        from strix.interface.main import (  # noqa: PLC0415
+        from strix.interface.main import (
             _telemetry_start,
             build_targets_info,
             preflight_model_connection,
@@ -281,16 +281,7 @@ class GoTuiRuntime:
             for target in getattr(candidate, "targets_info", [])
             if isinstance(target, dict) and target.get("original")
         ]
-        existing_mounts = [
-            str(target["original"])
-            for target in getattr(candidate, "targets_info", [])
-            if isinstance(target, dict)
-            and target.get("original")
-            and bool(target.get("details", {}).get("mount"))
-        ]
-        targets_changed = (
-            self.controller.targets != existing_targets or self.controller.mounts != existing_mounts
-        )
+        targets_changed = self.controller.targets != existing_targets
         model = (load_settings().llm.model or "").strip()
         try:
             await preflight_model_connection(model)
@@ -305,15 +296,10 @@ class GoTuiRuntime:
             raise RuntimeError(message) from exc
         try:
             if targets_changed:
-                # Rebuild the full typed set so path canonicalization, local
-                # deduplication, and copy-vs-mount precedence match the CLI.
-                candidate.target = [
-                    target
-                    for target in self.controller.targets
-                    if target not in self.controller.mounts
-                ]
+                # Rebuild the full typed set so path canonicalization and local
+                # deduplication match the CLI.
+                candidate.target = list(self.controller.targets)
                 candidate.target_list = []
-                candidate.mount = list(self.controller.mounts)
                 build_targets_info(candidate)
             prepare_run(candidate)
             _telemetry_start(candidate)

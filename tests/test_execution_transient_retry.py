@@ -15,6 +15,7 @@ from openai import (
     RateLimitError,
 )
 
+from strix.config import codex
 from strix.core import execution
 from strix.core.agents import AgentCoordinator
 
@@ -55,11 +56,27 @@ def test_server_errors_are_transient() -> None:
         assert execution._is_transient_model_error(_status_error(status)) is True
 
 
-def test_rate_limit_is_not_retried_here() -> None:
+def test_rate_limit_is_retried() -> None:
     rate_limited = RateLimitError(
         "slow down", response=httpx.Response(429, request=_request()), body=None
     )
-    assert execution._is_transient_model_error(rate_limited) is False
+    assert execution._is_transient_model_error(rate_limited) is True
+
+
+def test_dns_and_connection_errors_are_transient() -> None:
+    assert execution._is_transient_model_error(OSError("nodename nor servname provided")) is True
+    assert execution._is_transient_model_error(ConnectionError("reset")) is True
+    assert execution._is_transient_model_error(TimeoutError("timed out")) is True
+
+
+def test_content_guardrail_is_not_retried() -> None:
+    guardrail = APIError(
+        "This content was flagged for possible cybersecurity risk",
+        _request(),
+        body=None,
+    )
+    assert codex.is_content_guardrail_error(guardrail) is True
+    assert execution._is_transient_model_error(guardrail) is False
 
 
 def test_client_errors_are_not_transient() -> None:

@@ -101,7 +101,7 @@ async def finish_scan(
     execution stops. There is no draft mode and no second chance: never
     submit placeholder, provisional, or "checking if done" text in any
     field, and never call ``finish_scan`` to poll whether subagents are
-    done (use ``view_agent_graph`` / ``wait_for_message`` for that).
+    done (use ``view_agent_graph`` / ``wait_for_agents`` for that).
     Call it exactly ONCE, only when every field holds genuine, finished
     assessment prose.
 
@@ -111,7 +111,7 @@ async def finish_scan(
        summary. If ANY agent is in ``running`` / ``waiting`` state,
        you MUST NOT call ``finish_scan`` yet —
        wrap them up first via ``send_message_to_agent`` (ask them to
-       finish), ``wait_for_message`` (block until their report
+       finish), ``wait_for_agents`` (block until their report
        arrives), or ``stop_agent`` (graceful cancel). Only ``completed``
        / ``crashed`` / ``stopped`` agents are safe to leave behind.
        Calling ``finish_scan`` while children are alive orphans their

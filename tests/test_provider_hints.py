@@ -28,6 +28,7 @@ INSTALL_EXTRA_COMMAND_FRAGMENT = 'pipx install "strix-agent['
 WRAPPED_VERTEX_GOOGLE_ERROR = "litellm.APIConnectionError: No module named 'google'"
 WRAPPED_BEDROCK_BOTO3_ERROR = "litellm.APIConnectionError: No module named 'boto3'"
 main_module = importlib.import_module("strix.interface.main")
+models_module = importlib.import_module("strix.config.models")
 
 
 def test_bedrock_boto3_hint() -> None:
@@ -106,8 +107,8 @@ async def test_preflight_turns_rejected_key_into_actionable_error(
             return RejectingModel()
 
     clear_provider_credentials_invalid("anthropic")
-    monkeypatch.setattr(main_module, "StrixProvider", Provider)
-    monkeypatch.setattr(main_module, "configure_sdk_model_defaults", lambda _settings: None)
+    monkeypatch.setattr(models_module, "StrixProvider", Provider)
+    monkeypatch.setattr(models_module, "configure_sdk_model_defaults", lambda _settings: None)
 
     with pytest.raises(
         ProviderCredentialRejectedError,
@@ -115,7 +116,7 @@ async def test_preflight_turns_rejected_key_into_actionable_error(
     ) as error:
         await preflight_model_connection(
             "anthropic/claude",
-            settings=Settings(llm={"model": "anthropic/claude", "timeout": 1}),
+            settings=Settings.model_validate({"llm": {"model": "anthropic/claude", "timeout": 1}}),
         )
 
     assert error.value.provider == "anthropic"
@@ -149,13 +150,13 @@ async def test_preflight_does_not_classify_ordinary_connection_errors_as_rejecte
             return FailingModel()
 
     clear_provider_credentials_invalid("anthropic")
-    monkeypatch.setattr(main_module, "StrixProvider", Provider)
-    monkeypatch.setattr(main_module, "configure_sdk_model_defaults", lambda _settings: None)
+    monkeypatch.setattr(models_module, "StrixProvider", Provider)
+    monkeypatch.setattr(models_module, "configure_sdk_model_defaults", lambda _settings: None)
 
     with pytest.raises(type(error), match=str(error)):
         await preflight_model_connection(
             "anthropic/claude",
-            settings=Settings(llm={"model": "anthropic/claude", "timeout": 1}),
+            settings=Settings.model_validate({"llm": {"model": "anthropic/claude", "timeout": 1}}),
         )
 
     assert provider_auth_status("anthropic").state is not ProviderAuthState.INVALID
@@ -178,16 +179,18 @@ async def test_preflight_uses_route_bound_headers_and_timeout(
         def get_model(self, _model: str) -> Model:
             return Model()
 
-    monkeypatch.setattr(main_module, "StrixProvider", Provider)
-    monkeypatch.setattr(main_module, "configure_sdk_model_defaults", lambda _settings: None)
-    settings = Settings(
-        llm={
-            "model": "openrouter/openai/gpt-5",
-            "timeout": 17,
-            "extra_headers": {
-                "X-Feature-Key": "svc",
-                "X-Title": "Custom title",
-            },
+    monkeypatch.setattr(models_module, "StrixProvider", Provider)
+    monkeypatch.setattr(models_module, "configure_sdk_model_defaults", lambda _settings: None)
+    settings = Settings.model_validate(
+        {
+            "llm": {
+                "model": "openrouter/openai/gpt-5",
+                "timeout": 17,
+                "extra_headers": {
+                    "X-Feature-Key": "svc",
+                    "X-Title": "Custom title",
+                },
+            }
         }
     )
 

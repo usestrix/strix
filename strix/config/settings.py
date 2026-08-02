@@ -8,7 +8,9 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+DEFAULT_MAX_TURNS = 500
 
 _BASE_CONFIG = SettingsConfigDict(
     case_sensitive=False,
@@ -100,15 +102,10 @@ class RuntimeSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     image: str = Field(
-        default="ghcr.io/usestrix/strix-sandbox:1.1.0",
+        default="ghcr.io/usestrix/strix-sandbox:1.2.0",
         alias="STRIX_IMAGE",
     )
     backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
-    # Hard cap on a local target's size before we refuse to stream it into the
-    # sandbox file-by-file (the SDK copies every file individually, which stalls
-    # on large repos). Above this, the user must bind-mount via ``--mount``.
-    # Set to 0 (or less) to disable the pre-flight check entirely.
-    max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
     # Max screenshot/image tool outputs kept live per agent context (0 = none).
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 

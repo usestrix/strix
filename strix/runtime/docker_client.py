@@ -237,18 +237,18 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         _apply_log_limits(create_kwargs)
         _apply_run_labels(create_kwargs)
 
-        # Strix injection: host bind mounts (e.g. large repos passed via --mount)
-        # that bypass the SDK's file-by-file LocalDir copy.
-        bind_mounts = getattr(self, "strix_bind_mounts", ())
+        # Strix injection: local source trees, sorted shallowest-first so a
+        # nested spec lands on top of the tree it covers.
+        bind_mounts = self.strix_bind_mounts or ()
         if bind_mounts:
             mounts = create_kwargs.setdefault("mounts", [])
-            for spec in bind_mounts:
+            for spec in sorted(bind_mounts, key=lambda s: str(s["target"]).count("/")):
                 mounts.append(
                     DockerSDKMount(
                         target=spec["target"],
                         source=spec["source"],
                         type="bind",
-                        read_only=spec.get("read_only", True),
+                        read_only=spec.get("read_only", False),
                     )
                 )
 

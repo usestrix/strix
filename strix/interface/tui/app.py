@@ -34,8 +34,8 @@ from textual.widgets.tree import TreeNode
 
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.hooks import BudgetExceededError
-from strix.core.inputs import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.interface.tui.live_view import TuiLiveView
 from strix.interface.tui.messages import send_user_message_to_agent
@@ -815,6 +815,8 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self._scan_stop_event = threading.Event()
         self._scan_completed = threading.Event()
         self._scan_error: BaseException | None = None
+        self._startup_status = "Starting up"
+        self._startup_status_step = 0
         self._error_noted_agents: set[str] = set()
         self._budget_pause_notified = False
 
@@ -1041,9 +1043,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
                             name=names.get(agent_id, agent_id),
                             parent_id=parent_of.get(agent_id),
                             status=status,
-                            error_message=error,
+                            error_message=error or "",
                         )
-                        if status in {"failed", "crashed"} and error:
+                        if error:
                             if agent_id not in self._error_noted_agents:
                                 self._error_noted_agents.add(agent_id)
                                 self.live_view.record_agent_error(agent_id, error)
@@ -1111,7 +1113,9 @@ class StrixTUIApp(App):  # type: ignore[misc]
         self,
     ) -> tuple[Any, str | None]:
         if not self.selected_agent_id:
-            return self._get_chat_placeholder_content("Loading...", "placeholder-no-agent")
+            return self._get_chat_placeholder_content(
+                f"{self._startup_status}...", f"placeholder-no-agent-{self._startup_status_step}"
+            )
 
         events = self._gather_agent_events(self.selected_agent_id)
 
@@ -1293,6 +1297,10 @@ class StrixTUIApp(App):  # type: ignore[misc]
                 text.append("Send a message to continue", style="dim")
                 keymap = keymap_styled([("ctrl-q", "quit")])
             else:
+                error_msg = agent_data.get("error_message") or ""
+                if error_msg:
+                    text.append(error_msg, style="red")
+                    text.append(" \u00b7 ", style="dim")
                 text.append("Send message to resume", style="dim")
             return (text, keymap, False)
 
@@ -1521,6 +1529,7 @@ class StrixTUIApp(App):  # type: ignore[misc]
                                 max_budget_usd=getattr(self.args, "max_budget_usd", None),
                                 max_turns=getattr(self.args, "max_turns", DEFAULT_MAX_TURNS),
                                 event_sink=self._capture_sdk_event,
+                                status_sink=self._capture_startup_status,
                             ),
                         )
 
@@ -1551,6 +1560,18 @@ class StrixTUIApp(App):  # type: ignore[misc]
 
         self._scan_thread = threading.Thread(target=scan_target, daemon=True)
         self._scan_thread.start()
+
+    def _capture_startup_status(self, phase: str) -> None:
+        try:
+            self.call_from_thread(self._record_startup_status, phase)
+        except RuntimeError:
+            self._record_startup_status(phase)
+
+    def _record_startup_status(self, phase: str) -> None:
+        self._startup_status = phase
+        self._startup_status_step += 1
+        if not self.show_splash and not self.selected_agent_id:
+            self.call_later(self._update_chat_view)
 
     def _capture_sdk_event(self, agent_id: str, event: Any) -> None:
         try:

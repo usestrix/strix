@@ -5,7 +5,6 @@ from __future__ import annotations
 import argparse
 import importlib
 import sys
-from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -21,6 +20,7 @@ if TYPE_CHECKING:
 
 
 main_module: Any = importlib.import_module("strix.interface.main")
+models_module: Any = importlib.import_module("strix.config.models")
 MODEL = "anthropic/claude-opus-4-7"
 TARGET = {
     "type": "web_application",
@@ -98,8 +98,8 @@ def _install_startup_doubles(
 
     monkeypatch.setattr(main_module, "parse_arguments", lambda: args)
     monkeypatch.setattr(main_module, "load_settings", lambda: settings)
-    monkeypatch.setattr(main_module, "configure_sdk_model_defaults", lambda _settings: None)
-    monkeypatch.setattr(main_module, "StrixProvider", FakeProvider)
+    monkeypatch.setattr(models_module, "configure_sdk_model_defaults", lambda _settings: None)
+    monkeypatch.setattr(models_module, "StrixProvider", FakeProvider)
     monkeypatch.setattr(main_module, "start_background_check", lambda: None)
     monkeypatch.setattr(main_module, "prompt_update_if_available", lambda _console: False)
     monkeypatch.setattr(main_module, "check_docker_installed", lambda: None)
@@ -120,7 +120,7 @@ def test_successful_startup_persists_configuration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     args = _args()
-    settings = Settings(llm={"model": MODEL, "timeout": 1})
+    settings = Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}})
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
         args=args,
@@ -153,7 +153,7 @@ def test_interactive_rejected_saved_key_enters_setup_with_prepared_targets(
     config.set_provider_api_key("anthropic", "rejected-saved-key")
     args = _args()
     original_targets = args.targets_info
-    settings = Settings(llm={"model": MODEL, "timeout": 1})
+    settings = Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}})
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
         args=args,
@@ -186,7 +186,7 @@ def test_interactive_rejected_custom_key_enters_setup(
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
         args=args,
-        settings=Settings(llm={"model": model, "timeout": 1}),
+        settings=Settings.model_validate({"llm": {"model": model, "timeout": 1}}),
         failures={model: RuntimeError("HTTP 401 Unauthorized")},
     )
 
@@ -208,7 +208,7 @@ def test_interactive_rejected_environment_key_is_fatal_with_restart_guidance(
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
         args=args,
-        settings=Settings(llm={"model": MODEL, "timeout": 1}),
+        settings=Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}}),
         failures={MODEL: RuntimeError("HTTP 401 Unauthorized")},
     )
 
@@ -230,7 +230,7 @@ def test_noninteractive_rejected_saved_key_is_fatal(
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
         args=args,
-        settings=Settings(llm={"model": MODEL, "timeout": 1}),
+        settings=Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}}),
         failures={MODEL: RuntimeError("HTTP 401 Unauthorized")},
     )
 
@@ -252,7 +252,7 @@ def test_textual_rejected_saved_key_keeps_main_style_fatal_error(
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
         args=args,
-        settings=Settings(llm={"model": MODEL, "timeout": 1}),
+        settings=Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}}),
         failures={MODEL: RuntimeError("HTTP 401 Unauthorized")},
     )
 
@@ -282,7 +282,7 @@ def test_ordinary_model_connection_failures_do_not_enter_setup(
     calls, tui_args = _install_startup_doubles(
         monkeypatch,
         args=args,
-        settings=Settings(llm={"model": MODEL, "timeout": 1}),
+        settings=Settings.model_validate({"llm": {"model": MODEL, "timeout": 1}}),
         failures={MODEL: failure},
     )
 
@@ -356,22 +356,15 @@ def test_parse_arguments_applies_custom_config_before_loading_settings(
     config_path = tmp_path / "custom.json"
     calls: list[str] = []
 
-    monkeypatch.setattr(
-        main_module,
-        "validate_config_file",
-        lambda _raw_path: calls.append("validate") or config_path,
-    )
+    def fake_validate(_raw_path: str) -> Path:
+        calls.append("validate")
+        return config_path
+
+    monkeypatch.setattr(main_module, "validate_config_file", fake_validate)
     monkeypatch.setattr(
         main_module,
         "apply_config_override",
         lambda _path: calls.append("apply"),
-    )
-    monkeypatch.setattr(
-        main_module,
-        "load_settings",
-        lambda: (
-            calls.append("load") or SimpleNamespace(runtime=SimpleNamespace(max_local_copy_mb=1024))
-        ),
     )
     monkeypatch.setattr(
         sys,
@@ -381,4 +374,4 @@ def test_parse_arguments_applies_custom_config_before_loading_settings(
 
     main_module.parse_arguments()
 
-    assert calls == ["validate", "apply", "load"]
+    assert calls == ["validate", "apply"]

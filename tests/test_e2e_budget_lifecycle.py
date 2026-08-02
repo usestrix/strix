@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from strix.core import execution
-from strix.core.agents import AgentCoordinator
+from strix.core.agents import AgentCoordinator, WaitKind
 from strix.core.execution import _start_child_runner, run_agent_loop
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks
 from strix.core.sessions import open_agent_session
@@ -42,23 +42,32 @@ class _FakeStream:
         hooks: ReportUsageHooks,
         context: dict[str, Any],
         agent: Any,
+        coordinator: AgentCoordinator,
     ) -> None:
         self._ledger = ledger
         self._hooks = hooks
         self._context = context
         self._agent = agent
+        self._coordinator = coordinator
         self.run_loop_exception: BaseException | None = None
         self.final_output = None
 
     async def stream_events(self) -> AsyncIterator[Any]:
+        agent_id = str(self._context.get("agent_id"))
         self._ledger.cost += COST_PER_CALL
-        self._ledger.calls.append(str(self._context.get("agent_id")))
+        self._ledger.calls.append(agent_id)
         ctx_wrapper = MagicMock()
         ctx_wrapper.context = self._context
         try:
             await self._hooks.on_llm_end(ctx_wrapper, self._agent, MagicMock())
         except Exception as exc:  # noqa: BLE001
             self.run_loop_exception = exc
+        # Stand in for the explicit yield tool a real turn ends with. Without it
+        # every turn looks like a forgotten tool call and burns the recovery
+        # budget, which is a different scenario from the one under test here.
+        if self._coordinator.statuses.get(agent_id) == "running":
+            wait_kind: WaitKind = "user" if self._context.get("parent_id") is None else "agents"
+            await self._coordinator.park_waiting(agent_id, wait_kind=wait_kind)
         items: tuple[Any, ...] = ()
         for item in items:
             yield item
@@ -67,7 +76,7 @@ class _FakeStream:
         return
 
 
-def _fake_runner(ledger: _FakeLedger) -> Any:
+def _fake_runner(ledger: _FakeLedger, coordinator: AgentCoordinator) -> Any:
     class _FakeRunner:
         @staticmethod
         def run_streamed(
@@ -80,7 +89,13 @@ def _fake_runner(ledger: _FakeLedger) -> Any:
             session: Any,  # noqa: ARG004
             hooks: ReportUsageHooks,
         ) -> _FakeStream:
-            return _FakeStream(ledger=ledger, hooks=hooks, context=context, agent=agent)
+            return _FakeStream(
+                ledger=ledger,
+                hooks=hooks,
+                context=context,
+                agent=agent,
+                coordinator=coordinator,
+            )
 
     return _FakeRunner
 
@@ -103,10 +118,10 @@ async def test_full_budget_lifecycle_reserve_then_cap(  # noqa: PLR0915
 ) -> None:
     ledger = _FakeLedger()
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=MAX_BUDGET)
-    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger))
+    coordinator = AgentCoordinator()
+    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger, coordinator))
     monkeypatch.setattr(execution, "_compact_session", _noop_compact)
 
-    coordinator = AgentCoordinator()
     db_path = tmp_path / "agents.sqlite"
     sessions: list[Any] = []
     run_config = MagicMock()
@@ -218,7 +233,6 @@ async def test_respawned_children_after_reserve_never_spend(
     ledger = _FakeLedger()
     ledger.cost = 9.5
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=MAX_BUDGET)
-    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger))
     monkeypatch.setattr(execution, "_compact_session", _noop_compact)
 
     coordinator = AgentCoordinator()
@@ -230,6 +244,7 @@ async def test_respawned_children_after_reserve_never_spend(
     restored = AgentCoordinator()
     await restored.restore(snap)
     assert restored.reserve_stopped is True
+    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger, restored))
 
     sessions: list[Any] = []
     with patch("strix.core.hooks.get_global_report_state", return_value=ledger):
@@ -264,7 +279,6 @@ async def test_resumed_parked_root_after_reserve_is_renotified_and_finalizes(
     ledger = _FakeLedger()
     ledger.cost = 9.0
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=MAX_BUDGET)
-    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger))
     monkeypatch.setattr(execution, "_compact_session", _noop_compact)
 
     coordinator = AgentCoordinator()
@@ -276,6 +290,7 @@ async def test_resumed_parked_root_after_reserve_is_renotified_and_finalizes(
     restored = AgentCoordinator()
     await restored.restore(snap)
     assert restored.reserve_stopped is True
+    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger, restored))
 
     root_session = open_agent_session("root", tmp_path / "agents.sqlite")
     with patch("strix.core.hooks.get_global_report_state", return_value=ledger):
@@ -312,10 +327,10 @@ async def test_interactive_budget_pause_then_user_message_extends_and_resumes(
     ledger = _FakeLedger()
     ledger.cost = 9.0
     hooks = ReportUsageHooks(model="test-model", max_budget_usd=MAX_BUDGET, interactive=True)
-    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger))
+    coordinator = AgentCoordinator()
+    monkeypatch.setattr(execution, "Runner", _fake_runner(ledger, coordinator))
     monkeypatch.setattr(execution, "_compact_session", _noop_compact)
 
-    coordinator = AgentCoordinator()
     coordinator.set_budget_extender(hooks.extend_budget)
     await coordinator.register("root", "strix", parent_id=None)
     root_session = open_agent_session("root", tmp_path / "agents.sqlite")
