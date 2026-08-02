@@ -45,24 +45,36 @@ func applyMarkdownStyles(text string) string {
 	lines := strings.Split(text, "\n")
 
 	inCode := false
+	codeLang := ""
 	var codeLines []string
 
 	flushCode := func() {
 		if len(codeLines) > 0 {
-			out.WriteString(Col(Text).Render(strings.Join(codeLines, "\n")))
+			out.WriteString(HighlightCode(strings.Join(codeLines, "\n"), codeLang))
 		}
 		codeLines = nil
+		codeLang = ""
 	}
 
-	for i, line := range lines {
+	for i := 0; i < len(lines); i++ {
+		line := lines[i]
 		if i > 0 && !inCode {
 			out.WriteString("\n")
+		}
+
+		if !inCode {
+			if rows := tableRows(lines[i:]); rows > 0 {
+				out.WriteString(renderMarkdownTable(lines[i : i+rows]))
+				i += rows - 1
+				continue
+			}
 		}
 
 		if strings.HasPrefix(line, "```") {
 			if !inCode {
 				inCode = true
 				codeLines = nil
+				codeLang = strings.TrimSpace(strings.TrimPrefix(line, "```"))
 				if i > 0 {
 					out.WriteString("\n")
 				}
@@ -100,6 +112,103 @@ func applyMarkdownStyles(text string) string {
 		flushCode()
 	}
 	return out.String()
+}
+
+func isTableRow(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	return strings.HasPrefix(trimmed, "|") && strings.Count(trimmed, "|") >= 2
+}
+
+var tableSeparatorCell = regexp.MustCompile(`^:?-+:?$`)
+
+func isTableSeparator(line string) bool {
+	if !isTableRow(line) {
+		return false
+	}
+	cells := splitTableRow(line)
+	if len(cells) == 0 {
+		return false
+	}
+	for _, cell := range cells {
+		if !tableSeparatorCell.MatchString(strings.TrimSpace(cell)) {
+			return false
+		}
+	}
+	return true
+}
+
+// tableRows returns how many leading lines form a markdown table (header,
+// separator, then body rows), or 0 when the block is not a table.
+func tableRows(lines []string) int {
+	if len(lines) < 2 || !isTableRow(lines[0]) || !isTableSeparator(lines[1]) {
+		return 0
+	}
+	rows := 2
+	for rows < len(lines) && isTableRow(lines[rows]) && !isTableSeparator(lines[rows]) {
+		rows++
+	}
+	return rows
+}
+
+func splitTableRow(line string) []string {
+	trimmed := strings.TrimSpace(line)
+	trimmed = strings.TrimPrefix(trimmed, "|")
+	trimmed = strings.TrimSuffix(trimmed, "|")
+	cells := strings.Split(trimmed, "|")
+	for i := range cells {
+		cells[i] = strings.TrimSpace(cells[i])
+	}
+	return cells
+}
+
+// renderMarkdownTable draws a column-aligned table: bold header, a rule under
+// it, and inline-formatted body cells.
+func renderMarkdownTable(lines []string) string {
+	headerStyle := func(cell string) string { return Bold(Field).Render(cell) }
+	rows := make([][]string, 0, len(lines)-1)
+	styleCells := func(line string, style func(string) string) []string {
+		cells := splitTableRow(line)
+		for i := range cells {
+			cells[i] = style(cells[i])
+		}
+		return cells
+	}
+	rows = append(rows, styleCells(lines[0], headerStyle))
+	for _, line := range lines[2:] {
+		rows = append(rows, styleCells(line, inlineFormat))
+	}
+
+	widths := make([]int, len(rows[0]))
+	for _, cells := range rows {
+		for i, cell := range cells {
+			if i < len(widths) {
+				widths[i] = max(widths[i], lipgloss.Width(cell))
+			}
+		}
+	}
+
+	formatRow := func(cells []string) string {
+		parts := make([]string, len(widths))
+		for i := range widths {
+			cell := ""
+			if i < len(cells) {
+				cell = cells[i]
+			}
+			parts[i] = cell + strings.Repeat(" ", max(0, widths[i]-lipgloss.Width(cell)))
+		}
+		return strings.TrimRight(strings.Join(parts, Dim().Render(" │ ")), " ")
+	}
+
+	out := []string{formatRow(rows[0])}
+	rule := make([]string, len(widths))
+	for i, width := range widths {
+		rule[i] = strings.Repeat("─", width)
+	}
+	out = append(out, Dim().Render(strings.Join(rule, "─┼─")))
+	for _, cells := range rows[1:] {
+		out = append(out, formatRow(cells))
+	}
+	return strings.Join(out, "\n")
 }
 
 func tryHeader(line string) *mdHeader {

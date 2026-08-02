@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/atotto/clipboard"
+	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
@@ -109,7 +111,7 @@ type Model struct {
 	client                 *Client
 	width, height          int
 	snapshot               protocol.Snapshot
-	input                  textinput.Model
+	input                  textarea.Model
 	pickerInput            textinput.Model
 	viewport               viewport.Model
 	viewportContent        string
@@ -199,6 +201,50 @@ const banner = ` ███████╗████████╗████
  ███████║   ██║   ██║  ██║██║██╔╝ ██╗
  ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝`
 
+// maxInputLines caps the auto-growing chat composer, matching the old
+// Textual ChatTextArea (grows with content up to 8 lines).
+const maxInputLines = 8
+
+// newChatInput builds the multi-line chat composer. Enter submits (handled by
+// the update loop before the textarea sees it); Shift/Alt+Enter and Ctrl+J
+// insert a newline.
+func newChatInput() textarea.Model {
+	input := textarea.New()
+	input.ShowLineNumbers = false
+	input.CharLimit = 4096
+	input.MaxHeight = maxInputLines
+	input.SetHeight(1)
+	input.KeyMap.InsertNewline = key.NewBinding(
+		key.WithKeys("shift+enter", "alt+enter", "ctrl+j"),
+		key.WithHelp("shift+enter", "insert newline"),
+	)
+	plain := lipgloss.NewStyle()
+	text := lipgloss.NewStyle().Foreground(textColor)
+	placeholder := lipgloss.NewStyle().Foreground(lipgloss.Color("#525252"))
+	for _, style := range []*textarea.Style{&input.FocusedStyle, &input.BlurredStyle} {
+		style.Base = plain
+		style.CursorLine = text
+		style.EndOfBuffer = plain
+		style.Placeholder = placeholder
+		style.Text = text
+	}
+	input.FocusedStyle.Prompt = lipgloss.NewStyle().Bold(true).Foreground(green)
+	input.BlurredStyle.Prompt = lipgloss.NewStyle().Foreground(dim)
+	input.SetPromptFunc(2, func(lineIdx int) string {
+		if lineIdx == 0 {
+			return "> "
+		}
+		return "  "
+	})
+	input.Cursor.Style = lipgloss.NewStyle().Foreground(green)
+	return input
+}
+
+// syncInputHeight grows or shrinks the composer with its content.
+func (m *Model) syncInputHeight() {
+	m.input.SetHeight(min(max(1, m.input.LineCount()), maxInputLines))
+}
+
 func New(client *Client) Model {
 	newInput := func() textinput.Model {
 		input := textinput.New()
@@ -208,9 +254,8 @@ func New(client *Client) Model {
 		input.Cursor.Style = lipgloss.NewStyle().Foreground(green)
 		return input
 	}
-	input := newInput()
+	input := newChatInput()
 	input.Placeholder = "Type / to configure your scan"
-	input.PlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#525252"))
 	input.Focus()
 	return Model{
 		client: client, input: input, pickerInput: newInput(), viewport: viewport.New(80, 20), vulnViewport: viewport.New(80, 20),

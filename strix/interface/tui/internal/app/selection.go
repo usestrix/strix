@@ -29,9 +29,17 @@ func (m *Model) showToast(text string) tea.Cmd {
 	return tea.Tick(toastDuration, func(time.Time) tea.Msg { return toastExpiredMsg{id: id} })
 }
 
+type selectionRegion int
+
+const (
+	regionChat selectionRegion = iota
+	regionInput
+)
+
 type selectionState struct {
 	active   bool
 	dragging bool
+	region   selectionRegion
 	// Content-line coordinates: anchor is where the drag started, head is
 	// where the pointer currently is.
 	anchorLine, anchorCol int
@@ -64,9 +72,35 @@ func (m Model) chatContentCell(x, y int) (line, col int, ok bool) {
 	return m.viewport.YOffset + y - 1, x - 1, true
 }
 
-func (m *Model) beginSelection(line, col int) {
+// inputPromptWidth is the composer prompt ("> " / "  ") column width; input
+// selection coordinates are relative to the text after it.
+const inputPromptWidth = 2
+
+// inputTop returns the screen row of the composer's top border in the main view.
+func (m Model) inputTop() int {
+	_, _, _, chatHeight := m.layout()
+	statusH := 0
+	if m.statusVisible() {
+		statusH = 1
+	}
+	return chatHeight + statusH + m.commandMenuHeight()
+}
+
+// inputContentCell maps main-view screen coordinates to a text cell inside
+// the composer, honoring the border, padding, and prompt columns.
+func (m Model) inputContentCell(x, y int) (line, col int, ok bool) {
+	_, _, chatWidth, _ := m.layout()
+	top := m.inputTop()
+	textLeft := 2 + inputPromptWidth // border + padding, then the prompt
+	if x < textLeft || x > chatWidth-2 || y <= top || y > top+m.input.Height() {
+		return 0, 0, false
+	}
+	return y - top - 1, x - textLeft, true
+}
+
+func (m *Model) beginSelection(region selectionRegion, line, col int) {
 	m.selection = selectionState{
-		active: true, dragging: true,
+		active: true, dragging: true, region: region,
 		anchorLine: line, anchorCol: col,
 		headLine: line, headCol: col,
 	}
@@ -98,7 +132,11 @@ func (m *Model) finishSelection() tea.Cmd {
 
 func (m Model) selectedText() string {
 	fromLine, fromCol, toLine, toCol := m.selection.bounds()
-	lines := strings.Split(m.viewportContent, "\n")
+	source := m.viewportContent
+	if m.selection.region == regionInput {
+		source = m.inputText()
+	}
+	lines := strings.Split(source, "\n")
 	var out []string
 	for i := max(0, fromLine); i <= min(toLine, len(lines)-1); i++ {
 		left, right := 0, ansi.StringWidth(lines[i])
@@ -113,13 +151,40 @@ func (m Model) selectedText() string {
 	return strings.TrimRight(strings.Join(out, "\n"), "\n")
 }
 
+// inputText returns the composer's visible rows without the prompt columns,
+// as the source for input-region selection.
+func (m Model) inputText() string {
+	rows := strings.Split(m.input.View(), "\n")
+	for i, row := range rows {
+		rows[i] = ansi.Cut(row, inputPromptWidth, ansi.StringWidth(row))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// highlightInputSelection re-styles the selected cells of the rendered
+// composer, shifting columns past the prompt.
+func (m Model) highlightInputSelection(view string) string {
+	if !m.selection.active || m.selection.region != regionInput {
+		return view
+	}
+	return highlightRows(view, 0, m.selection, inputPromptWidth)
+}
+
 // highlightSelection re-styles the selected cells of the visible trace chunk.
 // visible holds the rows starting at content line offset.
 func (m Model) highlightSelection(visible string, offset int) string {
-	if !m.selection.active {
+	if !m.selection.active || m.selection.region != regionChat {
 		return visible
 	}
-	fromLine, fromCol, toLine, toCol := m.selection.bounds()
+	return highlightRows(visible, offset, m.selection, 0)
+}
+
+// highlightRows applies reverse video to the selected cells; shift moves the
+// selection columns right (for rows with a fixed prefix like the prompt).
+func highlightRows(visible string, offset int, selection selectionState, shift int) string {
+	fromLine, fromCol, toLine, toCol := selection.bounds()
+	fromCol += shift
+	toCol += shift
 	rows := strings.Split(visible, "\n")
 	for i, row := range rows {
 		line := offset + i
@@ -127,7 +192,7 @@ func (m Model) highlightSelection(visible string, offset int) string {
 			continue
 		}
 		width := ansi.StringWidth(row)
-		left, right := 0, width
+		left, right := shift, width
 		if line == fromLine {
 			left = min(fromCol, width)
 		}

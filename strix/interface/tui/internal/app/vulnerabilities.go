@@ -154,7 +154,7 @@ func (m Model) modalView() string {
 	switch m.modal {
 	case modalHelp:
 		title := lipgloss.NewStyle().Bold(true).Foreground(green).Width(34).Align(lipgloss.Center).Render("Strix Help")
-		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text")
+		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text")
 		content := title + "\n\n" + body
 		return lipgloss.NewStyle().Width(38).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(black).Padding(1, 2).Render(content)
 	case modalQuit:
@@ -244,7 +244,8 @@ func vulnerabilityBody(v map[string]any) string {
 	section("Evidence", render.StringValue(v["evidence"]))
 	section("PoC Description", render.StringValue(v["poc_description"]))
 	if poc := render.StringValue(v["poc_script_code"]); poc != "" {
-		b.WriteString("\n\n" + fieldStyle.Render("PoC Code") + "\n" + render.Col(textColor).Render(poc))
+		pocLang, pocCode := render.ParseFencedCode(poc)
+		b.WriteString("\n\n" + fieldStyle.Render("PoC Code") + "\n" + render.HighlightCode(pocCode, pocLang))
 	}
 	section("Remediation", render.StringValue(v["remediation_steps"]))
 	section("Assumptions", render.StringValue(v["assumptions"]))

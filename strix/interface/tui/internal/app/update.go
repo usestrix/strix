@@ -176,8 +176,17 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.selection.dragging {
 		switch msg.Action {
 		case tea.MouseActionMotion:
-			// Clamp to the trace pane so dragging past an edge keeps
+			// Clamp to the owning pane so dragging past an edge keeps
 			// extending the selection.
+			if m.selection.region == regionInput {
+				top := m.inputTop()
+				cx := min(max(x, 2+inputPromptWidth), max(2+inputPromptWidth, chatWidth-2))
+				cy := min(max(y, top+1), top+m.input.Height())
+				if line, col, ok := m.inputContentCell(cx, cy); ok {
+					m.extendSelection(line, col)
+				}
+				return m, nil
+			}
 			traceHeight := chatHeight - 2
 			cx := min(max(x, 1), max(1, chatWidth-2))
 			cy := min(max(y, 1), max(1, traceHeight))
@@ -254,11 +263,16 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		case y >= inputTop:
 			m.focus = focusInput
 			m.input.Focus()
+			if line, col, ok := m.inputContentCell(x, y); ok {
+				m.beginSelection(regionInput, line, col)
+			} else {
+				m.selection.active = false
+			}
 		case y < chatHeight:
 			m.focus = focusChat
 			m.input.Blur()
 			if line, col, ok := m.chatContentCell(x, y); ok {
-				m.beginSelection(line, col)
+				m.beginSelection(regionChat, line, col)
 			} else {
 				m.selection.active = false
 			}

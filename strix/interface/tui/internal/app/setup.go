@@ -254,21 +254,22 @@ func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight i
 	if m.statusVisible() {
 		statusH = 1
 	}
-	chatHeight = max(4, m.height-statusH-3-m.commandMenuHeight())
+	chatHeight = max(4, m.height-statusH-(m.input.Height()+2)-m.commandMenuHeight())
 	return
 }
 
 func (m *Model) resizeViewport() {
+	m.syncInputHeight()
 	if m.snapshot.SetupMode {
 		contentWidth, historyHeight := m.setupLayout()
-		m.input.Width = max(1, contentWidth-5)
+		m.input.SetWidth(max(3, contentWidth-3))
 		m.viewport.Width = max(10, contentWidth)
 		m.viewport.Height = max(1, historyHeight)
 		m.refreshViewport()
 		return
 	}
 	_, _, chatWidth, chatHeight := m.layout()
-	m.input.Width = max(1, chatWidth-5)
+	m.input.SetWidth(max(3, chatWidth-3))
 	// Reserve two columns inside the border for the scrollbar gap and track.
 	m.viewport.Width = max(10, chatWidth-4)
 	m.viewport.Height = max(3, chatHeight-2)
@@ -352,7 +353,7 @@ func (m Model) setupGeometry() (contentWidth, historyHeight, menuRows int, showS
 		partCount++
 	}
 	// Joined sections have one blank line between them; reserve one feedback row.
-	fixedWithoutMenu := headerHeight + summaryHeight + 3 + partCount - 1
+	fixedWithoutMenu := headerHeight + summaryHeight + m.input.Height() + 2 + partCount - 1
 	menuRows = min(menuRows, max(0, bodyHeight-fixedWithoutMenu-1))
 	if menuRows == 0 && m.commandMenuHeight() > 0 {
 		partCount--
@@ -435,14 +436,12 @@ func (m Model) setupSummaryView(width int) string {
 func (m Model) setupView() string {
 	contentWidth, _, menuRows, showSummary := m.setupGeometry()
 	inputBorder := dark
-	prompt := render.Col(dim).Render("> ")
 	if m.focus == focusInput {
 		inputBorder = green
-		prompt = render.Bold(green).Render("> ")
 	}
-	composer := lipgloss.NewStyle().Width(contentWidth - 2).Height(1).
+	composer := lipgloss.NewStyle().Width(contentWidth - 2).Height(m.input.Height()).
 		Border(lipgloss.RoundedBorder()).BorderForeground(inputBorder).PaddingLeft(1).
-		Render(prompt + m.input.View())
+		Render(m.input.View())
 
 	parts := []string{m.setupHeaderView(contentWidth)}
 	if showSummary {

@@ -322,11 +322,10 @@ func (m Model) mainView() string {
 	chat := lipgloss.NewStyle().Width(chatWidth - 2).Height(traceHeight).Border(lipgloss.RoundedBorder()).BorderForeground(chatBorder).Render(trace)
 
 	inputBorder := dark
-	prompt := lipgloss.NewStyle().Foreground(dim).Render("> ")
 	if m.focus == focusInput {
-		inputBorder, prompt = green, lipgloss.NewStyle().Bold(true).Foreground(green).Render("> ")
+		inputBorder = green
 	}
-	input := lipgloss.NewStyle().Width(chatWidth - 2).Height(1).Border(lipgloss.RoundedBorder()).BorderForeground(inputBorder).PaddingLeft(1).Render(prompt + m.input.View())
+	input := lipgloss.NewStyle().Width(chatWidth - 2).Height(m.input.Height()).Border(lipgloss.RoundedBorder()).BorderForeground(inputBorder).PaddingLeft(1).Render(m.highlightInputSelection(m.input.View()))
 
 	// Chat column: chat history, optional status row, live slash-command menu,
 	// then input — all chat-width.
