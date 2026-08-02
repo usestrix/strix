@@ -170,7 +170,7 @@ func renderExecCommand(args map[string]any, result any, status string) string {
 		metaParts = append(metaParts, "tty")
 	}
 	meta := strings.Join(metaParts, ", ")
-	return renderTerminal("$", Green, cmd, result, status, meta)
+	return renderTerminal("$", Green, HighlightCode(cmd, "bash"), result, status, meta)
 }
 
 func renderWriteStdin(args map[string]any, result any, status string) string {

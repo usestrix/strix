@@ -38,6 +38,26 @@ func TestChatAssistantMarkdown(t *testing.T) {
 	requireContains(t, out, "Heading", "bold")
 }
 
+func TestExecCommandHighlightsCommand(t *testing.T) {
+	out := Tool(tool("exec_command", map[string]any{"cmd": "for f in *.py; do echo \"$f\"; done"}, nil, "running"))
+	if !strings.Contains(out, "\x1b[38;5;") {
+		t.Fatalf("expected syntax-highlighted command:\n%q", out)
+	}
+}
+
+func TestApplyPatchHighlightsCode(t *testing.T) {
+	out := Tool(tool("apply_patch", map[string]any{
+		"patch": "*** Update File: src/app.py\n-import os\n+import sys\n+def main():\n+    return sys.argv",
+	}, nil, "completed"))
+	if !strings.Contains(out, "\x1b[38;5;") {
+		t.Fatalf("expected syntax-highlighted patch lines:\n%q", out)
+	}
+	lines := strings.Split(out, "\n")
+	if len(lines) != 5 {
+		t.Fatalf("diff line structure must survive highlighting, got %d lines:\n%q", len(lines), out)
+	}
+}
+
 func TestToolDispatchCoversKnownTools(t *testing.T) {
 	cases := []struct {
 		name  string

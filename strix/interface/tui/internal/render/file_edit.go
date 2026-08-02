@@ -96,16 +96,24 @@ func renderPatchOperation(b *strings.Builder, op patchOp) {
 		}
 		b.WriteString(" " + Dim().Render(p))
 	}
+	lang := languageForPath(op.path)
 	if op.kind == "update" {
-		for _, line := range op.old {
+		for _, line := range highlightLines(op.old, lang) {
 			b.WriteString("\n" + Col(Red).Render("-") + " " + line)
 		}
-		for _, line := range op.new {
+		for _, line := range highlightLines(op.new, lang) {
 			b.WriteString("\n" + Col(Green).Render("+") + " " + line)
 		}
 	} else if op.kind == "add" && len(op.new) > 0 {
-		b.WriteString("\n" + Col(Text).Render(strings.Join(op.new, "\n")))
+		b.WriteString("\n" + HighlightCode(strings.Join(op.new, "\n"), lang))
 	}
+}
+
+func highlightLines(lines []string, lang string) []string {
+	if len(lines) == 0 || lang == "" {
+		return lines
+	}
+	return strings.Split(HighlightCode(strings.Join(lines, "\n"), lang), "\n")
 }
 
 func renderApplyPatch(args map[string]any, result any, status string) string {

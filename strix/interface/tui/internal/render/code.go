@@ -1,6 +1,7 @@
 package render
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/alecthomas/chroma/v2"
@@ -38,6 +39,19 @@ func HighlightCode(code, language string) string {
 		return Col(Text).Render(code)
 	}
 	return strings.TrimSuffix(out.String(), "\n")
+}
+
+// languageForPath resolves a chroma language name from a file path, returning
+// "" when the extension is unknown.
+func languageForPath(path string) string {
+	if path == "" {
+		return ""
+	}
+	lexer := lexers.Match(filepath.Base(path))
+	if lexer == nil {
+		return ""
+	}
+	return lexer.Config().Name
 }
 
 // ParseFencedCode ports parse_fenced_code: strip a surrounding ``` fence and
