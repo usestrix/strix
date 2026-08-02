@@ -21,6 +21,7 @@ from strix.config import (
 )
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui import runtime as go_tui
+from strix.interface.tui import sidecar
 from strix.interface.tui.runtime import GoTuiRuntime
 
 
@@ -61,7 +62,7 @@ def test_binary_command_prefers_packaged_sidecar(
     sidecar = tmp_path / "strix-tui"
     sidecar.write_text("binary")
     monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
-    monkeypatch.setattr(go_tui, "_tui_source_dir", lambda: tmp_path / "tui-src")
+    monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: sidecar)
     monkeypatch.setattr(
         shutil,
@@ -82,7 +83,7 @@ def test_binary_command_prefers_current_source_over_packaged_sidecar(
     sidecar = tmp_path / "strix-tui"
     sidecar.write_text("stale")
     monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
-    monkeypatch.setattr(go_tui, "_tui_source_dir", lambda: tmp_path / "tui-src")
+    monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: sidecar)
     monkeypatch.setattr(shutil, "which", lambda name: "/usr/bin/go" if name == "go" else None)
 
@@ -96,8 +97,8 @@ def test_binary_command_reports_missing_sidecar(
     monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
     monkeypatch.setattr(shutil, "which", lambda _name: None)
-    monkeypatch.setattr(go_tui, "_tui_source_dir", lambda: tmp_path / "tui-src")
-    monkeypatch.setattr(go_tui, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
+    monkeypatch.setattr(go_tui, "project_root", lambda: tmp_path)
 
     with pytest.raises(RuntimeError, match="Bubble Tea TUI binary not found"):
         GoTuiRuntime.binary_command()
@@ -109,8 +110,8 @@ def test_binary_command_ignores_unconstrained_path_sidecar(
 ) -> None:
     monkeypatch.delenv("STRIX_TUI_BINARY", raising=False)
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
-    monkeypatch.setattr(go_tui, "_tui_source_dir", lambda: tmp_path / "tui-src")
-    monkeypatch.setattr(go_tui, "_project_root", lambda: tmp_path)
+    monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
+    monkeypatch.setattr(go_tui, "project_root", lambda: tmp_path)
     monkeypatch.setattr(shutil, "which", lambda _name: "/untrusted/path/strix-tui")
 
     with pytest.raises(RuntimeError, match="Bubble Tea TUI binary not found"):
@@ -127,7 +128,7 @@ def test_child_environment_excludes_credentials(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setenv("STRIX_TUI_TOKEN", "stale-transport-token")
     monkeypatch.setenv("TERM", "xterm-256color")
 
-    env = go_tui._child_environment()
+    env = sidecar.child_environment()
 
     assert env["TERM"] == "xterm-256color"
     assert "OPENAI_API_KEY" not in env
@@ -151,7 +152,7 @@ def test_accept_authenticated_connection() -> None:
 
     thread = threading.Thread(target=connect)
     thread.start()
-    connection = go_tui._accept_authenticated_connection(listener, "one-use-token")
+    connection = sidecar._accept_authenticated_connection(listener, "one-use-token")
     connection.close()
     listener.close()
     thread.join()
@@ -170,7 +171,7 @@ def test_rejects_invalid_connection_token() -> None:
     thread = threading.Thread(target=connect)
     thread.start()
     with pytest.raises(PermissionError, match="authentication failed"):
-        go_tui._accept_authenticated_connection(listener, "expected-token")
+        sidecar._accept_authenticated_connection(listener, "expected-token")
     listener.close()
     thread.join()
 
@@ -188,12 +189,12 @@ with socket.create_connection((host, int(port))) as connection:
     env = os.environ.copy()
     env.pop("STRIX_TUI_FD", None)
 
-    process, connection = await go_tui._launch_windows_tui_process(
+    process, connection = await sidecar._launch_windows_tui_process(
         [sys.executable, "-c", child], env, None
     )
     connection.close()
 
-    assert await go_tui._wait_process(process) == 0
+    assert await sidecar.wait_process(process) == 0
 
 
 async def _receive_exactly(connection: socket.socket, size: int) -> bytes:
@@ -246,8 +247,8 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
         scan_started.set()
 
     monkeypatch.setattr(runtime, "binary_command", lambda: ["test-sidecar"])
-    monkeypatch.setattr(go_tui, "_launch_tui_process", launch)
-    monkeypatch.setattr(go_tui, "_wait_process", wait_process)
+    monkeypatch.setattr(go_tui, "launch_tui_process", launch)
+    monkeypatch.setattr(go_tui, "wait_process", wait_process)
     monkeypatch.setattr(runtime, "init_run_state", init_state)
     monkeypatch.setattr(runtime, "start_scan", start_scan)
 

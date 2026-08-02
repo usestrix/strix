@@ -6,32 +6,24 @@ import asyncio
 import contextlib
 import json
 import math
-import re
 import secrets
 import time
 import webbrowser
 from collections.abc import Awaitable, Callable
 from copy import deepcopy
-from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import (
     CUSTOM_PROVIDER_ADD,
-    ProviderAuthState,
     configured_provider_model_groups,
     custom_provider,
     disconnect_provider,
     list_providers,
     load_settings,
     persist_selected_model,
-    provider_api_key_env,
     provider_auth_status,
-    provider_can_disconnect,
-    provider_credential_source,
-    provider_display_name,
     provider_for_model,
-    resolve_provider_api_key,
     save_custom_provider,
     set_custom_provider_enabled,
     set_provider_api_key,
@@ -39,6 +31,22 @@ from strix.config import (
 from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.live_view import TuiLiveView
+from strix.interface.tui.backend.projection import (
+    MAX_MODEL_LISTINGS,
+    MAX_TERMINAL_EVENTS,
+    MAX_TERMINAL_VULNERABILITIES,
+    MODEL_GROUP_TARGET_BYTES,
+    MODEL_LISTING_TTL_SECONDS,
+    MODEL_PAGE_TARGET_BYTES,
+    SCAN_MODES,
+    SCOPE_MODES,
+    ModelListing,
+    bounded_state_projection,
+    collection_item_projection,
+    provider_record,
+    sanitize_terminal_text,
+    terminal_projection,
+)
 from strix.interface.utils import check_mountable_dir, read_target_list_file
 
 
@@ -48,211 +56,11 @@ if TYPE_CHECKING:
     from strix.report.state import ReportState
 
 
+_STOPPABLE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
+
 ChangeCallback = Callable[[], None]
 StartCallback = Callable[[], Awaitable[None]]
 QuitCallback = Callable[[], Awaitable[None]]
-SCAN_MODES = ("quick", "standard", "deep")
-SCOPE_MODES = ("auto", "diff", "full")
-_STOPPABLE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
-_MAX_PROJECTION_STRING = 64 * 1024
-_MAX_COLLECTION_ITEM_BYTES = 512 * 1024
-_MAX_TERMINAL_EVENTS = 5_000
-_MAX_TERMINAL_VULNERABILITIES = 1_000
-_MODEL_LISTING_TTL_SECONDS = 60.0
-_MAX_MODEL_LISTINGS = 32
-_MODEL_GROUP_TARGET_BYTES = 24 * 1024
-_MODEL_PAGE_TARGET_BYTES = 48 * 1024
-_STATE_TARGET_BYTES = 48 * 1024
-_TERMINAL_ESCAPE_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_][0-?]*[ -/]*[@-~]")
-
-
-def sanitize_terminal_text(value: str) -> str:
-    without_escapes = _TERMINAL_ESCAPE_RE.sub("", value)
-    return "".join(
-        character
-        for character in without_escapes
-        if character in "\n\t" or (ord(character) >= 32 and not 127 <= ord(character) <= 159)
-    )
-
-
-def _terminal_projection(  # noqa: PLR0911
-    value: Any,
-    *,
-    max_string: int = _MAX_PROJECTION_STRING,
-    max_items: int = 200,
-    depth: int = 0,
-) -> Any:
-    """Copy and bound terminal-only data without changing durable history."""
-    if isinstance(value, str):
-        clean = sanitize_terminal_text(value)
-        if len(clean) <= max_string:
-            return clean
-        omitted = len(clean) - max_string
-        return f"{clean[:max_string]}\n...[{omitted} characters omitted from terminal projection]"
-    if value is None or isinstance(value, bool | int | float):
-        return value
-    if depth >= 8:
-        return "[nested value omitted from terminal projection]"
-    if isinstance(value, dict):
-        items = list(value.items())
-        projected = {
-            sanitize_terminal_text(str(key)): _terminal_projection(
-                item,
-                max_string=max_string,
-                max_items=max_items,
-                depth=depth + 1,
-            )
-            for key, item in items[:max_items]
-        }
-        if len(items) > max_items:
-            projected["_projection_notice"] = (
-                f"{len(items) - max_items} fields omitted from terminal projection"
-            )
-        return projected
-    if isinstance(value, list | tuple):
-        projected_items = [
-            _terminal_projection(
-                item,
-                max_string=max_string,
-                max_items=max_items,
-                depth=depth + 1,
-            )
-            for item in value[:max_items]
-        ]
-        if len(value) > max_items:
-            projected_items.append(
-                f"[{len(value) - max_items} items omitted from terminal projection]"
-            )
-        return projected_items
-    return _terminal_projection(
-        str(value),
-        max_string=max_string,
-        max_items=max_items,
-        depth=depth,
-    )
-
-
-def _collection_item_projection(item: dict[str, Any]) -> dict[str, Any]:
-    projected = _terminal_projection(item)
-    assert isinstance(projected, dict)
-    if len(json.dumps(projected, default=str, separators=(",", ":")).encode()) <= (
-        _MAX_COLLECTION_ITEM_BYTES
-    ):
-        return projected
-
-    projected = _terminal_projection(item, max_string=8 * 1024, max_items=40)
-    assert isinstance(projected, dict)
-    projected["projection_truncated"] = True
-    if len(json.dumps(projected, default=str, separators=(",", ":")).encode()) <= (
-        _MAX_COLLECTION_ITEM_BYTES
-    ):
-        return projected
-
-    # Preserve identity and useful summary fields even for pathological nested
-    # tool output or finding evidence.
-    compact: dict[str, Any] = {
-        key: _terminal_projection(item[key], max_string=8 * 1024, max_items=10)
-        for key in (
-            "id",
-            "version",
-            "type",
-            "agent_id",
-            "timestamp",
-            "title",
-            "severity",
-            "description",
-        )
-        if key in item
-    }
-    compact["projection_truncated"] = True
-    return compact
-
-
-def _bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
-    """Keep mutable control state comfortably below the 64 KiB frame limit."""
-
-    def encoded_size(value: dict[str, Any]) -> int:
-        return len(
-            json.dumps(value, default=str, ensure_ascii=False, separators=(",", ":")).encode()
-        )
-
-    if encoded_size(state) <= _STATE_TARGET_BYTES:
-        return state
-
-    state["projection_truncated"] = True
-    state["targets"] = [
-        _terminal_projection(target, max_string=64) for target in state["targets"][:8]
-    ]
-    state["instruction"] = _terminal_projection(state["instruction"], max_string=512)
-    state["messages"] = [
-        {
-            **message,
-            "text": _terminal_projection(message.get("text", ""), max_string=128),
-        }
-        for message in state["messages"][-5:]
-    ]
-    state["usage"] = {}
-    state["error"] = _terminal_projection(state["error"], max_string=512)
-    state["model_warning"] = _terminal_projection(state["model_warning"], max_string=256)
-    state["caido_url"] = _terminal_projection(state["caido_url"], max_string=256)
-    state["viewer_url"] = _terminal_projection(state["viewer_url"], max_string=256)
-    if encoded_size(state) <= _STATE_TARGET_BYTES:
-        return state
-
-    # Defensive final projection: use an explicit schema so future snapshot
-    # fields cannot silently bypass the aggregate byte budget.
-    return {
-        "setup_mode": state["setup_mode"],
-        "scan_started": state["scan_started"],
-        "scan_state": state["scan_state"],
-        "targets": state["targets"][:4],
-        "target_count": state["target_count"],
-        "instruction": _terminal_projection(state["instruction"], max_string=128),
-        "scan_mode": state["scan_mode"],
-        "max_budget_usd": state["max_budget_usd"],
-        "max_turns": state["max_turns"],
-        "scope_mode": state["scope_mode"],
-        "diff_base": state["diff_base"],
-        "provider": state["provider"],
-        "model": state["model"],
-        "model_warning": "",
-        "caido_url": None,
-        "messages": [],
-        "usage": {},
-        "viewer_status": state["viewer_status"],
-        "viewer_url": None,
-        "error": _terminal_projection(state["error"], max_string=256),
-        "projection_truncated": True,
-    }
-
-
-def _provider_record(provider: str) -> dict[str, Any]:
-    status = provider_auth_status(provider)
-    source = provider_credential_source(provider)
-    item = custom_provider(provider)
-    key_env = None if item is not None else provider_api_key_env(provider)
-    if item is None and (
-        source == "env"
-        or (status.state is not ProviderAuthState.INVALID and resolve_provider_api_key(provider))
-    ):
-        key_env = None
-    return {
-        "name": provider,
-        "label": provider_display_name(provider),
-        "configured": status.ready,
-        "key_env": key_env,
-        "custom": item is not None,
-        "state": status.state.value,
-        "detail": status.detail,
-        "source": source,
-        "disconnectable": provider_can_disconnect(provider),
-    }
-
-
-@dataclass(frozen=True)
-class _ModelListing:
-    expires_at: float
-    pages: tuple[dict[str, Any], ...]
 
 
 class TuiController:
@@ -308,7 +116,7 @@ class TuiController:
         self.diff_base = raw_diff_base.strip() if isinstance(raw_diff_base, str) else None
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
-        self._model_listings: dict[str, _ModelListing] = {}
+        self._model_listings: dict[str, ModelListing] = {}
         self.error: str | None = None
         self.viewer_status = "idle"
         self.viewer_url: str | None = None
@@ -378,42 +186,42 @@ class TuiController:
             "scan_started": self.scan_started,
             "scan_state": self.scan_state,
             "targets": [
-                _terminal_projection(target, max_string=128) for target in self.targets[:16]
+                terminal_projection(target, max_string=128) for target in self.targets[:16]
             ],
             "target_count": len(self.targets),
-            "instruction": _terminal_projection(self.instruction, max_string=2 * 1024),
+            "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
             "max_budget_usd": self.max_budget_usd,
             "max_turns": self.max_turns,
             "scope_mode": self.scope_mode,
-            "diff_base": _terminal_projection(self.diff_base, max_string=256),
-            "provider": _terminal_projection(provider_for_model(model), max_string=256),
-            "model": _terminal_projection(model, max_string=256),
-            "model_warning": _terminal_projection(model_warning, max_string=512),
-            "caido_url": _terminal_projection(
+            "diff_base": terminal_projection(self.diff_base, max_string=256),
+            "provider": terminal_projection(provider_for_model(model), max_string=256),
+            "model": terminal_projection(model, max_string=256),
+            "model_warning": terminal_projection(model_warning, max_string=512),
+            "caido_url": terminal_projection(
                 getattr(self.report_state, "caido_url", None), max_string=1024
             ),
             "messages": [
                 {
                     "id": str(message.get("id", ""))[:64],
-                    "text": _terminal_projection(message.get("text", ""), max_string=256),
+                    "text": terminal_projection(message.get("text", ""), max_string=256),
                     "level": str(message.get("level", "info"))[:32],
                 }
                 for message in self.messages[-10:]
             ],
-            "usage": _terminal_projection(usage, max_string=256, max_items=20),
+            "usage": terminal_projection(usage, max_string=256, max_items=20),
             "viewer_status": self.viewer_status,
-            "viewer_url": _terminal_projection(self.viewer_url, max_string=1024),
-            "error": _terminal_projection(self.error, max_string=2 * 1024),
+            "viewer_url": terminal_projection(self.viewer_url, max_string=1024),
+            "error": terminal_projection(self.error, max_string=2 * 1024),
         }
-        return _bounded_state_projection(state)
+        return bounded_state_projection(state)
 
     def collection(self, name: str) -> list[dict[str, Any]]:
         """Return one bounded terminal projection with stable item identities."""
         if name == "agents":
             return [
                 {
-                    key: _terminal_projection(agent.get(key), max_string=256, max_items=5)
+                    key: terminal_projection(agent.get(key), max_string=256, max_items=5)
                     for key in (
                         "id",
                         "name",
@@ -428,14 +236,14 @@ class TuiController:
                 for agent in self.live_view.agents.values()
             ]
         if name == "events":
-            return [_collection_item_projection(event) for event in self.live_view.events]
+            return [collection_item_projection(event) for event in self.live_view.events]
         if name == "vulnerabilities":
             reports = (
                 self.report_state.vulnerability_reports if self.report_state is not None else []
-            )[-_MAX_TERMINAL_VULNERABILITIES:]
+            )[-MAX_TERMINAL_VULNERABILITIES:]
             result: list[dict[str, Any]] = []
             for index, report in enumerate(reports):
-                projected = _collection_item_projection(report)
+                projected = collection_item_projection(report)
                 report_id = projected.get("id")
                 if not isinstance(report_id, str) or not report_id:
                     projected["id"] = f"vulnerability-{index}"
@@ -446,8 +254,8 @@ class TuiController:
     def collection_snapshot(self, name: str) -> tuple[int | None, list[dict[str, Any]]]:
         """Return a collection cursor and complete bounded projection."""
         if name == "events":
-            cursor, events = self.live_view.event_snapshot(limit=_MAX_TERMINAL_EVENTS)
-            return cursor, [_collection_item_projection(event) for event in events]
+            cursor, events = self.live_view.event_snapshot(limit=MAX_TERMINAL_EVENTS)
+            return cursor, [collection_item_projection(event) for event in events]
         return None, self.collection(name)
 
     def collection_changes(
@@ -460,7 +268,7 @@ class TuiController:
             raise ValueError(f"Collection {name!r} does not expose incremental changes")
         next_cursor, events = self.live_view.event_changes_since(cursor)
         return next_cursor, [
-            _collection_item_projection(event) for event in events[-_MAX_TERMINAL_EVENTS:]
+            collection_item_projection(event) for event in events[-MAX_TERMINAL_EVENTS:]
         ]
 
     async def handle(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -499,7 +307,7 @@ class TuiController:
         self._require_setup_mutable()
 
         def rows() -> list[dict[str, Any]]:
-            return [_provider_record(provider) for provider in list_providers()]
+            return [provider_record(provider) for provider in list_providers()]
 
         return {
             "providers": await asyncio.to_thread(rows)
@@ -544,31 +352,31 @@ class TuiController:
         groups = await configured_provider_model_groups(current_model=current_model)
         group_records = [
             {
-                "provider": _terminal_projection(group.provider, max_string=512),
-                "label": _terminal_projection(group.label, max_string=512),
+                "provider": terminal_projection(group.provider, max_string=512),
+                "label": terminal_projection(group.label, max_string=512),
                 "models": [
-                    _terminal_projection(model, max_string=4 * 1024) for model in group.models
+                    terminal_projection(model, max_string=4 * 1024) for model in group.models
                 ],
                 "allow_manual": group.allow_manual,
-                "error": _terminal_projection(group.error or "", max_string=4 * 1024),
+                "error": terminal_projection(group.error or "", max_string=4 * 1024),
             }
             for group in groups
         ]
         providers: list[dict[str, Any]] = []
         if not groups:
             providers = [
-                _terminal_projection(provider, max_string=4 * 1024, max_items=20)
+                terminal_projection(provider, max_string=4 * 1024, max_items=20)
                 for provider in (await self._providers({}))["providers"]
             ]
         listing_id = secrets.token_urlsafe(18)
         pages = tuple(self._model_listing_pages(listing_id, group_records, providers))
         now = time.monotonic()
         self._prune_model_listings(now)
-        if len(self._model_listings) >= _MAX_MODEL_LISTINGS:
+        if len(self._model_listings) >= MAX_MODEL_LISTINGS:
             oldest = min(self._model_listings, key=lambda key: self._model_listings[key].expires_at)
             self._model_listings.pop(oldest, None)
-        self._model_listings[listing_id] = _ModelListing(
-            expires_at=now + _MODEL_LISTING_TTL_SECONDS,
+        self._model_listings[listing_id] = ModelListing(
+            expires_at=now + MODEL_LISTING_TTL_SECONDS,
             pages=pages,
         )
         return self._model_page(listing_id, pages, 0)
@@ -609,7 +417,7 @@ class TuiController:
             fragment: list[str] = []
             for model in models:
                 candidate = {**base, "models": [*fragment, model]}
-                if fragment and TuiController._json_size(candidate) > _MODEL_GROUP_TARGET_BYTES:
+                if fragment and TuiController._json_size(candidate) > MODEL_GROUP_TARGET_BYTES:
                     entries.append(("groups", {**base, "models": fragment}))
                     fragment = [model]
                 else:
@@ -630,7 +438,7 @@ class TuiController:
             }
             candidate[field].append(entry)
             if (page["groups"] or page["providers"]) and (
-                TuiController._json_size(candidate) > _MODEL_PAGE_TARGET_BYTES
+                TuiController._json_size(candidate) > MODEL_PAGE_TARGET_BYTES
             ):
                 pages.append(page)
                 page = {"groups": [], "providers": []}
@@ -650,7 +458,7 @@ class TuiController:
         item = custom_provider(provider)
         if item and item.disabled:
             await asyncio.to_thread(set_custom_provider_enabled, provider, enabled=True)
-        return await asyncio.to_thread(_provider_record, provider)
+        return await asyncio.to_thread(provider_record, provider)
 
     async def _disconnect_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
@@ -658,14 +466,14 @@ class TuiController:
         if provider not in await asyncio.to_thread(list_providers):
             raise ValueError(f"Unknown provider: {provider}")
         await asyncio.to_thread(disconnect_provider, provider)
-        return await asyncio.to_thread(_provider_record, provider)
+        return await asyncio.to_thread(provider_record, provider)
 
     async def _save_api_key(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
         provider = self._required_string(payload, "provider")
         api_key = self._required_string(payload, "api_key")
         await asyncio.to_thread(set_provider_api_key, provider, api_key)
-        return await asyncio.to_thread(_provider_record, provider)
+        return await asyncio.to_thread(provider_record, provider)
 
     async def _add_custom_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
@@ -676,7 +484,7 @@ class TuiController:
         if not isinstance(raw_key, str):
             raise TypeError("api_key must be a string")
         item = await asyncio.to_thread(save_custom_provider, name, api_base, raw_key, kind)
-        return await asyncio.to_thread(_provider_record, item.id)
+        return await asyncio.to_thread(provider_record, item.id)
 
     async def _select_model(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()

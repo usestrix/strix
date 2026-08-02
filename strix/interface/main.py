@@ -6,7 +6,6 @@ Strix Agent Interface
 import argparse
 import asyncio
 import os
-import shutil
 import sys
 from pathlib import Path
 
@@ -16,7 +15,6 @@ from rich.text import Text
 
 from strix.config import (
     ProviderAuthState,
-    apply_config_override,
     codex,
     load_settings,
     persist_current,
@@ -24,8 +22,13 @@ from strix.config import (
     provider_credential_source,
     provider_for_model,
 )
-from strix.config.settings import DEFAULT_MAX_TURNS
-from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.core.paths import run_dir_for
+from strix.interface.cli_args import parse_arguments
+from strix.interface.environment import (
+    check_docker_installed,
+    pull_docker_image,
+    validate_environment,
+)
 from strix.interface.interactive import (
     InteractiveSetupUnavailableError,
     run_tui,
@@ -33,7 +36,6 @@ from strix.interface.interactive import (
 from strix.interface.scan_setup import (
     ModelConnectionError,
     ProviderCredentialRejectedError,
-    build_targets_info,
     preflight_model_connection,
     prepare_run,
     telemetry_start,
@@ -42,17 +44,10 @@ from strix.interface.update_check import (
     is_binary_install,
     notify_update,
     prompt_update_if_available,
-    self_update,
     start_background_check,
 )
 from strix.interface.utils import (
     build_final_stats_text,
-    check_docker_connection,
-    check_mountable_dir,
-    collect_local_sources,
-    image_exists,
-    process_pull_line,
-    validate_config_file,
 )
 from strix.telemetry import posthog, scarf
 from strix.telemetry.logging import configure_dependency_logging
@@ -74,157 +69,6 @@ import logging  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
-
-
-def validate_environment() -> None:
-    from strix.config.models import resolve_model_config
-
-    logger.info("Validating environment")
-    console = Console()
-    missing_required_vars = []
-    missing_optional_vars = []
-
-    settings = load_settings()
-
-    if codex.subscription_model(settings.llm.model):
-        if not codex.is_authenticated():
-            console.print(
-                f"[red]STRIX_LLM={settings.llm.model} uses your ChatGPT subscription, "
-                "but you're not signed in.[/] Run [cyan]strix auth login chatgpt[/] first."
-            )
-            sys.exit(1)
-        logger.info("Environment OK (ChatGPT subscription)")
-        return
-
-    if not settings.llm.model:
-        missing_required_vars.append("STRIX_LLM")
-
-    configured_provider = provider_for_model(settings.llm.model)
-    if configured_provider:
-        auth_status = provider_auth_status(configured_provider)
-        if not auth_status.ready:
-            missing_optional_vars.append(auth_status.detail)
-
-    if not resolve_model_config(settings).api_base:
-        missing_optional_vars.append("LLM_API_BASE")
-
-    if not settings.integrations.perplexity_api_key:
-        missing_optional_vars.append("PERPLEXITY_API_KEY")
-
-    if missing_required_vars:
-        error_text = Text()
-        error_text.append("MISSING REQUIRED ENVIRONMENT VARIABLES", style="bold red")
-        error_text.append("\n\n", style="white")
-
-        for var in missing_required_vars:
-            error_text.append(f"• {var}", style="bold yellow")
-            error_text.append(" is not set\n", style="white")
-
-        if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="dim white")
-            for var in missing_optional_vars:
-                error_text.append(f"• {var}", style="dim yellow")
-                error_text.append(" is not set\n", style="dim white")
-
-        error_text.append("\nRequired environment variables:\n", style="white")
-        for var in missing_required_vars:
-            if var == "STRIX_LLM":
-                error_text.append("• ", style="white")
-                error_text.append("STRIX_LLM", style="bold cyan")
-                error_text.append(
-                    " - Model name to use (e.g., 'openai/gpt-5.4' or "
-                    "'anthropic/claude-opus-4-7')\n",
-                    style="white",
-                )
-
-        if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="white")
-            for var in missing_optional_vars:
-                if var == "LLM_API_BASE":
-                    error_text.append("• ", style="white")
-                    error_text.append("LLM_API_BASE", style="bold cyan")
-                    error_text.append(
-                        " - Custom API base URL if using local models (e.g., Ollama, LMStudio)\n",
-                        style="white",
-                    )
-                elif var == "PERPLEXITY_API_KEY":
-                    error_text.append("• ", style="white")
-                    error_text.append("PERPLEXITY_API_KEY", style="bold cyan")
-                    error_text.append(
-                        " - API key for Perplexity AI web search (enables real-time research)\n",
-                        style="white",
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append("• ", style="white")
-                    error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
-                    error_text.append(
-                        " - Reasoning effort level: none, minimal, low, medium, high, xhigh, "
-                        "max (default: high)\n",
-                        style="white",
-                    )
-
-        error_text.append("\nExample setup:\n", style="white")
-        error_text.append("export STRIX_LLM='openai/gpt-5.4'\n", style="dim white")
-
-        if missing_optional_vars:
-            for var in missing_optional_vars:
-                if var == "LLM_API_BASE":
-                    error_text.append(
-                        "export LLM_API_BASE='http://localhost:11434'  "
-                        "# needed for local models only\n",
-                        style="dim white",
-                    )
-                elif var == "PERPLEXITY_API_KEY":
-                    error_text.append(
-                        "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append(
-                        "export STRIX_REASONING_EFFORT='high'\n",
-                        style="dim white",
-                    )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-
-        logger.debug("Missing required env vars: %s", missing_required_vars)
-        console.print("\n")
-        console.print(panel)
-        console.print()
-        sys.exit(1)
-    logger.info(
-        "Environment OK (optional missing: %s)",
-        missing_optional_vars or "none",
-    )
-
-
-def check_docker_installed() -> None:
-    if shutil.which("docker") is None:
-        logger.debug("Docker CLI not found in PATH")
-        console = Console()
-        error_text = Text()
-        error_text.append("DOCKER NOT INSTALLED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("The 'docker' CLI was not found in your PATH.\n", style="white")
-        error_text.append(
-            "Please install Docker and ensure the 'docker' command is available.\n\n", style="white"
-        )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n", panel, "\n")
-        sys.exit(1)
-    logger.debug("Docker CLI present")
 
 
 def _exception_messages(exc: BaseException) -> tuple[str, ...]:
@@ -424,340 +268,6 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         raise ModelConnectionError(raw_model, exc) from exc
 
 
-def get_version() -> str:
-    try:
-        from importlib.metadata import version
-
-        return version("strix-agent")
-    except Exception:
-        return "unknown"
-
-
-def _positive_budget(value: str) -> float:
-    try:
-        budget = float(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"invalid float value: {value!r}") from exc
-    import math
-
-    if not math.isfinite(budget) or budget <= 0:
-        raise argparse.ArgumentTypeError("must be a finite number greater than 0")
-    return budget
-
-
-def _positive_int(value: str) -> int:
-    try:
-        parsed = int(value)
-    except ValueError as exc:
-        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from exc
-    if parsed <= 0:
-        raise argparse.ArgumentTypeError("must be an integer greater than 0")
-    return parsed
-
-
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Web application penetration test
-  strix --target https://example.com
-
-  # GitHub repository analysis
-  strix --target https://github.com/user/repo
-  strix --target git@github.com:user/repo.git
-
-  # Local code analysis
-  strix --target ./my-project
-
-  # Domain penetration test
-  strix --target example.com
-
-  # IP address penetration test
-  strix --target 192.168.1.42
-
-  # Multiple targets (e.g., white-box testing with source and deployed app)
-  strix --target https://github.com/user/repo --target https://example.com
-  strix --target ./my-project --target https://staging.example.com --target https://prod.example.com
-
-  # Targets from a file, one target per non-empty, non-comment line
-  strix --target-list ./targets.txt
-
-  # Custom instructions (inline)
-  strix --target example.com --instruction "Focus on authentication vulnerabilities"
-
-  # Custom instructions (from file)
-  strix --target example.com --instruction-file ./instructions.txt
-  strix --target https://app.com --instruction-file /path/to/detailed_instructions.md
-        """,
-    )
-
-    parser.add_argument(
-        "-v",
-        "--version",
-        action="version",
-        version=f"strix {get_version()}",
-    )
-
-    parser.add_argument(
-        "--update",
-        action="store_true",
-        help="Update strix to the latest version and exit. Self-updates the "
-        "standalone binary install; for pip/pipx/uv installs, prints the "
-        "matching upgrade command instead.",
-    )
-
-    parser.add_argument(
-        "-t",
-        "--target",
-        type=str,
-        action="append",
-        help="Target to test (URL, repository, local directory path, domain name, or IP address). "
-        "Local directories are mounted into the sandbox writable. "
-        "Can be specified multiple times for multi-target scans. "
-        "Fresh runs require --target or --target-list.",
-    )
-    parser.add_argument(
-        "--target-list",
-        type=str,
-        action="append",
-        metavar="PATH",
-        help="Path to a file containing targets, one per non-empty, non-comment line. "
-        "Can be specified multiple times and combined with --target.",
-    )
-    parser.add_argument(
-        "--instruction",
-        type=str,
-        help="Custom instructions for the penetration test. This can be "
-        "specific vulnerability types to focus on (e.g., 'Focus on IDOR and XSS'), "
-        "testing approaches (e.g., 'Perform thorough authentication testing'), "
-        "test credentials (e.g., 'Use the following credentials to access the app: "
-        "admin:password123'), "
-        "or areas of interest (e.g., 'Check login API endpoint for security issues').",
-    )
-
-    parser.add_argument(
-        "--instruction-file",
-        type=str,
-        help="Path to a file containing detailed custom instructions for the penetration test. "
-        "Use this option when you have lengthy or complex instructions saved in a file "
-        "(e.g., '--instruction-file ./detailed_instructions.txt').",
-    )
-
-    parser.add_argument(
-        "-n",
-        "--non-interactive",
-        action="store_true",
-        help=(
-            "Run in non-interactive mode (no TUI, exits on completion). "
-            "Default is interactive mode with TUI."
-        ),
-    )
-
-    parser.add_argument(
-        "-m",
-        "--scan-mode",
-        type=str,
-        choices=["quick", "standard", "deep"],
-        default="deep",
-        help=(
-            "Scan mode: "
-            "'quick' for fast CI/CD checks, "
-            "'standard' for routine testing, "
-            "'deep' for thorough security reviews (default). "
-            "Default: deep."
-        ),
-    )
-
-    parser.add_argument(
-        "--scope-mode",
-        type=str,
-        choices=["auto", "diff", "full"],
-        default="auto",
-        help=(
-            "Scope mode for code targets: "
-            "'auto' enables PR diff-scope in CI/headless runs, "
-            "'diff' forces changed-files scope, "
-            "'full' disables diff-scope."
-        ),
-    )
-
-    parser.add_argument(
-        "--diff-base",
-        type=str,
-        help=(
-            "Target branch or commit to compare against (e.g., origin/main). "
-            "Defaults to the repository's default branch."
-        ),
-    )
-
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
-    )
-
-    parser.add_argument(
-        "--max-budget",
-        "--max-budget-usd",
-        dest="max_budget_usd",
-        metavar="USD",
-        type=_positive_budget,
-        default=None,
-        help=(
-            "Maximum LLM cost in USD (> 0). The scan stops cleanly when this limit is reached. "
-            "Graduated wrap-up warnings are sent to all agents as it is approached."
-        ),
-    )
-
-    parser.add_argument(
-        "--max-turns",
-        dest="max_turns",
-        metavar="N",
-        type=_positive_int,
-        default=DEFAULT_MAX_TURNS,
-        help=(
-            "Maximum turns per agent (> 0, default %(default)s). Each agent is force-stopped "
-            "when it reaches this limit, with graduated wrap-up warnings as it is approached."
-        ),
-    )
-
-    parser.add_argument(
-        "--resume",
-        type=str,
-        metavar="RUN_NAME",
-        help=(
-            "Resume a prior scan by its run name (the dir under ./strix_runs/). "
-            "Picks up the root + every non-terminal subagent's full LLM history "
-            "and agent topology. Skips fresh run-name generation."
-        ),
-    )
-    parser.add_argument("--tui-protocol-smoke", action="store_true", help=argparse.SUPPRESS)
-
-    args = parser.parse_args()
-    # Startup-resolved state lives alongside the parsed flags. The full schema
-    # is established here so downstream code reads attributes directly.
-    args.needs_setup = False
-    args.setup_invalid_provider = None
-    args.setup_guidance = None
-    args.targets_info = []
-    args.local_sources = []
-    args.diff_scope = {"active": False}
-    args.run_name = None
-
-    if args.config:
-        apply_config_override(validate_config_file(args.config))
-
-    if args.update:
-        sys.exit(0 if self_update() else 1)
-
-    if args.instruction and args.instruction_file:
-        parser.error(
-            "Cannot specify both --instruction and --instruction-file. Use one or the other."
-        )
-
-    if args.instruction_file:
-        instruction_path = Path(args.instruction_file)
-        try:
-            with instruction_path.open(encoding="utf-8") as f:
-                args.instruction = f.read().strip()
-                if not args.instruction:
-                    parser.error(f"Instruction file '{instruction_path}' is empty")
-        except Exception as e:
-            parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
-
-    args.user_explicit_instruction = args.instruction if args.resume else None
-
-    if args.resume:
-        if args.target or args.target_list:
-            parser.error(
-                "Cannot combine --resume with --target/--target-list. "
-                "--resume picks up where the prior run left off, including the "
-                "original target list."
-            )
-        _load_resume_state(args, parser)
-        agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"
-        if not agents_path.exists():
-            parser.error(
-                f"--resume {args.resume}: missing {agents_path}. The run was "
-                f"persisted but never reached its first agent snapshot — "
-                f"there's nothing to resume from. Pick a fresh --run-name "
-                f"or remove --resume to start over with the same targets."
-            )
-    else:
-        if not args.target and not args.target_list:
-            if args.non_interactive:
-                parser.error(
-                    "the following arguments are required: -t/--target or --target-list "
-                    "(or use --resume <run_name> to continue a prior scan)"
-                )
-            # Interactive launch with no target: open the normal TUI in setup
-            # mode, where the user provides the target (and optionally
-            # provider/model) via slash commands before the scan starts.
-            args.needs_setup = True
-            return args
-
-        try:
-            build_targets_info(args)
-        except ValueError as e:
-            parser.error(str(e))
-
-    return args
-
-
-def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
-    """Populate ``args.targets_info`` and friends from a prior run's run.json."""
-    from strix.report.writer import read_run_record
-
-    run_dir = run_dir_for(args.resume)
-    state_path = run_dir / "run.json"
-    if not state_path.exists():
-        parser.error(
-            f"--resume {args.resume}: no such run "
-            f"(missing {state_path}; remove --resume for a fresh start)"
-        )
-    try:
-        state = read_run_record(run_dir)
-    except RuntimeError as exc:
-        parser.error(f"--resume {args.resume}: run.json unreadable: {exc}")
-
-    args.targets_info = state.get("targets_info") or []
-    if not args.targets_info:
-        parser.error(f"--resume {args.resume}: run.json has no targets_info")
-
-    for target in args.targets_info:
-        if not isinstance(target, dict):
-            continue
-        details = target.get("details") or {}
-        if target.get("type") == "local_code" and details.get("target_path"):
-            try:
-                check_mountable_dir(Path(details["target_path"]).expanduser())
-            except ValueError as exc:
-                parser.error(f"--resume {args.resume}: {exc}")
-            continue
-        if target.get("type") != "repository":
-            continue
-        cloned = details.get("cloned_repo_path")
-        if not cloned:
-            continue
-        if not Path(cloned).expanduser().exists():
-            parser.error(
-                f"--resume {args.resume}: cloned repo at {cloned} is missing. "
-                f"It was deleted between runs. Pick a fresh --run-name to "
-                f"re-clone, or restore the directory before resuming."
-            )
-
-    if args.instruction is None:
-        args.instruction = state.get("instruction")
-    args.local_sources = collect_local_sources(args.targets_info)
-    if state.get("diff_scope"):
-        args.diff_scope = state.get("diff_scope")
-    persisted_scan_mode = state.get("scan_mode")
-    if persisted_scan_mode and args.scan_mode == "deep":
-        args.scan_mode = persisted_scan_mode
-
-
 def display_completion_message(args: argparse.Namespace, results_path: Path) -> None:
     from strix.report.state import get_global_report_state
 
@@ -837,58 +347,6 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     console.print()
     if not args.non_interactive:
         notify_update(console)
-
-
-def pull_docker_image() -> None:
-    from docker.errors import DockerException
-
-    console = Console()
-    client = check_docker_connection()
-
-    image = load_settings().runtime.image
-
-    if image_exists(client, image):
-        logger.debug("Docker image already present locally: %s", image)
-        return
-
-    logger.info("Pulling docker image: %s", image)
-    console.print()
-    console.print(f"[dim]Pulling image[/] {image}")
-    console.print("[dim yellow]This only happens on first run and may take a few minutes...[/]")
-    console.print()
-
-    with console.status("[bold cyan]Downloading image layers...", spinner="dots") as status:
-        try:
-            layers_info: dict[str, str] = {}
-            last_update = ""
-
-            for line in client.api.pull(image, stream=True, decode=True):
-                last_update = process_pull_line(line, layers_info, status, last_update)
-
-        except DockerException as e:
-            logger.debug("Failed to pull docker image %s", image, exc_info=True)
-            console.print()
-            error_text = Text()
-            error_text.append("FAILED TO PULL IMAGE", style="bold red")
-            error_text.append("\n\n", style="white")
-            error_text.append(f"Could not download: {image}\n", style="white")
-            error_text.append(str(e), style="dim red")
-
-            panel = Panel(
-                error_text,
-                title="[bold white]STRIX",
-                title_align="left",
-                border_style="red",
-                padding=(1, 2),
-            )
-            console.print(panel, "\n")
-            sys.exit(1)
-
-    logger.info("Docker image %s ready", image)
-    success_text = Text()
-    success_text.append("Docker image ready", style="#22c55e")
-    console.print(success_text)
-    console.print()
 
 
 def _print_error_panel(title: str, message: str) -> None:

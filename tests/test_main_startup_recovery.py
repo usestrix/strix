@@ -20,6 +20,7 @@ if TYPE_CHECKING:
 
 
 main_module: Any = importlib.import_module("strix.interface.main")
+cli_args_module: Any = importlib.import_module("strix.interface.cli_args")
 models_module: Any = importlib.import_module("strix.config.models")
 MODEL = "anthropic/claude-opus-4-7"
 TARGET = {
@@ -330,9 +331,9 @@ def test_parse_arguments_applies_custom_config_before_loading_settings(
         calls.append("validate")
         return config_path
 
-    monkeypatch.setattr(main_module, "validate_config_file", fake_validate)
+    monkeypatch.setattr(cli_args_module, "validate_config_file", fake_validate)
     monkeypatch.setattr(
-        main_module,
+        cli_args_module,
         "apply_config_override",
         lambda _path: calls.append("apply"),
     )

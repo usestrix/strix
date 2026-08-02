@@ -11,7 +11,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from strix.interface.tui.backend.controller import sanitize_terminal_text
+from strix.interface.tui.backend.projection import sanitize_terminal_text
 from strix.interface.tui.backend.protocol import (
     MAX_COLLECTION_FRAME_BYTES,
     MAX_COMMAND_BYTES,

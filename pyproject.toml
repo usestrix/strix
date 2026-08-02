@@ -290,6 +290,8 @@ ignore = [
 "strix/interface/cli.py" = ["BLE001", "PLC0415"]
 "strix/interface/scan_setup.py" = ["PLC0415"]
 "strix/interface/main.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
+"strix/interface/cli_args.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
+"strix/interface/environment.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
 # The Go TUI runtime and backend controller import interface modules lazily so
 # the sidecar entry point stays fast and avoids circular imports.
 "strix/interface/interactive.py" = ["PLC0415"]

@@ -12,7 +12,8 @@ import pytest
 
 from strix.config import ProviderModelGroup
 from strix.config.settings import DEFAULT_MAX_TURNS
-from strix.interface.tui.backend.controller import TuiController, _terminal_projection
+from strix.interface.tui.backend.controller import TuiController
+from strix.interface.tui.backend.projection import terminal_projection
 from strix.interface.tui.backend.protocol import (
     MAX_COMMAND_BYTES,
     PROTOCOL_CAPABILITIES,
@@ -540,7 +541,7 @@ def test_terminal_projection_strips_ansi_osc_and_c1_controls() -> None:
     assert "\x1b" not in projected
 
     hostile_mapping = {"header\x1b]52;c;Y2xpcA==\x07": "value"}
-    assert list(_terminal_projection(hostile_mapping)) == ["header"]
+    assert list(terminal_projection(hostile_mapping)) == ["header"]
     assert list(TuiBackendServer._sanitize_wire_value(hostile_mapping)) == ["header"]
 
 

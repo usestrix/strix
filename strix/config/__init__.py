@@ -23,6 +23,7 @@ from strix.config.loader import (
     resolve_env_value,
     update_config_env,
 )
+from strix.config.provider_detection import provider_authentication_error
 from strix.config.providers import (
     CUSTOM_PROVIDER_ADD,
     CUSTOM_PROVIDER_KINDS,
@@ -43,7 +44,6 @@ from strix.config.providers import (
     persist_selected_model,
     provider_api_key_env,
     provider_auth_status,
-    provider_authentication_error,
     provider_authentication_error_message,
     provider_can_disconnect,
     provider_chat_models,
