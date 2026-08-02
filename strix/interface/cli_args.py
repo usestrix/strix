@@ -227,7 +227,6 @@ Examples:
             "and agent topology. Skips fresh run-name generation."
         ),
     )
-    parser.add_argument("--tui-protocol-smoke", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
     # Startup-resolved state lives alongside the parsed flags. The full schema

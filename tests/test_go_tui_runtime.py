@@ -84,7 +84,6 @@ def test_binary_command_reports_missing_sidecar(
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
     monkeypatch.setattr(shutil, "which", lambda _name: None)
     monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
-    monkeypatch.setattr(go_tui, "project_root", lambda: tmp_path)
 
     with pytest.raises(RuntimeError, match="Bubble Tea TUI binary not found"):
         GoTuiRuntime.binary_command()
@@ -96,7 +95,6 @@ def test_binary_command_ignores_unconstrained_path_sidecar(
 ) -> None:
     monkeypatch.setattr(go_tui, "get_strix_resource_path", lambda *_parts: tmp_path / "missing")
     monkeypatch.setattr(go_tui, "tui_source_dir", lambda: tmp_path / "tui-src")
-    monkeypatch.setattr(go_tui, "project_root", lambda: tmp_path)
     monkeypatch.setattr(shutil, "which", lambda _name: "/untrusted/path/strix-tui")
 
     with pytest.raises(RuntimeError, match="Bubble Tea TUI binary not found"):

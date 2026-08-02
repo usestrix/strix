@@ -1,9 +1,7 @@
 package app
 
 import (
-	"crypto/rand"
 	"encoding/binary"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -171,91 +169,6 @@ func (c *Client) Handshake() error {
 		Type:    "ready",
 		Payload: payload,
 	}, maxCommandBytes)
-}
-
-// ProtocolSmoke exercises command correlation, state propagation, and all
-// collection bootstraps without starting Bubble Tea or entering alt screen.
-func (c *Client) ProtocolSmoke() error {
-	if connection, ok := c.conn.(interface{ SetDeadline(time.Time) error }); ok {
-		if err := connection.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
-			return err
-		}
-		defer connection.SetDeadline(time.Time{}) //nolint:errcheck
-	}
-
-	nonceBytes := make([]byte, 16)
-	if _, err := rand.Read(nonceBytes); err != nil {
-		return fmt.Errorf("create protocol smoke nonce: %w", err)
-	}
-	nonce := "protocol-smoke-" + hex.EncodeToString(nonceBytes)
-	requestID, err := c.Send("setup.set_instruction", map[string]string{"instruction": nonce})
-	if err != nil {
-		return fmt.Errorf("send protocol smoke command: %w", err)
-	}
-
-	commandComplete := false
-	stateComplete := false
-	collections := map[string]bool{"agents": false, "events": false, "vulnerabilities": false}
-	cursors := map[string]int{}
-	revisions := map[string]int{}
-	for !commandComplete || !stateComplete || !collections["agents"] || !collections["events"] || !collections["vulnerabilities"] {
-		envelope, err := c.Read()
-		if err != nil {
-			return fmt.Errorf("read protocol smoke response: %w", err)
-		}
-		if envelope.Version != protocol.Version {
-			return fmt.Errorf("protocol smoke version mismatch: %d", envelope.Version)
-		}
-		switch envelope.Type {
-		case "command_result":
-			if envelope.RequestID != requestID {
-				continue
-			}
-			var result protocol.CommandResult
-			if err := json.Unmarshal(envelope.Payload, &result); err != nil {
-				return fmt.Errorf("decode protocol smoke command result: %w", err)
-			}
-			if result.Command != "setup.set_instruction" || !c.Resolve(requestID, result.Command) {
-				return fmt.Errorf("protocol smoke command correlation failed")
-			}
-			if !result.OK {
-				message := "command failed"
-				if result.Error != nil && result.Error.Message != "" {
-					message = result.Error.Message
-				}
-				return fmt.Errorf("protocol smoke command failed: %s", message)
-			}
-			commandComplete = true
-		case "state":
-			var update protocol.StateUpdate
-			if err := json.Unmarshal(envelope.Payload, &update); err != nil {
-				return fmt.Errorf("decode protocol smoke state: %w", err)
-			}
-			if update.State.Instruction == nonce {
-				stateComplete = true
-			}
-		case "collection_bootstrap":
-			var chunk protocol.CollectionBootstrap
-			if err := json.Unmarshal(envelope.Payload, &chunk); err != nil {
-				return fmt.Errorf("decode protocol smoke collection: %w", err)
-			}
-			if _, ok := collections[chunk.Collection]; !ok {
-				return fmt.Errorf("protocol smoke received unknown collection %q", chunk.Collection)
-			}
-			if chunk.Cursor == 0 {
-				cursors[chunk.Collection] = 0
-				revisions[chunk.Collection] = chunk.Revision
-			}
-			if revisions[chunk.Collection] != chunk.Revision || cursors[chunk.Collection] != chunk.Cursor || chunk.NextCursor != chunk.Cursor+len(chunk.Items) {
-				return fmt.Errorf("protocol smoke collection cursor mismatch for %s", chunk.Collection)
-			}
-			cursors[chunk.Collection] = chunk.NextCursor
-			if chunk.Done {
-				collections[chunk.Collection] = true
-			}
-		}
-	}
-	return nil
 }
 
 func (c *Client) sendEnvelope(envelope protocol.Envelope, maximum int) error {

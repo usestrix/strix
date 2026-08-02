@@ -135,11 +135,3 @@ cursors are rejected as structured `invalid_request` results. Provider groups
 may span pages; Go merges fragments by provider and opens the model picker only
 after receiving `done:true`. If no provider is connected, the same paging shape
 uses `providers` instead of `groups`.
-
-## Protocol smoke
-
-`--tui-protocol-smoke` does not stop at negotiation. The sidecar sends a
-correlated `setup.set_instruction` command containing a random nonce, observes
-its successful result and a state revision containing that nonce, and consumes
-complete agents, events, and vulnerabilities bootstraps. It exits successfully
-only after all checks pass and never enters the terminal alternate screen.

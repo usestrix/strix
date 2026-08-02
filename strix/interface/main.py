@@ -489,12 +489,6 @@ def main() -> None:
 
     args = parse_arguments()
 
-    if args.tui_protocol_smoke:
-        from strix.interface.tui.runtime import run_tui_protocol_smoke
-
-        asyncio.run(run_tui_protocol_smoke(args))
-        return
-
     _detect_provider_setup_need(args)
 
     start_background_check()

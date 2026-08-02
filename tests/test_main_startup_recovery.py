@@ -51,7 +51,6 @@ def _args(*, non_interactive: bool = False) -> argparse.Namespace:
         needs_setup=False,
         setup_invalid_provider=None,
         setup_guidance=None,
-        tui_protocol_smoke=False,
         targets_info=[TARGET.copy()],
         scan_mode="deep",
         instruction=None,
@@ -310,15 +309,6 @@ def test_legacy_max_budget_flag_remains_accepted(monkeypatch: pytest.MonkeyPatch
     args = main_module.parse_arguments()
 
     assert args.max_budget_usd == 12.5
-
-
-def test_protocol_smoke_flag_needs_no_target(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(sys, "argv", ["strix", "--tui-protocol-smoke"])
-
-    args = main_module.parse_arguments()
-
-    assert args.tui_protocol_smoke is True
-    assert args.needs_setup is True
 
 
 def test_parse_arguments_applies_custom_config_before_loading_settings(

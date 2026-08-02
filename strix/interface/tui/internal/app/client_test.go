@@ -100,58 +100,6 @@ func TestHandshakeRejectsMismatchBeforeReady(t *testing.T) {
 	}
 }
 
-func TestProtocolSmokeRequiresCorrelatedCommandStateAndAllCollections(t *testing.T) {
-	server, connection := net.Pipe()
-	client := newClient(connection)
-	serverErr := make(chan error, 1)
-	go func() {
-		defer server.Close()
-		command, err := readEnvelopeFrame(server)
-		if err != nil {
-			serverErr <- err
-			return
-		}
-		if command.Type != "setup.set_instruction" || command.RequestID == "" {
-			serverErr <- fmt.Errorf("unexpected smoke command: %#v", command)
-			return
-		}
-		var commandPayload map[string]string
-		if err := json.Unmarshal(command.Payload, &commandPayload); err != nil {
-			serverErr <- err
-			return
-		}
-		nonce := commandPayload["instruction"]
-		resultPayload, _ := json.Marshal(protocol.CommandResult{
-			OK: true, Command: command.Type, Result: json.RawMessage(`{"instruction":"ok"}`),
-		})
-		frames := []protocol.Envelope{{
-			Version: protocol.Version, Type: "command_result", RequestID: command.RequestID, Payload: resultPayload,
-		}}
-		statePayload, _ := json.Marshal(protocol.StateUpdate{Revision: 2, State: protocol.Snapshot{Instruction: nonce}})
-		frames = append(frames, protocol.Envelope{Version: protocol.Version, Type: "state", Payload: statePayload})
-		for _, collection := range []string{"events", "vulnerabilities", "agents"} {
-			payload, _ := json.Marshal(protocol.CollectionBootstrap{
-				Collection: collection, Revision: 1, Cursor: 0, NextCursor: 0, Done: true,
-			})
-			frames = append(frames, protocol.Envelope{Version: protocol.Version, Type: "collection_bootstrap", Payload: payload})
-		}
-		for _, frame := range frames {
-			if err := writeEnvelopeFrame(server, frame); err != nil {
-				serverErr <- err
-				return
-			}
-		}
-		serverErr <- nil
-	}()
-
-	if err := client.ProtocolSmoke(); err != nil {
-		t.Fatal(err)
-	}
-	if err := <-serverErr; err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestReadRejectsOversizedCollectionLengthBeforePayload(t *testing.T) {
 	server, connection := net.Pipe()
 	client := newClient(connection)

@@ -30,7 +30,6 @@ from strix.interface.tui.sidecar import (
     child_environment,
     launch_tui_process,
     package_version,
-    project_root,
     terminate_process,
     tui_executable,
     tui_source_dir,
@@ -280,13 +279,9 @@ class GoTuiRuntime:
         # current source is the deterministic development choice.
         if (source / "go.mod").is_file() and shutil.which("go"):
             return ["go", "run", "./cmd/strix-tui"]
-        executable = tui_executable()
-        packaged = get_strix_resource_path("bin", executable)
+        packaged = get_strix_resource_path("bin", tui_executable())
         if packaged.is_file():
             return [str(packaged)]
-        development = project_root() / "build" / "sidecar" / executable
-        if development.is_file():
-            return [str(development)]
         raise RuntimeError(
             "Bubble Tea TUI binary not found. Reinstall Strix from an official platform wheel."
         )
@@ -298,8 +293,7 @@ class GoTuiRuntime:
         # only the Python-level bindings change.
         original_stdout = sys.stdout
         original_stderr = sys.stderr
-        log_path = os.environ.get("STRIX_TUI_LOG")
-        output_sink = Path(log_path or os.devnull).open("a", buffering=1)  # noqa: SIM115
+        output_sink = Path(os.devnull).open("a", buffering=1)  # noqa: SIM115
         sys.stdout = output_sink
         sys.stderr = output_sink
         backend_socket: socket.socket | None = None
@@ -348,24 +342,3 @@ class GoTuiRuntime:
 
 async def run_go_tui(args: argparse.Namespace) -> None:
     await GoTuiRuntime(args).run()
-
-
-async def run_tui_protocol_smoke(args: argparse.Namespace) -> None:
-    """Launch the resolved sidecar and complete a real protocol handshake."""
-    runtime = GoTuiRuntime(args)
-    env = child_environment()
-    env["STRIX_VERSION"] = package_version()
-    command = [*runtime.binary_command(), "--handshake-smoke"]
-    cwd = str(tui_source_dir()) if command[:2] == ["go", "run"] else None
-    process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None = None
-    connection: socket.socket | None = None
-    try:
-        process, connection = await launch_tui_process(command, env, cwd)
-        await runtime.server.start(connection)
-        return_code = await asyncio.wait_for(wait_process(process), timeout=15)
-        check_return_code(return_code)
-    finally:
-        await terminate_process(process)
-        await runtime.server.close()
-        if connection is not None:
-            connection.close()

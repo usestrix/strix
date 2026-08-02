@@ -20,13 +20,6 @@ func main() {
 		fmt.Fprintln(os.Stderr, "negotiate Strix TUI protocol:", err)
 		os.Exit(1)
 	}
-	if len(os.Args) > 1 && os.Args[1] == "--handshake-smoke" {
-		if err := client.ProtocolSmoke(); err != nil {
-			fmt.Fprintln(os.Stderr, "exercise Strix TUI protocol:", err)
-			os.Exit(1)
-		}
-		return
-	}
 	program := tea.NewProgram(app.New(client), tea.WithAltScreen(), tea.WithMouseCellMotion())
 	finalModel, err := program.Run()
 	if err != nil {
