@@ -6,10 +6,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/usestrix/strix/tui/internal/app"
+	"github.com/usestrix/strix/tui/internal/render"
 )
 
 func main() {
 	app.SetVersion(os.Getenv("STRIX_VERSION"))
+	render.DetectKittyGraphics()
 	client, err := app.ConnectFromEnvironment()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "connect to Strix backend:", err)

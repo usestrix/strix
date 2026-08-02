@@ -8,7 +8,6 @@ import (
 	_ "image/gif"
 	_ "image/jpeg"
 	"image/png"
-	"os"
 	"strings"
 	"sync"
 )
@@ -35,15 +34,10 @@ func SetImageWidth(cells int) {
 	imageCols = min(max(cells, imageMinCols), imageMaxCols)
 }
 
-// KittyGraphicsSupported reports whether the terminal natively supports the
-// kitty graphics protocol with Unicode placeholders (kitty and ghostty).
-var KittyGraphicsSupported = sync.OnceValue(func() bool {
-	if os.Getenv("KITTY_WINDOW_ID") != "" || os.Getenv("GHOSTTY_RESOURCES_DIR") != "" {
-		return true
-	}
-	term := os.Getenv("TERM")
-	return strings.Contains(term, "kitty") || strings.Contains(term, "ghostty")
-})
+// KittyGraphicsSupported reports whether the terminal supports the kitty
+// graphics protocol; set at startup by DetectKittyGraphics via a live
+// terminal query.
+var KittyGraphicsSupported = func() bool { return false }
 
 type kittyPlacement struct {
 	id   uint32
