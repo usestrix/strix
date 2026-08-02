@@ -1671,8 +1671,8 @@ func TestStatsViewShowsSubscription(t *testing.T) {
 	if !strings.Contains(stats, "ChatGPT subscription") {
 		t.Fatalf("stats missing subscription line: %q", stats)
 	}
-	if !strings.Contains(stats, "$0.00") || strings.Contains(stats, "$3.50") {
-		t.Fatalf("subscription runs must show $0.00: %q", stats)
+	if strings.Contains(stats, "$") {
+		t.Fatalf("subscription runs must not show a cost: %q", stats)
 	}
 }
 

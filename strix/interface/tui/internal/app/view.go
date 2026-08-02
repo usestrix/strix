@@ -452,9 +452,7 @@ func (m Model) statsView() string {
 			b.WriteString("\n")
 		}
 		b.WriteString(w.Render(fmt.Sprintf("%s tokens", formatCount(total))))
-		if m.snapshot.Subscription {
-			b.WriteString(w.Render(" · $0.00"))
-		} else if cost := floatValue(m.snapshot.Usage["cost"]); cost > 0 {
+		if cost := floatValue(m.snapshot.Usage["cost"]); !m.snapshot.Subscription && cost > 0 {
 			b.WriteString(w.Render(fmt.Sprintf(" · $%.2f", cost)))
 		}
 	}
