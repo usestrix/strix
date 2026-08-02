@@ -274,20 +274,20 @@ class TuiController:
         self.coordinator = coordinator
         self.report_state = report_state
         self.scan_loop: asyncio.AbstractEventLoop | None = None
-        self.setup_mode = bool(getattr(args, "needs_setup", False))
+        self.setup_mode = bool(args.needs_setup)
         self.scan_started = not self.setup_mode
         self._start_in_progress = False
         self.scan_state = "setup" if self.setup_mode else "running"
         self.targets = [
             str(target["original"])
-            for target in getattr(args, "targets_info", [])
+            for target in args.targets_info
             if isinstance(target, dict) and target.get("original")
         ]
-        instruction = getattr(args, "instruction", "")
+        instruction = args.instruction
         self.instruction = instruction.strip() if isinstance(instruction, str) else ""
-        requested_scan_mode = str(getattr(args, "scan_mode", "deep"))
+        requested_scan_mode = str(args.scan_mode)
         self.scan_mode = requested_scan_mode if requested_scan_mode in SCAN_MODES else "deep"
-        raw_budget = getattr(args, "max_budget_usd", None)
+        raw_budget = args.max_budget_usd
         self.max_budget_usd = (
             float(raw_budget)
             if isinstance(raw_budget, int | float)
@@ -296,15 +296,15 @@ class TuiController:
             and raw_budget > 0
             else None
         )
-        raw_turns = getattr(args, "max_turns", DEFAULT_MAX_TURNS)
+        raw_turns = args.max_turns
         self.max_turns = (
             raw_turns
             if isinstance(raw_turns, int) and not isinstance(raw_turns, bool) and raw_turns > 0
             else DEFAULT_MAX_TURNS
         )
-        requested_scope = str(getattr(args, "scope_mode", "auto"))
+        requested_scope = str(args.scope_mode)
         self.scope_mode = requested_scope if requested_scope in SCOPE_MODES else "auto"
-        raw_diff_base = getattr(args, "diff_base", None)
+        raw_diff_base = args.diff_base
         self.diff_base = raw_diff_base.strip() if isinstance(raw_diff_base, str) else None
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
@@ -317,8 +317,8 @@ class TuiController:
         self._on_quit = on_quit
         self._on_change = on_change
         if self.setup_mode:
-            invalid_provider = getattr(args, "setup_invalid_provider", None)
-            guidance = getattr(args, "setup_guidance", None)
+            invalid_provider = args.setup_invalid_provider
+            guidance = args.setup_guidance
             if isinstance(invalid_provider, str) and invalid_provider.strip():
                 self._append_message(
                     f"Provider requiring setup: {invalid_provider.strip()}",

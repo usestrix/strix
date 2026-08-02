@@ -636,7 +636,15 @@ Examples:
     parser.add_argument("--tui-protocol-smoke", action="store_true", help=argparse.SUPPRESS)
 
     args = parser.parse_args()
+    # Startup-resolved state lives alongside the parsed flags. The full schema
+    # is established here so downstream code reads attributes directly.
     args.needs_setup = False
+    args.setup_invalid_provider = None
+    args.setup_guidance = None
+    args.targets_info = []
+    args.local_sources = []
+    args.diff_scope = {"active": False}
+    args.run_name = None
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
@@ -688,7 +696,6 @@ Examples:
             # mode, where the user provides the target (and optionally
             # provider/model) via slash commands before the scan starts.
             args.needs_setup = True
-            args.targets_info = []
             return args
 
         try:
@@ -952,6 +959,55 @@ def _enter_setup_for_rejected_saved_key(
     return True
 
 
+def _detect_provider_setup_need(args: argparse.Namespace) -> None:
+    """Route fresh interactive launches with no usable provider into setup."""
+    if args.non_interactive or args.resume or args.needs_setup:
+        return
+    model = (load_settings().llm.model or "").strip()
+    if not model:
+        args.needs_setup = True
+        return
+    provider = provider_for_model(model)
+    auth_status = provider_auth_status(provider) if provider is not None else None
+    rejected_environment_key = bool(
+        provider
+        and auth_status
+        and auth_status.state is ProviderAuthState.INVALID
+        and provider_credential_source(provider) == "env"
+    )
+    if auth_status is None or (not auth_status.ready and not rejected_environment_key):
+        args.needs_setup = True
+        if provider and auth_status and auth_status.state is ProviderAuthState.INVALID:
+            args.setup_invalid_provider = provider
+            args.setup_guidance = auth_status.detail
+
+
+def _bootstrap_scan(args: argparse.Namespace) -> None:
+    """Warm up the model and prepare the run for a directly-launched scan.
+
+    A rejected saved key on an interactive launch flips ``args.needs_setup``
+    instead of exiting, dropping the launch into the TUI setup flow.
+    """
+    validate_environment()
+    try:
+        asyncio.run(warm_up_llm(show_model_warning=args.non_interactive))
+    except ProviderCredentialRejectedError as exc:
+        if _enter_setup_for_rejected_saved_key(args, exc):
+            return
+        _print_model_connection_error(exc, exc.model_name)
+        sys.exit(1)
+    except ModelConnectionError as exc:
+        _print_model_connection_error(exc, exc.model_name)
+        sys.exit(1)
+    persist_current()
+    try:
+        prepare_run(args)
+    except ValueError as e:
+        _print_error_panel("SCAN PREPARATION FAILED", str(e))
+        sys.exit(1)
+    telemetry_start(args)
+
+
 def main() -> None:
     configure_dependency_logging()
 
@@ -975,30 +1031,13 @@ def main() -> None:
 
     args = parse_arguments()
 
-    if getattr(args, "tui_protocol_smoke", False):
+    if args.tui_protocol_smoke:
         from strix.interface.tui.runtime import run_tui_protocol_smoke
 
         asyncio.run(run_tui_protocol_smoke(args))
         return
 
-    if not args.non_interactive and not args.resume and not args.needs_setup:
-        model = (load_settings().llm.model or "").strip()
-        if not model:
-            args.needs_setup = True
-        else:
-            provider = provider_for_model(model)
-            auth_status = provider_auth_status(provider) if provider is not None else None
-            rejected_environment_key = bool(
-                provider
-                and auth_status
-                and auth_status.state is ProviderAuthState.INVALID
-                and provider_credential_source(provider) == "env"
-            )
-            if auth_status is None or (not auth_status.ready and not rejected_environment_key):
-                args.needs_setup = True
-                if provider and auth_status and auth_status.state is ProviderAuthState.INVALID:
-                    args.setup_invalid_provider = provider
-                    args.setup_guidance = auth_status.detail
+    _detect_provider_setup_need(args)
 
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
@@ -1009,35 +1048,10 @@ def main() -> None:
     check_docker_installed()
     pull_docker_image()
 
-    setup_mode = getattr(args, "needs_setup", False)
-
-    if not setup_mode:
-        validate_environment()
-        try:
-            asyncio.run(warm_up_llm(show_model_warning=args.non_interactive))
-        except ProviderCredentialRejectedError as exc:
-            if _enter_setup_for_rejected_saved_key(args, exc):
-                setup_mode = True
-            else:
-                _print_model_connection_error(exc, exc.model_name)
-                sys.exit(1)
-        except ModelConnectionError as exc:
-            _print_model_connection_error(exc, exc.model_name)
-            sys.exit(1)
-        if not setup_mode:
-            persist_current()
-
-    if not setup_mode:
-        try:
-            prepare_run(args)
-        except ValueError as e:
-            _print_error_panel("SCAN PREPARATION FAILED", str(e))
-            sys.exit(1)
-        telemetry_start(args)
-    else:
-        # Setup mode: the TUI collects the target via slash commands, then calls
-        # prepare_run()/warm-up/telemetry itself once the user runs /start.
-        args.run_name = None
+    # In setup mode the TUI collects the target via slash commands, then runs
+    # prepare_run()/warm-up/telemetry itself once the user calls /start.
+    if not args.needs_setup:
+        _bootstrap_scan(args)
 
     from strix.report.state import get_global_report_state
 
@@ -1071,7 +1085,7 @@ def main() -> None:
             posthog.end(report_state, exit_reason=exit_reason)
             scarf.end(report_state, exit_reason=exit_reason)
 
-    if not getattr(args, "run_name", None):
+    if not args.run_name:
         # Setup mode where the user quit before starting a scan: nothing ran.
         return
 

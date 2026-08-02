@@ -19,6 +19,7 @@ from strix.config import (
     clear_provider_credentials_invalid,
     provider_auth_status,
 )
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui.runtime import GoTuiRuntime
 
@@ -26,8 +27,18 @@ from strix.interface.tui.runtime import GoTuiRuntime
 def args() -> argparse.Namespace:
     return argparse.Namespace(
         needs_setup=True,
+        setup_invalid_provider=None,
+        setup_guidance=None,
         targets_info=[],
         instruction=None,
+        scan_mode="deep",
+        max_budget_usd=None,
+        max_turns=DEFAULT_MAX_TURNS,
+        scope_mode="auto",
+        diff_base=None,
+        local_sources=[],
+        diff_scope={"active": False},
+        user_explicit_instruction=None,
         run_name="test-run",
     )
 
@@ -307,7 +318,6 @@ async def test_setup_preflights_model_before_starting(
     runtime = GoTuiRuntime(runtime_args)
     assert runtime.controller.instruction == "CLI instruction"
     runtime.controller.targets = ["https://example.com", "/workspace/mounted"]
-    runtime.controller.mounts = ["/workspace/mounted"]
     runtime.controller.scan_mode = "quick"
     runtime.controller.instruction = ""
     runtime.controller.max_budget_usd = 8.5

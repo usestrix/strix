@@ -11,6 +11,7 @@ from typing import Any, cast
 import pytest
 
 from strix.config import ProviderModelGroup
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController, _terminal_projection
 from strix.interface.tui.backend.protocol import (
     MAX_COMMAND_BYTES,
@@ -23,7 +24,22 @@ from strix.interface.tui.backend.server import TuiBackendServer
 
 
 def args() -> argparse.Namespace:
-    return argparse.Namespace(needs_setup=True, targets_info=[], instruction=None)
+    return argparse.Namespace(
+        needs_setup=True,
+        setup_invalid_provider=None,
+        setup_guidance=None,
+        targets_info=[],
+        instruction=None,
+        scan_mode="deep",
+        max_budget_usd=None,
+        max_turns=DEFAULT_MAX_TURNS,
+        scope_mode="auto",
+        diff_base=None,
+        local_sources=[],
+        diff_scope={"active": False},
+        user_explicit_instruction=None,
+        run_name=None,
+    )
 
 
 async def send_message(connection: socket.socket, message: dict[str, object]) -> None:

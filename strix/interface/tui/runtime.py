@@ -19,7 +19,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings, provider_authentication_error_message
-from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
@@ -247,13 +246,13 @@ class GoTuiRuntime:
             "targets": self.args.targets_info,
             "user_instructions": self.args.instruction or "",
             "run_name": self.args.run_name,
-            "diff_scope": getattr(self.args, "diff_scope", {"active": False}),
-            "scan_mode": getattr(self.args, "scan_mode", "deep"),
+            "diff_scope": self.args.diff_scope,
+            "scan_mode": self.args.scan_mode,
             "non_interactive": False,
-            "local_sources": getattr(self.args, "local_sources", None) or [],
-            "scope_mode": getattr(self.args, "scope_mode", "auto"),
-            "diff_base": getattr(self.args, "diff_base", None),
-            "resume_instruction": getattr(self.args, "user_explicit_instruction", None) or "",
+            "local_sources": self.args.local_sources or [],
+            "scope_mode": self.args.scope_mode,
+            "diff_base": self.args.diff_base,
+            "resume_instruction": self.args.user_explicit_instruction or "",
         }
         self.report_state = ReportState(self.scan_config["run_name"])
         self.report_state.hydrate_from_run_dir()
@@ -280,7 +279,7 @@ class GoTuiRuntime:
         candidate.diff_base = self.controller.diff_base
         existing_targets = [
             str(target["original"])
-            for target in getattr(candidate, "targets_info", [])
+            for target in candidate.targets_info
             if isinstance(target, dict) and target.get("original")
         ]
         targets_changed = self.controller.targets != existing_targets
@@ -317,11 +316,11 @@ class GoTuiRuntime:
                 scan_config=self.scan_config,
                 scan_id=self.scan_config["run_name"],
                 image=image,
-                local_sources=getattr(self.args, "local_sources", None) or [],
+                local_sources=self.args.local_sources or [],
                 coordinator=self.coordinator,
                 interactive=True,
-                max_turns=getattr(self.args, "max_turns", DEFAULT_MAX_TURNS),
-                max_budget_usd=getattr(self.args, "max_budget_usd", None),
+                max_turns=self.args.max_turns,
+                max_budget_usd=self.args.max_budget_usd,
                 event_sink=self.capture_event,
             )
             await self._sync_agent_state()

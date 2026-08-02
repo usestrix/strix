@@ -16,6 +16,7 @@ from strix.config import (
     read_config_env,
     reset_settings_cache,
 )
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController
 
 
@@ -24,7 +25,22 @@ if TYPE_CHECKING:
 
 
 def args() -> argparse.Namespace:
-    return argparse.Namespace(needs_setup=True, targets_info=[], instruction=None)
+    return argparse.Namespace(
+        needs_setup=True,
+        setup_invalid_provider=None,
+        setup_guidance=None,
+        targets_info=[],
+        instruction=None,
+        scan_mode="deep",
+        max_budget_usd=None,
+        max_turns=DEFAULT_MAX_TURNS,
+        scope_mode="auto",
+        diff_base=None,
+        local_sources=[],
+        diff_scope={"active": False},
+        user_explicit_instruction=None,
+        run_name=None,
+    )
 
 
 @pytest.fixture(autouse=True)
