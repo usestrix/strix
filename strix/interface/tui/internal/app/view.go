@@ -264,8 +264,8 @@ func (m Model) viewInner() string {
 	return m.toastOverlay(main)
 }
 
-// cornerOverlay splices a panel into the bottom-right corner, above where a
-// toast would sit, leaving the rest of the view visible behind it.
+// cornerOverlay splices a panel in directly above the composer, right-aligned
+// with it, leaving the rest of the view visible behind it.
 func (m Model) cornerOverlay(view, panel string) string {
 	if panel == "" {
 		return view
@@ -273,11 +273,20 @@ func (m Model) cornerOverlay(view, panel string) string {
 	fg := strings.Split(panel, "\n")
 	bg := strings.Split(view, "\n")
 	panelWidth := lipgloss.Width(panel)
-	left := max(0, m.width-panelWidth-2)
-	top := max(0, m.height-len(fg)-2)
+	// Right edge of the chat column, so it lines up with the composer rather
+	// than covering the sidebar.
+	_, _, chatWidth, _ := m.layout()
+	left := max(0, min(chatWidth, m.width)-panelWidth)
+	// Bottom row sits just above the composer, clearing the status line so the
+	// scan state and quit hint stay readable.
+	statusH := 0
+	if m.statusVisible() {
+		statusH = 1
+	}
+	top := max(0, m.inputTop()-statusH-len(fg))
 	for row := top; row < min(len(bg), top+len(fg)); row++ {
-		fgLine := fg[row-top]
-		rightStart := left + panelWidth
+		fgLine := ansi.Truncate(fg[row-top], max(0, m.width-left), "")
+		rightStart := left + lipgloss.Width(fgLine)
 		leftPart := padToWidth(ansi.Truncate(bg[row], left, ""), left)
 		rightPart := ""
 		if lipgloss.Width(bg[row]) > rightStart {

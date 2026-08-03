@@ -187,7 +187,7 @@ func (m Model) confirmView(title string, width int, border, titleColor lipgloss.
 // prepared until it is answered, and the directory is a workspace rather than a
 // target, so the prompt is what the scan follows.
 func (m Model) mountConfirmView() string {
-	width := min(52, max(34, m.width-4))
+	width := min(52, max(20, m.width-4))
 	dir := strings.TrimSpace(m.snapshot.PendingMount)
 	if dir == "" {
 		dir = "the current directory"
