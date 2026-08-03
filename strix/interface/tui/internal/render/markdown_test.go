@@ -71,3 +71,33 @@ func TestNonTablePipeLinesAreLeftAlone(t *testing.T) {
 		t.Fatalf("pipe text mangled: %q", ansi.Strip(out))
 	}
 }
+
+func TestInlineFormatKeepsNonEmphasisMarkers(t *testing.T) {
+	literal := []string{
+		"ls *.py *.go",
+		"snake_case_name and other_var_here",
+		"a * b * c",
+		"call obj.__init__ now",
+		"rm -rf /tmp/* /var/*",
+		"5 * 3 = 15",
+	}
+	for _, line := range literal {
+		if got := ansi.Strip(inlineFormat(line)); got != line {
+			t.Fatalf("%q was treated as emphasis: %q", line, got)
+		}
+	}
+}
+
+func TestInlineFormatStillStylesRealEmphasis(t *testing.T) {
+	cases := map[string]string{
+		"this is *italic* text": "this is italic text",
+		"this is **bold** text": "this is bold text",
+		"gone ~~away~~ now":     "gone away now",
+		"use `code` here":       "use code here",
+	}
+	for line, want := range cases {
+		if got := ansi.Strip(inlineFormat(line)); got != want {
+			t.Fatalf("%q: got %q want %q", line, got, want)
+		}
+	}
+}

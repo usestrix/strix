@@ -220,6 +220,57 @@ func tryHeader(line string) *mdHeader {
 	return nil
 }
 
+func isWordByte(b byte) bool {
+	return b == '_' || b >= '0' && b <= '9' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z'
+}
+
+// canOpenEmphasis reports whether an emphasis run starting at i (with the
+// given marker width) follows CommonMark-style flanking rules: it must not
+// sit inside a word and must be followed by a non-space.
+func canOpenEmphasis(line string, i, width int) bool {
+	if i > 0 && isWordByte(line[i-1]) {
+		return false
+	}
+	// Underscores appear inside identifiers far more often than as emphasis,
+	// so they only open at a word boundary.
+	if i > 0 && line[i] == '_' && line[i-1] != ' ' && line[i-1] != '\t' {
+		return false
+	}
+	after := i + width
+	return after < len(line) && line[after] != ' ' && line[after] != '\t'
+}
+
+// canCloseEmphasis reports whether an emphasis run ending at end (marker
+// starts at end) is preceded by a non-space and not followed by a word.
+func canCloseEmphasis(line string, end, width int) bool {
+	if end > 0 && (line[end-1] == ' ' || line[end-1] == '\t') {
+		return false
+	}
+	after := end + width
+	return after >= len(line) || !isWordByte(line[after])
+}
+
+// findEmphasisEnd locates the closing marker for an emphasis span opened at
+// i, honoring the flanking rules; returns -1 when the span should be treated
+// as literal text.
+func findEmphasisEnd(line string, i int, marker string) int {
+	from := i + len(marker)
+	for {
+		end := strings.Index(line[from:], marker)
+		if end == -1 {
+			return -1
+		}
+		end += from
+		if end == i+len(marker) {
+			return -1
+		}
+		if canCloseEmphasis(line, end, len(marker)) {
+			return end
+		}
+		from = end + 1
+	}
+}
+
 // inlineFormat ports _process_inline_formatting.
 func inlineFormat(line string) string {
 	var out strings.Builder
@@ -227,19 +278,21 @@ func inlineFormat(line string) string {
 	for i < n {
 		if i+1 < n && (line[i:i+2] == "**" || line[i:i+2] == "__") {
 			marker := line[i : i+2]
-			if end := strings.Index(line[i+2:], marker); end != -1 {
-				end += i + 2
-				out.WriteString(Bold(Field).Render(line[i+2 : end]))
-				i = end + 2
-				continue
+			if canOpenEmphasis(line, i, 2) {
+				if end := findEmphasisEnd(line, i, marker); end != -1 {
+					out.WriteString(Bold(Field).Render(line[i+2 : end]))
+					i = end + 2
+					continue
+				}
 			}
 		}
 		if i+1 < n && line[i:i+2] == "~~" {
-			if end := strings.Index(line[i+2:], "~~"); end != -1 {
-				end += i + 2
-				out.WriteString(lipgloss.NewStyle().Strikethrough(true).Foreground(Strike).Render(line[i+2 : end]))
-				i = end + 2
-				continue
+			if canOpenEmphasis(line, i, 2) {
+				if end := findEmphasisEnd(line, i, "~~"); end != -1 {
+					out.WriteString(lipgloss.NewStyle().Strikethrough(true).Foreground(Strike).Render(line[i+2 : end]))
+					i = end + 2
+					continue
+				}
 			}
 		}
 		if line[i] == '`' {
@@ -251,15 +304,12 @@ func inlineFormat(line string) string {
 			}
 		}
 		if line[i] == '*' || line[i] == '_' {
-			marker := line[i]
-			if i+1 < n && line[i+1] != marker {
-				if end := strings.IndexByte(line[i+1:], marker); end != -1 {
-					end += i + 1
-					if end+1 >= n || line[end+1] != marker {
-						out.WriteString(lipgloss.NewStyle().Italic(true).Foreground(Mint).Render(line[i+1 : end]))
-						i = end + 1
-						continue
-					}
+			marker := string(line[i])
+			if i+1 < n && line[i+1] != line[i] && canOpenEmphasis(line, i, 1) {
+				if end := findEmphasisEnd(line, i, marker); end != -1 && (end+1 >= n || line[end+1] != line[i]) {
+					out.WriteString(lipgloss.NewStyle().Italic(true).Foreground(Mint).Render(line[i+1 : end]))
+					i = end + 1
+					continue
 				}
 			}
 		}
