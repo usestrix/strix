@@ -35,6 +35,17 @@ def _status_style(code: int | None) -> str:
     return "dim"
 
 
+def _has_result(status: str) -> bool:
+    """True once the tool has returned, whether it succeeded or not.
+
+    ``live_view._tool_status_from_result`` maps a ``{"success": false}``
+    payload to ``"failed"``, and every proxy-tool error payload sets that
+    flag, so gating result rendering on ``"completed"`` alone hides exactly
+    the payloads that carry an ``error``.
+    """
+    return status in {"completed", "failed", "error"}
+
+
 @register_tool_renderer
 class ListRequestsRenderer(BaseToolRenderer):
     tool_name: ClassVar[str] = "list_requests"
@@ -68,7 +79,7 @@ class ListRequestsRenderer(BaseToolRenderer):
         if meta_parts:
             text.append(f"  ({', '.join(meta_parts)})", style="dim")
 
-        if status == "completed" and isinstance(result, dict):
+        if _has_result(status) and isinstance(result, dict):
             if "error" in result:
                 text.append(f"  error: {_sanitize(str(result['error']), 150)}", style="#ef4444")
             else:
@@ -139,7 +150,7 @@ class ViewRequestRenderer(BaseToolRenderer):
         if search_pattern:
             text.append(f"  /{_truncate(search_pattern, 100)}/", style="dim italic")
 
-        if status == "completed" and isinstance(result, dict):
+        if _has_result(status) and isinstance(result, dict):
             if "error" in result:
                 text.append(f"  error: {_sanitize(str(result['error']), 150)}", style="#ef4444")
             elif "hits" in result:
@@ -261,9 +272,18 @@ class RepeatRequestRenderer(BaseToolRenderer):
         elif modifications and isinstance(modifications, str):
             text.append(f"\n  {_truncate(modifications, 200)}", style="dim italic")
 
-        if status == "completed" and isinstance(result, dict):
+        if _has_result(status) and isinstance(result, dict):
             if not result.get("success", True) and result.get("error"):
                 text.append(f"\n  error: {_sanitize(str(result['error']), 150)}", style="#ef4444")
+            elif not result.get("success", True):
+                # A replay that never reached DONE carries no `error`; report the
+                # replay status rather than rendering an empty response as if the
+                # request had come back.
+                replay_status = _sanitize(str(result.get("status") or "unknown"), 40)
+                text.append(
+                    f"\n  replay did not complete: {replay_status}",
+                    style="#ef4444",
+                )
             else:
                 elapsed_ms = result.get("elapsed_ms")
                 response = result.get("response") or {}
@@ -327,7 +347,7 @@ class ListSitemapRenderer(BaseToolRenderer):
         if meta_parts:
             text.append(f"  ({', '.join(meta_parts)})", style="dim")
 
-        if status == "completed" and isinstance(result, dict):
+        if _has_result(status) and isinstance(result, dict):
             if "error" in result:
                 text.append(f"  error: {_sanitize(str(result['error']), 150)}", style="#ef4444")
             else:
@@ -401,7 +421,7 @@ class ViewSitemapEntryRenderer(BaseToolRenderer):
         if entry_id:
             text.append(f" #{_truncate(str(entry_id), 20)}", style="dim")
 
-        if status == "completed" and isinstance(result, dict):
+        if _has_result(status) and isinstance(result, dict):
             if "error" in result:
                 text.append(f"  error: {_sanitize(str(result['error']), 150)}", style="#ef4444")
             elif "entry" in result:
@@ -492,7 +512,7 @@ class ScopeRulesRenderer(BaseToolRenderer):
             if len(denylist) > 4:
                 text.append(f" +{len(denylist) - 4}", style="dim italic")
 
-        if status == "completed" and isinstance(result, dict):
+        if _has_result(status) and isinstance(result, dict):
             if "error" in result:
                 text.append(f"  error: {_sanitize(str(result['error']), 150)}", style="#ef4444")
             elif "scopes" in result:
