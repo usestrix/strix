@@ -87,6 +87,7 @@ const (
 	modalHelp
 	modalQuit
 	modalStop
+	modalConfirmMount
 	modalVulnerability
 )
 
@@ -144,6 +145,7 @@ type Model struct {
 	blockCache             map[string]renderedBlock
 	eventSpans             []eventSpan
 	setupLog               []string
+	pendingPrompt          string
 	errorText              string
 	fatalError             error
 	selectedAgent          int

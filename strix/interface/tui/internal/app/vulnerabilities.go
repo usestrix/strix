@@ -166,6 +166,8 @@ func (m Model) modalView() string {
 		}
 		// #stop_agent_dialog: width 30, border round #a3a3a3, title #a3a3a3.
 		return m.confirmView("🛑 Stop '"+name+"'?", 30, mid, mid)
+	case modalConfirmMount:
+		return m.mountConfirmView()
 	case modalVulnerability:
 		if len(m.snapshot.Vulnerabilities) == 0 {
 			return ""
@@ -176,17 +178,50 @@ func (m Model) modalView() string {
 }
 
 func (m Model) confirmView(title string, width int, border, titleColor lipgloss.Color) string {
-	// Yes = error variant (#ef4444), No = default variant (#737373); the focused
-	// button fills its background (#ef4444 / #363636) with white text.
-	yes := lipgloss.NewStyle().Foreground(red).Bold(true).Render("Yes")
-	no := lipgloss.NewStyle().Foreground(dim).Bold(true).Render("No")
-	if m.modalChoice == 0 {
-		yes = lipgloss.NewStyle().Background(red).Foreground(brightWhite).Bold(true).Render(" Yes ")
+	return m.confirmDialog(title, "", width, border, titleColor, red, "Yes", "No")
+}
+
+// mountConfirmView asks before a target-less launch mounts the working
+// directory. Nothing local reaches the sandbox until this is confirmed, so the
+// dialog names the exact directory and says what mounting it means. The
+// directory is a workspace, not a target - the prompt drives the scan.
+func (m Model) mountConfirmView() string {
+	width := min(64, max(40, m.width-8))
+	dir := strings.TrimSpace(m.snapshot.WorkingDir)
+	body := render.Dim().Render("No target set. The agent will work in:")
+	if dir == "" {
+		body += "\n\n" + render.Col(white).Render("the current directory")
 	} else {
-		no = lipgloss.NewStyle().Background(lipgloss.Color("#363636")).Foreground(brightWhite).Bold(true).Render(" No ")
+		body += "\n\n" + render.Col(white).Render(wrapBlock(dir, width-4))
 	}
-	content := lipgloss.NewStyle().Bold(true).Foreground(titleColor).Width(width-4).Align(lipgloss.Center).Render(title) +
-		"\n\n" + lipgloss.NewStyle().Width(width-4).Align(lipgloss.Center).Render(yes+"     "+no)
+	body += "\n\n" + render.Dim().Render("Mounted into the sandbox, live and writable.") +
+		"\n" + render.Dim().Render("Your prompt is what the scan follows.")
+	return m.confirmDialog("△ Work in this directory?", body, width, amber, amber, amber, "Confirm", "Cancel")
+}
+
+// confirmDialog renders a two-button prompt. The focused button fills its
+// background; body is optional detail shown between the title and the buttons.
+func (m Model) confirmDialog(
+	title, body string,
+	width int,
+	border, titleColor, confirmColor lipgloss.Color,
+	confirmLabel, cancelLabel string,
+) string {
+	// The affirmative takes the accent color, the cancel the default variant
+	// (#737373); the focused button fills its background with white text.
+	yes := lipgloss.NewStyle().Foreground(confirmColor).Bold(true).Render(confirmLabel)
+	no := lipgloss.NewStyle().Foreground(dim).Bold(true).Render(cancelLabel)
+	if m.modalChoice == 0 {
+		yes = lipgloss.NewStyle().Background(confirmColor).Foreground(brightWhite).Bold(true).Render(" " + confirmLabel + " ")
+	} else {
+		no = lipgloss.NewStyle().Background(lipgloss.Color("#363636")).Foreground(brightWhite).Bold(true).Render(" " + cancelLabel + " ")
+	}
+	inner := lipgloss.NewStyle().Width(width - 4)
+	content := inner.Bold(true).Foreground(titleColor).Align(lipgloss.Center).Render(title)
+	if body != "" {
+		content += "\n\n" + inner.Render(body)
+	}
+	content += "\n\n" + inner.Align(lipgloss.Center).Render(yes+"     "+no)
 	return lipgloss.NewStyle().Width(width).Border(lipgloss.RoundedBorder()).BorderForeground(border).Background(black).Padding(1).Render(content)
 }
 

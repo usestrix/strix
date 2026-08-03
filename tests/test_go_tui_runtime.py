@@ -330,7 +330,7 @@ async def test_setup_preflights_model_before_starting(
     )
     monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
 
-    def build(candidate: argparse.Namespace) -> None:
+    def build(candidate: argparse.Namespace, **_: object) -> None:
         calls.append("targets")
         assert candidate.target == ["https://example.com", "/workspace/mounted"]
         candidate.targets_info = [
@@ -378,7 +378,7 @@ async def test_optimistic_setup_skips_model_preflight(
     runtime.controller.targets = [str(Path.cwd())]
     calls: list[str] = []
 
-    async def preflight(model: str) -> None:
+    async def preflight(_model: str) -> None:
         calls.append("preflight")
 
     monkeypatch.setattr(
@@ -387,8 +387,8 @@ async def test_optimistic_setup_skips_model_preflight(
         lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
     )
     monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(go_tui, "build_targets_info", lambda candidate: calls.append("targets"))
-    monkeypatch.setattr(go_tui, "prepare_run", lambda candidate: calls.append("prepare"))
+    monkeypatch.setattr(go_tui, "build_targets_info", lambda _args, **_kw: calls.append("targets"))
+    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: calls.append("prepare"))
     monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
     monkeypatch.setattr(runtime, "init_run_state", lambda: calls.append("state"))
     monkeypatch.setattr(runtime, "start_scan", lambda: calls.append("scan"))
@@ -399,6 +399,40 @@ async def test_optimistic_setup_skips_model_preflight(
     # surfaces once the agent runs.
     assert "preflight" not in calls
     assert calls == ["targets", "prepare", "telemetry", "state", "scan"]
+
+
+@pytest.mark.asyncio
+async def test_confirmed_target_less_launch_mounts_workspace_without_targets(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The working directory reaches the run as a workspace, never as a target."""
+    runtime = GoTuiRuntime(args())
+    runtime.controller.workspace_mount = str(Path.home())
+    prepared: list[argparse.Namespace] = []
+
+    async def preflight(_model: str) -> None:
+        return None
+
+    monkeypatch.setattr(
+        go_tui,
+        "load_settings",
+        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
+    )
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(
+        go_tui,
+        "build_targets_info",
+        lambda _args, **_kw: pytest.fail("a target-less launch must not build targets"),
+    )
+    monkeypatch.setattr(go_tui, "prepare_run", prepared.append)
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
+    monkeypatch.setattr(runtime, "init_run_state", lambda: None)
+    monkeypatch.setattr(runtime, "start_scan", lambda: None)
+
+    await runtime.start_from_setup(verify=False)
+
+    assert prepared[0].workspace_mount == str(Path.home())
+    assert prepared[0].targets_info == []
 
 
 @pytest.mark.asyncio
@@ -430,7 +464,7 @@ async def test_setup_preserves_prepared_cli_targets(
     monkeypatch.setattr(
         go_tui,
         "build_targets_info",
-        lambda _args: pytest.fail("prepared targets should not be rebuilt"),
+        lambda _args, **_kw: pytest.fail("prepared targets should not be rebuilt"),
     )
     monkeypatch.setattr(go_tui, "prepare_run", lambda _args: calls.append("prepare"))
     monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
@@ -464,7 +498,7 @@ async def test_setup_target_change_preserves_local_targets(
     async def preflight(_model: str) -> None:
         return None
 
-    def build(target_args: argparse.Namespace) -> None:
+    def build(target_args: argparse.Namespace, **_: object) -> None:
         assert target_args.target == ["/workspace/source", "https://example.com"]
         target_args.targets_info = [
             {
@@ -526,7 +560,7 @@ async def test_setup_same_basename_uses_combined_workspace_names_on_retry(
     async def preflight(_model: str) -> None:
         return None
 
-    def build(target_args: argparse.Namespace) -> None:
+    def build(target_args: argparse.Namespace, **_: object) -> None:
         assert target_args.target == [existing_repo, added_repo]
         target_args.targets_info = [
             {
@@ -614,7 +648,7 @@ async def test_setup_target_rebuild_restores_all_target_fields_on_failure(
     async def preflight(_model: str) -> None:
         return None
 
-    def fail_rebuild(target_args: argparse.Namespace) -> None:
+    def fail_rebuild(target_args: argparse.Namespace, **_: object) -> None:
         target_args.target = ["mutated"]
         target_args.target_list = ["mutated.txt"]
         target_args.targets_info = [{"original": "partial"}]

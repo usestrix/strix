@@ -114,6 +114,11 @@ class TuiController:
         self.scope_mode = requested_scope if requested_scope in SCOPE_MODES else "auto"
         raw_diff_base = args.diff_base
         self.diff_base = raw_diff_base.strip() if isinstance(raw_diff_base, str) else None
+        # Host directory mounted for the agent to work in when the scan has no
+        # target, set only once the user confirms it. It is a workspace, not a
+        # target: it carries no scan scope, and the instruction is the only
+        # source of truth for what to do.
+        self.workspace_mount: str | None = None
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
         self._model_listings: dict[str, ModelListing] = {}
@@ -213,6 +218,7 @@ class TuiController:
                 terminal_projection(target, max_string=128) for target in self.targets[:16]
             ],
             "target_count": len(self.targets),
+            "working_dir": str(Path.cwd()),
             "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
             "max_budget_usd": self.max_budget_usd,
@@ -668,6 +674,11 @@ class TuiController:
         verify = payload.get("verify", True)
         if not isinstance(verify, bool):
             raise TypeError("verify must be a boolean")
+        # Launching with no target mounts the working directory, so it requires
+        # the user's explicit confirmation rather than happening silently.
+        mount_working_dir = payload.get("mount_working_dir", False)
+        if not isinstance(mount_working_dir, bool):
+            raise TypeError("mount_working_dir must be a boolean")
         model = (load_settings().llm.model or "").strip()
         if not model:
             raise ValueError("No model configured. Select a provider and model first.")
@@ -675,8 +686,12 @@ class TuiController:
         if not (await asyncio.to_thread(provider_auth_status, provider)).ready:
             raise ValueError(f"Provider '{provider}' is not configured")
         if not self.targets:
-            # With no target, scan the current working directory.
-            self.targets.append(str(Path.cwd()))
+            if not mount_working_dir:
+                raise ValueError("No target set. Add a target first.")
+            # Confirmed: mount the working directory so the agent has files to
+            # work in. It stays out of the target list, so the scan has no
+            # target and the instruction alone drives it.
+            self.workspace_mount = str(Path.cwd())
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
         self._start_in_progress = True

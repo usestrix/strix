@@ -85,6 +85,8 @@ class GoTuiRuntime:
             "scope_mode": self.args.scope_mode,
             "diff_base": self.args.diff_base,
             "resume_instruction": self.args.user_explicit_instruction or "",
+            "workspace_mount": getattr(self.args, "workspace_mount", None) or "",
+            "workspace_subdir": getattr(self.args, "workspace_subdir", None) or "",
         }
         self.report_state = ReportState(self.scan_config["run_name"])
         self.report_state.hydrate_from_run_dir()
@@ -128,6 +130,9 @@ class GoTuiRuntime:
                 if message is None:
                     message = f"Model connection failed: {exc}"
                 raise RuntimeError(message) from exc
+        # A confirmed target-less launch mounts the working directory for the
+        # agent to work in, without making it a scan target.
+        candidate.workspace_mount = self.controller.workspace_mount
         if targets_changed:
             # Rebuild the full typed set so path canonicalization and local
             # deduplication match the CLI.

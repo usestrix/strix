@@ -168,8 +168,15 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 		m.setupMsg("Cleared all targets.", render.Dim())
 		return m, send(m.client, "setup.clear_targets", map[string]any{})
 	case "/start", "/run":
+		// With no target the scan would mount the working directory; confirm
+		// that first, exactly as a bare prompt does.
+		if len(m.snapshot.Targets) == 0 {
+			m.pendingPrompt = ""
+			m.openModal(modalConfirmMount)
+			return m, nil
+		}
 		m.setupMsg("Verifying model connection...", render.Col(amber))
-		return m, send(m.client, "setup.start", map[string]any{})
+		return m, send(m.client, "setup.start", map[string]any{"verify": true})
 	default:
 		m.setupMsg("Unknown command '"+command+"'. Type /help.", render.Col(red))
 		return m, nil
@@ -192,22 +199,53 @@ func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 		targets++
 		commands = append(commands, send(m.client, "setup.add_target", map[string]any{"target": token}))
 	}
+	// With no target at all the scan would mount the working directory, so ask
+	// before doing that rather than mounting it silently.
+	if targets == 0 && len(m.snapshot.Targets) == 0 {
+		m.pendingPrompt = value
+		m.openModal(modalConfirmMount)
+		return *m, nil
+	}
 	if len(fields) > targets {
 		commands = append(commands, send(m.client, "setup.set_instruction", map[string]any{"instruction": value}))
 	}
-	// With a target, verify the model connection before the scan commits to it.
-	// A bare prompt launches optimistically, like a coding agent, and surfaces
-	// any model error live.
-	verify := targets > 0 || len(m.snapshot.Targets) > 0
-	if verify {
-		m.setupMsg("Verifying model connection...", render.Col(amber))
-	}
-	commands = append(commands, send(m.client, "setup.start", map[string]any{"verify": verify}))
+	// A named target verifies the model connection before the scan commits to
+	// it; see launchCommands for the confirmed target-less case.
+	m.setupMsg("Verifying model connection...", render.Col(amber))
+	commands = append(commands, send(m.client, "setup.start", map[string]any{"verify": true}))
 	// Ordered, not batched: setup.start leaves setup mode, so it must be the
 	// last command to reach the backend. Batched sends race, and once the
 	// preflight is skipped setup.start wins, making the target and instruction
 	// commands land after the guard closes and fail with a red error.
 	return *m, tea.Sequence(commands...)
+}
+
+// launchWorkingDir starts the scan against the working directory once the user
+// has confirmed mounting it. A bare prompt launches optimistically, like a
+// coding agent: no model preflight, so any model error surfaces live.
+func (m *Model) launchWorkingDir() tea.Cmd {
+	var commands []tea.Cmd
+	if prompt := strings.TrimSpace(m.pendingPrompt); prompt != "" {
+		commands = append(commands, send(m.client, "setup.set_instruction", map[string]any{"instruction": prompt}))
+	}
+	m.pendingPrompt = ""
+	commands = append(commands, send(m.client, "setup.start", map[string]any{
+		"verify": false, "mount_working_dir": true,
+	}))
+	// Ordered so setup.start cannot close the setup guard before the
+	// instruction lands.
+	return tea.Sequence(commands...)
+}
+
+// restorePendingPrompt puts a prompt back in the composer after the mount
+// confirmation is declined, so it can be edited or given a target instead.
+func (m *Model) restorePendingPrompt() {
+	if m.pendingPrompt == "" {
+		return
+	}
+	m.input.SetValue(m.pendingPrompt)
+	m.pendingPrompt = ""
+	m.resizeViewport()
 }
 
 func (m Model) hasTarget(candidate string) bool {

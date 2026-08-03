@@ -28,6 +28,7 @@ from strix.interface.utils import (
     clone_repository,
     collect_local_sources,
     dedupe_local_targets,
+    derive_local_base_name,
     generate_run_name,
     infer_target_type,
     is_whitebox_scan,
@@ -220,7 +221,31 @@ def prepare_run(args: argparse.Namespace) -> None:
         else:
             args.instruction = diff_scope.instruction_block
 
+    _attach_workspace_mount(args)
     _persist_run_record(args)
+
+
+def _attach_workspace_mount(args: argparse.Namespace) -> None:
+    """Expose ``args.workspace_mount`` to the sandbox without making it a target.
+
+    A workspace mount is a directory the agent works in, not something to test:
+    it stays out of ``targets_info``, so it carries no authorized scope, and it
+    is attached after diff-scope resolution so it contributes no diff context.
+    The instruction is the only source of truth for what to do with it.
+    """
+    mount = getattr(args, "workspace_mount", None)
+    if not mount:
+        return
+    args.workspace_subdir = derive_local_base_name(mount)
+    local_sources = list(getattr(args, "local_sources", None) or [])
+    local_sources.append(
+        {
+            "source_path": mount,
+            "workspace_subdir": args.workspace_subdir,
+            "protect_metadata": True,
+        }
+    )
+    args.local_sources = local_sources
 
 
 def telemetry_start(args: argparse.Namespace) -> None:

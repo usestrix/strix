@@ -4,9 +4,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/usestrix/strix/tui/internal/protocol"
 )
 
@@ -120,35 +122,111 @@ func contains(values []string, want string) bool {
 	return false
 }
 
-// A bare prompt with no target still launches: the whole prompt becomes the
-// instruction and the scan starts. The backend defaults the target to the
-// current directory, like any coding agent.
-func TestSetupPromptWithoutTargetLaunches(t *testing.T) {
+// startPayloadFlag reports a boolean field on the setup.start command.
+func startPayloadFlag(t *testing.T, envelopes []protocol.Envelope, field string) (value, found bool) {
+	t.Helper()
+	for _, envelope := range envelopes {
+		if envelope.Type != "setup.start" {
+			continue
+		}
+		var payload map[string]any
+		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		flag, ok := payload[field].(bool)
+		return flag, ok
+	}
+	return false, false
+}
+
+// A bare prompt would mount the working directory, so it asks first instead of
+// launching. Nothing is sent until the user confirms.
+func TestSetupPromptWithoutTargetAsksBeforeMounting(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
-	model.snapshot = protocol.Snapshot{SetupMode: true}
+	model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
 
-	_, cmd := model.submit("find auth bugs in the login flow")
+	updated, cmd := model.submit("find auth bugs in the login flow")
+	model = updated.(Model)
+
+	if model.modal != modalConfirmMount {
+		t.Fatalf("bare prompt did not open the mount confirmation: modal=%v", model.modal)
+	}
+	if model.modalChoice != 1 {
+		t.Fatalf("consent prompt should default to declining, got choice %d", model.modalChoice)
+	}
+	if types := commandTypes(drainCommands(t, cmd, connection)); len(types) != 0 {
+		t.Fatalf("nothing should be sent before consent, got %v", types)
+	}
+	if model.pendingPrompt != "find auth bugs in the login flow" {
+		t.Fatalf("prompt was not held for the confirmation: %q", model.pendingPrompt)
+	}
+	// The dialog has to name the directory being mounted.
+	if view := ansi.Strip(model.mountConfirmView()); !strings.Contains(view, "/Users/me/code/api") {
+		t.Fatalf("confirmation does not name the directory: %s", view)
+	}
+}
+
+// Confirming mounts the working directory: the prompt becomes the instruction
+// and the scan launches optimistically with consent recorded.
+func TestMountConfirmationLaunches(t *testing.T) {
+	connection := &recordingConn{}
+	model := New(&Client{conn: connection})
+	model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
+
+	updated, _ := model.submit("find auth bugs in the login flow")
+	model = updated.(Model)
+	model.modalChoice = 0 // Confirm
+	updated, cmd := model.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
+	model = updated.(Model)
+
 	envelopes := drainCommands(t, cmd, connection)
 	types := commandTypes(envelopes)
-
-	if !contains(types, "setup.set_instruction") {
-		t.Fatalf("prompt was not set as the instruction: %v", types)
+	if !contains(types, "setup.set_instruction") || !contains(types, "setup.start") {
+		t.Fatalf("confirmation did not launch: %v", types)
 	}
-	if !contains(types, "setup.start") {
-		t.Fatalf("prompt without a target did not launch: %v", types)
-	}
-	if contains(types, "setup.add_target") {
-		t.Fatalf("a plain prompt should not add a target: %v", types)
+	if mount, found := startPayloadFlag(t, envelopes, "mount_working_dir"); !found || !mount {
+		t.Fatalf("consent was not sent: mount_working_dir=%v found=%v", mount, found)
 	}
 	// A bare prompt launches optimistically: no model preflight.
 	if verify, found := startVerify(t, envelopes); !found || verify {
 		t.Fatalf("bare prompt should launch with verify=false, got verify=%v found=%v", verify, found)
 	}
-	// setup.start leaves setup mode, so it must be the last command sent;
-	// otherwise the instruction lands after the guard closes and errors.
+	// setup.start leaves setup mode, so it must be the last command sent.
 	if start, instr := firstIndex(types, "setup.start"), lastIndex(types, "setup.set_instruction"); start < instr {
 		t.Fatalf("setup.start (%d) must come after setup.set_instruction (%d): %v", start, instr, types)
+	}
+	if model.modal != modalNone {
+		t.Fatalf("modal stayed open after confirming: %v", model.modal)
+	}
+}
+
+// Declining sends nothing and puts the prompt back so a target can be added.
+func TestMountConfirmationDeclineRestoresPrompt(t *testing.T) {
+	for _, decline := range []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyEnter}} {
+		connection := &recordingConn{}
+		model := New(&Client{conn: connection})
+		model.width, model.height = 130, 40
+		model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
+
+		updated, _ := model.submit("find auth bugs in the login flow")
+		model = updated.(Model)
+		// KeyEnter here lands on the default choice, which is Cancel.
+		updated, cmd := model.updateModal(decline)
+		model = updated.(Model)
+
+		if types := commandTypes(drainCommands(t, cmd, connection)); len(types) != 0 {
+			t.Fatalf("%v: declining should send nothing, got %v", decline.Type, types)
+		}
+		if model.modal != modalNone {
+			t.Fatalf("%v: modal stayed open after declining", decline.Type)
+		}
+		if got := model.input.Value(); got != "find auth bugs in the login flow" {
+			t.Fatalf("%v: prompt was not restored, got %q", decline.Type, got)
+		}
+		if model.pendingPrompt != "" {
+			t.Fatalf("%v: pending prompt was not cleared: %q", decline.Type, model.pendingPrompt)
+		}
 	}
 }
 

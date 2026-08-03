@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from strix.interface.scan_setup import _attach_workspace_mount
 from strix.interface.utils import (
     check_mountable_dir,
     collect_local_sources,
@@ -14,6 +16,7 @@ from strix.interface.utils import (
     infer_target_type,
     read_target_list_file,
 )
+from strix.runtime.session_manager import build_bind_mounts
 
 
 def _local_target(target_path: str) -> dict[str, Any]:
@@ -64,6 +67,55 @@ def test_check_mountable_dir_rejects_home(tmp_path: Path, monkeypatch: pytest.Mo
 
     with pytest.raises(ValueError, match="Refusing to mount"):
         check_mountable_dir(home)
+
+
+def test_infer_target_type_guards_sensitive_dirs_by_default(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+
+    with pytest.raises(ValueError, match="Refusing to mount"):
+        infer_target_type(str(home))
+
+
+def test_workspace_mount_is_mounted_without_becoming_a_target(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A workspace mount reaches the sandbox but carries no target semantics.
+
+    It is the directory the agent works in, so it is exempt from the guard that
+    refuses home directories for scan targets, and it never enters targets_info.
+    """
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+    args = argparse.Namespace(targets_info=[], local_sources=[], workspace_mount=str(home))
+
+    _attach_workspace_mount(args)
+
+    assert args.targets_info == []
+    assert args.local_sources == [
+        {
+            "source_path": str(home),
+            "workspace_subdir": args.workspace_subdir,
+            "protect_metadata": True,
+        }
+    ]
+    # It is a real bind mount, so the sandbox exposes it under /workspace.
+    assert build_bind_mounts(args.local_sources)[0]["target"] == (
+        f"/workspace/{args.workspace_subdir}"
+    )
+
+
+def test_workspace_mount_absent_leaves_local_sources_alone() -> None:
+    args = argparse.Namespace(targets_info=[], local_sources=[], workspace_mount=None)
+
+    _attach_workspace_mount(args)
+
+    assert args.local_sources == []
 
 
 def test_check_mountable_dir_rejects_system_root() -> None:

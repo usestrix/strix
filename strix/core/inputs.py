@@ -75,6 +75,23 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             parts.append(f"\n\n{label}:")
             parts.extend(items)
 
+    # A workspace mount is a directory to work in, not an asset to test. It is
+    # listed apart from the targets so it never reads as scope.
+    if workspace_mount := scan_config.get("workspace_mount") or "":
+        subdir = scan_config.get("workspace_subdir") or ""
+        workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
+        parts.append("\n\nWorking Directory:")
+        parts.append(
+            f"- {workspace_mount} (available at: {workspace_path}; "
+            "this is the user's real directory, mounted live and writable — "
+            ".git/.agents/.codex are read-only)"
+        )
+        parts.append(
+            "- No scan target was set. This directory is where you work, not a "
+            "target to assess: the instructions below are the only source of "
+            "truth for what to do."
+        )
+
     if diff_scope.get("active"):
         parts.append("\n\nScope Constraints:")
         parts.append(

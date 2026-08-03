@@ -249,7 +249,7 @@ def test_setup_restores_prepared_cli_targets() -> None:
 async def test_start_validates_model_before_callback() -> None:
     started = False
 
-    async def start(verify: bool = True) -> None:
+    async def start(_verify: bool = True) -> None:
         nonlocal started
         started = True
 
@@ -264,7 +264,7 @@ async def test_start_validates_model_before_callback() -> None:
 async def test_start_resolves_routed_model_provider() -> None:
     started = False
 
-    async def start(verify: bool = True) -> None:
+    async def start(_verify: bool = True) -> None:
         nonlocal started
         started = True
 
@@ -281,7 +281,28 @@ async def test_start_resolves_routed_model_provider() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_without_target_defaults_to_current_directory() -> None:
+async def test_start_without_target_requires_mount_consent() -> None:
+    started = False
+
+    async def start(_verify: bool = True) -> None:
+        nonlocal started
+        started = True
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    reset_settings_cache()
+    controller = TuiController(args(), on_start=start)
+
+    # Mounting the working directory is never silent.
+    with pytest.raises(ValueError, match="No target set"):
+        await controller.handle("setup.start", {"verify": False})
+    assert started is False
+    assert controller.targets == []
+    assert controller.workspace_mount is None
+
+
+@pytest.mark.asyncio
+async def test_start_mounts_working_directory_without_making_it_a_target() -> None:
     started = False
     seen_verify: bool | None = None
 
@@ -295,13 +316,25 @@ async def test_start_without_target_defaults_to_current_directory() -> None:
     reset_settings_cache()
     controller = TuiController(args(), on_start=start)
 
-    # A bare prompt launches optimistically: no target, and verify is off.
-    result = await controller.handle("setup.start", {"verify": False})
+    # Confirmed bare prompt: mounts the working directory, and launches
+    # optimistically with no model preflight.
+    result = await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
 
     assert result == {"started": True}
     assert started is True
     assert seen_verify is False
-    assert controller.targets == [str(Path.cwd())]
+    # Mounted as a workspace, so the scan genuinely has no target and the
+    # instruction is the only source of truth.
+    assert controller.workspace_mount == str(Path.cwd())
+    assert controller.targets == []
+    assert controller.snapshot()["targets"] == []
+    assert controller.snapshot()["target_count"] == 0
+
+
+def test_snapshot_exposes_working_directory() -> None:
+    controller = TuiController(args())
+
+    assert controller.snapshot()["working_dir"] == str(Path.cwd())
 
 
 @pytest.mark.asyncio
@@ -329,7 +362,7 @@ async def test_start_rejects_concurrent_and_repeated_submissions() -> None:
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def start(verify: bool = True) -> None:
+    async def start(_verify: bool = True) -> None:
         entered.set()
         await release.wait()
 
