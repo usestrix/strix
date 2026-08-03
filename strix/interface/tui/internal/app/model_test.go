@@ -298,7 +298,7 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 	state := protocol.Snapshot{
 		SetupMode:    true,
 		ScanState:    "setup",
-		Model:        "openai/gpt-5.4",
+		Model:        "gpt-5.4",
 		Targets:      []string{"/workspace/source", "https://example.com"},
 		Instruction:  "focus on access control",
 		ScanMode:     "quick",
@@ -312,7 +312,7 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 
 	view := model.View()
 	for _, want := range []string{
-		"openai/gpt-5.4",
+		"gpt-5.4",
 		"/workspace/source",
 		"https://example.com",
 	} {

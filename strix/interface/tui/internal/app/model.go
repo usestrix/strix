@@ -184,7 +184,6 @@ type modelPickerOption struct {
 var (
 	green       = lipgloss.Color("#22c55e")
 	brightGreen = lipgloss.Color("#4ade80")
-	deepGreen   = lipgloss.Color("#166534")
 	blue        = lipgloss.Color("#3b82f6")
 	lightBlue   = lipgloss.Color("#60a5fa")
 	red         = lipgloss.Color("#ef4444")

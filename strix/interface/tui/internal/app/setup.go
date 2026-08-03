@@ -415,7 +415,7 @@ func (m Model) setupLayout() (contentWidth, historyHeight int) {
 func (m Model) setupGeometry() (contentWidth, historyHeight, menuRows int) {
 	contentWidth = min(64, max(24, m.width-8))
 	logoHeight := strings.Count(m.setupLogoView(contentWidth), "\n") + 1
-	composerHeight := m.input.Height() + 3 // meta row, blank line and the bar
+	composerHeight := lipgloss.Height(m.setupComposer(contentWidth))
 	menuRows = m.commandMenuHeight()
 	// Sections are separated by a blank line; the hint row closes the column.
 	fixed := logoHeight + 1 + composerHeight + 2
@@ -434,14 +434,16 @@ func (m Model) setupLogHeight() int { return min(len(m.setupLog), 8) }
 func (m Model) setupLogoView(width int) string {
 	if m.height < 20 {
 		return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).
-			Render(lipgloss.NewStyle().Bold(true).Foreground(brightGreen).Render("STRIX"))
+			Render(lipgloss.NewStyle().Bold(true).Foreground(brightWhite).Render("STRIX"))
 	}
 	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(shadedBanner())
 }
 
 var shadedBannerOnce = sync.OnceValue(func() string {
-	glyph := lipgloss.NewStyle().Bold(true).Foreground(brightGreen)
-	bevel := lipgloss.NewStyle().Foreground(deepGreen)
+	// Two-tone pixel wordmark, the way opencode shades its home logo: the
+	// left half recessed, the right half bright, everything else dropped.
+	shade := lipgloss.NewStyle().Foreground(dim)
+	bright := lipgloss.NewStyle().Bold(true).Foreground(brightWhite)
 	lines := strings.Split(banner, "\n")
 	block := 0
 	for _, line := range lines {
@@ -453,36 +455,54 @@ var shadedBannerOnce = sync.OnceValue(func() string {
 			b.WriteString("\n")
 		}
 		line += strings.Repeat(" ", block-lipgloss.Width(line))
-		for _, char := range line {
-			switch char {
-			case ' ':
-				b.WriteString(" ")
-			case '█':
-				b.WriteString(glyph.Render("█"))
-			default:
-				b.WriteString(bevel.Render(string(char)))
+		var shaded, lit strings.Builder
+		for column, char := range []rune(line) {
+			cell := " "
+			if char == '█' {
+				cell = "█"
+			}
+			if column < block/2 {
+				shaded.WriteString(cell)
+			} else {
+				lit.WriteString(cell)
 			}
 		}
+		b.WriteString(shade.Render(shaded.String()))
+		b.WriteString(bright.Render(strings.TrimRight(lit.String(), " ")))
 	}
 	return b.String()
 })
 
 func shadedBanner() string { return shadedBannerOnce() }
 
-// setupComposer draws the input the way opencode draws its prompt: no box, a
-// single accent bar down the left edge and the scan settings underneath.
+// setupComposer draws the input the way opencode draws its prompt: a raised
+// panel with an accent bar down the left edge and the scan meta underneath.
 func (m Model) setupComposer(width int) string {
-	bar := dark
+	bar := render.Col(dark).Render("▎")
 	if m.focus == focusInput {
-		bar = green
+		bar = render.Col(green).Render("▎")
 	}
-	body := m.input.View() + "\n\n" + m.setupSummaryView(max(8, width-4))
-	composer := lipgloss.NewStyle().
-		Border(lipgloss.Border{Left: "▎"}, false, false, false, true).
-		BorderForeground(bar).
-		Width(width - 1).PaddingLeft(1).PaddingRight(1).
-		Render(body)
-	return composer + "\n" + lipgloss.NewStyle().Foreground(bar).Width(width).Render("╹")
+	content := m.input.View() + "\n\n" + m.setupSummaryView(max(8, width-4))
+	lines := strings.Split(lipgloss.NewStyle().Width(width-4).Render(content), "\n")
+	rows := make([]string, 0, len(lines)+2)
+	rows = append(rows, panelRow(bar, width))
+	for _, line := range lines {
+		rows = append(rows, panelRow(bar+" "+line, width))
+	}
+	rows = append(rows, panelRow(bar, width))
+	return strings.Join(rows, "\n")
+}
+
+// panelBackground is the composer's raised surface; it is re-applied after
+// every reset so embedded styled runs do not punch holes in the panel.
+const panelBackground = "\x1b[48;2;24;24;24m"
+
+func panelRow(line string, width int) string {
+	line = panelBackground + strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+panelBackground)
+	if pad := width - lipgloss.Width(line); pad > 0 {
+		line += strings.Repeat(" ", pad)
+	}
+	return line + "\x1b[0m"
 }
 
 // setupSummaryView is the quiet meta row under the composer: just the model,
@@ -490,9 +510,18 @@ func (m Model) setupComposer(width int) string {
 func (m Model) setupSummaryView(width int) string {
 	wrap := lipgloss.NewStyle().Width(width)
 	model := strings.TrimSpace(m.snapshot.Model)
-	row := render.Col(mid).Render(model)
-	if model == "" {
-		row = render.Dim().Render("no model · /model to choose one")
+	row := render.Dim().Render("no model · /model to choose one")
+	if model != "" {
+		name := model
+		provider := ""
+		if slash := strings.Index(model, "/"); slash >= 0 {
+			provider = model[:slash]
+			name = model[strings.LastIndex(model, "/")+1:]
+		}
+		row = render.Col(green).Render("Scan") + render.Dim().Render(" · ") + render.Col(white).Render(name)
+		if provider != "" {
+			row += " " + render.Dim().Render(provider)
+		}
 	}
 	rows := []string{wrap.Render(row)}
 	if len(m.snapshot.Targets) > 0 {
@@ -507,12 +536,13 @@ func (m Model) setupSummaryView(width int) string {
 
 // setupHintsView is the closing key hint row, mirroring opencode's home footer.
 func (m Model) setupHintsView(width int) string {
-	hints := []string{"/model  choose model", "enter  launch scan", "/  commands"}
-	line := render.Dim().Render(strings.Join(hints, "   "))
+	key := lipgloss.NewStyle().Foreground(white).Render
+	label := render.Dim().Render
+	line := key("enter") + label(" launch scan") + "  " + key("/") + label(" commands") + "  " + key("/model") + label(" model")
 	if lipgloss.Width(line) > width {
-		line = render.Dim().Render("/help for commands")
+		line = label("/help for commands")
 	}
-	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(line)
+	return lipgloss.NewStyle().Width(width).Render(line)
 }
 
 func (m Model) setupView() string {
@@ -536,16 +566,17 @@ func (m Model) setupView() string {
 }
 
 func (m Model) setupBody(contentWidth, historyHeight, menuRows int) string {
-	parts := []string{m.setupLogoView(contentWidth), m.setupComposer(contentWidth)}
+	composer := m.setupComposer(contentWidth)
+	if menuRows == 0 {
+		// The command menu is the command reference while it is open.
+		composer += "\n" + m.setupHintsView(contentWidth)
+	}
+	parts := []string{m.setupLogoView(contentWidth), composer}
 	if menu := m.commandMenuViewLimit(contentWidth, menuRows); menu != "" {
 		parts = append(parts, menu)
 	}
 	if historyHeight > 0 {
 		parts = append(parts, m.viewport.View())
-	}
-	// The command menu is the command reference while it is open.
-	if menuRows == 0 {
-		parts = append(parts, m.setupHintsView(contentWidth))
 	}
 	return strings.Join(parts, "\n\n")
 }
