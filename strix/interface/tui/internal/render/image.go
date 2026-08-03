@@ -1,7 +1,6 @@
 package render
 
 import (
-	"regexp"
 	"strings"
 )
 
@@ -37,7 +36,40 @@ func renderViewImage(args map[string]any, result any) string {
 	return b.String()
 }
 
-var imageDataURIRE = regexp.MustCompile(`data:image/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/]+={0,2})`)
+var imageMimes = []string{"png", "jpeg", "jpg", "gif", "webp"}
+
+func isBase64Byte(b byte) bool {
+	return b >= 'A' && b <= 'Z' || b >= 'a' && b <= 'z' || b >= '0' && b <= '9' ||
+		b == '+' || b == '/' || b == '='
+}
+
+// parseImageDataURI scans a data URI without a regexp: payloads run to
+// megabytes and the regexp engine is far too slow to walk them per frame.
+func parseImageDataURI(s string) (mime, payload string) {
+	start := strings.Index(s, "data:image/")
+	if start < 0 {
+		return "", ""
+	}
+	rest := s[start+len("data:image/"):]
+	for _, candidate := range imageMimes {
+		if !strings.HasPrefix(rest, candidate+";base64,") {
+			continue
+		}
+		data := rest[len(candidate)+len(";base64,"):]
+		end := len(data)
+		for i := range len(data) {
+			if !isBase64Byte(data[i]) {
+				end = i
+				break
+			}
+		}
+		if candidate == "jpg" {
+			candidate = "jpeg"
+		}
+		return candidate, data[:end]
+	}
+	return "", ""
+}
 
 // extractImageDataURI pulls a base64 image payload out of a view_image tool
 // result: a raw data URI or a structured map with an image_url/url field.
@@ -56,11 +88,11 @@ func extractImageDataURI(result any) (mime, payload string) {
 	if s == "" {
 		return "", ""
 	}
-	m := imageDataURIRE.FindStringSubmatch(s)
-	if m == nil || len(m[2]) < 100 || len(m[2])%4 != 0 {
+	mime, payload = parseImageDataURI(s)
+	if mime == "" || len(payload) < 100 || len(payload)%4 != 0 {
 		return "", ""
 	}
-	return m[1], m[2]
+	return mime, payload
 }
 
 func isImageSuccess(result any) bool {

@@ -21,6 +21,45 @@ type eventSpan struct {
 	eventID    string
 }
 
+// renderedBlock is a chat block kept across frames: rendering (syntax
+// highlighting, image placements, wrapping) is expensive and only changes
+// when the event, the chat width, or its expanded state changes.
+type renderedBlock struct {
+	version    int
+	width      int
+	expanded   bool
+	wrapped    string
+	expandable bool
+	height     int
+}
+
+func (m *Model) renderEvent(event protocol.Event, width int) renderedBlock {
+	expanded := m.expandedEvents[event.ID]
+	if cached, ok := m.blockCache[event.ID]; ok &&
+		cached.version == event.Version && cached.width == width && cached.expanded == expanded {
+		return cached
+	}
+	var block string
+	expandable := false
+	switch event.Type {
+	case "chat":
+		block = render.Chat(event.Data)
+	case "tool":
+		name := render.StringValue(event.Data["tool_name"])
+		block, expandable = render.CollapseTool(render.Tool(event.Data), name, expanded)
+	}
+	entry := renderedBlock{version: event.Version, width: width, expanded: expanded, expandable: expandable}
+	if block != "" {
+		entry.wrapped = wrapBlock(block, width)
+		entry.height = strings.Count(entry.wrapped, "\n") + 1
+	}
+	if m.blockCache == nil {
+		m.blockCache = map[string]renderedBlock{}
+	}
+	m.blockCache[event.ID] = entry
+	return entry
+}
+
 func (m *Model) chatContent() string {
 	if len(m.snapshot.Agents) == 0 {
 		switch m.snapshot.ScanState {
@@ -64,27 +103,18 @@ func (m *Model) chatContent() string {
 		if event.AgentID != agentID {
 			continue
 		}
-		var block string
-		expandable := false
-		if event.Type == "chat" {
-			block = render.Chat(event.Data)
-		} else if event.Type == "tool" {
-			name := render.StringValue(event.Data["tool_name"])
-			block, expandable = render.CollapseTool(render.Tool(event.Data), name, m.expandedEvents[event.ID])
-		}
-		if block == "" {
+		entry := m.renderEvent(event, contentWidth)
+		if entry.wrapped == "" {
 			continue
 		}
-		wrapped := wrapBlock(block, contentWidth)
 		if len(blocks) > 0 {
 			line++ // blank separator line between blocks
 		}
-		height := strings.Count(wrapped, "\n") + 1
-		if expandable {
-			spans = append(spans, eventSpan{start: line, end: line + height - 1, eventID: event.ID})
+		if entry.expandable {
+			spans = append(spans, eventSpan{start: line, end: line + entry.height - 1, eventID: event.ID})
 		}
-		line += height
-		blocks = append(blocks, wrapped)
+		line += entry.height
+		blocks = append(blocks, entry.wrapped)
 	}
 	m.eventSpans = spans
 	if len(blocks) == 0 {
@@ -328,6 +358,43 @@ func splashModelWarning(model string) string {
 		lipgloss.NewStyle().Foreground(yellow).Render(" is not a recommended frontier model - pentest quality could be degraded")
 }
 
+// chatPaneKey identifies everything the bordered trace depends on.
+type chatPaneKey struct {
+	offset        int
+	width, height int
+	border        lipgloss.Color
+	selection     selectionState
+}
+
+// chatPane memoizes the bordered trace: slicing, scrollbar padding and border
+// styling all re-measure every visible cell, which is costly when inline image
+// placeholders (a base rune plus two combining marks per cell) fill the pane,
+// and the trace is unchanged across most frames.
+var chatPane struct {
+	key     chatPaneKey
+	content string
+	out     string
+}
+
+func (m Model) renderChatPane(width, height int, border lipgloss.Color) string {
+	key := chatPaneKey{offset: m.viewport.YOffset, width: width, height: height, border: border, selection: m.selection}
+	if chatPane.out != "" && chatPane.key == key && chatPane.content == m.viewportContent {
+		return chatPane.out
+	}
+	trace := withVerticalScrollbar(
+		m.highlightSelection(visibleContent(m.viewportContent, m.viewport.YOffset, height), m.viewport.YOffset),
+		width,
+		height,
+		m.viewport.TotalLineCount(),
+		m.viewport.VisibleLineCount(),
+		m.viewport.YOffset,
+	)
+	out := lipgloss.NewStyle().Width(width).Height(height).
+		Border(lipgloss.RoundedBorder()).BorderForeground(border).Render(trace)
+	chatPane.key, chatPane.content, chatPane.out = key, m.viewportContent, out
+	return out
+}
+
 func (m Model) mainView() string {
 	showSidebar, sidebarWidth, chatWidth, chatHeight := m.layout()
 	// Matches tui_styles.tcss: #chat_history border is near-black when idle and
@@ -337,18 +404,7 @@ func (m Model) mainView() string {
 		chatBorder = green
 	}
 	traceHeight := chatHeight - 2
-	trace := withVerticalScrollbar(
-		m.highlightSelection(
-			visibleContent(m.viewportContent, m.viewport.YOffset, traceHeight),
-			m.viewport.YOffset,
-		),
-		chatWidth-2,
-		traceHeight,
-		m.viewport.TotalLineCount(),
-		m.viewport.VisibleLineCount(),
-		m.viewport.YOffset,
-	)
-	chat := lipgloss.NewStyle().Width(chatWidth - 2).Height(traceHeight).Border(lipgloss.RoundedBorder()).BorderForeground(chatBorder).Render(trace)
+	chat := m.renderChatPane(chatWidth-2, traceHeight, chatBorder)
 
 	inputBorder := dark
 	if m.focus == focusInput {

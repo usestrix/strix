@@ -1694,3 +1694,76 @@ func TestVulnerabilityMarkdownReport(t *testing.T) {
 		}
 	}
 }
+
+func TestChatContentCachesBlocksUntilEventChanges(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 120, 30
+	model.showSplash = false
+	model.ready = true
+	event := protocol.Event{
+		ID: "1", AgentID: "one", Type: "tool", Version: 1,
+		Data: map[string]any{
+			"tool_name": "exec_command",
+			"args":      map[string]any{"cmd": "ls -la"},
+			"result":    "one\ntwo",
+			"status":    "completed",
+		},
+	}
+	model.snapshot = protocol.Snapshot{
+		Agents: []protocol.Agent{{ID: "one", Name: "Agent", Status: "running"}},
+		Events: []protocol.Event{event},
+	}
+	model.resizeViewport()
+	first := model.chatContent()
+	if model.chatContent() != first {
+		t.Fatal("cached render changed without an event change")
+	}
+
+	updated := event
+	updated.Version = 2
+	updated.Data = map[string]any{
+		"tool_name": "exec_command",
+		"args":      map[string]any{"cmd": "whoami"},
+		"result":    "root",
+		"status":    "completed",
+	}
+	model.snapshot.Events = []protocol.Event{updated}
+	next := model.chatContent()
+	if !strings.Contains(ansi.Strip(next), "whoami") {
+		t.Fatalf("new event version was served from cache: %q", ansi.Strip(next))
+	}
+}
+
+func TestChatContentRerendersOnWidthAndExpansionChange(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 120, 30
+	model.showSplash = false
+	model.ready = true
+	model.snapshot = protocol.Snapshot{
+		Agents: []protocol.Agent{{ID: "one", Name: "Agent", Status: "running"}},
+		Events: []protocol.Event{{
+			ID: "1", AgentID: "one", Type: "tool", Version: 1,
+			Data: map[string]any{
+				"tool_name": "exec_command",
+				"args":      map[string]any{"cmd": "seq 40"},
+				"result":    strings.Repeat("output line\n", 40),
+				"status":    "completed",
+			},
+		}},
+	}
+	model.resizeViewport()
+	collapsed := model.chatContent()
+	model.expandedEvents["1"] = true
+	expanded := model.chatContent()
+	if strings.Count(expanded, "\n") <= strings.Count(collapsed, "\n") {
+		t.Fatal("expanding an event was served from cache")
+	}
+	model.width = 80
+	model.resizeViewport()
+	narrow := model.chatContent()
+	for _, line := range strings.Split(narrow, "\n") {
+		if lipgloss.Width(line) > model.viewport.Width {
+			t.Fatalf("stale wrapped width after resize: %d > %d", lipgloss.Width(line), model.viewport.Width)
+		}
+	}
+}

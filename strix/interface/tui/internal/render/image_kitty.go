@@ -40,9 +40,10 @@ func SetImageWidth(cells int) {
 var KittyGraphicsSupported = func() bool { return false }
 
 type kittyPlacement struct {
-	id   uint32
-	cols int
-	rows int
+	id          uint32
+	cols        int
+	rows        int
+	placeholder string
 }
 
 var (
@@ -62,12 +63,24 @@ func DrainImageTransmissions() []string {
 	return out
 }
 
+// payloadKey identifies an image payload without hashing megabytes of base64
+// on every frame: its length plus both ends are enough to tell distinct
+// images apart.
+func payloadKey(payload string) string {
+	const edge = 64
+	if len(payload) <= 2*edge {
+		return payload
+	}
+	return fmt.Sprintf("%d:%s:%s", len(payload), payload[:edge], payload[len(payload)-edge:])
+}
+
 // kittyImageBlock registers the image payload (queueing its transmission on
 // first sight) and returns the styled placeholder block for the chat trace.
 func kittyImageBlock(mime, payload string) string {
 	kittyMu.Lock()
 	defer kittyMu.Unlock()
-	placement, ok := kittyByHash[payload]
+	key := payloadKey(payload)
+	placement, ok := kittyByHash[key]
 	if !ok {
 		pngData, w, h := payloadToPNG(mime, payload)
 		if pngData == nil {
@@ -77,11 +90,12 @@ func kittyImageBlock(mime, payload string) string {
 		rows := (h*cols + w - 1) / (w * 2)
 		rows = min(max(1, rows), imageMaxRows)
 		placement = kittyPlacement{id: kittyNextID, cols: cols, rows: rows}
+		placement.placeholder = kittyPlaceholder(placement)
 		kittyNextID++
-		kittyByHash[payload] = placement
+		kittyByHash[key] = placement
 		kittyQueue = append(kittyQueue, kittyTransmit(placement, pngData))
 	}
-	return kittyPlaceholder(placement)
+	return placement.placeholder
 }
 
 func payloadToPNG(mime, payload string) (data []byte, w, h int) {
