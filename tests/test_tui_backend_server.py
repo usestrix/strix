@@ -28,8 +28,6 @@ from strix.interface.tui.live_view import TuiLiveView
 def args() -> argparse.Namespace:
     return argparse.Namespace(
         needs_setup=True,
-        setup_invalid_provider=None,
-        setup_guidance=None,
         targets_info=[],
         instruction=None,
         scan_mode="deep",

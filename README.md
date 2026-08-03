@@ -73,7 +73,7 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 
 **Prerequisites:**
 - Docker (running)
-- Credentials for any [supported provider](https://docs.strix.ai/llm-providers/overview), a ChatGPT subscription sign-in, or a local/ambient-auth model
+- An LLM API key from any [supported provider](https://docs.strix.ai/llm-providers/overview) (OpenAI, Anthropic, Google, etc.)
 
 ### Installation & First Scan
 
@@ -86,7 +86,7 @@ pipx install strix-agent
 
 # Configure your AI provider
 export STRIX_LLM="openai/gpt-5.4"
-export OPENAI_API_KEY="your-api-key"
+export LLM_API_KEY="your-api-key"
 
 # Run your first security assessment
 strix --target ./app-directory
@@ -245,7 +245,7 @@ jobs:
       - name: Run Strix
         env:
           STRIX_LLM: ${{ secrets.STRIX_LLM }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          LLM_API_KEY: ${{ secrets.LLM_API_KEY }}
 
         run: strix -n -t ./ --scan-mode quick
 ```
@@ -259,7 +259,7 @@ jobs:
 
 ```bash
 export STRIX_LLM="openai/gpt-5.4"
-export OPENAI_API_KEY="your-api-key"
+export LLM_API_KEY="your-api-key"
 
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
@@ -268,16 +268,11 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 ```
 
 > [!NOTE]
-> Provider keys and models entered through the interactive setup are saved to
-> `~/.strix/cli-config.json`. Normal scans merge recognized process settings into
-> that file. Credentials are stored as plaintext with permissions restricted to
-> the current user (`0600`).
+> Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
 
-Interactive scans use the Go TUI. It supports targetless provider, model,
-credential, and target setup.
-
-Wheels are platform-specific and bundle the Go sidecar, so installs work out of
-the box. A source checkout runs the TUI directly from source and needs Go 1.24+.
+Interactive scans run in the Go TUI. Wheels are platform-specific and bundle the
+Go sidecar, so installs work out of the box. A source checkout runs the TUI
+directly from source and needs Go 1.24+.
 
 #### Sign in with a ChatGPT subscription
 

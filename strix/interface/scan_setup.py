@@ -14,14 +14,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from strix.config import (
-    Settings,
-    codex,
-    load_settings,
-    provider_authentication_error_message,
-    provider_credential_source,
-    provider_for_model,
-)
+from strix.config import Settings, codex, load_settings
 from strix.core.paths import run_dir_for
 from strix.interface.utils import (
     assign_workspace_subdirs,
@@ -47,25 +40,6 @@ logger = logging.getLogger(__name__)
 HOST_GATEWAY_HOSTNAME = "host.docker.internal"
 
 
-class ProviderCredentialRejectedError(RuntimeError):
-    """A model provider definitively rejected one set of credentials."""
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        model_name: str,
-        provider: str,
-        credential_source: str | None,
-        credential_role: str,
-    ) -> None:
-        super().__init__(message)
-        self.model_name = model_name
-        self.provider = provider
-        self.credential_source = credential_source
-        self.credential_role = credential_role
-
-
 class ModelConnectionError(RuntimeError):
     """An ordinary model preflight failure, annotated with its model route."""
 
@@ -78,81 +52,38 @@ async def preflight_model_connection(
     model_name: str,
     *,
     settings: Settings | None = None,
-    api_key: str | None = None,
-    api_base: str | None = None,
 ) -> None:
-    """Verify one selected model route before starting interactive setup."""
-    from strix.config.models import configure_sdk_model_defaults
+    """Verify the configured model route before starting a scan."""
+    from agents.models.interface import ModelTracing
+
+    from strix.config.models import StrixProvider, configure_sdk_model_defaults
+    from strix.core.inputs import make_model_settings
 
     resolved_settings = load_settings() if settings is None else settings
     configure_sdk_model_defaults(resolved_settings)
-    await _preflight_model_connection(
-        model_name,
-        settings=resolved_settings,
-        api_key=api_key,
-        api_base=api_base,
-    )
-
-
-async def _preflight_model_connection(
-    model_name: str,
-    *,
-    settings: Settings,
-    api_key: str | None,
-    api_base: str | None,
-) -> None:
-    """Verify one resolved model route without changing process credentials."""
-    from agents.models.interface import ModelTracing
-
-    from strix.config.models import (
-        StrixProvider,
-        model_extra_headers,
-        with_model_request_headers,
-    )
-    from strix.core.inputs import make_model_settings
-
-    model = StrixProvider(
-        model_name,
-        settings,
-        api_key=api_key,
-        api_base=api_base,
-    ).get_model(model_name)
+    model = StrixProvider().get_model(model_name)
     request_settings = make_model_settings(
         None,
         model_name=model_name,
-        request_timeout=settings.llm.timeout,
+        request_timeout=resolved_settings.llm.timeout,
         prompt_cache=False,
-        extra_headers=model_extra_headers(settings, model_name),
+        extra_headers=resolved_settings.llm.extra_headers,
     )
-    request_settings = with_model_request_headers(request_settings, model_name)
-    try:
-        await asyncio.wait_for(
-            model.get_response(
-                system_instructions="You are a helpful assistant.",
-                input="Reply with just 'OK'.",
-                model_settings=request_settings,
-                tools=[],
-                output_schema=None,
-                handoffs=[],
-                tracing=ModelTracing.DISABLED,
-                previous_response_id=None,
-                conversation_id=None,
-                prompt=None,
-            ),
-            timeout=settings.llm.timeout,
-        )
-    except Exception as exc:
-        provider = provider_for_model(model_name) or "openai"
-        credential_source = provider_credential_source(provider)
-        if message := provider_authentication_error_message(model_name, exc):
-            raise ProviderCredentialRejectedError(
-                message,
-                model_name=model_name,
-                provider=provider,
-                credential_source=credential_source,
-                credential_role="primary",
-            ) from exc
-        raise
+    await asyncio.wait_for(
+        model.get_response(
+            system_instructions="You are a helpful assistant.",
+            input="Reply with just 'OK'.",
+            model_settings=request_settings,
+            tools=[],
+            output_schema=None,
+            handoffs=[],
+            tracing=ModelTracing.DISABLED,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        ),
+        timeout=resolved_settings.llm.timeout,
+    )
 
 
 def build_targets_info(args: argparse.Namespace) -> None:

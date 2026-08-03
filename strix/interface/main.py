@@ -14,15 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import (
-    ProviderAuthState,
-    codex,
-    load_settings,
-    persist_current,
-    provider_auth_status,
-    provider_credential_source,
-    provider_for_model,
-)
+from strix.config import codex, load_settings, persist_current
 from strix.core.paths import run_dir_for
 from strix.interface.cli_args import parse_arguments
 from strix.interface.environment import (
@@ -36,7 +28,6 @@ from strix.interface.interactive import (
 )
 from strix.interface.scan_setup import (
     ModelConnectionError,
-    ProviderCredentialRejectedError,
     preflight_model_connection,
     prepare_run,
     telemetry_start,
@@ -145,8 +136,6 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         configure_sdk_model_defaults,
         is_known_openai_bare_model,
         is_recommended_or_frontier_model,
-        resolve_model_config,
-        with_model_request_headers,
     )
     from strix.core.inputs import make_model_settings
 
@@ -159,12 +148,11 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         configure_sdk_model_defaults(settings)
         llm = settings.llm
         raw_model = (llm.model or "").strip()
-        model_config = resolve_model_config(settings, raw_model)
         if (
             raw_model
             and "/" not in raw_model
             and not is_known_openai_bare_model(raw_model)
-            and not model_config.api_base
+            and not llm.api_base
         ):
             warn_text = Text()
             warn_text.append("UNKNOWN MODEL NAME", style="bold yellow")
@@ -225,7 +213,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
 
             dedupe_model = settings.dedupe.model.strip()
             raw_model = dedupe_model
-            deduper = StrixProvider(settings=settings).get_model(dedupe_model)
+            deduper = StrixProvider().get_model(dedupe_model)
             deduper_extra = _dedupe_extra_args(settings.dedupe)
             # A dedicated dedupe model may route to another provider, which must
             # never receive the main endpoint's headers; it has its own
@@ -240,7 +228,6 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             if deduper_extra:
                 merged = {**(deduper_settings.extra_args or {}), **deduper_extra}
                 deduper_settings = deduper_settings.resolve(ModelSettings(extra_args=merged))
-            deduper_settings = with_model_request_headers(deduper_settings, dedupe_model)
             await asyncio.wait_for(
                 deduper.get_response(
                     system_instructions="You are a helpful assistant.",
@@ -258,9 +245,6 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             )
             logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
 
-    except ProviderCredentialRejectedError:
-        logger.debug("LLM warm-up credentials were rejected", exc_info=True)
-        raise
     except ModelConnectionError:
         logger.debug("Model route warm-up failed", exc_info=True)
         raise
@@ -401,29 +385,6 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
     console.print()
 
 
-def _detect_provider_setup_need(args: argparse.Namespace) -> None:
-    """Route fresh interactive launches with no usable provider into setup."""
-    if args.non_interactive or args.resume or args.needs_setup:
-        return
-    model = (load_settings().llm.model or "").strip()
-    if not model:
-        args.needs_setup = True
-        return
-    provider = provider_for_model(model)
-    auth_status = provider_auth_status(provider) if provider is not None else None
-    rejected_environment_key = bool(
-        provider
-        and auth_status
-        and auth_status.state is ProviderAuthState.INVALID
-        and provider_credential_source(provider) == "env"
-    )
-    if auth_status is None or (not auth_status.ready and not rejected_environment_key):
-        args.needs_setup = True
-        if provider and auth_status and auth_status.state is ProviderAuthState.INVALID:
-            args.setup_invalid_provider = provider
-            args.setup_guidance = auth_status.detail
-
-
 def _bootstrap_scan(args: argparse.Namespace) -> None:
     """Warm up the model and prepare the run for a non-interactive scan.
 
@@ -436,7 +397,7 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
         return
     try:
         asyncio.run(warm_up_llm(show_model_warning=True))
-    except (ProviderCredentialRejectedError, ModelConnectionError) as exc:
+    except ModelConnectionError as exc:
         _print_model_connection_error(exc, exc.model_name)
         sys.exit(1)
     persist_current()
@@ -471,8 +432,6 @@ def main() -> None:
 
     args = parse_arguments()
 
-    _detect_provider_setup_need(args)
-
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
         if is_binary_install() and sys.platform != "win32":
@@ -482,8 +441,8 @@ def main() -> None:
     check_docker_installed()
     pull_docker_image()
 
-    # In setup mode the TUI collects the target via slash commands, then runs
-    # prepare_run()/warm-up/telemetry itself once the user calls /start.
+    # In setup mode the TUI collects the target, then runs prepare_run(),
+    # warm-up, and telemetry itself once the user starts the scan.
     if not args.needs_setup:
         _bootstrap_scan(args)
 

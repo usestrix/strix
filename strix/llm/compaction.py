@@ -18,7 +18,7 @@ from litellm.exceptions import BadRequestError, ContextWindowExceededError
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from strix.config import load_settings
-from strix.config.models import StrixProvider, model_extra_headers, with_model_request_headers
+from strix.config.models import StrixProvider
 from strix.core.inputs import make_model_settings
 from strix.core.sessions import replace_session_items, session_write_lock
 from strix.llm.context_budget import context_window, count_tokens, output_limit
@@ -287,16 +287,14 @@ def _extract_text(response: ModelResponse) -> str:
 
 
 async def _summarize(model: str, prompt: str, max_tokens: int) -> str | None:
-    settings = load_settings()
-    llm = settings.llm
+    llm = load_settings().llm
     model_settings = make_model_settings(
         None,
         model_name=model,
         request_timeout=llm.timeout,
         prompt_cache=False,
-        extra_headers=model_extra_headers(settings, model),
+        extra_headers=llm.extra_headers,
     ).resolve(ModelSettings(max_tokens=max_tokens))
-    model_settings = with_model_request_headers(model_settings, model)
     try:
         response = (
             await StrixProvider()

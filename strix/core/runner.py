@@ -21,9 +21,7 @@ from strix.config import load_settings
 from strix.config.models import (
     StrixProvider,
     configure_sdk_model_defaults,
-    model_extra_headers,
     uses_chat_completions_tool_schema,
-    with_model_request_headers,
 )
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
@@ -171,7 +169,6 @@ async def run_strix_scan(
             "No LLM model configured. Set STRIX_LLM env or pass model= to run_strix_scan().",
         )
     logger.info("LLM model resolved: %s", resolved_model)
-    model_provider = StrixProvider(resolved_model, settings)
     chat_completions_tools = uses_chat_completions_tool_schema(resolved_model, settings)
 
     if coordinator is None:
@@ -263,12 +260,11 @@ async def run_strix_scan(
             force_required_tool_choice=settings.llm.force_required_tool_choice,
             request_timeout=settings.llm.timeout,
             prompt_cache=settings.llm.prompt_cache,
-            extra_headers=model_extra_headers(settings, resolved_model),
+            extra_headers=settings.llm.extra_headers,
         )
-        model_settings = with_model_request_headers(model_settings, resolved_model)
         run_config = RunConfig(
             model=resolved_model,
-            model_provider=model_provider,
+            model_provider=StrixProvider(),
             model_settings=model_settings,
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,

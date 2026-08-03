@@ -10,11 +10,7 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strix.config import (
-    load_settings,
-    provider_auth_status,
-    provider_for_model,
-)
+from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.live_view import TuiLiveView
@@ -113,16 +109,6 @@ class TuiController:
         self._on_start = on_start
         self._on_quit = on_quit
         self._on_change = on_change
-        if self.setup_mode:
-            invalid_provider = args.setup_invalid_provider
-            guidance = args.setup_guidance
-            if isinstance(invalid_provider, str) and invalid_provider.strip():
-                self._append_message(
-                    f"Provider requiring setup: {invalid_provider.strip()}",
-                    "warning",
-                )
-            if isinstance(guidance, str) and guidance.strip():
-                self._append_message(guidance.strip(), "warning")
 
     def set_change_callback(self, callback: ChangeCallback) -> None:
         self._on_change = callback
@@ -152,15 +138,11 @@ class TuiController:
         self.error = detail
         self.notify_changed()
 
-    def enter_setup(self, *, provider: str | None = None, guidance: str | None = None) -> None:
-        """Drop a live session into the setup flow, e.g. on a rejected key."""
+    def enter_setup(self) -> None:
+        """Return a session to the start screen, e.g. on a declined mount."""
         self.setup_mode = True
         self.scan_started = False
         self.scan_state = "setup"
-        if provider and provider.strip():
-            self._append_message(f"Provider requiring setup: {provider.strip()}", "warning")
-        if guidance and guidance.strip():
-            self._append_message(guidance.strip(), "warning")
         self.notify_changed()
 
     def add_message(self, text: str, level: str = "info") -> None:
@@ -210,7 +192,6 @@ class TuiController:
             "max_turns": self.max_turns,
             "scope_mode": self.scope_mode,
             "diff_base": terminal_projection(self.diff_base, max_string=256),
-            "provider": terminal_projection(provider_for_model(model), max_string=256),
             "model": terminal_projection(model, max_string=256),
             "model_warning": terminal_projection(model_warning, max_string=512),
             "caido_url": terminal_projection(
@@ -342,10 +323,7 @@ class TuiController:
             raise TypeError("mount_working_dir must be a boolean")
         model = (load_settings().llm.model or "").strip()
         if not model:
-            raise ValueError("No model configured. Select a provider and model first.")
-        provider = provider_for_model(model) or "openai"
-        if not (await asyncio.to_thread(provider_auth_status, provider)).ready:
-            raise ValueError(f"Provider '{provider}' is not configured")
+            raise ValueError("No model configured. Set STRIX_LLM first.")
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
         if not self.targets:

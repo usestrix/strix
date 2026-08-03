@@ -13,12 +13,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from strix.config import load_settings, persist_current, provider_authentication_error_message
+from strix.config import load_settings, persist_current
 from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
 from strix.interface.scan_setup import (
-    ProviderCredentialRejectedError,
     build_targets_info,
     preflight_model_connection,
     prepare_run,
@@ -129,10 +128,7 @@ class GoTuiRuntime:
                 await preflight_model_connection(model)
             except Exception as exc:
                 logger.exception("Go TUI setup model preflight failed")
-                message = provider_authentication_error_message(model, exc)
-                if message is None:
-                    message = f"Model connection failed: {exc}"
-                raise RuntimeError(message) from exc
+                raise RuntimeError(f"Model connection failed: {exc}") from exc
         # A confirmed target-less launch mounts the working directory for the
         # agent to work in, without making it a scan target.
         candidate.workspace_mount = self.controller.workspace_mount
@@ -153,8 +149,7 @@ class GoTuiRuntime:
         """Prepare a directly-launched scan once the TUI is on screen.
 
         The model round trip and run preparation run here rather than before
-        launch so the interface appears immediately. A rejected saved key
-        drops the session into the setup flow instead of failing the run.
+        launch so the interface appears immediately.
         """
         model = (load_settings().llm.model or "").strip()
         try:
@@ -162,18 +157,9 @@ class GoTuiRuntime:
             persist_current()
             prepare_run(self.args)
             telemetry_start(self.args)
-        except ProviderCredentialRejectedError as exc:
-            if exc.credential_role == "primary" and exc.credential_source in {"config", "custom"}:
-                self.controller.enter_setup(provider=exc.provider, guidance=str(exc))
-                return
-            self.controller.fail_preparation(
-                provider_authentication_error_message(model, exc) or str(exc)
-            )
-            return
         except Exception as exc:
             logger.exception("Go TUI scan preparation failed")
-            message = provider_authentication_error_message(model, exc)
-            self.controller.fail_preparation(message or str(exc))
+            self.controller.fail_preparation(str(exc))
             return
         self.controller.scan_state = "running"
         self.init_run_state()

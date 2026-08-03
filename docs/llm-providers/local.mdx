@@ -37,12 +37,6 @@ For critical assessments, we strongly recommend using state-of-the-art cloud mod
    export LLM_API_BASE="http://localhost:11434"
    ```
 
-The interactive provider screen keeps Ollama visible when it is unavailable and
-shows whether the local endpoint can be reached. Once Ollama is running, Strix
-loads the installed model names from `GET /api/tags`; it does not show LiteLLM's
-static Ollama catalog. `ollama_chat` is an internal routing alias and is not
-listed as a separate provider.
-
 ### Recommended Models
 
 We recommend these models for the best balance of reasoning and tool use:
@@ -54,7 +48,7 @@ We recommend these models for the best balance of reasoning and tool use:
 
 ## LM Studio / OpenAI Compatible
 
-Configure an OpenAI-compatible endpoint with environment variables:
+If you use LM Studio, vLLM, or other runners:
 
 ```bash
 export STRIX_LLM="openai/local-model"
@@ -70,7 +64,7 @@ a JSON object — they are sent on every request:
 ```bash
 export STRIX_LLM="openai/your-model"
 export LLM_API_BASE="https://your-gateway.example/v1"
-export OPENAI_API_KEY="your-bearer-token"       # sent as Authorization: Bearer ...
+export LLM_API_KEY="your-bearer-token"          # sent as Authorization: Bearer ...
 export LLM_EXTRA_HEADERS='{"X-Feature-Key":"value","X-Tenant":"acme"}'
 ```
 

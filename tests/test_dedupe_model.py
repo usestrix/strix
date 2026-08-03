@@ -67,7 +67,6 @@ def test_dedicated_dedupe_model_gets_no_main_headers_by_default(
 
 
 def test_fallback_dedupe_inherits_main_headers(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("STRIX_LLM", "openai/main-model")
     monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({"X-Main": "svc"}))
     loader._cached = None
     try:

@@ -15,13 +15,7 @@ from typing import Any, cast
 
 import pytest
 
-from strix.config import (
-    ProviderAuthState,
-    clear_provider_credentials_invalid,
-    provider_auth_status,
-)
 from strix.config.settings import DEFAULT_MAX_TURNS
-from strix.interface.scan_setup import ProviderCredentialRejectedError
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui import sidecar
 from strix.interface.tui.runtime import GoTuiRuntime
@@ -30,8 +24,6 @@ from strix.interface.tui.runtime import GoTuiRuntime
 def args() -> argparse.Namespace:
     return argparse.Namespace(
         needs_setup=True,
-        setup_invalid_provider=None,
-        setup_guidance=None,
         targets_info=[],
         instruction=None,
         scan_mode="deep",
@@ -816,13 +808,11 @@ async def test_setup_preflight_failure_does_not_start_scan(
     monkeypatch.setattr(runtime, "init_run_state", mark_started)
     monkeypatch.setattr(runtime, "start_scan", mark_started)
 
-    with pytest.raises(RuntimeError, match=r"authentication failed.*API_KEY was rejected"):
+    with pytest.raises(RuntimeError, match="Model connection failed: 401 Unauthorized"):
         await runtime.start_from_setup()
 
     assert started is False
     assert runtime.scan_task is None
-    assert provider_auth_status("openrouter").state is ProviderAuthState.INVALID
-    clear_provider_credentials_invalid("openrouter")
 
 
 @pytest.mark.asyncio
@@ -871,33 +861,6 @@ def _direct_launch_args() -> argparse.Namespace:
     launch_args = args()
     launch_args.needs_setup = False
     return launch_args
-
-
-@pytest.mark.asyncio
-async def test_prepare_and_start_enters_setup_on_rejected_saved_key(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime = GoTuiRuntime(_direct_launch_args())
-    started: list[str] = []
-
-    async def preflight(_model: str) -> None:
-        raise ProviderCredentialRejectedError(
-            "anthropic authentication failed: saved key was rejected",
-            model_name="anthropic/claude-opus-4-7",
-            provider="anthropic",
-            credential_source="config",
-            credential_role="primary",
-        )
-
-    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(runtime, "start_scan", lambda: started.append("scan"))
-
-    await runtime.prepare_and_start()
-
-    assert started == []
-    assert runtime.controller.setup_mode is True
-    assert runtime.controller.scan_state == "setup"
-    assert any("anthropic" in message["text"] for message in runtime.controller.messages)
 
 
 @pytest.mark.asyncio

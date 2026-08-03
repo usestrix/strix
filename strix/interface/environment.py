@@ -8,12 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import (
-    codex,
-    load_settings,
-    provider_auth_status,
-    provider_for_model,
-)
+from strix.config import codex, load_settings
 from strix.interface.utils import (
     check_docker_connection,
     image_exists,
@@ -25,8 +20,6 @@ logger = logging.getLogger(__name__)
 
 
 def validate_environment() -> None:
-    from strix.config.models import resolve_model_config
-
     logger.info("Validating environment")
     console = Console()
     missing_required_vars = []
@@ -47,13 +40,10 @@ def validate_environment() -> None:
     if not settings.llm.model:
         missing_required_vars.append("STRIX_LLM")
 
-    configured_provider = provider_for_model(settings.llm.model)
-    if configured_provider:
-        auth_status = provider_auth_status(configured_provider)
-        if not auth_status.ready:
-            missing_optional_vars.append(auth_status.detail)
+    if not settings.llm.api_key:
+        missing_optional_vars.append("LLM_API_KEY")
 
-    if not resolve_model_config(settings).api_base:
+    if not settings.llm.api_base:
         missing_optional_vars.append("LLM_API_BASE")
 
     if not settings.integrations.perplexity_api_key:

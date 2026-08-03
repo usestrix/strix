@@ -7,11 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from strix.config import (
-    apply_config_override,
-    clear_provider_credentials_invalid,
-    reset_settings_cache,
-)
+from strix.config import apply_config_override, loader
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController
 
@@ -19,8 +15,6 @@ from strix.interface.tui.backend.controller import TuiController
 def args() -> argparse.Namespace:
     return argparse.Namespace(
         needs_setup=True,
-        setup_invalid_provider=None,
-        setup_guidance=None,
         targets_info=[],
         instruction=None,
         scan_mode="deep",
@@ -49,9 +43,6 @@ def isolated_config(tmp_path: Path) -> None:
     ):
         os.environ.pop(key, None)
     apply_config_override(tmp_path / "config.json")
-    for provider in ("openai", "anthropic", "azure"):
-        clear_provider_credentials_invalid(provider)
-    reset_settings_cache()
 
 
 @pytest.mark.asyncio
@@ -109,18 +100,9 @@ async def test_large_target_list_reports_truncated_snapshot_count() -> None:
     assert len(snapshot["targets"]) == 16
 
 
-def test_saved_model_restores_provider() -> None:
-    os.environ["STRIX_LLM"] = "litellm/anthropic/claude-sonnet-4"
-    reset_settings_cache()
-
-    controller = TuiController(args())
-
-    assert controller.snapshot()["provider"] == "anthropic"
-
-
 def test_state_populates_model_warning_for_non_frontier_model() -> None:
     os.environ["STRIX_LLM"] = "openai/gpt-3.5-turbo"
-    reset_settings_cache()
+    loader._cached = None
 
     warning = TuiController(args()).snapshot()["model_warning"]
 
@@ -156,16 +138,15 @@ async def test_start_validates_model_before_callback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_resolves_routed_model_provider() -> None:
+async def test_start_launches_with_a_configured_model() -> None:
     started = False
 
     async def start(_verify: bool = True) -> None:
         nonlocal started
         started = True
 
-    os.environ["STRIX_LLM"] = "litellm/anthropic/claude-sonnet-4"
-    os.environ["ANTHROPIC_API_KEY"] = "test-key"
-    reset_settings_cache()
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    loader._cached = None
     controller = TuiController(args(), on_start=start)
     await controller.handle("setup.add_target", {"target": "https://example.com"})
 
@@ -185,7 +166,7 @@ async def test_start_without_target_requires_mount_consent() -> None:
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
-    reset_settings_cache()
+    loader._cached = None
     controller = TuiController(args(), on_start=start)
 
     # Mounting the working directory is never silent.
@@ -207,7 +188,7 @@ async def test_target_less_start_enters_live_view_and_waits_for_the_mount() -> N
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
-    reset_settings_cache()
+    loader._cached = None
     controller = TuiController(args(), on_start=start)
 
     result = await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
@@ -235,7 +216,7 @@ async def test_confirming_the_mount_starts_the_scan_without_a_target() -> None:
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
-    reset_settings_cache()
+    loader._cached = None
     controller = TuiController(args(), on_start=start)
     await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
 
@@ -262,7 +243,7 @@ async def test_declining_the_mount_returns_to_the_start_screen() -> None:
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
-    reset_settings_cache()
+    loader._cached = None
     controller = TuiController(args(), on_start=start)
     await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
 
@@ -304,7 +285,7 @@ async def test_start_forwards_verify_flag_by_default() -> None:
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
-    reset_settings_cache()
+    loader._cached = None
     controller = TuiController(args(), on_start=start)
     await controller.handle("setup.add_target", {"target": "https://example.com"})
 
@@ -325,7 +306,7 @@ async def test_start_rejects_concurrent_and_repeated_submissions() -> None:
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
-    reset_settings_cache()
+    loader._cached = None
     controller = TuiController(args(), on_start=start)
     await controller.handle("setup.add_target", {"target": "https://example.com"})
 
@@ -404,21 +385,16 @@ async def test_unknown_command_is_rejected() -> None:
         await controller.handle("nope", {})
 
 
-def test_setup_recovery_messages_are_sanitized_and_agents_are_collection_only() -> None:
-    setup_args = args()
-    setup_args.setup_invalid_provider = "anthropic\x1b[31m"
-    setup_args.setup_guidance = "replace\x1b]52;c;Y2xpcA==\x07 key\x85"
-    controller = TuiController(setup_args)
+def test_messages_are_sanitized_and_agents_are_collection_only() -> None:
+    controller = TuiController(args())
+    controller.add_message("replace\x1b]52;c;Y2xpcA==\x07 key\x85")
     for index in range(40):
         controller.live_view.upsert_agent(f"agent-{index}", name=f"Agent {index}")
 
     snapshot = controller.snapshot()
 
     assert "agents" not in snapshot
-    assert [message["text"] for message in snapshot["messages"]] == [
-        "Provider requiring setup: anthropic",
-        "replace key",
-    ]
+    assert [message["text"] for message in snapshot["messages"]] == ["replace key"]
     assert len(controller.collection("agents")) == 40
 
 

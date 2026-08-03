@@ -15,8 +15,6 @@ from strix.config import load_settings
 from strix.config.models import (
     StrixProvider,
     configure_sdk_model_defaults,
-    model_extra_headers,
-    with_model_request_headers,
 )
 from strix.core.inputs import make_model_settings
 from strix.report.state import get_global_report_state
@@ -53,10 +51,7 @@ def _dedupe_extra_args(dedupe: DedupeSettings) -> dict[str, str]:
 def _dedupe_model_settings(
     dedupe: DedupeSettings, model_name: str, request_timeout: float | None
 ) -> ModelSettings:
-    app_settings = load_settings()
-    headers = (
-        dedupe.extra_headers if dedupe.model else model_extra_headers(app_settings, model_name)
-    )
+    llm = load_settings().llm
     settings = make_model_settings(
         dedupe.reasoning_effort,
         model_name=model_name,
@@ -66,12 +61,12 @@ def _dedupe_model_settings(
         # model; a dedicated dedupe model may route to another provider, which
         # must never receive the main endpoint's credentials. A dedicated model
         # gets its own DEDUPE_LLM_EXTRA_HEADERS instead.
-        extra_headers=headers,
+        extra_headers=dedupe.extra_headers if dedupe.model else llm.extra_headers,
     )
     extra = _dedupe_extra_args(dedupe)
     if extra:
         settings = settings.resolve(ModelSettings(extra_args=extra))
-    return with_model_request_headers(settings, model_name)
+    return settings
 
 
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.

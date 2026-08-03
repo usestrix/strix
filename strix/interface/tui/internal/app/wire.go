@@ -94,7 +94,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			}
 			return nil
 		}
-		if m.snapshot.ScanStarted && !m.snapshot.SetupMode && (strings.HasPrefix(result.Command, "setup.") || result.Command == "providers.list" || result.Command == "models.list") {
+		if m.snapshot.ScanStarted && !m.snapshot.SetupMode && strings.HasPrefix(result.Command, "setup.") {
 			return nil
 		}
 		m.errorText = ""

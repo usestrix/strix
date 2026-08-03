@@ -1,4 +1,4 @@
-"""Tests for route-bound custom request headers."""
+"""Tests for LLM_EXTRA_HEADERS: custom default headers on OpenAI-compatible endpoints."""
 
 from __future__ import annotations
 
@@ -7,15 +7,11 @@ from typing import TYPE_CHECKING
 
 import litellm
 import pytest
-from agents.model_settings import ModelSettings
+from agents.models import _openai_shared
 
 from strix.config import loader
 from strix.config.loader import load_settings
-from strix.config.models import (
-    configure_sdk_model_defaults,
-    model_extra_headers,
-    with_model_request_headers,
-)
+from strix.config.models import configure_sdk_model_defaults
 
 
 if TYPE_CHECKING:
@@ -33,65 +29,69 @@ def _reset(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setattr(loader, "_override", None)
 
     saved_headers = litellm.headers
+    saved_client = _openai_shared.get_default_openai_client()
     litellm.headers = None
     try:
         yield
     finally:
         litellm.headers = saved_headers
+        _openai_shared.set_default_openai_client(saved_client)  # type: ignore[arg-type]
 
 
 def test_extra_headers_parsed_from_json_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({"X-A": "1", "X-B": "2"}))
-
     settings = load_settings()
-
     assert settings.llm.extra_headers == {"X-A": "1", "X-B": "2"}
-    assert "X-A" not in repr(settings.llm)
 
 
-def test_extra_headers_are_bound_to_configured_provider(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("STRIX_LLM", "openai/gpt-5")
-    monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({"X-Feature-Key": "svc"}))
-    settings = load_settings()
-
-    assert model_extra_headers(settings, "openai/gpt-5-mini") == {"X-Feature-Key": "svc"}
-    assert model_extra_headers(settings, "anthropic/claude") is None
-
-
-def test_sdk_configuration_does_not_install_global_headers(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_extra_headers_merged_into_litellm_headers(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_LLM", "litellm/openai/some-model")
+    monkeypatch.setenv("LLM_API_BASE", "https://gateway.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "token")
+    headers = {"X-Feature-Key": "svc", "X-Tenant": "acme"}
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps(headers))
+
+    configure_sdk_model_defaults(load_settings())
+
+    current: object = litellm.headers
+    assert isinstance(current, dict)
+    assert current["X-Feature-Key"] == "svc"
+    assert current["X-Tenant"] == "acme"
+
+
+def test_extra_headers_applied_to_native_openai_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "openai/some-model")
     monkeypatch.setenv("LLM_API_BASE", "https://gateway.example/v1")
     monkeypatch.setenv("LLM_API_KEY", "token")
     monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({"X-Feature-Key": "svc"}))
 
     configure_sdk_model_defaults(load_settings())
 
-    assert litellm.headers is None
+    client = _openai_shared.get_default_openai_client()
+    assert client is not None
+    assert client.default_headers.get("X-Feature-Key") == "svc"
+    assert str(client.base_url).rstrip("/") == "https://gateway.example/v1"
 
 
-def test_openrouter_attribution_merges_with_user_headers() -> None:
-    settings = ModelSettings(
-        extra_headers={
-            "X-Feature-Key": "svc",
-            "X-Title": "Custom title",
-        }
-    )
-
-    resolved = with_model_request_headers(settings, "openrouter/openai/gpt-5")
-
-    assert resolved.extra_headers == {
-        "HTTP-Referer": "https://strix.ai",
-        "X-Title": "Custom title",
-        "X-OpenRouter-Categories": "cli-agent",
-        "X-Feature-Key": "svc",
-    }
-
-
-def test_no_extra_headers_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_extra_headers_applied_to_native_openai_without_custom_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("STRIX_LLM", "openai/gpt-5")
+    monkeypatch.setenv("LLM_API_KEY", "token")
+    monkeypatch.setenv("LLM_EXTRA_HEADERS", json.dumps({"X-Feature-Key": "svc"}))
 
-    assert model_extra_headers(load_settings(), "openai/gpt-5") is None
+    configure_sdk_model_defaults(load_settings())
+
+    client = _openai_shared.get_default_openai_client()
+    assert client is not None
+    assert client.default_headers.get("X-Feature-Key") == "svc"
+
+
+def test_no_extra_headers_leaves_litellm_headers_untouched(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "openai/some-model")
+    monkeypatch.setenv("LLM_API_BASE", "https://gateway.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "token")
+
+    configure_sdk_model_defaults(load_settings())
+
+    assert litellm.headers is None

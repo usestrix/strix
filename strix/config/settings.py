@@ -23,8 +23,6 @@ class LlmSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     model: str | None = Field(default=None, alias="STRIX_LLM")
-    # Compatibility-only views. Runtime model routes resolve credentials and
-    # endpoints through strix.config.models.resolve_model_config instead.
     api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),

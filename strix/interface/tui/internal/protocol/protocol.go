@@ -59,7 +59,6 @@ type Snapshot struct {
 	MaxTurns            int              `json:"max_turns"`
 	ScopeMode           string           `json:"scope_mode"`
 	DiffBase            string           `json:"diff_base"`
-	Provider            *string          `json:"provider"`
 	Model               string           `json:"model"`
 	ModelWarning        string           `json:"model_warning"`
 	CaidoURL            string           `json:"caido_url"`

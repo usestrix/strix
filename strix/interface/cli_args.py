@@ -232,8 +232,6 @@ Examples:
     # Startup-resolved state lives alongside the parsed flags. The full schema
     # is established here so downstream code reads attributes directly.
     args.needs_setup = False
-    args.setup_invalid_provider = None
-    args.setup_guidance = None
     args.targets_info = []
     args.local_sources = []
     args.diff_scope = {"active": False}
@@ -289,9 +287,9 @@ Examples:
                     "the following arguments are required: -t/--target or --target-list "
                     "(or use --resume <run_name> to continue a prior scan)"
                 )
-            # Interactive launch with no target: open the normal TUI in setup
-            # mode, where the user provides the target (and optionally
-            # provider/model) via slash commands before the scan starts.
+            # Interactive launch with no target: open the normal TUI on its
+            # start screen, where the user gives a target or a bare prompt
+            # before the scan starts.
             args.needs_setup = True
             return args
 
