@@ -207,6 +207,9 @@ VALIDATION REQUIREMENTS:
 - Full validation required - no assumptions
 - Demonstrate concrete impact with evidence
 - Consider business context for severity assessment — check whether the target is a demo/sandbox environment or content meant to be public, and factor that in
+- Score only the security impact demonstrated by the proof of concept. Reachability, missing authentication, scanner labels, and theoretical follow-on attacks do not by themselves justify non-None CVSS impact metrics
+- Treat public metadata, internal-looking identifiers, source maps without secrets, and transport/configuration hygiene as observations unless validation proves unauthorized restricted-data access, modification, or service disruption
+- Every non-None Confidentiality, Integrity, or Availability metric must map to explicit evidence in the report; use Scope Changed only for a demonstrated crossing of security authorities
 - Independent verification through subagent
 - Document complete attack chain
 - Keep going until you find something that matters

@@ -126,23 +126,25 @@ def _validate_cwe(cwe: str) -> str | None:
 
 
 def _calculate_cvss(breakdown: dict[str, str]) -> tuple[float, str, str]:
-    try:
-        from cvss import CVSS3
+    from cvss import CVSS3
 
-        vector = (
-            f"CVSS:3.1/AV:{breakdown['attack_vector']}/AC:{breakdown['attack_complexity']}/"
-            f"PR:{breakdown['privileges_required']}/UI:{breakdown['user_interaction']}/"
-            f"S:{breakdown['scope']}/C:{breakdown['confidentiality']}/"
-            f"I:{breakdown['integrity']}/A:{breakdown['availability']}"
-        )
-        c = CVSS3(vector)
-        score = c.scores()[0]
-        severity = c.severities()[0].lower()
-    except Exception:
-        logger.exception("Failed to calculate CVSS")
-        return 7.5, "high", ""
-    else:
-        return score, severity, vector
+    vector = (
+        f"CVSS:3.1/AV:{breakdown['attack_vector']}/AC:{breakdown['attack_complexity']}/"
+        f"PR:{breakdown['privileges_required']}/UI:{breakdown['user_interaction']}/"
+        f"S:{breakdown['scope']}/C:{breakdown['confidentiality']}/"
+        f"I:{breakdown['integrity']}/A:{breakdown['availability']}"
+    )
+
+    try:
+        cvss = CVSS3(vector)
+        score = cvss.scores()[0]
+        base_severity = cvss.severities()[0].lower()
+    except Exception as exc:
+        msg = f"Failed to calculate CVSS for validated vector: {vector}"
+        raise ValueError(msg) from exc
+
+    severity = "info" if base_severity == "none" else base_severity
+    return score, severity, vector
 
 
 _REQUIRED_FIELDS = {
@@ -233,7 +235,10 @@ async def _do_create(  # noqa: PLR0912
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
 
-    cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
+    try:
+        cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
+    except ValueError as exc:
+        return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
 
     try:
         from strix.report.state import get_global_report_state
@@ -377,6 +382,30 @@ async def create_vulnerability_report(
       lockfile/manifest that matches a published advisory. File those
       with ``create_dependency_report`` instead, never with this tool.
 
+    **Reporting and severity gate**:
+
+    - A reachable endpoint, unusual response, weak configuration, or
+      reconnaissance artifact is not by itself a vulnerability. File a
+      report only when the PoC demonstrates an unauthorized security
+      consequence or a realistic, fully validated path to one.
+    - Score only the reasonable final impact supported by the PoC. Do
+      not score speculative pivots or consequences that require another
+      unverified vulnerability.
+    - Network reachability and missing authentication affect
+      exploitability; neither creates Confidentiality, Integrity, or
+      Availability impact by itself.
+    - Public metadata, internal-looking names or addresses, software
+      versions, intended client-side code, and source maps without
+      secrets or restricted source normally have ``C:N``.
+    - Configuration and transport observations require a realistic
+      attacker-controlled exploit and direct security impact. Client
+      errors, compatibility issues, fingerprinting, and attack-surface
+      discovery alone should not be filed as vulnerabilities.
+    - Before filing, verify that the impact narrative, PoC, and every
+      non-None CVSS impact metric describe the same demonstrated
+      consequence. When evidence is incomplete, lower the metric or
+      continue validation; never choose a higher value "to be safe."
+
     Automatic LLM-based **deduplication** rejects reports that describe
     the same root cause on the same asset as an existing report. If you
     get a ``duplicate_of`` response, do NOT retry — move on to other
@@ -429,6 +458,23 @@ async def create_vulnerability_report(
     - ``scope``: ``U`` (Unchanged) / ``C`` (Changed)
     - ``confidentiality`` / ``integrity`` / ``availability``: ``N`` /
       ``L`` / ``H``
+
+    Derive the vector from the demonstrated attack, not the finding
+    category or a scanner/template severity:
+
+    - ``C:L`` requires actual access to some restricted information.
+      Reconnaissance value alone is ``C:N``. ``C:H`` requires total
+      disclosure or limited disclosure with a direct serious impact,
+      such as a usable administrator credential or private key.
+    - ``I:L`` requires demonstrated unauthorized, limited modification;
+      ``I:H`` requires total or directly serious modification. Otherwise
+      use ``I:N``.
+    - ``A:L`` requires demonstrated performance degradation or service
+      interruption; ``A:H`` requires complete or directly serious
+      denial of the affected service. Otherwise use ``A:N``.
+    - Use ``S:C`` only when exploitation demonstrably crosses into a
+      component governed by a different security authority. A separate
+      backend, downstream effect, or third-party name is insufficient.
 
     Example::
 
@@ -502,7 +548,10 @@ async def create_vulnerability_report(
             (1-3 sentences) — it appears first in the report. Deep
             technical detail and root-cause analysis belong in
             ``technical_analysis``, not here.
-        impact: What an attacker achieves; business risk; data at risk.
+        impact: The unauthorized result demonstrated by the PoC, the
+            affected data or operation, and its scope. Keep plausible
+            but unverified follow-on risks separate; do not use them to
+            set CVSS metrics.
         target: Affected URL / domain / repository.
         technical_analysis: The mechanism and root cause.
         poc_description: Step-by-step reproduction (steps only, no code).
