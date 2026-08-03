@@ -315,11 +315,6 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 		"openai/gpt-5.4",
 		"/workspace/source",
 		"https://example.com",
-		"quick",
-		"$12.50",
-		"275",
-		"diff @ origin/main",
-		"focus on access control",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("start screen is missing %q: %s", want, view)
@@ -452,9 +447,6 @@ func TestModeCommandOpensPickerAndUpdatesSetupSummary(t *testing.T) {
 	handleCommandResult(t, &model, "setup.set_mode", map[string]string{"mode": "standard"})
 	if model.snapshot.ScanMode != "standard" {
 		t.Fatalf("mode result was not applied: %q", model.snapshot.ScanMode)
-	}
-	if summary := ansi.Strip(model.setupSummaryView(80)); !strings.Contains(summary, "mode standard") {
-		t.Fatalf("setup summary does not show mode: %s", summary)
 	}
 }
 

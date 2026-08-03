@@ -336,9 +336,7 @@ func (m Model) setupLayout() (contentWidth, historyHeight int) {
 // setupGeometry sizes the centered setup column: wordmark, composer, an
 // optional command menu and the feedback log, all inside a narrow column.
 func (m Model) setupGeometry() (contentWidth, historyHeight, menuRows int) {
-	// Same rule as opencode's home prompt: a comfortable fixed column that
-	// grows to 70% on wide terminals.
-	contentWidth = min(max(76, m.width*7/10), max(24, m.width-8))
+	contentWidth = min(64, max(24, m.width-8))
 	logoHeight := strings.Count(m.setupLogoView(contentWidth), "\n") + 1
 	composerHeight := m.input.Height() + 3 // meta row, blank line and the bar
 	menuRows = m.commandMenuHeight()
@@ -410,59 +408,22 @@ func (m Model) setupComposer(width int) string {
 	return composer + "\n" + lipgloss.NewStyle().Foreground(bar).Width(width).Render("╹")
 }
 
-// setupSummaryView is the meta row under the composer: everything the scan
-// will run with, unset values called out in amber.
+// setupSummaryView is the quiet meta row under the composer: just the model,
+// plus the targets once some are added.
 func (m Model) setupSummaryView(width int) string {
-	value := func(text string, configured bool) string {
-		if !configured {
-			return render.Col(amber).Render(text)
-		}
-		return render.Col(white).Render(text)
-	}
-	separator := render.Dim().Render(" · ")
-
+	wrap := lipgloss.NewStyle().Width(width)
 	model := strings.TrimSpace(m.snapshot.Model)
-	mode := strings.TrimSpace(m.snapshot.ScanMode)
-	if mode == "" {
-		mode = "deep"
+	row := render.Col(mid).Render(model)
+	if model == "" {
+		row = render.Dim().Render("no model · /model to choose one")
 	}
-	budget := "no budget"
-	if m.snapshot.MaxBudgetUSD != nil {
-		budget = fmt.Sprintf("$%.2f", *m.snapshot.MaxBudgetUSD)
-	}
-	turns := m.snapshot.MaxTurns
-	if turns <= 0 {
-		turns = 500
-	}
-	scope := m.snapshot.ScopeMode
-	if scope == "" {
-		scope = "auto"
-	}
-	if m.snapshot.DiffBase != "" {
-		scope += " @ " + m.snapshot.DiffBase
-	}
-	settings := []string{
-		value(orFallback(model, "no model"), model != ""),
-		render.Dim().Render("mode " + mode),
-		render.Dim().Render(budget),
-		render.Dim().Render(fmt.Sprintf("%d turns", turns)),
-		render.Dim().Render("scope " + scope),
-	}
-
-	targets := "no target"
+	rows := []string{wrap.Render(row)}
 	if len(m.snapshot.Targets) > 0 {
-		targets = strings.Join(m.snapshot.Targets, ", ")
+		targets := strings.Join(m.snapshot.Targets, ", ")
 		if hidden := m.snapshot.TargetCount - len(m.snapshot.Targets); hidden > 0 {
 			targets += fmt.Sprintf(" +%d more", hidden)
 		}
-	}
-	wrap := lipgloss.NewStyle().Width(width)
-	rows := []string{
-		wrap.Render(strings.Join(settings, separator)),
-		wrap.Render(value(targets, len(m.snapshot.Targets) > 0)),
-	}
-	if instruction := strings.TrimSpace(m.snapshot.Instruction); instruction != "" {
-		rows = append(rows, wrap.Render(render.Dim().Render(instruction)))
+		rows = append(rows, wrap.Render(render.Col(white).Render(targets)))
 	}
 	return strings.Join(rows, "\n")
 }
@@ -475,13 +436,6 @@ func (m Model) setupHintsView(width int) string {
 		line = render.Dim().Render("/help for commands")
 	}
 	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(line)
-}
-
-func orFallback(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
 }
 
 func (m Model) setupView() string {
