@@ -369,6 +369,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyMsg:
 		if m.showSplash {
+			switch msg.String() {
+			case "ctrl+c", "ctrl+q", "q", "esc":
+				m.quitting = true
+				return m, tea.Batch(send(m.client, "app.quit", map[string]any{}), tea.Quit)
+			}
+			m.showSplash = false
 			return m, nil
 		}
 		if m.picker != pickerNone {

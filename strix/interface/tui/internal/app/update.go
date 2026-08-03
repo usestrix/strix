@@ -14,6 +14,11 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.openModal(modalHelp)
 		return m, nil
 	case "ctrl+c", "ctrl+q":
+		// Nothing to lose on the start screen; quit without confirmation.
+		if m.snapshot.SetupMode {
+			m.quitting = true
+			return m, tea.Batch(send(m.client, "app.quit", map[string]any{}), tea.Quit)
+		}
 		m.modalChoice = 1
 		m.openModal(modalQuit)
 		return m, nil
