@@ -2,10 +2,8 @@ package app
 
 import (
 	"fmt"
-	"math"
 	"net"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 
@@ -48,68 +46,6 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 	case "/quit", "/exit":
 		m.quitting = true
 		return m, tea.Batch(send(m.client, "app.quit", map[string]any{}), tea.Quit)
-	case "/mode", "/scan-mode":
-		if arg == "" {
-			m.options = append([]string(nil), scanModes...)
-			m.openPicker(pickerScanMode)
-			return m, nil
-		}
-		return m, send(m.client, "setup.set_mode", map[string]any{"mode": strings.ToLower(arg)})
-	case "/budget":
-		if arg == "" {
-			if m.snapshot.MaxBudgetUSD == nil {
-				m.setupMsg("No budget limit is configured.", render.Dim())
-			} else {
-				m.setupMsg(fmt.Sprintf("Current budget limit: $%.2f.", *m.snapshot.MaxBudgetUSD), render.Dim())
-			}
-			return m, nil
-		}
-		if strings.EqualFold(arg, "off") || strings.EqualFold(arg, "none") {
-			return m, send(m.client, "setup.set_budget", map[string]any{"budget": nil})
-		}
-		budget, err := strconv.ParseFloat(arg, 64)
-		if err != nil || budget <= 0 || math.IsNaN(budget) || math.IsInf(budget, 0) {
-			m.setupMsg("Budget must be a number greater than 0, or 'off'.", render.Col(red))
-			return m, nil
-		}
-		return m, send(m.client, "setup.set_budget", map[string]any{"budget": budget})
-	case "/turns", "/max-turns":
-		if arg == "" {
-			m.setupMsg(fmt.Sprintf("Current maximum turns: %d per agent.", m.snapshot.MaxTurns), render.Dim())
-			return m, nil
-		}
-		turns, err := strconv.Atoi(arg)
-		if err != nil || turns <= 0 {
-			m.setupMsg("Maximum turns must be an integer greater than 0.", render.Col(red))
-			return m, nil
-		}
-		return m, send(m.client, "setup.set_max_turns", map[string]any{"turns": turns})
-	case "/scope", "/scope-mode":
-		fields := strings.Fields(arg)
-		if len(fields) == 0 {
-			message := "Current scope mode: " + m.snapshot.ScopeMode
-			if m.snapshot.DiffBase != "" {
-				message += " against " + m.snapshot.DiffBase
-			}
-			m.setupMsg(message+".", render.Dim())
-			return m, nil
-		}
-		mode := strings.ToLower(fields[0])
-		if len(fields) > 2 || (mode != "auto" && mode != "diff" && mode != "full") {
-			m.setupMsg("Usage: /scope <auto|diff|full> [base|default]", render.Col(red))
-			return m, nil
-		}
-		payload := map[string]any{"mode": mode}
-		if len(fields) == 2 {
-			if strings.EqualFold(fields[1], "default") {
-				payload["base"] = nil
-			} else {
-				payload["base"] = fields[1]
-			}
-		} else if mode == "full" {
-			payload["base"] = nil
-		}
-		return m, send(m.client, "setup.set_scope", payload)
 	case "/target":
 		if arg == "" {
 			if len(m.snapshot.Targets) > 0 {
@@ -135,18 +71,6 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 		}
 		m.setupMsg("✓ Added target: "+arg, render.Col(green))
 		return m, send(m.client, "setup.add_target", map[string]any{"target": arg})
-	case "/mount":
-		if arg == "" {
-			m.setupMsg("/mount <path> adds a local directory as a target.", render.Dim())
-			return m, nil
-		}
-		return m, send(m.client, "setup.add_mount", map[string]any{"path": arg})
-	case "/target-list":
-		if arg == "" {
-			m.setupMsg("Usage: /target-list <path>", render.Col(red))
-			return m, nil
-		}
-		return m, send(m.client, "setup.load_target_list", map[string]any{"path": arg})
 	case "/prompt", "/instruction":
 		if arg != "" {
 			m.setupMsg("✓ Prompt set.", render.Col(green))
@@ -154,12 +78,6 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 			m.setupMsg("Prompt cleared.", render.Dim())
 		}
 		return m, send(m.client, "setup.set_instruction", map[string]any{"instruction": arg})
-	case "/prompt-file", "/instruction-file":
-		if arg == "" {
-			m.setupMsg("Usage: /prompt-file <path>", render.Col(red))
-			return m, nil
-		}
-		return m, send(m.client, "setup.load_instruction_file", map[string]any{"path": arg})
 	case "/clear":
 		m.setupMsg("Cleared all targets.", render.Dim())
 		return m, send(m.client, "setup.clear_targets", map[string]any{})
@@ -436,22 +354,13 @@ func (m *Model) refreshViewport() {
 // setupCommands mirrors _SETUP_COMMANDS: the ordered command list shown in the
 // setup intro and by /help.
 var setupCommands = [][2]string{
-	{"/mode [quick|standard|deep]", "Set scan depth (default: deep)"},
-	{"/budget <USD|off>", "Set or disable the scan cost limit"},
-	{"/turns <N>", "Set maximum turns per agent"},
-	{"/scope <auto|diff|full> [base]", "Set code scope and optional diff base"},
 	{"/target <value>", "Add a target: URL, repo, path, domain, or IP"},
-	{"/mount <path>", "Add a read-only local directory mount"},
-	{"/target-list <path>", "Load targets from a file"},
 	{"/prompt <text>", "Set an optional instruction for the scan"},
-	{"/prompt-file <path>", "Load scan instructions from a file"},
 	{"/clear", "Remove all targets"},
 	{"/start", "Launch the scan"},
 	{"/help", "Show this command list"},
 	{"/quit", "Exit without scanning"},
 }
-
-var scanModes = []string{"quick", "standard", "deep"}
 
 func (m Model) setupContent() string {
 	var b strings.Builder
@@ -782,4 +691,20 @@ func (m *Model) syncMountPrompt() {
 	case m.snapshot.PendingMount == "" && m.modal == modalConfirmMount:
 		m.closeModal()
 	}
+}
+
+// optionWindow returns a [start,end) slice that keeps the cursor visible within
+// a scrolling window of at most size rows.
+func optionWindow(cursor, length, size int) (int, int) {
+	if length <= size {
+		return 0, length
+	}
+	start := cursor - size + 1
+	if start < 0 {
+		start = 0
+	}
+	if start > length-size {
+		start = length - size
+	}
+	return start, start + size
 }

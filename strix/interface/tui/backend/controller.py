@@ -28,7 +28,7 @@ from strix.interface.tui.backend.projection import (
     sanitize_terminal_text,
     terminal_projection,
 )
-from strix.interface.utils import check_mountable_dir, is_subscription_run, read_target_list_file
+from strix.interface.utils import is_subscription_run
 
 
 if TYPE_CHECKING:
@@ -290,15 +290,8 @@ class TuiController:
     async def handle(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         handlers = {
             "setup.add_target": self._add_target,
-            "setup.add_mount": self._add_mount,
-            "setup.load_target_list": self._load_target_list,
             "setup.clear_targets": self._clear_targets,
             "setup.set_instruction": self._set_instruction,
-            "setup.load_instruction_file": self._load_instruction_file,
-            "setup.set_mode": self._set_mode,
-            "setup.set_budget": self._set_budget,
-            "setup.set_max_turns": self._set_max_turns,
-            "setup.set_scope": self._set_scope,
             "setup.start": self._start,
             "setup.confirm_mount": self._confirm_mount,
             "agent.send_message": self._send_message,
@@ -320,42 +313,6 @@ class TuiController:
             self.targets.append(target)
         return {"target": target, "total": len(self.targets)}
 
-    async def _add_mount(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        raw_path = self._required_string(payload, "path")
-
-        def resolve_mount_path() -> str:
-            path = Path(raw_path).expanduser()
-            try:
-                resolved = path.resolve()
-                is_dir = resolved.is_dir()
-            except (OSError, RuntimeError) as e:
-                raise ValueError(f"Invalid mount path '{raw_path}': {e!s}") from e
-            if not is_dir:
-                raise ValueError(
-                    f"Mount path '{raw_path}' is not an existing directory. "
-                    "/mount requires a path to a local directory."
-                )
-            check_mountable_dir(resolved)
-            return str(resolved)
-
-        mount = await asyncio.to_thread(resolve_mount_path)
-        if mount not in self.targets:
-            self.targets.append(mount)
-        return {"mount": mount, "total": len(self.targets)}
-
-    async def _load_target_list(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        path = self._required_string(payload, "path")
-        targets = await asyncio.to_thread(read_target_list_file, path)
-        added = 0
-        for target in targets:
-            if target in self.targets:
-                continue
-            self.targets.append(target)
-            added += 1
-        return {"path": path, "added": added, "total": len(self.targets)}
-
     async def _clear_targets(self, _payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()
         self.targets.clear()
@@ -368,79 +325,6 @@ class TuiController:
             raise TypeError("instruction must be a string")
         self.instruction = instruction.strip()
         return {"instruction": self.instruction}
-
-    async def _load_instruction_file(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        raw_path = self._required_string(payload, "path")
-        path = Path(raw_path).expanduser()
-
-        def read_instruction() -> str:
-            if not path.is_file():
-                raise ValueError(f"Instruction file '{raw_path}' is not an existing file")
-            try:
-                instruction = path.read_text(encoding="utf-8").strip()
-            except UnicodeDecodeError as exc:
-                raise ValueError(
-                    f"Instruction file '{raw_path}' must be valid UTF-8 text: {exc!s}"
-                ) from exc
-            except OSError as exc:
-                raise ValueError(f"Failed to read instruction file '{raw_path}': {exc!s}") from exc
-            if not instruction:
-                raise ValueError(f"Instruction file '{raw_path}' is empty")
-            return instruction
-
-        self.instruction = await asyncio.to_thread(read_instruction)
-        return {"path": str(path), "characters": len(self.instruction)}
-
-    async def _set_mode(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        scan_mode = self._required_string(payload, "mode").lower()
-        if scan_mode not in SCAN_MODES:
-            choices = ", ".join(SCAN_MODES)
-            raise ValueError(f"mode must be one of: {choices}")
-        self.scan_mode = scan_mode
-        return {"mode": scan_mode}
-
-    async def _set_budget(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        budget = payload.get("budget")
-        if budget is None:
-            self.max_budget_usd = None
-        elif (
-            isinstance(budget, bool)
-            or not isinstance(budget, int | float)
-            or not math.isfinite(float(budget))
-            or budget <= 0
-        ):
-            raise ValueError("budget must be a finite number greater than 0, or null")
-        else:
-            self.max_budget_usd = float(budget)
-        return {"budget": self.max_budget_usd}
-
-    async def _set_max_turns(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        turns = payload.get("turns")
-        if isinstance(turns, bool) or not isinstance(turns, int) or turns <= 0:
-            raise ValueError("turns must be an integer greater than 0")
-        self.max_turns = turns
-        return {"turns": turns}
-
-    async def _set_scope(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        scope_mode = self._required_string(payload, "mode").lower()
-        if scope_mode not in SCOPE_MODES:
-            choices = ", ".join(SCOPE_MODES)
-            raise ValueError(f"scope mode must be one of: {choices}")
-        self.scope_mode = scope_mode
-        if "base" in payload:
-            raw_base = payload["base"]
-            if raw_base is not None and not isinstance(raw_base, str):
-                raise TypeError("base must be a string or null")
-            self.diff_base = raw_base.strip() if isinstance(raw_base, str) else None
-            self.diff_base = self.diff_base or None
-        elif scope_mode == "full":
-            self.diff_base = None
-        return {"mode": self.scope_mode, "base": self.diff_base}
 
     async def _start(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.scan_started or self._start_in_progress:

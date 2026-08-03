@@ -9,7 +9,6 @@ var Capabilities = []string{
 	"collection-deltas",
 	"structured-command-errors",
 	"agents-collection",
-	"setup-run-controls",
 }
 
 type Envelope struct {

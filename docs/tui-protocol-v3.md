@@ -15,7 +15,7 @@ mode.
 Python sends exactly one `hello` immediately after transport connection:
 
 ```json
-{"version":3,"type":"hello","payload":{"capabilities":["state-revisions","collection-deltas","structured-command-errors","paged-models","agents-collection","setup-run-controls"]}}
+{"version":3,"type":"hello","payload":{"capabilities":["state-revisions","collection-deltas","structured-command-errors","agents-collection"]}}
 ```
 
 Go validates the version, message type, and exact ordered capability list. It
@@ -23,7 +23,7 @@ then sends the corresponding `ready` before creating the Bubble Tea program or
 entering the terminal alternate screen:
 
 ```json
-{"version":3,"type":"ready","payload":{"capabilities":["state-revisions","collection-deltas","structured-command-errors","paged-models","agents-collection","setup-run-controls"]}}
+{"version":3,"type":"ready","payload":{"capabilities":["state-revisions","collection-deltas","structured-command-errors","agents-collection"]}}
 ```
 
 Python does not initialize report/run state or start a scan until it validates
@@ -78,60 +78,23 @@ submissions, and applies results only when both request ID and command match.
 
 Client commands are:
 
-- `providers.list`, `models.list`
-- `setup.select_provider`, `setup.save_api_key`, `setup.disconnect_provider`
-- `setup.add_custom_provider`, `setup.select_model`
-- `setup.add_target`, `setup.add_mount`, `setup.load_target_list`, `setup.clear_targets`
-- `setup.set_instruction`, `setup.load_instruction_file`, `setup.set_mode`
-- `setup.set_budget`, `setup.set_max_turns`, `setup.set_scope`, `setup.start`
+- `setup.add_target`, `setup.clear_targets`, `setup.set_instruction`
+- `setup.start`, `setup.confirm_mount`
 - `agent.send_message`, `agent.stop`
 - `viewer.open`, `collection.resync`, `app.quit`
 
 A success is correlated as follows:
 
 ```json
-{"version":3,"type":"command_result","request_id":"go-1","payload":{"ok":true,"command":"providers.list","result":{}}}
+{"version":3,"type":"command_result","request_id":"go-1","payload":{"ok":true,"command":"setup.add_target","result":{}}}
 ```
 
 Errors are structured and do not stop the command reader:
 
 ```json
-{"version":3,"type":"command_result","request_id":"go-2","payload":{"ok":false,"command":"setup.select_model","error":{"code":"persistence_error","message":"disk is read-only","retryable":true}}}
+{"version":3,"type":"command_result","request_id":"go-2","payload":{"ok":false,"command":"setup.set_instruction","error":{"code":"persistence_error","message":"disk is read-only","retryable":true}}}
 ```
 
 Malformed commands, persistence `OSError`s, and unexpected command exceptions
 are isolated to their request. EOF, invalid frame lengths, and socket I/O errors
 are fatal transport failures and close the connection.
-
-API keys appear only in `setup.save_api_key` and `setup.add_custom_provider`
-payloads. They are cleared from Go input fields after submission and are never
-echoed in state, results, logs, process arguments, or the child environment.
-
-### Paged model listings
-
-`models.list` is always paged. A request without a cursor creates an immutable,
-short-lived server snapshot:
-
-```json
-{"version":3,"type":"models.list","request_id":"go-3","payload":{}}
-```
-
-The result identifies the snapshot and page. Every command result, including a
-page containing part of one unusually large provider group, remains below the
-64 KiB control-frame limit:
-
-```json
-{"listing_id":"R4nd0m","cursor":0,"next_cursor":1,"done":false,"groups":[{"provider":"openai","label":"OpenAI","models":["openai/gpt-5"],"allow_manual":false,"error":""}],"providers":[]}
-```
-
-The next request must echo both values:
-
-```json
-{"version":3,"type":"models.list","request_id":"go-4","payload":{"listing_id":"R4nd0m","cursor":1}}
-```
-
-The listing ID expires after 60 seconds. Unknown, expired, or out-of-range
-cursors are rejected as structured `invalid_request` results. Provider groups
-may span pages; Go merges fragments by provider and opens the model picker only
-after receiving `done:true`. If no provider is connected, the same paging shape
-uses `providers` instead of `groups`.

@@ -23,15 +23,14 @@ take precedence.
 
 If model preflight receives a definite authentication rejection, Strix marks the
 provider credential invalid instead of treating key presence as configured.
-Keys saved by Strix can be replaced from `/provider`. Environment-backed keys
-must be updated in the launching environment and require restarting Strix.
+Environment-backed keys must be updated in the launching environment and require
+restarting Strix.
 Timeouts, rate limits, and model-access errors do not invalidate credentials.
 
-The interactive model picker includes every configured provider. For Vertex AI,
-Bedrock, and SageMaker, Strix passively recognizes local ADC, AWS profiles,
-access-key pairs, web identity, and container credential markers. It does not
-contact cloud metadata services merely to populate the picker. An explicitly
-selected cloud model still reaches the provider SDK's normal ambient credential
+For Vertex AI, Bedrock, and SageMaker, Strix passively recognizes local ADC, AWS
+profiles, access-key pairs, web identity, and container credential markers. It
+does not contact cloud metadata services merely to detect them. A configured
+cloud model still reaches the provider SDK's normal ambient credential
 chain, and the model preflight remains the authoritative credential and
 permission check.
 

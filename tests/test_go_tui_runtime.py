@@ -260,7 +260,6 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
                         "collection-deltas",
                         "structured-command-errors",
                         "agents-collection",
-                        "setup-run-controls",
                     ]
                 },
             },

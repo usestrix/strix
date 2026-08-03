@@ -8,7 +8,6 @@ import (
 	"github.com/atotto/clipboard"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -56,13 +55,6 @@ func SetVersion(v string) {
 	}
 }
 
-type pickerMode int
-
-const (
-	pickerNone pickerMode = iota
-	pickerScanMode
-)
-
 type modalMode int
 
 const (
@@ -97,11 +89,9 @@ type Model struct {
 	width, height          int
 	snapshot               protocol.Snapshot
 	input                  textarea.Model
-	pickerInput            textinput.Model
 	viewport               viewport.Model
 	viewportContent        string
 	vulnViewport           viewport.Model
-	picker                 pickerMode
 	modal                  modalMode
 	focus                  focusMode
 	options                []string
@@ -260,19 +250,11 @@ func composerHeight(input textarea.Model) int {
 }
 
 func New(client *Client) Model {
-	newInput := func() textinput.Model {
-		input := textinput.New()
-		input.Prompt = ""
-		input.CharLimit = 4096
-		input.TextStyle = lipgloss.NewStyle().Foreground(textColor)
-		input.Cursor.Style = lipgloss.NewStyle().Foreground(green)
-		return input
-	}
 	input := newChatInput()
 	input.Placeholder = setupPlaceholder
 	input.Focus()
 	return Model{
-		client: client, input: input, pickerInput: newInput(), viewport: viewport.New(80, 20), vulnViewport: viewport.New(80, 20),
+		client: client, input: input, viewport: viewport.New(80, 20), vulnViewport: viewport.New(80, 20),
 		collapsedAgents: map[string]bool{}, expandedEvents: map[string]bool{}, blockCache: map[string]renderedBlock{}, showSplash: true, splashStarted: time.Now(), followOutput: true,
 		collectionRevisions: map[string]int{}, collectionAssemblies: map[string]*collectionAssembly{}, resyncRequested: map[string]bool{}, resyncRequests: map[string]string{},
 		seenMessages: map[string]bool{},
@@ -387,9 +369,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.showSplash = false
 			return m, nil
 		}
-		if m.picker != pickerNone {
-			return m.updatePicker(msg)
-		}
 		if m.modal != modalNone {
 			return m.updateModal(msg)
 		}
@@ -401,9 +380,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateMouse(msg)
 	}
 	var cmd tea.Cmd
-	if m.picker != pickerNone {
-		m.pickerInput, cmd = m.pickerInput.Update(msg)
-	} else if m.modal == modalNone {
+	if m.modal == modalNone {
 		m.input, cmd = m.input.Update(msg)
 	}
 	cmds = append(cmds, cmd)

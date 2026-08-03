@@ -14,7 +14,6 @@ func TestProtocolVersionAndCapabilities(t *testing.T) {
 		"collection-deltas",
 		"structured-command-errors",
 		"agents-collection",
-		"setup-run-controls",
 	}
 	if !reflect.DeepEqual(Capabilities, wantCapabilities) {
 		t.Fatalf("capabilities = %#v, want %#v", Capabilities, wantCapabilities)

@@ -249,10 +249,7 @@ func (m Model) viewInner() string {
 	if m.snapshot.SetupMode {
 		main = m.setupView()
 	}
-	if m.picker != pickerNone {
-		// Picker screens use a transparent backdrop (background: $background 0%).
-		main = m.overlay(main, m.pickerView(), false)
-	} else if m.modal == modalConfirmMount {
+	if m.modal == modalConfirmMount {
 		// A corner prompt, not a dialog: it sits out of the way in the live view
 		// while the scan waits on the answer.
 		main = m.cornerOverlay(main, m.modalView())

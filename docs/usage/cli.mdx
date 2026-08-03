@@ -108,15 +108,14 @@ strix (--target <target> | --target-list <path>) [options]
 
 ## Interactive Interface
 
-Interactive scans use the Go/Bubble Tea interface. It supports targetless
-interactive setup for providers, credentials, models, and targets. If the Go
-sidecar cannot activate, Strix exits with guidance; failures after Go TUI
-activation are surfaced rather than switching interfaces mid-session.
+Interactive scans use the Go/Bubble Tea interface. It opens on a start screen
+where a prompt, a target, or both launch a scan; a prompt on its own runs
+against the working directory once you confirm mounting it. If the Go sidecar
+cannot activate, Strix exits with guidance; failures after Go TUI activation are
+surfaced rather than switching interfaces mid-session.
 
-Setup slash commands also cover the main fresh-run controls: `/budget <USD|off>`,
-`/turns <N>`, `/scope <auto|diff|full> [base]`, `/mount <path>`,
-`/target-list <path>`, and `/prompt-file <path>`. These values are applied before
-the scan starts; they do not mutate an active or resumed scan.
+Run settings come from the flags above. The model comes from `STRIX_LLM` or your
+config file, and the start screen shows which one it will use.
 
 ## Examples
 

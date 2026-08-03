@@ -160,9 +160,6 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateMouse routes wheel and click events to the pane under the pointer.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.picker != pickerNone {
-		return m.updatePickerMouse(msg)
-	}
 	if m.modal != modalNone {
 		return m.updateModalMouse(msg)
 	}
@@ -429,45 +426,6 @@ func (m Model) updateSetupMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// updatePickerMouse keeps all pointer events inside the active picker. Clicking
-// an option selects it, while the wheel moves the highlighted option.
-func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		if m.cursor > 0 {
-			m.cursor--
-		}
-		return m, nil
-	case tea.MouseButtonWheelDown:
-		if m.cursor+1 < len(m.filtered) {
-			m.cursor++
-		}
-		return m, nil
-	}
-	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
-		return m, nil
-	}
-
-	view := m.pickerView()
-	left, top, width, height := m.centeredViewBounds(view)
-	if msg.X < left || msg.X >= left+width || msg.Y < top || msg.Y >= top+height {
-		return m, nil
-	}
-	// Provider/model dialogs have one border row, one padding row, the title,
-	// a blank line, the three-row search box, and a blank line before options.
-	const firstOptionRow = 8
-	start, end := optionWindow(m.cursor, len(m.filtered), 18)
-	index := start + msg.Y - top - firstOptionRow
-	if index < start || index >= end {
-		return m, nil
-	}
-	m.cursor = index
-	return m.selectPickerOption(index)
-}
-
-// updateModalMouse captures pointer input while a modal is open and activates
-// the same confirmation actions as Enter. Non-interactive modal areas consume
-// the event without affecting the screen behind them.
 func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modal == modalVulnerability {
 		view := m.modalView()

@@ -54,16 +54,7 @@ We recommend these models for the best balance of reasoning and tool use:
 
 ## LM Studio / OpenAI Compatible
 
-The interactive provider list includes **Add custom provider**. It saves as many
-named endpoints as you need. Select OpenAI-compatible, llama.cpp, or vLLM,
-enter the required API base URL, and optionally enter an API key. Strix discovers
-models from `GET /models`; you can type a model ID manually if discovery is not
-available. For llama.cpp and vLLM, Strix appends `/v1` when you enter a server
-root URL. Discovery uses a short timeout so an offline endpoint does not hold up
-the combined model picker. Successful results are cached briefly, and failed
-endpoints remain available for manual model entry.
-
-You can also configure one OpenAI-compatible endpoint with environment variables:
+Configure an OpenAI-compatible endpoint with environment variables:
 
 ```bash
 export STRIX_LLM="openai/local-model"

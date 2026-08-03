@@ -2,7 +2,6 @@ package app
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
@@ -30,7 +29,6 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		update.State.Vulnerabilities = m.snapshot.Vulnerabilities
 		update.State.Agents = m.snapshot.Agents
 		m.consumeMessages(update.State.Messages, update.State.SetupMode)
-		wasSetup := m.snapshot.SetupMode
 		m.snapshot = update.State
 		m.stateRevision = update.Revision
 		if m.snapshot.Error != nil {
@@ -42,9 +40,6 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.showSplash = false
 			m.input.Placeholder = setupPlaceholder
 		} else {
-			if wasSetup && m.picker != pickerNone {
-				m.closePicker()
-			}
 			m.input.Placeholder = chatPlaceholder
 		}
 		m.selectedAgent = selectedAgentIndex(m.snapshot.Agents, selectedAgentID)
@@ -104,73 +99,6 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		}
 		m.errorText = ""
 		switch result.Command {
-		case "setup.set_mode":
-			var data struct {
-				Mode string `json:"mode"`
-			}
-			_ = json.Unmarshal(result.Result, &data)
-			if data.Mode != "" {
-				m.closePicker()
-				m.snapshot.ScanMode = data.Mode
-				m.setupMsg("✓ Scan mode set to "+data.Mode+".", render.Col(green))
-			}
-		case "setup.add_mount":
-			var data struct {
-				Mount string `json:"mount"`
-			}
-			_ = json.Unmarshal(result.Result, &data)
-			if data.Mount != "" {
-				m.setupMsg("✓ Added read-only mount: "+data.Mount, render.Col(green))
-			}
-		case "setup.load_target_list":
-			var data struct {
-				Path  string `json:"path"`
-				Added int    `json:"added"`
-				Total int    `json:"total"`
-			}
-			_ = json.Unmarshal(result.Result, &data)
-			m.setupMsg(fmt.Sprintf("✓ Added %d target(s) from %s (%d total).", data.Added, data.Path, data.Total), render.Col(green))
-		case "setup.load_instruction_file":
-			var data struct {
-				Path       string `json:"path"`
-				Characters int    `json:"characters"`
-			}
-			_ = json.Unmarshal(result.Result, &data)
-			m.setupMsg(fmt.Sprintf("✓ Loaded %d instruction characters from %s.", data.Characters, data.Path), render.Col(green))
-		case "setup.set_budget":
-			var data struct {
-				Budget *float64 `json:"budget"`
-			}
-			_ = json.Unmarshal(result.Result, &data)
-			m.snapshot.MaxBudgetUSD = data.Budget
-			if data.Budget == nil {
-				m.setupMsg("Budget limit disabled.", render.Dim())
-			} else {
-				m.setupMsg(fmt.Sprintf("✓ Budget set to $%.2f.", *data.Budget), render.Col(green))
-			}
-		case "setup.set_max_turns":
-			var data struct {
-				Turns int `json:"turns"`
-			}
-			_ = json.Unmarshal(result.Result, &data)
-			m.snapshot.MaxTurns = data.Turns
-			m.setupMsg(fmt.Sprintf("✓ Maximum turns set to %d per agent.", data.Turns), render.Col(green))
-		case "setup.set_scope":
-			var data struct {
-				Mode string  `json:"mode"`
-				Base *string `json:"base"`
-			}
-			_ = json.Unmarshal(result.Result, &data)
-			m.snapshot.ScopeMode = data.Mode
-			m.snapshot.DiffBase = ""
-			if data.Base != nil {
-				m.snapshot.DiffBase = *data.Base
-			}
-			message := "✓ Scope mode set to " + data.Mode
-			if m.snapshot.DiffBase != "" {
-				message += " against " + m.snapshot.DiffBase
-			}
-			m.setupMsg(message+".", render.Col(green))
 		case "viewer.open":
 			var data struct {
 				Status string  `json:"status"`

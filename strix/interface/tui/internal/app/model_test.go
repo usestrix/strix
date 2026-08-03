@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -220,36 +219,6 @@ func TestAgentsCollectionPreservesSelectedIDAcrossUpsertsAndDeletes(t *testing.T
 	}
 }
 
-func TestUnknownAndMismatchedCommandResultsCannotClosePersistencePicker(t *testing.T) {
-	client := newClient(&recordingConn{})
-	model := New(client)
-	model.picker = pickerScanMode
-	client.pending["request-1"] = "setup.set_mode"
-	client.pendingByKey["setup.set_mode"] = "request-1"
-	client.requestKeyByID["request-1"] = "setup.set_mode"
-	result := rawJSON(t, protocol.CommandResult{
-		OK: true, Command: "setup.set_mode", Result: rawJSON(t, map[string]string{"mode": "quick"}),
-	})
-
-	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "command_result", RequestID: "unknown", Payload: json.RawMessage(`not-json`)})
-	if model.errorText != "" {
-		t.Fatal("malformed unknown result mutated model error state")
-	}
-	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "command_result", RequestID: "unknown", Payload: result})
-	if model.picker != pickerScanMode {
-		t.Fatal("unknown result closed persistence picker")
-	}
-	mismatched := rawJSON(t, protocol.CommandResult{OK: true, Command: "setup.set_budget", Result: rawJSON(t, map[string]any{})})
-	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "command_result", RequestID: "request-1", Payload: mismatched})
-	if model.picker != pickerScanMode || client.pending["request-1"] == "" {
-		t.Fatal("mismatched result mutated picker or pending request")
-	}
-	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "command_result", RequestID: "request-1", Payload: result})
-	if model.picker != pickerNone || client.pending["request-1"] != "" {
-		t.Fatal("correlated success did not close picker and resolve request")
-	}
-}
-
 func TestSetupCommandsAppearAboveInputAndFilter(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 100, 50
@@ -261,25 +230,13 @@ func TestSetupCommandsAppearAboveInputAndFilter(t *testing.T) {
 	}
 	model.input.SetValue("/")
 	view := model.View()
-	if !strings.Contains(view, "/mode") || !strings.Contains(view, "/target") {
+	if !strings.Contains(view, "/target") || !strings.Contains(view, "/start") {
 		t.Fatalf("all setup commands were not recommended for bare slash: %s", view)
 	}
-	model.input.SetValue("/mo")
+	model.input.SetValue("/cl")
 	view = model.View()
-	if !strings.Contains(view, "/mode") || strings.Contains(view, "/target") {
+	if !strings.Contains(view, "/clear") || strings.Contains(view, "/target") {
 		t.Fatalf("setup command recommendations were not filtered: %s", view)
-	}
-}
-
-func TestSetupCommandListIncludesFreshRunControls(t *testing.T) {
-	commands := make(map[string]bool, len(setupCommands))
-	for _, command := range setupCommands {
-		commands[strings.Fields(command[0])[0]] = true
-	}
-	for _, command := range []string{"/budget", "/turns", "/scope", "/mount", "/target-list", "/prompt-file"} {
-		if !commands[command] {
-			t.Fatalf("setup command list is missing %s", command)
-		}
 	}
 }
 
@@ -333,7 +290,6 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 		ScanStarted: true,
 		ScanState:   "running",
 	}
-	model.openPicker(pickerScanMode)
 	model.handleEnvelope(stateEnvelope(t, 2, runningState))
 	model.handleEnvelope(bootstrapEnvelope(t, "agents", 1, protocol.Agent{ID: "one", Name: "LIVE_AGENT", Status: "running"}))
 	view := model.View()
@@ -342,9 +298,6 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	}
 	if model.input.Placeholder != "Send a message" {
 		t.Fatalf("live input placeholder was not updated: %q", model.input.Placeholder)
-	}
-	if model.picker != pickerNone {
-		t.Fatalf("setup picker remained open after scan start: %v", model.picker)
 	}
 }
 
@@ -374,107 +327,12 @@ func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 	}
 }
 
-func TestModeCommandOpensPickerAndUpdatesSetupSummary(t *testing.T) {
-	model := New(nil)
-	model.snapshot.SetupMode = true
-	model.snapshot.ScanMode = "deep"
-
-	updated, cmd := model.submitSetup("/mode")
-	model = updated.(Model)
-	if cmd != nil || model.picker != pickerScanMode {
-		t.Fatalf("/mode did not open mode picker: picker=%v cmd=%v", model.picker, cmd)
-	}
-	if got := strings.Join(model.filtered, ","); got != "quick,standard,deep" {
-		t.Fatalf("mode options = %q", got)
-	}
-
-	handleCommandResult(t, &model, "setup.set_mode", map[string]string{"mode": "standard"})
-	if model.snapshot.ScanMode != "standard" {
-		t.Fatalf("mode result was not applied: %q", model.snapshot.ScanMode)
-	}
-}
-
-func TestModeCommandAcceptsInlineValue(t *testing.T) {
-	model := New(nil)
-	model.snapshot.SetupMode = true
-
-	_, cmd := model.submitSetup("/mode quick")
-
-	if cmd == nil {
-		t.Fatal("/mode quick did not send the mode command")
-	}
-}
-
-func TestAdditionalSetupCommandsSendBackendRequests(t *testing.T) {
-	tests := []struct {
-		input   string
-		command string
-		payload map[string]any
-	}{
-		{"/budget 5.5", "setup.set_budget", map[string]any{"budget": 5.5}},
-		{"/budget off", "setup.set_budget", map[string]any{"budget": nil}},
-		{"/turns 250", "setup.set_max_turns", map[string]any{"turns": float64(250)}},
-		{"/scope diff origin/main", "setup.set_scope", map[string]any{"mode": "diff", "base": "origin/main"}},
-		{"/mount /workspace/source", "setup.add_mount", map[string]any{"path": "/workspace/source"}},
-		{"/target-list targets.txt", "setup.load_target_list", map[string]any{"path": "targets.txt"}},
-		{"/prompt-file prompt.txt", "setup.load_instruction_file", map[string]any{"path": "prompt.txt"}},
-	}
-
-	for _, test := range tests {
-		t.Run(test.command+test.input, func(t *testing.T) {
-			model, connection := newCommandTestModel(t)
-			model.snapshot.SetupMode = true
-			_, cmd := model.submitSetup(test.input)
-			envelope := commandFromCmd(t, cmd, connection)
-			if envelope.Type != test.command {
-				t.Fatalf("command = %q, want %q", envelope.Type, test.command)
-			}
-			var payload map[string]any
-			if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(payload, test.payload) {
-				t.Fatalf("payload = %#v, want %#v", payload, test.payload)
-			}
-		})
-	}
-}
-
-func TestAdditionalSetupCommandResultsUpdateSummaryState(t *testing.T) {
-	model := New(nil)
-	handleCommandResult(t, &model, "setup.set_budget", map[string]any{"budget": 7.25})
-	handleCommandResult(t, &model, "setup.set_max_turns", map[string]any{"turns": 333})
-	handleCommandResult(t, &model, "setup.set_scope", map[string]any{"mode": "diff", "base": "origin/main"})
-
-	if model.snapshot.MaxBudgetUSD == nil || *model.snapshot.MaxBudgetUSD != 7.25 {
-		t.Fatalf("budget result was not applied: %#v", model.snapshot.MaxBudgetUSD)
-	}
-	if model.snapshot.MaxTurns != 333 {
-		t.Fatalf("turn result was not applied: %d", model.snapshot.MaxTurns)
-	}
-	if model.snapshot.ScopeMode != "diff" || model.snapshot.DiffBase != "origin/main" {
-		t.Fatalf("scope result was not applied: %q %q", model.snapshot.ScopeMode, model.snapshot.DiffBase)
-	}
-}
-
-func TestAdditionalSetupCommandsRejectInvalidInlineValues(t *testing.T) {
-	for _, command := range []string{"/budget 0", "/budget NaN", "/turns 0", "/turns nope", "/scope invalid"} {
-		model := New(nil)
-		model.snapshot.SetupMode = true
-		updated, cmd := model.submitSetup(command)
-		result := updated.(Model)
-		if cmd != nil || len(result.setupLog) == 0 {
-			t.Fatalf("invalid command %q was sent or did not report an error", command)
-		}
-	}
-}
-
 func TestSetupCommandKeyboardSelectionSubmits(t *testing.T) {
 	model := New(nil)
 	model.snapshot.SetupMode = true
 	model.focus = focusInput
-	// "/s" narrows to /scope then /start, so the second entry is one that sends.
-	model.input.SetValue("/s")
+	// A bare slash lists every command; the second is /prompt, which sends.
+	model.input.SetValue("/")
 
 	updated, _ := model.updateMain(tea.KeyMsg{Type: tea.KeyDown})
 	model = updated.(Model)
@@ -515,19 +373,6 @@ func TestSubmittedSetupCommandIsNotEchoedInOutput(t *testing.T) {
 	}
 }
 
-func TestEmptyPickerSubmitDoesNotSelect(t *testing.T) {
-	model := New(nil)
-	model.picker = pickerScanMode
-	model.options = []string{"deep"}
-	model.pickerInput.SetValue("not-a-mode")
-	model.filterOptions()
-	updated, cmd := model.updatePicker(tea.KeyMsg{Type: tea.KeyEnter})
-	result := updated.(Model)
-	if cmd != nil || result.picker != pickerScanMode {
-		t.Fatal("empty search submit selected or closed the picker")
-	}
-}
-
 func TestStateMessagesRenderOnce(t *testing.T) {
 	model := New(nil)
 	message := protocol.Message{ID: "setup-1", Text: "Replace the rejected key", Level: "warning"}
@@ -535,21 +380,6 @@ func TestStateMessagesRenderOnce(t *testing.T) {
 	model.handleEnvelope(stateEnvelope(t, 2, protocol.Snapshot{SetupMode: true, Messages: []protocol.Message{message}}))
 	if len(model.setupLog) != 1 || !strings.Contains(ansi.Strip(model.setupLog[0]), message.Text) {
 		t.Fatalf("setup message was not rendered exactly once: %#v", model.setupLog)
-	}
-}
-
-func TestPickerInputDoesNotMirrorMainInput(t *testing.T) {
-	model := New(nil)
-	model.input.SetValue("main draft")
-	model.openPicker(pickerScanMode)
-
-	updated, _ := model.updatePicker(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("secret")})
-	result := updated.(Model)
-	if result.input.Value() != "main draft" {
-		t.Fatalf("picker changed main input: %q", result.input.Value())
-	}
-	if result.pickerInput.Value() != "secret" {
-		t.Fatalf("API key was not entered in picker input: %q", result.pickerInput.Value())
 	}
 }
 

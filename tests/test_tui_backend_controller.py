@@ -85,126 +85,27 @@ async def test_setup_instruction_starts_from_cli_and_can_be_cleared() -> None:
 
 
 @pytest.mark.asyncio
-async def test_scan_mode_is_validated_and_saved_in_setup_state() -> None:
-    controller = TuiController(args())
-
-    result = await controller.handle("setup.set_mode", {"mode": "quick"})
-
-    assert result == {"mode": "quick"}
-    assert controller.snapshot()["scan_mode"] == "quick"
-    with pytest.raises(ValueError, match="quick, standard, deep"):
-        await controller.handle("setup.set_mode", {"mode": "invalid"})
-
-
-@pytest.mark.asyncio
-async def test_setup_run_limits_and_scope_are_validated() -> None:
-    controller = TuiController(args())
-
-    budget = await controller.handle("setup.set_budget", {"budget": 12.5})
-    turns = await controller.handle("setup.set_max_turns", {"turns": 275})
-    scope = await controller.handle(
-        "setup.set_scope",
-        {"mode": "diff", "base": "origin/main"},
-    )
-
-    assert budget == {"budget": 12.5}
-    assert turns == {"turns": 275}
-    assert scope == {"mode": "diff", "base": "origin/main"}
-    snapshot = controller.snapshot()
-    assert snapshot["max_budget_usd"] == 12.5
-    assert snapshot["max_turns"] == 275
-    assert snapshot["scope_mode"] == "diff"
-    assert snapshot["diff_base"] == "origin/main"
-
-    assert await controller.handle("setup.set_budget", {"budget": None}) == {"budget": None}
-    assert await controller.handle("setup.set_scope", {"mode": "full"}) == {
-        "mode": "full",
-        "base": None,
-    }
-    with pytest.raises(ValueError, match="greater than 0"):
-        await controller.handle("setup.set_budget", {"budget": 0})
-    with pytest.raises(ValueError, match="integer greater than 0"):
-        await controller.handle("setup.set_max_turns", {"turns": 0})
-    with pytest.raises(ValueError, match="auto, diff, full"):
-        await controller.handle("setup.set_scope", {"mode": "invalid"})
-
-
-@pytest.mark.asyncio
-async def test_setup_loads_mount_target_list_and_instruction_file(tmp_path: Path) -> None:
-    mount = tmp_path / "source"
-    mount.mkdir()
-    target_list = tmp_path / "targets.txt"
-    target_list.write_text(
-        "https://one.example\n# ignored\nhttps://two.example\n",
-        encoding="utf-8",
-    )
-    prompt_file = tmp_path / "prompt.txt"
-    prompt_file.write_text("Focus on authorization boundaries.\n", encoding="utf-8")
-    controller = TuiController(args())
-
-    mounted = await controller.handle("setup.add_mount", {"path": str(mount)})
-    loaded_targets = await controller.handle(
-        "setup.load_target_list",
-        {"path": str(target_list)},
-    )
-    loaded_prompt = await controller.handle(
-        "setup.load_instruction_file",
-        {"path": str(prompt_file)},
-    )
-
-    resolved_mount = str(mount.resolve())
-    assert mounted == {"mount": resolved_mount, "total": 1}
-    assert loaded_targets == {"path": str(target_list), "added": 2, "total": 3}
-    assert loaded_prompt == {"path": str(prompt_file), "characters": 34}
-    snapshot = controller.snapshot()
-    assert snapshot["targets"] == [
-        resolved_mount,
-        "https://one.example",
-        "https://two.example",
-    ]
-    assert snapshot["instruction"] == "Focus on authorization boundaries."
-
-    assert await controller.handle("setup.clear_targets", {}) == {"targets": []}
-    assert controller.snapshot()["targets"] == []
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    ("command", "payload"),
-    [
-        ("setup.add_target", {"target": "https://example.com"}),
-        ("setup.set_mode", {"mode": "quick"}),
-        ("setup.set_budget", {"budget": 1}),
-    ],
-)
-async def test_setup_controls_reject_changes_after_start(
-    command: str,
-    payload: dict[str, object],
-) -> None:
+async def test_setup_controls_reject_changes_after_start() -> None:
     controller = TuiController(args())
     controller.setup_mode = False
     controller.scan_started = True
 
     with pytest.raises(RuntimeError, match="can no longer be changed"):
-        await controller.handle(command, payload)
+        await controller.handle("setup.add_target", {"target": "https://example.com"})
 
 
 @pytest.mark.asyncio
-async def test_large_target_list_reports_truncated_snapshot_count(tmp_path: Path) -> None:
-    target_list = tmp_path / "targets.txt"
-    target_list.write_text(
-        "\n".join(f"https://target-{index}.example" for index in range(20)),
-        encoding="utf-8",
-    )
+async def test_large_target_list_reports_truncated_snapshot_count() -> None:
     controller = TuiController(args())
 
-    result = await controller.handle("setup.load_target_list", {"path": str(target_list)})
+    for index in range(20):
+        await controller.handle("setup.add_target", {"target": f"https://target-{index}.example"})
     added = await controller.handle("setup.add_target", {"target": "https://last.example"})
     snapshot = controller.snapshot()
 
-    assert result["total"] == 20
     assert added == {"target": "https://last.example", "total": 21}
     assert snapshot["target_count"] == 21
+    # The snapshot only carries a bounded prefix of the list.
     assert len(snapshot["targets"]) == 16
 
 
