@@ -332,7 +332,7 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	model.width, model.height = 130, 34
 	model.showSplash = false
 	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{SetupMode: true, ScanState: "setup"}))
-	if view := model.View(); !strings.Contains(view, "Type / to configure your scan") {
+	if view := model.View(); !strings.Contains(view, "Enter a target and instructions, or / for commands") {
 		t.Fatalf("setup snapshot did not show the start screen: %s", view)
 	}
 

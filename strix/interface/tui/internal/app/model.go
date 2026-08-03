@@ -260,7 +260,7 @@ func New(client *Client) Model {
 		return input
 	}
 	input := newChatInput()
-	input.Placeholder = "Type / to configure your scan"
+	input.Placeholder = "Enter a target and instructions, or / for commands"
 	input.Focus()
 	return Model{
 		client: client, input: input, pickerInput: newInput(), viewport: viewport.New(80, 20), vulnViewport: viewport.New(80, 20),

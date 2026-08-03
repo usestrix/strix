@@ -3,6 +3,8 @@ package app
 import (
 	"fmt"
 	"math"
+	"net"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -31,8 +33,7 @@ func (m Model) submit(value string) (tea.Model, tea.Cmd) {
 // copied into the output pane; only useful results and errors are recorded.
 func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 	if !strings.HasPrefix(value, "/") {
-		m.setupMsg("Commands start with '/'. Type /help to see them.", render.Col(red))
-		return m, nil
+		return m.submitSetupPrompt(value)
 	}
 	parts := strings.SplitN(value, " ", 2)
 	command := strings.ToLower(parts[0])
@@ -173,6 +174,82 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 		m.setupMsg("Unknown command '"+command+"'. Type /help.", render.Col(red))
 		return m, nil
 	}
+}
+
+// submitSetupPrompt handles free text the way opencode's home prompt does:
+// anything that looks like a target is added, the rest becomes the scan
+// instruction, and the scan launches once a target is known.
+func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
+	var commands []tea.Cmd
+	fields := strings.Fields(value)
+	targets := 0
+	for _, field := range fields {
+		token := strings.Trim(field, ",;")
+		if !looksLikeTarget(token) || m.hasTarget(token) {
+			continue
+		}
+		targets++
+		m.setupMsg("✓ Added target: "+token, render.Col(green))
+		commands = append(commands, send(m.client, "setup.add_target", map[string]any{"target": token}))
+	}
+	if len(fields) > targets {
+		commands = append(commands, send(m.client, "setup.set_instruction", map[string]any{"instruction": value}))
+	}
+	if targets > 0 || len(m.snapshot.Targets) > 0 {
+		m.setupMsg("Verifying model connection...", render.Col(amber))
+		commands = append(commands, send(m.client, "setup.start", map[string]any{}))
+	} else {
+		m.setupMsg("Prompt saved. Add a target (URL, repo, path, domain, or IP) to launch.", render.Dim())
+	}
+	return *m, tea.Batch(commands...)
+}
+
+func (m Model) hasTarget(candidate string) bool {
+	for _, target := range m.snapshot.Targets {
+		if target == candidate {
+			return true
+		}
+	}
+	return false
+}
+
+// looksLikeTarget reports whether a whitespace-delimited token names something
+// scannable: a URL, repo, filesystem path, domain, or IP address.
+func looksLikeTarget(token string) bool {
+	if token == "" {
+		return false
+	}
+	if strings.Contains(token, "://") || strings.HasSuffix(token, ".git") {
+		return true
+	}
+	if strings.HasPrefix(token, "/") || strings.HasPrefix(token, "./") || strings.HasPrefix(token, "~/") || strings.HasPrefix(token, "../") {
+		return true
+	}
+	if ip := net.ParseIP(token); ip != nil {
+		return true
+	}
+	host := token
+	if at := strings.LastIndex(host, "@"); at >= 0 {
+		host = host[at+1:]
+	}
+	host = strings.SplitN(host, "/", 2)[0]
+	host = strings.SplitN(host, ":", 2)[0]
+	if !domainPattern.MatchString(host) {
+		return false
+	}
+	tld := host[strings.LastIndex(host, ".")+1:]
+	return len(tld) >= 2 && !isNumeric(tld)
+}
+
+var domainPattern = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z0-9]{2,}$`)
+
+func isNumeric(value string) bool {
+	for _, char := range value {
+		if char < '0' || char > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // matchingSetupCommands returns live recommendations for the slash command
@@ -430,7 +507,7 @@ func (m Model) setupSummaryView(width int) string {
 
 // setupHintsView is the closing key hint row, mirroring opencode's home footer.
 func (m Model) setupHintsView(width int) string {
-	hints := []string{"/model  choose model", "/target  add target", "/start  launch"}
+	hints := []string{"/model  choose model", "enter  launch scan", "/  commands"}
 	line := render.Dim().Render(strings.Join(hints, "   "))
 	if lipgloss.Width(line) > width {
 		line = render.Dim().Render("/help for commands")

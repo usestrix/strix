@@ -37,7 +37,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.errorText = *m.snapshot.Error
 		}
 		if m.snapshot.SetupMode {
-			m.input.Placeholder = "Type / to configure your scan"
+			m.input.Placeholder = "Enter a target and instructions, or / for commands"
 		} else {
 			if wasSetup && m.picker != pickerNone {
 				m.closePicker()
