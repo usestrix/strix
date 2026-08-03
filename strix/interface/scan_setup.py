@@ -277,6 +277,9 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,
+        # Kept apart from instruction, which carries the diff-scope preamble: the
+        # transcript replays this as the user's opening message.
+        "user_instruction": getattr(args, "user_instruction", None),
         "non_interactive": args.non_interactive,
         "local_sources": getattr(args, "local_sources", []),
         # Persisted so --resume can remount the workspace: it is not a target,

@@ -23,8 +23,47 @@ class TuiLiveView:
         self._next_event_id = 1
         self._open_assistant_event_by_agent: dict[str, dict[str, Any]] = {}
         self._tool_event_by_agent_and_call_id: dict[tuple[str, str], dict[str, Any]] = {}
+        self._user_instruction: str | None = None
+        self._user_instruction_at: str | None = None
+        self._user_instruction_shown = False
+
+    def set_user_instruction(self, text: str | None, *, timestamp: str | None = None) -> None:
+        """Open the transcript with what the user asked for.
+
+        The prompt from the start screen, ``--instruction`` and
+        ``--instruction-file`` all reach the agent folded into its task, which the
+        transcript does not show. This replays it as their first message instead,
+        once, against the root agent - which may not exist yet, so it is held
+        until that agent appears.
+        """
+        if self._user_instruction_shown or not (text or "").strip():
+            return
+        self._user_instruction = str(text).strip()
+        self._user_instruction_at = timestamp
+        for agent_id, agent in self.agents.items():
+            if agent.get("parent_id") is None:
+                self._show_user_instruction(agent_id)
+                return
+
+    def _show_user_instruction(self, agent_id: str) -> None:
+        if self._user_instruction_shown or not self._user_instruction:
+            return
+        self._user_instruction_shown = True
+        self._append_event(
+            agent_id,
+            "chat",
+            {
+                "role": "user",
+                "content": self._user_instruction,
+                "metadata": {"source": "user_instruction"},
+            },
+            timestamp=self._user_instruction_at,
+        )
 
     def hydrate_from_run_dir(self, run_dir: Path) -> None:
+        # Armed before the agents are added so the root agent's arrival puts the
+        # user's opening message ahead of the replayed history.
+        self._load_user_instruction(run_dir)
         state_dir = runtime_state_dir(run_dir)
         agents_path = state_dir / "agents.json"
         if not agents_path.exists():
@@ -48,6 +87,24 @@ class TuiLiveView:
                 status=str(status),
             )
         self._hydrate_sdk_session_history(run_dir, statuses.keys())
+
+    def _load_user_instruction(self, run_dir: Path) -> None:
+        """Take the user's opening message from the run record, if it has one."""
+        try:
+            record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(record, dict):
+            return
+        instruction = record.get("user_instruction")
+        if not isinstance(instruction, str):
+            return
+        start_time = record.get("start_time")
+        # Stamped with the run's start so it sorts ahead of replayed history.
+        self.set_user_instruction(
+            instruction,
+            timestamp=start_time if isinstance(start_time, str) else None,
+        )
 
     def _hydrate_sdk_session_history(self, run_dir: Path, agent_ids: Any) -> None:
         # An agent's first user turn is the task it was launched with, not
@@ -95,6 +152,10 @@ class TuiLiveView:
         if error_message is not None:
             current["error_message"] = error_message
         current["updated_at"] = now
+        # The root agent is where the user's opening message belongs, and it only
+        # exists once the scan reaches this point.
+        if current.get("parent_id") is None:
+            self._show_user_instruction(agent_id)
 
     def record_agent_error(self, agent_id: str, error: str) -> None:
         self._append_event(

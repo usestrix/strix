@@ -261,6 +261,10 @@ Examples:
             parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
 
     args.user_explicit_instruction = args.instruction if args.resume else None
+    # What the user actually asked for, kept apart from args.instruction because
+    # prepare_run prepends the diff-scope preamble to that. This is the text the
+    # transcript shows as their opening message.
+    args.user_instruction = args.instruction or None
 
     if args.resume:
         if args.target or args.target_list:
@@ -346,6 +350,8 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
 
     if args.instruction is None:
         args.instruction = state.get("instruction")
+    if not getattr(args, "user_instruction", None):
+        args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
     # Remount the workspace the run was started with. The user already confirmed
     # this directory, so the target mount guard does not apply to it; it only has

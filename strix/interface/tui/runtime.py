@@ -107,6 +107,9 @@ class GoTuiRuntime:
         candidate = deepcopy(self.args)
         candidate.scan_mode = self.controller.scan_mode
         candidate.instruction = self.controller.instruction
+        # Held apart from instruction, which prepare_run prefixes with the
+        # diff-scope preamble, so the transcript can show what was typed.
+        candidate.user_instruction = self.controller.instruction or None
         candidate.max_budget_usd = self.controller.max_budget_usd
         candidate.max_turns = self.controller.max_turns
         candidate.scope_mode = self.controller.scope_mode

@@ -193,3 +193,76 @@ def test_internal_turn_classifier_keeps_bracketed_user_text() -> None:
         "stop",
     ):
         assert not _is_internal_agent_turn(content), content
+
+
+def test_user_instruction_opens_the_transcript_when_the_root_agent_appears() -> None:
+    """A live scan has no root agent yet, so the message waits for it."""
+    view = TuiLiveView()
+
+    view.set_user_instruction("find IDOR in the checkout flow")
+    assert _user_messages(view) == []
+
+    view.upsert_agent("ab12", name="Strix", parent_id=None, status="running")
+    assert _user_messages(view) == ["find IDOR in the checkout flow"]
+
+    # Repeated agent syncs and subagents must not repeat it.
+    view.upsert_agent("cd34", name="recon", parent_id="ab12", status="running")
+    view.upsert_agent("ab12", status="running")
+    assert _user_messages(view) == ["find IDOR in the checkout flow"]
+
+
+def test_blank_user_instruction_adds_nothing() -> None:
+    view = TuiLiveView()
+
+    view.set_user_instruction("   ")
+    view.set_user_instruction(None)
+    view.upsert_agent("ab12", name="Strix", parent_id=None, status="running")
+
+    assert _user_messages(view) == []
+
+
+def test_replayed_run_opens_with_the_users_instruction(tmp_path: Path) -> None:
+    """It comes from the run record and sorts ahead of replayed history."""
+    run_dir = tmp_path / "run"
+    _write_run(
+        run_dir,
+        [
+            {"role": "user", "content": "\n\nURLs: - https://example.com"},
+            {"role": "assistant", "content": "starting"},
+            {"role": "user", "content": "also check coupons"},
+        ],
+    )
+    (run_dir / "run.json").write_text(
+        json.dumps(
+            {
+                "start_time": "2026-01-01T00:00:00+00:00",
+                # instruction carries the diff-scope preamble; only the user's own
+                # text belongs in the transcript.
+                "instruction": "[diff-scope preamble]\n\naudit the auth flow",
+                "user_instruction": "audit the auth flow",
+            }
+        ),
+        encoding="utf-8",
+    )
+    view = TuiLiveView()
+
+    view.hydrate_from_run_dir(run_dir)
+
+    assert _user_messages(view) == ["audit the auth flow", "also check coupons"]
+    first = view.events[0]
+    assert first["data"]["content"] == "audit the auth flow"
+    # Stamped with the run's start, so ordering by timestamp keeps it first.
+    assert first["timestamp"] == "2026-01-01T00:00:00+00:00"
+
+
+def test_replayed_run_without_an_instruction_is_unchanged(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    _write_run(run_dir, [{"role": "assistant", "content": "starting"}])
+    (run_dir / "run.json").write_text(
+        json.dumps({"start_time": "2026-01-01T00:00:00+00:00"}), encoding="utf-8"
+    )
+    view = TuiLiveView()
+
+    view.hydrate_from_run_dir(run_dir)
+
+    assert _user_messages(view) == []
