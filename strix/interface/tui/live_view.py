@@ -50,11 +50,19 @@ class TuiLiveView:
         self._hydrate_sdk_session_history(run_dir, statuses.keys())
 
     def _hydrate_sdk_session_history(self, run_dir: Path, agent_ids: Any) -> None:
+        # An agent's first user turn is the task it was launched with, not
+        # something the user typed at it, so it is replayed as context rather
+        # than as a message.
+        tasked: set[str] = set()
         for agent_id, item, timestamp in load_session_history(run_dir, agent_ids):
+            first_user_turn = agent_id not in tasked
+            if item.get("role") == "user" and item.get("type") in {None, "message"}:
+                tasked.add(agent_id)
             self._ingest_session_history_item(
                 agent_id,
                 item,
                 timestamp=timestamp,
+                first_user_turn=first_user_turn,
             )
 
     def upsert_agent(
@@ -146,22 +154,30 @@ class TuiLiveView:
         item: dict[str, Any],
         *,
         timestamp: str,
+        first_user_turn: bool = False,
     ) -> None:
         item_type = item.get("type")
         role = item.get("role")
         if role in {"user", "assistant"} and (item_type in {None, "message"}):
             content = _session_message_text(item)
-            if content:
-                self._append_event(
-                    agent_id,
-                    "chat",
-                    {
-                        "role": role,
-                        "content": content,
-                        "metadata": {"source": "sdk_session"},
-                    },
-                    timestamp=timestamp,
-                )
+            if not content:
+                return
+            # A live run only shows what the user actually typed; the agent's
+            # task and the guidance the system feeds it stay out of the
+            # transcript. Replayed history has to make the same distinction, or
+            # resuming attributes all of it to the user.
+            if role == "user" and (first_user_turn or _is_internal_agent_turn(content)):
+                return
+            self._append_event(
+                agent_id,
+                "chat",
+                {
+                    "role": role,
+                    "content": content,
+                    "metadata": {"source": "sdk_session"},
+                },
+                timestamp=timestamp,
+            )
             return
 
         if item_type == "function_call":
@@ -330,6 +346,29 @@ def _sdk_message_text(item: Any) -> str:
 
 def _session_message_text(item: dict[str, Any]) -> str:
     return _message_content_text(item.get("content", ""))
+
+
+# Guidance the system feeds an agent is injected as a user turn, which is the
+# same shape a typed message takes, so replayed history cannot tell them apart by
+# role alone. Every such turn is either bracketed or one of the notices below.
+# Sources: strix.core.agents._message_to_session_item (inter-agent and system
+# messages, "[Message from ...]"), strix.core.execution (terminal, stall and
+# no-tool-call notices), strix.core.hooks (turn and cost budget warnings,
+# "[NOTICE]"/"[URGENT]"/"[CRITICAL]"), and strix.core.inputs (inherited context).
+_INTERNAL_TURN_MARKERS = (
+    "== Inherited context from parent",
+    "Your previous message ended a turn without a tool call.",
+    "Your previous response ended the autonomous Strix run without a lifecycle tool call.",
+)
+
+
+def _is_internal_agent_turn(content: str) -> bool:
+    """Report whether a replayed user turn is system guidance, not a typed message."""
+    text = content.lstrip()
+    # Every notice the system injects is prefixed with a bracketed tag.
+    if text.startswith("["):
+        return True
+    return text.startswith(_INTERNAL_TURN_MARKERS)
 
 
 def _message_content_text(content: Any) -> str:
