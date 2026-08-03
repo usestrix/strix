@@ -40,17 +40,26 @@ class TuiLiveView:
             return
         self._user_instruction = str(text).strip()
         self._user_instruction_at = timestamp
-        for agent_id, agent in self.agents.items():
-            if agent.get("parent_id") is None:
-                self._show_user_instruction(agent_id)
-                return
+        self.flush_user_instruction()
 
-    def _show_user_instruction(self, agent_id: str) -> None:
+    def flush_user_instruction(self) -> bool:
+        """Post the held opening message once a root agent exists, once.
+
+        Driven from wherever the agent graph is refreshed rather than from
+        ``upsert_agent``, which subclasses override without calling back here.
+        Returns whether it posted, so callers can report the change.
+        """
         if self._user_instruction_shown or not self._user_instruction:
-            return
+            return False
+        root_id = next(
+            (agent_id for agent_id, agent in self.agents.items() if agent.get("parent_id") is None),
+            None,
+        )
+        if root_id is None:
+            return False
         self._user_instruction_shown = True
         self._append_event(
-            agent_id,
+            root_id,
             "chat",
             {
                 "role": "user",
@@ -59,6 +68,7 @@ class TuiLiveView:
             },
             timestamp=self._user_instruction_at,
         )
+        return True
 
     def hydrate_from_run_dir(self, run_dir: Path) -> None:
         # Armed before the agents are added so the root agent's arrival puts the
@@ -86,6 +96,8 @@ class TuiLiveView:
                 parent_id=parent_of.get(agent_id) if isinstance(parent_of, dict) else None,
                 status=str(status),
             )
+        # Ahead of the replayed history, so it opens the transcript.
+        self.flush_user_instruction()
         self._hydrate_sdk_session_history(run_dir, statuses.keys())
 
     def _load_user_instruction(self, run_dir: Path) -> None:
@@ -152,10 +164,6 @@ class TuiLiveView:
         if error_message is not None:
             current["error_message"] = error_message
         current["updated_at"] = now
-        # The root agent is where the user's opening message belongs, and it only
-        # exists once the scan reaches this point.
-        if current.get("parent_id") is None:
-            self._show_user_instruction(agent_id)
 
     def record_agent_error(self, agent_id: str, error: str) -> None:
         self._append_event(

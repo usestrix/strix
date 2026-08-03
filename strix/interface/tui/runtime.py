@@ -244,6 +244,10 @@ class GoTuiRuntime:
             else:
                 self._error_noted_agents.discard(agent_id)
 
+        # The user's opening message waits for the root agent to exist, which is
+        # the first thing this sync learns about.
+        changed = self.live_view.flush_user_instruction() or changed
+
         roots = [agent_id for agent_id, parent_id in parent_of.items() if parent_id is None]
         root_id = roots[0] if roots else None
         root_status = statuses.get(root_id) if root_id is not None else None

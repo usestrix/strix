@@ -11,7 +11,10 @@ import json
 import sqlite3
 from typing import TYPE_CHECKING, Any
 
+import pytest
+
 from strix.core.paths import runtime_state_dir
+from strix.interface.tui.backend.live_view import TuiLiveView as GoTuiLiveView
 from strix.interface.tui.live_view import TuiLiveView, _is_internal_agent_turn
 
 
@@ -195,19 +198,29 @@ def test_internal_turn_classifier_keeps_bracketed_user_text() -> None:
         assert not _is_internal_agent_turn(content), content
 
 
-def test_user_instruction_opens_the_transcript_when_the_root_agent_appears() -> None:
-    """A live scan has no root agent yet, so the message waits for it."""
-    view = TuiLiveView()
+@pytest.mark.parametrize("view_class", [TuiLiveView, GoTuiLiveView])
+def test_user_instruction_opens_the_transcript_when_the_root_agent_appears(
+    view_class: type[TuiLiveView],
+) -> None:
+    """A live scan has no root agent yet, so the message waits for it.
+
+    Exercised against the projection the Go TUI actually uses as well as the
+    base one: that subclass overrides upsert_agent without calling back, so a
+    hook placed there would silently never run.
+    """
+    view = view_class()
 
     view.set_user_instruction("find IDOR in the checkout flow")
     assert _user_messages(view) == []
 
     view.upsert_agent("ab12", name="Strix", parent_id=None, status="running")
+    assert view.flush_user_instruction() is True
     assert _user_messages(view) == ["find IDOR in the checkout flow"]
 
     # Repeated agent syncs and subagents must not repeat it.
     view.upsert_agent("cd34", name="recon", parent_id="ab12", status="running")
     view.upsert_agent("ab12", status="running")
+    assert view.flush_user_instruction() is False
     assert _user_messages(view) == ["find IDOR in the checkout flow"]
 
 
