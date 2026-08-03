@@ -157,6 +157,8 @@ def verify_dependency(  # noqa: PLR0911 — the returns are deliberate fail-open
     if affecting is None:
         return None  # provider couldn't answer → fail open, emit
     if ident in affecting:
+        logger.info("dep-verify: %s confirmed in range for %s@%s; emitting (real)",
+                    ident, pkg, version)
         return None  # confirmed: installed version IS in the CVE's range → emit (real)
     if not affecting:
         # definitive "no advisories affect this version" is still a coverage-gap
