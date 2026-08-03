@@ -91,7 +91,13 @@ class OsvProvider:
     """AdvisoryProvider backed by an OSV-schema /v1/query endpoint. Default
     api.osv.dev; point `url` at a self-hosted OSV mirror (identical contract) for
     air-gapped / data-residency deployments. Uses `requests` (a core dep) — no
-    extra package."""
+    extra package.
+
+    The caller runs this off the event loop (asyncio.to_thread), but keep the
+    per-request timeout short so a stalled provider fails open quickly rather than
+    holding a worker thread — this is a bounded advisory lookup, not bulk I/O."""
+
+    _TIMEOUT_S = 10
 
     def __init__(self, url: str) -> None:
         self.url = url
@@ -99,7 +105,7 @@ class OsvProvider:
     def _query(self, payload: dict[str, Any]) -> list[dict] | None:
         try:
             ca = os.environ.get("REQUESTS_CA_BUNDLE")
-            resp = requests.post(self.url, timeout=20, json=payload,
+            resp = requests.post(self.url, timeout=self._TIMEOUT_S, json=payload,
                                  verify=ca if ca else True)
             if resp.status_code != 200:
                 logger.info("dep-verify: OSV %s for %s; can't answer",

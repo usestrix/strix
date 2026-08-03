@@ -830,7 +830,11 @@ async def _do_create_dependency(  # noqa: PLR0912
         if load_settings().dep_verify.enabled:
             from strix.report.dep_verify import verify_dependency
 
-            dep_verdict = verify_dependency({
+            # verify_dependency does blocking HTTP (advisory provider). Run it in a
+            # worker thread so a slow/unreachable provider can't stall the shared
+            # async agent loop (it would otherwise block every concurrent agent for
+            # up to the provider timeout, x2 on the clean-version path).
+            dep_verdict = await asyncio.to_thread(verify_dependency, {
                 "cve": parsed_cve, "package_name": package_name,
                 "installed_version": installed_version,
                 "package_ecosystem": package_ecosystem,

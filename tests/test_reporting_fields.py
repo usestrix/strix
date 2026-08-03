@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import threading
+import time
 from typing import TYPE_CHECKING
 
 import pytest
 
+import strix.report.dep_verify as depv
+from strix.config import loader
 from strix.report.dedupe import (
     _check_dependency_duplicate,
     _prepare_report_for_comparison,
@@ -190,6 +194,43 @@ async def test_dependency_report_with_zero_cvss_remains_low_severity(
     report = report_state.vulnerability_reports[0]
     assert report["severity"] == "low"
     assert report["cvss"] == 0.0
+
+
+async def test_dependency_verify_runs_off_the_event_loop(
+    report_state: ReportState,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The verifier does blocking HTTP; it must be offloaded (asyncio.to_thread)
+    so a slow/unreachable provider can't stall the shared async agent loop. Stub
+    verify_dependency with a blocking call that records its thread + rejects, and
+    assert (a) the reject propagates and (b) it ran on a NON-main thread."""
+    monkeypatch.setenv("STRIX_DEP_VERIFY", "1")
+    loader._cached = None
+
+    main_thread = threading.current_thread()
+    ran_on: dict[str, object] = {}
+
+    def _blocking_verify(_candidate: dict) -> dict:
+        ran_on["thread"] = threading.current_thread()
+        time.sleep(0.05)  # simulate a slow provider (blocking)
+        return {"success": False, "verify_rejected": True,
+                "dep_version_out_of_range": True, "error": "out of range"}
+
+    monkeypatch.setattr(depv, "verify_dependency", _blocking_verify)
+
+    result = await _do_create_dependency(
+        title="CVE-2021-44906 in minimist 1.2.6",
+        description="Prototype pollution.", target="repo/package.json",
+        cve="CVE-2021-44906", package_name="minimist", installed_version="1.2.6",
+        impact="x", remediation_steps="upgrade", assumptions="a",
+        package_ecosystem="npm", fixed_version=None, cwe=None,
+        advisory_cvss=7.5, technical_analysis=None, fix_effort="low",
+    )
+    # reject propagated + finding NOT persisted
+    assert result["verify_rejected"] is True
+    assert not report_state.vulnerability_reports
+    # ran off the event loop (a worker thread, not the main thread)
+    assert ran_on["thread"] is not main_thread
 
 
 async def test_dependency_report_requires_advisory_cvss(report_state: ReportState) -> None:
