@@ -274,7 +274,7 @@ func TestSetupCommandsAppearAboveInputAndFilter(t *testing.T) {
 	}
 	model.input.SetValue("/mo")
 	view = model.View()
-	if !strings.Contains(view, "/model") || strings.Contains(view, "/provider") || strings.Contains(view, "/target") {
+	if !strings.Contains(view, "/mode") || strings.Contains(view, "/provider") || strings.Contains(view, "/target") {
 		t.Fatalf("setup command recommendations were not filtered: %s", view)
 	}
 }
@@ -312,7 +312,6 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 
 	view := model.View()
 	for _, want := range []string{
-		"Configure your pentest",
 		"openai/gpt-5.4",
 		"/workspace/source",
 		"https://example.com",
@@ -338,7 +337,7 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	model.width, model.height = 130, 34
 	model.showSplash = false
 	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{SetupMode: true, ScanState: "setup"}))
-	if view := model.View(); !strings.Contains(view, "Configure your pentest") || !strings.Contains(view, "Type / to configure your scan") {
+	if view := model.View(); !strings.Contains(view, "Type / to configure your scan") {
 		t.Fatalf("setup snapshot did not show the start screen: %s", view)
 	}
 
@@ -454,7 +453,7 @@ func TestModeCommandOpensPickerAndUpdatesSetupSummary(t *testing.T) {
 	if model.snapshot.ScanMode != "standard" {
 		t.Fatalf("mode result was not applied: %q", model.snapshot.ScanMode)
 	}
-	if summary := ansi.Strip(model.setupSummaryView(80)); !strings.Contains(summary, "mode     standard") {
+	if summary := ansi.Strip(model.setupSummaryView(80)); !strings.Contains(summary, "mode standard") {
 		t.Fatalf("setup summary does not show mode: %s", summary)
 	}
 }
