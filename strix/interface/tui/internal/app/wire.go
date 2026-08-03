@@ -40,12 +40,12 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			// The start screen is its own landing page; never sit on the
 			// splash before it.
 			m.showSplash = false
-			m.input.Placeholder = "Enter a target and instructions, or / for commands"
+			m.input.Placeholder = setupPlaceholder
 		} else {
 			if wasSetup && m.picker != pickerNone {
 				m.closePicker()
 			}
-			m.input.Placeholder = "Send a message"
+			m.input.Placeholder = chatPlaceholder
 		}
 		m.selectedAgent = selectedAgentIndex(m.snapshot.Agents, selectedAgentID)
 		m.selectedVuln = min(m.selectedVuln, max(0, len(m.snapshot.Vulnerabilities)-1))

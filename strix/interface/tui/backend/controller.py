@@ -59,7 +59,7 @@ if TYPE_CHECKING:
 _STOPPABLE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
 
 ChangeCallback = Callable[[], None]
-StartCallback = Callable[[], Awaitable[None]]
+StartCallback = Callable[[bool], Awaitable[None]]
 QuitCallback = Callable[[], Awaitable[None]]
 
 
@@ -659,9 +659,15 @@ class TuiController:
             self.diff_base = None
         return {"mode": self.scope_mode, "base": self.diff_base}
 
-    async def _start(self, _payload: dict[str, Any]) -> dict[str, Any]:
+    async def _start(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.scan_started or self._start_in_progress:
             raise RuntimeError("Scan is already starting or running")
+        # A bare prompt launches optimistically, like a coding agent: it skips
+        # the network model preflight and surfaces any model error live. A named
+        # target keeps the preflight so a real scan does not commit blind.
+        verify = payload.get("verify", True)
+        if not isinstance(verify, bool):
+            raise TypeError("verify must be a boolean")
         model = (load_settings().llm.model or "").strip()
         if not model:
             raise ValueError("No model configured. Select a provider and model first.")
@@ -669,12 +675,13 @@ class TuiController:
         if not (await asyncio.to_thread(provider_auth_status, provider)).ready:
             raise ValueError(f"Provider '{provider}' is not configured")
         if not self.targets:
-            raise ValueError("No target set. Add a target first.")
+            # With no target, scan the current working directory.
+            self.targets.append(str(Path.cwd()))
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
         self._start_in_progress = True
         try:
-            await self._on_start()
+            await self._on_start(verify)
         finally:
             self._start_in_progress = False
         self.setup_mode = False

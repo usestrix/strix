@@ -176,9 +176,10 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 	}
 }
 
-// submitSetupPrompt handles free text the way opencode's home prompt does:
+// submitSetupPrompt handles free text the way a coding agent's prompt does:
 // anything that looks like a target is added, the rest becomes the scan
-// instruction, and the scan launches once a target is known.
+// instruction, and the prompt alone is enough to launch. With no target, the
+// backend scans the current working directory.
 func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 	var commands []tea.Cmd
 	fields := strings.Fields(value)
@@ -189,19 +190,24 @@ func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 			continue
 		}
 		targets++
-		m.setupMsg("✓ Added target: "+token, render.Col(green))
 		commands = append(commands, send(m.client, "setup.add_target", map[string]any{"target": token}))
 	}
 	if len(fields) > targets {
 		commands = append(commands, send(m.client, "setup.set_instruction", map[string]any{"instruction": value}))
 	}
-	if targets > 0 || len(m.snapshot.Targets) > 0 {
+	// With a target, verify the model connection before the scan commits to it.
+	// A bare prompt launches optimistically, like a coding agent, and surfaces
+	// any model error live.
+	verify := targets > 0 || len(m.snapshot.Targets) > 0
+	if verify {
 		m.setupMsg("Verifying model connection...", render.Col(amber))
-		commands = append(commands, send(m.client, "setup.start", map[string]any{}))
-	} else {
-		m.setupMsg("Prompt saved. Add a target (URL, repo, path, domain, or IP) to launch.", render.Dim())
 	}
-	return *m, tea.Batch(commands...)
+	commands = append(commands, send(m.client, "setup.start", map[string]any{"verify": verify}))
+	// Ordered, not batched: setup.start leaves setup mode, so it must be the
+	// last command to reach the backend. Batched sends race, and once the
+	// preflight is skipped setup.start wins, making the target and instruction
+	// commands land after the guard closes and fail with a red error.
+	return *m, tea.Sequence(commands...)
 }
 
 func (m Model) hasTarget(candidate string) bool {
@@ -279,6 +285,20 @@ func (m Model) matchingSetupCommands() [][2]string {
 
 func (m Model) commandMenuHeight() int { return len(m.matchingSetupCommands()) }
 
+// selectionBackground is the raised surface behind the highlighted menu row.
+const selectionBackground = "\x1b[48;2;20;20;20m"
+
+// surfaceRow paints a row onto a background surface. The background is
+// re-applied after every style reset so styled runs inside the row do not punch
+// holes in it, and the row is padded out to the full width.
+func surfaceRow(line string, width int, background string) string {
+	line = background + strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+background)
+	if pad := width - lipgloss.Width(line); pad > 0 {
+		line += strings.Repeat(" ", pad)
+	}
+	return line + "\x1b[0m"
+}
+
 func (m Model) commandMenuView(width int) string {
 	matches := m.matchingSetupCommands()
 	if len(matches) == 0 {
@@ -287,24 +307,37 @@ func (m Model) commandMenuView(width int) string {
 	return m.commandMenuViewLimit(width, len(matches))
 }
 
+// commandMenuViewLimit lays the command list out in two columns: the command
+// itself in a gutter sized to the longest visible name, then its description in
+// whatever space is left. The selected row is marked and lifted onto a surface.
 func (m Model) commandMenuViewLimit(width, limit int) string {
 	matches := m.matchingSetupCommands()
 	if len(matches) == 0 || limit <= 0 {
 		return ""
 	}
 	start, end := optionWindow(m.commandCursor, len(matches), limit)
+	gutter := 0
+	for i := start; i < end; i++ {
+		gutter = max(gutter, lipgloss.Width(matches[i][0]))
+	}
+	gutter = min(gutter, max(10, width/2))
 	lines := make([]string, 0, end-start)
 	for i := start; i < end; i++ {
 		command := matches[i]
-		prefix := "  "
-		commandStyle := render.Col(render.InfoBlue)
-		descriptionStyle := render.Dim()
-		if i == m.commandCursor {
-			prefix = "› "
+		prefix, commandStyle, descriptionStyle := "  ", render.Col(render.InfoBlue), render.Dim()
+		selected := i == m.commandCursor
+		if selected {
+			prefix = render.Col(green).Render("› ")
 			commandStyle = lipgloss.NewStyle().Bold(true).Foreground(brightGreen)
 			descriptionStyle = lipgloss.NewStyle().Foreground(mid)
 		}
-		line := commandStyle.Render(fmt.Sprintf("%s%-21s", prefix, command[0])) + descriptionStyle.Render(command[1])
+		name := padToWidth(truncate(command[0], gutter), gutter)
+		line := prefix + commandStyle.Render(name) + "   " +
+			descriptionStyle.Render(truncate(command[1], max(0, width-gutter-6)))
+		if selected {
+			lines = append(lines, surfaceRow(line, width, selectionBackground))
+			continue
+		}
 		lines = append(lines, padToWidth(ansi.Truncate(line, max(1, width), ""), width))
 	}
 	return strings.Join(lines, "\n")
@@ -336,18 +369,31 @@ func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight i
 	return
 }
 
+// resizeViewport refits the composer and the scrollback to the terminal. The
+// composer is sized width first: how far its content wraps, and so how tall it
+// needs to be, depends on the width it is given.
 func (m *Model) resizeViewport() {
-	m.syncInputHeight()
 	if m.snapshot.SetupMode {
-		contentWidth, historyHeight := m.setupLayout()
-		m.input.SetWidth(max(3, contentWidth-3))
+		contentWidth := setupColumnWidth(m.width)
+		// The composer's border and padding each take a column per side.
+		m.input.SetWidth(max(3, contentWidth-4))
+		// A clipped placeholder reads as an unfinished sentence, so a narrow
+		// composer gets the short prompt instead.
+		m.input.Placeholder = setupPlaceholder
+		if contentWidth-6 < lipgloss.Width(setupPlaceholder) {
+			m.input.Placeholder = setupPlaceholderShort
+		}
+		m.syncInputHeight()
 		m.viewport.Width = max(10, contentWidth)
-		m.viewport.Height = max(1, historyHeight)
+		m.viewport.Height = max(1, setupLogRows(m.setupLog))
 		m.refreshViewport()
 		return
 	}
-	_, _, chatWidth, chatHeight := m.layout()
+	_, _, chatWidth, _ := m.layout()
+	// The accent bar and its padding each take a column.
 	m.input.SetWidth(max(3, chatWidth-3))
+	m.syncInputHeight()
+	_, _, _, chatHeight := m.layout()
 	// Reserve two columns inside the border for the scrollbar gap and track.
 	m.viewport.Width = max(10, chatWidth-4)
 	m.viewport.Height = max(3, chatHeight-2)
@@ -405,178 +451,303 @@ func (m *Model) setupMsg(text string, style lipgloss.Style) {
 	m.setupLogAppend(style.Render(text))
 }
 
-func (m Model) setupLayout() (contentWidth, historyHeight int) {
-	contentWidth, historyHeight, _ = m.setupGeometry()
-	return
+// setupLogRows is how many feedback lines the launch column shows before the
+// fit starts trimming them. It is a launch pad, not a scrollback.
+func setupLogRows(log []string) int { return min(len(log), 6) }
+
+// Logo treatments, largest last. The launch column steps down through them as
+// the terminal runs out of room.
+const (
+	logoNone = iota
+	logoCompact
+	logoFull
+)
+
+// setupColumnWidth is the width of the centered launch column. It widens to
+// the banner rather than lose it, as long as the terminal can still spare a
+// margin either side.
+func setupColumnWidth(terminal int) int {
+	width := min(72, max(24, terminal-8))
+	if terminal >= wordmarkWidth()+2 {
+		width = max(width, wordmarkWidth())
+	}
+	return width
 }
 
-// setupGeometry sizes the centered setup column: wordmark, composer, an
-// optional command menu and the feedback log, all inside a narrow column.
-func (m Model) setupGeometry() (contentWidth, historyHeight, menuRows int) {
-	contentWidth = min(64, max(24, m.width-8))
-	logoHeight := strings.Count(m.setupLogoView(contentWidth), "\n") + 1
-	composerHeight := lipgloss.Height(m.setupComposer(contentWidth))
-	menuRows = m.commandMenuHeight()
-	// Sections are separated by a blank line; the hint row closes the column.
-	fixed := logoHeight + 1 + composerHeight + 2
-	available := max(0, min(m.height, 40)-fixed)
-	menuRows = min(menuRows, available)
-	historyHeight = min(m.setupLogHeight(), max(0, available-menuRows-1))
-	return
+// setupFit records how much of the launch column survives at the current
+// terminal size: the wordmark treatment, whether the tagline is shown, and how
+// many command-menu and feedback-log rows fit.
+type setupFit struct {
+	width    int
+	logo     int
+	tagline  bool
+	menuRows int
+	logRows  int
 }
 
-// setupLogHeight keeps the feedback log to the recent lines; the setup screen
-// is a launch pad, not a scrollback.
-func (m Model) setupLogHeight() int { return min(len(m.setupLog), 8) }
-
-// setupLogoView renders the wordmark two-tone - solid cells bright, bevel
-// cells recessed - the way opencode shades its home logo.
-func (m Model) setupLogoView(width int) string {
-	if m.height < 20 {
-		return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).
-			Render(lipgloss.NewStyle().Bold(true).Foreground(brightWhite).Render("STRIX"))
+// setupFit picks the richest layout that still fits the terminal. Sections are
+// surrendered in the order of shrink below - never the composer, which is the
+// only thing on this screen the user has to reach.
+func (m Model) setupFit() setupFit {
+	fit := setupFit{
+		width:    setupColumnWidth(m.width),
+		logo:     logoFull,
+		tagline:  true,
+		menuRows: m.commandMenuHeight(),
+		logRows:  setupLogRows(m.setupLog),
 	}
-	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(shadedBanner())
-}
-
-var shadedBannerOnce = sync.OnceValue(func() string {
-	// Two-tone pixel wordmark, the way opencode shades its home logo: the
-	// left half recessed, the right half bright, everything else dropped.
-	shade := lipgloss.NewStyle().Foreground(dim)
-	bright := lipgloss.NewStyle().Bold(true).Foreground(brightWhite)
-	lines := strings.Split(banner, "\n")
-	block := 0
-	for _, line := range lines {
-		block = max(block, lipgloss.Width(line))
+	if m.width < wordmarkWidth()+2 {
+		fit.logo = logoCompact
 	}
-	var b strings.Builder
-	for index, line := range lines {
-		if index > 0 {
-			b.WriteString("\n")
-		}
-		line += strings.Repeat(" ", block-lipgloss.Width(line))
-		var shaded, lit strings.Builder
-		for column, char := range []rune(line) {
-			cell := " "
-			if char == '█' {
-				cell = "█"
-			}
-			if column < block/2 {
-				shaded.WriteString(cell)
-			} else {
-				lit.WriteString(cell)
-			}
-		}
-		b.WriteString(shade.Render(shaded.String()))
-		b.WriteString(bright.Render(strings.TrimRight(lit.String(), " ")))
+	if m.height < 18 {
+		fit.logo, fit.tagline = min(fit.logo, logoCompact), false
 	}
-	return b.String()
-})
-
-func shadedBanner() string { return shadedBannerOnce() }
-
-// setupComposer draws the input the way opencode draws its prompt: a raised
-// panel with an accent bar down the left edge and the scan meta underneath.
-func (m Model) setupComposer(width int) string {
-	bar := render.Col(dark).Render("▎")
-	if m.focus == focusInput {
-		bar = render.Col(green).Render("▎")
+	shrink := []func(*setupFit) bool{
+		func(f *setupFit) bool { return trimTo(&f.logRows, 3) },
+		func(f *setupFit) bool { return trimTo(&f.menuRows, 6) },
+		func(f *setupFit) bool { return clearFlag(&f.tagline) },
+		func(f *setupFit) bool { return trimTo(&f.logRows, 0) },
+		func(f *setupFit) bool { return trimTo(&f.menuRows, 3) },
+		func(f *setupFit) bool { return trimTo(&f.logo, logoCompact) },
+		func(f *setupFit) bool { return trimTo(&f.menuRows, 1) },
+		func(f *setupFit) bool { return trimTo(&f.logo, logoNone) },
 	}
-	content := m.input.View() + "\n\n" + m.setupSummaryView(max(8, width-4))
-	lines := strings.Split(lipgloss.NewStyle().Width(width-4).Render(content), "\n")
-	rows := make([]string, 0, len(lines)+2)
-	rows = append(rows, panelRow(bar, width))
-	for _, line := range lines {
-		rows = append(rows, panelRow(bar+" "+line, width))
-	}
-	rows = append(rows, panelRow(bar, width))
-	return strings.Join(rows, "\n")
-}
-
-// panelBackground is the composer's raised surface; it is re-applied after
-// every reset so embedded styled runs do not punch holes in the panel.
-const panelBackground = "\x1b[48;2;24;24;24m"
-
-func panelRow(line string, width int) string {
-	line = panelBackground + strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+panelBackground)
-	if pad := width - lipgloss.Width(line); pad > 0 {
-		line += strings.Repeat(" ", pad)
-	}
-	return line + "\x1b[0m"
-}
-
-// setupSummaryView is the quiet meta row under the composer: just the model,
-// plus the targets once some are added.
-func (m Model) setupSummaryView(width int) string {
-	wrap := lipgloss.NewStyle().Width(width)
-	model := strings.TrimSpace(m.snapshot.Model)
-	row := render.Dim().Render("no model · /model to choose one")
-	if model != "" {
-		name := model
-		provider := ""
-		if slash := strings.Index(model, "/"); slash >= 0 {
-			provider = model[:slash]
-			name = model[strings.LastIndex(model, "/")+1:]
-		}
-		row = render.Col(green).Render("Scan") + render.Dim().Render(" · ") + render.Col(white).Render(name)
-		if provider != "" {
-			row += " " + render.Dim().Render(provider)
+	for step := 0; step < len(shrink) && lipgloss.Height(m.setupBody(fit)) > m.height; {
+		if !shrink[step](&fit) {
+			step++
 		}
 	}
-	rows := []string{wrap.Render(row)}
-	if len(m.snapshot.Targets) > 0 {
-		targets := strings.Join(m.snapshot.Targets, ", ")
-		if hidden := m.snapshot.TargetCount - len(m.snapshot.Targets); hidden > 0 {
-			targets += fmt.Sprintf(" +%d more", hidden)
-		}
-		rows = append(rows, wrap.Render(render.Col(white).Render(targets)))
-	}
-	return strings.Join(rows, "\n")
+	return fit
 }
 
-// setupHintsView is the closing key hint row, mirroring opencode's home footer.
-func (m Model) setupHintsView(width int) string {
-	key := lipgloss.NewStyle().Foreground(white).Render
-	label := render.Dim().Render
-	line := key("enter") + label(" launch scan") + "  " + key("/") + label(" commands") + "  " + key("/model") + label(" model")
-	if lipgloss.Width(line) > width {
-		line = label("/help for commands")
+func trimTo(value *int, floor int) bool {
+	if *value <= floor {
+		return false
 	}
-	return lipgloss.NewStyle().Width(width).Render(line)
+	*value--
+	return true
+}
+
+func clearFlag(flag *bool) bool {
+	if !*flag {
+		return false
+	}
+	*flag = false
+	return true
 }
 
 func (m Model) setupView() string {
-	contentWidth, historyHeight, menuRows := m.setupGeometry()
-	body := m.setupBody(contentWidth, historyHeight, menuRows)
-	// Shed the optional sections until the column fits the terminal: first the
-	// feedback log, then the command menu row by row.
-	if lipgloss.Height(body) > m.height && historyHeight > 0 {
-		historyHeight = 0
-		body = m.setupBody(contentWidth, historyHeight, menuRows)
+	fit := m.setupFit()
+	rows := strings.Split(m.setupBody(fit), "\n")
+	if len(rows) > m.height {
+		rows = rows[:max(0, m.height)]
 	}
-	for lipgloss.Height(body) > m.height && menuRows > 0 {
-		menuRows--
-		body = m.setupBody(contentWidth, historyHeight, menuRows)
+	// Anchor the column on its resting height rather than its current one, so a
+	// growing composer, an open command menu and new feedback all push downward.
+	// Centering on the live height walks the whole page up under the cursor,
+	// one row at a time, as the prompt wraps.
+	top := (m.height - m.setupRestingHeight(fit, len(rows))) / 2
+	top = min(max(top, 0), max(0, m.height-len(rows)))
+	left := max(0, (m.width-fit.width)/2)
+	frame := make([]string, m.height)
+	for row := range frame {
+		line := ""
+		if index := row - top; index >= 0 && index < len(rows) {
+			line = strings.Repeat(" ", left) + rows[index]
+		}
+		frame[row] = padToWidth(line, m.width)
 	}
-	if lipgloss.Height(body) > m.height {
-		body = strings.Join(strings.Split(body, "\n")[:max(0, m.height)], "\n")
-	}
-	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, body,
-		lipgloss.WithWhitespaceBackground(black))
+	return strings.Join(frame, "\n")
 }
 
-func (m Model) setupBody(contentWidth, historyHeight, menuRows int) string {
-	composer := m.setupComposer(contentWidth)
-	if menuRows == 0 {
-		// The command menu is the command reference while it is open.
-		composer += "\n" + m.setupHintsView(contentWidth)
+// setupRestingHeight is the column's height with the composer at its opening
+// size and the transient sections closed: the layout the screen sits at when
+// idle. Anchoring on this keeps the column still as the composer grows.
+func (m Model) setupRestingHeight(fit setupFit, height int) int {
+	floor, _ := m.composerBounds()
+	height -= max(0, m.input.Height()-floor)
+	if fit.menuRows > 0 {
+		height -= fit.menuRows + 1 // the menu and the blank line above it
 	}
-	parts := []string{m.setupLogoView(contentWidth), composer}
-	if menu := m.commandMenuViewLimit(contentWidth, menuRows); menu != "" {
+	if fit.logRows > 0 && len(m.setupLog) > 0 {
+		height -= fit.logRows + 1
+	}
+	return height
+}
+
+// setupBody stacks the launch column: wordmark, composer with its scan summary,
+// the target list, the live command menu, feedback and the key hints. Sections
+// are separated by a blank line; the composer and its summary read as one unit.
+func (m Model) setupBody(fit setupFit) string {
+	parts := make([]string, 0, 6)
+	if header := m.setupHeaderView(fit); header != "" {
+		parts = append(parts, header)
+	}
+	parts = append(parts, m.setupComposer(fit.width))
+	if menu := m.commandMenuViewLimit(fit.width, fit.menuRows); menu != "" {
 		parts = append(parts, menu)
 	}
-	if historyHeight > 0 {
-		parts = append(parts, m.viewport.View())
+	if log := m.setupLogView(fit); log != "" {
+		parts = append(parts, log)
 	}
-	return strings.Join(parts, "\n\n")
+	parts = append(parts, m.setupHintsView(fit.width))
+	// Every row is padded to the column width: lipgloss.Place centers each line
+	// on its own, which would otherwise stagger the short rows.
+	rows := strings.Split(strings.Join(parts, "\n\n"), "\n")
+	for index, row := range rows {
+		rows[index] = padToWidth(row, fit.width)
+	}
+	return strings.Join(rows, "\n")
+}
+
+// setupHeaderView centers the wordmark over the tagline.
+func (m Model) setupHeaderView(fit setupFit) string {
+	center := lipgloss.NewStyle().Width(fit.width).Align(lipgloss.Center)
+	var rows []string
+	switch fit.logo {
+	case logoFull:
+		// The banner is tall enough to want air under it.
+		rows = append(rows, center.Render(wordmark()))
+		if fit.tagline {
+			rows = append(rows, "")
+		}
+	case logoCompact:
+		rows = append(rows, center.Render(lipgloss.NewStyle().Bold(true).Foreground(brightGreen).Render("STRIX")))
+	}
+	if fit.tagline {
+		rows = append(rows, center.Render(render.Dim().Render("Open-source AI hackers for your apps")))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// banner is the Strix wordmark: block letters with a bevelled edge.
+const banner = ` ███████╗████████╗██████╗ ██╗██╗  ██╗
+ ██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝
+ ███████╗   ██║   ██████╔╝██║ ╚███╔╝
+ ╚════██║   ██║   ██╔══██╗██║ ██╔██╗
+ ███████║   ██║   ██║  ██║██║██╔╝ ██╗
+ ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝`
+
+// wordmark renders the banner in solid brand green. Every row is padded out to
+// the full block so centering cannot ripple the letterforms out of alignment.
+var wordmarkOnce = sync.OnceValue(func() string {
+	green := lipgloss.NewStyle().Foreground(green)
+	lines := strings.Split(banner, "\n")
+	rows := make([]string, len(lines))
+	for index, line := range lines {
+		rows[index] = green.Render(line + strings.Repeat(" ", wordmarkWidth()-lipgloss.Width(line)))
+	}
+	return strings.Join(rows, "\n")
+})
+
+func wordmark() string { return wordmarkOnce() }
+
+// wordmarkWidth is the cell width of the widest banner row.
+var wordmarkWidth = sync.OnceValue(func() int {
+	block := 0
+	for _, line := range strings.Split(banner, "\n") {
+		block = max(block, lipgloss.Width(line))
+	}
+	return block
+})
+
+// setupComposer draws the prompt as a rounded panel that lights up green while
+// it holds focus. The scan meta and targets live inside the panel, flush under
+// the input, so everything shares one left edge - the way opencode aligns its
+// home prompt.
+func (m Model) setupComposer(width int) string {
+	border := dark
+	if m.focus == focusInput {
+		border = green
+	}
+	// Width covers the padding but not the border, so a box of the given total
+	// width sets width-2 here and hands the interior the width-4 that is left.
+	inner := max(1, width-4)
+	body := m.highlightInputSelection(m.input.View())
+	body += "\n\n" + m.setupSummaryView(inner)
+	if targets := m.setupTargetsView(inner); targets != "" {
+		body += "\n" + targets
+	}
+	return lipgloss.NewStyle().Width(max(1, width-2)).Padding(0, 1).
+		Border(lipgloss.RoundedBorder()).BorderForeground(border).
+		Render(body)
+}
+
+// setupSummaryView is the quiet meta line inside the panel: what the scan will
+// run as, or what is still missing before it can run.
+func (m Model) setupSummaryView(width int) string {
+	chips := []string{}
+	if model := strings.TrimSpace(m.snapshot.Model); model != "" {
+		name, provider := model, ""
+		if slash := strings.LastIndex(model, "/"); slash >= 0 {
+			provider, name = model[:slash], model[slash+1:]
+		}
+		chip := render.Col(green).Render("● ") + render.Col(white).Render(name)
+		if provider != "" {
+			chips = append(chips, chip, render.Dim().Render(provider))
+		} else {
+			chips = append(chips, chip)
+		}
+	} else {
+		chips = append(chips, render.Col(amber).Render("○ no model")+render.Dim().Render(" · /model to connect"))
+	}
+	if m.snapshot.MaxBudgetUSD != nil {
+		chips = append(chips, render.Dim().Render(fmt.Sprintf("$%.2f budget", *m.snapshot.MaxBudgetUSD)))
+	}
+	return truncate(strings.Join(chips, render.Dim().Render(" · ")), max(1, width))
+}
+
+// setupTargetsView lists what the scan is pointed at, once anything is queued.
+func (m Model) setupTargetsView(width int) string {
+	if len(m.snapshot.Targets) == 0 {
+		return ""
+	}
+	const visible = 4
+	total := max(m.snapshot.TargetCount, len(m.snapshot.Targets))
+	rows := []string{render.Bold(green).Render("Targets") + render.Dim().Render(fmt.Sprintf(" %d", total))}
+	for _, target := range m.snapshot.Targets[:min(visible, len(m.snapshot.Targets))] {
+		rows = append(rows, render.Col(dim).Render("▸ ")+render.Col(white).Render(truncate(target, max(1, width-2))))
+	}
+	if hidden := total - visible; hidden > 0 {
+		rows = append(rows, render.Dim().Render(fmt.Sprintf("+%d more", hidden)))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// setupLogView shows the tail of the feedback log. The launch screen is a
+// launch pad, not a scrollback, so only the most recent lines are kept.
+func (m Model) setupLogView(fit setupFit) string {
+	if fit.logRows <= 0 || len(m.setupLog) == 0 {
+		return ""
+	}
+	tail := m.setupLog[max(0, len(m.setupLog)-fit.logRows):]
+	rows := make([]string, 0, len(tail))
+	for _, line := range tail {
+		// Align with the panel interior [2, width-2].
+		rows = append(rows, "  "+truncate(line, max(1, fit.width-4)))
+	}
+	return strings.Join(rows, "\n")
+}
+
+// setupHintsView is the closing key hint row, aligned to the panel's inner
+// edges: keys flush under the input, the version at the far right.
+func (m Model) setupHintsView(width int) string {
+	// The panel's interior spans [2, width-2]; match it so the row reads as a
+	// footer under the input rather than a stray line.
+	const pad = "  "
+	inner := max(1, width-4)
+	key := lipgloss.NewStyle().Foreground(white).Render
+	label := render.Dim().Render
+	hint := func(k, text string) string { return key(k) + label(" "+text) }
+	left := hint("enter", "launch scan") + label("   ") + hint("/", "commands") +
+		label("   ") + hint("ctrl+c", "quit")
+	if lipgloss.Width(left) > inner {
+		left = hint("/", "commands")
+	}
+	right := label("v" + appVersion)
+	gap := inner - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 2 {
+		return pad + left
+	}
+	return pad + left + strings.Repeat(" ", gap) + right
 }

@@ -338,7 +338,8 @@ func (m Model) splashView() string {
 	version := lipgloss.NewStyle().Foreground(white).Faint(true).Render("v" + appVersion)
 	tagline := lipgloss.NewStyle().Foreground(white).Faint(true).Render("Open-source AI hackers for your apps")
 	url := lipgloss.NewStyle().Bold(true).Foreground(green).Render("strix.ai")
-	content := lipgloss.NewStyle().Foreground(green).Render(banner) + "\n\n" +
+	// The wordmark is shared with the launch screen so the two read as one moment.
+	content := wordmark() + "\n\n" +
 		welcome + "\n" + version + "\n" + tagline + "\n\n" +
 		start.String() + "\n\n" + url
 	if warn := m.snapshot.ModelWarning; warn != "" {
@@ -410,13 +411,9 @@ func (m Model) mainView() string {
 	if m.focus == focusInput {
 		inputBorder = green
 	}
-	// Same prompt treatment as the setup screen: a left accent bar with a cap,
-	// preceded by a spacer row so the composer keeps its previous footprint.
-	composer := lipgloss.NewStyle().Width(chatWidth-2).Height(m.input.Height()).
-		Border(lipgloss.Border{Left: "▎"}, false, false, false, true).
-		BorderForeground(inputBorder).PaddingLeft(1).
+	input := lipgloss.NewStyle().Width(chatWidth - 2).Height(m.input.Height()).
+		Border(lipgloss.RoundedBorder()).BorderForeground(inputBorder).PaddingLeft(1).
 		Render(m.highlightInputSelection(m.input.View()))
-	input := "\n" + composer + "\n" + lipgloss.NewStyle().Foreground(inputBorder).Width(chatWidth-1).Render("╹")
 
 	// Chat column: chat history, optional status row, live slash-command menu,
 	// then input — all chat-width.
@@ -482,7 +479,11 @@ func (m Model) sidebarView(width, height int) string {
 }
 
 func (m Model) sidebarHeights() (statsHeight, vulnHeight, agentHeight int) {
-	statsHeight = min(15, strings.Count(m.statsView(), "\n")+3)
+	// Measure the stats panel the way its box will render it: a long model name
+	// wraps inside the sidebar, and counting only its newlines would size the
+	// box short and push the whole frame past the bottom of the terminal.
+	statsRows := lipgloss.Height(lipgloss.NewStyle().Width(m.viewerContentWidth()).Render(m.statsView()))
+	statsHeight = min(15, statsRows+2)
 	if len(m.snapshot.Vulnerabilities) > 0 {
 		rows := 0
 		width := m.vulnerabilityListWidth()

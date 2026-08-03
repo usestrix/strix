@@ -101,7 +101,7 @@ class GoTuiRuntime:
         )
         self.controller.notify_changed()
 
-    async def start_from_setup(self) -> None:
+    async def start_from_setup(self, verify: bool = True) -> None:
         candidate = deepcopy(self.args)
         candidate.scan_mode = self.controller.scan_mode
         candidate.instruction = self.controller.instruction
@@ -116,14 +116,18 @@ class GoTuiRuntime:
         ]
         targets_changed = self.controller.targets != existing_targets
         model = (load_settings().llm.model or "").strip()
-        try:
-            await preflight_model_connection(model)
-        except Exception as exc:
-            logger.exception("Go TUI setup model preflight failed")
-            message = provider_authentication_error_message(model, exc)
-            if message is None:
-                message = f"Model connection failed: {exc}"
-            raise RuntimeError(message) from exc
+        # A bare prompt launches optimistically: it skips the network preflight
+        # and lets any model error surface once the agent starts, like a coding
+        # agent. A named target keeps the upfront check.
+        if verify:
+            try:
+                await preflight_model_connection(model)
+            except Exception as exc:
+                logger.exception("Go TUI setup model preflight failed")
+                message = provider_authentication_error_message(model, exc)
+                if message is None:
+                    message = f"Model connection failed: {exc}"
+                raise RuntimeError(message) from exc
         if targets_changed:
             # Rebuild the full typed set so path canonicalization and local
             # deduplication match the CLI.

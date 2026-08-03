@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/usestrix/strix/tui/internal/protocol"
 )
 
@@ -198,16 +199,20 @@ var (
 	black       = lipgloss.Color("#000000")
 )
 
-const banner = ` ███████╗████████╗██████╗ ██╗██╗  ██╗
- ██╔════╝╚══██╔══╝██╔══██╗██║╚██╗██╔╝
- ███████╗   ██║   ██████╔╝██║ ╚███╔╝
- ╚════██║   ██║   ██╔══██╗██║ ██╔██╗
- ███████║   ██║   ██║  ██║██║██╔╝ ██╗
- ╚══════╝   ╚═╝   ╚═╝  ╚═╝╚═╝╚═╝  ╚═╝`
+// Composer placeholders. The launch screen falls back to the short prompt when
+// the column is too narrow to show the full one without clipping it.
+const (
+	setupPlaceholder      = "Enter a prompt or target, or / for commands"
+	setupPlaceholderShort = "Prompt, or / for commands"
+	chatPlaceholder       = "Send a message"
+)
 
-// maxInputLines caps the auto-growing chat composer, matching the old
-// Textual ChatTextArea (grows with content up to 8 lines).
-const maxInputLines = 8
+// The composer opens at minInputLines rows for breathing room and grows with
+// its content up to maxInputLines.
+const (
+	minInputLines = 3
+	maxInputLines = 8
+)
 
 // newChatInput builds the multi-line chat composer. Enter submits (handled by
 // the update loop before the textarea sees it); Shift/Alt+Enter and Ctrl+J
@@ -244,9 +249,53 @@ func newChatInput() textarea.Model {
 	return input
 }
 
-// syncInputHeight grows or shrinks the composer with its content.
+// composerBounds returns the floor and ceiling row counts for the composer at
+// the current terminal height. A short terminal shrinks the ceiling so a long
+// prompt cannot crowd out everything above it.
+//
+// Only the launch screen opens taller than a single row: there the composer is
+// the whole screen and wants breathing room, while during a scan it sits under
+// the trace and stays out of the way until there is something to show.
+func (m Model) composerBounds() (floor, ceiling int) {
+	ceiling = maxInputLines
+	if m.height > 0 {
+		ceiling = max(minInputLines, min(maxInputLines, m.height/3))
+	}
+	floor = 1
+	if m.snapshot.SetupMode {
+		floor = min(minInputLines, ceiling)
+	}
+	return floor, ceiling
+}
+
+// syncInputHeight grows or shrinks the composer with its content, between the
+// floor and ceiling.
 func (m *Model) syncInputHeight() {
-	m.input.SetHeight(min(max(1, m.input.LineCount()), maxInputLines))
+	floor, ceiling := m.composerBounds()
+	m.input.SetHeight(max(floor, min(composerHeight(m.input), ceiling)))
+}
+
+// composerHeight is how many rows the composer needs to show all of its
+// content, capped at maxInputLines. Soft-wrapped rows count: a single long
+// line still grows the box. LineCount only counts hard newlines, and the
+// wrapped height the textarea does report covers just the line the cursor is
+// on, so a scratch copy measures each line with the composer's own wrapping.
+func composerHeight(input textarea.Model) int {
+	probe, rows := input, 0
+	for _, line := range strings.Split(input.Value(), "\n") {
+		// A line narrower than the text column cannot wrap, which is the case
+		// for nearly every keystroke; only measure the ones that might.
+		if ansi.StringWidth(line) < input.Width() {
+			rows++
+		} else {
+			probe.SetValue(line)
+			rows += probe.LineInfo().Height
+		}
+		if rows >= maxInputLines {
+			return maxInputLines
+		}
+	}
+	return max(1, rows)
 }
 
 func New(client *Client) Model {
@@ -259,7 +308,7 @@ func New(client *Client) Model {
 		return input
 	}
 	input := newChatInput()
-	input.Placeholder = "Enter a target and instructions, or / for commands"
+	input.Placeholder = setupPlaceholder
 	input.Focus()
 	return Model{
 		client: client, input: input, pickerInput: newInput(), viewport: viewport.New(80, 20), vulnViewport: viewport.New(80, 20),

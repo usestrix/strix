@@ -332,7 +332,7 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	model.width, model.height = 130, 34
 	model.showSplash = false
 	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{SetupMode: true, ScanState: "setup"}))
-	if view := model.View(); !strings.Contains(view, "Enter a target and instructions, or / for commands") {
+	if view := model.View(); !strings.Contains(view, setupPlaceholder) {
 		t.Fatalf("setup snapshot did not show the start screen: %s", view)
 	}
 
@@ -387,9 +387,12 @@ func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 	model.input.SetValue("/")
 	model.resizeViewport()
 
-	view := model.viewInner()
-	if !strings.Contains(view, "STRIX") {
-		t.Fatalf("compact start screen logo is missing: %s", view)
+	view := ansi.Strip(model.viewInner())
+	// A narrow terminal falls back to the plain wordmark, but the launch screen
+	// never gives up its identity entirely.
+	topRow := ansi.Strip(strings.SplitN(wordmark(), "\n", 2)[0])
+	if !strings.Contains(view, topRow) && !strings.Contains(view, "STRIX") {
+		t.Fatalf("narrow start screen logo is missing: %s", view)
 	}
 	lines := strings.Split(view, "\n")
 	if len(lines) > model.height {

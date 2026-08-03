@@ -4,7 +4,7 @@ import argparse
 import asyncio
 import json
 import os
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 
@@ -18,10 +18,6 @@ from strix.config import (
 )
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def args() -> argparse.Namespace:
@@ -253,7 +249,7 @@ def test_setup_restores_prepared_cli_targets() -> None:
 async def test_start_validates_model_before_callback() -> None:
     started = False
 
-    async def start() -> None:
+    async def start(verify: bool = True) -> None:
         nonlocal started
         started = True
 
@@ -268,7 +264,7 @@ async def test_start_validates_model_before_callback() -> None:
 async def test_start_resolves_routed_model_provider() -> None:
     started = False
 
-    async def start() -> None:
+    async def start(verify: bool = True) -> None:
         nonlocal started
         started = True
 
@@ -285,11 +281,55 @@ async def test_start_resolves_routed_model_provider() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_without_target_defaults_to_current_directory() -> None:
+    started = False
+    seen_verify: bool | None = None
+
+    async def start(verify: bool = True) -> None:
+        nonlocal started, seen_verify
+        started = True
+        seen_verify = verify
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    reset_settings_cache()
+    controller = TuiController(args(), on_start=start)
+
+    # A bare prompt launches optimistically: no target, and verify is off.
+    result = await controller.handle("setup.start", {"verify": False})
+
+    assert result == {"started": True}
+    assert started is True
+    assert seen_verify is False
+    assert controller.targets == [str(Path.cwd())]
+
+
+@pytest.mark.asyncio
+async def test_start_forwards_verify_flag_by_default() -> None:
+    seen_verify: bool | None = None
+
+    async def start(verify: bool = True) -> None:
+        nonlocal seen_verify
+        seen_verify = verify
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    reset_settings_cache()
+    controller = TuiController(args(), on_start=start)
+    await controller.handle("setup.add_target", {"target": "https://example.com"})
+
+    # A named target keeps the upfront model check.
+    await controller.handle("setup.start", {})
+
+    assert seen_verify is True
+
+
+@pytest.mark.asyncio
 async def test_start_rejects_concurrent_and_repeated_submissions() -> None:
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def start() -> None:
+    async def start(verify: bool = True) -> None:
         entered.set()
         await release.wait()
 

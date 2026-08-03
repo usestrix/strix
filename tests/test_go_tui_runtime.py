@@ -9,6 +9,7 @@ import socket
 import struct
 import sys
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
 
@@ -367,6 +368,37 @@ async def test_setup_preflights_model_before_starting(
     assert runtime.args.max_turns == 321
     assert runtime.args.scope_mode == "diff"
     assert runtime.args.diff_base == "origin/main"
+
+
+@pytest.mark.asyncio
+async def test_optimistic_setup_skips_model_preflight(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(args())
+    runtime.controller.targets = [str(Path.cwd())]
+    calls: list[str] = []
+
+    async def preflight(model: str) -> None:
+        calls.append("preflight")
+
+    monkeypatch.setattr(
+        go_tui,
+        "load_settings",
+        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
+    )
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "build_targets_info", lambda candidate: calls.append("targets"))
+    monkeypatch.setattr(go_tui, "prepare_run", lambda candidate: calls.append("prepare"))
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
+    monkeypatch.setattr(runtime, "init_run_state", lambda: calls.append("state"))
+    monkeypatch.setattr(runtime, "start_scan", lambda: calls.append("scan"))
+
+    await runtime.start_from_setup(verify=False)
+
+    # No preflight: the scan launches straight through and any model error
+    # surfaces once the agent runs.
+    assert "preflight" not in calls
+    assert calls == ["targets", "prepare", "telemetry", "state", "scan"]
 
 
 @pytest.mark.asyncio
