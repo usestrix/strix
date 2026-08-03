@@ -10,7 +10,6 @@ PROTOCOL_CAPABILITIES = (
     "state-revisions",
     "collection-deltas",
     "structured-command-errors",
-    "paged-models",
     "agents-collection",
     "setup-run-controls",
 )

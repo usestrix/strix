@@ -11,7 +11,6 @@ from typing import Any, cast
 import pytest
 from agents.tool import ToolOutputImage
 
-from strix.config import ProviderModelGroup
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController
 from strix.interface.tui.backend.projection import terminal_projection
@@ -423,67 +422,6 @@ async def test_agents_collection_has_no_state_cap_and_sends_delete_and_resync() 
         assert bootstrap["payload"]["collection"] == "agents"
         assert bootstrap["payload"]["revision"] == 3
         assert len(bootstrap["payload"]["items"]) == 39
-    finally:
-        child.close()
-        await server.close()
-
-
-@pytest.mark.asyncio
-async def test_models_list_command_frames_remain_under_64_kib(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "strix.interface.tui.backend.controller.load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="")),
-    )
-
-    async def groups(*, current_model: str | None = None) -> list[ProviderModelGroup]:
-        assert current_model == ""
-        models = tuple(f"openai/model-{index}-{'x' * 900}" for index in range(180))
-        return [ProviderModelGroup("openai", "OpenAI", models)]
-
-    monkeypatch.setattr(
-        "strix.interface.tui.backend.controller.configured_provider_model_groups",
-        groups,
-    )
-    backend, child = socket.socketpair()
-    child.setblocking(False)  # noqa: FBT003
-    server = TuiBackendServer(TuiController(args()))
-    await start_server(server, backend, child)
-    try:
-        await receive_initial_state(child)
-        request_id = "models-0"
-        payload: dict[str, Any] = {}
-        pages = 0
-        listing_id = ""
-        while True:
-            await send_message(
-                child,
-                {
-                    "version": 3,
-                    "type": "models.list",
-                    "request_id": request_id,
-                    "payload": payload,
-                },
-            )
-            while True:
-                size, message = await asyncio.wait_for(receive_frame(child), timeout=2)
-                if (
-                    message.get("type") == "command_result"
-                    and message.get("request_id") == request_id
-                ):
-                    break
-            assert size <= MAX_COMMAND_BYTES
-            page = message["payload"]["result"]
-            pages += 1
-            if not listing_id:
-                listing_id = page["listing_id"]
-            assert page["listing_id"] == listing_id
-            if page["done"]:
-                break
-            request_id = f"models-{pages}"
-            payload = {"listing_id": listing_id, "cursor": page["next_cursor"]}
-        assert pages > 1
     finally:
         child.close()
         await server.close()

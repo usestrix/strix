@@ -80,9 +80,6 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			return nil
 		}
 		if !result.OK {
-			if result.Command == "models.list" {
-				m.modelListing = nil
-			}
 			if result.Command == "collection.resync" {
 				if collection := m.resyncRequests[envelope.RequestID]; collection != "" {
 					m.resyncRequested[collection] = false
@@ -107,84 +104,6 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		}
 		m.errorText = ""
 		switch result.Command {
-		case "providers.list":
-			var data protocol.ProvidersResult
-			_ = json.Unmarshal(result.Result, &data)
-			m.options = m.options[:0]
-			m.providerConfigured = map[string]bool{}
-			m.providerLabels = map[string]string{}
-			m.providerStates = map[string]string{}
-			m.providerDetails = map[string]string{}
-			m.providerDisconnectable = map[string]bool{}
-			for _, p := range data.Providers {
-				m.options = append(m.options, p.Name)
-				m.providerConfigured[p.Name] = p.Configured
-				m.providerLabels[p.Name] = p.Label
-				m.providerStates[p.Name] = p.State
-				m.providerDetails[p.Name] = p.Detail
-				m.providerDisconnectable[p.Name] = p.Disconnectable
-			}
-			m.openPicker(pickerProvider)
-		case "models.list":
-			var data protocol.ModelsResult
-			if err := json.Unmarshal(result.Result, &data); err != nil {
-				m.setupMsg(err.Error(), render.Col(red))
-				m.modelListing = nil
-				return nil
-			}
-			return m.handleModelListingPage(data)
-		case "setup.select_provider":
-			var data protocol.Provider
-			_ = json.Unmarshal(result.Result, &data)
-			m.applyProviderRecord(data)
-			if data.Configured {
-				m.setupMsg("✓ "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail)+" Use /model to pick a model.", render.Col(green))
-			} else if data.KeyEnv != nil {
-				m.keyEnv = *data.KeyEnv
-				m.openPicker(pickerAPIKey)
-			} else {
-				m.setupMsg(m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), render.Col(red))
-			}
-		case "setup.save_api_key":
-			var data protocol.Provider
-			_ = json.Unmarshal(result.Result, &data)
-			m.applyProviderRecord(data)
-			if m.picker == pickerAPIKey {
-				m.closePicker()
-			}
-			if data.Configured {
-				m.setupMsg("✓ Saved credentials. "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail)+" Use /model to pick a model.", render.Col(green))
-			} else {
-				m.setupMsg("Saved the API key, but more configuration is required. "+m.providerStatusText(m.configProvider, m.configProviderLabel, m.configProviderDetail), render.Col(amber))
-			}
-		case "setup.disconnect_provider":
-			var data protocol.Provider
-			_ = json.Unmarshal(result.Result, &data)
-			m.providerConfigured[data.Name] = data.Configured
-			m.providerStates[data.Name] = data.State
-			m.providerDetails[data.Name] = data.Detail
-			m.providerDisconnectable[data.Name] = data.Disconnectable
-			m.setupMsg("Disconnected "+data.Label+".", render.Col(amber))
-		case "setup.add_custom_provider":
-			var data protocol.Provider
-			_ = json.Unmarshal(result.Result, &data)
-			if m.picker == pickerCustomAPIKey {
-				m.closePicker()
-			}
-			m.customKind, m.customName, m.customURL = "", "", ""
-			m.applyProviderRecord(data)
-			m.setupMsg("✓ Added custom provider. "+m.providerStatusText(data.Name, data.Label, data.Detail)+" Use /model to pick a model.", render.Col(green))
-		case "setup.select_model":
-			var data struct {
-				Model string `json:"model"`
-			}
-			_ = json.Unmarshal(result.Result, &data)
-			if m.picker == pickerModel || m.picker == pickerManualModel {
-				m.closePicker()
-			}
-			if data.Model != "" {
-				m.setupMsg("✓ Model set to "+data.Model+" (saved to your config).", render.Col(green))
-			}
 		case "setup.set_mode":
 			var data struct {
 				Mode string `json:"mode"`
@@ -290,101 +209,6 @@ func (m *Model) consumeMessages(messages []protocol.Message, setupMode bool) {
 		}
 		m.setupMsg(message.Text, style)
 	}
-}
-
-func (m *Model) handleModelListingPage(data protocol.ModelsResult) tea.Cmd {
-	if data.ListingID == "" || data.Cursor < 0 || data.NextCursor != data.Cursor+1 {
-		m.modelListing = nil
-		m.setupMsg("Invalid paged model listing received from backend.", render.Col(red))
-		return nil
-	}
-	if data.Cursor == 0 {
-		m.modelListing = &modelListingAssembly{
-			listingID: data.ListingID, groupIndexes: map[string]int{}, providerNames: map[string]bool{},
-		}
-	}
-	listing := m.modelListing
-	if listing == nil || listing.listingID != data.ListingID || listing.cursor != data.Cursor {
-		m.modelListing = nil
-		m.setupMsg("Model listing page mismatch; run /model again.", render.Col(red))
-		return nil
-	}
-	for _, group := range data.Groups {
-		if index, exists := listing.groupIndexes[group.Provider]; exists {
-			listing.groups[index].Models = append(listing.groups[index].Models, group.Models...)
-			listing.groups[index].AllowManual = listing.groups[index].AllowManual || group.AllowManual
-			if listing.groups[index].Error == "" {
-				listing.groups[index].Error = group.Error
-			}
-			continue
-		}
-		listing.groupIndexes[group.Provider] = len(listing.groups)
-		listing.groups = append(listing.groups, group)
-	}
-	for _, provider := range data.Providers {
-		if listing.providerNames[provider.Name] {
-			continue
-		}
-		listing.providerNames[provider.Name] = true
-		listing.providers = append(listing.providers, provider)
-	}
-	listing.cursor = data.NextCursor
-	if !data.Done {
-		return send(m.client, "models.list", map[string]any{
-			"listing_id": listing.listingID,
-			"cursor":     listing.cursor,
-		})
-	}
-	groups, providers := listing.groups, listing.providers
-	m.modelListing = nil
-	m.installModelListing(groups, providers)
-	return nil
-}
-
-func (m *Model) installModelListing(groups []protocol.ModelGroup, providers []protocol.Provider) {
-	m.options = m.options[:0]
-	m.modelOptions = map[string]modelPickerOption{}
-	if len(groups) == 0 && len(providers) > 0 {
-		m.providerConfigured = map[string]bool{}
-		m.providerLabels = map[string]string{}
-		m.providerStates = map[string]string{}
-		m.providerDetails = map[string]string{}
-		m.providerDisconnectable = map[string]bool{}
-		for _, provider := range providers {
-			m.options = append(m.options, provider.Name)
-			m.providerConfigured[provider.Name] = provider.Configured
-			m.providerLabels[provider.Name] = provider.Label
-			m.providerStates[provider.Name] = provider.State
-			m.providerDetails[provider.Name] = provider.Detail
-			m.providerDisconnectable[provider.Name] = provider.Disconnectable
-		}
-		m.openPicker(pickerProvider)
-		return
-	}
-	for groupIndex, group := range groups {
-		label := group.Label
-		if label == "" {
-			label = group.Provider
-		}
-		if strings.TrimSpace(group.Error) != "" {
-			m.setupMsg(label+": "+strings.TrimSpace(group.Error), render.Col(amber))
-		}
-		for modelIndex, model := range group.Models {
-			token := fmt.Sprintf("model:%d:%d", groupIndex, modelIndex)
-			m.options = append(m.options, token)
-			m.modelOptions[token] = modelPickerOption{provider: group.Provider, label: label, model: model}
-		}
-		if group.AllowManual {
-			token := fmt.Sprintf("manual:%d", groupIndex)
-			m.options = append(m.options, token)
-			m.modelOptions[token] = modelPickerOption{provider: group.Provider, label: label, manual: true}
-		}
-	}
-	if len(m.options) == 0 {
-		m.setupMsg("No configured providers or models are available. Run /provider to connect one.", render.Dim())
-		return
-	}
-	m.openPicker(pickerModel)
 }
 
 func validCollection(name string) bool {

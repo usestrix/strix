@@ -8,7 +8,6 @@ var Capabilities = []string{
 	"state-revisions",
 	"collection-deltas",
 	"structured-command-errors",
-	"paged-models",
 	"agents-collection",
 	"setup-run-controls",
 }
@@ -118,37 +117,4 @@ type CommandResult struct {
 	Command string          `json:"command"`
 	Result  json.RawMessage `json:"result"`
 	Error   *CommandError   `json:"error"`
-}
-
-type ProvidersResult struct {
-	Providers []Provider `json:"providers"`
-}
-
-type Provider struct {
-	Name           string  `json:"name"`
-	Label          string  `json:"label"`
-	Configured     bool    `json:"configured"`
-	KeyEnv         *string `json:"key_env"`
-	Custom         bool    `json:"custom"`
-	State          string  `json:"state"`
-	Detail         string  `json:"detail"`
-	Source         string  `json:"source"`
-	Disconnectable bool    `json:"disconnectable"`
-}
-
-type ModelsResult struct {
-	ListingID  string       `json:"listing_id"`
-	Cursor     int          `json:"cursor"`
-	NextCursor int          `json:"next_cursor"`
-	Done       bool         `json:"done"`
-	Groups     []ModelGroup `json:"groups"`
-	Providers  []Provider   `json:"providers"`
-}
-
-type ModelGroup struct {
-	Provider    string   `json:"provider"`
-	Label       string   `json:"label"`
-	Models      []string `json:"models"`
-	AllowManual bool     `json:"allow_manual"`
-	Error       string   `json:"error"`
 }

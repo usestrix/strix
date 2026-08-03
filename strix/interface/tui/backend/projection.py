@@ -4,19 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from dataclasses import dataclass
 from typing import Any
-
-from strix.config import (
-    ProviderAuthState,
-    custom_provider,
-    provider_api_key_env,
-    provider_auth_status,
-    provider_can_disconnect,
-    provider_credential_source,
-    provider_display_name,
-    resolve_provider_api_key,
-)
 
 
 SCAN_MODES = ("quick", "standard", "deep")
@@ -26,10 +14,6 @@ MAX_IMAGE_DATA_URI_BYTES = 2 * 1024 * 1024
 MAX_COLLECTION_ITEM_BYTES = 512 * 1024
 MAX_TERMINAL_EVENTS = 5_000
 MAX_TERMINAL_VULNERABILITIES = 1_000
-MODEL_LISTING_TTL_SECONDS = 60.0
-MAX_MODEL_LISTINGS = 32
-MODEL_GROUP_TARGET_BYTES = 24 * 1024
-MODEL_PAGE_TARGET_BYTES = 48 * 1024
 STATE_TARGET_BYTES = 48 * 1024
 TERMINAL_ESCAPE_RE = re.compile(r"\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[@-_][0-?]*[ -/]*[@-~]")
 
@@ -196,32 +180,3 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "error": terminal_projection(state["error"], max_string=256),
         "projection_truncated": True,
     }
-
-
-def provider_record(provider: str) -> dict[str, Any]:
-    status = provider_auth_status(provider)
-    source = provider_credential_source(provider)
-    item = custom_provider(provider)
-    key_env = None if item is not None else provider_api_key_env(provider)
-    if item is None and (
-        source == "env"
-        or (status.state is not ProviderAuthState.INVALID and resolve_provider_api_key(provider))
-    ):
-        key_env = None
-    return {
-        "name": provider,
-        "label": provider_display_name(provider),
-        "configured": status.ready,
-        "key_env": key_env,
-        "custom": item is not None,
-        "state": status.state.value,
-        "detail": status.detail,
-        "source": source,
-        "disconnectable": provider_can_disconnect(provider),
-    }
-
-
-@dataclass(frozen=True)
-class ModelListing:
-    expires_at: float
-    pages: tuple[dict[str, Any], ...]

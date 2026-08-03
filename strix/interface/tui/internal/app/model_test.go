@@ -51,14 +51,6 @@ func newCommandTestModel(t *testing.T) (Model, *recordingConn) {
 
 func handleCommandResult(t *testing.T, model *Model, command string, result any) tea.Cmd {
 	t.Helper()
-	if command == "models.list" {
-		if listing, ok := result.(protocol.ModelsResult); ok && listing.ListingID == "" {
-			listing.ListingID = "test-listing"
-			listing.NextCursor = 1
-			listing.Done = true
-			result = listing
-		}
-	}
 	resultPayload, err := json.Marshal(result)
 	if err != nil {
 		t.Fatal(err)
@@ -231,12 +223,12 @@ func TestAgentsCollectionPreservesSelectedIDAcrossUpsertsAndDeletes(t *testing.T
 func TestUnknownAndMismatchedCommandResultsCannotClosePersistencePicker(t *testing.T) {
 	client := newClient(&recordingConn{})
 	model := New(client)
-	model.picker = pickerModel
-	client.pending["request-1"] = "setup.select_model"
-	client.pendingByKey["setup.select_model"] = "request-1"
-	client.requestKeyByID["request-1"] = "setup.select_model"
+	model.picker = pickerScanMode
+	client.pending["request-1"] = "setup.set_mode"
+	client.pendingByKey["setup.set_mode"] = "request-1"
+	client.requestKeyByID["request-1"] = "setup.set_mode"
 	result := rawJSON(t, protocol.CommandResult{
-		OK: true, Command: "setup.select_model", Result: rawJSON(t, map[string]string{"model": "openai/gpt-5"}),
+		OK: true, Command: "setup.set_mode", Result: rawJSON(t, map[string]string{"mode": "quick"}),
 	})
 
 	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "command_result", RequestID: "unknown", Payload: json.RawMessage(`not-json`)})
@@ -244,12 +236,12 @@ func TestUnknownAndMismatchedCommandResultsCannotClosePersistencePicker(t *testi
 		t.Fatal("malformed unknown result mutated model error state")
 	}
 	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "command_result", RequestID: "unknown", Payload: result})
-	if model.picker != pickerModel {
+	if model.picker != pickerScanMode {
 		t.Fatal("unknown result closed persistence picker")
 	}
-	mismatched := rawJSON(t, protocol.CommandResult{OK: true, Command: "models.list", Result: rawJSON(t, map[string]any{})})
+	mismatched := rawJSON(t, protocol.CommandResult{OK: true, Command: "setup.set_budget", Result: rawJSON(t, map[string]any{})})
 	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "command_result", RequestID: "request-1", Payload: mismatched})
-	if model.picker != pickerModel || client.pending["request-1"] == "" {
+	if model.picker != pickerScanMode || client.pending["request-1"] == "" {
 		t.Fatal("mismatched result mutated picker or pending request")
 	}
 	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "command_result", RequestID: "request-1", Payload: result})
@@ -264,17 +256,17 @@ func TestSetupCommandsAppearAboveInputAndFilter(t *testing.T) {
 	model.showSplash = false
 	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{SetupMode: true, ScanState: "setup"}))
 
-	if view := model.View(); strings.Contains(view, "/provider") {
+	if view := model.View(); strings.Contains(view, "/target") {
 		t.Fatalf("setup commands appeared before slash was typed: %s", view)
 	}
 	model.input.SetValue("/")
 	view := model.View()
-	if !strings.Contains(view, "/provider") || !strings.Contains(view, "/target") {
+	if !strings.Contains(view, "/mode") || !strings.Contains(view, "/target") {
 		t.Fatalf("all setup commands were not recommended for bare slash: %s", view)
 	}
 	model.input.SetValue("/mo")
 	view = model.View()
-	if !strings.Contains(view, "/mode") || strings.Contains(view, "/provider") || strings.Contains(view, "/target") {
+	if !strings.Contains(view, "/mode") || strings.Contains(view, "/target") {
 		t.Fatalf("setup command recommendations were not filtered: %s", view)
 	}
 }
@@ -341,7 +333,7 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 		ScanStarted: true,
 		ScanState:   "running",
 	}
-	model.openPicker(pickerProvider)
+	model.openPicker(pickerScanMode)
 	model.handleEnvelope(stateEnvelope(t, 2, runningState))
 	model.handleEnvelope(bootstrapEnvelope(t, "agents", 1, protocol.Agent{ID: "one", Name: "LIVE_AGENT", Status: "running"}))
 	view := model.View()
@@ -353,29 +345,6 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	}
 	if model.picker != pickerNone {
 		t.Fatalf("setup picker remained open after scan start: %v", model.picker)
-	}
-}
-
-func TestDelayedSetupResultCannotReopenPickerAfterScanStart(t *testing.T) {
-	client := newClient(&recordingConn{})
-	model := New(client)
-	model.snapshot = protocol.Snapshot{ScanStarted: true, ScanState: "running"}
-	client.pending["request-1"] = "models.list"
-	client.pendingByKey["models.list"] = "request-1"
-	client.requestKeyByID["request-1"] = "models.list"
-	result := rawJSON(t, protocol.CommandResult{
-		OK: true, Command: "models.list", Result: rawJSON(t, protocol.ModelsResult{
-			ListingID: "listing", Cursor: 0, NextCursor: 1, Done: true,
-			Groups: []protocol.ModelGroup{{Provider: "openai", Models: []string{"openai/gpt-5"}}},
-		}),
-	})
-
-	model.handleEnvelope(protocol.Envelope{
-		Version: protocol.Version, Type: "command_result", RequestID: "request-1", Payload: result,
-	})
-
-	if model.picker != pickerNone || len(model.options) != 0 {
-		t.Fatalf("delayed setup result reopened picker: picker=%v options=%#v", model.picker, model.options)
 	}
 }
 
@@ -402,34 +371,6 @@ func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 		if width := lipgloss.Width(line); width > model.width {
 			t.Fatalf("start screen line width %d exceeds terminal width %d: %q", width, model.width, ansi.Strip(line))
 		}
-	}
-}
-
-func TestModelCommandUsesAggregateRequestWithoutChangingSnapshotProvider(t *testing.T) {
-	model, connection := newCommandTestModel(t)
-	provider := "anthropic"
-	state := protocol.Snapshot{
-		SetupMode: true,
-		ScanState: "setup",
-		Provider:  &provider,
-		Model:     "anthropic/claude-sonnet-4",
-	}
-	model.handleEnvelope(stateEnvelope(t, 1, state))
-
-	if model.configProvider != "" {
-		t.Fatalf("snapshot provider leaked into configuration state: %q", model.configProvider)
-	}
-	updated, cmd := model.submitSetup("/model")
-	result := updated.(Model)
-	envelope := commandFromCmd(t, cmd, connection)
-	if envelope.Type != "models.list" || string(envelope.Payload) != "{}" {
-		t.Fatalf("/model request = %s %s", envelope.Type, envelope.Payload)
-	}
-	if len(result.setupLog) != 0 {
-		t.Fatalf("/model reported a setup error: %#v", result.setupLog)
-	}
-	if result.snapshot.Provider == nil || *result.snapshot.Provider != provider || result.snapshot.Model != "anthropic/claude-sonnet-4" {
-		t.Fatalf("/model changed the snapshot selection: %#v", result.snapshot)
 	}
 }
 
@@ -532,7 +473,8 @@ func TestSetupCommandKeyboardSelectionSubmits(t *testing.T) {
 	model := New(nil)
 	model.snapshot.SetupMode = true
 	model.focus = focusInput
-	model.input.SetValue("/")
+	// "/s" narrows to /scope then /start, so the second entry is one that sends.
+	model.input.SetValue("/s")
 
 	updated, _ := model.updateMain(tea.KeyMsg{Type: tea.KeyDown})
 	model = updated.(Model)
@@ -542,7 +484,7 @@ func TestSetupCommandKeyboardSelectionSubmits(t *testing.T) {
 	updated, cmd := model.updateMain(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
 	if model.input.Value() != "" || cmd == nil {
-		t.Fatalf("enter did not submit selected /model command: value=%q cmd=%v", model.input.Value(), cmd)
+		t.Fatalf("enter did not submit the selected command: value=%q cmd=%v", model.input.Value(), cmd)
 	}
 }
 
@@ -575,83 +517,14 @@ func TestSubmittedSetupCommandIsNotEchoedInOutput(t *testing.T) {
 
 func TestEmptyPickerSubmitDoesNotSelect(t *testing.T) {
 	model := New(nil)
-	model.picker = pickerProvider
-	model.options = []string{"openai"}
-	model.pickerInput.SetValue("not-a-provider")
+	model.picker = pickerScanMode
+	model.options = []string{"deep"}
+	model.pickerInput.SetValue("not-a-mode")
 	model.filterOptions()
 	updated, cmd := model.updatePicker(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(Model)
-	if cmd != nil || result.picker != pickerProvider {
+	if cmd != nil || result.picker != pickerScanMode {
 		t.Fatal("empty search submit selected or closed the picker")
-	}
-}
-
-func TestAggregateModelsFlattenInProviderOrderAndSearchLabelAndID(t *testing.T) {
-	model := New(nil)
-	model.snapshot.Model = "openai/gpt-5"
-	handleCommandResult(t, &model, "models.list", protocol.ModelsResult{Groups: []protocol.ModelGroup{
-		{Provider: "openai", Label: "OpenAI", Models: []string{"openai/gpt-5"}},
-		{Provider: "custom-local", Label: "Local GPU", Models: []string{"custom-local/qwen"}, AllowManual: true},
-		{Provider: "broken", Label: "Broken Cloud", Error: "authentication failed"},
-	}})
-
-	if model.picker != pickerModel || len(model.options) != 3 {
-		t.Fatalf("aggregate models did not open a three-row picker: picker=%v options=%#v", model.picker, model.options)
-	}
-	rows := []string{
-		model.modelOptionLabel(model.options[0]),
-		model.modelOptionLabel(model.options[1]),
-		model.modelOptionLabel(model.options[2]),
-	}
-	if !strings.Contains(rows[0], "→ OpenAI  openai/gpt-5") ||
-		!strings.Contains(rows[1], "Local GPU  custom-local/qwen") ||
-		!strings.Contains(rows[2], "Local GPU  Enter model ID...") {
-		t.Fatalf("unexpected flattened model rows: %#v", rows)
-	}
-	if content := ansi.Strip(model.setupContent()); !strings.Contains(content, "Broken Cloud: authentication failed") {
-		t.Fatalf("group error was not surfaced: %s", content)
-	}
-
-	model.pickerInput.SetValue("local gpu")
-	model.filterOptions()
-	if len(model.filtered) != 2 {
-		t.Fatalf("provider label search returned %d rows: %#v", len(model.filtered), model.filtered)
-	}
-	model.pickerInput.SetValue("qwen")
-	model.filterOptions()
-	if len(model.filtered) != 1 || model.modelOptions[model.filtered[0]].model != "custom-local/qwen" {
-		t.Fatalf("model ID search returned %#v", model.filtered)
-	}
-}
-
-func TestPagedModelsAccumulateSplitGroupsAndOpenPickerOnlyWhenDone(t *testing.T) {
-	model, connection := newCommandTestModel(t)
-	first := protocol.ModelsResult{
-		ListingID: "listing-1", Cursor: 0, NextCursor: 1,
-		Groups: []protocol.ModelGroup{{Provider: "openai", Label: "OpenAI", Models: []string{"openai/one"}}},
-	}
-	cmd := handleCommandResult(t, &model, "models.list", first)
-	if model.picker != pickerNone || len(model.options) != 0 || cmd == nil {
-		t.Fatalf("partial model page became visible: picker=%v options=%#v cmd=%v", model.picker, model.options, cmd)
-	}
-	request := commandFromCmd(t, cmd, connection)
-	if request.Type != "models.list" || !strings.Contains(string(request.Payload), `"cursor":1`) || !strings.Contains(string(request.Payload), `"listing_id":"listing-1"`) {
-		t.Fatalf("next model page request = %#v", request)
-	}
-
-	second := protocol.ModelsResult{
-		ListingID: "listing-1", Cursor: 1, NextCursor: 2, Done: true,
-		Groups: []protocol.ModelGroup{{Provider: "openai", Label: "OpenAI", Models: []string{"openai/two"}, AllowManual: true}},
-	}
-	payload := rawJSON(t, protocol.CommandResult{OK: true, Command: "models.list", Result: rawJSON(t, second)})
-	model.handleEnvelope(protocol.Envelope{
-		Version: protocol.Version, Type: "command_result", RequestID: request.RequestID, Payload: payload,
-	})
-	if model.picker != pickerModel || len(model.options) != 3 {
-		t.Fatalf("completed model listing was not installed: picker=%v options=%#v", model.picker, model.options)
-	}
-	if got := model.modelOptions[model.options[1]].model; got != "openai/two" {
-		t.Fatalf("split provider group was not merged: %q", got)
 	}
 }
 
@@ -665,104 +538,10 @@ func TestStateMessagesRenderOnce(t *testing.T) {
 	}
 }
 
-func TestModelSelectionSendsProviderFromGroup(t *testing.T) {
-	model, connection := newCommandTestModel(t)
-	snapshotProvider := "anthropic"
-	model.snapshot.Provider = &snapshotProvider
-	model.snapshot.Model = "anthropic/claude"
-	handleCommandResult(t, &model, "models.list", protocol.ModelsResult{Groups: []protocol.ModelGroup{
-		{Provider: "openai", Label: "OpenAI", Models: []string{"openai/gpt-5"}},
-	}})
-
-	_, cmd := model.selectPickerOption(0)
-	envelope := commandFromCmd(t, cmd, connection)
-	var payload struct {
-		Provider string `json:"provider"`
-		Model    string `json:"model"`
-	}
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if envelope.Type != "setup.select_model" || payload.Provider != "openai" || payload.Model != "openai/gpt-5" {
-		t.Fatalf("model selection sent %s %#v", envelope.Type, payload)
-	}
-	if model.snapshot.Provider == nil || *model.snapshot.Provider != snapshotProvider || model.snapshot.Model != "anthropic/claude" {
-		t.Fatalf("model picker changed snapshot selection: %#v", model.snapshot)
-	}
-}
-
-func TestMouseSelectsAggregateModelWithoutChangingOptionGeometry(t *testing.T) {
-	model, connection := newCommandTestModel(t)
-	model.width, model.height = 100, 30
-	handleCommandResult(t, &model, "models.list", protocol.ModelsResult{Groups: []protocol.ModelGroup{
-		{Provider: "openai", Label: "OpenAI", Models: []string{"openai/gpt-5"}},
-		{Provider: "anthropic", Label: "Anthropic", Models: []string{"anthropic/claude"}},
-	}})
-
-	_, top, _, _ := model.centeredViewBounds(model.pickerView())
-	updated, cmd := model.updateMouse(tea.MouseMsg{
-		X: model.width / 2, Y: top + 9, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
-	})
-	model = updated.(Model)
-	if model.picker != pickerModel {
-		t.Fatalf("model picker closed before correlated success: %v", model.picker)
-	}
-	envelope := commandFromCmd(t, cmd, connection)
-	var payload map[string]string
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload["provider"] != "anthropic" || payload["model"] != "anthropic/claude" {
-		t.Fatalf("mouse selected wrong aggregate model: %#v", payload)
-	}
-}
-
-func TestManualModelSentinelScopesAndPrefixesCustomProviderOnce(t *testing.T) {
-	model, connection := newCommandTestModel(t)
-	handleCommandResult(t, &model, "models.list", protocol.ModelsResult{Groups: []protocol.ModelGroup{
-		{Provider: "custom-local", Label: "Local GPU", AllowManual: true},
-	}})
-
-	updated, cmd := model.selectPickerOption(0)
-	model = updated.(Model)
-	if cmd != nil || model.picker != pickerManualModel || model.manualModelProvider != "custom-local" {
-		t.Fatalf("manual sentinel did not open scoped entry: picker=%v provider=%q cmd=%v", model.picker, model.manualModelProvider, cmd)
-	}
-	model.pickerInput.SetValue("custom-local/custom-local/qwen-2.5")
-	updated, cmd = model.updatePicker(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	envelope := commandFromCmd(t, cmd, connection)
-	var payload map[string]string
-	if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-		t.Fatal(err)
-	}
-	if payload["provider"] != "custom-local" || payload["model"] != "custom-local/qwen-2.5" {
-		t.Fatalf("manual model payload = %#v", payload)
-	}
-	if model.picker != pickerManualModel {
-		t.Fatalf("manual model picker closed before correlated success: %v", model.picker)
-	}
-}
-
-func TestEmptyAggregateModelsDirectsToProvider(t *testing.T) {
-	model := New(nil)
-	handleCommandResult(t, &model, "models.list", protocol.ModelsResult{Providers: []protocol.Provider{
-		{Name: "anthropic", Label: "Anthropic", State: "missing", Detail: "needs key"},
-		{Name: "__add_custom__", Label: "+ Add custom provider", Configured: true},
-	}})
-
-	if model.picker != pickerProvider {
-		t.Fatalf("empty models did not open provider picker: %v", model.picker)
-	}
-	if len(model.options) != 2 || model.options[0] != "anthropic" {
-		t.Fatalf("provider options = %#v", model.options)
-	}
-}
-
 func TestPickerInputDoesNotMirrorMainInput(t *testing.T) {
 	model := New(nil)
 	model.input.SetValue("main draft")
-	model.openPicker(pickerAPIKey)
+	model.openPicker(pickerScanMode)
 
 	updated, _ := model.updatePicker(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune("secret")})
 	result := updated.(Model)
@@ -771,225 +550,6 @@ func TestPickerInputDoesNotMirrorMainInput(t *testing.T) {
 	}
 	if result.pickerInput.Value() != "secret" {
 		t.Fatalf("API key was not entered in picker input: %q", result.pickerInput.Value())
-	}
-}
-
-func TestAPIKeyIsClearedWhilePickerWaitsForCorrelatedResult(t *testing.T) {
-	model, connection := newCommandTestModel(t)
-	model.picker = pickerAPIKey
-	model.configProvider = "anthropic"
-	model.pickerInput.SetValue("super-secret")
-
-	updated, cmd := model.updatePicker(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	envelope := commandFromCmd(t, cmd, connection)
-	if model.pickerInput.Value() != "" {
-		t.Fatal("submitted API key remained in the input field")
-	}
-	if model.picker != pickerAPIKey {
-		t.Fatal("API key picker closed before correlated success")
-	}
-	if !strings.Contains(string(envelope.Payload), "super-secret") {
-		t.Fatal("API key was not sent to the backend")
-	}
-}
-
-func TestAddCustomProviderPickerAcceptsOptionalAPIKey(t *testing.T) {
-	model := New(nil)
-	model.options = []string{"openai", "__add_custom__"}
-	model.providerLabels = map[string]string{"__add_custom__": "+ Add custom provider"}
-	model.openPicker(pickerProvider)
-
-	updated, cmd := model.selectPickerOption(1)
-	model = updated.(Model)
-	if cmd != nil || model.picker != pickerCustomKind {
-		t.Fatalf("custom option did not open compatibility picker: picker=%v cmd=%v", model.picker, cmd)
-	}
-	updated, _ = model.selectPickerOption(2)
-	model = updated.(Model)
-	if model.picker != pickerCustomName || model.customKind != "vllm" {
-		t.Fatalf("vLLM compatibility was not selected: picker=%v kind=%q", model.picker, model.customKind)
-	}
-	model.pickerInput.SetValue("Local GPU")
-	updated, _ = model.updatePicker(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	model.pickerInput.SetValue("http://localhost:8000")
-	updated, _ = model.updatePicker(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	updated, cmd = model.updatePicker(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	if cmd == nil || model.picker != pickerCustomAPIKey {
-		t.Fatalf("empty optional key was not submitted: picker=%v cmd=%v", model.picker, cmd)
-	}
-}
-
-func TestProviderPickerFiltersCustomDisplayName(t *testing.T) {
-	model := New(nil)
-	model.options = []string{"openai", "custom-123", "__add_custom__"}
-	model.providerLabels = map[string]string{
-		"custom-123":     "Local GPU",
-		"__add_custom__": "+ Add custom provider",
-	}
-	model.openPicker(pickerProvider)
-	model.pickerInput.SetValue("local gpu")
-	model.filterOptions()
-
-	if len(model.filtered) != 1 || model.filtered[0] != "custom-123" {
-		t.Fatalf("custom display name was not searchable: %#v", model.filtered)
-	}
-}
-
-func TestProviderConfigurationUsesBackendStatusWithoutChangingSelection(t *testing.T) {
-	model := New(nil)
-	selectedProvider := "anthropic"
-	model.snapshot.Provider = &selectedProvider
-	model.snapshot.Model = "anthropic/claude"
-	handleCommandResult(t, &model, "providers.list", protocol.ProvidersResult{Providers: []protocol.Provider{
-		{Name: "openai", Label: "OpenAI", Configured: true, State: "external", Detail: "authenticated by environment"},
-	}})
-
-	if label := model.providerOptionLabel("openai"); !strings.Contains(label, "◇ OpenAI") || !strings.Contains(label, "authenticated by environment") {
-		t.Fatalf("provider label did not use backend state/detail: %q", label)
-	}
-	updated, cmd := model.selectPickerOption(0)
-	model = updated.(Model)
-	if cmd == nil || model.configProvider != "openai" {
-		t.Fatalf("provider was not selected for configuration: provider=%q cmd=%v", model.configProvider, cmd)
-	}
-	if model.snapshot.Provider == nil || *model.snapshot.Provider != selectedProvider || model.snapshot.Model != "anthropic/claude" {
-		t.Fatalf("provider configuration changed selected model/provider: %#v", model.snapshot)
-	}
-
-	handleCommandResult(t, &model, "setup.select_provider", map[string]any{
-		"name": "openai", "label": "OpenAI", "configured": true,
-		"state": "external", "detail": "authenticated by environment",
-	})
-	if message := ansi.Strip(model.setupContent()); !strings.Contains(message, "authenticated by environment") {
-		t.Fatalf("provider result did not report backend detail: %s", message)
-	}
-	if model.snapshot.Provider == nil || *model.snapshot.Provider != selectedProvider || model.snapshot.Model != "anthropic/claude" {
-		t.Fatalf("provider result changed selected model/provider: %#v", model.snapshot)
-	}
-}
-
-func TestInvalidSavedProviderKeyOpensReplacementPrompt(t *testing.T) {
-	model := New(nil)
-	keyEnv := "ANTHROPIC_API_KEY"
-	handleCommandResult(t, &model, "setup.select_provider", map[string]any{
-		"name": "anthropic", "label": "Anthropic", "configured": false,
-		"key_env": &keyEnv, "state": "invalid", "detail": "ANTHROPIC_API_KEY was rejected",
-	})
-
-	if model.picker != pickerAPIKey || model.configProvider != "anthropic" {
-		t.Fatalf("invalid key did not open replacement prompt: picker=%v provider=%q", model.picker, model.configProvider)
-	}
-	if message := ansi.Strip(model.providerOptionLabel("anthropic")); !strings.HasPrefix(message, "!") {
-		t.Fatalf("invalid provider marker = %q", message)
-	}
-}
-
-func TestInvalidEnvironmentKeyShowsGuidanceWithoutPrompt(t *testing.T) {
-	model := New(nil)
-	handleCommandResult(t, &model, "setup.select_provider", map[string]any{
-		"name": "anthropic", "label": "Anthropic", "configured": false,
-		"key_env": nil, "state": "invalid", "detail": "update it in the environment and restart Strix",
-	})
-
-	if model.picker != pickerNone {
-		t.Fatalf("environment key opened an in-app prompt: %v", model.picker)
-	}
-	if message := ansi.Strip(model.setupContent()); !strings.Contains(message, "update it in the environment") {
-		t.Fatalf("environment guidance missing: %q", message)
-	}
-}
-
-func TestMouseSelectsProviderOption(t *testing.T) {
-	model := New(nil)
-	model.width, model.height = 100, 30
-	model.options = []string{"openai", "anthropic"}
-	model.openPicker(pickerProvider)
-
-	_, top, _, _ := model.centeredViewBounds(model.pickerView())
-	updated, cmd := model.updateMouse(tea.MouseMsg{
-		X:      model.width / 2,
-		Y:      top + 9,
-		Button: tea.MouseButtonLeft,
-		Action: tea.MouseActionPress,
-	})
-	result := updated.(Model)
-	if result.configProvider != "anthropic" || result.picker != pickerNone || cmd == nil {
-		t.Fatalf("mouse did not select provider to configure: provider=%q picker=%v cmd=%v", result.configProvider, result.picker, cmd)
-	}
-}
-
-func TestRapidWheelEventsDoNotMutateProviderOrModelSearch(t *testing.T) {
-	for _, picker := range []pickerMode{pickerProvider, pickerModel} {
-		t.Run(pickerPlaceholderForTest(picker), func(t *testing.T) {
-			model := New(nil)
-			for index := range 40 {
-				model.options = append(model.options, fmt.Sprintf("option-%02d", index))
-			}
-			model.openPicker(picker)
-
-			for range 1_000 {
-				updated, _ := model.updateMouse(tea.MouseMsg{Button: tea.MouseButtonWheelDown})
-				model = updated.(Model)
-			}
-			if model.cursor != len(model.filtered)-1 || model.pickerInput.Value() != "" {
-				t.Fatalf("wheel down changed search or failed to clamp: cursor=%d search=%q", model.cursor, model.pickerInput.Value())
-			}
-
-			for range 1_000 {
-				updated, _ := model.updateMouse(tea.MouseMsg{Button: tea.MouseButtonWheelUp})
-				model = updated.(Model)
-			}
-			if model.cursor != 0 || model.pickerInput.Value() != "" {
-				t.Fatalf("wheel up changed search or failed to clamp: cursor=%d search=%q", model.cursor, model.pickerInput.Value())
-			}
-		})
-	}
-}
-
-func pickerPlaceholderForTest(picker pickerMode) string {
-	if picker == pickerProvider {
-		return "provider"
-	}
-	return "model"
-}
-
-func TestProviderDisconnectButtonSendsDisconnectCommand(t *testing.T) {
-	model, connection := newCommandTestModel(t)
-	model.width, model.height = 100, 30
-	model.options = []string{"anthropic"}
-	model.providerLabels = map[string]string{"anthropic": "Anthropic"}
-	model.providerConfigured = map[string]bool{"anthropic": true}
-	model.providerStates = map[string]string{"anthropic": "configured"}
-	model.providerDetails = map[string]string{"anthropic": "saved key"}
-	model.providerDisconnectable["anthropic"] = true
-	model.openPicker(pickerProvider)
-
-	view := model.pickerView()
-	left, top, _, _ := model.centeredViewBounds(view)
-	x, y := -1, -1
-	for row, line := range strings.Split(view, "\n") {
-		plain := ansi.Strip(line)
-		if index := strings.Index(plain, "[disconnect]"); index >= 0 {
-			x, y = left+ansi.StringWidth(plain[:index])+1, top+row
-			break
-		}
-	}
-	if x < 0 {
-		t.Fatal("disconnect button was not rendered")
-	}
-
-	updated, cmd := model.updateMouse(tea.MouseMsg{X: x, Y: y, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress})
-	result := updated.(Model)
-	if result.picker != pickerProvider {
-		t.Fatal("disconnect button closed provider picker")
-	}
-	envelope := commandFromCmd(t, cmd, connection)
-	if envelope.Type != "setup.disconnect_provider" || !strings.Contains(string(envelope.Payload), "anthropic") {
-		t.Fatalf("unexpected disconnect command: %#v", envelope)
 	}
 }
 

@@ -48,10 +48,6 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 	case "/quit", "/exit":
 		m.quitting = true
 		return m, tea.Batch(send(m.client, "app.quit", map[string]any{}), tea.Quit)
-	case "/provider", "/providers", "/connect":
-		return m, send(m.client, "providers.list", map[string]any{})
-	case "/model", "/models":
-		return m, send(m.client, "models.list", map[string]any{})
 	case "/mode", "/scan-mode":
 		if arg == "" {
 			m.options = append([]string(nil), scanModes...)
@@ -440,8 +436,6 @@ func (m *Model) refreshViewport() {
 // setupCommands mirrors _SETUP_COMMANDS: the ordered command list shown in the
 // setup intro and by /help.
 var setupCommands = [][2]string{
-	{"/provider", "Configure or connect an LLM provider"},
-	{"/model", "Search + select a model across configured providers (saved)"},
 	{"/mode [quick|standard|deep]", "Set scan depth (default: deep)"},
 	{"/budget <USD|off>", "Set or disable the scan cost limit"},
 	{"/turns <N>", "Set maximum turns per agent"},
@@ -713,7 +707,8 @@ func (m Model) setupSummaryView(width int) string {
 			chips = append(chips, chip)
 		}
 	} else {
-		chips = append(chips, render.Col(amber).Render("○ no model")+render.Dim().Render(" · /model to connect"))
+		chips = append(chips, render.Col(amber).Render("○ no model")+
+			render.Dim().Render(" · set STRIX_LLM or configure one in your config"))
 	}
 	if m.snapshot.MaxBudgetUSD != nil {
 		chips = append(chips, render.Dim().Render(fmt.Sprintf("$%.2f budget", *m.snapshot.MaxBudgetUSD)))

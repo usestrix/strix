@@ -42,15 +42,6 @@ type collectionAssembly struct {
 	ids          map[string]bool
 }
 
-type modelListingAssembly struct {
-	listingID     string
-	cursor        int
-	groups        []protocol.ModelGroup
-	groupIndexes  map[string]int
-	providers     []protocol.Provider
-	providerNames map[string]bool
-}
-
 // appVersion is the package version string shown on the splash and stats panel.
 // It is set by main from the STRIX_VERSION env var (see go_tui.py), matching
 // Python's get_package_version() which reads the installed "strix-agent" version
@@ -69,15 +60,7 @@ type pickerMode int
 
 const (
 	pickerNone pickerMode = iota
-	pickerProvider
-	pickerModel
-	pickerManualModel
 	pickerScanMode
-	pickerAPIKey
-	pickerCustomKind
-	pickerCustomName
-	pickerCustomURL
-	pickerCustomAPIKey
 )
 
 type modalMode int
@@ -124,22 +107,6 @@ type Model struct {
 	options                []string
 	filtered               []string
 	cursor                 int
-	configProvider         string
-	configProviderLabel    string
-	configProviderState    string
-	configProviderDetail   string
-	keyEnv                 string
-	providerConfigured     map[string]bool
-	providerLabels         map[string]string
-	providerStates         map[string]string
-	providerDetails        map[string]string
-	providerDisconnectable map[string]bool
-	modelOptions           map[string]modelPickerOption
-	manualModelProvider    string
-	manualModelLabel       string
-	customKind             string
-	customName             string
-	customURL              string
 	collapsedAgents        map[string]bool
 	expandedEvents         map[string]bool
 	blockCache             map[string]renderedBlock
@@ -171,17 +138,9 @@ type Model struct {
 	collectionAssemblies   map[string]*collectionAssembly
 	resyncRequested        map[string]bool
 	resyncRequests         map[string]string
-	modelListing           *modelListingAssembly
 	seenMessages           map[string]bool
 	vulnerabilityCopied    bool
 	vulnerabilityCopyError string
-}
-
-type modelPickerOption struct {
-	provider string
-	label    string
-	model    string
-	manual   bool
 }
 
 var (
@@ -314,7 +273,7 @@ func New(client *Client) Model {
 	input.Focus()
 	return Model{
 		client: client, input: input, pickerInput: newInput(), viewport: viewport.New(80, 20), vulnViewport: viewport.New(80, 20),
-		collapsedAgents: map[string]bool{}, expandedEvents: map[string]bool{}, blockCache: map[string]renderedBlock{}, providerConfigured: map[string]bool{}, providerLabels: map[string]string{}, providerStates: map[string]string{}, providerDetails: map[string]string{}, providerDisconnectable: map[string]bool{}, showSplash: true, splashStarted: time.Now(), followOutput: true,
+		collapsedAgents: map[string]bool{}, expandedEvents: map[string]bool{}, blockCache: map[string]renderedBlock{}, showSplash: true, splashStarted: time.Now(), followOutput: true,
 		collectionRevisions: map[string]int{}, collectionAssemblies: map[string]*collectionAssembly{}, resyncRequested: map[string]bool{}, resyncRequests: map[string]string{},
 		seenMessages: map[string]bool{},
 	}

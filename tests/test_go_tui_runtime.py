@@ -259,7 +259,6 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
                         "state-revisions",
                         "collection-deltas",
                         "structured-command-errors",
-                        "paged-models",
                         "agents-collection",
                         "setup-run-controls",
                     ]

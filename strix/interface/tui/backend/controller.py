@@ -4,46 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import math
-import secrets
-import time
 import webbrowser
 from collections.abc import Awaitable, Callable
-from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import (
-    CUSTOM_PROVIDER_ADD,
-    configured_provider_model_groups,
-    custom_provider,
-    disconnect_provider,
-    list_providers,
     load_settings,
-    persist_selected_model,
     provider_auth_status,
     provider_for_model,
-    save_custom_provider,
-    set_custom_provider_enabled,
-    set_provider_api_key,
 )
 from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.backend.projection import (
-    MAX_MODEL_LISTINGS,
     MAX_TERMINAL_EVENTS,
     MAX_TERMINAL_VULNERABILITIES,
-    MODEL_GROUP_TARGET_BYTES,
-    MODEL_LISTING_TTL_SECONDS,
-    MODEL_PAGE_TARGET_BYTES,
     SCAN_MODES,
     SCOPE_MODES,
-    ModelListing,
     bounded_state_projection,
     collection_item_projection,
-    provider_record,
     sanitize_terminal_text,
     terminal_projection,
 )
@@ -125,7 +106,6 @@ class TuiController:
         self._pending_verify = True
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
-        self._model_listings: dict[str, ModelListing] = {}
         self.error: str | None = None
         self.viewer_status = "idle"
         self.viewer_url: str | None = None
@@ -309,13 +289,6 @@ class TuiController:
 
     async def handle(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         handlers = {
-            "providers.list": self._providers,
-            "models.list": self._models,
-            "setup.select_provider": self._select_provider,
-            "setup.save_api_key": self._save_api_key,
-            "setup.disconnect_provider": self._disconnect_provider,
-            "setup.add_custom_provider": self._add_custom_provider,
-            "setup.select_model": self._select_model,
             "setup.add_target": self._add_target,
             "setup.add_mount": self._add_mount,
             "setup.load_target_list": self._load_target_list,
@@ -339,208 +312,6 @@ class TuiController:
         result = await handler(payload)
         self.notify_changed()
         return result
-
-    async def _providers(self, _payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-
-        def rows() -> list[dict[str, Any]]:
-            return [provider_record(provider) for provider in list_providers()]
-
-        return {
-            "providers": await asyncio.to_thread(rows)
-            + [
-                {
-                    "name": CUSTOM_PROVIDER_ADD,
-                    "label": "+ Add custom provider",
-                    "configured": True,
-                    "key_env": None,
-                    "custom": True,
-                    "state": "configured",
-                    "detail": "",
-                    "source": None,
-                    "disconnectable": False,
-                }
-            ]
-        }
-
-    async def _models(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        listing_id = payload.get("listing_id")
-        cursor = payload.get("cursor")
-        if listing_id is None and cursor is None:
-            return await self._new_model_listing()
-        if not isinstance(listing_id, str) or not listing_id:
-            raise ValueError("listing_id must be a non-empty string")
-        if not isinstance(cursor, int) or isinstance(cursor, bool) or cursor < 0:
-            raise ValueError("cursor must be a non-negative integer")
-
-        now = time.monotonic()
-        self._prune_model_listings(now)
-        listing = self._model_listings.get(listing_id)
-        if listing is None or listing.expires_at <= now:
-            self._model_listings.pop(listing_id, None)
-            raise ValueError("Model listing expired or is unknown; request a new listing")
-        if cursor >= len(listing.pages):
-            raise ValueError("cursor is outside the model listing")
-        return self._model_page(listing_id, listing.pages, cursor)
-
-    async def _new_model_listing(self) -> dict[str, Any]:
-        current_model = (load_settings().llm.model or "").strip()
-        groups = await configured_provider_model_groups(current_model=current_model)
-        group_records = [
-            {
-                "provider": terminal_projection(group.provider, max_string=512),
-                "label": terminal_projection(group.label, max_string=512),
-                "models": [
-                    terminal_projection(model, max_string=4 * 1024) for model in group.models
-                ],
-                "allow_manual": group.allow_manual,
-                "error": terminal_projection(group.error or "", max_string=4 * 1024),
-            }
-            for group in groups
-        ]
-        providers: list[dict[str, Any]] = []
-        if not groups:
-            providers = [
-                terminal_projection(provider, max_string=4 * 1024, max_items=20)
-                for provider in (await self._providers({}))["providers"]
-            ]
-        listing_id = secrets.token_urlsafe(18)
-        pages = tuple(self._model_listing_pages(listing_id, group_records, providers))
-        now = time.monotonic()
-        self._prune_model_listings(now)
-        if len(self._model_listings) >= MAX_MODEL_LISTINGS:
-            oldest = min(self._model_listings, key=lambda key: self._model_listings[key].expires_at)
-            self._model_listings.pop(oldest, None)
-        self._model_listings[listing_id] = ModelListing(
-            expires_at=now + MODEL_LISTING_TTL_SECONDS,
-            pages=pages,
-        )
-        return self._model_page(listing_id, pages, 0)
-
-    def _prune_model_listings(self, now: float) -> None:
-        for listing_id, listing in list(self._model_listings.items()):
-            if listing.expires_at <= now:
-                self._model_listings.pop(listing_id, None)
-
-    @staticmethod
-    def _model_page(
-        listing_id: str,
-        pages: tuple[dict[str, Any], ...],
-        cursor: int,
-    ) -> dict[str, Any]:
-        return {
-            "listing_id": listing_id,
-            "cursor": cursor,
-            "next_cursor": cursor + 1,
-            "done": cursor + 1 == len(pages),
-            "groups": deepcopy(pages[cursor]["groups"]),
-            "providers": deepcopy(pages[cursor]["providers"]),
-        }
-
-    @staticmethod
-    def _model_listing_pages(
-        listing_id: str,
-        groups: list[dict[str, Any]],
-        providers: list[dict[str, Any]],
-    ) -> list[dict[str, Any]]:
-        entries: list[tuple[str, dict[str, Any]]] = []
-        for group in groups:
-            base = {key: value for key, value in group.items() if key != "models"}
-            models = group["models"]
-            if not models:
-                entries.append(("groups", {**base, "models": []}))
-                continue
-            fragment: list[str] = []
-            for model in models:
-                candidate = {**base, "models": [*fragment, model]}
-                if fragment and TuiController._json_size(candidate) > MODEL_GROUP_TARGET_BYTES:
-                    entries.append(("groups", {**base, "models": fragment}))
-                    fragment = [model]
-                else:
-                    fragment.append(model)
-            entries.append(("groups", {**base, "models": fragment}))
-        entries.extend(("providers", provider) for provider in providers)
-
-        pages: list[dict[str, Any]] = []
-        page: dict[str, list[dict[str, Any]]] = {"groups": [], "providers": []}
-        for field, entry in entries:
-            candidate = {
-                "listing_id": listing_id,
-                "cursor": len(pages),
-                "next_cursor": len(pages) + 1,
-                "done": False,
-                "groups": list(page["groups"]),
-                "providers": list(page["providers"]),
-            }
-            candidate[field].append(entry)
-            if (page["groups"] or page["providers"]) and (
-                TuiController._json_size(candidate) > MODEL_PAGE_TARGET_BYTES
-            ):
-                pages.append(page)
-                page = {"groups": [], "providers": []}
-            page[field].append(entry)
-        pages.append(page)
-        return pages
-
-    @staticmethod
-    def _json_size(value: Any) -> int:
-        return len(json.dumps(value, default=str, separators=(",", ":")).encode("utf-8"))
-
-    async def _select_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        provider = self._required_string(payload, "provider")
-        if provider not in list_providers():
-            raise ValueError(f"Unknown provider: {provider}")
-        item = custom_provider(provider)
-        if item and item.disabled:
-            await asyncio.to_thread(set_custom_provider_enabled, provider, enabled=True)
-        return await asyncio.to_thread(provider_record, provider)
-
-    async def _disconnect_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        provider = self._required_string(payload, "provider")
-        if provider not in await asyncio.to_thread(list_providers):
-            raise ValueError(f"Unknown provider: {provider}")
-        await asyncio.to_thread(disconnect_provider, provider)
-        return await asyncio.to_thread(provider_record, provider)
-
-    async def _save_api_key(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        provider = self._required_string(payload, "provider")
-        api_key = self._required_string(payload, "api_key")
-        await asyncio.to_thread(set_provider_api_key, provider, api_key)
-        return await asyncio.to_thread(provider_record, provider)
-
-    async def _add_custom_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        name = self._required_string(payload, "name")
-        api_base = self._required_string(payload, "api_base")
-        kind = self._required_string(payload, "kind").lower()
-        raw_key = payload.get("api_key", "")
-        if not isinstance(raw_key, str):
-            raise TypeError("api_key must be a string")
-        item = await asyncio.to_thread(save_custom_provider, name, api_base, raw_key, kind)
-        return await asyncio.to_thread(provider_record, item.id)
-
-    async def _select_model(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        provider = self._required_string(payload, "provider")
-        model = self._required_string(payload, "model")
-        if provider not in await asyncio.to_thread(list_providers):
-            raise ValueError(f"Unknown provider: {provider}")
-        if provider_for_model(model) != provider:
-            raise ValueError(f"Model '{model}' does not belong to provider '{provider}'")
-        item = custom_provider(provider)
-        if item:
-            prefix = f"{item.id}/"
-            if not model.startswith(prefix) or not model[len(prefix) :].strip():
-                raise ValueError(f"Model '{model}' is not valid for {item.name}")
-        status = await asyncio.to_thread(provider_auth_status, provider)
-        if not status.ready:
-            raise ValueError(f"Provider '{provider}' is not configured")
-        await asyncio.to_thread(persist_selected_model, model)
-        return {"model": model}
 
     async def _add_target(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()

@@ -432,9 +432,6 @@ func (m Model) updateSetupMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 // updatePickerMouse keeps all pointer events inside the active picker. Clicking
 // an option selects it, while the wheel moves the highlighted option.
 func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.picker == pickerManualModel || m.picker == pickerAPIKey || m.picker == pickerCustomName || m.picker == pickerCustomURL || m.picker == pickerCustomAPIKey {
-		return m, nil
-	}
 	switch msg.Button {
 	case tea.MouseButtonWheelUp:
 		if m.cursor > 0 {
@@ -465,21 +462,6 @@ func (m Model) updatePickerMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.cursor = index
-	if m.picker == pickerProvider && m.providerDisconnectable[m.filtered[index]] {
-		lines := strings.Split(view, "\n")
-		row := msg.Y - top
-		if row >= 0 && row < len(lines) {
-			plain := ansi.Strip(lines[row])
-			if button := strings.Index(plain, "[disconnect]"); button >= 0 {
-				start := ansi.StringWidth(plain[:button])
-				end := start + len("[disconnect]")
-				x := msg.X - left
-				if x >= start && x < end {
-					return m, send(m.client, "setup.disconnect_provider", map[string]any{"provider": m.filtered[index]})
-				}
-			}
-		}
-	}
 	return m.selectPickerOption(index)
 }
 
