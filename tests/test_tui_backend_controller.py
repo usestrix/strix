@@ -302,7 +302,34 @@ async def test_start_without_target_requires_mount_consent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_mounts_working_directory_without_making_it_a_target() -> None:
+async def test_target_less_start_enters_live_view_and_waits_for_the_mount() -> None:
+    """Nothing is prepared until the live-view confirmation is answered."""
+    started = False
+
+    async def start(_verify: bool = True) -> None:
+        nonlocal started
+        started = True
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    reset_settings_cache()
+    controller = TuiController(args(), on_start=start)
+
+    result = await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
+
+    assert result == {"started": True}
+    # The live view is up so the prompt can be shown there, but the scan has not
+    # been prepared and nothing is mounted yet.
+    assert started is False
+    assert controller.setup_mode is False
+    assert controller.scan_state == "preparing"
+    assert controller.pending_workspace_mount == str(Path.cwd())
+    assert controller.workspace_mount is None
+    assert controller.snapshot()["pending_mount"] == str(Path.cwd())
+
+
+@pytest.mark.asyncio
+async def test_confirming_the_mount_starts_the_scan_without_a_target() -> None:
     started = False
     seen_verify: bool | None = None
 
@@ -315,26 +342,61 @@ async def test_start_mounts_working_directory_without_making_it_a_target() -> No
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
     reset_settings_cache()
     controller = TuiController(args(), on_start=start)
+    await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
 
-    # Confirmed bare prompt: mounts the working directory, and launches
-    # optimistically with no model preflight.
-    result = await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
+    result = await controller.handle("setup.confirm_mount", {"approved": True})
 
-    assert result == {"started": True}
+    assert result == {"approved": True}
     assert started is True
+    # Launched optimistically, and mounted as a workspace: the scan genuinely
+    # has no target, so the instruction is the only source of truth.
     assert seen_verify is False
-    # Mounted as a workspace, so the scan genuinely has no target and the
-    # instruction is the only source of truth.
     assert controller.workspace_mount == str(Path.cwd())
     assert controller.targets == []
-    assert controller.snapshot()["targets"] == []
-    assert controller.snapshot()["target_count"] == 0
+    assert controller.scan_state == "running"
+    assert controller.snapshot()["pending_mount"] == ""
+
+
+@pytest.mark.asyncio
+async def test_declining_the_mount_returns_to_the_start_screen() -> None:
+    started = False
+
+    async def start(_verify: bool = True) -> None:
+        nonlocal started
+        started = True
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    reset_settings_cache()
+    controller = TuiController(args(), on_start=start)
+    await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
+
+    result = await controller.handle("setup.confirm_mount", {"approved": False})
+
+    assert result == {"approved": False}
+    # Nothing was prepared, so the session goes back to the start screen and can
+    # be launched again.
+    assert started is False
+    assert controller.workspace_mount is None
+    assert controller.pending_workspace_mount is None
+    assert controller.setup_mode is True
+    assert controller.scan_started is False
+    assert controller.scan_state == "setup"
+
+
+@pytest.mark.asyncio
+async def test_confirm_mount_requires_a_pending_request() -> None:
+    controller = TuiController(args())
+
+    with pytest.raises(RuntimeError, match="No mount confirmation is pending"):
+        await controller.handle("setup.confirm_mount", {"approved": True})
 
 
 def test_snapshot_exposes_working_directory() -> None:
     controller = TuiController(args())
 
     assert controller.snapshot()["working_dir"] == str(Path.cwd())
+    assert controller.snapshot()["pending_mount"] == ""
 
 
 @pytest.mark.asyncio

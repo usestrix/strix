@@ -221,11 +221,11 @@ def prepare_run(args: argparse.Namespace) -> None:
         else:
             args.instruction = diff_scope.instruction_block
 
-    _attach_workspace_mount(args)
+    attach_workspace_mount(args)
     _persist_run_record(args)
 
 
-def _attach_workspace_mount(args: argparse.Namespace) -> None:
+def attach_workspace_mount(args: argparse.Namespace) -> None:
     """Expose ``args.workspace_mount`` to the sandbox without making it a target.
 
     A workspace mount is a directory the agent works in, not something to test:
@@ -279,6 +279,9 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "instruction": args.instruction,
         "non_interactive": args.non_interactive,
         "local_sources": getattr(args, "local_sources", []),
+        # Persisted so --resume can remount the workspace: it is not a target,
+        # so it cannot be rebuilt from targets_info.
+        "workspace_mount": getattr(args, "workspace_mount", None),
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scope_mode": args.scope_mode,
         "diff_base": args.diff_base,

@@ -54,6 +54,7 @@ type Snapshot struct {
 	Targets             []string         `json:"targets"`
 	TargetCount         int              `json:"target_count"`
 	WorkingDir          string           `json:"working_dir"`
+	PendingMount        string           `json:"pending_mount"`
 	Instruction         string           `json:"instruction"`
 	ScanMode            string           `json:"scan_mode"`
 	MaxBudgetUSD        *float64         `json:"max_budget_usd"`

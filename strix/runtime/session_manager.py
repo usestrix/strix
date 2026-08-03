@@ -36,8 +36,14 @@ _PROTECTED_METADATA_NAMES = (".git", ".agents", ".codex")
 
 
 def _host_identity_env() -> dict[str, str]:
-    if sys.platform != "linux":
+    # Read the platform through a local so it is not narrowed to whichever OS is
+    # type-checking: comparing sys.platform directly makes one of these branches
+    # statically dead, and which one flips between Linux and macOS.
+    platform_name: str = sys.platform
+    if platform_name != "linux":
         return {}
+    # Bind-mount ownership only needs mapping on Linux, where the container uid
+    # must match the host's.
     return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
 
 

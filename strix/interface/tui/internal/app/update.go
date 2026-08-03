@@ -626,22 +626,23 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch key.String() {
 	case "esc":
-		declined := m.modal == modalConfirmMount
-		m.closeModal()
-		if declined {
-			m.restorePendingPrompt()
+		if m.modal == modalConfirmMount {
+			// The backend is waiting on an answer; escape declines it.
+			return m, m.answerMountConfirmation(false)
 		}
+		m.closeModal()
 		return m, nil
 	case "left", "right", "up", "down", "tab":
 		m.modalChoice = 1 - m.modalChoice
 		return m, nil
 	case "enter":
 		modal, choice := m.modal, m.modalChoice
+		if modal == modalConfirmMount {
+			// The snapshot closes this prompt once the backend has the answer.
+			return m, m.answerMountConfirmation(choice == 0)
+		}
 		m.closeModal()
 		if choice == 1 {
-			if modal == modalConfirmMount {
-				m.restorePendingPrompt()
-			}
 			return m, nil
 		}
 		if modal == modalQuit {
@@ -651,9 +652,6 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if modal == modalStop && m.selectedAgentCanStop() {
 			agent := m.snapshot.Agents[m.selectedAgent]
 			return m, send(m.client, "agent.stop", map[string]any{"agent_id": agent.ID})
-		}
-		if modal == modalConfirmMount {
-			return m, m.launchWorkingDir()
 		}
 	}
 	return m, nil

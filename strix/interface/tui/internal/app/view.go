@@ -252,12 +252,40 @@ func (m Model) viewInner() string {
 	if m.picker != pickerNone {
 		// Picker screens use a transparent backdrop (background: $background 0%).
 		main = m.overlay(main, m.pickerView(), false)
+	} else if m.modal == modalConfirmMount {
+		// A corner prompt, not a dialog: it sits out of the way in the live view
+		// while the scan waits on the answer.
+		main = m.cornerOverlay(main, m.modalView())
 	} else if m.modal != modalNone {
 		// Only the vulnerability detail dims its backdrop (#000000 80%); Help,
 		// Quit and Stop are transparent.
 		main = m.overlay(main, m.modalView(), m.modal == modalVulnerability)
 	}
 	return m.toastOverlay(main)
+}
+
+// cornerOverlay splices a panel into the bottom-right corner, above where a
+// toast would sit, leaving the rest of the view visible behind it.
+func (m Model) cornerOverlay(view, panel string) string {
+	if panel == "" {
+		return view
+	}
+	fg := strings.Split(panel, "\n")
+	bg := strings.Split(view, "\n")
+	panelWidth := lipgloss.Width(panel)
+	left := max(0, m.width-panelWidth-2)
+	top := max(0, m.height-len(fg)-2)
+	for row := top; row < min(len(bg), top+len(fg)); row++ {
+		fgLine := fg[row-top]
+		rightStart := left + panelWidth
+		leftPart := padToWidth(ansi.Truncate(bg[row], left, ""), left)
+		rightPart := ""
+		if lipgloss.Width(bg[row]) > rightStart {
+			rightPart = ansi.TruncateLeft(bg[row], rightStart, "")
+		}
+		bg[row] = leftPart + fgLine + rightPart
+	}
+	return strings.Join(bg, "\n")
 }
 
 // toastOverlay splices a transient notification into the bottom-right corner,

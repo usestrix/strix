@@ -139,54 +139,26 @@ func startPayloadFlag(t *testing.T, envelopes []protocol.Envelope, field string)
 	return false, false
 }
 
-// A bare prompt would mount the working directory, so it asks first instead of
-// launching. Nothing is sent until the user confirms.
-func TestSetupPromptWithoutTargetAsksBeforeMounting(t *testing.T) {
+// A bare prompt launches straight away, asking to mount the working directory
+// rather than adding it as a target. The prompt is held in case it is declined.
+func TestSetupPromptWithoutTargetLaunchesAndRequestsMount(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
 	model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
 
 	updated, cmd := model.submit("find auth bugs in the login flow")
 	model = updated.(Model)
-
-	if model.modal != modalConfirmMount {
-		t.Fatalf("bare prompt did not open the mount confirmation: modal=%v", model.modal)
-	}
-	if model.modalChoice != 1 {
-		t.Fatalf("consent prompt should default to declining, got choice %d", model.modalChoice)
-	}
-	if types := commandTypes(drainCommands(t, cmd, connection)); len(types) != 0 {
-		t.Fatalf("nothing should be sent before consent, got %v", types)
-	}
-	if model.pendingPrompt != "find auth bugs in the login flow" {
-		t.Fatalf("prompt was not held for the confirmation: %q", model.pendingPrompt)
-	}
-	// The dialog has to name the directory being mounted.
-	if view := ansi.Strip(model.mountConfirmView()); !strings.Contains(view, "/Users/me/code/api") {
-		t.Fatalf("confirmation does not name the directory: %s", view)
-	}
-}
-
-// Confirming mounts the working directory: the prompt becomes the instruction
-// and the scan launches optimistically with consent recorded.
-func TestMountConfirmationLaunches(t *testing.T) {
-	connection := &recordingConn{}
-	model := New(&Client{conn: connection})
-	model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
-
-	updated, _ := model.submit("find auth bugs in the login flow")
-	model = updated.(Model)
-	model.modalChoice = 0 // Confirm
-	updated, cmd := model.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-
 	envelopes := drainCommands(t, cmd, connection)
 	types := commandTypes(envelopes)
+
 	if !contains(types, "setup.set_instruction") || !contains(types, "setup.start") {
-		t.Fatalf("confirmation did not launch: %v", types)
+		t.Fatalf("bare prompt did not launch: %v", types)
+	}
+	if contains(types, "setup.add_target") {
+		t.Fatalf("the working directory must not be added as a target: %v", types)
 	}
 	if mount, found := startPayloadFlag(t, envelopes, "mount_working_dir"); !found || !mount {
-		t.Fatalf("consent was not sent: mount_working_dir=%v found=%v", mount, found)
+		t.Fatalf("mount was not requested: mount_working_dir=%v found=%v", mount, found)
 	}
 	// A bare prompt launches optimistically: no model preflight.
 	if verify, found := startVerify(t, envelopes); !found || verify {
@@ -196,36 +168,95 @@ func TestMountConfirmationLaunches(t *testing.T) {
 	if start, instr := firstIndex(types, "setup.start"), lastIndex(types, "setup.set_instruction"); start < instr {
 		t.Fatalf("setup.start (%d) must come after setup.set_instruction (%d): %v", start, instr, types)
 	}
+	if model.pendingPrompt != "find auth bugs in the login flow" {
+		t.Fatalf("prompt was not held in case the mount is declined: %q", model.pendingPrompt)
+	}
+	// The confirmation is not raised locally; the backend asks for it.
 	if model.modal != modalNone {
-		t.Fatalf("modal stayed open after confirming: %v", model.modal)
+		t.Fatalf("submit should not open a dialog itself: modal=%v", model.modal)
 	}
 }
 
-// Declining sends nothing and puts the prompt back so a target can be added.
-func TestMountConfirmationDeclineRestoresPrompt(t *testing.T) {
-	for _, decline := range []tea.KeyMsg{{Type: tea.KeyEsc}, {Type: tea.KeyEnter}} {
+// The backend asks from the live view, so the prompt follows the snapshot.
+func TestPendingMountOpensAndClosesWithTheSnapshot(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 40
+	model.ready = true
+
+	model.snapshot.PendingMount = "/Users/me/code/api"
+	model.syncMountPrompt()
+	if model.modal != modalConfirmMount {
+		t.Fatalf("pending mount did not raise the prompt: modal=%v", model.modal)
+	}
+	if model.modalChoice != 1 {
+		t.Fatalf("a consent prompt should default to declining, got %d", model.modalChoice)
+	}
+	// It names the directory the backend is waiting on, and stays compact.
+	view := ansi.Strip(model.mountConfirmView())
+	if !strings.Contains(view, "/Users/me/code/api") {
+		t.Fatalf("prompt does not name the directory: %s", view)
+	}
+	if rows := strings.Count(view, "\n") + 1; rows > 6 {
+		t.Fatalf("corner prompt should stay compact, got %d rows:\n%s", rows, view)
+	}
+
+	// Once the backend has the answer it clears, which closes the prompt.
+	model.snapshot.PendingMount = ""
+	model.syncMountPrompt()
+	if model.modal != modalNone {
+		t.Fatalf("prompt stayed open after the pending mount cleared: %v", model.modal)
+	}
+}
+
+// Answering replies to the backend; declining puts the prompt back to edit.
+func TestMountConfirmationAnswers(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		key      tea.KeyMsg
+		choice   int
+		approved bool
+	}{
+		{"confirm", tea.KeyMsg{Type: tea.KeyEnter}, 0, true},
+		{"cancel", tea.KeyMsg{Type: tea.KeyEnter}, 1, false},
+		{"escape", tea.KeyMsg{Type: tea.KeyEsc}, 1, false},
+	} {
 		connection := &recordingConn{}
 		model := New(&Client{conn: connection})
 		model.width, model.height = 130, 40
 		model.snapshot = protocol.Snapshot{SetupMode: true, WorkingDir: "/Users/me/code/api"}
-
 		updated, _ := model.submit("find auth bugs in the login flow")
 		model = updated.(Model)
-		// KeyEnter here lands on the default choice, which is Cancel.
-		updated, cmd := model.updateModal(decline)
-		model = updated.(Model)
+		connection.Reset()
+		model.snapshot.PendingMount = "/Users/me/code/api"
+		model.syncMountPrompt()
+		model.modalChoice = tc.choice
 
-		if types := commandTypes(drainCommands(t, cmd, connection)); len(types) != 0 {
-			t.Fatalf("%v: declining should send nothing, got %v", decline.Type, types)
+		updated, cmd := model.updateModal(tc.key)
+		model = updated.(Model)
+		envelopes := drainCommands(t, cmd, connection)
+
+		if len(envelopes) != 1 || envelopes[0].Type != "setup.confirm_mount" {
+			t.Fatalf("%s: expected one setup.confirm_mount, got %v", tc.name, commandTypes(envelopes))
 		}
-		if model.modal != modalNone {
-			t.Fatalf("%v: modal stayed open after declining", decline.Type)
+		var payload struct {
+			Approved bool `json:"approved"`
 		}
-		if got := model.input.Value(); got != "find auth bugs in the login flow" {
-			t.Fatalf("%v: prompt was not restored, got %q", decline.Type, got)
+		if err := json.Unmarshal(envelopes[0].Payload, &payload); err != nil {
+			t.Fatal(err)
+		}
+		if payload.Approved != tc.approved {
+			t.Fatalf("%s: approved=%v, want %v", tc.name, payload.Approved, tc.approved)
+		}
+		// Declining returns to the start screen, so the prompt comes back.
+		want := ""
+		if !tc.approved {
+			want = "find auth bugs in the login flow"
+		}
+		if got := model.input.Value(); got != want {
+			t.Fatalf("%s: composer = %q, want %q", tc.name, got, want)
 		}
 		if model.pendingPrompt != "" {
-			t.Fatalf("%v: pending prompt was not cleared: %q", decline.Type, model.pendingPrompt)
+			t.Fatalf("%s: held prompt was not cleared: %q", tc.name, model.pendingPrompt)
 		}
 	}
 }

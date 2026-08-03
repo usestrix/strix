@@ -168,12 +168,12 @@ func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
 		m.setupMsg("Cleared all targets.", render.Dim())
 		return m, send(m.client, "setup.clear_targets", map[string]any{})
 	case "/start", "/run":
-		// With no target the scan would mount the working directory; confirm
-		// that first, exactly as a bare prompt does.
+		// With no target the scan mounts the working directory, which the
+		// backend confirms from the live view.
 		if len(m.snapshot.Targets) == 0 {
-			m.pendingPrompt = ""
-			m.openModal(modalConfirmMount)
-			return m, nil
+			return m, send(m.client, "setup.start", map[string]any{
+				"verify": false, "mount_working_dir": true,
+			})
 		}
 		m.setupMsg("Verifying model connection...", render.Col(amber))
 		return m, send(m.client, "setup.start", map[string]any{"verify": true})
@@ -199,20 +199,22 @@ func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 		targets++
 		commands = append(commands, send(m.client, "setup.add_target", map[string]any{"target": token}))
 	}
-	// With no target at all the scan would mount the working directory, so ask
-	// before doing that rather than mounting it silently.
-	if targets == 0 && len(m.snapshot.Targets) == 0 {
-		m.pendingPrompt = value
-		m.openModal(modalConfirmMount)
-		return *m, nil
-	}
 	if len(fields) > targets {
 		commands = append(commands, send(m.client, "setup.set_instruction", map[string]any{"instruction": value}))
 	}
-	// A named target verifies the model connection before the scan commits to
-	// it; see launchCommands for the confirmed target-less case.
-	m.setupMsg("Verifying model connection...", render.Col(amber))
-	commands = append(commands, send(m.client, "setup.start", map[string]any{"verify": true}))
+	// With a target, verify the model connection before the scan commits to it.
+	// A bare prompt launches optimistically, like a coding agent, and mounts the
+	// working directory - the backend asks about that from the live view, so the
+	// prompt is held here in case it is declined.
+	verify := targets > 0 || len(m.snapshot.Targets) > 0
+	payload := map[string]any{"verify": verify}
+	if verify {
+		m.setupMsg("Verifying model connection...", render.Col(amber))
+	} else {
+		m.pendingPrompt = value
+		payload["mount_working_dir"] = true
+	}
+	commands = append(commands, send(m.client, "setup.start", payload))
 	// Ordered, not batched: setup.start leaves setup mode, so it must be the
 	// last command to reach the backend. Batched sends race, and once the
 	// preflight is skipped setup.start wins, making the target and instruction
@@ -220,32 +222,16 @@ func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 	return *m, tea.Sequence(commands...)
 }
 
-// launchWorkingDir starts the scan against the working directory once the user
-// has confirmed mounting it. A bare prompt launches optimistically, like a
-// coding agent: no model preflight, so any model error surfaces live.
-func (m *Model) launchWorkingDir() tea.Cmd {
-	var commands []tea.Cmd
-	if prompt := strings.TrimSpace(m.pendingPrompt); prompt != "" {
-		commands = append(commands, send(m.client, "setup.set_instruction", map[string]any{"instruction": prompt}))
+// answerMountConfirmation replies to the working-directory mount the backend is
+// waiting on. Declining returns to the start screen, so the prompt goes back in
+// the composer to be edited or given a target instead.
+func (m *Model) answerMountConfirmation(approved bool) tea.Cmd {
+	if !approved && m.pendingPrompt != "" {
+		m.input.SetValue(m.pendingPrompt)
+		m.resizeViewport()
 	}
 	m.pendingPrompt = ""
-	commands = append(commands, send(m.client, "setup.start", map[string]any{
-		"verify": false, "mount_working_dir": true,
-	}))
-	// Ordered so setup.start cannot close the setup guard before the
-	// instruction lands.
-	return tea.Sequence(commands...)
-}
-
-// restorePendingPrompt puts a prompt back in the composer after the mount
-// confirmation is declined, so it can be edited or given a target instead.
-func (m *Model) restorePendingPrompt() {
-	if m.pendingPrompt == "" {
-		return
-	}
-	m.input.SetValue(m.pendingPrompt)
-	m.pendingPrompt = ""
-	m.resizeViewport()
+	return send(m.client, "setup.confirm_mount", map[string]any{"approved": approved})
 }
 
 func (m Model) hasTarget(candidate string) bool {
@@ -788,4 +774,17 @@ func (m Model) setupHintsView(width int) string {
 		return pad + left
 	}
 	return pad + left + strings.Repeat(" ", gap) + right
+}
+
+// syncMountPrompt raises or clears the working-directory prompt to match the
+// backend, which asks for it from the live view once a target-less scan is
+// waiting on the answer. Following the snapshot rather than the keystroke keeps
+// the prompt right across redraws and reconnects.
+func (m *Model) syncMountPrompt() {
+	switch {
+	case m.snapshot.PendingMount != "" && m.modal != modalConfirmMount:
+		m.openModal(modalConfirmMount)
+	case m.snapshot.PendingMount == "" && m.modal == modalConfirmMount:
+		m.closeModal()
+	}
 }

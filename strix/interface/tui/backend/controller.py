@@ -119,6 +119,10 @@ class TuiController:
         # target: it carries no scan scope, and the instruction is the only
         # source of truth for what to do.
         self.workspace_mount: str | None = None
+        # A target-less launch enters the live view and asks there before
+        # anything is prepared; this holds the directory awaiting that answer.
+        self.pending_workspace_mount: str | None = None
+        self._pending_verify = True
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
         self._model_listings: dict[str, ModelListing] = {}
@@ -219,6 +223,7 @@ class TuiController:
             ],
             "target_count": len(self.targets),
             "working_dir": str(Path.cwd()),
+            "pending_mount": self.pending_workspace_mount or "",
             "instruction": terminal_projection(self.instruction, max_string=2 * 1024),
             "scan_mode": self.scan_mode,
             "max_budget_usd": self.max_budget_usd,
@@ -322,6 +327,7 @@ class TuiController:
             "setup.set_max_turns": self._set_max_turns,
             "setup.set_scope": self._set_scope,
             "setup.start": self._start,
+            "setup.confirm_mount": self._confirm_mount,
             "agent.send_message": self._send_message,
             "agent.stop": self._stop_agent,
             "viewer.open": self._open_viewer,
@@ -685,13 +691,24 @@ class TuiController:
         provider = provider_for_model(model) or "openai"
         if not (await asyncio.to_thread(provider_auth_status, provider)).ready:
             raise ValueError(f"Provider '{provider}' is not configured")
+        if self._on_start is None:
+            raise RuntimeError("Scan start is unavailable")
         if not self.targets:
             if not mount_working_dir:
                 raise ValueError("No target set. Add a target first.")
-            # Confirmed: mount the working directory so the agent has files to
-            # work in. It stays out of the target list, so the scan has no
-            # target and the instruction alone drives it.
-            self.workspace_mount = str(Path.cwd())
+            # Mounting the working directory needs the user's confirmation, and
+            # that is asked in the live view. Enter it now and prepare nothing
+            # until the answer arrives, so declining leaves no run behind.
+            self.pending_workspace_mount = str(Path.cwd())
+            self._pending_verify = verify
+            self.setup_mode = False
+            self.scan_started = True
+            self.scan_state = "preparing"
+            return {"started": True}
+        await self._begin_scan(verify)
+        return {"started": True}
+
+    async def _begin_scan(self, verify: bool) -> None:
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
         self._start_in_progress = True
@@ -702,7 +719,24 @@ class TuiController:
         self.setup_mode = False
         self.scan_started = True
         self.scan_state = "running"
-        return {"started": True}
+
+    async def _confirm_mount(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Answer the pending working-directory mount asked for in the live view."""
+        mount = self.pending_workspace_mount
+        if mount is None:
+            raise RuntimeError("No mount confirmation is pending")
+        approved = payload.get("approved")
+        if not isinstance(approved, bool):
+            raise TypeError("approved must be a boolean")
+        self.pending_workspace_mount = None
+        if not approved:
+            # Nothing was prepared, so return to the start screen untouched.
+            self.workspace_mount = None
+            self.enter_setup()
+            return {"approved": False}
+        self.workspace_mount = mount
+        await self._begin_scan(self._pending_verify)
+        return {"approved": True}
 
     async def _send_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         agent_id = self._required_string(payload, "agent_id")

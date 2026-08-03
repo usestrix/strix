@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from strix.interface.scan_setup import _attach_workspace_mount
+from strix.interface.scan_setup import attach_workspace_mount
 from strix.interface.utils import (
     check_mountable_dir,
     collect_local_sources,
@@ -94,7 +94,7 @@ def test_workspace_mount_is_mounted_without_becoming_a_target(
     monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
     args = argparse.Namespace(targets_info=[], local_sources=[], workspace_mount=str(home))
 
-    _attach_workspace_mount(args)
+    attach_workspace_mount(args)
 
     assert args.targets_info == []
     assert args.local_sources == [
@@ -113,7 +113,7 @@ def test_workspace_mount_is_mounted_without_becoming_a_target(
 def test_workspace_mount_absent_leaves_local_sources_alone() -> None:
     args = argparse.Namespace(targets_info=[], local_sources=[], workspace_mount=None)
 
-    _attach_workspace_mount(args)
+    attach_workspace_mount(args)
 
     assert args.local_sources == []
 

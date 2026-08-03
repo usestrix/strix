@@ -52,6 +52,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		if m.modal == modalStop && !m.selectedAgentCanStop() {
 			m.closeModal()
 		}
+		m.syncMountPrompt()
 		m.ensureAgentVisible()
 		m.ensureVulnerabilityVisible()
 		m.ready = true

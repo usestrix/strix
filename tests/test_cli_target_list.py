@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import sys
 from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
@@ -83,3 +84,84 @@ def test_parse_arguments_rejects_resume_with_target_list(
         cli_main.parse_arguments()
 
     assert "Cannot combine --resume with --target/--target-list" in capsys.readouterr().err
+
+
+def _write_run_record(runs_dir: Path, run_name: str, record: dict[str, Any]) -> None:
+    """Write a resumable run: its record plus the agent snapshot resume needs."""
+    run_dir = runs_dir / run_name
+    run_dir.mkdir(parents=True, exist_ok=True)
+    (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    state_dir = run_dir / ".state"
+    state_dir.mkdir(exist_ok=True)
+    (state_dir / "agents.json").write_text("{}", encoding="utf-8")
+
+
+def test_resume_restores_a_target_less_workspace_mount(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A run that only mounted a working directory is resumable."""
+    work = tmp_path / "project"
+    work.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "pentest_abcd",
+        {
+            "run_name": "pentest_abcd",
+            "targets_info": [],
+            "local_sources": [],
+            "workspace_mount": str(work),
+            "instruction": "audit the auth flow",
+            "scan_mode": "deep",
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_abcd"])
+
+    args = cli_main.parse_arguments()
+
+    # Still genuinely target-less, and the workspace is mounted again.
+    assert args.targets_info == []
+    assert args.workspace_mount == str(work)
+    assert args.local_sources == [
+        {"source_path": str(work), "workspace_subdir": "project", "protect_metadata": True}
+    ]
+    assert args.instruction == "audit the auth flow"
+
+
+def test_resume_reports_a_missing_workspace_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "pentest_abcd",
+        {
+            "run_name": "pentest_abcd",
+            "targets_info": [],
+            "local_sources": [],
+            "workspace_mount": str(tmp_path / "deleted"),
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_abcd"])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "is missing" in capsys.readouterr().err
+
+
+def test_resume_still_requires_targets_or_a_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "pentest_abcd",
+        {"run_name": "pentest_abcd", "targets_info": [], "local_sources": []},
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_abcd"])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "has no targets_info" in capsys.readouterr().err

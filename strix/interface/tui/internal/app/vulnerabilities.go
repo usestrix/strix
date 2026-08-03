@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/usestrix/strix/tui/internal/render"
 )
 
@@ -181,22 +182,46 @@ func (m Model) confirmView(title string, width int, border, titleColor lipgloss.
 	return m.confirmDialog(title, "", width, border, titleColor, red, "Yes", "No")
 }
 
-// mountConfirmView asks before a target-less launch mounts the working
-// directory. Nothing local reaches the sandbox until this is confirmed, so the
-// dialog names the exact directory and says what mounting it means. The
-// directory is a workspace, not a target - the prompt drives the scan.
+// mountConfirmView asks before a target-less scan mounts the working directory.
+// It is a compact prompt docked in the corner of the live view: nothing is
+// prepared until it is answered, and the directory is a workspace rather than a
+// target, so the prompt is what the scan follows.
 func (m Model) mountConfirmView() string {
-	width := min(64, max(40, m.width-8))
-	dir := strings.TrimSpace(m.snapshot.WorkingDir)
-	body := render.Dim().Render("No target set. The agent will work in:")
+	width := min(52, max(34, m.width-4))
+	dir := strings.TrimSpace(m.snapshot.PendingMount)
 	if dir == "" {
-		body += "\n\n" + render.Col(white).Render("the current directory")
-	} else {
-		body += "\n\n" + render.Col(white).Render(wrapBlock(dir, width-4))
+		dir = "the current directory"
 	}
-	body += "\n\n" + render.Dim().Render("Mounted into the sandbox, live and writable.") +
-		"\n" + render.Dim().Render("Your prompt is what the scan follows.")
-	return m.confirmDialog("△ Work in this directory?", body, width, amber, amber, amber, "Confirm", "Cancel")
+	title := render.Bold(amber).Render("△ Mount working directory?")
+	body := render.Col(white).Render(truncatePath(dir, width-4)) + "\n" +
+		render.Dim().Render("writable in the sandbox")
+	return m.cornerPrompt(title, body, width, "Confirm", "Cancel")
+}
+
+// truncatePath keeps the tail of a path visible, which is the part that
+// identifies the directory.
+func truncatePath(path string, width int) string {
+	if width <= 1 || lipgloss.Width(path) <= width {
+		return path
+	}
+	return "…" + ansi.TruncateLeft(path, lipgloss.Width(path)-width+1, "")
+}
+
+// cornerPrompt renders a compact two-button prompt for the corner of the live
+// view, sized to its content rather than centered like the modal dialogs.
+func (m Model) cornerPrompt(title, body string, width int, confirmLabel, cancelLabel string) string {
+	yes := lipgloss.NewStyle().Foreground(amber).Bold(true).Render(confirmLabel)
+	no := lipgloss.NewStyle().Foreground(dim).Bold(true).Render(cancelLabel)
+	if m.modalChoice == 0 {
+		yes = lipgloss.NewStyle().Background(amber).Foreground(brightWhite).Bold(true).Render(" " + confirmLabel + " ")
+	} else {
+		no = lipgloss.NewStyle().Background(lipgloss.Color("#363636")).Foreground(brightWhite).Bold(true).Render(" " + cancelLabel + " ")
+	}
+	inner := lipgloss.NewStyle().Width(width - 4)
+	content := inner.Render(title) + "\n" + inner.Render(body) + "\n" +
+		inner.Align(lipgloss.Right).Render(yes+"  "+no)
+	return lipgloss.NewStyle().Width(width).Border(lipgloss.RoundedBorder()).
+		BorderForeground(amber).Background(black).Padding(0, 1).Render(content)
 }
 
 // confirmDialog renders a two-button prompt. The focused button fills its

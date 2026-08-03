@@ -9,7 +9,7 @@ from pathlib import Path
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
-from strix.interface.scan_setup import build_targets_info
+from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
     check_mountable_dir,
@@ -316,7 +316,10 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         parser.error(f"--resume {args.resume}: run.json unreadable: {exc}")
 
     args.targets_info = state.get("targets_info") or []
-    if not args.targets_info:
+    # A target-less run has no targets_info at all: it works in a mounted
+    # directory, driven by its instruction.
+    workspace_mount = state.get("workspace_mount") or None
+    if not args.targets_info and not workspace_mount:
         parser.error(f"--resume {args.resume}: run.json has no targets_info")
 
     for target in args.targets_info:
@@ -344,6 +347,17 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     if args.instruction is None:
         args.instruction = state.get("instruction")
     args.local_sources = collect_local_sources(args.targets_info)
+    # Remount the workspace the run was started with. The user already confirmed
+    # this directory, so the target mount guard does not apply to it; it only has
+    # to still be there.
+    args.workspace_mount = workspace_mount
+    if workspace_mount:
+        if not Path(workspace_mount).expanduser().is_dir():
+            parser.error(
+                f"--resume {args.resume}: the working directory {workspace_mount} "
+                f"is missing. Restore it before resuming, or start a fresh run."
+            )
+        attach_workspace_mount(args)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
     persisted_scan_mode = state.get("scan_mode")
