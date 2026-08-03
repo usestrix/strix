@@ -25,16 +25,21 @@ def _cand(**kw):
 
 
 class _FakeProvider:
-    """Returns a fixed affecting-set (or None for can't-answer)."""
-    def __init__(self, affecting):
+    """Returns a fixed affecting-set (None for can't-answer). `knows` is what
+    knows_package returns (True=package known, False=unknown, None=can't tell)."""
+    def __init__(self, affecting, knows=None):
         self._a = affecting
+        self._knows = knows
 
     def affecting(self, _pkg, _ecosystem, _version):
         return self._a
 
+    def knows_package(self, _pkg, _ecosystem):
+        return self._knows
 
-def _prov(affecting):
-    return _FakeProvider(affecting)
+
+def _prov(affecting, knows=None):
+    return _FakeProvider(affecting, knows)
 
 
 # --- verdict logic (explicit provider, no network) ---
@@ -53,9 +58,25 @@ def test_out_of_range_rejects():
     assert "CVE-2021-23337" in out["error"]
 
 
-def test_empty_set_fails_open():
-    # definitive "no advisories affect this version" -> coverage-gap risk -> emit.
-    assert dv.verify_dependency(_cand(), _prov(set())) is None
+def test_empty_set_unknown_package_fails_open():
+    # empty affecting + provider doesn't know the package (knows=False) ->
+    # genuine coverage gap (private/vendored) -> emit.
+    assert dv.verify_dependency(_cand(), _prov(set(), knows=False)) is None
+
+
+def test_empty_set_cant_tell_fails_open():
+    # empty affecting + knows_package can't answer (None) -> fail open, emit.
+    assert dv.verify_dependency(_cand(), _prov(set(), knows=None)) is None
+
+
+def test_empty_set_known_package_rejects():
+    # empty affecting BUT provider KNOWS the package (advisories on other versions)
+    # -> confident out-of-range -> REJECT. The minimist@1.2.6 case a live scan of a
+    # weak model exposed: OSV knows minimist but 0 advisories affect 1.2.6.
+    out = dv.verify_dependency(_cand(), _prov(set(), knows=True))
+    assert out is not None
+    assert out["verify_rejected"] is True
+    assert out["dep_version_out_of_range"] is True
 
 
 def test_provider_cant_answer_fails_open():

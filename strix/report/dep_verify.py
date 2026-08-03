@@ -79,6 +79,13 @@ class AdvisoryProvider(Protocol):
 
     def affecting(self, pkg: str, ecosystem: str, version: str) -> set[str] | None: ...
 
+    def knows_package(self, pkg: str, ecosystem: str) -> bool | None:
+        """Does the provider have ANY advisory for this package (any version)?
+        Lets the caller tell a CONFIDENT out-of-range (provider knows the package
+        but nothing affects the installed version) from a COVERAGE GAP (provider
+        doesn't know the package at all → fail open). None = can't determine."""
+        ...
+
 
 class OsvProvider:
     """AdvisoryProvider backed by an OSV-schema /v1/query endpoint. Default
@@ -89,27 +96,37 @@ class OsvProvider:
     def __init__(self, url: str) -> None:
         self.url = url
 
-    def affecting(self, pkg: str, ecosystem: str, version: str) -> set[str] | None:
+    def _query(self, payload: dict[str, Any]) -> list[dict] | None:
         try:
             ca = os.environ.get("REQUESTS_CA_BUNDLE")
-            resp = requests.post(
-                self.url, timeout=20,
-                json={"package": {"name": pkg, "ecosystem": ecosystem}, "version": version},
-                verify=ca if ca else True,
-            )
+            resp = requests.post(self.url, timeout=20, json=payload,
+                                 verify=ca if ca else True)
             if resp.status_code != 200:
-                logger.info("dep-verify: OSV %s for %s@%s; can't answer",
-                            resp.status_code, pkg, version)
+                logger.info("dep-verify: OSV %s for %s; can't answer",
+                            resp.status_code, payload.get("package"))
                 return None
-            vulns = resp.json().get("vulns", []) or []
+            return resp.json().get("vulns", []) or []
         except Exception:  # noqa: BLE001 — advisory; a hiccup must never suppress a finding
-            logger.info("dep-verify: OSV query failed for %s@%s; can't answer",
-                        pkg, version, exc_info=True)
+            logger.info("dep-verify: OSV query failed for %s; can't answer",
+                        payload.get("package"), exc_info=True)
+            return None
+
+    def affecting(self, pkg: str, ecosystem: str, version: str) -> set[str] | None:
+        vulns = self._query(
+            {"package": {"name": pkg, "ecosystem": ecosystem}, "version": version})
+        if vulns is None:
             return None
         affecting: set[str] = set()
         for v in vulns:
             affecting |= _ids_for(v)
         return affecting
+
+    def knows_package(self, pkg: str, ecosystem: str) -> bool | None:
+        # version-less query returns every advisory for the package (any version).
+        vulns = self._query({"package": {"name": pkg, "ecosystem": ecosystem}})
+        if vulns is None:
+            return None
+        return len(vulns) > 0
 
 
 def _resolve_provider(dep_settings: Any) -> AdvisoryProvider | None:
@@ -161,14 +178,25 @@ def verify_dependency(  # noqa: PLR0911 — the returns are deliberate fail-open
                     ident, pkg, version)
         return None  # confirmed: installed version IS in the CVE's range → emit (real)
     if not affecting:
-        # definitive "no advisories affect this version" is still a coverage-gap
-        # risk (private/vendored pkg, provider lag) → fail open, emit.
-        logger.info("dep-verify: provider lists NO advisories for %s@%s; emitting "
-                    "(coverage gap, not a confident FP)", pkg, version)
-        return None
+        # Nothing affects the installed version. Disambiguate:
+        #   - provider KNOWS the package (has advisories for OTHER versions) but
+        #     none hit this version → CONFIDENT out-of-range → reject.
+        #   - provider doesn't know the package at all (private/vendored, lag) →
+        #     genuine coverage gap → fail open, emit.
+        knows = None
+        try:
+            knows = provider.knows_package(pkg, eco)
+        except Exception:  # noqa: BLE001 — advisory
+            knows = None
+        if not knows:  # False (unknown pkg) or None (can't tell) → fail open
+            logger.info("dep-verify: provider has no advisories for %s at all; "
+                        "emitting (coverage gap, not a confident FP)", pkg)
+            return None
+        # else: package is known, this version is clean → fall through to reject.
 
-    # Provider knows advisories for this version but NOT the cited one → the
-    # installed version is out of the cited CVE's range → false positive.
+    # Provider knows advisories for this version but NOT the cited one (or knows
+    # the package and NOTHING affects this version) → the installed version is out
+    # of the cited CVE's range → false positive.
     return {
         "success": False,
         "error": (
@@ -176,8 +204,8 @@ def verify_dependency(  # noqa: PLR0911 — the returns are deliberate fail-open
             f"not affect {pkg}@{version} per the advisory provider (installed "
             f"version is outside the advisory's vulnerable range — likely already "
             f"patched or the CVE is mis-attributed to this package). Advisories "
-            f"affecting {pkg}@{version}: {sorted(affecting)}. If you believe the "
-            f"version IS vulnerable, cite the exact affected range."
+            f"affecting {pkg}@{version}: {sorted(affecting) or 'none'}. If you "
+            f"believe the version IS vulnerable, cite the exact affected range."
         ),
         "verify_rejected": True,
         "dep_version_out_of_range": True,
