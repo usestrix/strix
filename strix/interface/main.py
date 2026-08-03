@@ -5,6 +5,7 @@ Strix Agent Interface
 
 import argparse
 import asyncio
+import contextlib
 import os
 import sys
 from pathlib import Path
@@ -515,8 +516,12 @@ def main() -> None:
                 "stopped",
             )
             report_state.cleanup(status=status)
-            posthog.end(report_state, exit_reason=exit_reason)
-            scarf.end(report_state, exit_reason=exit_reason)
+            # Best-effort beacons on the way out. They reach the network, so a
+            # second Ctrl-C lands here; abandon them rather than trading a clean
+            # exit for a traceback.
+            with contextlib.suppress(KeyboardInterrupt, Exception):
+                posthog.end(report_state, exit_reason=exit_reason)
+                scarf.end(report_state, exit_reason=exit_reason)
 
     if not args.run_name:
         # Setup mode where the user quit before starting a scan: nothing ran.

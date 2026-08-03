@@ -13,6 +13,12 @@ logger = logging.getLogger(__name__)
 
 SESSION_ID: str = uuid4().hex[:16]
 
+# (connect, read) seconds. Telemetry is a beacon, never something a user waits
+# on, and these calls sit on the shutdown path: an endpoint that is blackholed by
+# a firewall stalls in connect, so the cap has to be short enough that quitting
+# still feels immediate.
+SEND_TIMEOUT: tuple[float, float] = (2.0, 3.0)
+
 _FIRST_RUN_CACHED: bool | None = None
 
 
