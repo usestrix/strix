@@ -66,7 +66,13 @@ def test_resume_hides_system_guidance_injected_as_user_turns(tmp_path: Path) -> 
                 "Waiting timeout reached.",
             },
             {"role": "user", "content": "[NOTICE] Turn budget: 350/500 used (70%)."},
-            {"role": "user", "content": "[Agent stalled] recon (a1) kept ending turns"},
+            # A stall notice reaches the parent through the coordinator, so it
+            # arrives wrapped rather than as a bare "[Agent stalled]".
+            {
+                "role": "user",
+                "content": "[Message from recon (a1) | type=stalled | priority=high]\n"
+                "[Agent stalled] recon (a1) kept ending turns",
+            },
             {
                 "role": "user",
                 "content": "Your previous message ended a turn without a tool call. "
@@ -154,17 +160,34 @@ def test_resume_treats_each_agents_first_user_turn_as_its_task(tmp_path: Path) -
     assert _user_messages(view) == ["also try the password reset"]
 
 
-def test_internal_turn_classifier() -> None:
+def test_internal_turn_classifier_matches_every_injected_form() -> None:
     for content in (
+        # Coordinator deliveries, which wrap the stall, terminal and budget notices.
         "[Message from recon (a1) | type=information | priority=normal]\nfound it",
-        "[Agent completed] recon (a1) finished",
+        "[Message from recon (a1) | type=stalled | priority=high]\n[Agent stalled] recon (a1)",
+        "[Message from system (system) | type=budget_extended | priority=normal]\n"
+        "[Budget] extended",
+        # Budget warnings, the only notices injected without a wrapper.
+        "[NOTICE] Turn budget: 350/500 used (70%).",
         "[URGENT] Scan cost budget: $9.50/$10.00 spent (95%).",
+        "[CRITICAL] Turn budget: 480/500 used (96%).",
         "== Inherited context from parent (background only) ==",
         "Your previous message ended a turn without a tool call.",
         "Your previous response ended the autonomous Strix run without a lifecycle tool call.",
     ):
         assert _is_internal_agent_turn(content), content
+
+
+def test_internal_turn_classifier_keeps_bracketed_user_text() -> None:
+    """A leading bracket is not enough: typed text often starts with one."""
     for content in (
+        '[{"id": 1, "role": "admin"}, {"id": 2}]',
+        "[link](https://example.com) check this endpoint",
+        "[URGENT] stop testing the admin panel",
+        "[2026-01-01 12:00:03] ERROR auth failed - look into this",
+        "[note] creds are admin:hunter2",
+        "[Agent] can you check this?",
+        "[]",
         "check the coupon endpoint next",
         "Use creds admin:hunter2 for the login form",
         "stop",

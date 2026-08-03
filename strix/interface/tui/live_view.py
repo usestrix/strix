@@ -350,25 +350,31 @@ def _session_message_text(item: dict[str, Any]) -> str:
 
 # Guidance the system feeds an agent is injected as a user turn, which is the
 # same shape a typed message takes, so replayed history cannot tell them apart by
-# role alone. Every such turn is either bracketed or one of the notices below.
-# Sources: strix.core.agents._message_to_session_item (inter-agent and system
-# messages, "[Message from ...]"), strix.core.execution (terminal, stall and
-# no-tool-call notices), strix.core.hooks (turn and cost budget warnings,
-# "[NOTICE]"/"[URGENT]"/"[CRITICAL]"), and strix.core.inputs (inherited context).
-_INTERNAL_TURN_MARKERS = (
+# role alone. These are the exact openings it arrives with. Matching the full
+# opening rather than just a leading bracket keeps pasted JSON, markdown links and
+# a typed "[URGENT] stop" out of it.
+_INTERNAL_TURN_PREFIXES = (
+    # strix.core.agents._message_to_session_item: everything the coordinator
+    # delivers from another agent or from the system, which wraps the stall,
+    # terminal and budget-extension notices in strix.core.execution too.
+    "[Message from ",
+    # strix.core.inputs.child_initial_input: a subagent's parent context.
     "== Inherited context from parent",
+    # strix.core.execution: the no-tool-call recovery nudge, both modes.
     "Your previous message ended a turn without a tool call.",
     "Your previous response ended the autonomous Strix run without a lifecycle tool call.",
+    # strix.core.hooks: budget warnings, the only notices injected unwrapped.
+    *(
+        f"[{label}] {subject}"
+        for label in ("NOTICE", "URGENT", "CRITICAL")
+        for subject in ("Turn budget:", "Scan cost budget:")
+    ),
 )
 
 
 def _is_internal_agent_turn(content: str) -> bool:
     """Report whether a replayed user turn is system guidance, not a typed message."""
-    text = content.lstrip()
-    # Every notice the system injects is prefixed with a bracketed tag.
-    if text.startswith("["):
-        return True
-    return text.startswith(_INTERNAL_TURN_MARKERS)
+    return content.lstrip().startswith(_INTERNAL_TURN_PREFIXES)
 
 
 def _message_content_text(content: Any) -> str:
