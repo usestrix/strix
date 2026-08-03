@@ -410,7 +410,13 @@ func (m Model) mainView() string {
 	if m.focus == focusInput {
 		inputBorder = green
 	}
-	input := lipgloss.NewStyle().Width(chatWidth - 2).Height(m.input.Height()).Border(lipgloss.RoundedBorder()).BorderForeground(inputBorder).PaddingLeft(1).Render(m.highlightInputSelection(m.input.View()))
+	// Same prompt treatment as the setup screen: a left accent bar with a cap,
+	// preceded by a spacer row so the composer keeps its previous footprint.
+	composer := lipgloss.NewStyle().Width(chatWidth-2).Height(m.input.Height()).
+		Border(lipgloss.Border{Left: "▎"}, false, false, false, true).
+		BorderForeground(inputBorder).PaddingLeft(1).
+		Render(m.highlightInputSelection(m.input.View()))
+	input := "\n" + composer + "\n" + lipgloss.NewStyle().Foreground(inputBorder).Width(chatWidth-1).Render("╹")
 
 	// Chat column: chat history, optional status row, live slash-command menu,
 	// then input — all chat-width.
