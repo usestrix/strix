@@ -1,5 +1,3 @@
-"""Secret files must never exist on disk under a permissive mode."""
-
 from __future__ import annotations
 
 import json
@@ -17,7 +15,6 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
-# Windows does not model POSIX permission bits.
 posix_only = pytest.mark.skipif(
     sys.platform == "win32", reason="POSIX permission bits are not modelled on Windows"
 )
@@ -39,7 +36,6 @@ def test_file_is_owner_only(tmp_path: Path) -> None:
 
 @posix_only
 def test_a_permissive_umask_cannot_widen_the_file(tmp_path: Path) -> None:
-    """Under umask 0 the old code produced a 0666 file."""
     previous = os.umask(0)
     try:
         target = tmp_path / "auth.json"
@@ -51,7 +47,6 @@ def test_a_permissive_umask_cannot_widen_the_file(tmp_path: Path) -> None:
 
 @posix_only
 def test_a_stale_temporary_does_not_leak_its_mode(tmp_path: Path) -> None:
-    """O_CREAT does not apply a mode to a file that already exists."""
     target = tmp_path / "auth.json"
     stale = target.with_suffix(target.suffix + ".tmp")
     stale.write_text("leftover", encoding="utf-8")
