@@ -81,9 +81,6 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 # Install Strix
 curl -sSL https://strix.ai/install | bash
 
-# Or install the Python package
-pipx install strix-agent
-
 # Configure your AI provider
 export STRIX_LLM="openai/gpt-5.4"
 export LLM_API_KEY="your-api-key"
@@ -269,10 +266,6 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 
 > [!NOTE]
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
-
-Interactive scans run in the Go TUI. Wheels are platform-specific and bundle the
-Go sidecar, so installs work out of the box. A source checkout runs the TUI
-directly from source and needs Go 1.24+.
 
 #### Sign in with a ChatGPT subscription
 

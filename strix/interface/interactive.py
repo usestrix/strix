@@ -28,8 +28,7 @@ async def run_tui(args: argparse.Namespace) -> None:
         await run_go_tui(args)
     except GoTuiPreActivationError as exc:
         raise InteractiveSetupUnavailableError(
-            "The interactive interface requires the Go TUI. "
-            "Install an official platform wheel or run a source checkout with Go 1.24+."
+            f"The interactive interface could not start: {exc}"
         ) from exc
 
 

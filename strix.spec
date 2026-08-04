@@ -29,18 +29,12 @@ for xml_file in strix_root.rglob('*.xml'):
     rel_path = xml_file.relative_to(project_root)
     datas.append((str(xml_file), str(rel_path.parent)))
 
-for tcss_file in strix_root.rglob('*.tcss'):
-    rel_path = tcss_file.relative_to(project_root)
-    datas.append((str(tcss_file), str(rel_path.parent)))
-
 # Prebuilt local-viewer SPA (served by `strix view`).
 viewer_static = strix_root / 'interface' / 'viewer' / 'static'
 for asset in viewer_static.rglob('*'):
     if asset.is_file():
         rel_path = asset.relative_to(project_root)
         datas.append((str(asset), str(rel_path.parent)))
-
-datas += collect_data_files('textual')
 
 datas += collect_data_files('tiktoken')
 datas += collect_data_files('tiktoken_ext')
@@ -59,17 +53,6 @@ hiddenimports = [
     'litellm.llms.bedrock',
     'litellm.utils',
     'litellm.caching',
-
-    # Textual TUI
-    'textual',
-    'textual.app',
-    'textual.widgets',
-    'textual.containers',
-    'textual.screen',
-    'textual.binding',
-    'textual.reactive',
-    'textual.css',
-    'textual._text_area_theme',
 
     # Rich console
     'rich',
@@ -145,8 +128,9 @@ hiddenimports = [
     'strix.agents',
     'strix.agents.factory',
     'strix.agents.prompt',
-    'strix.config.models',
-    'strix.config.providers',
+    'strix.config.loader',
+    'strix.config.settings',
+    'strix.config.codex',
     'strix.core',
     'strix.core.agents',
     'strix.core.execution',
@@ -196,7 +180,6 @@ hiddenimports = [
 ]
 
 hiddenimports += collect_submodules('litellm')
-hiddenimports += collect_submodules('textual')
 hiddenimports += collect_submodules('rich')
 hiddenimports += collect_submodules('pydantic')
 hiddenimports += collect_submodules('pygments')
