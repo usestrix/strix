@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import requests
 
-import strix.core.api_spec as api_spec
 from strix.core.api_spec import (
     MAX_ENDPOINTS_RENDERED,
     SpecParseError,
@@ -23,6 +22,7 @@ from strix.core.api_spec import (
 
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
     from pathlib import Path
 
 
@@ -265,12 +265,12 @@ def test_postman_resolves_collection_variables(tmp_path: Path) -> None:
 def test_fetch_postman_collection_unwraps(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
-    def fake_get(url: str, headers: dict[str, str], timeout: int) -> _FakeResponse:
+    def fake_get(url: str, headers: dict[str, str], **_kwargs: Any) -> _FakeResponse:
         captured["url"] = url
         captured["headers"] = headers
         return _FakeResponse(200, {"collection": POSTMAN_WITH_VARS})
 
-    monkeypatch.setattr(api_spec.requests, "get", fake_get)
+    monkeypatch.setattr(requests, "get", fake_get)
     collection = fetch_postman_collection("abc-123", "PMAK-xyz")
 
     assert collection["info"]["name"] == "Var Collection"
@@ -280,9 +280,9 @@ def test_fetch_postman_collection_unwraps(monkeypatch: pytest.MonkeyPatch) -> No
 
 def test_parse_postman_api_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        api_spec.requests,
+        requests,
         "get",
-        lambda *a, **k: _FakeResponse(200, {"collection": POSTMAN_WITH_VARS}),
+        lambda *_a, **_k: _FakeResponse(200, {"collection": POSTMAN_WITH_VARS}),
     )
     inventory = parse_postman_api("abc-123", "PMAK-xyz")
     assert inventory.spec_format == "postman"
@@ -296,9 +296,9 @@ def test_fetch_postman_missing_key_raises() -> None:
 
 def test_fetch_postman_404_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        api_spec.requests,
+        requests,
         "get",
-        lambda *a, **k: _FakeResponse(404, {}),
+        lambda *_a, **_k: _FakeResponse(404, {}),
     )
     with pytest.raises(SpecParseError, match="not found"):
         fetch_postman_collection("missing", "PMAK-xyz")
@@ -306,9 +306,9 @@ def test_fetch_postman_404_raises(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_fetch_postman_401_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        api_spec.requests,
+        requests,
         "get",
-        lambda *a, **k: _FakeResponse(401, {}),
+        lambda *_a, **_k: _FakeResponse(401, {}),
     )
     with pytest.raises(SpecParseError, match="rejected the key"):
         fetch_postman_collection("abc-123", "bad-key")
@@ -349,13 +349,13 @@ def _dispatch_get(
 def test_fetch_postman_environment_returns_enabled_values(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(api_spec.requests, "get", lambda *a, **k: _FakeResponse(200, ENV_PAYLOAD))
+    monkeypatch.setattr(requests, "get", lambda *_a, **_k: _FakeResponse(200, ENV_PAYLOAD))
     values = fetch_postman_environment("env-1", "PMAK-xyz")
     assert values == {"baseUrl": "https://api.env.test"}  # disabled secret excluded
 
 
 def test_parse_postman_api_resolves_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(api_spec.requests, "get", _dispatch_get(POSTMAN_NEEDS_ENV, ENV_PAYLOAD))
+    monkeypatch.setattr(requests, "get", _dispatch_get(POSTMAN_NEEDS_ENV, ENV_PAYLOAD))
     inventory = parse_postman_api("coll-1", "PMAK-xyz", "env-1")
     assert inventory.base_urls == ["https://api.env.test"]
     assert inventory.endpoints[0].path == "/things/1"
@@ -365,9 +365,9 @@ def test_parse_postman_api_without_env_leaves_variable_unresolved(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        api_spec.requests,
+        requests,
         "get",
-        lambda *a, **k: _FakeResponse(200, {"collection": POSTMAN_NEEDS_ENV}),
+        lambda *_a, **_k: _FakeResponse(200, {"collection": POSTMAN_NEEDS_ENV}),
     )
     inventory = parse_postman_api("coll-1", "PMAK-xyz")
     # no environment supplied -> no concrete base URL recovered

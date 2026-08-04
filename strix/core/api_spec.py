@@ -9,7 +9,7 @@ The inventory feeds two places:
 
 * :func:`strix.core.inputs.build_root_task` renders it as an endpoint list so
   the agent tests every operation instead of discovering them by crawling.
-  
+
 * :func:`strix.core.inputs.build_scope_context` uses the base URLs to mark the
   API hosts as authorized, in-scope targets.
 
@@ -603,6 +603,19 @@ def _fetch_cached(collection_uid: str, api_key: str, environment_uid: str) -> Ap
     return parse_postman_api(collection_uid, api_key, environment_uid)
 
 
+def _load_postman_inventory(details: dict[str, Any]) -> ApiSpecInventory | None:
+    uid = details.get("collection_uid")
+    if not uid:
+        return None
+    env_uid = str(details.get("environment_uid") or "")
+    try:
+        api_key = load_settings().integrations.postman_api_key or ""
+        return _fetch_cached(str(uid), api_key, env_uid)
+    except SpecParseError as exc:
+        logger.warning("api_spec: failed to fetch Postman collection %s: %s", uid, exc)
+        return None
+
+
 def load_inventory(details: dict[str, Any]) -> ApiSpecInventory | None:
     """Return the inventory for an ``api_spec`` target's ``details`` block.
 
@@ -613,16 +626,7 @@ def load_inventory(details: dict[str, Any]) -> ApiSpecInventory | None:
     failure so callers degrade gracefully.
     """
     if details.get("source") == "postman_api":
-        uid = details.get("collection_uid")
-        if not uid:
-            return None
-        env_uid = str(details.get("environment_uid") or "")
-        try:
-            api_key = load_settings().integrations.postman_api_key or ""
-            return _fetch_cached(str(uid), api_key, env_uid)
-        except SpecParseError as exc:
-            logger.warning("api_spec: failed to fetch Postman collection %s: %s", uid, exc)
-            return None
+        return _load_postman_inventory(details)
 
     spec = details.get("target_spec")
     if not spec:
