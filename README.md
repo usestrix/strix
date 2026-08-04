@@ -283,7 +283,6 @@ export LLM_API_KEY="your-api-key"
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
-export POSTMAN_API_KEY="PMAK-..."  # to fetch Postman collections by id (postman://<uuid>)
 export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
 
