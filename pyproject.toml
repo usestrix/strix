@@ -276,9 +276,6 @@ ignore = [
 # Lazy import of strix.config.models avoids a circular dependency between the
 # report pipeline and the config layer.
 "strix/report/dedupe.py" = ["PLC0415"]
-# litellm and strix.config are imported lazily to avoid the slow litellm import
-# at startup and a circular dependency with the config package.
-"strix/config/providers.py" = ["PLC0415"]
 "strix/telemetry/logging.py" = ["PLC0415"]
 "strix/config/models.py" = ["PLC0415"]
 # Heavy inference deps (httpx, openai) imported lazily so auth-status checks
