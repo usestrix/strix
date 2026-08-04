@@ -29,3 +29,9 @@ func waitReadable(in *os.File, timeout time.Duration) (bool, error) {
 		return n > 0, nil
 	}
 }
+
+// interruptSelf raises the interrupt the terminal could not deliver while the
+// capability query held the terminal with signals disabled.
+func interruptSelf() {
+	_ = unix.Kill(os.Getpid(), unix.SIGINT)
+}

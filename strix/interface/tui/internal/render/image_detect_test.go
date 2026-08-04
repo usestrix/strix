@@ -18,10 +18,10 @@ func TestCapabilityReadGivesUpOnASilentTerminal(t *testing.T) {
 	defer writer.Close()
 
 	start := time.Now()
-	supported, answered := readCapabilityReply(reader, 150*time.Millisecond)
+	reply := readCapabilityReply(reader, 150*time.Millisecond)
 
-	if supported || answered {
-		t.Fatalf("silence reported an answer: supported=%v answered=%v", supported, answered)
+	if reply.supported || reply.answered {
+		t.Fatalf("silence reported an answer: %+v", reply)
 	}
 	if elapsed := time.Since(start); elapsed > 3*time.Second {
 		t.Fatalf("the read was not bounded: %s", elapsed)
@@ -44,13 +44,13 @@ func TestCapabilityReadClassifiesTheReply(t *testing.T) {
 				t.Fatalf("write reply: %v", err)
 			}
 
-			supported, answered := readCapabilityReply(reader, time.Second)
+			reply := readCapabilityReply(reader, time.Second)
 
-			if !answered {
+			if !reply.answered {
 				t.Fatal("a reply was sent but not seen")
 			}
-			if supported != testCase.want {
-				t.Fatalf("support = %v, want %v", supported, testCase.want)
+			if reply.supported != testCase.want {
+				t.Fatalf("support = %v, want %v", reply.supported, testCase.want)
 			}
 		})
 	}
@@ -66,9 +66,9 @@ func TestDrainClearsWhatFollowsTheAnswer(t *testing.T) {
 		t.Fatalf("write reply: %v", err)
 	}
 
-	supported, answered := readCapabilityReply(reader, time.Second)
-	if !supported || !answered {
-		t.Fatalf("kitty answer not recognized: supported=%v answered=%v", supported, answered)
+	reply := readCapabilityReply(reader, time.Second)
+	if !reply.supported || !reply.answered {
+		t.Fatalf("kitty answer not recognized: %+v", reply)
 	}
 	drainInput(reader, drainBudget)
 
@@ -78,6 +78,30 @@ func TestDrainClearsWhatFollowsTheAnswer(t *testing.T) {
 	}
 	if leftover {
 		t.Fatal("part of the reply survived the drain and would be echoed")
+	}
+}
+
+// The query clears ISIG, so ctrl-c arrives as ETX rather than a signal. It has to
+// end the wait instead of being swallowed as terminal noise, which is what left a
+// hung startup unresponsive to ctrl-c.
+func TestCtrlCEndsTheWait(t *testing.T) {
+	reader, writer := pipePair(t)
+	defer writer.Close()
+	if _, err := writer.Write([]byte{etx}); err != nil {
+		t.Fatalf("write ctrl-c: %v", err)
+	}
+
+	start := time.Now()
+	reply := readCapabilityReply(reader, 10*time.Second)
+
+	if !reply.interrupted {
+		t.Fatalf("ctrl-c was not recognized: %+v", reply)
+	}
+	if reply.answered || reply.supported {
+		t.Fatalf("ctrl-c must not be read as a terminal answer: %+v", reply)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("ctrl-c did not end the wait promptly: %s", elapsed)
 	}
 }
 

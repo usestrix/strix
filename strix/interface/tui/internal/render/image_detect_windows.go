@@ -13,3 +13,7 @@ import (
 func waitReadable(_ *os.File, _ time.Duration) (bool, error) {
 	return false, nil
 }
+
+// interruptSelf has nothing to do: detection never reads on this platform, so
+// ctrl-c is never withheld from the console.
+func interruptSelf() {}
