@@ -17,7 +17,6 @@ from strix.config.models import (
     model_supports_reasoning,
     request_timeout_extra_args,
 )
-from strix.core.api_spec import load_inventory, render_inventory
 from strix.core.sessions import scrub_images_from_items
 
 
@@ -51,6 +50,29 @@ def _render_diff_scope(diff_scope: dict[str, Any]) -> list[str]:
         if deleted:
             parts.append(f"- {label}: {deleted} deleted file(s) are context-only")
     return parts
+
+
+def _render_api_spec(details: dict[str, Any]) -> list[str]:
+    """Render an API spec target as root-task lines.
+
+    The spec itself is in the workspace, so the task points at the file and lets
+    the agent read the contract rather than restating a parsed summary of it.
+    """
+    title = details.get("spec_title") or details.get("target_spec", "API")
+    workspace_path = details.get("workspace_path", "")
+    lines = [
+        f"- {title} ({details.get('spec_format', 'api')} specification"
+        + (f", available at: {workspace_path}" if workspace_path else "")
+        + ")"
+    ]
+    if base_urls := details.get("base_urls") or []:
+        lines.append("  - Base URL(s): " + ", ".join(base_urls))
+    lines.append(
+        "  - Read the specification and test every operation it declares, using "
+        "its declared parameters, request bodies, and auth. Endpoints in the "
+        "specification are in scope even when nothing links to them."
+    )
+    return lines
 
 
 def build_root_task(scan_config: dict[str, Any]) -> str:
@@ -90,13 +112,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         elif ttype == "ip_address":
             sections["IP Addresses"].append(f"- {details.get('target_ip', '')}")
         elif ttype == "api_spec":
-            inventory = load_inventory(details)
-            if inventory is not None:
-                sections["API Specifications"].append(render_inventory(inventory))
-            else:
-                sections["API Specifications"].append(
-                    f"- {details.get('target_spec', 'unknown spec')} (could not be parsed)",
-                )
+            sections["API Specifications"].extend(_render_api_spec(details))
 
     parts: list[str] = []
     for label, items in sections.items():
@@ -153,12 +169,10 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         # An API spec authorizes the hosts it declares as in-scope web targets
         # so the agent can exercise every endpoint without expanding scope.
         if ttype == "api_spec":
-            inventory = load_inventory(details)
-            if inventory is not None:
-                authorized.extend(
-                    {"type": "web_application", "value": base_url, "workspace_path": ""}
-                    for base_url in inventory.base_urls
-                )
+            authorized.extend(
+                {"type": "web_application", "value": base_url, "workspace_path": ""}
+                for base_url in details.get("base_urls") or []
+            )
 
     return {
         "scope_source": "system_scan_config",

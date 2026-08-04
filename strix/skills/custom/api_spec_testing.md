@@ -5,12 +5,14 @@ description: Spec-driven API pentesting — systematically exercise every endpoi
 
 # API Spec Testing
 
-When a target is an ingested API specification (OpenAPI 3.x, Swagger 2.0, or a
-Postman collection), the root task already contains a normalized endpoint
-inventory under **API Specifications** — every operation with its method, path,
-declared parameters, request-body fields, and auth scheme. Do not rediscover the
-surface by crawling. Walk the inventory operation-by-operation and prove
-findings against the live base URL(s), which are authorized in scope.
+When a target is an API specification (OpenAPI 3.x, Swagger 2.0, or a Postman
+collection), the root task lists it under **API Specifications** with the path
+to the spec file in the workspace and the authorized base URL(s). Read the spec
+file first and build your own endpoint inventory from it — every operation with
+its method, path, parameters, request-body schema (resolve `$ref`/`allOf`), and
+auth scheme. Do not rediscover the surface by crawling. Walk the inventory
+operation-by-operation and prove findings against the live base URL(s), which
+are authorized in scope.
 
 ## Methodology
 

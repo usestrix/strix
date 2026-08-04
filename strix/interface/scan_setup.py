@@ -12,10 +12,17 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
-from strix.core.api_spec import SpecParseError, parse_api_spec, parse_postman_api
+from strix.core.api_spec import (
+    SpecParseError,
+    fetch_postman_collection,
+    fetch_postman_environment,
+    load_spec,
+    spec_base_urls,
+    spec_title,
+)
 from strix.core.paths import run_dir_for
 from strix.interface.utils import (
     assign_workspace_subdirs,
@@ -29,6 +36,8 @@ from strix.interface.utils import (
     read_target_list_file,
     resolve_diff_scope_context,
     rewrite_localhost_targets,
+    stage_api_specs,
+    write_fetched_collection,
 )
 from strix.telemetry import posthog, scarf
 
@@ -111,7 +120,7 @@ def build_targets_info(args: argparse.Namespace) -> None:
             display_target = target
 
         if target_type == "api_spec":
-            _validate_api_spec(target, target_dict)
+            _resolve_api_spec(target, target_dict)
 
         args.targets_info.append(
             {"type": target_type, "details": target_dict, "original": display_target}
@@ -123,23 +132,32 @@ def build_targets_info(args: argparse.Namespace) -> None:
     rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
 
 
-def _validate_api_spec(target: str, details: dict[str, str]) -> None:
-    """Parse an API spec target up front so bad input fails before the run starts."""
+def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
+    """Read the spec up front so bad input fails before the run starts.
+
+    Records the declared base URLs (the only thing scope authorization can take
+    from a spec) and, for a ``postman://`` target, downloads the collection to a
+    local file so the sandbox never needs the Postman API key.
+    """
     try:
         if details.get("source") == "postman_api":
-            postman_key = load_settings().integrations.postman_api_key or ""
-            inventory = parse_postman_api(
-                details["collection_uid"],
-                postman_key,
-                details.get("environment_uid", ""),
+            collection_uid = str(details["collection_uid"])
+            api_key = load_settings().integrations.postman_api_key or ""
+            raw = fetch_postman_collection(collection_uid, api_key)
+            environment_uid = str(details.get("environment_uid") or "")
+            extra_variables = (
+                fetch_postman_environment(environment_uid, api_key) if environment_uid else None
             )
+            details["target_spec"] = write_fetched_collection(raw, collection_uid)
         else:
-            inventory = parse_api_spec(details["target_spec"])
+            raw = load_spec(str(details["target_spec"]))
+            extra_variables = None
+        base_urls = spec_base_urls(raw, extra_variables=extra_variables)
     except SpecParseError as exc:
         raise ValueError(f"Invalid API spec '{target}': {exc}") from None
 
-    if not inventory.endpoints:
-        raise ValueError(f"API spec '{target}' contains no endpoints to test")
+    details["spec_title"] = spec_title(raw)
+    details["base_urls"] = base_urls
 
 
 def prepare_run(args: argparse.Namespace) -> None:
@@ -162,6 +180,7 @@ def prepare_run(args: argparse.Namespace) -> None:
             target_info["details"]["cloned_repo_path"] = cloned_path
 
     args.local_sources = collect_local_sources(args.targets_info)
+    args.local_sources.extend(stage_api_specs(args.targets_info, args.run_name))
     diff_scope = resolve_diff_scope_context(
         local_sources=args.local_sources,
         scope_mode=args.scope_mode,
