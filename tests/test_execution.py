@@ -856,6 +856,39 @@ async def test_structured_provider_refusal_fails_noninteractive_child(
 
 
 @pytest.mark.asyncio
+async def test_crashing_noninteractive_child_settles_and_wakes_its_parent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The exception ends the child's task, so its status and the parent's wake-up
+    # have to be settled on the way out or the parent waits on a dead child.
+    def _boom(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("sandbox died mid-turn")
+
+    monkeypatch.setattr("strix.core.execution.Runner.run_streamed", _boom)
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+
+    with pytest.raises(RuntimeError, match="sandbox died mid-turn"):
+        await execution._run_cycle(
+            MagicMock(),
+            coordinator,
+            "child",
+            input_data="task",
+            run_config=MagicMock(),
+            context={"parent_id": "root"},
+            max_turns=5,
+            session=None,
+            interactive=False,
+            event_sink=None,
+            hooks=None,
+        )
+
+    assert coordinator.statuses["child"] == "crashed"
+    assert coordinator.pending_counts.get("root", 0) > 0
+
+
+@pytest.mark.asyncio
 async def test_run_agent_loop_seeds_identity_before_first_cycle(
     tmp_path: Any, monkeypatch: pytest.MonkeyPatch
 ) -> None:

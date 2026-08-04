@@ -780,17 +780,21 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 await coordinator.set_status(agent_id, "failed", error=str(exc))
                 await notify_parent_on_terminal(coordinator, agent_id, "failed")
                 return None
-            if not interactive:
-                raise
             if isinstance(exc, MaxTurnsExceeded):
                 status: Status = "stopped"
             elif isinstance(exc, UserError | AgentsException | APIError):
                 status = "failed"
             else:
                 status = "crashed"
-            logger.exception("agent run failed for %s; parking as %s", agent_id, status)
+            logger.exception("agent run failed for %s; marking %s", agent_id, status)
+            # Settle the status and wake the parent before the exception unwinds a
+            # non-interactive agent's task: a child that dies still owes its parent a
+            # report, and the parent would otherwise wait out its timeout on a message
+            # the dead child can no longer send.
             await coordinator.set_status(agent_id, status, error=str(exc) or type(exc).__name__)
             await notify_parent_on_terminal(coordinator, agent_id, status)
+            if not interactive:
+                raise
             return None
         else:
             return cast("RunResultBase | None", stream)
