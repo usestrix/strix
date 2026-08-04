@@ -30,34 +30,18 @@ operations, and anything touching billing, auth, or PII first.
 
 ## What to test per endpoint
 
-**Authorization (highest yield on APIs)**
-- BOLA/IDOR: swap object identifiers in path/query/body across two accounts;
-  confirm cross-account read or state change. Every `{id}`, `parentId`,
-  `accountId`, `tenantId` in the inventory is a candidate.
-- BFLA: call privileged operations (declared `auth` scopes, admin paths) with a
-  lower-privilege token; confirm the action succeeds.
-- Missing auth: replay each endpoint with the token stripped and with an expired
-  token; the declared `auth: …` in the inventory tells you what should be
-  required — flag any endpoint that returns data without it.
-
-**Mass assignment / excessive data exposure**
-- Use the declared `body:` fields as a starting point, then add sensitive fields
-  the schema omits (`role`, `isAdmin`, `verified`, `balance`, `ownerId`) and
-  confirm they are honored.
-- Check responses for fields beyond what the caller should see.
-
-**Injection & parameter abuse**
-- For every parameter, test against its declared type: send strings where
-  integers/UUIDs are expected, oversized values, and injection payloads
-  (SQLi/NoSQLi/command/SSTI depending on backend). Type confusion often bypasses
-  validation.
-- Test `fields`/`include`/`expand`/`filter` style knobs for authorization
-  bypass in resolvers/serializers.
-
-**Business logic & rate limits**
-- Chain operations across endpoints (create → approve → withdraw) looking for
-  workflow/state bypass and race conditions on money/quota mutations.
-- Confirm rate limiting on auth and expensive endpoints.
+Test the full range of API weaknesses against each operation, driven by what the
+contract reveals — do not treat the following as an exhaustive checklist. The
+highest-yield classes on APIs are **authorization** flaws, since the spec hands
+you the object identifiers and privilege boundaries to abuse: examples include
+BOLA/IDOR (swap `{id}`/`accountId`/`tenantId` across two accounts), BFLA
+(privileged operations with a lower-privilege token), and missing/broken auth
+(replay with the token stripped or expired against endpoints whose declared auth
+says one is required). Beyond authorization, use the declared parameters and
+body schema as a launch point for mass assignment and excessive data exposure,
+injection and type-confusion on every parameter, and multi-step business-logic
+and rate-limit abuse — and follow the contract wherever it suggests something
+else worth probing.
 
 ## Validation
 

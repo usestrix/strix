@@ -14,9 +14,7 @@ strix (--target <target> | --target-list <path>) [options]
 <ParamField path="--target, -t" type="string">
   Target to test. Accepts URLs, repositories, local directories, domains, IP addresses, API spec files (OpenAPI/Swagger `.json`/`.yaml`, a Postman collection export), or a live Postman collection by id (`postman://<collection-uuid>`). Can be specified multiple times. Fresh runs require at least one target source: `--target` or `--target-list`.
 
-  When the target is an API spec, Strix mounts it in the agent's workspace and authorizes the base URLs it declares as in-scope hosts - so the agent reads the contract and tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
-
-Strix authorizes the base URLs the spec/collection declares (including those resolved from a Postman environment). If you also pass explicit `--target` hosts, they act as an allow-list that narrows scope to just those hosts, this is useful to keep the agent off example or production URLs a spec happens to declare.
+  When the target is an API spec, Strix copies it into the agent's workspace and authorizes the base URLs it declares (including those resolved from a Postman environment) as in-scope hosts - so the agent reads the contract and tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
 
   <Note>
     A local directory is mounted into the sandbox live and **writable**, so the agent edits your real files (`.git` excepted). Commit or stash first.

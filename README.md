@@ -189,7 +189,7 @@ strix --target https://your-app.com
 
 Point Strix at an API contract and it tests every declared endpoint instead of
 having to discover them by crawling. Pair the spec with the live base URL so the
-agent knows where to send traffic. Strix authorizes all base URLs the spec/collection declares (including those resolved from a Postman environment), but pass an explicit --target <host> alongside the spec to narrow testing to just that host:
+agent knows where to send traffic:
 
 ```bash
 # OpenAPI / Swagger file (.json / .yaml)

@@ -70,7 +70,9 @@ def _render_api_spec(details: dict[str, Any]) -> list[str]:
     lines.append(
         "  - Read the specification and test every operation it declares, using "
         "its declared parameters, request bodies, and auth. Endpoints in the "
-        "specification are in scope even when nothing links to them."
+        "specification are in scope even when nothing links to them. Load the "
+        "`api_spec_testing` skill for the methodology, or spawn a specialist "
+        "with it."
     )
     return lines
 
