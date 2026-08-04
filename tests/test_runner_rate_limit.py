@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 import pytest
+from agents import ModelSettings
 from openai import RateLimitError
 
 import strix.tools.notes.tools as notes_tools
@@ -64,7 +65,7 @@ async def test_persistent_rate_limit_stops_gracefully(
 
     monkeypatch.setattr(runner, "build_root_task", lambda _scan_config: "task")
     monkeypatch.setattr(runner, "build_scope_context", lambda _scan_config: "")
-    monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(runner, "make_model_settings", lambda *_args, **_kwargs: ModelSettings())
     monkeypatch.setattr(runner, "build_strix_agent", lambda **_kwargs: object())
     monkeypatch.setattr(runner, "make_child_factory", lambda **_kwargs: lambda **_k: object())
     monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: object())
