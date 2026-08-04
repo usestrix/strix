@@ -109,7 +109,6 @@ type Model struct {
 	selectedVuln           int
 	agentOffset            int
 	vulnOffset             int
-	commandCursor          int
 	modalChoice            int
 	ready                  bool
 	quitting               bool
@@ -169,8 +168,8 @@ const (
 // Composer placeholders. The launch screen falls back to the short prompt when
 // the column is too narrow to show the full one without clipping it.
 const (
-	setupPlaceholder      = "Enter a prompt or target, or / for commands"
-	setupPlaceholderShort = "Prompt, or / for commands"
+	setupPlaceholder      = "Describe what to test, or name a target"
+	setupPlaceholderShort = "What should Strix test?"
 	chatPlaceholder       = "Send a message"
 )
 

@@ -87,7 +87,7 @@ func (m Model) inputTop() int {
 	if m.statusVisible() {
 		statusH = 1
 	}
-	return chatHeight + statusH + m.commandMenuHeight()
+	return chatHeight + statusH
 }
 
 // inputContentCell maps main-view screen coordinates to a text cell inside

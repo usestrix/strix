@@ -37,17 +37,6 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "up", "down":
-		if m.focus == focusInput {
-			matches := m.matchingSetupCommands()
-			if len(matches) > 0 {
-				delta := 1
-				if key.String() == "up" {
-					delta = -1
-				}
-				m.commandCursor = clampCycle(m.commandCursor+delta, len(matches))
-				return m, nil
-			}
-		}
 		if m.focus == focusAgents && len(m.snapshot.Agents) > 0 {
 			delta := 1
 			if key.String() == "up" {
@@ -92,12 +81,7 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if key.String() == "enter" && m.focus == focusInput {
 			value := strings.TrimSpace(m.input.Value())
-			if matches := m.matchingSetupCommands(); len(matches) > 0 {
-				selection := min(m.commandCursor, len(matches)-1)
-				value = strings.Fields(matches[selection][0])[0]
-			}
 			m.input.SetValue("")
-			m.commandCursor = 0
 			m.resizeViewport()
 			if value != "" {
 				return m.submit(value)
@@ -147,13 +131,8 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	}
 	var cmd tea.Cmd
-	oldValue := m.input.Value()
 	m.input, cmd = m.input.Update(key)
-	// A changed query starts selection at the best (top) match. Slash-command
-	// recommendations occupy space above the input, so resize while typing.
-	if m.input.Value() != oldValue {
-		m.commandCursor = 0
-	}
+	// Typing changes how far the composer wraps, so refit it.
 	m.resizeViewport()
 	return m, cmd
 }
@@ -258,7 +237,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.statusVisible() {
 		statusH = 1
 	}
-	inputTop := chatHeight + statusH + m.commandMenuHeight()
+	inputTop := chatHeight + statusH
 	// Chat column: chat box on top, input box below the (optional) status row.
 	if x < chatWidth {
 		switch {

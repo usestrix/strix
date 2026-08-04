@@ -271,7 +271,6 @@ class TuiController:
     async def handle(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         handlers = {
             "setup.add_target": self._add_target,
-            "setup.clear_targets": self._clear_targets,
             "setup.set_instruction": self._set_instruction,
             "setup.start": self._start,
             "setup.confirm_mount": self._confirm_mount,
@@ -293,11 +292,6 @@ class TuiController:
         if target not in self.targets:
             self.targets.append(target)
         return {"target": target, "total": len(self.targets)}
-
-    async def _clear_targets(self, _payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        self.targets.clear()
-        return {"targets": []}
 
     async def _set_instruction(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()

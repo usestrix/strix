@@ -219,24 +219,21 @@ func TestAgentsCollectionPreservesSelectedIDAcrossUpsertsAndDeletes(t *testing.T
 	}
 }
 
-func TestSetupCommandsAppearAboveInputAndFilter(t *testing.T) {
+// Typing a slash must not surface a command list; the start screen takes prompts
+// and targets only.
+func TestSetupOffersNoSlashCommands(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 100, 50
 	model.showSplash = false
 	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{SetupMode: true, ScanState: "setup"}))
 
-	if view := model.View(); strings.Contains(view, "/target") {
-		t.Fatalf("setup commands appeared before slash was typed: %s", view)
-	}
 	model.input.SetValue("/")
-	view := model.View()
-	if !strings.Contains(view, "/target") || !strings.Contains(view, "/start") {
-		t.Fatalf("all setup commands were not recommended for bare slash: %s", view)
-	}
-	model.input.SetValue("/cl")
-	view = model.View()
-	if !strings.Contains(view, "/clear") || strings.Contains(view, "/target") {
-		t.Fatalf("setup command recommendations were not filtered: %s", view)
+	model.resizeViewport()
+	view := ansi.Strip(model.View())
+	for _, gone := range []string{"/target", "/start", "/clear", "/prompt", "/quit", "/help"} {
+		if strings.Contains(view, gone) {
+			t.Fatalf("a slash command menu still appears for %q: %s", gone, view)
+		}
 	}
 }
 
@@ -327,49 +324,43 @@ func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 	}
 }
 
-func TestSetupCommandKeyboardSelectionSubmits(t *testing.T) {
-	model := New(nil)
-	model.snapshot.SetupMode = true
+// A leading slash is ordinary prompt text now: there are no commands to match,
+// so it must reach the scan as written rather than being rejected.
+func TestLeadingSlashIsPromptTextNotACommand(t *testing.T) {
+	connection := &recordingConn{}
+	model := New(&Client{conn: connection})
+	model.snapshot = protocol.Snapshot{SetupMode: true}
 	model.focus = focusInput
-	// A bare slash lists every command; the second is /prompt, which sends.
-	model.input.SetValue("/")
-
-	updated, _ := model.updateMain(tea.KeyMsg{Type: tea.KeyDown})
-	model = updated.(Model)
-	if model.commandCursor != 1 {
-		t.Fatalf("down did not select the next command: %d", model.commandCursor)
-	}
-	updated, cmd := model.updateMain(tea.KeyMsg{Type: tea.KeyEnter})
-	model = updated.(Model)
-	if model.input.Value() != "" || cmd == nil {
-		t.Fatalf("enter did not submit the selected command: value=%q cmd=%v", model.input.Value(), cmd)
-	}
-}
-
-func TestEnterSubmitsTopFilteredSetupCommand(t *testing.T) {
-	model := New(nil)
-	model.snapshot.SetupMode = true
-	model.focus = focusInput
-	model.input.SetValue("/he")
+	model.input.SetValue("/etc/passwd is world readable, check it")
 
 	updated, cmd := model.updateMain(tea.KeyMsg{Type: tea.KeyEnter})
 	result := updated.(Model)
-	if cmd != nil || result.input.Value() != "" {
-		t.Fatalf("enter did not submit top result: value=%q cmd=%v", result.input.Value(), cmd)
+	if cmd == nil {
+		t.Fatal("enter did not submit")
 	}
-	if len(result.setupLog) != 0 {
-		t.Fatalf("selected /help should not be echoed: %#v", result.setupLog)
+	types := commandTypes(drainCommands(t, cmd, connection))
+	if !contains(types, "setup.start") {
+		t.Fatalf("a slash-leading prompt did not launch a scan: %v", types)
+	}
+	// The path is read as a target and the sentence as the instruction.
+	if !contains(types, "setup.add_target") || !contains(types, "setup.set_instruction") {
+		t.Fatalf("slash-leading prompt was not split into target and instruction: %v", types)
+	}
+	for _, line := range result.setupLog {
+		if strings.Contains(ansi.Strip(line), "Unknown command") {
+			t.Fatalf("a slash-leading prompt was treated as a command: %#v", result.setupLog)
+		}
 	}
 }
 
-func TestSubmittedSetupCommandIsNotEchoedInOutput(t *testing.T) {
+// The composer is cleared on submit and the prompt is not echoed into the log.
+func TestSubmittedPromptIsNotEchoedInOutput(t *testing.T) {
 	model := New(nil)
 	model.snapshot.SetupMode = true
-	updated, _ := model.submitSetup("/prompt secret instruction")
+	updated, _ := model.submitSetupPrompt("secret instruction")
 	result := updated.(Model)
-	content := result.setupContent()
-	if strings.Contains(content, "/prompt") || strings.Contains(content, "> secret instruction") {
-		t.Fatalf("submitted slash command leaked into output: %s", content)
+	if content := result.setupContent(); strings.Contains(content, "secret instruction") {
+		t.Fatalf("submitted prompt leaked into output: %s", content)
 	}
 }
 

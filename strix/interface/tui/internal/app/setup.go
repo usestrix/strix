@@ -9,13 +9,12 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/x/ansi"
 	"github.com/usestrix/strix/tui/internal/render"
 )
 
 func (m Model) submit(value string) (tea.Model, tea.Cmd) {
 	if m.snapshot.SetupMode {
-		return m.submitSetup(value)
+		return m.submitSetupPrompt(value)
 	}
 	if len(m.snapshot.Agents) == 0 {
 		m.errorText = "No agent is available"
@@ -25,76 +24,6 @@ func (m Model) submit(value string) (tea.Model, tea.Cmd) {
 		m.selectedAgent = 0
 	}
 	return m, send(m.client, "agent.send_message", map[string]any{"agent_id": m.snapshot.Agents[m.selectedAgent].ID, "message": value})
-}
-
-// submitSetup handles a setup-mode slash command. Commands themselves are not
-// copied into the output pane; only useful results and errors are recorded.
-func (m Model) submitSetup(value string) (tea.Model, tea.Cmd) {
-	if !strings.HasPrefix(value, "/") {
-		return m.submitSetupPrompt(value)
-	}
-	parts := strings.SplitN(value, " ", 2)
-	command := strings.ToLower(parts[0])
-	arg := ""
-	if len(parts) == 2 {
-		arg = strings.TrimSpace(parts[1])
-	}
-	switch command {
-	case "/help":
-		// The live command menu above the input is the command reference.
-		return m, nil
-	case "/quit", "/exit":
-		m.quitting = true
-		return m, tea.Batch(send(m.client, "app.quit", map[string]any{}), tea.Quit)
-	case "/target":
-		if arg == "" {
-			if len(m.snapshot.Targets) > 0 {
-				var b strings.Builder
-				b.WriteString(render.Bold(green).Render("Targets"))
-				for _, t := range m.snapshot.Targets {
-					b.WriteString("\n" + render.Col(white).Render("  "+t))
-				}
-				if hidden := m.snapshot.TargetCount - len(m.snapshot.Targets); hidden > 0 {
-					b.WriteString(fmt.Sprintf("\n  ...and %d more", hidden))
-				}
-				m.setupLogAppend(b.String())
-			} else {
-				m.setupMsg("No targets yet. Add one with /target <url|repo|path|domain|ip>", render.Dim())
-			}
-			return m, nil
-		}
-		for _, t := range m.snapshot.Targets {
-			if t == arg {
-				m.setupMsg("'"+arg+"' is already in the target list.", render.Dim())
-				return m, nil
-			}
-		}
-		m.setupMsg("✓ Added target: "+arg, render.Col(green))
-		return m, send(m.client, "setup.add_target", map[string]any{"target": arg})
-	case "/prompt", "/instruction":
-		if arg != "" {
-			m.setupMsg("✓ Prompt set.", render.Col(green))
-		} else {
-			m.setupMsg("Prompt cleared.", render.Dim())
-		}
-		return m, send(m.client, "setup.set_instruction", map[string]any{"instruction": arg})
-	case "/clear":
-		m.setupMsg("Cleared all targets.", render.Dim())
-		return m, send(m.client, "setup.clear_targets", map[string]any{})
-	case "/start", "/run":
-		// With no target the scan mounts the working directory, which the
-		// backend confirms from the live view.
-		if len(m.snapshot.Targets) == 0 {
-			return m, send(m.client, "setup.start", map[string]any{
-				"verify": false, "mount_working_dir": true,
-			})
-		}
-		m.setupMsg("Verifying model connection...", render.Col(amber))
-		return m, send(m.client, "setup.start", map[string]any{"verify": true})
-	default:
-		m.setupMsg("Unknown command '"+command+"'. Type /help.", render.Col(red))
-		return m, nil
-	}
 }
 
 // submitSetupPrompt handles free text the way a coding agent's prompt does:
@@ -196,101 +125,12 @@ func isNumeric(value string) bool {
 	return true
 }
 
-// matchingSetupCommands returns live recommendations for the slash command
-// currently being typed. A bare slash shows every command; subsequent command
-// characters narrow the list. Arguments do not hide the selected command.
-func (m Model) matchingSetupCommands() [][2]string {
-	if !m.snapshot.SetupMode || m.focus != focusInput {
-		return nil
-	}
-	rawValue := m.input.Value()
-	value := strings.ToLower(strings.TrimSpace(rawValue))
-	// A space means a command has been completed and its arguments are being
-	// entered. Hide recommendations so Enter submits it normally.
-	if !strings.HasPrefix(value, "/") || strings.ContainsAny(rawValue, " \t\n") {
-		return nil
-	}
-	query := value
-	matches := make([][2]string, 0, len(setupCommands))
-	for _, command := range setupCommands {
-		name := strings.Fields(command[0])[0]
-		if strings.HasPrefix(name, query) {
-			matches = append(matches, command)
-		}
-	}
-	return matches
-}
-
-func (m Model) commandMenuHeight() int { return len(m.matchingSetupCommands()) }
-
-// selectionBackground is the raised surface behind the highlighted menu row.
-const selectionBackground = "\x1b[48;2;20;20;20m"
-
-// surfaceRow paints a row onto a background surface. The background is
-// re-applied after every style reset so styled runs inside the row do not punch
-// holes in it, and the row is padded out to the full width.
-func surfaceRow(line string, width int, background string) string {
-	line = background + strings.ReplaceAll(line, "\x1b[0m", "\x1b[0m"+background)
-	if pad := width - lipgloss.Width(line); pad > 0 {
-		line += strings.Repeat(" ", pad)
-	}
-	return line + "\x1b[0m"
-}
-
-func (m Model) commandMenuView(width int) string {
-	matches := m.matchingSetupCommands()
-	if len(matches) == 0 {
-		return ""
-	}
-	return m.commandMenuViewLimit(width, len(matches))
-}
-
-// commandMenuViewLimit lays the command list out in two columns: the command
-// itself in a gutter sized to the longest visible name, then its description in
-// whatever space is left. The selected row is marked and lifted onto a surface.
-func (m Model) commandMenuViewLimit(width, limit int) string {
-	matches := m.matchingSetupCommands()
-	if len(matches) == 0 || limit <= 0 {
-		return ""
-	}
-	start, end := optionWindow(m.commandCursor, len(matches), limit)
-	gutter := 0
-	for i := start; i < end; i++ {
-		gutter = max(gutter, lipgloss.Width(matches[i][0]))
-	}
-	gutter = min(gutter, max(10, width/2))
-	lines := make([]string, 0, end-start)
-	for i := start; i < end; i++ {
-		command := matches[i]
-		prefix, commandStyle, descriptionStyle := "  ", render.Col(render.InfoBlue), render.Dim()
-		selected := i == m.commandCursor
-		if selected {
-			prefix = render.Col(green).Render("› ")
-			commandStyle = lipgloss.NewStyle().Bold(true).Foreground(brightGreen)
-			descriptionStyle = lipgloss.NewStyle().Foreground(mid)
-		}
-		name := padToWidth(truncate(command[0], gutter), gutter)
-		line := prefix + commandStyle.Render(name) + "   " +
-			descriptionStyle.Render(truncate(command[1], max(0, width-gutter-6)))
-		if selected {
-			lines = append(lines, surfaceRow(line, width, selectionBackground))
-			continue
-		}
-		lines = append(lines, padToWidth(ansi.Truncate(line, max(1, width), ""), width))
-	}
-	return strings.Join(lines, "\n")
-}
-
 // statusVisible mirrors #agent_status_display: shown only when an agent is
 // selected during a scan; hidden (display:none) in setup mode.
 func (m Model) statusVisible() bool {
 	return !m.snapshot.SetupMode && len(m.snapshot.Agents) > 0
 }
 
-// layout returns the shared geometry used by both the viewport sizing and the
-// rendered chat box. The chat box, optional status row and 3-row input stack
-// inside the chat column; the sidebar spans the full screen height alongside
-// them, matching the Textual container tree.
 func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight int) {
 	showSidebar = m.width >= 120
 	if showSidebar {
@@ -303,7 +143,7 @@ func (m Model) layout() (showSidebar bool, sidebarWidth, chatWidth, chatHeight i
 	if m.statusVisible() {
 		statusH = 1
 	}
-	chatHeight = max(4, m.height-statusH-(m.input.Height()+2)-m.commandMenuHeight())
+	chatHeight = max(4, m.height-statusH-(m.input.Height()+2))
 	return
 }
 
@@ -349,17 +189,6 @@ func (m *Model) refreshViewport() {
 	if m.followOutput && wasBottom {
 		m.viewport.GotoBottom()
 	}
-}
-
-// setupCommands mirrors _SETUP_COMMANDS: the ordered command list shown in the
-// setup intro and by /help.
-var setupCommands = [][2]string{
-	{"/target <value>", "Add a target: URL, repo, path, domain, or IP"},
-	{"/prompt <text>", "Set an optional instruction for the scan"},
-	{"/clear", "Remove all targets"},
-	{"/start", "Launch the scan"},
-	{"/help", "Show this command list"},
-	{"/quit", "Exit without scanning"},
 }
 
 func (m Model) setupContent() string {
@@ -414,13 +243,12 @@ func setupColumnWidth(terminal int) int {
 
 // setupFit records how much of the launch column survives at the current
 // terminal size: the wordmark treatment, whether the tagline is shown, and how
-// many command-menu and feedback-log rows fit.
+// many feedback-log rows fit.
 type setupFit struct {
-	width    int
-	logo     int
-	tagline  bool
-	menuRows int
-	logRows  int
+	width   int
+	logo    int
+	tagline bool
+	logRows int
 }
 
 // setupFit picks the richest layout that still fits the terminal. Sections are
@@ -428,11 +256,10 @@ type setupFit struct {
 // only thing on this screen the user has to reach.
 func (m Model) setupFit() setupFit {
 	fit := setupFit{
-		width:    setupColumnWidth(m.width),
-		logo:     logoFull,
-		tagline:  true,
-		menuRows: m.commandMenuHeight(),
-		logRows:  setupLogRows(m.setupLog),
+		width:   setupColumnWidth(m.width),
+		logo:    logoFull,
+		tagline: true,
+		logRows: setupLogRows(m.setupLog),
 	}
 	if m.width < wordmarkWidth()+2 {
 		fit.logo = logoCompact
@@ -442,12 +269,9 @@ func (m Model) setupFit() setupFit {
 	}
 	shrink := []func(*setupFit) bool{
 		func(f *setupFit) bool { return trimTo(&f.logRows, 3) },
-		func(f *setupFit) bool { return trimTo(&f.menuRows, 6) },
 		func(f *setupFit) bool { return clearFlag(&f.tagline) },
 		func(f *setupFit) bool { return trimTo(&f.logRows, 0) },
-		func(f *setupFit) bool { return trimTo(&f.menuRows, 3) },
 		func(f *setupFit) bool { return trimTo(&f.logo, logoCompact) },
-		func(f *setupFit) bool { return trimTo(&f.menuRows, 1) },
 		func(f *setupFit) bool { return trimTo(&f.logo, logoNone) },
 	}
 	for step := 0; step < len(shrink) && lipgloss.Height(m.setupBody(fit)) > m.height; {
@@ -481,7 +305,7 @@ func (m Model) setupView() string {
 		rows = rows[:max(0, m.height)]
 	}
 	// Anchor the column on its resting height rather than its current one, so a
-	// growing composer, an open command menu and new feedback all push downward.
+	// growing composer and new feedback both push downward.
 	// Centering on the live height walks the whole page up under the cursor,
 	// one row at a time, as the prompt wraps.
 	top := (m.height - m.setupRestingHeight(fit, len(rows))) / 2
@@ -504,9 +328,6 @@ func (m Model) setupView() string {
 func (m Model) setupRestingHeight(fit setupFit, height int) int {
 	floor, _ := m.composerBounds()
 	height -= max(0, m.input.Height()-floor)
-	if fit.menuRows > 0 {
-		height -= fit.menuRows + 1 // the menu and the blank line above it
-	}
 	if fit.logRows > 0 && len(m.setupLog) > 0 {
 		height -= fit.logRows + 1
 	}
@@ -514,7 +335,7 @@ func (m Model) setupRestingHeight(fit setupFit, height int) int {
 }
 
 // setupBody stacks the launch column: wordmark, composer with its scan summary,
-// the target list, the live command menu, feedback and the key hints. Sections
+// the target list, feedback and the key hints. Sections
 // are separated by a blank line; the composer and its summary read as one unit.
 func (m Model) setupBody(fit setupFit) string {
 	parts := make([]string, 0, 6)
@@ -522,9 +343,6 @@ func (m Model) setupBody(fit setupFit) string {
 		parts = append(parts, header)
 	}
 	parts = append(parts, m.setupComposer(fit.width))
-	if menu := m.commandMenuViewLimit(fit.width, fit.menuRows); menu != "" {
-		parts = append(parts, menu)
-	}
 	if log := m.setupLogView(fit); log != "" {
 		parts = append(parts, log)
 	}
@@ -678,10 +496,10 @@ func (m Model) setupHintsView(width int) string {
 	key := lipgloss.NewStyle().Foreground(white).Render
 	label := render.Dim().Render
 	hint := func(k, text string) string { return key(k) + label(" "+text) }
-	left := hint("enter", "launch scan") + label("   ") + hint("/", "commands") +
+	left := hint("enter", "launch scan") + label("   ") + hint("shift+enter", "newline") +
 		label("   ") + hint("ctrl+c", "quit")
 	if lipgloss.Width(left) > inner {
-		left = hint("/", "commands")
+		left = hint("enter", "launch scan")
 	}
 	right := label("v" + appVersion)
 	gap := inner - lipgloss.Width(left) - lipgloss.Width(right)
@@ -702,20 +520,4 @@ func (m *Model) syncMountPrompt() {
 	case m.snapshot.PendingMount == "" && m.modal == modalConfirmMount:
 		m.closeModal()
 	}
-}
-
-// optionWindow returns a [start,end) slice that keeps the cursor visible within
-// a scrolling window of at most size rows.
-func optionWindow(cursor, length, size int) (int, int) {
-	if length <= size {
-		return 0, length
-	}
-	start := cursor - size + 1
-	if start < 0 {
-		start = 0
-	}
-	if start > length-size {
-		start = length - size
-	}
-	return start, start + size
 }

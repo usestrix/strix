@@ -451,14 +451,10 @@ func (m Model) mainView() string {
 		Border(lipgloss.RoundedBorder()).BorderForeground(inputBorder).PaddingLeft(1).
 		Render(m.highlightInputSelection(m.input.View()))
 
-	// Chat column: chat history, optional status row, live slash-command menu,
-	// then input — all chat-width.
+	// Chat column: chat history, optional status row, then input — all chat-width.
 	leftParts := []string{chat}
 	if m.statusVisible() {
 		leftParts = append(leftParts, m.statusView(chatWidth))
-	}
-	if menu := m.commandMenuView(chatWidth); menu != "" {
-		leftParts = append(leftParts, menu)
 	}
 	leftParts = append(leftParts, input)
 	leftColumn := strings.Join(leftParts, "\n")
