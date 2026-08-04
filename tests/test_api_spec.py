@@ -1,4 +1,4 @@
-"""Tests for spec recognition and base-URL extraction in strix.core.api_spec."""
+"""Tests for spec recognition and base-URL extraction in strix.interface.utils."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ import pytest
 import requests
 import yaml
 
-from strix.core.api_spec import (
+from strix.interface.utils import (
     SpecParseError,
     classify_spec,
     detect_spec_format,
