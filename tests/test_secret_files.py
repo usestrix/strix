@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from strix.utils.secret_files import SECRET_DIR_MODE, SECRET_FILE_MODE, write_secret_text
+from strix.utils.secret_files import SECRET_FILE_MODE, write_secret_text
 
 
 if TYPE_CHECKING:
@@ -35,13 +35,6 @@ def test_file_is_owner_only(tmp_path: Path) -> None:
     target = tmp_path / "auth.json"
     write_secret_text(target, "{}")
     assert stat.S_IMODE(target.stat().st_mode) == SECRET_FILE_MODE
-
-
-@posix_only
-def test_directory_is_owner_only(tmp_path: Path) -> None:
-    target = tmp_path / "created" / "auth.json"
-    write_secret_text(target, "{}")
-    assert stat.S_IMODE(target.parent.stat().st_mode) == SECRET_DIR_MODE
 
 
 @posix_only

@@ -12,7 +12,6 @@ if TYPE_CHECKING:
 
 
 SECRET_FILE_MODE = 0o600
-SECRET_DIR_MODE = 0o700
 
 
 def write_secret_text(path: Path, text: str) -> None:
@@ -22,8 +21,6 @@ def write_secret_text(path: Path, text: str) -> None:
     would leave the contents world-readable in between.
     """
     path.parent.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError):
-        path.parent.chmod(SECRET_DIR_MODE)
 
     tmp = path.with_suffix(path.suffix + ".tmp")
     # O_CREAT does not apply the mode to an existing file, so a temporary left
