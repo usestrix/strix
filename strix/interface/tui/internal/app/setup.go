@@ -214,8 +214,11 @@ func (m *Model) setupLogAppend(line string) {
 }
 
 // setupMsg appends a styled feedback line (success green, error red, notice dim).
+// The log budgets rows by entry, so a message is flattened to one line first: a
+// wrapped exception would otherwise render as several rows and push the launch
+// column past the bottom of the terminal.
 func (m *Model) setupMsg(text string, style lipgloss.Style) {
-	m.setupLogAppend(style.Render(text))
+	m.setupLogAppend(style.Render(flattenStatus(text)))
 }
 
 // setupLogRows is how many feedback lines the launch column shows before the

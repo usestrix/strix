@@ -1169,3 +1169,62 @@ func TestChatContentRerendersOnWidthAndExpansionChange(t *testing.T) {
 		}
 	}
 }
+
+// A model or backend failure can be a wrapped exception hundreds of columns
+// wide and several lines long. The status row is one line of the chat column, so
+// an oversized one widens the whole column - JoinHorizontal pads every row to the
+// widest - which pushed the sidebar off screen and wrapped the frame.
+func TestLongErrorDoesNotBreakTheFrame(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 120, 24
+	model.showSplash = false
+	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{ScanState: "running"}))
+	bootstrap := protocol.CollectionBootstrap{
+		Collection: "agents", Revision: 1, Cursor: 0, NextCursor: 1, Done: true,
+		Items: []json.RawMessage{rawJSON(t, protocol.Agent{ID: "a0", Name: "Strix", Status: "running"})},
+	}
+	model.handleEnvelope(protocol.Envelope{
+		Version: protocol.Version, Type: "collection_bootstrap", Payload: rawJSON(t, bootstrap),
+	})
+	model.errorText = "litellm.APIConnectionError: OpenrouterException - Connection error " +
+		"while calling https://openrouter.ai/api/v1/chat/completions: HTTPSConnectionPool" +
+		"(host='openrouter.ai', port=443): Max retries exceeded\nTraceback (most recent " +
+		"call last):\n  File \"/x/y.py\", line 42, in send\n    raise err"
+	model.resizeViewport()
+
+	lines := strings.Split(model.View(), "\n")
+	if len(lines) > model.height {
+		t.Fatalf("frame is %d rows in a %d-row terminal", len(lines), model.height)
+	}
+	for i, line := range lines {
+		if width := ansi.StringWidth(line); width > model.width {
+			t.Fatalf("row %d is %d columns in a %d-column terminal", i, width, model.width)
+		}
+	}
+	// The sidebar has to survive: its panels are the right edge of the frame.
+	if !strings.Contains(ansi.Strip(model.View()), "Strix") {
+		t.Fatal("the agent tree was pushed out of the frame")
+	}
+}
+
+func TestStatusMessageFlattensAndKeepsItsHint(t *testing.T) {
+	row := ansi.Strip(statusMessage("boom\nsecond line\twith tabs", red, " · Send message to resume", 60))
+
+	if strings.Contains(row, "\n") || strings.Contains(row, "\t") {
+		t.Fatalf("status row is not a single line: %q", row)
+	}
+	if !strings.HasSuffix(row, " · Send message to resume") {
+		t.Fatalf("the hint was lost: %q", row)
+	}
+	if !strings.Contains(row, "boom second line with tabs") {
+		t.Fatalf("the message was mangled: %q", row)
+	}
+	// A message far too long for the row keeps the hint readable.
+	long := ansi.Strip(statusMessage(strings.Repeat("x", 500), red, " · Send message to resume", 60))
+	if width := ansi.StringWidth(long); width > 60 {
+		t.Fatalf("status message is %d columns, want at most 60", width)
+	}
+	if !strings.HasSuffix(long, " · Send message to resume") {
+		t.Fatalf("the hint was clipped away: %q", long)
+	}
+}

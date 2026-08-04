@@ -93,3 +93,25 @@ func TestFocusedPanelsCarryTheGreenBorder(t *testing.T) {
 		}
 	}
 }
+
+// A wrapped exception is several lines. The log budgets rows by entry, so it has
+// to become one row or the launch column grows past the terminal.
+func TestSetupLogKeepsMultiLineErrorsToOneRow(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 100, 26
+	model.showSplash = false
+	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{SetupMode: true, ScanState: "setup"}))
+	model.setupMsg("boom\nTraceback (most recent call last):\n  File \"x.py\", line 1\n    raise", render.Col(red))
+	model.resizeViewport()
+
+	if entries := len(model.setupLog); entries != 1 {
+		t.Fatalf("one message became %d log entries", entries)
+	}
+	if strings.Contains(model.setupLog[0], "\n") {
+		t.Fatalf("log entry spans rows: %q", model.setupLog[0])
+	}
+	lines := strings.Split(model.View(), "\n")
+	if len(lines) > model.height {
+		t.Fatalf("start screen is %d rows in a %d-row terminal", len(lines), model.height)
+	}
+}

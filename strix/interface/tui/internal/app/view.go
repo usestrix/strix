@@ -654,8 +654,7 @@ func (m Model) statusView(width int) string {
 		case "waiting":
 			left = lipgloss.NewStyle().Foreground(dim).Render("Send message to resume")
 			if msg := agent.ErrorMessage; msg != "" {
-				left = lipgloss.NewStyle().Foreground(red).Render(msg) +
-					lipgloss.NewStyle().Foreground(dim).Render(" · Send message to resume")
+				left = statusMessage(msg, red, " · Send message to resume", width)
 			}
 		case "budget_paused":
 			left = lipgloss.NewStyle().Foreground(amber).Render("Budget limit reached") +
@@ -670,15 +669,35 @@ func (m Model) statusView(width int) string {
 			if msg == "" {
 				msg = "Agent failed"
 			}
-			left = lipgloss.NewStyle().Foreground(red).Render(msg) +
-				lipgloss.NewStyle().Foreground(dim).Render(" · Send message to resume")
+			left = statusMessage(msg, red, " · Send message to resume", width)
 		}
 	}
 	if m.errorText != "" {
-		left = lipgloss.NewStyle().Foreground(red).Render(m.errorText)
+		left = statusMessage(m.errorText, red, "", width-lipgloss.Width(right))
 	}
+	// The row is one line of the chat column, and a wider one would widen the
+	// whole column: JoinHorizontal pads every row to the widest, which pushes the
+	// sidebar off screen and wraps the frame. Nothing here may exceed its width.
+	left = truncate(left, max(1, width-2-lipgloss.Width(right)))
 	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
 	return " " + left + strings.Repeat(" ", max(1, gap-1)) + right
+}
+
+// statusMessage fits a message and its trailing hint on the one status row. A
+// model or backend error can be a wrapped exception several lines long, so it is
+// flattened to a single line and clipped, leaving the hint readable.
+func statusMessage(message string, color lipgloss.Color, hint string, width int) string {
+	styledHint := lipgloss.NewStyle().Foreground(dim).Render(hint)
+	room := max(1, width-2-lipgloss.Width(styledHint))
+	flat := truncate(flattenStatus(message), room)
+	return lipgloss.NewStyle().Foreground(color).Render(flat) + styledHint
+}
+
+// flattenStatus turns a multi-line message into one line, collapsing the runs of
+// whitespace that joining its lines leaves behind.
+func flattenStatus(message string) string {
+	message = strings.NewReplacer("\r\n", " ", "\r", " ", "\n", " ", "\t", " ").Replace(message)
+	return strings.Join(strings.Fields(message), " ")
 }
 
 func (m Model) sweepView() string {
