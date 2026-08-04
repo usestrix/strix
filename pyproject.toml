@@ -67,6 +67,7 @@ dev = [
   "pyinstaller>=6.17.0; python_version >= '3.12' and python_version < '3.15'",
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
+  "types-requests>=2.32",
 ]
 
 [tool.pytest.ini_options]
