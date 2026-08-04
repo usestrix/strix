@@ -164,7 +164,7 @@ func wrapBlock(value string, width int) string {
 	return strings.Join(out, "\n")
 }
 
-func verticalScrollbar(height, total, visible, offset int) string {
+func verticalScrollbar(height, total, visible, offset int, thumb lipgloss.Color) string {
 	if height <= 0 || total <= visible {
 		return ""
 	}
@@ -177,11 +177,10 @@ func verticalScrollbar(height, total, visible, offset int) string {
 		maxOffset := total - visible
 		thumbStart = (height - thumbHeight) * min(max(0, offset), maxOffset) / maxOffset
 	}
-	trackStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#262626"))
-	thumbStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#737373"))
+	thumbStyle := lipgloss.NewStyle().Foreground(thumb)
 	bar := make([]string, height)
 	for row := range bar {
-		bar[row] = trackStyle.Render("│")
+		bar[row] = " "
 		if row >= thumbStart && row < thumbStart+thumbHeight {
 			bar[row] = thumbStyle.Render("█")
 		}
@@ -189,17 +188,19 @@ func verticalScrollbar(height, total, visible, offset int) string {
 	return strings.Join(bar, "\n")
 }
 
+// withVerticalScrollbar reserves a single column for the bar, and only while the
+// panel actually overflows.
 func withVerticalScrollbar(
 	content string,
 	width, height, total, visible, offset int,
+	thumb lipgloss.Color,
 ) string {
 	if total <= visible {
 		return fixedPanelBody(content, width, height)
 	}
-	bodyWidth := max(1, width-2)
-	body := fixedPanelBody(content, bodyWidth, height)
-	bar := verticalScrollbar(height, total, visible, offset)
-	return lipgloss.JoinHorizontal(lipgloss.Top, body, " ", bar)
+	body := fixedPanelBody(content, max(1, width-1), height)
+	bar := verticalScrollbar(height, total, visible, offset, thumb)
+	return lipgloss.JoinHorizontal(lipgloss.Top, body, bar)
 }
 
 func visibleContent(content string, offset, height int) string {
@@ -423,6 +424,7 @@ func (m Model) renderChatPane(width, height int, border lipgloss.Color) string {
 		m.viewport.TotalLineCount(),
 		m.viewport.VisibleLineCount(),
 		m.viewport.YOffset,
+		thumbTrace,
 	)
 	out := lipgloss.NewStyle().Width(width).Height(height).
 		Border(lipgloss.RoundedBorder()).BorderForeground(border).Render(trace)
@@ -476,12 +478,13 @@ func (m Model) sidebarView(width, height int) string {
 	agentRows := max(1, agentHeight-4)
 	agentEntries := agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)
 	agents := withVerticalScrollbar(
-		m.agentsView(max(1, width-6), agentRows),
+		m.agentsView(max(1, width-5), agentRows),
 		width-4,
 		agentRows,
 		len(agentEntries),
 		agentRows,
 		m.agentOffset,
+		thumbAgents,
 	)
 	agentBorder := dark
 	if m.focus == focusAgents {
@@ -499,12 +502,13 @@ func (m Model) sidebarView(width, height int) string {
 		vulnRows := max(1, vulnHeight-2)
 		totalRows, offsetRows := m.vulnerabilityScrollRows()
 		findings := withVerticalScrollbar(
-			m.vulnerabilitiesView(max(1, width-6), vulnRows),
+			m.vulnerabilitiesView(max(1, width-5), vulnRows),
 			width-4,
 			vulnRows,
 			totalRows,
 			vulnRows,
 			offsetRows,
+			thumbFindings,
 		)
 		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(vulnRows).Border(lipgloss.RoundedBorder()).BorderForeground(vulnBorder).Padding(0, 1).Render(findings))
 	}

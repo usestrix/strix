@@ -210,17 +210,24 @@ func truncatePath(path string, width int) string {
 // cornerPrompt renders a compact two-button prompt for the corner of the live
 // view, sized to its content rather than centered like the modal dialogs.
 func (m Model) cornerPrompt(title, body string, width int, confirmLabel, cancelLabel string) string {
-	yes := lipgloss.NewStyle().Foreground(amber).Bold(true).Render(confirmLabel)
-	no := lipgloss.NewStyle().Foreground(dim).Bold(true).Render(cancelLabel)
-	if m.modalChoice == 0 {
-		yes = lipgloss.NewStyle().Background(amber).Foreground(brightWhite).Bold(true).Render(" " + confirmLabel + " ")
-	} else {
-		no = lipgloss.NewStyle().Background(lipgloss.Color("#363636")).Foreground(brightWhite).Bold(true).Render(" " + cancelLabel + " ")
+	// Each label keeps its padding whether or not it is focused, so moving the
+	// choice repaints a background instead of shifting the pair sideways.
+	button := func(label string, focused bool, fill lipgloss.Color) string {
+		style := lipgloss.NewStyle().Bold(true)
+		if focused {
+			return style.Background(fill).Foreground(brightWhite).Render(" " + label + " ")
+		}
+		return style.Foreground(fill).Render(" " + label + " ")
+	}
+	yes := button(confirmLabel, m.modalChoice == 0, amber)
+	no := button(cancelLabel, m.modalChoice != 0, dim)
+	if m.modalChoice != 0 {
+		no = button(cancelLabel, true, lipgloss.Color("#3e3e3e"))
 	}
 	inner := lipgloss.NewStyle().Width(width - 4)
 	content := inner.Render(title) + "\n" + inner.Render(body) + "\n" +
-		inner.Align(lipgloss.Right).Render(yes+"  "+no)
-	return lipgloss.NewStyle().Width(width).Border(lipgloss.RoundedBorder()).
+		inner.Align(lipgloss.Right).Render(yes+" "+no)
+	return lipgloss.NewStyle().Width(width-2).Border(lipgloss.RoundedBorder()).
 		BorderForeground(amber).Background(black).Padding(0, 1).Render(content)
 }
 
@@ -232,22 +239,35 @@ func (m Model) confirmDialog(
 	border, titleColor, confirmColor lipgloss.Color,
 	confirmLabel, cancelLabel string,
 ) string {
-	// The affirmative takes the accent color, the cancel the default variant
-	// (#737373); the focused button fills its background with white text.
-	yes := lipgloss.NewStyle().Foreground(confirmColor).Bold(true).Render(confirmLabel)
-	no := lipgloss.NewStyle().Foreground(dim).Bold(true).Render(cancelLabel)
-	if m.modalChoice == 0 {
-		yes = lipgloss.NewStyle().Background(confirmColor).Foreground(brightWhite).Bold(true).Render(" " + confirmLabel + " ")
-	} else {
-		no = lipgloss.NewStyle().Background(lipgloss.Color("#363636")).Foreground(brightWhite).Bold(true).Render(" " + cancelLabel + " ")
+	// Two equal columns with a one-cell gutter. The buttons keep their columns
+	// whichever one is focused, so moving the choice repaints a background
+	// instead of shifting the row.
+	contentWidth := width - 4
+	inner := lipgloss.NewStyle().Width(contentWidth)
+	// Two columns share the content width with a one-cell gutter; the label
+	// carries a space on each side before it is centered in its column.
+	leftColumn := (contentWidth - 1) / 2
+	rightColumn := contentWidth - 1 - leftColumn
+	button := func(label string, column int, focused bool, fill lipgloss.Color) string {
+		style := lipgloss.NewStyle().Width(column).Align(lipgloss.Center).Bold(true)
+		if focused {
+			return style.Background(fill).Foreground(brightWhite).Render(" " + label + " ")
+		}
+		return style.Foreground(fill).Render(" " + label + " ")
 	}
-	inner := lipgloss.NewStyle().Width(width - 4)
+	yes := button(confirmLabel, leftColumn, m.modalChoice == 0, confirmColor)
+	no := button(cancelLabel, rightColumn, false, dim)
+	if m.modalChoice != 0 {
+		no = button(cancelLabel, rightColumn, true, lipgloss.Color("#3e3e3e"))
+	}
 	content := inner.Bold(true).Foreground(titleColor).Align(lipgloss.Center).Render(title)
 	if body != "" {
 		content += "\n\n" + inner.Render(body)
 	}
-	content += "\n\n" + inner.Align(lipgloss.Center).Render(yes+"     "+no)
-	return lipgloss.NewStyle().Width(width).Border(lipgloss.RoundedBorder()).BorderForeground(border).Background(black).Padding(1).Render(content)
+	content += "\n\n" + inner.Align(lipgloss.Center).Render(yes+" "+no)
+	// Width() sets the content box, so the border's two columns come off it to
+	// keep the dialog the width the design calls for.
+	return lipgloss.NewStyle().Width(width - 2).Border(lipgloss.RoundedBorder()).BorderForeground(border).Background(black).Padding(1).Render(content)
 }
 
 // vulnerabilityBody ports VulnerabilityDetailScreen._render_vulnerability:

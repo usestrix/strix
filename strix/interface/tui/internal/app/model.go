@@ -150,6 +150,22 @@ var (
 	black       = lipgloss.Color("#000000")
 )
 
+// Agent tree colors: a uniform label, dim guides, and a filled block cursor.
+const (
+	treeLabel    = lipgloss.Color("#e7e5e4")
+	treeGuide    = lipgloss.Color("#4f4f4f")
+	treeCursorFg = lipgloss.Color("#ddedf9")
+	treeCursorBg = lipgloss.Color("#0178d4")
+)
+
+// Scrollbar thumbs. Each panel keeps its own, and the track stays blank so a
+// scrollable panel does not gain a visible rule down its edge.
+const (
+	thumbTrace    = lipgloss.Color("#1a1a1a")
+	thumbAgents   = lipgloss.Color("#404040")
+	thumbFindings = lipgloss.Color("#333333")
+)
+
 // Composer placeholders. The launch screen falls back to the short prompt when
 // the column is too narrow to show the full one without clipping it.
 const (

@@ -701,8 +701,15 @@ func TestAgentTreeUsesDepthFirstOrderAndStableSelectionPosition(t *testing.T) {
 	if got, want := strings.Join(order, ","), "root,a,a-child,b"; got != want {
 		t.Fatalf("agent tree order = %q, want %q", got, want)
 	}
-	if view := ansi.Strip(model.agentsView(50, 10)); !strings.Contains(view, "⏷") {
-		t.Fatalf("expanded agent does not show the large disclosure icon: %s", view)
+	if view := ansi.Strip(model.agentsView(50, 10)); !strings.Contains(view, "▼") {
+		t.Fatalf("expanded agent does not show its toggle: %s", view)
+	}
+	// A leaf carries no toggle at all, so its icon sits where a parent's
+	// toggle would be.
+	for _, line := range strings.Split(ansi.Strip(model.agentsView(50, 10)), "\n") {
+		if strings.Contains(line, "Agent B") && !strings.HasSuffix(line, "└─ ⚪ Agent B") {
+			t.Fatalf("leaf row reserved toggle space: %q", line)
+		}
 	}
 
 	model.selectedAgent = 1
@@ -723,6 +730,12 @@ func TestAgentTreeUsesDepthFirstOrderAndStableSelectionPosition(t *testing.T) {
 		t.Fatalf("selection moved agent label from column %d to %d", unselected, selected)
 	}
 
+	// The cursor is a filled block behind the label; no row carries a gutter
+	// accent, which would indent every node past the panel padding.
+	if strings.ContainsAny(selectedView, "┃") {
+		t.Fatalf("agent rows drew a gutter accent: %s", selectedView)
+	}
+
 	model.focus = focusAgents
 	model.selectedAgent = 1
 	updated, _ := model.updateMain(tea.KeyMsg{Type: tea.KeyDown})
@@ -739,8 +752,8 @@ func TestAgentTreeUsesDepthFirstOrderAndStableSelectionPosition(t *testing.T) {
 			t.Fatal("collapsed parent still rendered its child")
 		}
 	}
-	if view := ansi.Strip(result.agentsView(50, 10)); !strings.Contains(view, "⏵") {
-		t.Fatalf("collapsed agent does not show the large disclosure icon: %s", view)
+	if view := ansi.Strip(result.agentsView(50, 10)); !strings.Contains(view, "▶") {
+		t.Fatalf("collapsed agent does not show its toggle: %s", view)
 	}
 }
 
@@ -816,21 +829,35 @@ func TestRunningViewerShowsCompleteWrappedURL(t *testing.T) {
 }
 
 func TestVerticalScrollbarThumbTracksScrollOffset(t *testing.T) {
-	top := strings.Split(ansi.Strip(verticalScrollbar(6, 24, 6, 0)), "\n")
-	bottom := strings.Split(ansi.Strip(verticalScrollbar(6, 24, 6, 18)), "\n")
+	top := strings.Split(ansi.Strip(verticalScrollbar(6, 24, 6, 0, thumbAgents)), "\n")
+	bottom := strings.Split(ansi.Strip(verticalScrollbar(6, 24, 6, 18, thumbAgents)), "\n")
 
-	if top[0] != "█" || top[5] != "│" {
+	// The track is blank, so only the thumb is drawn.
+	if top[0] != "█" || top[5] != " " {
 		t.Fatalf("top scrollbar is incorrect: %#v", top)
 	}
-	if bottom[0] != "│" || bottom[5] != "█" {
+	if bottom[0] != " " || bottom[5] != "█" {
 		t.Fatalf("bottom scrollbar is incorrect: %#v", bottom)
 	}
-	if full := verticalScrollbar(4, 4, 4, 0); full != "" {
+	if full := verticalScrollbar(4, 4, 4, 0, thumbAgents); full != "" {
 		t.Fatalf("non-overflowing scrollbar should be hidden: %q", full)
 	}
-	withoutBar := ansi.Strip(withVerticalScrollbar("content", 12, 2, 2, 2, 0))
-	if strings.ContainsAny(withoutBar, "│█") {
+	withoutBar := ansi.Strip(withVerticalScrollbar("content", 12, 2, 2, 2, 0, thumbAgents))
+	if strings.ContainsAny(withoutBar, "█") {
 		t.Fatalf("non-overflowing panel rendered a scrollbar: %q", withoutBar)
+	}
+}
+
+// The bar takes exactly one column, so a scrolling panel keeps the rest.
+func TestVerticalScrollbarOccupiesOneColumn(t *testing.T) {
+	rows := strings.Split(withVerticalScrollbar("content", 12, 2, 24, 2, 0, thumbTrace), "\n")
+	for _, row := range rows {
+		if width := ansi.StringWidth(row); width != 12 {
+			t.Fatalf("scrolling panel row width = %d, want 12", width)
+		}
+	}
+	if !strings.Contains(ansi.Strip(rows[0]), "█") {
+		t.Fatalf("thumb missing from the first row: %q", rows[0])
 	}
 }
 

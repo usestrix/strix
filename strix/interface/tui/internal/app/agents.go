@@ -167,24 +167,26 @@ func (m Model) agentsView(width, height int) string {
 		if count := m.agentVulnCount(agent.ID); count > 0 {
 			vulnSuffix = fmt.Sprintf(" (%d)", count)
 		}
-		disclosure := "  "
+		// Only a node with children carries a toggle; a leaf renders none at all,
+		// so its icon sits where its parent's toggle would be.
+		disclosure := ""
 		if hasAgentChildren(agent.ID, m.snapshot.Agents) {
-			disclosure = "⏷ "
+			disclosure = "▼ "
 			if m.collapsedAgents[agent.ID] {
-				disclosure = "⏵ "
+				disclosure = "▶ "
 			}
 		}
-		label := entry.prefix + disclosure + icon + " " + agent.Name + vulnSuffix
-		// Reserve the left border and padding on every row so selection changes
-		// only color/weight, never the node's horizontal position.
-		style := lipgloss.NewStyle().Foreground(lipgloss.Color("#d6d3d1")).BorderLeft(true).BorderStyle(lipgloss.ThickBorder()).BorderForeground(black).PaddingLeft(1)
-		if entry.depth > 0 {
-			style = style.Foreground(lipgloss.Color("#a8a29e"))
-		}
+		label := disclosure + icon + " " + agent.Name + vulnSuffix
+		// The guides are dim and stay outside the cursor; the cursor is a filled
+		// block behind the label alone.
+		labelStyle := lipgloss.NewStyle().Foreground(treeLabel)
 		if entry.index == m.selectedAgent {
-			style = style.Bold(true).Foreground(white).BorderForeground(lipgloss.Color("#d6d3d1"))
+			labelStyle = labelStyle.Foreground(treeCursorFg).Background(treeCursorBg).Bold(true)
 		}
-		lines = append(lines, style.Render(truncate(label, max(1, width-2))))
+		room := max(1, width-lipgloss.Width(entry.prefix))
+		lines = append(lines,
+			lipgloss.NewStyle().Foreground(treeGuide).Render(entry.prefix)+
+				labelStyle.Render(truncate(label, room)))
 	}
 	return strings.Join(lines, "\n")
 }
