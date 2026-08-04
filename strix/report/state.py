@@ -1,6 +1,7 @@
 import json
 import logging
 import subprocess
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -95,6 +96,8 @@ def get_global_report_state() -> Optional["ReportState"]:
 def set_global_report_state(report_state: "ReportState") -> None:
     global _global_report_state  # noqa: PLW0603
     _global_report_state = report_state
+    # New run: drop any streamed-cost entries a prior run left unconsumed.
+    streamed_openrouter_costs.clear()
 
 
 class ReportState:
@@ -507,6 +510,72 @@ class ReportState:
         self._sync_llm_usage_record()
 
 
+def openrouter_stream_cost(usage: Any) -> float | None:
+    """Total OpenRouter-reported cost from a raw stream ``usage`` block, or None.
+
+    Non-BYOK responses bill everything to ``usage.cost``. BYOK responses put the
+    OpenRouter fee in ``usage.cost`` (often 0) and the provider charge in
+    ``usage.cost_details.upstream_inference_cost``, so BYOK totals sum the two.
+    """
+    if not isinstance(usage, dict):
+        return None
+    total = 0.0
+    cost = usage.get("cost")
+    if isinstance(cost, int | float) and cost > 0:
+        total += float(cost)
+    if bool(usage.get("is_byok")):
+        details = usage.get("cost_details")
+        upstream = details.get("upstream_inference_cost") if isinstance(details, dict) else None
+        if isinstance(upstream, int | float) and upstream > 0:
+            total += float(upstream)
+    return total if total > 0 else None
+
+
+def _response_id(completion_response: Any) -> str | None:
+    response_id = getattr(completion_response, "id", None)
+    if response_id is None and isinstance(completion_response, dict):
+        response_id = cast("dict[str, Any]", completion_response).get("id")
+    return response_id if isinstance(response_id, str) and response_id else None
+
+
+class StreamedOpenRouterCosts:
+    """Correlates OpenRouter's per-stream cost from the parser to the cost callback.
+
+    LiteLLM rebuilds streamed responses from token-only chunks and drops the
+    ``usage.cost`` OpenRouter reports in its final stream chunk (its non-streamed
+    path preserves it; streaming snapshots hidden params at stream start). Every
+    scan streams, so the OpenRouter streaming handler (see strix.config.models)
+    records the cost here keyed by response id, and the callback takes it back out
+    for the matching rebuilt response. Entries are removed on read; ``clear()``
+    runs per scan so nothing accumulates across runs.
+    """
+
+    def __init__(self) -> None:
+        self._costs: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def remember(self, response_id: Any, usage: Any) -> None:
+        cost = openrouter_stream_cost(usage)
+        if cost is None or not (isinstance(response_id, str) and response_id):
+            return
+        with self._lock:
+            self._costs[response_id] = cost
+
+    def take(self, completion_response: Any) -> float | None:
+        response_id = _response_id(completion_response)
+        if response_id is None:
+            return None
+        with self._lock:
+            return self._costs.pop(response_id, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._costs.clear()
+
+
+streamed_openrouter_costs = StreamedOpenRouterCosts()
+
+
 def litellm_cost_callback(
     kwargs: Any,
     completion_response: Any,
@@ -540,6 +609,11 @@ def litellm_cost_callback(
 
     if cost is None:
         cost = _usage_reported_cost(completion_response)
+
+    # Recover the exact OpenRouter cost the streaming handler stashed for this
+    # response — LiteLLM drops it from streamed usage, so nothing above sees it.
+    if cost is None:
+        cost = streamed_openrouter_costs.take(completion_response)
 
     if cost is None:
         cost = _estimate_response_cost(kwargs, completion_response)

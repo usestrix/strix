@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import logging
 import urllib.parse
-import urllib.request
 from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
+import requests
+
 from strix.config import load_settings
 from strix.telemetry._common import (
+    SEND_TIMEOUT,
     SESSION_ID,
     base_props,
     get_version,
@@ -42,8 +44,7 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
         url = f"{_SCARF_ENDPOINT}{path}"
         if query:
             url = f"{url}?{query}"
-        req = urllib.request.Request(url, method="POST")  # noqa: S310
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
+        with requests.post(url, timeout=SEND_TIMEOUT):
             pass
     except Exception:  # noqa: BLE001
         logger.debug("scarf send failed for event %s", event, exc_info=True)

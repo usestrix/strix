@@ -54,18 +54,17 @@ CT logs record nearly every publicly-trusted certificate. Query by domain (match
 
 ## Recommended Tooling
 
-Prefer the projectdiscovery suite (already available in the sandbox and pipeline-friendly with JSON output):
+These tools are available in the sandbox and are pipeline-friendly with JSON output:
 
 - **`subfinder`** — passive subdomain aggregation across many sources incl. CT: `subfinder -d example.com -all -recursive -silent -oJ -o subs.jsonl`
-- **`tlsx`** — TLS/cert data at scale; grab SANs and issuer/org to pivot: `tlsx -l hosts.txt -san -cn -tls-version -json -o tls.jsonl`
-- **`uncover`** — query Shodan/Censys/Fofa/Quake/crt.sh engines from one CLI: `uncover -q 'ssl:"Example Inc"' -e shodan,censys,fofa -json`
-- **`asnmap`** — org/domain/ASN → CIDR ranges: `asnmap -d example.com -json` / `asnmap -org "Example Inc"`
-- **`mapcidr`** — expand/aggregate CIDRs into host lists for probing: `mapcidr -cidr 192.0.2.0/24 -o hosts.txt`
-- **`dnsx`** — fast resolution, PTR, and wildcard filtering: `dnsx -l names.txt -a -aaaa -cname -ptr -resp -json -o dns.jsonl`
-- **`httpx`** — live probing + cert grab in one pass (see methodology).
+- **`httpx`** — live probing plus cert/SAN grab in one pass: `httpx -l hosts.txt -tls-grab -json` (see methodology).
 - **`naabu`** — port sweep for non-HTTP services: `naabu -list hosts.txt -top-ports 100 -verify -silent`
+- **`curl` + `jq`** — direct **crt.sh** JSON queries for CT (no key needed) and other index APIs.
+- **`openssl s_client`** — active read of a live host's cert to extract SANs/CN.
+- **`dig`** / **`nslookup`** — forward/reverse (PTR) resolution and CNAME chains.
+- **`whois`** — ASN/netblock lookups (e.g. `whois -h whois.cymru.com`).
 
-Also useful: **`amass`** (`amass intel`/`enum` for ASN, cert, and passive sources), **`cero`** (bulk SAN extraction from IPs/ranges), and direct **crt.sh** JSON queries when no keys are configured. Cross-source results — CT + passive DNS + `subfinder` together beat any single source.
+Cross-source results — CT + passive DNS + `subfinder` together beat any single source. If you need a tool that is not installed, install it into the sandbox at runtime.
 
 ## Key Techniques
 
@@ -75,7 +74,7 @@ Every new name, PTR result, CNAME target, and cert SAN becomes a fresh seed. Loo
 
 ### Cert-Fingerprint Pivoting
 
-Search Censys/Shodan (or `uncover`) by a cert's `fingerprint_sha256` to find every other host presenting the same certificate — the strongest cross-asset link for tying acquisitions and shadow infra to the target.
+Search Censys/Shodan by a cert's `fingerprint_sha256` to find every other host presenting the same certificate — the strongest cross-asset link for tying acquisitions and shadow infra to the target.
 
 ### Naming-Convention Inference
 
@@ -83,11 +82,11 @@ Wildcard SANs and observed hostnames expose the org's naming scheme; generate ta
 
 ### IP-First Discovery
 
-For ASN-owned ranges, sweep IPs directly with `naabu`/`httpx` and read served certs (`tlsx`) to find services that have no DNS name at all.
+For ASN-owned ranges, sweep IPs directly with `naabu`/`httpx` and read served certs (`httpx -tls-grab`, or `openssl s_client`) to find services that have no DNS name at all.
 
 ## Advanced Techniques
 
-- **Active SAN harvesting** across whole ranges with `tlsx`/`cero` recovers internal hostnames never logged to public CT.
+- **Active SAN harvesting** across whole ranges with `httpx -tls-grab` (or `openssl s_client`) recovers internal hostnames never logged to public CT.
 - **Favicon and response hashing** (`httpx -favicon`, hash pivots in Shodan) clusters instances of the same app across unrelated hostnames.
 - **Vhost differentials**: probe a single IP with multiple `Host:` values to unmask co-located apps behind one address.
 - **Historical CT/DNS diffing** highlights recently issued certs and newly appearing hosts — high-signal for fresh or misconfigured deployments.
@@ -108,11 +107,11 @@ For ASN-owned ranges, sweep IPs directly with `naabu`/`httpx` and read served ce
 ## Testing Methodology
 
 1. **Seed** - domains, org/legal names, known IPs, email domains, code-host org
-2. **Certificate transparency** - pull all logged certs per seed domain and org name (crt.sh, `uncover`)
-3. **SAN/CN extraction** - parse every Subject CN and SAN with `tlsx`; each new name is a new seed
-4. **Passive DNS** - resolve forward and reverse with `dnsx`; harvest historical records
-5. **ASN/IP mapping** - `asnmap` → `mapcidr` to expand owned ranges, then sweep for live hosts
-6. **Active TLS pivot** - `tlsx`/`cero` on live IPs/ports to grab SANs missing from public CT
+2. **Certificate transparency** - pull all logged certs per seed domain and org name (crt.sh, Censys/Shodan)
+3. **SAN/CN extraction** - parse every Subject CN and SAN with `httpx -tls-grab` (or `openssl s_client`); each new name is a new seed
+4. **Passive DNS** - resolve forward and reverse with `dig`; harvest historical records
+5. **ASN/IP mapping** - `whois` the netblock/ASN to expand owned ranges, then sweep for live hosts
+6. **Active TLS pivot** - `httpx -tls-grab` on live IPs/ports to grab SANs missing from public CT
 7. **Consolidate & probe** - dedupe, `httpx` probe, classify, and route to specialists
 
 ## Validation
@@ -139,13 +138,13 @@ For ASN-owned ranges, sweep IPs directly with `naabu`/`httpx` and read served ce
 ## Pro Tips
 
 1. Loop the pipeline — every SAN, PTR, and CNAME target is a new seed until the set converges.
-2. crt.sh is the cheapest high-yield source (no key); Censys/Shodan via `uncover` add cert-fingerprint and vhost pivoting when keys exist.
-3. Always cert-grab live hosts with `tlsx` — active SANs catch internal hostnames never sent to public CT.
+2. crt.sh is the cheapest high-yield source (no key); Censys/Shodan add cert-fingerprint and vhost pivoting when keys exist.
+3. Always cert-grab live hosts with `httpx -tls-grab` (or `openssl s_client`) — active SANs catch internal hostnames never sent to public CT.
 4. Internal-looking SANs (`*.internal`, `*.svc.cluster.local`, staging names) are the highest-signal leads.
 5. Wildcard SANs reveal naming conventions — seed targeted guesses instead of blind brute force.
 6. Cluster by function, not product name, so the workflow generalizes to any exposed service.
-7. Keep JSON output throughout so stages chain cleanly (`subfinder` → `dnsx` → `httpx` → `naabu`).
+7. Keep JSON output throughout so stages chain cleanly (`subfinder` → `dig` → `httpx` → `naabu`).
 
 ## Summary
 
-Broad passive discovery — CT + TLS SAN pivoting + passive DNS + ASN/IP mapping, looped until convergence — finds the assets brute force misses, especially internal-named and forgotten services leaked through certificates. Build the inventory with the projectdiscovery suite, probe and classify it generically, then route each interesting asset to the specialist skill for its class.
+Broad passive discovery — CT + TLS SAN pivoting + passive DNS + ASN/IP mapping, looped until convergence — finds the assets brute force misses, especially internal-named and forgotten services leaked through certificates. Build the inventory with `subfinder`, `httpx`, `naabu`, and CT/DNS/cert queries, probe and classify it generically, then route each interesting asset to the specialist skill for its class.

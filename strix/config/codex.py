@@ -18,11 +18,13 @@ import logging
 import secrets
 import threading
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+
+import requests
+
+from strix.utils.secret_files import write_secret_text
 
 
 if TYPE_CHECKING:
@@ -67,14 +69,7 @@ def _read_store() -> dict[str, Any]:
 
 
 def _write_store(data: dict[str, Any]) -> None:
-    AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp = AUTH_PATH.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    with contextlib.suppress(OSError):
-        tmp.chmod(0o600)
-    tmp.replace(AUTH_PATH)
-    with contextlib.suppress(OSError):
-        AUTH_PATH.chmod(0o600)
+    write_secret_text(AUTH_PATH, json.dumps(data, indent=2))
 
 
 def read_record() -> dict[str, Any] | None:
@@ -221,26 +216,23 @@ def _first(query: dict[str, list[str]], key: str) -> str | None:
 
 
 def _post_form(payload: dict[str, str]) -> dict[str, Any]:
-    body = urllib.parse.urlencode(payload).encode("ascii")
-    request = urllib.request.Request(  # noqa: S310 - fixed https OAuth endpoint
-        TOKEN_URL,
-        data=body,
-        headers={
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
+    detail = ""
     try:
-        with urllib.request.urlopen(  # noqa: S310  # nosec B310 - fixed https endpoint
-            request, timeout=_TOKEN_TIMEOUT
+        with requests.post(
+            TOKEN_URL,
+            data=payload,
+            headers={"Accept": "application/json"},
+            timeout=_TOKEN_TIMEOUT,
         ) as response:
-            data = json.loads(response.read() or b"{}")
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode("utf-8", "replace")[:300]
-        raise CodexAuthError("token_http_error", f"HTTP {exc.code}: {detail}") from exc
-    except (urllib.error.URLError, TimeoutError, OSError) as exc:
+            status_code = response.status_code
+            body = response.content
+            if status_code >= 400:
+                detail = response.text[:300]
+    except requests.RequestException as exc:
         raise CodexAuthError("unavailable", str(exc)) from exc
+    if status_code >= 400:
+        raise CodexAuthError("token_http_error", f"HTTP {status_code}: {detail}")
+    data = json.loads(body or b"{}")
     if not isinstance(data, dict):
         raise CodexAuthError("bad_response", "token endpoint returned non-object")
     return data

@@ -13,6 +13,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.runner import run_strix_scan
 from strix.report.state import ReportState, set_global_report_state
 from strix.runtime import session_manager
@@ -20,6 +21,7 @@ from strix.runtime import session_manager
 from .utils import (
     build_live_stats_text,
     format_vulnerability_report,
+    has_model_response,
 )
 
 
@@ -134,10 +136,16 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     set_global_report_state(report_state)
 
+    startup_phase: list[str] = ["Starting up"]
+
     def create_live_status() -> Panel:
         status_text = Text()
         status_text.append("Penetration test in progress", style="bold #22c55e")
         status_text.append("\n\n")
+
+        if not has_model_response(report_state):
+            status_text.append(f"{startup_phase[0]}...", style="dim")
+            status_text.append("\n\n")
 
         stats_text = build_live_stats_text(report_state)
         if stats_text:
@@ -150,6 +158,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             border_style="#22c55e",
             padding=(1, 2),
         )
+
+    def _note_startup_phase(phase: str) -> None:
+        startup_phase[:] = [phase]
 
     try:
         console.print()
@@ -184,6 +195,8 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     local_sources=getattr(args, "local_sources", None) or [],
                     interactive=bool(getattr(args, "interactive", False)),
                     max_budget_usd=getattr(args, "max_budget_usd", None),
+                    max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
+                    status_sink=_note_startup_phase,
                 )
             finally:
                 stop_updates.set()

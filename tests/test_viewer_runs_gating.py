@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING
 
-from strix.viewer.server import build_runs_payload, resolve_run_dir
+from strix.interface.viewer.server import build_runs_payload, resolve_run_dir
 
 
 if TYPE_CHECKING:

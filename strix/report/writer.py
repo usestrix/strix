@@ -10,7 +10,7 @@ import re
 import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pygments.lexers import PythonLexer, get_lexer_by_name, guess_lexer
 from pygments.lexers.special import TextLexer
@@ -74,10 +74,10 @@ def resolve_lexer(language: str | None, code: str) -> Lexer:
     try:
         lexer = guess_lexer(code)
     except ClassNotFound:
-        return PythonLexer()
+        return cast("Lexer", PythonLexer())
     # ``guess_lexer`` returns the plain-text lexer when it can't detect anything.
     if isinstance(lexer, TextLexer):
-        return PythonLexer()
+        return cast("Lexer", PythonLexer())
     return lexer
 
 

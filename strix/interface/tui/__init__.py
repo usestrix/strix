@@ -1,6 +1,6 @@
-"""Textual TUI interface."""
+"""Terminal user interface: Go/Bubble Tea frontend plus its Python runtime and backend."""
 
-from strix.interface.tui.app import StrixTUIApp, run_tui
+from strix.interface.tui.live_view import TuiLiveView
 
 
-__all__ = ["StrixTUIApp", "run_tui"]
+__all__ = ["TuiLiveView"]

@@ -8,7 +8,9 @@ from pydantic import AliasChoices, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
-ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh"]
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+
+DEFAULT_MAX_TURNS = 500
 
 _BASE_CONFIG = SettingsConfigDict(
     case_sensitive=False,
@@ -24,6 +26,7 @@ class LlmSettings(BaseSettings):
     api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
+        repr=False,
     )
     api_base: str | None = Field(
         default=None,
@@ -35,10 +38,23 @@ class LlmSettings(BaseSettings):
             "OLLAMA_API_BASE",
         ),
     )
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        alias="LLM_EXTRA_HEADERS",
+        repr=False,
+    )
     reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
     force_required_tool_choice: bool = Field(
         default=False,
         alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
+    )
+    prompt_cache: bool = Field(
+        default=True,
+        alias="STRIX_PROMPT_CACHE",
+    )
+    disable_streaming: bool = Field(
+        default=False,
+        alias="LLM_DISABLE_STREAMING",
     )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
 
@@ -51,23 +67,43 @@ class DedupeSettings(BaseSettings):
         default=None,
         alias="STRIX_DEDUPE_REASONING_EFFORT",
     )
-    api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY")
+    api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY", repr=False)
     api_base: str | None = Field(default=None, alias="DEDUPE_LLM_API_BASE")
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        alias="DEDUPE_LLM_EXTRA_HEADERS",
+        repr=False,
+    )
+
+
+class ContextSettings(BaseSettings):
+    """Context-window management: per-tool-output caps and history compaction."""
+
+    model_config = _BASE_CONFIG
+
+    auto_compact: bool = Field(default=True, alias="STRIX_CONTEXT_AUTO_COMPACT")
+    compact_buffer_tokens: int = Field(default=20_000, gt=0, alias="STRIX_CONTEXT_BUFFER_TOKENS")
+    keep_tokens: int = Field(default=8_000, gt=0, alias="STRIX_CONTEXT_KEEP_TOKENS")
+    fallback_context_tokens: int = Field(
+        default=200_000, gt=0, alias="STRIX_CONTEXT_FALLBACK_TOKENS"
+    )
+    summary_max_tokens: int = Field(default=4_096, gt=0, alias="STRIX_CONTEXT_SUMMARY_TOKENS")
+    tool_output_max_tokens: int = Field(default=8_000, gt=0, alias="STRIX_TOOL_OUTPUT_MAX_TOKENS")
+    tool_output_max_lines: int = Field(default=2_000, gt=0, alias="STRIX_TOOL_OUTPUT_MAX_LINES")
+    # Floor above the truncation-notice size so a preview always fits.
+    tool_output_max_bytes: int = Field(
+        default=50 * 1024, ge=1024, alias="STRIX_TOOL_OUTPUT_MAX_BYTES"
+    )
 
 
 class RuntimeSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     image: str = Field(
-        default="ghcr.io/usestrix/strix-sandbox:1.1.0",
+        default="ghcr.io/usestrix/strix-sandbox:1.2.0",
         alias="STRIX_IMAGE",
     )
     backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
-    # Hard cap on a local target's size before we refuse to stream it into the
-    # sandbox file-by-file (the SDK copies every file individually, which stalls
-    # on large repos). Above this, the user must bind-mount via ``--mount``.
-    # Set to 0 (or less) to disable the pre-flight check entirely.
-    max_local_copy_mb: int = Field(default=1024, alias="STRIX_MAX_LOCAL_COPY_MB")
     # Max screenshot/image tool outputs kept live per agent context (0 = none).
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 
@@ -81,8 +117,16 @@ class TelemetrySettings(BaseSettings):
 class IntegrationSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
-    perplexity_api_key: str | None = Field(default=None, alias="PERPLEXITY_API_KEY")
-    postman_api_key: str | None = Field(default=None, alias="POSTMAN_API_KEY")
+    perplexity_api_key: str | None = Field(
+        default=None,
+        alias="PERPLEXITY_API_KEY",
+        repr=False,
+    )
+    postman_api_key: str | None = Field(
+        default=None,
+        alias="POSTMAN_API_KEY",
+        repr=False,
+    )
 
 
 class ViewerSettings(BaseSettings):
@@ -100,6 +144,7 @@ class Settings(BaseSettings):
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
     viewer: ViewerSettings = Field(default_factory=ViewerSettings)

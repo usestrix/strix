@@ -10,6 +10,9 @@ from openai.types.shared import Reasoning
 
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
+    bedrock_route_supports_prompt_caching,
+    is_bedrock_route,
+    is_claude_model,
     is_known_openai_bare_model,
     model_supports_reasoning,
     request_timeout_extra_args,
@@ -20,9 +23,6 @@ from strix.core.sessions import scrub_images_from_items
 
 if TYPE_CHECKING:
     from strix.config.settings import ReasoningEffort
-
-
-DEFAULT_MAX_TURNS = 500
 
 
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
@@ -80,8 +80,11 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
-            suffix = ", read-only mount" if details.get("mount") else ""
-            sections["Local Codebases"].append(f"- {path} (available at: {workspace_path}{suffix})")
+            sections["Local Codebases"].append(
+                f"- {path} (available at: {workspace_path}; "
+                "this is the user's real directory, mounted live and writable — "
+                ".git/.agents/.codex are read-only)"
+            )
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":
@@ -100,6 +103,23 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         if items:
             parts.append(f"\n\n{label}:")
             parts.extend(items)
+
+    # A workspace mount is a directory to work in, not an asset to test. It is
+    # listed apart from the targets so it never reads as scope.
+    if workspace_mount := scan_config.get("workspace_mount") or "":
+        subdir = scan_config.get("workspace_subdir") or ""
+        workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
+        parts.append("\n\nWorking Directory:")
+        parts.append(
+            f"- {workspace_mount} (available at: {workspace_path}; "
+            "this is the user's real directory, mounted live and writable — "
+            ".git/.agents/.codex are read-only)"
+        )
+        parts.append(
+            "- No scan target was set. This directory is where you work, not a "
+            "target to assess: the instructions below are the only source of "
+            "truth for what to do."
+        )
 
     parts.extend(_render_diff_scope(diff_scope))
 
@@ -154,12 +174,15 @@ def make_model_settings(
     model_name: str,
     force_required_tool_choice: bool = False,
     request_timeout: float | None = None,
+    prompt_cache: bool = True,
+    extra_headers: dict[str, str] | None = None,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),
+        extra_headers=dict(extra_headers) if extra_headers else None,
     )
     if (
         reasoning_effort is not None
@@ -167,11 +190,56 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
+            _reasoning_settings(reasoning_effort, model_settings.extra_args),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
+
+    cache_extra_args = _prompt_cache_extra_args(model_name) if prompt_cache else None
+    if cache_extra_args:
+        model_settings = model_settings.resolve(
+            ModelSettings(
+                extra_args={**(model_settings.extra_args or {}), **cache_extra_args},
+            ),
+        )
     return model_settings
+
+
+def _reasoning_settings(
+    effort: ReasoningEffort,
+    extra_args: dict[str, Any] | None,
+) -> ModelSettings:
+    """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
+    a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
+    which collapses every ``reasoning_effort`` level to plain thinking-enabled.
+    Providers that don't support ``max`` reject the request.
+    """
+    if effort != "max":
+        return ModelSettings(reasoning=Reasoning(effort=effort))
+    return ModelSettings(
+        extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
+    )
+
+
+def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
+    """LiteLLM ``cache_control_injection_points`` for Claude prompt caching.
+
+    System prompt + rolling last-message breakpoint everywhere; ``tool_config``
+    only on Bedrock Converse (the only route whose LiteLLM transform consumes
+    it — elsewhere it leaks onto the wire and native Anthropic 400s). Unmapped
+    Bedrock models get no points at all: Bedrock rejects the passed-through
+    field outright.
+    """
+    if not is_claude_model(model_name):
+        return None
+    if is_bedrock_route(model_name) and not bedrock_route_supports_prompt_caching(model_name):
+        return None
+
+    points: list[dict[str, Any]] = [{"location": "message", "role": "system"}]
+    if is_bedrock_route(model_name):
+        points.append({"location": "tool_config"})
+    points.append({"location": "message", "index": -1})
+    return {"cache_control_injection_points": points}
 
 
 def child_initial_input(

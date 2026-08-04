@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import contextlib
+import io
 import json
 import logging
 import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agents import RunConfig
@@ -21,6 +23,7 @@ from strix.config.models import (
     configure_sdk_model_defaults,
     uses_chat_completions_tool_schema,
 )
+from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
     respawn_subagents,
@@ -29,22 +32,28 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import BudgetExceededError, ReportUsageHooks
+from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
-    DEFAULT_MAX_TURNS,
     build_root_task,
     build_scope_context,
     make_model_settings,
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
+from strix.tools.output_store import (
+    WORKSPACE_SPILL_DIR,
+    configure_spill_writer,
+)
 
 
 if TYPE_CHECKING:
     from agents.memory import SQLiteSession
     from agents.result import RunResultBase
+
+    from strix.runtime.status import StatusSink
 
 
 logger = logging.getLogger(__name__)
@@ -113,6 +122,7 @@ async def run_strix_scan(
     event_sink: StreamEventSink | None = None,
     root_instructions_override: str | None = None,
     extra_system_prompt_context: dict[str, Any] | None = None,
+    status_sink: StatusSink | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -122,6 +132,11 @@ async def run_strix_scan(
     context before prompt rendering. Child agents keep the standard scan prompt
     and context.
     """
+
+    def report(phase: str) -> None:
+        if status_sink is not None:
+            status_sink(phase)
+
     if scan_id is None:
         scan_id = f"scan-{uuid.uuid4().hex[:8]}"
 
@@ -179,6 +194,18 @@ async def run_strix_scan(
                 f"Cannot resume scan {scan_id}: missing SDK session database at {agents_db}",
             )
         await coordinator.restore(snap)
+        report_state = get_global_report_state()
+        if report_state is not None:
+            budget_stopped, reserve_stopped = recomputed_budget_flags(
+                report_state.get_total_llm_cost(),
+                max_budget_usd,
+                interactive=interactive,
+            )
+            await coordinator.reset_budget_stops(
+                budget_stopped=budget_stopped,
+                reserve_stopped=reserve_stopped,
+                budget_paused=interactive and coordinator.budget_paused,
+            )
         for aid, parent in coordinator.parent_of.items():
             if parent is None:
                 root_id = aid
@@ -200,8 +227,24 @@ async def run_strix_scan(
         scan_id,
         image=image,
         local_sources=local_sources or [],
+        status_sink=status_sink,
     )
+    report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
+
+    sandbox_session = bundle["session"]
+
+    async def _spill_to_workspace(output_id: str, text: str) -> str | None:
+        """Write an oversized tool result into the sandbox; return its path or None."""
+        path = f"{WORKSPACE_SPILL_DIR}/{output_id}.txt"
+        try:
+            await sandbox_session.write(Path(path), io.BytesIO(text.encode("utf-8")))
+        except Exception:
+            logger.exception("failed to spill tool output to sandbox workspace")
+            return None
+        return path
+
+    configure_spill_writer(_spill_to_workspace)
 
     sessions_to_close: list[SQLiteSession] = []
 
@@ -216,6 +259,8 @@ async def run_strix_scan(
             model_name=resolved_model,
             force_required_tool_choice=settings.llm.force_required_tool_choice,
             request_timeout=settings.llm.timeout,
+            prompt_cache=settings.llm.prompt_cache,
+            extra_headers=settings.llm.extra_headers,
         )
         run_config = RunConfig(
             model=resolved_model,
@@ -224,7 +269,14 @@ async def run_strix_scan(
             sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
             trace_include_sensitive_data=False,
         )
-        hooks = ReportUsageHooks(model=resolved_model, max_budget_usd=max_budget_usd)
+        hooks = ReportUsageHooks(
+            model=resolved_model,
+            max_budget_usd=max_budget_usd,
+            max_turns=max_turns,
+            interactive=interactive,
+        )
+        if interactive:
+            coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
@@ -399,6 +451,7 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "failed")
         raise
     finally:
+        configure_spill_writer(None)
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()

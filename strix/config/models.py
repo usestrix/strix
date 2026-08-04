@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import inspect
 import os
+import time
 from typing import TYPE_CHECKING, Any
 
 from agents import (
@@ -13,6 +14,8 @@ from agents import (
     set_tracing_disabled,
 )
 from agents.model_settings import ModelSettings
+from agents.models.fake_id import FAKE_RESPONSES_ID
+from agents.models.interface import Model
 from agents.models.multi_provider import MultiProvider
 from agents.models.openai_responses import OpenAIResponsesModel
 from agents.retry import (
@@ -21,6 +24,8 @@ from agents.retry import (
     RetryPolicyContext,
     retry_policies,
 )
+from openai.types.responses import Response, ResponseCompletedEvent
+from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
 
 from strix.config import codex
@@ -30,10 +35,17 @@ from strix.config.loader import load_settings
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
 
-    from agents.models.interface import Model, ModelProvider
+    from agents.agent_output import AgentOutputSchemaBase
+    from agents.handoffs import Handoff
+    from agents.items import ModelResponse, TResponseInputItem, TResponseStreamEvent
+    from agents.models.interface import ModelProvider, ModelTracing
+    from agents.retry import ModelRetryAdvice, ModelRetryAdviceRequest
+    from agents.tool import Tool
+    from agents.usage import Usage
     from openai import AsyncOpenAI
+    from openai.types.responses.response_prompt_param import ResponsePromptParam
 
-    from strix.config.settings import ReasoningEffort, Settings
+    from strix.config.settings import LlmSettings, ReasoningEffort, Settings
 
 
 def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
@@ -71,10 +83,13 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         effort = self._reasoning_effort
         if effort and effort != "none":
             # Clamp to efforts the backend accepts.
-            if effort == "minimal":
-                effort = "low"
-            elif effort == "xhigh":
-                effort = "high"
+            match effort:
+                case "minimal":
+                    effort = "low"
+                case "xhigh" | "max":
+                    effort = "high"
+                case _:
+                    pass
             overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=effort)))
         return model_settings.resolve(overrides)
 
@@ -135,6 +150,124 @@ class _CodexResponsesModel(OpenAIResponsesModel):
                     await result
 
 
+class _NonStreamingModel(Model):
+    """Serve the SDK's streamed run loop from a single non-streaming request.
+
+    Some OpenAI-compatible gateways do not support Server-Sent Events, or
+    deliver them unreliably (dropping structured tool-call deltas, or stalling
+    mid-stream so the whole turn waits out the read timeout). The SDK run loop
+    Strix uses only issues streamed requests, so such a gateway fails every
+    turn. Opt in with ``LLM_DISABLE_STREAMING=true`` to wrap the resolved model
+    so each turn makes one non-streaming ``get_response`` (``stream:false`` on
+    the wire) and the completed result is replayed as a single terminal stream
+    event. The run loop then executes tools and emits run items from that final
+    response exactly as it would for a real stream, so nothing else changes.
+    """
+
+    def __init__(self, inner: Model) -> None:
+        self._inner = inner
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+    def get_retry_advice(self, request: ModelRetryAdviceRequest) -> ModelRetryAdvice | None:
+        return self._inner.get_retry_advice(request)
+
+    async def get_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> ModelResponse:
+        return await self._inner.get_response(
+            system_instructions,
+            input,
+            model_settings,
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )
+
+    async def stream_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> AsyncIterator[TResponseStreamEvent]:
+        response = await self._inner.get_response(
+            system_instructions,
+            input,
+            model_settings,
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )
+        yield _completed_stream_event(response, getattr(self._inner, "model", None))
+
+
+def _completed_stream_event(
+    model_response: ModelResponse, model_name: object | None
+) -> TResponseStreamEvent:
+    """Wrap a non-streamed ``ModelResponse`` as the terminal event of a stream.
+
+    The run loop builds its authoritative per-turn response solely from the
+    ``response.completed`` event, so a single event carrying the full output
+    and usage is all it needs.
+    """
+    response = Response(
+        id=model_response.response_id or FAKE_RESPONSES_ID,
+        created_at=time.time(),
+        model=str(model_name) if model_name else "",
+        object="response",
+        output=list(model_response.output),
+        tool_choice="auto",
+        tools=[],
+        parallel_tool_calls=False,
+        usage=_response_usage(model_response.usage),
+    )
+    return ResponseCompletedEvent(
+        response=response,
+        sequence_number=0,
+        type="response.completed",
+    )
+
+
+def _response_usage(usage: Usage | None) -> ResponseUsage | None:
+    if usage is None:
+        return None
+    return ResponseUsage(
+        input_tokens=usage.input_tokens,
+        output_tokens=usage.output_tokens,
+        total_tokens=usage.total_tokens,
+        input_tokens_details=usage.input_tokens_details,
+        output_tokens_details=usage.output_tokens_details,
+    )
+
+
 class StrixProvider(MultiProvider):
     """Route any non-OpenAI prefix through LiteLLM with the prefix preserved,
     so users type ``deepseek/deepseek-chat`` rather than
@@ -159,14 +292,21 @@ class StrixProvider(MultiProvider):
         return self._get_fallback_provider("litellm"), original_model_name
 
     def get_model(self, model_name: str | None) -> Model:
+        llm = load_settings().llm
         slug = codex.subscription_model(model_name)
         if slug:
+            # The ChatGPT subscription backend is always streamed; it has no
+            # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
+            # does not apply here.
             return _CodexResponsesModel(
                 slug,
                 codex.get_subscription_client(),
-                reasoning_effort=load_settings().llm.reasoning_effort,
+                reasoning_effort=llm.reasoning_effort,
             )
-        return super().get_model(model_name)
+        model = super().get_model(model_name)
+        if llm.disable_streaming:
+            return _NonStreamingModel(model)
+        return model
 
 
 DEFAULT_MODEL_RETRY = ModelRetrySettings(
@@ -243,6 +383,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
         set_default_openai_api("chat_completions")
     else:
         set_default_openai_api("responses")
+    _configure_extra_headers(llm)
 
 
 def _mirror_api_key_to_provider_env(model_name: str | None, api_key: str) -> None:
@@ -277,6 +418,51 @@ def _configure_litellm_compatibility() -> None:
     litellm.suppress_debug_info = True
 
     _register_litellm_cost_callback()
+    _install_openrouter_stream_cost_capture()
+
+
+def _install_openrouter_stream_cost_capture() -> None:
+    """Preserve OpenRouter's per-stream cost, which LiteLLM drops when streaming.
+
+    OpenRouter reports the real charge in ``usage.cost`` of the final stream
+    chunk, but LiteLLM rebuilds streamed responses from token-only fields and
+    discards it (its non-streamed path stashes the cost in hidden params; the
+    streaming path does not). Every scan streams, so without this the cost is
+    lost and Strix falls back to a cost-map estimate that is missing entirely
+    for new models (e.g. kimi-k3), reporting $0. Subclass the OpenRouter
+    streaming handler to record the cost keyed by response id so the cost
+    callback can recover the exact charge for the matching rebuilt response.
+    """
+    import litellm
+    from litellm.llms.openrouter.chat.transformation import (
+        OpenRouterChatCompletionStreamingHandler,
+        OpenrouterConfig,
+    )
+
+    from strix.report.state import streamed_openrouter_costs
+
+    class _StrixOpenRouterStreamingHandler(OpenRouterChatCompletionStreamingHandler):
+        def chunk_parser(self, chunk: dict[str, Any]) -> Any:
+            stream = super().chunk_parser(chunk)
+            streamed_openrouter_costs.remember(
+                chunk.get("id") or getattr(stream, "id", None), chunk.get("usage")
+            )
+            return stream
+
+    class _StrixOpenrouterConfig(OpenrouterConfig):
+        def get_model_response_iterator(
+            self, streaming_response: Any, sync_stream: bool, json_mode: bool | None = False
+        ) -> Any:
+            return _StrixOpenRouterStreamingHandler(
+                streaming_response=streaming_response,
+                sync_stream=sync_stream,
+                json_mode=json_mode,
+            )
+
+    # LiteLLM's provider-config factory reads litellm.OpenrouterConfig at call
+    # time, so overriding the attribute is enough for the subclass to take
+    # effect. (type: ignore — mypy rejects reassigning a class attribute.)
+    litellm.OpenrouterConfig = _StrixOpenrouterConfig  # type: ignore[misc]
 
 
 _OPENROUTER_ATTRIBUTION_HEADERS = {
@@ -300,6 +486,43 @@ def _configure_openrouter_attribution(model_name: str | None) -> None:
         return
 
     litellm.headers = {**existing, **_OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
+
+
+def _configure_extra_headers(llm: LlmSettings) -> None:
+    """Send user-provided default headers on every LLM request.
+
+    Some OpenAI-compatible endpoints require extra HTTP headers (e.g. request
+    attribution or tenant routing) alongside the bearer token. Users supply
+    them via ``LLM_EXTRA_HEADERS``; they are applied to both routing paths:
+    the LiteLLM route (``litellm.headers``) and the SDK-native OpenAI route
+    (a default client carrying ``default_headers``), so they take effect
+    regardless of the ``STRIX_LLM`` prefix.
+    """
+    headers = llm.extra_headers
+    if not headers:
+        return
+    _merge_litellm_headers(headers)
+    _register_openai_client_with_headers(llm, headers)
+
+
+def _merge_litellm_headers(headers: dict[str, str]) -> None:
+    import litellm
+
+    current: object = litellm.headers
+    existing: dict[str, str] = current if isinstance(current, dict) else {}
+    litellm.headers = {**existing, **headers}  # type: ignore[assignment]
+
+
+def _register_openai_client_with_headers(llm: LlmSettings, headers: dict[str, str]) -> None:
+    from agents import set_default_openai_client
+    from openai import AsyncOpenAI
+
+    client = AsyncOpenAI(
+        api_key=llm.api_key or "not-needed",
+        base_url=llm.api_base,
+        default_headers=dict(headers),
+    )
+    set_default_openai_client(client, use_for_tracing=False)
 
 
 def _register_litellm_cost_callback() -> None:
@@ -429,3 +652,45 @@ def is_known_openai_bare_model(model_name: str) -> bool:
         return False
     entry = litellm.model_cost.get(name)
     return bool(entry and entry.get("litellm_provider") == "openai")
+
+
+def is_claude_model(model_name: str) -> bool:
+    return "claude" in (model_name or "").strip().lower()
+
+
+def is_bedrock_route(model_name: str) -> bool:
+    name = (model_name or "").strip().lower()
+    return name.startswith("bedrock/") or "anthropic." in name
+
+
+def _prompt_cache_name_candidates(model_name: str) -> list[str]:
+    # LiteLLM's model map keys the same model under several names; strip the
+    # route prefix, then leading dotted segments (region, provider).
+    name = (model_name or "").strip().lower()
+    for prefix in ("litellm/", "bedrock/"):
+        if name.startswith(prefix):
+            name = name[len(prefix) :]
+            break
+    candidates = [name]
+    rest = name
+    while "." in rest:
+        rest = rest.split(".", 1)[1]
+        candidates.append(rest)
+    return candidates
+
+
+def bedrock_route_supports_prompt_caching(model_name: str) -> bool:
+    # Bedrock rejects the cache marker for models LiteLLM's map doesn't
+    # recognise as cache-capable, so callers withhold it unless confirmed here.
+    import litellm
+
+    checker = getattr(getattr(litellm, "utils", None), "supports_prompt_caching", None)
+    for cand in _prompt_cache_name_candidates(model_name):
+        if checker is not None:
+            with contextlib.suppress(Exception):
+                if checker(cand):
+                    return True
+        entry = litellm.model_cost.get(cand)
+        if entry and entry.get("supports_prompt_caching"):
+            return True
+    return False

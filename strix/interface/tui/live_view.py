@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 if TYPE_CHECKING:
     from pathlib import Path
 
+from agents.tool import ToolOutputImage
+
 from strix.core.paths import runtime_state_dir
 from strix.interface.tui.history import load_session_history
 
@@ -20,9 +22,58 @@ class TuiLiveView:
         self.events: list[dict[str, Any]] = []
         self._next_event_id = 1
         self._open_assistant_event_by_agent: dict[str, dict[str, Any]] = {}
-        self._tool_event_by_call_id: dict[str, dict[str, Any]] = {}
+        self._tool_event_by_agent_and_call_id: dict[tuple[str, str], dict[str, Any]] = {}
+        self._user_instruction: str | None = None
+        self._user_instruction_at: str | None = None
+        self._user_instruction_shown = False
+
+    def set_user_instruction(self, text: str | None, *, timestamp: str | None = None) -> None:
+        """Open the transcript with what the user asked for.
+
+        The prompt from the start screen, ``--instruction`` and
+        ``--instruction-file`` all reach the agent folded into its task, which the
+        transcript does not show. This replays it as their first message instead,
+        once, against the root agent - which may not exist yet, so it is held
+        until that agent appears.
+        """
+        if self._user_instruction_shown or not (text or "").strip():
+            return
+        self._user_instruction = str(text).strip()
+        self._user_instruction_at = timestamp
+        self.flush_user_instruction()
+
+    def flush_user_instruction(self) -> bool:
+        """Post the held opening message once a root agent exists, once.
+
+        Driven from wherever the agent graph is refreshed rather than from
+        ``upsert_agent``, which subclasses override without calling back here.
+        Returns whether it posted, so callers can report the change.
+        """
+        if self._user_instruction_shown or not self._user_instruction:
+            return False
+        root_id = next(
+            (agent_id for agent_id, agent in self.agents.items() if agent.get("parent_id") is None),
+            None,
+        )
+        if root_id is None:
+            return False
+        self._user_instruction_shown = True
+        self._append_event(
+            root_id,
+            "chat",
+            {
+                "role": "user",
+                "content": self._user_instruction,
+                "metadata": {"source": "user_instruction"},
+            },
+            timestamp=self._user_instruction_at,
+        )
+        return True
 
     def hydrate_from_run_dir(self, run_dir: Path) -> None:
+        # Armed before the agents are added so the root agent's arrival puts the
+        # user's opening message ahead of the replayed history.
+        self._load_user_instruction(run_dir)
         state_dir = runtime_state_dir(run_dir)
         agents_path = state_dir / "agents.json"
         if not agents_path.exists():
@@ -45,14 +96,42 @@ class TuiLiveView:
                 parent_id=parent_of.get(agent_id) if isinstance(parent_of, dict) else None,
                 status=str(status),
             )
+        # Ahead of the replayed history, so it opens the transcript.
+        self.flush_user_instruction()
         self._hydrate_sdk_session_history(run_dir, statuses.keys())
 
+    def _load_user_instruction(self, run_dir: Path) -> None:
+        """Take the user's opening message from the run record, if it has one."""
+        try:
+            record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(record, dict):
+            return
+        instruction = record.get("user_instruction")
+        if not isinstance(instruction, str):
+            return
+        start_time = record.get("start_time")
+        # Stamped with the run's start so it sorts ahead of replayed history.
+        self.set_user_instruction(
+            instruction,
+            timestamp=start_time if isinstance(start_time, str) else None,
+        )
+
     def _hydrate_sdk_session_history(self, run_dir: Path, agent_ids: Any) -> None:
+        # An agent's first user turn is the task it was launched with, not
+        # something the user typed at it, so it is replayed as context rather
+        # than as a message.
+        tasked: set[str] = set()
         for agent_id, item, timestamp in load_session_history(run_dir, agent_ids):
+            first_user_turn = agent_id not in tasked
+            if item.get("role") == "user" and item.get("type") in {None, "message"}:
+                tasked.add(agent_id)
             self._ingest_session_history_item(
                 agent_id,
                 item,
                 timestamp=timestamp,
+                first_user_turn=first_user_turn,
             )
 
     def upsert_agent(
@@ -82,7 +161,7 @@ class TuiLiveView:
             current["parent_id"] = parent_id
         if status is not None:
             current["status"] = status
-        if error_message:
+        if error_message is not None:
             current["error_message"] = error_message
         current["updated_at"] = now
 
@@ -144,22 +223,30 @@ class TuiLiveView:
         item: dict[str, Any],
         *,
         timestamp: str,
+        first_user_turn: bool = False,
     ) -> None:
         item_type = item.get("type")
         role = item.get("role")
         if role in {"user", "assistant"} and (item_type in {None, "message"}):
             content = _session_message_text(item)
-            if content:
-                self._append_event(
-                    agent_id,
-                    "chat",
-                    {
-                        "role": role,
-                        "content": content,
-                        "metadata": {"source": "sdk_session"},
-                    },
-                    timestamp=timestamp,
-                )
+            if not content:
+                return
+            # A live run only shows what the user actually typed; the agent's
+            # task and the guidance the system feeds it stay out of the
+            # transcript. Replayed history has to make the same distinction, or
+            # resuming attributes all of it to the user.
+            if role == "user" and (first_user_turn or _is_internal_agent_turn(content)):
+                return
+            self._append_event(
+                agent_id,
+                "chat",
+                {
+                    "role": role,
+                    "content": content,
+                    "metadata": {"source": "sdk_session"},
+                },
+                timestamp=timestamp,
+            )
             return
 
         if item_type == "function_call":
@@ -223,7 +310,8 @@ class TuiLiveView:
         timestamp: str | None = None,
     ) -> None:
         call_id = call["call_id"]
-        existing = self._tool_event_by_call_id.get(call_id)
+        event_key = (agent_id, call_id)
+        existing = self._tool_event_by_agent_and_call_id.get(event_key)
         tool_data = {
             "tool_name": call["tool_name"],
             "args": call["args"],
@@ -233,7 +321,7 @@ class TuiLiveView:
         }
         if existing is None:
             event = self._append_event(agent_id, "tool", tool_data, timestamp=timestamp)
-            self._tool_event_by_call_id[call_id] = event
+            self._tool_event_by_agent_and_call_id[event_key] = event
         else:
             existing["data"].update(tool_data)
             self._bump_event(existing, timestamp=timestamp)
@@ -249,7 +337,8 @@ class TuiLiveView:
         timestamp: str | None = None,
     ) -> None:
         call_id = output["call_id"]
-        event = self._tool_event_by_call_id.get(call_id)
+        event_key = (agent_id, call_id)
+        event = self._tool_event_by_agent_and_call_id.get(event_key)
         if event is None:
             event = self._append_event(
                 agent_id,
@@ -263,9 +352,9 @@ class TuiLiveView:
                 },
                 timestamp=timestamp,
             )
-            self._tool_event_by_call_id[call_id] = event
+            self._tool_event_by_agent_and_call_id[event_key] = event
 
-        result = _parse_json_value(output["output"])
+        result = _normalize_image_result(_parse_json_value(output["output"]))
         event["data"]["result"] = result
         event["data"]["status"] = _tool_status_from_result(result)
         self._bump_event(event, timestamp=timestamp)
@@ -328,6 +417,35 @@ def _session_message_text(item: dict[str, Any]) -> str:
     return _message_content_text(item.get("content", ""))
 
 
+# Guidance the system feeds an agent is injected as a user turn, which is the
+# same shape a typed message takes, so replayed history cannot tell them apart by
+# role alone. These are the exact openings it arrives with. Matching the full
+# opening rather than just a leading bracket keeps pasted JSON, markdown links and
+# a typed "[URGENT] stop" out of it.
+_INTERNAL_TURN_PREFIXES = (
+    # strix.core.agents._message_to_session_item: everything the coordinator
+    # delivers from another agent or from the system, which wraps the stall,
+    # terminal and budget-extension notices in strix.core.execution too.
+    "[Message from ",
+    # strix.core.inputs.child_initial_input: a subagent's parent context.
+    "== Inherited context from parent",
+    # strix.core.execution: the no-tool-call recovery nudge, both modes.
+    "Your previous message ended a turn without a tool call.",
+    "Your previous response ended the autonomous Strix run without a lifecycle tool call.",
+    # strix.core.hooks: budget warnings, the only notices injected unwrapped.
+    *(
+        f"[{label}] {subject}"
+        for label in ("NOTICE", "URGENT", "CRITICAL")
+        for subject in ("Turn budget:", "Scan cost budget:")
+    ),
+)
+
+
+def _is_internal_agent_turn(content: str) -> bool:
+    """Report whether a replayed user turn is system guidance, not a typed message."""
+    return content.lstrip().startswith(_INTERNAL_TURN_PREFIXES)
+
+
 def _message_content_text(content: Any) -> str:
     parts: list[str] = []
     content_items = content if isinstance(content, list) else [content]
@@ -359,6 +477,30 @@ def _parse_json_value(value: Any) -> Any:
         return json.loads(value)
     except json.JSONDecodeError:
         return value
+
+
+def _normalize_image_result(result: Any) -> Any:
+    image_url = _image_url_from_result(result)
+    if image_url is None:
+        return result
+    return {"type": "image", "image_url": image_url}
+
+
+def _image_url_from_result(result: Any) -> str | None:
+    if isinstance(result, list):
+        for block in result:
+            url = _image_url_from_result(block)
+            if url is not None:
+                return url
+        return None
+    if isinstance(result, dict):
+        if result.get("type") in {"image", "input_image", "output_image"}:
+            url = result.get("image_url")
+            return url if isinstance(url, str) and url.startswith("data:image/") else None
+        return None
+    if isinstance(result, ToolOutputImage) and isinstance(result.image_url, str):
+        return result.image_url if result.image_url.startswith("data:image/") else None
+    return None
 
 
 def _tool_status_from_result(result: Any) -> str:
