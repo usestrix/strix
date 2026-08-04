@@ -675,12 +675,31 @@ func (m Model) statusView(width int) string {
 	if m.errorText != "" {
 		left = statusMessage(m.errorText, red, "", width-lipgloss.Width(right))
 	}
-	// The row is one line of the chat column, and a wider one would widen the
-	// whole column: JoinHorizontal pads every row to the widest, which pushes the
-	// sidebar off screen and wraps the frame. Nothing here may exceed its width.
-	left = truncate(left, max(1, width-2-lipgloss.Width(right)))
-	gap := max(1, width-lipgloss.Width(left)-lipgloss.Width(right))
-	return " " + left + strings.Repeat(" ", max(1, gap-1)) + right
+	return composeStatusRow(left, right, width)
+}
+
+// composeStatusRow lays the status text and the corner hint on one row exactly
+// width columns wide. A wider row would widen the whole chat column, because
+// JoinHorizontal pads every row of a block to its widest, which pushes the
+// sidebar off screen and wraps the frame.
+func composeStatusRow(left, right string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	const leading = 1 // the row is indented one column, like the panels above it
+	// A terminal can be narrower than the hint itself. Drop the hint rather than
+	// keep it at the cost of the status, which is the part carrying information;
+	// ctrl-q works whether or not the row has room to say so.
+	if lipgloss.Width(right) > 0 && width < lipgloss.Width(right)+leading+2 {
+		right = ""
+	}
+	separator := 0
+	if lipgloss.Width(right) > 0 {
+		separator = 1
+	}
+	left = truncate(left, max(0, width-leading-lipgloss.Width(right)-separator))
+	padding := max(0, width-leading-lipgloss.Width(left)-lipgloss.Width(right))
+	return " " + left + strings.Repeat(" ", padding) + right
 }
 
 // statusMessage fits a message and its trailing hint on the one status row. A

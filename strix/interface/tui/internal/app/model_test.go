@@ -1228,3 +1228,61 @@ func TestStatusMessageFlattensAndKeepsItsHint(t *testing.T) {
 		t.Fatalf("the hint was clipped away: %q", long)
 	}
 }
+
+// The status row must be exactly as wide as the column it sits in, at every
+// terminal size. A narrow terminal cannot fit the quit hint alongside any status
+// text, and keeping it anyway made the row wider than the terminal.
+func TestStatusRowIsExactlyItsWidth(t *testing.T) {
+	quitHint := lipgloss.NewStyle().Foreground(white).Render("ctrl-q") +
+		lipgloss.NewStyle().Foreground(dim).Render(" quit")
+	longMessage := lipgloss.NewStyle().Foreground(red).Render(strings.Repeat("boom ", 40))
+
+	for width := 1; width <= 60; width++ {
+		for _, testCase := range []struct {
+			name        string
+			left, right string
+		}{
+			{"empty", "", ""},
+			{"hint only", "", quitHint},
+			{"long message and hint", longMessage, quitHint},
+			{"long message alone", longMessage, ""},
+		} {
+			row := composeStatusRow(testCase.left, testCase.right, width)
+			if got := ansi.StringWidth(row); got != width {
+				t.Fatalf("%s at width %d rendered %d columns: %q",
+					testCase.name, width, got, ansi.Strip(row))
+			}
+			if strings.Contains(row, "\n") {
+				t.Fatalf("%s at width %d spans rows", testCase.name, width)
+			}
+		}
+	}
+	if row := composeStatusRow("x", "y", 0); row != "" {
+		t.Fatalf("a zero-width row should be empty, got %q", row)
+	}
+}
+
+// A running scan in a narrow terminal must not wrap the frame.
+func TestNarrowTerminalKeepsTheFrameIntact(t *testing.T) {
+	for _, width := range []int{8, 10, 13, 14, 20, 40} {
+		model := New(nil)
+		model.width, model.height = width, 20
+		model.showSplash = false
+		model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{ScanState: "running"}))
+		bootstrap := protocol.CollectionBootstrap{
+			Collection: "agents", Revision: 1, Cursor: 0, NextCursor: 1, Done: true,
+			Items: []json.RawMessage{rawJSON(t, protocol.Agent{ID: "a0", Name: "Strix", Status: "running"})},
+		}
+		model.handleEnvelope(protocol.Envelope{
+			Version: protocol.Version, Type: "collection_bootstrap", Payload: rawJSON(t, bootstrap),
+		})
+		model.errorText = strings.Repeat("connection failed ", 20)
+		model.resizeViewport()
+
+		for i, line := range strings.Split(model.View(), "\n") {
+			if got := ansi.StringWidth(line); got > width {
+				t.Fatalf("at width %d row %d is %d columns", width, i, got)
+			}
+		}
+	}
+}
