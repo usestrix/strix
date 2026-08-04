@@ -466,13 +466,19 @@ func (m Model) mainView() string {
 	return lipgloss.NewStyle().Background(black).Foreground(textColor).Render(body)
 }
 
-// The sidebar panels keep one border color whatever has focus: the stylesheet's
-// Tree:focus rule loses to the #agents_tree id selector, so it never applied, and
-// honoring it dropped the border to near-black and made it vanish.
+// Every panel that Tab can reach shows focus the way the chat and the composer
+// do, with a green border. The stylesheet asked for near-black on the tree
+// instead, through a Tree:focus rule that lost to the #agents_tree id selector
+// and so never applied - honoring it made the outline vanish on the one panel
+// that had just become active.
 func (m Model) sidebarView(width, height int) string {
 	// Stats box height fits its content (auto, max 15); vulns panel max-height 12.
 	statsBody := m.statsView()
 	statsHeight, vulnHeight, agentHeight := m.sidebarHeights()
+	agentBorder := dark
+	if m.focus == focusAgents {
+		agentBorder = green
+	}
 	// #agents_tree padding: 1 (all sides); interior lines = box - border - v.padding.
 	agentRows := max(1, agentHeight-4)
 	agentEntries := agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)
@@ -487,9 +493,13 @@ func (m Model) sidebarView(width, height int) string {
 	)
 	parts := []string{
 		lipgloss.NewStyle().Width(width-2).Height(m.viewerHeight()-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(m.viewerView(width - 4)),
-		lipgloss.NewStyle().Width(width-2).Height(agentHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(1, 1).Render(agents),
+		lipgloss.NewStyle().Width(width-2).Height(agentHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(agentBorder).Padding(1, 1).Render(agents),
 	}
 	if vulnHeight > 0 {
+		vulnBorder := dark
+		if m.focus == focusVulnerabilities {
+			vulnBorder = green
+		}
 		vulnRows := max(1, vulnHeight-2)
 		totalRows, offsetRows := m.vulnerabilityScrollRows()
 		findings := withVerticalScrollbar(
@@ -501,7 +511,7 @@ func (m Model) sidebarView(width, height int) string {
 			offsetRows,
 			thumbFindings,
 		)
-		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(vulnRows).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(findings))
+		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(vulnRows).Border(lipgloss.RoundedBorder()).BorderForeground(vulnBorder).Padding(0, 1).Render(findings))
 	}
 	parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(statsHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(statsBody))
 	return strings.Join(parts, "\n")

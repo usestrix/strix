@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/usestrix/strix/tui/internal/protocol"
 	"github.com/usestrix/strix/tui/internal/render"
 )
@@ -61,5 +63,33 @@ func TestRepeatedSetupStartFailureLogsOnce(t *testing.T) {
 	}
 	if got := len(model.setupLog); got != 1 {
 		t.Fatalf("three identical launch failures logged %d lines, want 1: %#v", got, model.setupLog)
+	}
+}
+
+// Every Tab-reachable panel shows focus with the same green border.
+func TestFocusedPanelsCarryTheGreenBorder(t *testing.T) {
+	// The profile is global; restore it so later tests still render unstyled.
+	previous := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(previous) })
+	lipgloss.SetColorProfile(termenv.TrueColor)
+	borderColorsOf := func(focus focusMode) string {
+		m := New(nil)
+		m.width, m.height = 130, 30
+		m.showSplash = false
+		m.snapshot.ScanState = "running"
+		m.snapshot.Agents = []protocol.Agent{{ID: "a0", Name: "Strix", Status: "running"}}
+		m.snapshot.Vulnerabilities = []map[string]any{{"title": "XSS", "severity": "high"}}
+		m.focus = focus
+		m.resizeViewport()
+		return m.sidebarView(26, m.height)
+	}
+	idle := borderColorsOf(focusInput)
+	if strings.Contains(idle, "34;197;94") {
+		t.Fatal("an unfocused sidebar panel drew a green border")
+	}
+	for _, focus := range []focusMode{focusAgents, focusVulnerabilities} {
+		if !strings.Contains(borderColorsOf(focus), "34;197;94") {
+			t.Fatalf("focus %v did not draw a green border", focus)
+		}
 	}
 }
