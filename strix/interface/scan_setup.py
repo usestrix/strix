@@ -17,27 +17,29 @@ from typing import TYPE_CHECKING, Any
 from strix.config import Settings, codex, load_settings
 from strix.core.paths import run_dir_for
 from strix.interface.utils import (
-    SpecParseError,
     assign_workspace_subdirs,
     clone_repository,
     collect_local_sources,
     dedupe_local_targets,
     derive_local_base_name,
-    fetch_postman_collection,
-    fetch_postman_environment,
     generate_run_name,
     infer_target_type,
     is_whitebox_scan,
-    load_spec,
     read_target_list_file,
     resolve_diff_scope_context,
     rewrite_localhost_targets,
-    spec_base_urls,
-    spec_title,
     stage_api_specs,
     write_fetched_collection,
 )
 from strix.telemetry import posthog, scarf
+from strix.utils.api_spec import (
+    SpecParseError,
+    fetch_postman_collection,
+    fetch_postman_environment,
+    load_spec,
+    spec_base_urls,
+    spec_title,
+)
 
 
 if TYPE_CHECKING:
