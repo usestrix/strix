@@ -370,8 +370,19 @@ func (m Model) setupContent() string {
 	return strings.TrimSuffix(b.String(), "\n")
 }
 
-// setupLogAppend records a chronological line in the setup scrollback.
-func (m *Model) setupLogAppend(line string) { m.setupLog = append(m.setupLog, line) }
+// setupLogAppend records a chronological line in the setup scrollback. A line
+// that is already there moves to the end instead of being repeated: retrying a
+// launch that cannot succeed yet - no model configured, no target - would
+// otherwise push the same pair of lines until they were all the log held.
+func (m *Model) setupLogAppend(line string) {
+	for i, existing := range m.setupLog {
+		if existing == line {
+			m.setupLog = append(m.setupLog[:i], m.setupLog[i+1:]...)
+			break
+		}
+	}
+	m.setupLog = append(m.setupLog, line)
+}
 
 // setupMsg appends a styled feedback line (success green, error red, notice dim).
 func (m *Model) setupMsg(text string, style lipgloss.Style) {
