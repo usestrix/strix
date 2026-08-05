@@ -110,15 +110,76 @@ resolution (npm `overrides` / yarn `resolutions` / pnpm `pnpm.overrides` /
 Maven `dependencyManagement` / Gradle resolution strategy / `go mod edit`),
 not just "upgrade <vulnerable pkg> to <fixed>".
 
+### Usage / reachability analysis (required for every dependency CVE)
+
+For every CVE you are about to report, run a static usage analysis and record
+the result in the structured `reachability` + `reachability_evidence` fields.
+The level is an **evidence ladder, never an exploitability verdict** — claim
+only what you proved, and cite the proof. It never changes severity (that is
+`advisory_cvss` alone); it exists so the reader can prioritize.
+
+**Go — use govulncheck (real call-graph analysis):**
+
+```bash
+# Symbol-level: reports only vulnerabilities whose vulnerable functions are
+# actually reachable from application code. Needs the Go toolchain + module
+# deps; if either is missing, fall back to the checks below rather than
+# claiming a level.
+if command -v govulncheck >/dev/null && go version >/dev/null 2>&1; then
+  govulncheck -format json ./... > "$ART/govulncheck.json" || true
+fi
+```
+
+- A finding with a call stack ⇒ `reachability=reachable_call_path`, put the
+  call-path excerpt (entrypoint → vulnerable function) in
+  `reachability_evidence`.
+- Listed as affecting a required module but with no reachable symbol ⇒ fall
+  back to the import/symbol checks below (`imported` / `not_imported`).
+
+**All other ecosystems — import check, then symbol match:**
+
+1. **Import check.** Search application code (exclude lockfiles, vendored
+   deps, `node_modules`, build output) for imports of the vulnerable package:
+   `ast-grep`/`rg` for `import`/`require`/`from X import` of the package (and
+   its ecosystem import name, which may differ from the registry name, e.g.
+   `PyYAML` → `yaml`). No hits ⇒ `not_imported`, with the search scope stated
+   in `reachability_evidence`. For a **transitive** dependency, the check is
+   whether application code imports it directly; if not, it is reachable only
+   through the direct dependency — check whether the direct dep's usage can
+   hit it (if unclear, use `imported` when the direct dep is used at all).
+2. **Symbol match.** Read the advisory (GHSA/NVD/OSV `affected[].ecosystem_specific.imports` or the
+   advisory text) for the affected functions/classes/APIs. Search application
+   code for those symbols (`ast-grep` pattern or `rg -n`). Hits ⇒
+   `vulnerable_symbol_used`, with repo-relative `file:line` of each hit (up
+   to a handful) in `reachability_evidence`. Imported but no affected-symbol
+   usage found (or the advisory names no symbols) ⇒ `imported`.
+3. If the analysis was not performed or is inconclusive (obfuscated code,
+   dynamic loading, unparsable sources) ⇒ `unknown` and say why in
+   `assumptions`.
+
+Cheap-first budgeting: the import check is one search per package — always do
+it. Do the symbol match at least for every `critical`/`high`/KEV CVE; batch
+the searches. Never let this analysis stall reporting — `unknown` with a
+reason beats an unverified claim.
+
+Anti-overclaim rules:
+
+- `not_imported` still does NOT mean safe (dynamic `import()`/reflection/
+  framework wiring evade static search) — never phrase it as "not exploitable".
+- `reachable_call_path` is reserved for call-graph tools (govulncheck); a
+  symbol grep hit is `vulnerable_symbol_used`, no matter how convinced you are.
+- The tool rejects any level other than `unknown` without
+  `reachability_evidence`.
+
 ### Reachability is a confidence modifier, not a gate
 
 Do NOT suppress or downgrade a known CVE just because you could not prove the
 vulnerable code path is reachable. Report it, set `advisory_cvss` from the
-advisory, and use `assumptions` to note reachability (e.g. "the vulnerable
-`template()` API does not appear to be imported in application code, so practical
-exploitability is uncertain"). If you *can* show reachability or chain it into a
-dynamic exploit, do that and report it as a normal dynamic finding with
-`create_vulnerability_report` instead.
+advisory, record the usage analysis in `reachability`/`reachability_evidence`,
+and use `assumptions` for anything softer. If you *can* actually trigger the
+vulnerable path or chain it into a dynamic exploit, additionally report that
+as a normal dynamic finding with `create_vulnerability_report` (the standalone
+CVE stays in its own `create_dependency_report`).
 
 ## Reporting
 
@@ -152,7 +213,8 @@ findings and rejects empty PoC fields):
 - Set `cwe` to the most specific `CWE-NNN` when the advisory names one.
 - Do NOT cap severity at LOW just because there is no dynamic reproduction — use
   the advisory score.
-- Use `assumptions` for reachability/exploitability caveats.
+- Set `reachability` + `reachability_evidence` from the usage analysis above;
+  use `assumptions` for anything softer (confidence, caveats, analysis limits).
 
 Verify the CVE with `web_search` when available before reporting. Never guess or
 hallucinate a CVE id.
@@ -168,3 +230,5 @@ hallucinate a CVE id.
 - Do not silently drop a known CVE because it lacks a dynamic PoC — that is the
   exact failure this skill prevents.
 - Do not downgrade advisory severity for lack of dynamic reproduction.
+- Do not claim a `reachability` level the evidence does not prove — `unknown`
+  with a reason is always acceptable; an overclaimed level never is.

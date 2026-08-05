@@ -719,6 +719,17 @@ def _dependency_severity(advisory_cvss: float | None) -> tuple[float, str]:
     return score, "none"
 
 
+_VALID_REACHABILITY = frozenset(
+    {
+        "not_imported",
+        "imported",
+        "vulnerable_symbol_used",
+        "reachable_call_path",
+        "unknown",
+    }
+)
+
+
 def _build_dependency_metadata(
     *,
     package_name: str,
@@ -727,6 +738,8 @@ def _build_dependency_metadata(
     fixed_version: str | None,
     introduced_by: str | None,
     dependency_path: str | None,
+    reachability: str | None = None,
+    reachability_evidence: str | None = None,
 ) -> dict[str, str]:
     metadata = {
         "package_name": package_name.strip(),
@@ -740,7 +753,23 @@ def _build_dependency_metadata(
         metadata["introduced_by"] = introduced_by.strip()
     if dependency_path and dependency_path.strip():
         metadata["dependency_path"] = dependency_path.strip()
+    # "unknown" is the absent case — omitting it keeps the jsonb contract clean,
+    # and evidence without a level would have nothing to qualify.
+    if reachability and reachability.strip() and reachability.strip() != "unknown":
+        metadata["reachability"] = reachability.strip()
+        if reachability_evidence and reachability_evidence.strip():
+            metadata["reachability_evidence"] = reachability_evidence.strip()
     return metadata
+
+
+_REACHABILITY_EVIDENCE_LABELS = {
+    "not_imported": "not imported by application code",
+    "imported": "imported by application code; affected API usage unconfirmed",
+    "vulnerable_symbol_used": "the advisory's affected API is used in application code",
+    "reachable_call_path": (
+        "a call path from application code to the vulnerable function was proven"
+    ),
+}
 
 
 def _build_dependency_evidence(
@@ -751,6 +780,8 @@ def _build_dependency_evidence(
     fixed_version: str | None,
     introduced_by: str | None,
     dependency_path: str | None,
+    reachability: str | None = None,
+    reachability_evidence: str | None = None,
 ) -> str:
     evidence = (
         f"**Advisory evidence:** `{cve}` applies to `{package_name}` "
@@ -765,6 +796,15 @@ def _build_dependency_evidence(
         )
     if dependency_path and dependency_path.strip():
         evidence += f"\n\n**Dependency chain:** `{dependency_path.strip()}`"
+    label = _REACHABILITY_EVIDENCE_LABELS.get((reachability or "").strip().lower())
+    if label:
+        evidence += f"\n\n**Usage analysis:** {label}."
+        if reachability_evidence and reachability_evidence.strip():
+            evidence += f" {reachability_evidence.strip()}"
+        evidence += (
+            " This is a prioritization signal from static analysis, not a"
+            " proof of exploitability or of safety."
+        )
     return evidence
 
 
@@ -787,6 +827,8 @@ async def _do_create_dependency(  # noqa: PLR0912
     fix_effort: str,
     introduced_by: str | None = None,
     dependency_path: str | None = None,
+    reachability: str = "unknown",
+    reachability_evidence: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
@@ -823,6 +865,18 @@ async def _do_create_dependency(  # noqa: PLR0912
             f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
         )
 
+    reachability = (reachability or "unknown").strip().lower()
+    if reachability not in _VALID_REACHABILITY:
+        errors.append(
+            f"Invalid reachability: {reachability!r}. Must be one of: {sorted(_VALID_REACHABILITY)}"
+        )
+    elif reachability != "unknown" and not (reachability_evidence or "").strip():
+        errors.append(
+            "reachability_evidence is required when reachability is not 'unknown': "
+            "cite the concrete proof (import file:line, matched symbol usage, or "
+            "govulncheck call path). Never claim a reachability level without evidence."
+        )
+
     if advisory_cvss is None:
         errors.append(
             "advisory_cvss is required: read the published advisory base score "
@@ -843,6 +897,8 @@ async def _do_create_dependency(  # noqa: PLR0912
         fixed_version=fixed_version,
         introduced_by=introduced_by,
         dependency_path=dependency_path,
+        reachability=reachability,
+        reachability_evidence=reachability_evidence,
     )
     evidence = _build_dependency_evidence(
         cve=parsed_cve,
@@ -851,6 +907,8 @@ async def _do_create_dependency(  # noqa: PLR0912
         fixed_version=fixed_version,
         introduced_by=introduced_by,
         dependency_path=dependency_path,
+        reachability=reachability,
+        reachability_evidence=reachability_evidence,
     )
 
     try:
@@ -949,6 +1007,8 @@ async def create_dependency_report(
     fix_effort: str = "low",
     introduced_by: str | None = None,
     dependency_path: str | None = None,
+    reachability: str = "unknown",
+    reachability_evidence: str | None = None,
 ) -> str:
     """File a known-CVE dependency (SCA) finding — one report per CVE x package.
 
@@ -973,9 +1033,26 @@ async def create_dependency_report(
     - Re-reporting the same CVE/package already filed.
 
     **Reachability**: do NOT silently downgrade or suppress a finding
-    because the vulnerable code path may be unreachable — instead state
-    reachability as an ``assumptions`` / confidence factor. Report the
-    finding; let the reader weigh exploitability.
+    because the vulnerable code path may be unreachable — report it, and
+    record what the usage analysis showed via the structured
+    ``reachability`` + ``reachability_evidence`` fields (see the
+    dependency-cve-scanning skill for the analysis procedure). The level
+    is an evidence ladder, never an exploitability verdict:
+
+    - ``not_imported`` — the package is never imported/required by
+      application code (strongest de-prioritization signal; still not
+      proof of safety — dynamic loading, reflection, or framework wiring
+      can evade static search).
+    - ``imported`` — application code imports the package, but usage of
+      the advisory's affected API was not confirmed.
+    - ``vulnerable_symbol_used`` — the advisory's affected
+      function/class/API appears in application code.
+    - ``reachable_call_path`` — a call-graph tool (e.g. ``govulncheck``)
+      proved a path from application code to the vulnerable function.
+    - ``unknown`` — usage analysis was not performed or was inconclusive.
+
+    Severity is still derived solely from ``advisory_cvss`` — the
+    reachability level never changes the rating, only prioritization.
 
     **Formatting**: use markdown in text fields (``**bold**``, ``inline
     code`` for package/version identifiers, fenced code blocks for
@@ -1010,6 +1087,14 @@ async def create_dependency_report(
             to the vulnerable package, joined with `` > `` (e.g.
             ``express@4.18.1 > body-parser@1.20.0 > qs@6.10.2``). Omit
             for direct dependencies.
+        reachability: Usage-evidence level from static analysis — one of
+            ``not_imported`` / ``imported`` / ``vulnerable_symbol_used`` /
+            ``reachable_call_path`` / ``unknown``. Claim only what the
+            evidence proves; when in doubt use ``unknown``.
+        reachability_evidence: The concrete proof for the claimed level
+            (required for any level other than ``unknown``): repo-relative
+            ``file:line`` of the import or symbol usage, the matched
+            advisory symbols, or the govulncheck call-path excerpt.
     """
     agent_id, agent_name = _caller_identity(ctx)
 
@@ -1031,6 +1116,8 @@ async def create_dependency_report(
         fix_effort=fix_effort,
         introduced_by=introduced_by,
         dependency_path=dependency_path,
+        reachability=reachability,
+        reachability_evidence=reachability_evidence,
         agent_id=agent_id,
         agent_name=agent_name,
     )

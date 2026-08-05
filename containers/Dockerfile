@@ -16,7 +16,8 @@ RUN mkdir -p /out/bin && \
     go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
     go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
     go install -v github.com/jaeles-project/gospider@latest && \
-    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest
+    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest && \
+    go install -v golang.org/x/vuln/cmd/govulncheck@latest
 
 # ---------------------------------------------------------------------------
 # Runtime stage
@@ -53,6 +54,7 @@ RUN apt-get update && \
     nmap ncat ndiff \
     sqlmap nuclei subfinder naabu ffuf \
     nodejs npm pipx \
+    golang-go \
     libcap2-bin \
     gdb \
     libnss3-tools \

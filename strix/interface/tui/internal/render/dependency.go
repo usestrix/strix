@@ -57,6 +57,12 @@ func renderDependencyReport(args map[string]any, result any) string {
 	section("Description", StringValue(args["description"]))
 	section("Impact", StringValue(args["impact"]))
 	section("Technical Analysis", StringValue(args["technical_analysis"]))
+	if reach := StringValue(args["reachability"]); reach != "" && reach != "unknown" {
+		b.WriteString("\n\n" + Bold(Field).Render("Usage evidence: ") + reach)
+		if ev := StringValue(args["reachability_evidence"]); ev != "" {
+			b.WriteString("\n" + ev)
+		}
+	}
 	section("Assumptions", StringValue(args["assumptions"]))
 	section("Remediation", StringValue(args["remediation_steps"]))
 	if title == "" {

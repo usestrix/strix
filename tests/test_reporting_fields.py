@@ -255,6 +255,120 @@ async def test_dependency_report_with_zero_cvss_remains_low_severity(
     assert report["cvss"] == 0.0
 
 
+async def test_dependency_report_records_reachability(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Command injection where template is used.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        fixed_version="4.17.21",
+        cwe=None,
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="vulnerable_symbol_used",
+        reachability_evidence="src/render.ts:14 calls `_.template()`.",
+    )
+
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    assert report["dependency_metadata"]["reachability"] == "vulnerable_symbol_used"
+    assert (
+        report["dependency_metadata"]["reachability_evidence"]
+        == "src/render.ts:14 calls `_.template()`."
+    )
+    assert "**Usage analysis:**" in report["evidence"]
+    assert "not a proof of exploitability or of safety" in report["evidence"]
+    # The level must never influence the rating — that stays advisory_cvss only.
+    assert report["severity"] == "high"
+
+
+async def test_dependency_report_rejects_reachability_without_evidence(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Impact.",
+        remediation_steps="Upgrade.",
+        assumptions="Assumptions.",
+        package_ecosystem="npm",
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="not_imported",
+    )
+
+    assert result["success"] is False
+    assert any("reachability_evidence is required" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_dependency_report_rejects_unknown_reachability_level(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Impact.",
+        remediation_steps="Upgrade.",
+        assumptions="Assumptions.",
+        package_ecosystem="npm",
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="not_exploitable",
+        reachability_evidence="vibes",
+    )
+
+    assert result["success"] is False
+    assert any("Invalid reachability" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_dependency_report_omits_unknown_reachability(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Impact.",
+        remediation_steps="Upgrade.",
+        assumptions="Analysis was inconclusive.",
+        package_ecosystem="npm",
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+    )
+
+    assert result["success"] is True
+    metadata = report_state.vulnerability_reports[0]["dependency_metadata"]
+    assert "reachability" not in metadata
+    assert "reachability_evidence" not in metadata
+
+
 async def test_dependency_report_requires_advisory_cvss(report_state: ReportState) -> None:
     result = await _do_create_dependency(
         title="CVE-2024-0001 in sample 1.0.0",
@@ -621,6 +735,8 @@ def test_vuln_tool_exposes_new_params() -> None:
 
     dep_props = create_dependency_report.params_json_schema["properties"]
     for field in ("package_name", "installed_version", "cve", "advisory_cvss"):
+        assert field in dep_props
+    for field in ("reachability", "reachability_evidence"):
         assert field in dep_props
     dep_required = create_dependency_report.params_json_schema["required"]
     assert "package_ecosystem" in dep_required
