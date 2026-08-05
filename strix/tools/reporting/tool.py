@@ -730,6 +730,25 @@ _VALID_REACHABILITY = frozenset(
 )
 
 
+def _validate_manifest_path(manifest_path: str | None) -> str | None:
+    """Return an error message when manifest_path is missing or unsafe."""
+    path = (manifest_path or "").strip()
+    if not path:
+        return (
+            "manifest_path is required: pass the repo-relative path of the "
+            "lockfile/manifest where the vulnerable version was observed "
+            "(trivy's Target, e.g. 'package-lock.json' or "
+            "'services/api/pom.xml'). It binds the finding to its exact file "
+            "so remediation can target the right repository."
+        )
+    if path.startswith("/") or "\\" in path or path.split("/")[0].endswith(":"):
+        return f"manifest_path must be a relative path within the repository, got {path!r}"
+    segments = path.split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        return f"manifest_path must not contain empty, '.', or '..' segments, got {path!r}"
+    return None
+
+
 def _build_dependency_metadata(
     *,
     package_name: str,
@@ -738,6 +757,7 @@ def _build_dependency_metadata(
     fixed_version: str | None,
     introduced_by: str | None,
     dependency_path: str | None,
+    manifest_path: str | None = None,
     reachability: str | None = None,
     reachability_evidence: str | None = None,
 ) -> dict[str, str]:
@@ -747,6 +767,8 @@ def _build_dependency_metadata(
     }
     if package_ecosystem and package_ecosystem.strip():
         metadata["package_ecosystem"] = package_ecosystem.strip()
+    if manifest_path and manifest_path.strip():
+        metadata["manifest_path"] = manifest_path.strip()
     if fixed_version and fixed_version.strip():
         metadata["fixed_version"] = fixed_version.strip()
     if introduced_by and introduced_by.strip():
@@ -827,6 +849,7 @@ async def _do_create_dependency(  # noqa: PLR0912
     fix_effort: str,
     introduced_by: str | None = None,
     dependency_path: str | None = None,
+    manifest_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
     agent_id: str | None = None,
@@ -865,6 +888,10 @@ async def _do_create_dependency(  # noqa: PLR0912
             f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
         )
 
+    manifest_err = _validate_manifest_path(manifest_path)
+    if manifest_err:
+        errors.append(manifest_err)
+
     reachability = (reachability or "unknown").strip().lower()
     if reachability not in _VALID_REACHABILITY:
         errors.append(
@@ -897,6 +924,7 @@ async def _do_create_dependency(  # noqa: PLR0912
         fixed_version=fixed_version,
         introduced_by=introduced_by,
         dependency_path=dependency_path,
+        manifest_path=manifest_path,
         reachability=reachability,
         reachability_evidence=reachability_evidence,
     )
@@ -1001,6 +1029,7 @@ async def create_dependency_report(
     remediation_steps: str,
     assumptions: str,
     package_ecosystem: str,
+    manifest_path: str | None = None,
     fixed_version: str | None = None,
     cwe: str | None = None,
     technical_analysis: str | None = None,
@@ -1087,6 +1116,13 @@ async def create_dependency_report(
             to the vulnerable package, joined with `` > `` (e.g.
             ``express@4.18.1 > body-parser@1.20.0 > qs@6.10.2``). Omit
             for direct dependencies.
+        manifest_path: **Required.** The repo-relative path of the
+            lockfile/manifest where the vulnerable version was observed —
+            trivy's ``Target`` (e.g. ``package-lock.json``,
+            ``services/api/pom.xml``). Strip any scan-workspace or repo
+            checkout directory prefix so the path is relative to the
+            repository root. This binds the finding to its exact file so
+            remediation can target the right repository.
         reachability: Usage-evidence level from static analysis — one of
             ``not_imported`` / ``imported`` / ``vulnerable_symbol_used`` /
             ``reachable_call_path`` / ``unknown``. Claim only what the
@@ -1116,6 +1152,7 @@ async def create_dependency_report(
         fix_effort=fix_effort,
         introduced_by=introduced_by,
         dependency_path=dependency_path,
+        manifest_path=manifest_path,
         reachability=reachability,
         reachability_evidence=reachability_evidence,
         agent_id=agent_id,

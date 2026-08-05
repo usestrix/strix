@@ -200,6 +200,12 @@ findings and rejects empty PoC fields):
   - `package_ecosystem` — normalized ecosystem from `.Results[].Type` (lowercased,
     e.g. `npm`, `pypi`, `go`, `maven`, `rubygems`, `cargo`) (required).
   - `fixed_version` — `FixedVersion` (leave empty only if no fix is published).
+  - `manifest_path` — the repo-relative `Target` lockfile/manifest path
+    (required). Strip any scan-workspace or repo checkout directory prefix so
+    the path is relative to the repository root (e.g. `package-lock.json`,
+    `services/api/pom.xml`); the tool rejects absolute paths and `..` segments.
+    This binds the finding to the exact file so remediation can target the
+    right repository.
 - Reference the repo-relative `Target` lockfile path in `description` /
   `technical_analysis` (no leading slash) so the finding is traceable.
 - Put the concrete proof in `description` / `technical_analysis`: package name,

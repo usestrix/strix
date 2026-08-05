@@ -141,6 +141,7 @@ async def test_dependency_report_sets_class_and_metadata(report_state: ReportSta
         remediation_steps="Upgrade to 4.17.21.",
         assumptions="Assumes the template sink is reachable.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="4.17.21",
         cwe="CWE-94",
         advisory_cvss=7.2,
@@ -160,6 +161,7 @@ async def test_dependency_report_sets_class_and_metadata(report_state: ReportSta
         "package_name": "lodash",
         "installed_version": "4.17.20",
         "package_ecosystem": "npm",
+        "manifest_path": "package-lock.json",
         "fixed_version": "4.17.21",
     }
 
@@ -176,6 +178,7 @@ async def test_dependency_report_records_transitive_chain(report_state: ReportSt
         remediation_steps="Upgrade express to 4.18.2, which resolves qs 6.11.0.",
         assumptions="qs parses all incoming query strings by default.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="6.10.3",
         cwe="CWE-1321",
         advisory_cvss=7.5,
@@ -213,6 +216,7 @@ async def test_dependency_report_omits_blank_chain_fields(report_state: ReportSt
         remediation_steps="Upgrade.",
         assumptions="Assumptions.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version=None,
         cwe=None,
         advisory_cvss=5.0,
@@ -241,6 +245,7 @@ async def test_dependency_report_with_zero_cvss_remains_low_severity(
         remediation_steps="Upgrade to 1.0.1.",
         assumptions="Assumes the package is included in deployed builds.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=0.0,
@@ -267,6 +272,7 @@ async def test_dependency_report_records_reachability(report_state: ReportState)
         remediation_steps="Upgrade to 4.17.21.",
         assumptions="Assumes the template sink is reachable.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="4.17.21",
         cwe=None,
         advisory_cvss=7.2,
@@ -303,6 +309,7 @@ async def test_dependency_report_rejects_reachability_without_evidence(
         remediation_steps="Upgrade.",
         assumptions="Assumptions.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=5.0,
@@ -330,6 +337,7 @@ async def test_dependency_report_rejects_unknown_reachability_level(
         remediation_steps="Upgrade.",
         assumptions="Assumptions.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=5.0,
@@ -356,6 +364,7 @@ async def test_dependency_report_omits_unknown_reachability(report_state: Report
         remediation_steps="Upgrade.",
         assumptions="Analysis was inconclusive.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=5.0,
@@ -381,6 +390,7 @@ async def test_dependency_report_requires_advisory_cvss(report_state: ReportStat
         remediation_steps="Upgrade to 1.0.1.",
         assumptions="Assumes the package ships in deployed builds.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=None,
@@ -436,6 +446,7 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
         remediation_steps="Upgrade to 1.0.1.",
         assumptions="Assumes the package is included in deployed builds.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=0.0,
@@ -453,6 +464,7 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
             "package_name": "sample",
             "installed_version": "1.0.0",
             "package_ecosystem": "npm",
+            "manifest_path": "package-lock.json",
             "fixed_version": "1.0.1",
         },
         "technical_analysis": None,
@@ -471,6 +483,7 @@ async def test_dependency_report_rejects_bad_cve(report_state: ReportState) -> N
         remediation_steps="r",
         assumptions="a",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version=None,
         cwe=None,
         advisory_cvss=None,
@@ -493,6 +506,7 @@ async def test_dependency_report_requires_ecosystem(report_state: ReportState) -
         remediation_steps="Upgrade to 1.0.1.",
         assumptions="Assumes the package is included in deployed builds.",
         package_ecosystem="",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=0.0,
@@ -502,6 +516,62 @@ async def test_dependency_report_requires_ecosystem(report_state: ReportState) -
 
     assert result["success"] is False
     assert any("package_ecosystem" in error for error in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_dependency_report_requires_manifest_path(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Low-impact dependency advisory.",
+        remediation_steps="Upgrade to 1.0.1.",
+        assumptions="Assumes the package is included in deployed builds.",
+        package_ecosystem="npm",
+        manifest_path=None,
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+    )
+
+    assert result["success"] is False
+    assert any("manifest_path is required" in error for error in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    ["/etc/passwd", "..\\pom.xml", "services/../pom.xml", "./package.json", "C:/repo/pom.xml"],
+)
+async def test_dependency_report_rejects_unsafe_manifest_path(
+    report_state: ReportState, bad_path: str
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Low-impact dependency advisory.",
+        remediation_steps="Upgrade to 1.0.1.",
+        assumptions="Assumes the package is included in deployed builds.",
+        package_ecosystem="npm",
+        manifest_path=bad_path,
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+    )
+
+    assert result["success"] is False
+    assert any("manifest_path" in error for error in result["errors"])
     assert not report_state.vulnerability_reports
 
 
@@ -736,7 +806,7 @@ def test_vuln_tool_exposes_new_params() -> None:
     dep_props = create_dependency_report.params_json_schema["properties"]
     for field in ("package_name", "installed_version", "cve", "advisory_cvss"):
         assert field in dep_props
-    for field in ("reachability", "reachability_evidence"):
+    for field in ("reachability", "reachability_evidence", "manifest_path"):
         assert field in dep_props
     dep_required = create_dependency_report.params_json_schema["required"]
     assert "package_ecosystem" in dep_required
