@@ -653,6 +653,72 @@ async def test_dependency_dedupe_rejects_same_cve_package_identity() -> None:
     assert result["confidence"] == 1.0
 
 
+async def test_dependency_dedupe_keeps_findings_from_distinct_manifests() -> None:
+    existing = [
+        {
+            "id": "vuln-0001",
+            "title": "CVE-2024-0001 in sample",
+            "cve": "CVE-2024-0001",
+            "dependency_metadata": {
+                "package_name": "sample",
+                "installed_version": "1.0.0",
+                "package_ecosystem": "npm",
+                "manifest_path": "services/api/package-lock.json",
+            },
+        }
+    ]
+    candidate = {
+        "title": "CVE-2024-0001 in sample (web)",
+        "description": "Same advisory observed in a second workspace.",
+        "target": "repo/package.json",
+        "cve": "CVE-2024-0001",
+        "dependency_metadata": {
+            "package_name": "sample",
+            "installed_version": "1.0.0",
+            "package_ecosystem": "npm",
+            "manifest_path": "services/web/package-lock.json",
+        },
+    }
+
+    result = await check_duplicate(candidate, existing)
+
+    assert result["is_duplicate"] is False
+    assert result["confidence"] == 1.0
+
+
+async def test_dependency_dedupe_rejects_same_manifest_identity() -> None:
+    existing = [
+        {
+            "id": "vuln-0001",
+            "title": "CVE-2024-0001 in sample",
+            "cve": "CVE-2024-0001",
+            "dependency_metadata": {
+                "package_name": "sample",
+                "installed_version": "1.0.0",
+                "package_ecosystem": "npm",
+                "manifest_path": "services/api/package-lock.json",
+            },
+        }
+    ]
+    candidate = {
+        "title": "CVE-2024-0001 in sample re-reported",
+        "description": "Same advisory, same manifest.",
+        "target": "repo/package.json",
+        "cve": "CVE-2024-0001",
+        "dependency_metadata": {
+            "package_name": "sample",
+            "installed_version": "1.0.0",
+            "package_ecosystem": "npm",
+            "manifest_path": "services/api/package-lock.json",
+        },
+    }
+
+    result = await check_duplicate(candidate, existing)
+
+    assert result["is_duplicate"] is True
+    assert result["duplicate_id"] == "vuln-0001"
+
+
 async def test_dependency_dedupe_detects_legacy_same_cve_package() -> None:
     existing = [
         {

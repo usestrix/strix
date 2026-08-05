@@ -77,8 +77,10 @@ For each entry under `.Results[].Vulnerabilities[]` in `trivy-sca.json`, collect
 - `CVSS` — the published advisory base score
 - `PrimaryURL` / references — to verify the advisory
 
-Deduplicate by `(CVE, PkgName, InstalledVersion)`. File one
-`create_dependency_report` per CVE — do not batch multiple CVEs into one report.
+Deduplicate by `(CVE, PkgName, Target)` — the same CVE/package observed in two
+different manifests (e.g. two workspaces of a monorepo) is two findings, one
+per manifest. File one `create_dependency_report` per CVE — do not batch
+multiple CVEs into one report.
 
 ### Attribute transitive CVEs to the direct dependency
 
