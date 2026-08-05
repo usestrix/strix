@@ -41,6 +41,7 @@ dependencies = [
   "rich",
   "docker>=7.1.0",
   "requests>=2.32.0",
+  "duckduckgo_search>=8.0,<9",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
   "reportlab>=4.0",
