@@ -1,4 +1,4 @@
-"""``web_search`` — Perplexity-backed search with DuckDuckGo fallback."""
+"""``web_search`` — configurable search backends (Perplexity / DuckDuckGo)."""
 
 from __future__ import annotations
 
@@ -112,14 +112,14 @@ def _perplexity_search(query: str) -> dict[str, Any]:  # noqa: PLR0911
 
 
 def _ddg_search(query: str) -> dict[str, Any]:
-    """Search using DuckDuckGo (free, no API key required)."""
+    """Search using DuckDuckGo (opt-in, no API key required, scraping-based)."""
     try:
-        from duckduckgo_search import DDGS  # noqa: PLC0415 - lazy import
+        from ddgs import DDGS  # noqa: PLC0415 - lazy import
     except ImportError:
-        logger.exception("duckduckgo_search package not installed")
+        logger.exception("ddgs package not installed")
         return {
             "success": False,
-            "error": "DuckDuckGo search package not installed",
+            "error": "ddgs package not installed (pip install ddgs)",
         }
 
     logger.info("web_search ddg query (len=%d): %s", len(query), query[:120])
@@ -158,28 +158,41 @@ def _do_search(query: str) -> dict[str, Any]:
     if not query or not query.strip():
         return {"success": False, "error": "Query cannot be empty"}
 
-    api_key = load_settings().integrations.perplexity_api_key
+    settings = load_settings()
+    backend = settings.integrations.web_search_backend
 
-    # Try Perplexity first if configured
-    if api_key:
-        result = _perplexity_search(query)
-        if result["success"]:
-            return result
-        logger.warning(
-            "web_search perplexity failed, falling back to duckduckgo: %s",
-            result.get("error"),
-        )
+    if backend == "duckduckgo":
+        return _ddg_search(query)
 
-    # Fallback to DuckDuckGo (free, zero-config)
-    return _ddg_search(query)
+    if backend == "perplexity" or backend is None:
+        api_key = settings.integrations.perplexity_api_key
+        if not api_key:
+            return {
+                "success": False,
+                "error": (
+                    "Web search is not configured for this scan "
+                    "(operator needs to set PERPLEXITY_API_KEY). Proceed without it"
+                ),
+            }
+        return _perplexity_search(query)
+
+    return {
+        "success": False,
+        "error": (
+            f"Unknown STRIX_WEB_SEARCH_BACKEND={backend!r}. "
+            "Valid options: 'perplexity', 'duckduckgo'"
+        ),
+    }
 
 
 @function_tool(timeout=330)
 async def web_search(ctx: RunContextWrapper, query: str) -> str:
     """Real-time web search — your primary research tool.
 
-    Uses Perplexity (reasoning model) when configured, with automatic
-    DuckDuckGo fallback. No API key required for the fallback.
+    Configure the search provider with STRIX_WEB_SEARCH_BACKEND:
+      - "perplexity" (default) — requires PERPLEXITY_API_KEY
+      - "duckduckgo" — free, opt-in, no API key needed
+        (may be unreliable from datacenter IPs)
 
     Use it liberally for anything that's not in your training data:
 

@@ -127,6 +127,10 @@ class IntegrationSettings(BaseSettings):
         alias="POSTMAN_API_KEY",
         repr=False,
     )
+    web_search_backend: str | None = Field(
+        default=None,
+        alias="STRIX_WEB_SEARCH_BACKEND",
+    )
 
 
 class ViewerSettings(BaseSettings):
