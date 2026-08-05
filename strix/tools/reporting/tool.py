@@ -890,6 +890,30 @@ async def _do_create_dependency(  # noqa: PLR0912
                 "reason": dedupe.get("reason", ""),
             }
 
+        # Deterministic version-range verify (opt-in, STRIX_DEP_VERIFY). A
+        # dependency-CVE false positive is a factual question — is the installed
+        # version actually in the advisory's affected range? — so it's checked
+        # against an advisory provider (OSV by default), no LLM. Fail-open: only
+        # rejects when the provider proves the version is OUT of the cited CVE's
+        # range. Sibling of the dedup-reject above.
+        from strix.config import load_settings
+        if load_settings().dep_verify.enabled:
+            from strix.report.dep_verify import verify_dependency
+
+            # verify_dependency does blocking HTTP (advisory provider). Run it in a
+            # worker thread so a slow/unreachable provider can't stall the shared
+            # async agent loop (it would otherwise block every concurrent agent for
+            # up to the provider timeout, x2 on the clean-version path).
+            dep_verdict = await asyncio.to_thread(verify_dependency, {
+                "cve": parsed_cve, "package_name": package_name,
+                "installed_version": installed_version,
+                "package_ecosystem": package_ecosystem,
+            })
+            if dep_verdict is not None:
+                logger.info("dep-verify rejected %s %s@%s (version out of range)",
+                            parsed_cve, package_name, installed_version)
+                return dep_verdict
+
         report_id = report_state.add_vulnerability_report(
             title=title,
             description=description,

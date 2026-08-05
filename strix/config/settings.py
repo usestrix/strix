@@ -76,6 +76,32 @@ class DedupeSettings(BaseSettings):
     )
 
 
+class DepVerifySettings(BaseSettings):
+    """Deterministic dependency version-range verification (report/dep_verify.py).
+
+    A dependency-CVE false positive is a FACTUAL question — is the installed
+    version actually in the advisory's affected range? — not a code-reasoning one.
+    So this is a deterministic check (no LLM): before a dependency report is
+    persisted, ask an advisory provider which advisories affect the exact
+    installed version; if the cited CVE/GHSA isn't among them, the finding is out
+    of range and gets rejected. OFF by default; opt-in.
+
+    PROVIDER-PLUGGABLE — not everyone can/will call a hosted advisory API
+    (air-gapped scans, data-residency rules, private advisory DBs). ``provider``:
+      "osv"  -> query an OSV-schema API (default https://api.osv.dev; override
+                ``osv_url`` for a self-hosted OSV mirror — same /v1/query contract).
+      "none" -> disabled (== enabled=False).
+    Fail-open throughout: any uncertainty emits the finding (never suppress a real
+    one on a provider hiccup / coverage gap).
+    """
+
+    model_config = _BASE_CONFIG
+
+    enabled: bool = Field(default=False, alias="STRIX_DEP_VERIFY")
+    provider: str = Field(default="osv", alias="STRIX_DEP_VERIFY_PROVIDER")
+    osv_url: str = Field(default="https://api.osv.dev/v1/query", alias="STRIX_OSV_URL")
+
+
 class ContextSettings(BaseSettings):
     """Context-window management: per-tool-output caps and history compaction."""
 
@@ -143,6 +169,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
+    dep_verify: DepVerifySettings = Field(default_factory=DepVerifySettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
