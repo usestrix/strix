@@ -221,8 +221,8 @@ GET /admin              # Try admin pages
 ## Validation
 
 1. **Pre-MFA access** — Show API responses with sensitive data using only the post-password, pre-MFA session token. Include paired requests: same endpoint with full MFA token vs pre-MFA token
-2. **Rate limit absence** — Show 10+ consecutive failed OTP attempts without lockout; include timestamps proving no throttle
-3. **Code replay** — Show the same OTP code accepted twice with timestamps proving both were after the first use
+2. **Rate limit absence** — Determine the application's actual lockout threshold (if any) by incrementally increasing failed attempts. Show that the threshold is either absent or set unreasonably high (e.g., >100 attempts). Include timestamps proving no throttle or lockout at the tested volume. Note: 10 failed attempts alone does NOT prove absence of rate limiting if the threshold is set higher — continue testing until you observe either enforcement or reach a brute-forceable volume
+3. **Code replay** — Show the same OTP code accepted for **two separate authentication sessions** (not just two requests within the same session). Demonstrate that the replay enables unauthorized access — e.g., an attacker who captured a valid code can use it after the legitimate user has already consumed it. Same-window duplicate verification without a concrete security consequence is not a vulnerability
 4. **Recovery bypass** — Show complete password reset flow resulting in login without MFA prompt
 5. **Client-side gate** — Show tampered JWT/cookie granting access to protected resources with `mfa_verified=false` → `true`
 6. Provide full HTTP request/response pairs for each finding
