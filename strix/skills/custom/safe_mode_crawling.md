@@ -25,12 +25,12 @@ These are not hypothetical — they are the natural consequence of an autonomous
 
 | Method | Default Risk | Notes |
 |--------|-------------|-------|
-| `GET`, `HEAD`, `OPTIONS` | 🟢 Safe | Read-only by specification; safe to explore |
+| `GET`, `HEAD`, `OPTIONS` | 🟢 Usually Safe | Read-only by specification, but **not guaranteed** — some apps use GET for state changes |
 | `POST` | 🟡 Caution | Creates resources; may trigger side effects |
 | `PUT`, `PATCH` | 🟡 Caution | Modifies existing resources |
 | `DELETE` | 🔴 High Risk | Removes resources; often irreversible |
 
-**Exception:** Some APIs use `POST` for destructive operations (e.g., `POST /api/users/delete`, `POST /admin/purge-cache`). Always check the endpoint semantics, not just the HTTP method.
+**Critical:** HTTP method alone is NOT sufficient to determine safety. Some applications expose state-changing operations through `GET` (e.g., `GET /api/users/delete?id=5`, `GET /admin/reset-password?user=admin`, `GET /logout`, `GET /unsubscribe`). Similarly, `POST` is used for destructive operations (e.g., `POST /api/users/delete`, `POST /admin/purge-cache`). **Always check endpoint semantics — URL path, query parameters, and context — regardless of HTTP method.**
 
 ### High-Risk Endpoint Patterns
 
@@ -69,17 +69,22 @@ Before submitting any form, check:
 ## Decision Framework
 
 ```
-Does the endpoint match a high-risk pattern (e.g., /delete, /payment)?
-├── YES → STOP. Log the finding. Do NOT execute.
-│         Surface to operator with: URL, method, parameters, and risk assessment.
-└── NO → Is this action strictly read-only (GET/HEAD/OPTIONS)?
-    ├── YES → Proceed
-    └── NO → Is this a standard form submission / API call for testing?
-        ├── YES → Check: can this action be reversed?
-        │   ├── YES (e.g., create a test user that can be deleted) → Proceed with caution
-        │   └── NO or UNCERTAIN → STOP. Surface to operator.
-        └── NO → Proceed with standard testing
+1. Does the endpoint match a high-risk pattern (e.g., /delete, /payment, /reset)?
+   ├── YES → STOP. Log the finding. Do NOT execute.
+   │         Surface to operator with: URL, method, parameters, and risk assessment.
+   └── NO → Continue to step 2.
+
+2. Does the endpoint semantics suggest state change? (Check URL path, query params,
+   button text, form action, API docs — even for GET/HEAD/OPTIONS.)
+   ├── YES or UNCERTAIN → Treat as mutating. Go to step 3.
+   └── NO, confirmed read-only → Proceed.
+
+3. Can this action be reversed?
+   ├── YES (e.g., create a test user that can be deleted) → Proceed with caution.
+   └── NO or UNCERTAIN → STOP. Surface to operator.
 ```
+
+> **Why GET/HEAD/OPTIONS are not auto-approved:** The HTTP spec says these methods _should_ be safe, but real-world applications violate this. A `GET /admin/deleteUser?id=5` is just as destructive as `DELETE /api/users/5`. The decision tree checks endpoint semantics for **every** request, regardless of method.
 
 ## Operational Rules
 
