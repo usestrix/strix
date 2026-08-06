@@ -34,9 +34,13 @@ False positives damage credibility. A single false positive in a penetration tes
 **Example: XSS Canary**
 ```
 Input:  <img src=x onerror="fetch('//canary.strix_7f3a2b')">
-Check:  Does the payload appear unencoded in the response HTML?
-Proof:  DOM snapshot showing the <img> tag rendered with onerror intact
+Check:  Does the payload execute in browser context? (Reflection alone is insufficient —
+        encoded or context-escaped output is NOT a confirmed XSS.)
+Proof:  Headless browser confirms onerror fired (e.g., network request to canary URL observed),
+        OR DOM snapshot showing the tag rendered in an executable context without encoding.
 ```
+
+**Important:** Reflection ≠ execution. A canary appearing in the response body proves data flow, but only proves exploitability if it appears in an executable context (unescaped HTML, active attribute, script block). If the canary is encoded or placed in a non-executable context, escalate to **headless validation** to confirm actual impact.
 
 **Example: Prototype Pollution Canary**
 ```json
@@ -72,10 +76,12 @@ Control:  Repeat 3x — difference is consistent
 
 **Example: IDOR (Differential)**
 ```
-Own:     GET /api/users/42/profile  (with user 42's token) → 200
-Foreign: GET /api/users/43/profile  (with user 42's token) → 200 (IDOR confirmed)
+Own:     GET /api/users/42/profile  (with user 42's token) → 200, body contains user 42's email
+Foreign: GET /api/users/43/profile  (with user 42's token) → 200, body contains user 43's email
 Control: GET /api/users/43/profile  (no token) → 401 (auth works, authz doesn't)
 ```
+
+**Important:** A 200 status code alone does NOT prove IDOR. You must compare the response **body** to confirm that private data belonging to the foreign user is returned. Legitimately shared or sanitized profiles (e.g., public usernames) returning 200 are not authorization bypasses. Verify that the returned data includes fields the requesting user should not have access to.
 
 **Example: Time-Based**
 ```
@@ -144,10 +150,13 @@ Headless browser confirms: does the iframe render? Are `X-Frame-Options` and `fr
 
 **Example: Blind SSRF**
 ```
-Payload:  POST /webhook {"url": "https://UNIQUE_ID.oob.listener.com/ssrf"}
-Check:    Did the OOB listener receive an HTTP request from the target's IP?
-Evidence: Listener log showing request with timestamp, source IP, headers
+Payload:  POST /import {"url": "http://169.254.169.254/latest/meta-data/"}
+Check:    Did the target fetch an internal/prohibited destination (cloud metadata, internal IP,
+          or non-public host) that a client-side request could not reach?
+Evidence: Response contains cloud metadata, OR OOB listener on internal network received request
 ```
+
+**Important:** A callback from an endpoint designed to fetch URLs (webhooks, URL previews) does NOT by itself prove SSRF. The finding requires access to a **prohibited destination** — an internal IP, cloud metadata service, localhost, or non-public host — that crosses a network trust boundary. Legitimate outbound fetches to attacker-controlled external URLs prove server-side request capability but not SSRF unless the server adds credentials, bypasses egress controls, or reaches an otherwise-unreachable target.
 
 **Example: Blind XXE**
 ```xml
