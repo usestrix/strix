@@ -69,11 +69,11 @@ Before submitting any form, check:
 ## Decision Framework
 
 ```
-Is this action read-only (GET/HEAD/OPTIONS)?
-├── YES → Proceed
-└── NO → Does the endpoint match a high-risk pattern?
-    ├── YES → STOP. Log the finding. Do NOT execute.
-    │         Surface to operator with: URL, method, parameters, and risk assessment.
+Does the endpoint match a high-risk pattern (e.g., /delete, /payment)?
+├── YES → STOP. Log the finding. Do NOT execute.
+│         Surface to operator with: URL, method, parameters, and risk assessment.
+└── NO → Is this action strictly read-only (GET/HEAD/OPTIONS)?
+    ├── YES → Proceed
     └── NO → Is this a standard form submission / API call for testing?
         ├── YES → Check: can this action be reversed?
         │   ├── YES (e.g., create a test user that can be deleted) → Proceed with caution
