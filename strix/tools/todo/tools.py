@@ -131,13 +131,30 @@ def _normalize_todo_ids(raw_ids: Any) -> list[str]:
         stripped = raw_ids.strip()
         if not stripped:
             return []
+        # json.loads is used only to unpack a JSON *array* ('["a", "b"]')
+        # or a JSON *string* scalar ('"a3f9c2"', which unwraps to the id).
+        # Any other bare token is a literal id (optionally comma-separated)
+        # and must NOT be routed through a parsed *numeric* scalar: ids are
+        # 6-char uuid slugs, and ones like "1e5230" or "2363e0" are valid
+        # JSON numbers that json.loads would mangle (-> inf / "2363.0"),
+        # silently targeting a non-existent todo.
         try:
-            data = json.loads(stripped)
+            parsed = json.loads(stripped)
         except json.JSONDecodeError:
-            data = stripped.split(",") if "," in stripped else [stripped]
-        if isinstance(data, list):
-            return [str(item).strip() for item in data if str(item).strip()]
-        return [str(data).strip()]
+            parsed = None
+        if isinstance(parsed, list):
+            return [str(item).strip() for item in parsed if str(item).strip()]
+        # Otherwise resolve to literal tokens: a JSON string scalar unwraps
+        # to its value, a comma string splits, and anything else is a single
+        # token kept verbatim (so numeric-looking ids aren't mangled by the
+        # parse above).
+        if isinstance(parsed, str):
+            tokens = [parsed]
+        elif "," in stripped:
+            tokens = stripped.split(",")
+        else:
+            tokens = [stripped]
+        return [token.strip() for token in tokens if token.strip()]
     if isinstance(raw_ids, list):
         return [str(item).strip() for item in raw_ids if str(item).strip()]
     return [str(raw_ids).strip()]
