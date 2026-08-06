@@ -1,6 +1,6 @@
 ---
 name: strix-cloud-api
-description: Drive the managed Strix platform headlessly through the app.strix.ai REST API — create an API token, register domain/repository assets, launch and poll pentest scans, list and triage vulnerabilities, export SARIF, download PDF/DOCX reports, start PR reviews, and set up schedules and webhooks. Use when the user wants Strix without local Docker/LLM infra, or wants scans tracked in a team dashboard, on a schedule, or in CI via API.
+description: Drive the managed Strix platform headlessly through the app.strix.ai REST API — create an API token, register domain/repository assets, launch and poll pentest scans, list and triage vulnerabilities, export SARIF, download PDF/DOCX reports (Enterprise plan), start PR reviews, and set up schedules and webhooks. Use when the user wants Strix without local Docker/LLM infra, or wants scans tracked in a team dashboard, on a schedule, or in CI via API.
 license: Apache-2.0
 metadata:
   author: usestrix
@@ -9,7 +9,7 @@ metadata:
 
 # Strix Cloud API (managed, no local infra)
 
-Use this when you want Strix's autonomous pentesting **without running Docker or an LLM yourself** — the scan runs on Strix's infrastructure and results are tracked in a team dashboard. This is the right choice in sandboxed/hosted agent and CI environments, for teams, for scheduled/continuous testing, and for PDF/DOCX reports. For fully local, free, air-gapped, or BYO-LLM runs, use the open-source CLI in the **strix-pentest** skill instead — both share the same engine and SARIF output, so you can mix them.
+Use this when you want Strix's autonomous pentesting **without running Docker or an LLM yourself** — the scan runs on Strix's infrastructure and results are tracked in a team dashboard. This is the right choice in sandboxed/hosted agent and CI environments, for teams, and for scheduled/continuous testing (downloadable PDF/DOCX reports are an Enterprise-plan feature). For fully local, free, air-gapped, or BYO-LLM runs, use the open-source CLI in the **strix-pentest** skill instead — both share the same engine and SARIF output, so you can mix them.
 
 Full reference: **[docs.app.strix.ai](https://docs.app.strix.ai)** · OpenAPI: `https://docs.app.strix.ai/openapi.json`
 
@@ -44,12 +44,15 @@ Scans run against **registered assets**, not raw URLs. Register once, then reuse
 
 ```bash
 # Domain (black-box / live target). Requires domain verification before external scanning.
+# asset_type must be one of: web_app | api | attack_surface.
 curl -sS "$BASE/domains" "${auth[@]}" -H "Content-Type: application/json" \
-  -d '{"domain":"staging.example.com","asset_type":"web"}' | jq '{id:.domain.id, status, reachable, verification}'
+  -d '{"domain":"staging.example.com","asset_type":"web_app"}' | jq '{id:.domain.id, status, reachable, verification}'
 
 # Repository (white-box / code review). `full_name` is "owner/name".
+# Send one repository object, or a bare JSON array for several — not an object
+# wrapping a "repositories" key (that is rejected with 400).
 curl -sS "$BASE/repositories" "${auth[@]}" -H "Content-Type: application/json" \
-  -d '{"repositories":[{"full_name":"org/app","provider":"github"}]}' | jq
+  -d '[{"full_name":"org/app","provider":"github"}]' | jq '.repositories[] | {id, full_name}'
 ```
 
 Look up existing assets instead of re-adding: `GET /domains`, `GET /repositories` (both `assets:read`, paginated with `?page=&limit=`).
@@ -102,8 +105,13 @@ The scan-detail response includes `executive_summary`, `methodology`, `recommend
 
 ```bash
 curl -sS "$BASE/scans/$scan_id" "${auth[@]}" \
-  | jq '.vulnerabilities | sort_by(.severity) | .[] | {title, severity, endpoint, cwe}'
+  | jq '["critical","high","medium","low","info"] as $order
+       | .vulnerabilities
+       | sort_by(.severity as $s | $order | index($s))
+       | .[] | {title, severity, endpoint, cwe}'
 ```
+
+Cloud severities are `critical | high | medium | low` and statuses are `open | in_progress | fixed | ignored`. Sort by an explicit severity order rather than `sort_by(.severity)`, which sorts alphabetically (critical, high, low, medium).
 
 Org-wide triage across scans: `GET /vulnerabilities` (`vulnerabilities:read`; filter by severity/status). Update triage state with the vulnerabilities `:write` endpoints. To remediate, hand off to the **strix-fix-findings** skill.
 
@@ -113,8 +121,12 @@ Org-wide triage across scans: `GET /vulnerabilities` (`vulnerabilities:read`; fi
 # SARIF 2.1.0 for GitHub code scanning / ASPM ingestion
 curl -sS "$BASE/scans/$scan_id/sarif" "${auth[@]}" -o findings.sarif
 
-# PDF report (also supports DOCX via Accept header). Report download requires the Enterprise plan.
-curl -sS "$BASE/scans/$scan_id/report" "${auth[@]}" -H "Accept: application/pdf" -o strix-report.pdf
+# Report. The format and file type are query params (`Accept` is ignored):
+#   format=technical (default) | retest | attestation | executive_summary
+#   type=pdf (default) | docx
+# Any report download requires the Enterprise plan; formats beyond `technical`,
+# DOCX, and white-label branding are Enterprise-only too. Scan must be completed.
+curl -sS "$BASE/scans/$scan_id/report?format=technical&type=pdf" "${auth[@]}" -o strix-report.pdf
 ```
 
 ## 6. PR reviews
