@@ -118,4 +118,4 @@ jobs:
         with:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           generate_release_notes: true
-          files: release/*
+          files: release/**
