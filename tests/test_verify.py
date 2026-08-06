@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from strix.config import loader
 from strix.report import verify
+from strix.report.state import ReportState, set_global_report_state
+from strix.tools.reporting import tool
 
 
 def _reset_cache() -> None:
@@ -223,3 +225,79 @@ async def test_out_of_range_confidence_does_not_suppress(monkeypatch: pytest.Mon
     )
     assert out["reject"] is False
     assert out["confidence"] == 0.0
+
+
+# --- integration: the hook in _do_create actually gates persistence ---
+
+_HIGH_CVSS = {
+    "attack_vector": "N",
+    "attack_complexity": "L",
+    "privileges_required": "N",
+    "user_interaction": "N",
+    "scope": "U",
+    "confidentiality": "H",
+    "integrity": "H",
+    "availability": "H",
+}
+
+
+async def _create_report(monkeypatch: pytest.MonkeyPatch, verdict: dict) -> tuple[dict, object]:
+    """Drive the real _do_create with dedupe disabled and verify_finding stubbed."""
+    state = ReportState(run_name="itest")
+    set_global_report_state(state)
+
+    async def _not_dup(candidate, existing):  # noqa: ARG001
+        return {"is_duplicate": False, "duplicate_id": "", "confidence": 1.0, "reason": ""}
+
+    async def _verdict(candidate, severity):  # noqa: ARG001
+        return verdict
+
+    # Patch at the call sites _do_create imports them from.
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", _not_dup)
+    monkeypatch.setattr("strix.report.verify.verify_finding", _verdict)
+
+    result = await tool._do_create(
+        title="Command injection in backup handler",
+        description="Unsanitised user input into a shell command.",
+        impact="RCE",
+        target="backup/handler.go",
+        technical_analysis="exec.Command('sh','-c', userInput)",
+        poc_description="?name=x;id",
+        poc_script_code="curl 'http://host/backup?name=x;id'",
+        remediation_steps="Sanitise / use argv.",
+        evidence="handler.go:42",
+        assumptions="Assumes the backup endpoint is reachable by the attacker.",
+        fix_effort="medium",
+        cvss_breakdown=_HIGH_CVSS,
+        endpoint=None,
+        method=None,
+        cve=None,
+        cwe=None,
+        code_locations=None,
+    )
+    return result, state
+
+
+async def test_hook_reject_blocks_persistence(monkeypatch: pytest.MonkeyPatch):
+    result, state = await _create_report(
+        monkeypatch,
+        {
+            "reject": True,
+            "verdict": "FALSE_POSITIVE",
+            "confidence": 0.95,
+            "reason": "already patched",
+        },
+    )
+    assert result["success"] is False
+    assert result.get("verify_verdict") == "FALSE_POSITIVE"
+    # nothing persisted
+    assert state.get_existing_vulnerabilities() == []
+
+
+async def test_hook_emit_persists(monkeypatch: pytest.MonkeyPatch):
+    result, state = await _create_report(
+        monkeypatch,
+        {"reject": False, "verdict": "REAL", "confidence": 0.9, "reason": "reachable"},
+    )
+    assert result["success"] is True
+    assert len(state.get_existing_vulnerabilities()) == 1
