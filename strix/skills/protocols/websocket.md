@@ -85,7 +85,8 @@ The most critical WebSocket-specific vulnerability. If the server relies solely 
 - Test: connect without any session cookie or token — does the server accept?
 
 **Token Leakage**
-- Auth tokens in WebSocket URL query params (`wss://target.com/ws?token=SECRET`) leak via Referer, server logs, proxy logs, browser history
+- Auth tokens in WebSocket URL query params (`wss://target.com/ws?token=SECRET`) may leak via Referer headers, server logs, proxy logs, or browser history
+- To confirm: verify an actual exposure channel exists (e.g., a third-party Referer under the active Referrer-Policy, accessible log file, or proxy recording). Do not report leakage without demonstrating an attacker-observable sink
 - Prefer token in first message or `Sec-WebSocket-Protocol` header
 
 **Ticket/Session Fixation**
@@ -126,25 +127,29 @@ The most critical WebSocket-specific vulnerability. If the server relies solely 
 - Template rendering of message content (SSTI)
 
 **Protocol-Level**
-- Fragmented frames to bypass message inspection
+- Fragmented frames to bypass message inspection (WAF/IDS evasion)
 - Control frames (ping/pong/close) with oversized or malicious payloads
 - Binary frames when text expected and vice versa
-- Reserved opcodes and extension negotiation abuse
+- Note: RFC-compliant rejection or disconnect of malformed frames is **expected behavior**, not a vulnerability. Only report if the server crashes, leaks state, or affects other connections
 
 ### Denial of Service
 
+> **Operator approval required.** DoS testing can disrupt shared or production environments. Do NOT execute these tests autonomously — surface the test plan to the operator and proceed only with explicit authorization. Start with conservative limits and escalate gradually.
+
 **Connection Exhaustion**
-- Open maximum connections without sending data
-- Slowloris-style: keep connections alive with periodic pings
+- Open a small number of idle connections (start with 10, not "maximum") and monitor server behavior
+- Slowloris-style: keep connections alive with periodic pings — observe at what threshold the server degrades
+- Stop immediately if other users or services are affected
 
 **Message Flooding**
-- Rapid message sends to exhaust server resources
-- Large messages exceeding expected size limits
-- Deeply nested JSON payloads
+- Send messages at incrementally increasing rates; observe response latency and error rates
+- Test oversized messages against documented or observed limits
+- Deeply nested JSON payloads — check if the server enforces depth limits
 
 **Frame Abuse**
-- Fragmented messages never completed
-- Ping floods forcing pong responses
+- Fragmented messages never completed — a compliant server should timeout and disconnect (this is expected behavior, not a vulnerability)
+- Reserved opcodes and malformed frames — RFC-compliant rejection/disconnect is normal; only report if the server crashes, leaks memory, or affects other connections
+- Report frame-handling issues only when they cause **cross-connection impact, persistent degradation, or inspection bypass**
 
 ### Socket.IO Specific
 
