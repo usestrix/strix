@@ -163,7 +163,7 @@ _REQUIRED_FIELDS = {
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 
 
-async def _do_create(  # noqa: PLR0912
+async def _do_create(  # noqa: PLR0912, PLR0911, PLR0915
     *,
     title: str,
     description: str,
@@ -283,6 +283,26 @@ async def _do_create(  # noqa: PLR0912
                 "duplicate_title": duplicate_title,
                 "confidence": dedupe.get("confidence", 0.0),
                 "reason": dedupe.get("reason", ""),
+            }
+
+        # Opt-in verify-before-emit (STRIX_VERIFY). A sibling of the dedupe
+        # reject: re-adjudicate the candidate and drop only a high-confidence
+        # false positive. Fail-open — anything short of a confident
+        # FALSE_POSITIVE (including errors) emits, so it can't lose a real find.
+        from strix.report.verify import verify_finding
+
+        verdict = await verify_finding(candidate, severity)
+        if verdict.get("reject"):
+            return {
+                "success": False,
+                "error": (
+                    "Rejected by verify-before-emit as a likely false positive "
+                    f"(confidence={verdict.get('confidence', 0.0):.2f}): "
+                    f"{verdict.get('reason', '')}"
+                ),
+                "verify_verdict": verdict.get("verdict", ""),
+                "confidence": verdict.get("confidence", 0.0),
+                "reason": verdict.get("reason", ""),
             }
 
         report_id = report_state.add_vulnerability_report(
