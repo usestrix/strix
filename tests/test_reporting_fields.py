@@ -141,6 +141,7 @@ async def test_dependency_report_sets_class_and_metadata(report_state: ReportSta
         remediation_steps="Upgrade to 4.17.21.",
         assumptions="Assumes the template sink is reachable.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="4.17.21",
         cwe="CWE-94",
         advisory_cvss=7.2,
@@ -160,8 +161,74 @@ async def test_dependency_report_sets_class_and_metadata(report_state: ReportSta
         "package_name": "lodash",
         "installed_version": "4.17.20",
         "package_ecosystem": "npm",
+        "manifest_path": "package-lock.json",
         "fixed_version": "4.17.21",
     }
+
+
+async def test_dependency_report_records_transitive_chain(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2022-24999 in qs 6.10.2",
+        description="Prototype pollution in qs parsing.",
+        target="repo/package.json",
+        cve="CVE-2022-24999",
+        package_name="qs",
+        installed_version="6.10.2",
+        impact="Denial of service via crafted query strings.",
+        remediation_steps="Upgrade express to 4.18.2, which resolves qs 6.11.0.",
+        assumptions="qs parses all incoming query strings by default.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="6.10.3",
+        cwe="CWE-1321",
+        advisory_cvss=7.5,
+        technical_analysis=None,
+        fix_effort="trivial",
+        introduced_by="express@4.18.1",
+        dependency_path="express@4.18.1 > body-parser@1.20.0 > qs@6.10.2",
+    )
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    assert report["dependency_metadata"]["introduced_by"] == "express@4.18.1"
+    assert (
+        report["dependency_metadata"]["dependency_path"]
+        == "express@4.18.1 > body-parser@1.20.0 > qs@6.10.2"
+    )
+    assert (
+        "**Transitive dependency:** introduced by the direct dependency `express@4.18.1`."
+        in report["evidence"]
+    )
+    assert (
+        "**Dependency chain:** `express@4.18.1 > body-parser@1.20.0 > qs@6.10.2`"
+        in report["evidence"]
+    )
+
+
+async def test_dependency_report_omits_blank_chain_fields(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Impact.",
+        remediation_steps="Upgrade.",
+        assumptions="Assumptions.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version=None,
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="trivial",
+        introduced_by="  ",
+        dependency_path=None,
+    )
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    assert "introduced_by" not in report["dependency_metadata"]
+    assert "dependency_path" not in report["dependency_metadata"]
 
 
 async def test_dependency_report_with_zero_cvss_remains_low_severity(
@@ -178,6 +245,7 @@ async def test_dependency_report_with_zero_cvss_remains_low_severity(
         remediation_steps="Upgrade to 1.0.1.",
         assumptions="Assumes the package is included in deployed builds.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=0.0,
@@ -192,6 +260,124 @@ async def test_dependency_report_with_zero_cvss_remains_low_severity(
     assert report["cvss"] == 0.0
 
 
+async def test_dependency_report_records_reachability(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Command injection where template is used.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="4.17.21",
+        cwe=None,
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="vulnerable_symbol_used",
+        reachability_evidence="src/render.ts:14 calls `_.template()`.",
+    )
+
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    assert report["dependency_metadata"]["reachability"] == "vulnerable_symbol_used"
+    assert (
+        report["dependency_metadata"]["reachability_evidence"]
+        == "src/render.ts:14 calls `_.template()`."
+    )
+    assert "**Usage analysis:**" in report["evidence"]
+    assert "not a proof of exploitability or of safety" in report["evidence"]
+    # The level must never influence the rating — that stays advisory_cvss only.
+    assert report["severity"] == "high"
+
+
+async def test_dependency_report_rejects_reachability_without_evidence(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Impact.",
+        remediation_steps="Upgrade.",
+        assumptions="Assumptions.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="not_imported",
+    )
+
+    assert result["success"] is False
+    assert any("reachability_evidence is required" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_dependency_report_rejects_unknown_reachability_level(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Impact.",
+        remediation_steps="Upgrade.",
+        assumptions="Assumptions.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+        reachability="not_exploitable",
+        reachability_evidence="vibes",
+    )
+
+    assert result["success"] is False
+    assert any("Invalid reachability" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_dependency_report_omits_unknown_reachability(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Impact.",
+        remediation_steps="Upgrade.",
+        assumptions="Analysis was inconclusive.",
+        package_ecosystem="npm",
+        manifest_path="package-lock.json",
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+    )
+
+    assert result["success"] is True
+    metadata = report_state.vulnerability_reports[0]["dependency_metadata"]
+    assert "reachability" not in metadata
+    assert "reachability_evidence" not in metadata
+
+
 async def test_dependency_report_requires_advisory_cvss(report_state: ReportState) -> None:
     result = await _do_create_dependency(
         title="CVE-2024-0001 in sample 1.0.0",
@@ -204,6 +390,7 @@ async def test_dependency_report_requires_advisory_cvss(report_state: ReportStat
         remediation_steps="Upgrade to 1.0.1.",
         assumptions="Assumes the package ships in deployed builds.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=None,
@@ -259,6 +446,7 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
         remediation_steps="Upgrade to 1.0.1.",
         assumptions="Assumes the package is included in deployed builds.",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=0.0,
@@ -276,6 +464,7 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
             "package_name": "sample",
             "installed_version": "1.0.0",
             "package_ecosystem": "npm",
+            "manifest_path": "package-lock.json",
             "fixed_version": "1.0.1",
         },
         "technical_analysis": None,
@@ -294,6 +483,7 @@ async def test_dependency_report_rejects_bad_cve(report_state: ReportState) -> N
         remediation_steps="r",
         assumptions="a",
         package_ecosystem="npm",
+        manifest_path="package-lock.json",
         fixed_version=None,
         cwe=None,
         advisory_cvss=None,
@@ -316,6 +506,7 @@ async def test_dependency_report_requires_ecosystem(report_state: ReportState) -
         remediation_steps="Upgrade to 1.0.1.",
         assumptions="Assumes the package is included in deployed builds.",
         package_ecosystem="",
+        manifest_path="package-lock.json",
         fixed_version="1.0.1",
         cwe=None,
         advisory_cvss=0.0,
@@ -325,6 +516,62 @@ async def test_dependency_report_requires_ecosystem(report_state: ReportState) -
 
     assert result["success"] is False
     assert any("package_ecosystem" in error for error in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_dependency_report_requires_manifest_path(report_state: ReportState) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Low-impact dependency advisory.",
+        remediation_steps="Upgrade to 1.0.1.",
+        assumptions="Assumes the package is included in deployed builds.",
+        package_ecosystem="npm",
+        manifest_path=None,
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+    )
+
+    assert result["success"] is False
+    assert any("manifest_path is required" in error for error in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+@pytest.mark.parametrize(
+    "bad_path",
+    ["/etc/passwd", "..\\pom.xml", "services/../pom.xml", "./package.json", "C:/repo/pom.xml"],
+)
+async def test_dependency_report_rejects_unsafe_manifest_path(
+    report_state: ReportState, bad_path: str
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2024-0001 in sample 1.0.0",
+        description="Published advisory affects the pinned version.",
+        target="repo/package.json",
+        cve="CVE-2024-0001",
+        package_name="sample",
+        installed_version="1.0.0",
+        impact="Low-impact dependency advisory.",
+        remediation_steps="Upgrade to 1.0.1.",
+        assumptions="Assumes the package is included in deployed builds.",
+        package_ecosystem="npm",
+        manifest_path=bad_path,
+        fixed_version="1.0.1",
+        cwe=None,
+        advisory_cvss=5.0,
+        technical_analysis=None,
+        fix_effort="low",
+    )
+
+    assert result["success"] is False
+    assert any("manifest_path" in error for error in result["errors"])
     assert not report_state.vulnerability_reports
 
 
@@ -404,6 +651,72 @@ async def test_dependency_dedupe_rejects_same_cve_package_identity() -> None:
     assert result["is_duplicate"] is True
     assert result["duplicate_id"] == "vuln-0001"
     assert result["confidence"] == 1.0
+
+
+async def test_dependency_dedupe_keeps_findings_from_distinct_manifests() -> None:
+    existing = [
+        {
+            "id": "vuln-0001",
+            "title": "CVE-2024-0001 in sample",
+            "cve": "CVE-2024-0001",
+            "dependency_metadata": {
+                "package_name": "sample",
+                "installed_version": "1.0.0",
+                "package_ecosystem": "npm",
+                "manifest_path": "services/api/package-lock.json",
+            },
+        }
+    ]
+    candidate = {
+        "title": "CVE-2024-0001 in sample (web)",
+        "description": "Same advisory observed in a second workspace.",
+        "target": "repo/package.json",
+        "cve": "CVE-2024-0001",
+        "dependency_metadata": {
+            "package_name": "sample",
+            "installed_version": "1.0.0",
+            "package_ecosystem": "npm",
+            "manifest_path": "services/web/package-lock.json",
+        },
+    }
+
+    result = await check_duplicate(candidate, existing)
+
+    assert result["is_duplicate"] is False
+    assert result["confidence"] == 1.0
+
+
+async def test_dependency_dedupe_rejects_same_manifest_identity() -> None:
+    existing = [
+        {
+            "id": "vuln-0001",
+            "title": "CVE-2024-0001 in sample",
+            "cve": "CVE-2024-0001",
+            "dependency_metadata": {
+                "package_name": "sample",
+                "installed_version": "1.0.0",
+                "package_ecosystem": "npm",
+                "manifest_path": "services/api/package-lock.json",
+            },
+        }
+    ]
+    candidate = {
+        "title": "CVE-2024-0001 in sample re-reported",
+        "description": "Same advisory, same manifest.",
+        "target": "repo/package.json",
+        "cve": "CVE-2024-0001",
+        "dependency_metadata": {
+            "package_name": "sample",
+            "installed_version": "1.0.0",
+            "package_ecosystem": "npm",
+            "manifest_path": "services/api/package-lock.json",
+        },
+    }
+
+    result = await check_duplicate(candidate, existing)
+
+    assert result["is_duplicate"] is True
+    assert result["duplicate_id"] == "vuln-0001"
 
 
 async def test_dependency_dedupe_detects_legacy_same_cve_package() -> None:
@@ -558,6 +871,8 @@ def test_vuln_tool_exposes_new_params() -> None:
 
     dep_props = create_dependency_report.params_json_schema["properties"]
     for field in ("package_name", "installed_version", "cve", "advisory_cvss"):
+        assert field in dep_props
+    for field in ("reachability", "reachability_evidence", "manifest_path"):
         assert field in dep_props
     dep_required = create_dependency_report.params_json_schema["required"]
     assert "package_ecosystem" in dep_required

@@ -17,14 +17,19 @@ jobs:
         include:
           - os: macos-latest
             target: macos-arm64
+            wheel-platform: macosx_11_0_arm64
           - os: macos-15-intel
             target: macos-x86_64
+            wheel-platform: macosx_11_0_x86_64
           - os: ubuntu-22.04
             target: linux-x86_64
+            wheel-platform: manylinux_2_17_x86_64
           - os: ubuntu-22.04-arm
             target: linux-arm64
+            wheel-platform: manylinux_2_17_aarch64
           - os: windows-latest
             target: windows-x86_64
+            wheel-platform: win_amd64
 
     runs-on: ${{ matrix.os }}
 
@@ -39,17 +44,33 @@ jobs:
 
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
 
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version: '1.24.x'
+          check-latest: true
+          cache-dependency-path: strix/interface/tui/go.sum
+
       - name: Build
         shell: bash
+        env:
+          STRIX_WHEEL_PLATFORM_TAG: ${{ matrix.wheel-platform }}
         run: |
           uv sync --frozen
+          uv build --wheel
+          uv run python -c 'import glob, os, sys, zipfile; wheels = glob.glob("dist/*.whl"); assert len(wheels) == 1, wheels; archive = zipfile.ZipFile(wheels[0]); tui = "strix/bin/strix-tui.exe" if sys.platform == "win32" else "strix/bin/strix-tui"; assert tui in archive.namelist(); metadata = archive.read(next(name for name in archive.namelist() if name.endswith(".dist-info/WHEEL"))).decode(); assert "Root-Is-Purelib: false" in metadata; assert "Tag: py3-none-" + os.environ["STRIX_WHEEL_PLATFORM_TAG"] in metadata'
+
           uv run pyinstaller strix.spec --noconfirm
 
           if [[ "${{ runner.os }}" == "Windows" ]]; then
+            PYI_BINARY="dist/strix.exe"
+            TUI_NAME="strix-tui.exe"
             dist/strix.exe --version
           else
+            PYI_BINARY="dist/strix"
+            TUI_NAME="strix-tui"
             dist/strix --version
           fi
+          uv run pyi-archive_viewer -l "$PYI_BINARY" | grep "strix/bin/$TUI_NAME" >/dev/null
 
           if [[ "${{ matrix.target }}" == "linux-arm64" ]]; then
             file dist/strix
@@ -77,6 +98,7 @@ jobs:
           path: |
             dist/release/*.tar.gz
             dist/release/*.zip
+            dist/*.whl
           if-no-files-found: error
 
   release:

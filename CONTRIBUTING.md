@@ -7,6 +7,7 @@ Thank you for your interest in contributing to Strix! This guide will help you g
 ### Prerequisites
 
 - Python 3.12+
+- Latest Go 1.24.x patch (only for Bubble Tea TUI development and release artifacts)
 - Docker (running)
 - [uv](https://docs.astral.sh/uv/) (for dependency management)
 - Git
@@ -112,6 +113,22 @@ make viewer   # or: cd strix/interface/viewer/frontend && npm ci && npm run buil
 ```
 
 Commit both the source change and the regenerated `strix/interface/viewer/static/`.
+
+## Package builds
+
+Editable installs do not need Go; they run the TUI from source (`go run`).
+
+Wheels always bundle the matching Go sidecar and are platform-specific:
+
+```bash
+make wheel
+```
+
+The build hook (`scripts/tui_sidecar_hook.py`) compiles the sidecar, embeds it as
+`strix/bin/strix-tui`, and assigns the current platform tag. It requires Go
+1.24.x or newer and fails rather than producing a wheel without the sidecar.
+`scripts/build.sh` and `strix.spec` are likewise strict for frozen PyInstaller
+releases.
 
 ## 🤝 Community
 

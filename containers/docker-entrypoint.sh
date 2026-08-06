@@ -1,6 +1,22 @@
 #!/bin/bash
 set -e
 
+if [ -n "${STRIX_HOST_UID:-}" ] && [ "${STRIX_HOST_UID}" != "0" ] && [ "${STRIX_HOST_UID}" != "$(id -u)" ]; then
+  exec sudo -E -- bash -c '
+    set -e
+    gid="${STRIX_HOST_GID:-$STRIX_HOST_UID}"
+    old_uid="$1"
+    old_gid="$2"
+    export PATH="$3"
+    shift 3
+    sed -i "s|^pentester:x:${old_uid}:${old_gid}:|pentester:x:${STRIX_HOST_UID}:${gid}:|" /etc/passwd
+    sed -i "s|^pentester:x:${old_gid}:|pentester:x:${gid}:|" /etc/group
+    chown -R "${STRIX_HOST_UID}:${gid}" /home/pentester /app/certs
+    chown "${STRIX_HOST_UID}:${gid}" /workspace
+    exec setpriv --reuid "${STRIX_HOST_UID}" --regid "${gid}" --init-groups "$0" "$@"
+  ' "$0" "$(id -u)" "$(id -g)" "$PATH" "$@"
+fi
+
 CAIDO_PORT=48080
 CAIDO_LOG="/tmp/caido_startup.log"
 

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 from litellm.exceptions import BadRequestError, ContextWindowExceededError, RateLimitError
+from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from strix.config import ContextSettings
 from strix.llm import compaction
@@ -146,17 +147,35 @@ def _patch_budget(monkeypatch: pytest.MonkeyPatch, *, keep_tokens: int, window: 
     context.auto_compact = True
     settings = SimpleNamespace(
         context=context,
-        llm=SimpleNamespace(api_key=None, api_base=None, timeout=1),
+        llm=SimpleNamespace(api_key=None, api_base=None, timeout=1, extra_headers=None),
     )
     monkeypatch.setattr(compaction, "load_settings", lambda: settings)
 
 
-def _patch_summary(monkeypatch: pytest.MonkeyPatch, text: str) -> None:
-    async def fake_acompletion(**_kwargs: Any) -> Any:
-        message = SimpleNamespace(content=text)
-        return SimpleNamespace(choices=[SimpleNamespace(message=message)])
+def _model_response(text: str) -> Any:
+    chunk = ResponseOutputText(annotations=[], text=text, type="output_text")
+    message = ResponseOutputMessage(
+        id="msg", content=[chunk], role="assistant", status="completed", type="message"
+    )
+    return SimpleNamespace(output=[message])
 
-    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+
+def _patch_summary(
+    monkeypatch: pytest.MonkeyPatch, text: str, captured: dict[str, Any] | None = None
+) -> None:
+    class FakeModel:
+        async def get_response(self, **kwargs: Any) -> Any:
+            if captured is not None:
+                captured.update(kwargs)
+            return _model_response(text)
+
+    class FakeProvider:
+        def get_model(self, model_name: str | None) -> Any:
+            if captured is not None:
+                captured["model"] = model_name
+            return FakeModel()
+
+    monkeypatch.setattr(compaction, "StrixProvider", FakeProvider)
 
 
 @pytest.mark.asyncio
@@ -189,19 +208,38 @@ async def test_maybe_compact_rewrites_and_keeps_pairs(monkeypatch: pytest.Monkey
 async def test_maybe_compact_updates_previous_summary(monkeypatch: pytest.MonkeyPatch) -> None:
     # Window large enough to leave real room for the summary instructions.
     _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
-    captured: dict[str, str] = {}
-
-    async def fake_acompletion(**kwargs: Any) -> Any:
-        captured["prompt"] = kwargs["messages"][0]["content"]
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="NEW"))])
-
-    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+    captured: dict[str, Any] = {}
+    _patch_summary(monkeypatch, "NEW", captured)
 
     prior = compaction._checkpoint_item("OLD SUMMARY TEXT")
     session = FakeSession([prior, *_turns(12)])
 
     assert await compaction.maybe_compact(session, model="m", force=True) is True
-    assert "OLD SUMMARY TEXT" in captured["prompt"]
+    assert "OLD SUMMARY TEXT" in captured["input"]
+
+
+@pytest.mark.asyncio
+async def test_summarize_routes_through_provider_with_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
+    monkeypatch.setattr(
+        compaction,
+        "load_settings",
+        lambda: SimpleNamespace(
+            llm=SimpleNamespace(
+                api_key=None, api_base=None, timeout=1, extra_headers={"X-Feature-Key": "svc"}
+            )
+        ),
+    )
+    captured: dict[str, Any] = {}
+    _patch_summary(monkeypatch, "S", captured)
+
+    assert await compaction._summarize("litellm/openai/some-model", "p", 64) == "S"
+    assert captured["model"] == "litellm/openai/some-model"
+    settings = captured["model_settings"]
+    assert settings.extra_headers == {"X-Feature-Key": "svc"}
+    assert settings.max_tokens == 64
 
 
 def test_fit_to_tokens_truncates_oversized_text(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -233,19 +271,14 @@ def test_summary_output_tokens_capped_at_model_limit(monkeypatch: pytest.MonkeyP
 async def test_maybe_compact_bounds_summary_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     # A tiny window with a huge head must not send an oversized summary request.
     _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
-    captured: dict[str, str] = {}
-
-    async def fake_acompletion(**kwargs: Any) -> Any:
-        captured["prompt"] = kwargs["messages"][0]["content"]
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="S"))])
-
-    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+    captured: dict[str, Any] = {}
+    _patch_summary(monkeypatch, "S", captured)
     big_turns = [{"role": "user", "content": "y" * 2_000} for _ in range(50)]
     session = FakeSession(big_turns)
 
     assert await compaction.maybe_compact(session, model="m") is True
     # count_tokens==len(chars); prompt must fit the model window.
-    assert len(captured["prompt"]) <= 4_000
+    assert len(captured["input"]) <= 4_000
 
 
 @pytest.mark.asyncio
@@ -256,27 +289,27 @@ async def test_summary_request_fits_when_room_is_below_old_floor(
     instructions = len(compaction._SUMMARY_INSTRUCTIONS)
     window = instructions + 64 + 256 + 300  # summary_max(64)+slack(256)+room(300)
     _patch_budget(monkeypatch, keep_tokens=30, window=window)
-    captured: dict[str, str] = {}
-
-    async def fake_acompletion(**kwargs: Any) -> Any:
-        captured["prompt"] = kwargs["messages"][0]["content"]
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="S"))])
-
-    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+    captured: dict[str, Any] = {}
+    _patch_summary(monkeypatch, "S", captured)
     session = FakeSession([{"role": "user", "content": "y" * 5_000} for _ in range(20)])
 
     assert await compaction.maybe_compact(session, model="m") is True
-    assert len(captured["prompt"]) <= window
+    assert len(captured["input"]) <= window
 
 
 @pytest.mark.asyncio
 async def test_maybe_compact_skips_when_summary_fails(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_budget(monkeypatch, keep_tokens=30, window=4_000)
 
-    async def fake_acompletion(**_kwargs: Any) -> Any:
-        raise RuntimeError("boom")
+    class BoomModel:
+        async def get_response(self, **_kwargs: Any) -> Any:
+            raise RuntimeError("boom")
 
-    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+    class BoomProvider:
+        def get_model(self, _model_name: str | None) -> Any:
+            return BoomModel()
+
+    monkeypatch.setattr(compaction, "StrixProvider", BoomProvider)
     session = FakeSession(_turns(12))
     before = await session.get_items()
 
@@ -290,17 +323,11 @@ async def test_maybe_compact_skips_when_no_room_to_summarise(
 ) -> None:
     # No room for any head -> no (doomed) summary is attempted.
     _patch_budget(monkeypatch, keep_tokens=30, window=200)
-    called = False
-
-    async def fake_acompletion(**_kwargs: Any) -> Any:
-        nonlocal called
-        called = True
-        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="S"))])
-
-    monkeypatch.setattr("strix.llm.compaction.litellm.acompletion", fake_acompletion)
+    captured: dict[str, Any] = {}
+    _patch_summary(monkeypatch, "S", captured)
     session = FakeSession(_turns(12))
     before = await session.get_items()
 
     assert await compaction.maybe_compact(session, model="m", force=True) is False
-    assert called is False
+    assert not captured
     assert await session.get_items() == before

@@ -20,6 +20,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+LLM_TURN_KEY = "llm_turn"
+
 _STAGE_LABELS: tuple[str, ...] = ("NOTICE", "URGENT", "CRITICAL")
 _TURN_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
 _ROOT_BUDGET_WARN_BANDS: tuple[float, ...] = (0.70, 0.85, 0.95)
@@ -144,6 +146,7 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
         system_prompt: str | None,  # noqa: ARG002
         input_items: list[TResponseInputItem],
     ) -> None:
+        context.context[LLM_TURN_KEY] = int(context.context.get(LLM_TURN_KEY, 0)) + 1
         try:
             self._maybe_warn_turns(context, input_items)
             self._maybe_warn_budget(context, input_items)

@@ -6,31 +6,27 @@ description: "Command-line options for Strix"
 ## Basic Usage
 
 ```bash
-strix (--target <target> | --target-list <path> | --mount <path>) [options]
+strix (--target <target> | --target-list <path>) [options]
 ```
 
 ## Options
 
 <ParamField path="--target, -t" type="string">
-  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times. Fresh runs require at least one target source: `--target`, `--target-list`, or `--mount`.
+  Target to test. Accepts URLs, repositories, local directories, domains, IP addresses, API spec files (OpenAPI/Swagger `.json`/`.yaml`, a Postman collection export), or a live Postman collection by id (`postman://<collection-uuid>`). Can be specified multiple times. Fresh runs require at least one target source: `--target` or `--target-list`.
+
+  When the target is an API spec, Strix copies it into the agent's workspace and authorizes the base URLs it declares (including those resolved from a Postman environment) as in-scope hosts - so the agent reads the contract and tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
+
+  <Note>
+    A local directory is mounted into the sandbox live and **writable**, so the agent edits your real files (`.git` excepted). Commit or stash first.
+  </Note>
+
+  <Note>
+    Fetching a Postman collection by id requires `POSTMAN_API_KEY`. Add `?env=<environment-uuid>` to also pull a Postman environment, which resolves `{{baseUrl}}` / token variables the collection references (e.g. `postman://<collection-uuid>?env=<environment-uid>`).
+  </Note>
 </ParamField>
 
 <ParamField path="--target-list" type="string">
   Path to a file containing targets, one per non-empty, non-comment line. Lines starting with `#` are ignored. Can be specified multiple times and combined with `--target`.
-</ParamField>
-
-<ParamField path="--mount" type="string">
-  Bind-mount a local directory into the sandbox (read-only) instead of copying it in file-by-file. Use this for large repositories that are too big to stream into the container. Can be specified multiple times.
-
-  Strix copies local `--target` directories into the sandbox one file at a time, which stalls on very large trees. When a local target exceeds the copy limit (see `STRIX_MAX_LOCAL_COPY_MB`, default 1024 MB) Strix exits early and asks you to re-run with `--mount`.
-
-  <Note>
-    The mount is read-only to protect your source from accidental modification. This is not a hard security boundary: a root process inside the container can remount it writable, so treat `--mount` as "scan my own code", not as isolation from untrusted code.
-  </Note>
-
-  <Note>
-    The size pre-flight only covers local directory targets. Remote repositories (cloned at scan time) are not size-checked.
-  </Note>
 </ParamField>
 
 <ParamField path="--instruction" type="string">
@@ -138,11 +134,14 @@ strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 # Multi-target white-box testing
 strix -t https://github.com/org/app -t https://staging.example.com
 
+# API spec + live target (OpenAPI/Swagger file or Postman collection)
+strix -t ./openapi.yaml -t https://api.example.com
+
+# Postman collection pulled live by id (+ optional environment)
+strix -t "postman://<collection-uuid>?env=<environment-uuid>"
+
 # Targets from a file
 strix --target-list ./targets.txt
-
-# Large local repository — bind-mount instead of copying it in
-strix --mount ./huge-monorepo
 ```
 
 ## Exit Codes

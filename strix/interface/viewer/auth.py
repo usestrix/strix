@@ -22,6 +22,7 @@ from typing import Any
 import requests
 
 from strix.config.loader import load_settings
+from strix.utils.secret_files import write_secret_text
 
 
 logger = logging.getLogger(__name__)
@@ -115,15 +116,8 @@ def is_verified() -> bool:
 
 def write_auth(email: str, token: str, verified_at: str) -> None:
     """Atomically persist the auth record with 0600 permissions."""
-    AUTH_PATH.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps({"email": email, "token": token, "verified_at": verified_at})
-    tmp = AUTH_PATH.with_suffix(".json.tmp")
-    tmp.write_text(payload, encoding="utf-8")
-    with contextlib.suppress(OSError):
-        tmp.chmod(0o600)
-    tmp.replace(AUTH_PATH)
-    with contextlib.suppress(OSError):
-        AUTH_PATH.chmod(0o600)
+    write_secret_text(AUTH_PATH, payload)
 
 
 def forget() -> None:
@@ -148,16 +142,16 @@ def _post_json(path: str, payload: dict[str, Any], *, timeout: int) -> tuple[int
     """
     url = f"{_app_url()}{path}"
     try:
-        response = requests.post(
+        with requests.post(
             url,
             json=payload,
             headers={"Accept": "application/json"},
             timeout=timeout,
-        )
+        ) as response:
+            return response.status_code, _parse_body(response.content)
     except requests.RequestException as exc:
         logger.warning("relay request to %s failed: %s", path, exc)
         raise RelayError("unavailable") from exc
-    return response.status_code, _parse_body(response.content)
 
 
 def _parse_body(raw: bytes) -> dict[str, Any]:

@@ -33,14 +33,13 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "openai-agents[litellm]==0.14.6",
-  "openai>=2.26.0,<2.45",
+  "openai-agents[litellm]>=0.19.0,<0.20",
+  "openai>=2.45.0,<3",
   "litellm",
   "pydantic>=2.11.3",
   "pydantic-settings>=2.13.0",
   "rich",
   "docker>=7.1.0",
-  "textual>=6.0.0",
   "requests>=2.32.0",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
@@ -49,6 +48,7 @@ dependencies = [
   # Cap <49: 49.x drops the universal2 macOS wheel (arm64-only), which breaks
   # the Intel macOS (macos-x86_64) release build's `uv sync --frozen`.
   "cryptography>=48.0.1,<49",
+  "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -68,6 +68,7 @@ dev = [
   "pyinstaller>=6.17.0; python_version >= '3.12' and python_version < '3.15'",
   "pytest>=8.3",
   "pytest-asyncio>=0.24",
+  "types-requests>=2.32",
 ]
 
 [tool.pytest.ini_options]
@@ -82,7 +83,19 @@ packages = ["strix"]
 # The prebuilt viewer bundle under strix/interface/viewer/static/ ships automatically
 # (hatchling includes non-.py files under the package). The Vite SOURCE lives
 # under the package dir too (strix/interface/viewer/frontend/) but must never ship in the wheel.
-exclude = ["strix/interface/viewer/frontend", "strix/interface/viewer/frontend/**"]
+exclude = [
+  "strix/interface/viewer/frontend",
+  "strix/interface/viewer/frontend/**",
+  # Go TUI SOURCE lives under the package dir but must never ship in the wheel;
+  # the compiled sidecar is force-included as strix/bin/strix-tui instead.
+  "strix/interface/tui/cmd/**",
+  "strix/interface/tui/internal/**",
+  "strix/interface/tui/go.mod",
+  "strix/interface/tui/go.sum",
+]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "scripts/tui_sidecar_hook.py"
 
 # ============================================================================
 # Type Checking Configuration
@@ -115,13 +128,13 @@ module = [
     "litellm.*",
     "rich.*",
     "jinja2.*",
-    "textual.*",
     "cvss.*",
     "docker.*",
     "caido_sdk_client.*",
     "pydantic_settings.*",
     "reportlab.*",
     "pypdf.*",
+    "yaml.*",
     "pygments.*",
 ]
 ignore_missing_imports = true
@@ -217,9 +230,16 @@ ignore = [
 # args they intentionally ignore.
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
+# Hatchling loads the build hook by path, not as an importable package.
+"scripts/tui_sidecar_hook.py" = ["INP001"]
 # Stdlib HTTP handler overrides (do_GET/do_POST).
 "strix/interface/auth_cli.py" = ["N802"]
 "tests/test_codex_streaming.py" = ["N802"]
+"tests/test_disable_streaming.py" = ["N802"]
+"tests/test_tool_call_ids.py" = ["N802"]
+"tests/test_tool_call_limits.py" = ["N802", "SLF001"]
+"tests/test_stream_idle_timeout.py" = ["N802", "SLF001"]
+"tests/test_unknown_tool_recovery.py" = ["N802"]
 "tests/test_report_pdf.py" = ["S105", "S106"]
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
 # circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.
@@ -274,9 +294,15 @@ ignore = [
 # CLI / TUI / main keep extensive lazy imports + broad exception
 # swallows for resilience around terminal-rendering errors.
 "strix/interface/cli.py" = ["BLE001", "PLC0415"]
-"strix/interface/tui/app.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915", "SIM105"]
+"strix/interface/scan_setup.py" = ["PLC0415"]
 "strix/interface/main.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
-"strix/interface/tui/renderers/agent_message_renderer.py" = ["PLC0415"]
+"strix/interface/cli_args.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
+"strix/interface/environment.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
+# The Go TUI runtime and backend controller import interface modules lazily so
+# the sidecar entry point stays fast and avoids circular imports.
+"strix/interface/interactive.py" = ["PLC0415"]
+"strix/interface/tui/runtime.py" = ["PLC0415"]
+"strix/interface/tui/backend/controller.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
 force-single-line = false

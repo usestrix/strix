@@ -217,6 +217,8 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         ("Ecosystem", dep_meta.get("package_ecosystem")),
         ("Installed Version", dep_meta.get("installed_version")),
         ("Fixed Version", dep_meta.get("fixed_version")),
+        ("Introduced By", dep_meta.get("introduced_by")),
+        ("Dependency Chain", dep_meta.get("dependency_path")),
         ("Endpoint", report.get("endpoint")),
         ("Method", report.get("method")),
         ("CVE", report.get("cve")),

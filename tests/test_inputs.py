@@ -8,7 +8,12 @@ from typing import Any
 import litellm
 import pytest
 
-from strix.core.inputs import build_root_task, child_initial_input, make_model_settings
+from strix.core.inputs import (
+    build_root_task,
+    build_scope_context,
+    child_initial_input,
+    make_model_settings,
+)
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -129,6 +134,17 @@ def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: 
         ]
 
 
+def test_max_reasoning_effort_sent_as_raw_body_field() -> None:
+    # "max" is absent from the OpenAI SDK's Reasoning enum, and LiteLLM's DeepSeek
+    # mapping collapses every effort to thinking-enabled, so it has to ride along
+    # as a raw body field to reach the provider.
+    settings = make_model_settings(
+        "max", model_name="deepseek/deepseek-v4-flash", request_timeout=30
+    )
+    assert settings.reasoning is None
+    assert settings.extra_args == {"timeout": 30, "extra_body": {"reasoning_effort": "max"}}
+
+
 def test_conversation_tail_breakpoint_moves_with_appended_transcript() -> None:
     # LiteLLM must place the index=-1 cache_control on the last message however
     # long the transcript grows.
@@ -189,6 +205,34 @@ def test_build_root_task_web_application_with_instructions() -> None:
     assert "URLs:" in task
     assert "https://app.example.com" in task
     assert "Special instructions: Focus on auth." in task
+
+
+def test_build_root_task_workspace_mount_is_not_a_target() -> None:
+    """A target-less run gets a working directory, not an assessment scope."""
+    config = {
+        "targets": [],
+        "user_instructions": "Find IDOR in the checkout flow.",
+        "workspace_mount": "/Users/me/code/api",
+        "workspace_subdir": "api",
+    }
+    task = build_root_task(config)
+
+    assert "Working Directory:" in task
+    assert "/workspace/api" in task
+    assert "No scan target was set" in task
+    assert "Special instructions: Find IDOR in the checkout flow." in task
+    # It must not be presented as an asset to test.
+    for label in ("Local Codebases:", "Repositories:", "URLs:", "IP Addresses:"):
+        assert label not in task
+
+
+def test_build_scope_context_authorizes_nothing_without_targets() -> None:
+    """A mounted workspace grants no authorized scope."""
+    scope = build_scope_context(
+        {"targets": [], "workspace_mount": "/Users/me/code/api", "workspace_subdir": "api"}
+    )
+
+    assert scope["authorized_targets"] == []
 
 
 def test_build_root_task_diff_scope() -> None:
@@ -270,6 +314,30 @@ def test_make_model_settings_omits_timeout_when_unset() -> None:
     settings = make_model_settings("none", model_name="gpt-4o")
 
     assert settings.extra_args is None
+
+
+def test_make_model_settings_sets_extra_headers() -> None:
+    settings = make_model_settings(
+        "none",
+        model_name="openai/some-model",
+        extra_headers={"X-Feature-Key": "svc", "X-Tenant": "acme"},
+    )
+
+    assert settings.extra_headers == {"X-Feature-Key": "svc", "X-Tenant": "acme"}
+
+
+def test_make_model_settings_omits_extra_headers_when_unset() -> None:
+    assert make_model_settings("none", model_name="gpt-4o").extra_headers is None
+
+
+def test_make_model_settings_extra_headers_survive_reasoning_resolve() -> None:
+    settings = make_model_settings(
+        "high",
+        model_name="openai/o3",
+        extra_headers={"X-Feature-Key": "svc"},
+    )
+
+    assert settings.extra_headers == {"X-Feature-Key": "svc"}
 
 
 def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:

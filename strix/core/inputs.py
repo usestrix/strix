@@ -24,9 +24,6 @@ if TYPE_CHECKING:
     from strix.config.settings import ReasoningEffort
 
 
-DEFAULT_MAX_TURNS = 500
-
-
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
     name = (model_name or "").strip().lower()
     for prefix in ("litellm/", "any-llm/"):
@@ -34,6 +31,50 @@ def _accepts_required_tool_choice(model_name: str | None) -> bool:
             name = name[len(prefix) :]
             break
     return name.startswith("openai/") or is_known_openai_bare_model(name)
+
+
+def _render_diff_scope(diff_scope: dict[str, Any]) -> list[str]:
+    """Render pull-request diff-scope constraints as root-task lines."""
+    if not diff_scope.get("active"):
+        return []
+    parts: list[str] = [
+        "\n\nScope Constraints:",
+        "- Pull request diff-scope mode is active. Prioritize changed files "
+        "and use other files only for context.",
+    ]
+    for repo_scope in diff_scope.get("repos", []) or []:
+        label = repo_scope.get("workspace_subdir") or repo_scope.get("source_path") or "repository"
+        changed = repo_scope.get("analyzable_files_count", 0)
+        deleted = repo_scope.get("deleted_files_count", 0)
+        parts.append(f"- {label}: {changed} changed file(s) in primary scope")
+        if deleted:
+            parts.append(f"- {label}: {deleted} deleted file(s) are context-only")
+    return parts
+
+
+def _render_api_spec(details: dict[str, Any]) -> list[str]:
+    """Render an API spec target as root-task lines.
+
+    The spec itself is in the workspace, so the task points at the file and lets
+    the agent read the contract rather than restating a parsed summary of it.
+    """
+    title = details.get("spec_title") or details.get("target_spec", "API")
+    workspace_path = details.get("workspace_path", "")
+    lines = [
+        f"- {title} ({details.get('spec_format', 'api')} specification"
+        + (f", available at: {workspace_path}" if workspace_path else "")
+        + ")"
+    ]
+    if base_urls := details.get("base_urls") or []:
+        lines.append("  - Base URL(s): " + ", ".join(base_urls))
+    lines.append(
+        "  - Read the specification and test every operation it declares, using "
+        "its declared parameters, request bodies, and auth. Endpoints in the "
+        "specification are in scope even when nothing links to them. Load the "
+        "`api_spec_testing` skill for the methodology, or spawn a specialist "
+        "with it."
+    )
+    return lines
 
 
 def build_root_task(scan_config: dict[str, Any]) -> str:
@@ -46,6 +87,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         "Local Codebases": [],
         "URLs": [],
         "IP Addresses": [],
+        "API Specifications": [],
     }
 
     for target in targets:
@@ -62,12 +104,17 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
-            suffix = ", read-only mount" if details.get("mount") else ""
-            sections["Local Codebases"].append(f"- {path} (available at: {workspace_path}{suffix})")
+            sections["Local Codebases"].append(
+                f"- {path} (available at: {workspace_path}; "
+                "this is the user's real directory, mounted live and writable — "
+                ".git/.agents/.codex are read-only)"
+            )
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":
             sections["IP Addresses"].append(f"- {details.get('target_ip', '')}")
+        elif ttype == "api_spec":
+            sections["API Specifications"].extend(_render_api_spec(details))
 
     parts: list[str] = []
     for label, items in sections.items():
@@ -75,21 +122,24 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             parts.append(f"\n\n{label}:")
             parts.extend(items)
 
-    if diff_scope.get("active"):
-        parts.append("\n\nScope Constraints:")
+    # A workspace mount is a directory to work in, not an asset to test. It is
+    # listed apart from the targets so it never reads as scope.
+    if workspace_mount := scan_config.get("workspace_mount") or "":
+        subdir = scan_config.get("workspace_subdir") or ""
+        workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
+        parts.append("\n\nWorking Directory:")
         parts.append(
-            "- Pull request diff-scope mode is active. Prioritize changed files "
-            "and use other files only for context.",
+            f"- {workspace_mount} (available at: {workspace_path}; "
+            "this is the user's real directory, mounted live and writable — "
+            ".git/.agents/.codex are read-only)"
         )
-        for repo_scope in diff_scope.get("repos", []) or []:
-            label = (
-                repo_scope.get("workspace_subdir") or repo_scope.get("source_path") or "repository"
-            )
-            changed = repo_scope.get("analyzable_files_count", 0)
-            deleted = repo_scope.get("deleted_files_count", 0)
-            parts.append(f"- {label}: {changed} changed file(s) in primary scope")
-            if deleted:
-                parts.append(f"- {label}: {deleted} deleted file(s) are context-only")
+        parts.append(
+            "- No scan target was set. This directory is where you work, not a "
+            "target to assess: the instructions below are the only source of "
+            "truth for what to do."
+        )
+
+    parts.extend(_render_diff_scope(diff_scope))
 
     task = " ".join(parts)
     if user_instructions:
@@ -104,6 +154,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "local_code": "target_path",
         "web_application": "target_url",
         "ip_address": "target_ip",
+        "api_spec": "target_spec",
     }
     for target in scan_config.get("targets", []) or []:
         ttype = target.get("type", "unknown")
@@ -116,6 +167,14 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         authorized.append(
             {"type": ttype, "value": value, "workspace_path": workspace_path},
         )
+
+        # An API spec authorizes the hosts it declares as in-scope web targets
+        # so the agent can exercise every endpoint without expanding scope.
+        if ttype == "api_spec":
+            authorized.extend(
+                {"type": "web_application", "value": base_url, "workspace_path": ""}
+                for base_url in details.get("base_urls") or []
+            )
 
     return {
         "scope_source": "system_scan_config",
@@ -132,12 +191,14 @@ def make_model_settings(
     force_required_tool_choice: bool = False,
     request_timeout: float | None = None,
     prompt_cache: bool = True,
+    extra_headers: dict[str, str] | None = None,
 ) -> ModelSettings:
     model_settings = ModelSettings(
         parallel_tool_calls=False,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),
+        extra_headers=dict(extra_headers) if extra_headers else None,
     )
     if (
         reasoning_effort is not None
@@ -145,7 +206,7 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            ModelSettings(reasoning=Reasoning(effort=reasoning_effort)),
+            _reasoning_settings(reasoning_effort, model_settings.extra_args),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
@@ -158,6 +219,22 @@ def make_model_settings(
             ),
         )
     return model_settings
+
+
+def _reasoning_settings(
+    effort: ReasoningEffort,
+    extra_args: dict[str, Any] | None,
+) -> ModelSettings:
+    """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
+    a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
+    which collapses every ``reasoning_effort`` level to plain thinking-enabled.
+    Providers that don't support ``max`` reject the request.
+    """
+    if effort != "max":
+        return ModelSettings(reasoning=Reasoning(effort=effort))
+    return ModelSettings(
+        extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
+    )
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:

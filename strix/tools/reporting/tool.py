@@ -126,23 +126,25 @@ def _validate_cwe(cwe: str) -> str | None:
 
 
 def _calculate_cvss(breakdown: dict[str, str]) -> tuple[float, str, str]:
-    try:
-        from cvss import CVSS3
+    from cvss import CVSS3
 
-        vector = (
-            f"CVSS:3.1/AV:{breakdown['attack_vector']}/AC:{breakdown['attack_complexity']}/"
-            f"PR:{breakdown['privileges_required']}/UI:{breakdown['user_interaction']}/"
-            f"S:{breakdown['scope']}/C:{breakdown['confidentiality']}/"
-            f"I:{breakdown['integrity']}/A:{breakdown['availability']}"
-        )
-        c = CVSS3(vector)
-        score = c.scores()[0]
-        severity = c.severities()[0].lower()
-    except Exception:
-        logger.exception("Failed to calculate CVSS")
-        return 7.5, "high", ""
-    else:
-        return score, severity, vector
+    vector = (
+        f"CVSS:3.1/AV:{breakdown['attack_vector']}/AC:{breakdown['attack_complexity']}/"
+        f"PR:{breakdown['privileges_required']}/UI:{breakdown['user_interaction']}/"
+        f"S:{breakdown['scope']}/C:{breakdown['confidentiality']}/"
+        f"I:{breakdown['integrity']}/A:{breakdown['availability']}"
+    )
+
+    try:
+        cvss = CVSS3(vector)
+        score = cvss.scores()[0]
+        base_severity = cvss.severities()[0].lower()
+    except Exception as exc:
+        msg = f"Failed to calculate CVSS for validated vector: {vector}"
+        raise ValueError(msg) from exc
+
+    severity = "info" if base_severity == "none" else base_severity
+    return score, severity, vector
 
 
 _REQUIRED_FIELDS = {
@@ -233,7 +235,10 @@ async def _do_create(  # noqa: PLR0912
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
 
-    cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
+    try:
+        cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
+    except ValueError as exc:
+        return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
 
     try:
         from strix.report.state import get_global_report_state
@@ -377,6 +382,30 @@ async def create_vulnerability_report(
       lockfile/manifest that matches a published advisory. File those
       with ``create_dependency_report`` instead, never with this tool.
 
+    **Reporting and severity gate**:
+
+    - A reachable endpoint, unusual response, weak configuration, or
+      reconnaissance artifact is not by itself a vulnerability. File a
+      report only when the PoC demonstrates an unauthorized security
+      consequence or a realistic, fully validated path to one.
+    - Score only the reasonable final impact supported by the PoC. Do
+      not score speculative pivots or consequences that require another
+      unverified vulnerability.
+    - Network reachability and missing authentication affect
+      exploitability; neither creates Confidentiality, Integrity, or
+      Availability impact by itself.
+    - Public metadata, internal-looking names or addresses, software
+      versions, intended client-side code, and source maps without
+      secrets or restricted source normally have ``C:N``.
+    - Configuration and transport observations require a realistic
+      attacker-controlled exploit and direct security impact. Client
+      errors, compatibility issues, fingerprinting, and attack-surface
+      discovery alone should not be filed as vulnerabilities.
+    - Before filing, verify that the impact narrative, PoC, and every
+      non-None CVSS impact metric describe the same demonstrated
+      consequence. When evidence is incomplete, lower the metric or
+      continue validation; never choose a higher value "to be safe."
+
     Automatic LLM-based **deduplication** rejects reports that describe
     the same root cause on the same asset as an existing report. If you
     get a ``duplicate_of`` response, do NOT retry — move on to other
@@ -429,6 +458,23 @@ async def create_vulnerability_report(
     - ``scope``: ``U`` (Unchanged) / ``C`` (Changed)
     - ``confidentiality`` / ``integrity`` / ``availability``: ``N`` /
       ``L`` / ``H``
+
+    Derive the vector from the demonstrated attack, not the finding
+    category or a scanner/template severity:
+
+    - ``C:L`` requires actual access to some restricted information.
+      Reconnaissance value alone is ``C:N``. ``C:H`` requires total
+      disclosure or limited disclosure with a direct serious impact,
+      such as a usable administrator credential or private key.
+    - ``I:L`` requires demonstrated unauthorized, limited modification;
+      ``I:H`` requires total or directly serious modification. Otherwise
+      use ``I:N``.
+    - ``A:L`` requires demonstrated performance degradation or service
+      interruption; ``A:H`` requires complete or directly serious
+      denial of the affected service. Otherwise use ``A:N``.
+    - Use ``S:C`` only when exploitation demonstrably crosses into a
+      component governed by a different security authority. A separate
+      backend, downstream effect, or third-party name is insufficient.
 
     Example::
 
@@ -502,7 +548,10 @@ async def create_vulnerability_report(
             (1-3 sentences) — it appears first in the report. Deep
             technical detail and root-cause analysis belong in
             ``technical_analysis``, not here.
-        impact: What an attacker achieves; business risk; data at risk.
+        impact: The unauthorized result demonstrated by the PoC, the
+            affected data or operation, and its scope. Keep plausible
+            but unverified follow-on risks separate; do not use them to
+            set CVSS metrics.
         target: Affected URL / domain / repository.
         technical_analysis: The mechanism and root cause.
         poc_description: Step-by-step reproduction (steps only, no code).
@@ -670,12 +719,47 @@ def _dependency_severity(advisory_cvss: float | None) -> tuple[float, str]:
     return score, "none"
 
 
+_VALID_REACHABILITY = frozenset(
+    {
+        "not_imported",
+        "imported",
+        "vulnerable_symbol_used",
+        "reachable_call_path",
+        "unknown",
+    }
+)
+
+
+def _validate_manifest_path(manifest_path: str | None) -> str | None:
+    """Return an error message when manifest_path is missing or unsafe."""
+    path = (manifest_path or "").strip()
+    if not path:
+        return (
+            "manifest_path is required: pass the repo-relative path of the "
+            "lockfile/manifest where the vulnerable version was observed "
+            "(trivy's Target, e.g. 'package-lock.json' or "
+            "'services/api/pom.xml'). It binds the finding to its exact file "
+            "so remediation can target the right repository."
+        )
+    if path.startswith("/") or "\\" in path or path.split("/")[0].endswith(":"):
+        return f"manifest_path must be a relative path within the repository, got {path!r}"
+    segments = path.split("/")
+    if any(segment in ("", ".", "..") for segment in segments):
+        return f"manifest_path must not contain empty, '.', or '..' segments, got {path!r}"
+    return None
+
+
 def _build_dependency_metadata(
     *,
     package_name: str,
     installed_version: str,
     package_ecosystem: str | None,
     fixed_version: str | None,
+    introduced_by: str | None,
+    dependency_path: str | None,
+    manifest_path: str | None = None,
+    reachability: str | None = None,
+    reachability_evidence: str | None = None,
 ) -> dict[str, str]:
     metadata = {
         "package_name": package_name.strip(),
@@ -683,9 +767,31 @@ def _build_dependency_metadata(
     }
     if package_ecosystem and package_ecosystem.strip():
         metadata["package_ecosystem"] = package_ecosystem.strip()
+    if manifest_path and manifest_path.strip():
+        metadata["manifest_path"] = manifest_path.strip()
     if fixed_version and fixed_version.strip():
         metadata["fixed_version"] = fixed_version.strip()
+    if introduced_by and introduced_by.strip():
+        metadata["introduced_by"] = introduced_by.strip()
+    if dependency_path and dependency_path.strip():
+        metadata["dependency_path"] = dependency_path.strip()
+    # "unknown" is the absent case — omitting it keeps the jsonb contract clean,
+    # and evidence without a level would have nothing to qualify.
+    if reachability and reachability.strip() and reachability.strip() != "unknown":
+        metadata["reachability"] = reachability.strip()
+        if reachability_evidence and reachability_evidence.strip():
+            metadata["reachability_evidence"] = reachability_evidence.strip()
     return metadata
+
+
+_REACHABILITY_EVIDENCE_LABELS = {
+    "not_imported": "not imported by application code",
+    "imported": "imported by application code; affected API usage unconfirmed",
+    "vulnerable_symbol_used": "the advisory's affected API is used in application code",
+    "reachable_call_path": (
+        "a call path from application code to the vulnerable function was proven"
+    ),
+}
 
 
 def _build_dependency_evidence(
@@ -694,6 +800,10 @@ def _build_dependency_evidence(
     package_name: str,
     installed_version: str,
     fixed_version: str | None,
+    introduced_by: str | None,
+    dependency_path: str | None,
+    reachability: str | None = None,
+    reachability_evidence: str | None = None,
 ) -> str:
     evidence = (
         f"**Advisory evidence:** `{cve}` applies to `{package_name}` "
@@ -701,6 +811,22 @@ def _build_dependency_evidence(
     )
     if fixed_version and fixed_version.strip():
         evidence += f" The advisory is fixed in `{fixed_version.strip()}`."
+    if introduced_by and introduced_by.strip():
+        evidence += (
+            f"\n\n**Transitive dependency:** introduced by the direct "
+            f"dependency `{introduced_by.strip()}`."
+        )
+    if dependency_path and dependency_path.strip():
+        evidence += f"\n\n**Dependency chain:** `{dependency_path.strip()}`"
+    label = _REACHABILITY_EVIDENCE_LABELS.get((reachability or "").strip().lower())
+    if label:
+        evidence += f"\n\n**Usage analysis:** {label}."
+        if reachability_evidence and reachability_evidence.strip():
+            evidence += f" {reachability_evidence.strip()}"
+        evidence += (
+            " This is a prioritization signal from static analysis, not a"
+            " proof of exploitability or of safety."
+        )
     return evidence
 
 
@@ -721,6 +847,11 @@ async def _do_create_dependency(  # noqa: PLR0912
     advisory_cvss: float | None,
     technical_analysis: str | None,
     fix_effort: str,
+    introduced_by: str | None = None,
+    dependency_path: str | None = None,
+    manifest_path: str | None = None,
+    reachability: str = "unknown",
+    reachability_evidence: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
@@ -757,6 +888,22 @@ async def _do_create_dependency(  # noqa: PLR0912
             f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
         )
 
+    manifest_err = _validate_manifest_path(manifest_path)
+    if manifest_err:
+        errors.append(manifest_err)
+
+    reachability = (reachability or "unknown").strip().lower()
+    if reachability not in _VALID_REACHABILITY:
+        errors.append(
+            f"Invalid reachability: {reachability!r}. Must be one of: {sorted(_VALID_REACHABILITY)}"
+        )
+    elif reachability != "unknown" and not (reachability_evidence or "").strip():
+        errors.append(
+            "reachability_evidence is required when reachability is not 'unknown': "
+            "cite the concrete proof (import file:line, matched symbol usage, or "
+            "govulncheck call path). Never claim a reachability level without evidence."
+        )
+
     if advisory_cvss is None:
         errors.append(
             "advisory_cvss is required: read the published advisory base score "
@@ -775,12 +922,21 @@ async def _do_create_dependency(  # noqa: PLR0912
         installed_version=installed_version,
         package_ecosystem=package_ecosystem,
         fixed_version=fixed_version,
+        introduced_by=introduced_by,
+        dependency_path=dependency_path,
+        manifest_path=manifest_path,
+        reachability=reachability,
+        reachability_evidence=reachability_evidence,
     )
     evidence = _build_dependency_evidence(
         cve=parsed_cve,
         package_name=package_name.strip(),
         installed_version=installed_version.strip(),
         fixed_version=fixed_version,
+        introduced_by=introduced_by,
+        dependency_path=dependency_path,
+        reachability=reachability,
+        reachability_evidence=reachability_evidence,
     )
 
     try:
@@ -873,10 +1029,15 @@ async def create_dependency_report(
     remediation_steps: str,
     assumptions: str,
     package_ecosystem: str,
+    manifest_path: str | None = None,
     fixed_version: str | None = None,
     cwe: str | None = None,
     technical_analysis: str | None = None,
     fix_effort: str = "low",
+    introduced_by: str | None = None,
+    dependency_path: str | None = None,
+    reachability: str = "unknown",
+    reachability_evidence: str | None = None,
 ) -> str:
     """File a known-CVE dependency (SCA) finding — one report per CVE x package.
 
@@ -901,9 +1062,26 @@ async def create_dependency_report(
     - Re-reporting the same CVE/package already filed.
 
     **Reachability**: do NOT silently downgrade or suppress a finding
-    because the vulnerable code path may be unreachable — instead state
-    reachability as an ``assumptions`` / confidence factor. Report the
-    finding; let the reader weigh exploitability.
+    because the vulnerable code path may be unreachable — report it, and
+    record what the usage analysis showed via the structured
+    ``reachability`` + ``reachability_evidence`` fields (see the
+    dependency-cve-scanning skill for the analysis procedure). The level
+    is an evidence ladder, never an exploitability verdict:
+
+    - ``not_imported`` — the package is never imported/required by
+      application code (strongest de-prioritization signal; still not
+      proof of safety — dynamic loading, reflection, or framework wiring
+      can evade static search).
+    - ``imported`` — application code imports the package, but usage of
+      the advisory's affected API was not confirmed.
+    - ``vulnerable_symbol_used`` — the advisory's affected
+      function/class/API appears in application code.
+    - ``reachable_call_path`` — a call-graph tool (e.g. ``govulncheck``)
+      proved a path from application code to the vulnerable function.
+    - ``unknown`` — usage analysis was not performed or was inconclusive.
+
+    Severity is still derived solely from ``advisory_cvss`` — the
+    reachability level never changes the rating, only prioritization.
 
     **Formatting**: use markdown in text fields (``**bold**``, ``inline
     code`` for package/version identifiers, fenced code blocks for
@@ -929,6 +1107,30 @@ async def create_dependency_report(
         technical_analysis: Optional deeper mechanism/root-cause detail.
         fix_effort: One of ``trivial`` / ``low`` / ``medium`` / ``high``
             (dependency upgrades are usually ``trivial``/``low``).
+        introduced_by: For a **transitive** dependency, the direct
+            dependency (from the project's own manifest) that pulls the
+            vulnerable package in, as ``name@version`` (e.g.
+            ``express@4.18.1``). Omit when the vulnerable package is
+            itself a direct dependency.
+        dependency_path: The resolution chain from the direct dependency
+            to the vulnerable package, joined with `` > `` (e.g.
+            ``express@4.18.1 > body-parser@1.20.0 > qs@6.10.2``). Omit
+            for direct dependencies.
+        manifest_path: **Required.** The repo-relative path of the
+            lockfile/manifest where the vulnerable version was observed —
+            trivy's ``Target`` (e.g. ``package-lock.json``,
+            ``services/api/pom.xml``). Strip any scan-workspace or repo
+            checkout directory prefix so the path is relative to the
+            repository root. This binds the finding to its exact file so
+            remediation can target the right repository.
+        reachability: Usage-evidence level from static analysis — one of
+            ``not_imported`` / ``imported`` / ``vulnerable_symbol_used`` /
+            ``reachable_call_path`` / ``unknown``. Claim only what the
+            evidence proves; when in doubt use ``unknown``.
+        reachability_evidence: The concrete proof for the claimed level
+            (required for any level other than ``unknown``): repo-relative
+            ``file:line`` of the import or symbol usage, the matched
+            advisory symbols, or the govulncheck call-path excerpt.
     """
     agent_id, agent_name = _caller_identity(ctx)
 
@@ -948,6 +1150,11 @@ async def create_dependency_report(
         advisory_cvss=advisory_cvss,
         technical_analysis=technical_analysis,
         fix_effort=fix_effort,
+        introduced_by=introduced_by,
+        dependency_path=dependency_path,
+        manifest_path=manifest_path,
+        reachability=reachability,
+        reachability_evidence=reachability_evidence,
         agent_id=agent_id,
         agent_name=agent_name,
     )

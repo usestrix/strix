@@ -54,7 +54,7 @@ export default function AgentCommsRenderer({ toolName, args }: ToolRendererProps
     );
   }
 
-  if (toolName === "wait_for_message") {
+  if (toolName === "wait_for_agents") {
     const reason = (args.reason as string) ?? "";
     return (
       <div className="flex items-center gap-2">
