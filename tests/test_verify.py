@@ -83,6 +83,31 @@ def test_parse_verdict_bad_confidence_defaults_zero():
     assert v["confidence"] == 0.0
 
 
+@pytest.mark.parametrize("raw", ["100", "1e999", "-5", "1.0001", "NaN", "-0.01"])
+def test_parse_verdict_out_of_range_confidence_collapses_to_zero(raw: str):
+    # Untrusted output: any confidence outside [0,1] or non-finite must not be
+    # able to authorize suppression — it collapses to 0.0 (emits, fail-open).
+    v = verify._parse_verdict(f'{{"verdict": "FALSE_POSITIVE", "confidence": {raw}}}')
+    assert v["confidence"] == 0.0
+
+
+def test_extra_args_gated_on_dedicated_model(monkeypatch: pytest.MonkeyPatch):
+    # Verifier creds must NOT overlay onto the main model when no dedicated
+    # STRIX_VERIFY_MODEL is set (would point verification at the wrong endpoint).
+    monkeypatch.setenv("VERIFY_LLM_API_KEY", "sk-verify")
+    monkeypatch.setenv("VERIFY_LLM_API_BASE", "https://verify.example")
+    _reset_cache()
+    verify_settings = loader.load_settings().verify
+    assert verify_settings.model is None
+    assert verify._verify_extra_args(verify_settings) == {}
+
+    # With a dedicated model, the creds ARE passed through.
+    monkeypatch.setenv("STRIX_VERIFY_MODEL", "openai/verifier")
+    _reset_cache()
+    verify_settings = loader.load_settings().verify
+    assert verify._verify_extra_args(verify_settings)["api_key"] == "sk-verify"
+
+
 def test_parse_verdict_no_json_raises():
     with pytest.raises(ValueError):
         verify._parse_verdict("I think this is real, sorry no JSON")
@@ -186,3 +211,15 @@ async def test_unparseable_response_emits(monkeypatch: pytest.MonkeyPatch):
     out = await _run_with_stubbed_model(monkeypatch, "no json here", "critical")
     assert out["reject"] is False
     assert out["verdict"] == "ERROR"
+
+
+async def test_out_of_range_confidence_does_not_suppress(monkeypatch: pytest.MonkeyPatch):
+    # A FALSE_POSITIVE with confidence=100 must NOT authorize suppression — the
+    # clamp collapses it to 0.0, which fails the threshold and emits.
+    out = await _run_with_stubbed_model(
+        monkeypatch,
+        '{"verdict": "FALSE_POSITIVE", "confidence": 100, "reason": "bogus"}',
+        "critical",
+    )
+    assert out["reject"] is False
+    assert out["confidence"] == 0.0

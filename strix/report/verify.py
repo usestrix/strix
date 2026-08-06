@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import TYPE_CHECKING, Any
 
 from agents.model_settings import ModelSettings
@@ -67,6 +68,15 @@ Respond with ONLY a JSON object:
 
 
 def _verify_extra_args(verify: VerifySettings) -> dict[str, str]:
+    """Per-call credential + endpoint for a *dedicated* verify model.
+
+    Only applies when STRIX_VERIFY_MODEL is set: the verifier's key/base must
+    never be overlaid onto the main model when the verifier falls back to it
+    (that would point verification at the wrong endpoint/account). Mirrors the
+    dedupe module's gating.
+    """
+    if not verify.model:
+        return {}
     extra: dict[str, str] = {}
     if verify.api_key and verify.api_key.strip():
         extra["api_key"] = verify.api_key.strip()
@@ -122,9 +132,15 @@ def _parse_verdict(content: str) -> dict[str, Any]:
 
     verdict = str(parsed.get("verdict") or "").strip().upper()
     reason = str(parsed.get("reason") or "")[:500]
+    # The model output is untrusted (no schema is enforced on the response), so
+    # a confidence outside [0, 1] — 100, 1e999, -5, nan — must not be able to
+    # authorize suppression. Anything non-finite or out of range collapses to
+    # 0.0, which fails the min_confidence gate and emits (fail-open).
     try:
         confidence = float(parsed.get("confidence", 0.0))
     except (TypeError, ValueError):
+        confidence = 0.0
+    if not math.isfinite(confidence) or not (0.0 <= confidence <= 1.0):
         confidence = 0.0
     return {"verdict": verdict, "confidence": confidence, "reason": reason}
 
