@@ -474,6 +474,18 @@ func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			m.modalChoice = 1
 			return m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
 		}
+	case modalConfirmMount:
+		left, top, panel := m.mountPromptBounds()
+		if labelHitAt(panel, mountConfirmLabel, left, top, msg.X, msg.Y) {
+			m.modalChoice = 0
+			cmd := m.answerMountConfirmation(true)
+			return m, cmd
+		}
+		if labelHitAt(panel, mountCancelLabel, left, top, msg.X, msg.Y) {
+			m.modalChoice = 1
+			cmd := m.answerMountConfirmation(false)
+			return m, cmd
+		}
 	case modalVulnerability:
 		for _, button := range m.reportButtons() {
 			if button == reportCopy || button == reportDone {
@@ -507,7 +519,14 @@ func (m Model) centeredViewBounds(view string) (left, top, width, height int) {
 
 func (m Model) centeredLabelHit(view, label string, x, y int) bool {
 	left, top, _, _ := m.centeredViewBounds(view)
-	for row, line := range strings.Split(view, "\n") {
+	return labelHitAt(view, label, left, top, x, y)
+}
+
+// labelHitAt reports whether a click landed on a label drawn in a panel whose
+// top-left corner is at (left, top). The mount prompt is docked in a corner
+// rather than centered, so it cannot use the centered bounds.
+func labelHitAt(panel, label string, left, top, x, y int) bool {
+	for row, line := range strings.Split(panel, "\n") {
 		plain := ansi.Strip(line)
 		index := strings.Index(plain, label)
 		if index < 0 || y != top+row {
@@ -593,7 +612,8 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		if m.modal == modalConfirmMount {
 			// The backend is waiting on an answer; escape declines it.
-			return m, m.answerMountConfirmation(false)
+			cmd := m.answerMountConfirmation(false)
+			return m, cmd
 		}
 		m.closeModal()
 		return m, nil
@@ -604,7 +624,10 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		modal, choice := m.modal, m.modalChoice
 		if modal == modalConfirmMount {
 			// The snapshot closes this prompt once the backend has the answer.
-			return m, m.answerMountConfirmation(choice == 0)
+			// Bound to a variable first: the call restores the held prompt into
+			// the composer, and that has to be in the model being returned.
+			cmd := m.answerMountConfirmation(choice == 0)
+			return m, cmd
 		}
 		m.closeModal()
 		if choice == 1 {

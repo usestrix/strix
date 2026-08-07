@@ -271,6 +271,23 @@ func (m Model) viewInner() string {
 	return m.toastOverlay(main)
 }
 
+// mountPromptBounds is where the working-directory prompt is drawn. It is placed
+// by cornerOverlay rather than centered, so a click has to be tested against
+// these bounds and not the ones the other modals use.
+func (m Model) mountPromptBounds() (left, top int, panel string) {
+	panel = m.modalView()
+	if panel == "" {
+		return 0, 0, ""
+	}
+	_, _, chatWidth, _ := m.layout()
+	left = max(0, min(chatWidth, m.width)-lipgloss.Width(panel))
+	statusH := 0
+	if m.statusVisible() {
+		statusH = 1
+	}
+	return left, max(0, m.inputTop()-statusH-lipgloss.Height(panel)), panel
+}
+
 // cornerOverlay splices a panel in directly above the composer, right-aligned
 // with it, leaving the rest of the view visible behind it.
 func (m Model) cornerOverlay(view, panel string) string {
