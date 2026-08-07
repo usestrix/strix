@@ -320,16 +320,26 @@ def _build_llm_usage_stats(
     input_tokens = _int_stat(usage, "input_tokens")
     output_tokens = _int_stat(usage, "output_tokens")
     cached_tokens = _detail_value(usage, "input_tokens_details", "cached_tokens")
+    uncached_tokens = max(0, input_tokens - cached_tokens)
     cost = _float_stat(usage, "cost")
 
     stats_text.append("\n")
-    stats_text.append("Input Tokens ", style="dim")
-    stats_text.append(format_token_count(input_tokens), style="white")
-
-    if live or cached_tokens > 0:
+    if cached_tokens > 0:
+        stats_text.append("Input (total) ", style="dim")
+        stats_text.append(format_token_count(input_tokens), style="white")
         stats_text.append("  ·  ", style="dim white")
-        stats_text.append("Cached Tokens ", style="dim")
+        stats_text.append("Cached (in total) ", style="dim")
         stats_text.append(format_token_count(cached_tokens), style="white")
+        stats_text.append("  ·  ", style="dim white")
+        stats_text.append("New input ", style="dim")
+        stats_text.append(format_token_count(uncached_tokens), style="white")
+    else:
+        stats_text.append("Input Tokens ", style="dim")
+        stats_text.append(format_token_count(input_tokens), style="white")
+        if live:
+            stats_text.append("  ·  ", style="dim white")
+            stats_text.append("Cached (in total) ", style="dim")
+            stats_text.append(format_token_count(cached_tokens), style="white")
 
     separator = "\n" if live else "  ·  "
     stats_text.append(separator, style="dim white")
