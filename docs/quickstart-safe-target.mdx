@@ -80,6 +80,10 @@ strix --target /tmp/nodegoat --scan-mode quick
 
 This analyzes the source code directly — no running application needed.
 
+<Warning>
+Strix mounts the target directory **live and writable**. The agent may create or modify files during scanning. Always use a fresh clone (as shown above) or commit/stash your changes before scanning an existing working directory.
+</Warning>
+
 ## Verifying Your Setup
 
 After your first scan completes, check:
