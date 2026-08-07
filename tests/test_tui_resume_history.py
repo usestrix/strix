@@ -8,18 +8,21 @@ shows what the user actually typed; resuming has to match that.
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import Any
 
 import pytest
 
+from strix.core import execution
 from strix.core.paths import runtime_state_dir
 from strix.interface.tui.backend.live_view import TuiLiveView as GoTuiLiveView
-from strix.interface.tui.live_view import TuiLiveView, _is_internal_agent_turn
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
+from strix.interface.tui.live_view import (
+    _INTERNAL_TURN_PREFIXES,
+    TuiLiveView,
+    _is_internal_agent_turn,
+)
 
 
 def _write_run(run_dir: Path, items: list[dict[str, Any]], agent_id: str = "root") -> None:
@@ -176,9 +179,27 @@ def test_internal_turn_classifier_matches_every_injected_form() -> None:
         "[CRITICAL] Turn budget: 480/500 used (96%).",
         "== Inherited context from parent (background only) ==",
         "Your previous message ended a turn without a tool call.",
-        "Your previous response ended the autonomous Strix run without a lifecycle tool call.",
+        "Your previous response ended the autonomous run without a lifecycle tool call.",
     ):
         assert _is_internal_agent_turn(content), content
+
+
+def test_internal_turn_prefixes_still_match_what_is_injected() -> None:
+    """The classifier copies sentences out of another module, so they can drift.
+
+    Both nudges are written inline in strix.core.execution, so there is nothing to
+    import and compare against. Read them out of its source instead, joining the
+    adjacent string literals the line wrapping leaves behind.
+    """
+    source = (Path(execution.__file__)).read_text(encoding="utf-8")
+    merged = re.sub(r'"\s*\n\s*"', "", source)
+    nudges = [prefix for prefix in _INTERNAL_TURN_PREFIXES if prefix.startswith("Your previous")]
+    assert nudges, "the no-tool-call nudges are no longer in the classifier"
+    for nudge in nudges:
+        assert nudge in merged, (
+            f"the classifier expects {nudge!r}, which strix.core.execution no longer "
+            f"injects. A resumed scan would show that nudge as the user's own message."
+        )
 
 
 def test_internal_turn_classifier_keeps_bracketed_user_text() -> None:
