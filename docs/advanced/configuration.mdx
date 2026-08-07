@@ -108,6 +108,23 @@ strix_runs/<run_name>/events.jsonl
 
 When remote vars are set, Strix dual-writes telemetry to both local JSONL and the remote OTEL endpoint.
 
+## Interface Colors
+
+By default the interface draws with its own palette on a black background. Two
+environment variables hand color back to the terminal.
+
+<ParamField path="STRIX_TUI_COLORS" type="string">
+  Set to `terminal` (or `ansi`) to draw with the terminal's own 16 colors and its
+  own background, so the interface follows your terminal theme instead of
+  overriding it.
+</ParamField>
+
+<ParamField path="NO_COLOR" type="string">
+  Set to any non-empty value to disable color entirely, following the
+  [NO_COLOR](https://no-color.org) convention. The background is left to the
+  terminal as well.
+</ParamField>
+
 ## Docker Configuration
 
 <ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.3.0" type="string">

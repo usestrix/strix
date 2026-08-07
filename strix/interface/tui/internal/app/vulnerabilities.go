@@ -1,6 +1,8 @@
 package app
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -13,31 +15,64 @@ var panelSeverityColors = map[string]lipgloss.Color{
 	"critical": render.SevCrit, "high": render.SevHigh, "medium": render.SevMed, "low": green, "info": blue,
 }
 
+// vulnerabilityRow is one rendered line of the findings list. The list scrolls by
+// row rather than by finding, so a long title does not make the panel jump a
+// whole entry at a time.
+type vulnerabilityRow struct {
+	index int    // the finding this line belongs to
+	text  string // one wrapped line of its title
+	first bool   // the line that carries the number and the severity dot
+}
+
+// vulnerabilitySeqWidth is how many digits the sequence numbers are padded to. It
+// grows with the count so the numbers stay aligned without spending columns a
+// short list does not need.
+func vulnerabilitySeqWidth(total int) int {
+	digits := len(strconv.Itoa(max(1, total)))
+	return max(2, digits)
+}
+
+// vulnerabilityRows lays every finding out as the lines it will occupy.
+func (m Model) vulnerabilityRows(width int) []vulnerabilityRow {
+	seq := vulnerabilitySeqWidth(len(m.snapshot.Vulnerabilities))
+	// Each line is inset past the number and the dot so wrapped titles line up
+	// under the first line rather than under the number.
+	body := max(1, width-seq-3)
+	rows := make([]vulnerabilityRow, 0, len(m.snapshot.Vulnerabilities))
+	for i := range m.snapshot.Vulnerabilities {
+		for line, text := range strings.Split(wrapBlock(m.vulnerabilityTitle(i), body), "\n") {
+			rows = append(rows, vulnerabilityRow{index: i, text: text, first: line == 0})
+		}
+	}
+	return rows
+}
+
 func (m Model) vulnerabilitiesView(width, height int) string {
-	var lines []string
-	start := min(max(0, m.vulnOffset), max(0, len(m.snapshot.Vulnerabilities)-1))
-	for i := start; i < len(m.snapshot.Vulnerabilities) && len(lines) < height; i++ {
-		vuln := m.snapshot.Vulnerabilities[i]
-		severity := strings.ToLower(render.StringValue(vuln["severity"]))
-		color, ok := panelSeverityColors[severity]
-		if !ok {
-			color = blue // matches SEVERITY_COLORS.get(severity, "#3b82f6")
-		}
-		marker := lipgloss.NewStyle().Foreground(color).Render("● ")
+	rows := m.vulnerabilityRows(width)
+	seq := vulnerabilitySeqWidth(len(m.snapshot.Vulnerabilities))
+	start := min(max(0, m.vulnOffset), max(0, len(rows)-1))
+	end := min(len(rows), start+height)
+	indent := strings.Repeat(" ", seq+3)
+	lines := make([]string, 0, max(0, end-start))
+	for _, row := range rows[start:end] {
+		vuln := m.snapshot.Vulnerabilities[row.index]
 		style := lipgloss.NewStyle().Foreground(textColor)
-		if i == m.selectedVuln {
+		number := render.Dim()
+		if row.index == m.selectedVuln {
 			style = style.Bold(true).Foreground(white)
+			number = lipgloss.NewStyle().Foreground(mid)
 		}
-		for row, titleLine := range m.vulnerabilityTitleLines(i, width) {
-			if len(lines) >= height {
-				break
+		prefix := indent
+		if row.first {
+			severity := strings.ToLower(render.StringValue(vuln["severity"]))
+			color, ok := panelSeverityColors[severity]
+			if !ok {
+				color = blue // matches SEVERITY_COLORS.get(severity, "#3b82f6")
 			}
-			prefix := "  "
-			if row == 0 {
-				prefix = marker
-			}
-			lines = append(lines, prefix+style.Render(titleLine))
+			prefix = number.Render(fmt.Sprintf("%0*d", seq, row.index+1)) + " " +
+				lipgloss.NewStyle().Foreground(color).Render("● ")
 		}
+		lines = append(lines, prefix+style.Render(row.text))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -47,81 +82,64 @@ func (m Model) vulnerabilityListWidth() int {
 	return max(1, sidebarWidth-6)
 }
 
-func (m Model) vulnerabilityTitleLines(index, width int) []string {
+func (m Model) vulnerabilityTitle(index int) string {
 	title := render.StringValue(m.snapshot.Vulnerabilities[index]["title"])
 	if title == "" {
 		title = "Unknown Vulnerability"
 	}
-	return strings.Split(wrapBlock(title, max(1, width-2)), "\n")
+	return title
 }
 
+// vulnerabilityScrollRows reports the list length and position in rows, which is
+// what the scrollbar needs to move continuously.
 func (m Model) vulnerabilityScrollRows() (total, offset int) {
-	width := m.vulnerabilityListWidth()
-	for i := range m.snapshot.Vulnerabilities {
-		rows := len(m.vulnerabilityTitleLines(i, width))
-		total += rows
-		if i < m.vulnOffset {
-			offset += rows
-		}
-	}
-	return total, offset
+	return len(m.vulnerabilityRows(m.vulnerabilityListWidth())), m.vulnOffset
 }
 
-func (m Model) vulnerabilityOffsetAtRow(targetRow int) int {
-	width := m.vulnerabilityListWidth()
-	row := 0
-	for i := range m.snapshot.Vulnerabilities {
-		row += len(m.vulnerabilityTitleLines(i, width))
-		if targetRow < row {
-			return i
-		}
-	}
-	return max(0, len(m.snapshot.Vulnerabilities)-1)
-}
-
-func (m Model) vulnerabilityVisibleEnd(start int) int {
-	height := m.vulnerabilityPageSize()
-	width := m.vulnerabilityListWidth()
-	rows := 0
-	end := min(max(0, start), len(m.snapshot.Vulnerabilities))
-	for end < len(m.snapshot.Vulnerabilities) {
-		itemRows := len(m.vulnerabilityTitleLines(end, width))
-		if rows > 0 && rows+itemRows > height {
-			break
-		}
-		rows += itemRows
-		end++
-		if rows >= height {
-			break
-		}
-	}
-	return end
-}
-
+// vulnerabilityIndexAtRow maps a click on a visible row back to its finding.
 func (m Model) vulnerabilityIndexAtRow(row int) int {
-	width := m.vulnerabilityListWidth()
-	currentRow := 0
-	for i := m.vulnOffset; i < m.vulnerabilityVisibleEnd(m.vulnOffset); i++ {
-		currentRow += len(m.vulnerabilityTitleLines(i, width))
-		if row < currentRow {
-			return i
-		}
+	rows := m.vulnerabilityRows(m.vulnerabilityListWidth())
+	target := m.vulnOffset + row
+	if target < 0 || target >= len(rows) {
+		return -1
 	}
-	return -1
+	return rows[target].index
 }
 
+// ensureVulnerabilityVisible scrolls the least it can to bring the selected
+// finding into view, keeping the whole entry visible where it fits.
 func (m *Model) ensureVulnerabilityVisible() {
-	if len(m.snapshot.Vulnerabilities) == 0 {
+	rows := m.vulnerabilityRows(m.vulnerabilityListWidth())
+	if len(rows) == 0 {
 		m.vulnOffset = 0
 		return
 	}
-	if m.selectedVuln < m.vulnOffset {
-		m.vulnOffset = m.selectedVuln
+	height := m.vulnerabilityPageSize()
+	firstRow, lastRow := -1, -1
+	for row, entry := range rows {
+		if entry.index != m.selectedVuln {
+			continue
+		}
+		if firstRow < 0 {
+			firstRow = row
+		}
+		lastRow = row
 	}
-	for m.selectedVuln >= m.vulnerabilityVisibleEnd(m.vulnOffset) && m.vulnOffset < m.selectedVuln {
-		m.vulnOffset++
+	if firstRow < 0 {
+		m.vulnOffset = clampVulnerabilityOffset(m.vulnOffset, len(rows), height)
+		return
 	}
-	m.vulnOffset = min(m.vulnOffset, len(m.snapshot.Vulnerabilities)-1)
+	if firstRow < m.vulnOffset {
+		m.vulnOffset = firstRow
+	} else if lastRow >= m.vulnOffset+height {
+		// Prefer showing the whole entry, but never scroll its start out of view.
+		m.vulnOffset = min(firstRow, lastRow-height+1)
+	}
+	m.vulnOffset = clampVulnerabilityOffset(m.vulnOffset, len(rows), height)
+}
+
+func clampVulnerabilityOffset(offset, total, height int) int {
+	return min(max(0, offset), max(0, total-height))
 }
 
 func (m Model) vulnerabilityPageSize() int {
@@ -129,23 +147,52 @@ func (m Model) vulnerabilityPageSize() int {
 	return max(1, vulnHeight-2)
 }
 
+// vulnerabilityPageItems is how many findings a page step should move by: the
+// number of distinct entries currently on screen.
 func (m Model) vulnerabilityPageItems() int {
-	return max(1, m.vulnerabilityVisibleEnd(m.vulnOffset)-m.vulnOffset)
+	rows := m.vulnerabilityRows(m.vulnerabilityListWidth())
+	height := m.vulnerabilityPageSize()
+	start := min(max(0, m.vulnOffset), max(0, len(rows)))
+	end := min(len(rows), start+height)
+	seen := 0
+	previous := -1
+	for _, row := range rows[start:end] {
+		if row.index != previous {
+			seen++
+			previous = row.index
+		}
+	}
+	return max(1, seen)
 }
 
 func (m *Model) moveVulnerabilitySelection(delta int) {
 	m.selectedVuln = max(0, min(len(m.snapshot.Vulnerabilities)-1, m.selectedVuln+delta))
 }
 
+// keepVulnerabilitySelectionInWindow pulls the selection to the nearest finding
+// still on screen after the list has been scrolled directly.
 func (m *Model) keepVulnerabilitySelectionInWindow() {
-	if len(m.snapshot.Vulnerabilities) == 0 {
+	rows := m.vulnerabilityRows(m.vulnerabilityListWidth())
+	if len(rows) == 0 {
 		return
 	}
-	if m.selectedVuln < m.vulnOffset {
-		m.selectedVuln = m.vulnOffset
-	} else if end := m.vulnerabilityVisibleEnd(m.vulnOffset); m.selectedVuln >= end {
-		m.selectedVuln = max(m.vulnOffset, end-1)
+	height := m.vulnerabilityPageSize()
+	start := min(max(0, m.vulnOffset), max(0, len(rows)-1))
+	end := min(len(rows), start+height)
+	visible := rows[start:end]
+	if len(visible) == 0 {
+		return
 	}
+	for _, row := range visible {
+		if row.index == m.selectedVuln {
+			return
+		}
+	}
+	if m.selectedVuln < visible[0].index {
+		m.selectedVuln = visible[0].index
+		return
+	}
+	m.selectedVuln = visible[len(visible)-1].index
 }
 
 // statsView ports build_tui_stats_text + the version line appended in
@@ -156,7 +203,7 @@ func (m Model) modalView() string {
 		title := lipgloss.NewStyle().Bold(true).Foreground(green).Width(34).Align(lipgloss.Center).Render("Strix Help")
 		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text\nClick     Expand/collapse tool")
 		content := title + "\n\n" + body
-		return lipgloss.NewStyle().Width(38).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(black).Padding(1, 2).Render(content)
+		return lipgloss.NewStyle().Width(38).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(panelBackground()).Padding(1, 2).Render(content)
 	case modalQuit:
 		// #quit_dialog: width 24, border round #333333, title #d4d4d4.
 		return m.confirmView("Quit Strix?", 24, dark, textColor)
@@ -228,7 +275,7 @@ func (m Model) cornerPrompt(title, body string, width int, confirmLabel, cancelL
 	content := inner.Render(title) + "\n" + inner.Render(body) + "\n" +
 		inner.Align(lipgloss.Right).Render(yes+" "+no)
 	return lipgloss.NewStyle().Width(width-2).Border(lipgloss.RoundedBorder()).
-		BorderForeground(amber).Background(black).Padding(0, 1).Render(content)
+		BorderForeground(amber).Background(panelBackground()).Padding(0, 1).Render(content)
 }
 
 // confirmDialog renders a two-button prompt. The focused button fills its
@@ -267,7 +314,7 @@ func (m Model) confirmDialog(
 	content += "\n\n" + inner.Align(lipgloss.Center).Render(yes+" "+no)
 	// Width() sets the content box, so the border's two columns come off it to
 	// keep the dialog the width the design calls for.
-	return lipgloss.NewStyle().Width(width - 2).Border(lipgloss.RoundedBorder()).BorderForeground(border).Background(black).Padding(1).Render(content)
+	return lipgloss.NewStyle().Width(width - 2).Border(lipgloss.RoundedBorder()).BorderForeground(border).Background(panelBackground()).Padding(1).Render(content)
 }
 
 // vulnerabilityBody ports VulnerabilityDetailScreen._render_vulnerability:

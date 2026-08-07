@@ -164,6 +164,15 @@ func wrapBlock(value string, width int) string {
 	return strings.Join(out, "\n")
 }
 
+// scrollbarThumb brightens the bar being dragged so the grab reads as taking
+// hold of it.
+func (m Model) scrollbarThumb(target scrollbarTarget) lipgloss.Color {
+	if m.draggingScrollbar == target {
+		return thumbActive
+	}
+	return thumbResting
+}
+
 func verticalScrollbar(height, total, visible, offset int, thumb lipgloss.Color) string {
 	if height <= 0 || total <= visible {
 		return ""
@@ -224,7 +233,7 @@ func fixedPanelBody(content string, width, height int) string {
 		padding := strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))
 		// End every source style before padding; otherwise inline-code and tool
 		// backgrounds can paint the empty space through to the panel border.
-		body[row] = line + "\x1b[0m" + blackBG + padding
+		body[row] = line + "\x1b[0m" + backgroundSGR() + padding
 	}
 	return strings.Join(body, "\n")
 }
@@ -244,7 +253,7 @@ func (m Model) viewInner() string {
 		return m.splashView()
 	}
 	if !m.ready {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, lipgloss.NewStyle().Foreground(dim).Render("Connecting to Strix…"), lipgloss.WithWhitespaceBackground(black))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, lipgloss.NewStyle().Foreground(dim).Render("Connecting to Strix…"), lipgloss.WithWhitespaceBackground(panelBackground()))
 	}
 	main := m.mainView()
 	if m.snapshot.SetupMode {
@@ -304,7 +313,7 @@ func (m Model) toastOverlay(view string) string {
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(green).
-		Background(black).
+		Background(panelBackground()).
 		Foreground(textColor).
 		Padding(0, 1).
 		Render(m.toast)
@@ -329,7 +338,7 @@ func (m Model) toastOverlay(view string) string {
 // blackBG is the SGR that selects a solid black background.
 const blackBG = "\x1b[48;2;0;0;0m"
 
-// fillBackground paints the whole frame black like Textual's Screen background.
+// fillBackground paints the whole frame, unless the terminal owns the background.
 // Bubble Tea has no screen compositor, so any cell the view does not explicitly
 // color shows the terminal's default background. lipgloss emits a full reset
 // (\x1b[0m) at the end of every styled span, which also clears the background, so
@@ -340,7 +349,11 @@ func fillBackground(view string) string {
 	if view == "" {
 		return view
 	}
-	return blackBG + strings.ReplaceAll(view, "\x1b[0m", "\x1b[0m"+blackBG)
+	fill := backgroundSGR()
+	if fill == "" {
+		return view
+	}
+	return fill + strings.ReplaceAll(view, "\x1b[0m", "\x1b[0m"+fill)
 }
 
 func (m Model) splashView() string {
@@ -383,7 +396,7 @@ func (m Model) splashView() string {
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(green).Padding(1, 6).Align(lipgloss.Center).Render(content)
 	// #splash_screen background is solid black.
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel,
-		lipgloss.WithWhitespaceBackground(black))
+		lipgloss.WithWhitespaceBackground(panelBackground()))
 }
 
 // splashModelWarning ports SplashScreen._build_model_warning_text.
@@ -424,7 +437,7 @@ func (m Model) renderChatPane(width, height int, border lipgloss.Color) string {
 		m.viewport.TotalLineCount(),
 		m.viewport.VisibleLineCount(),
 		m.viewport.YOffset,
-		thumbTrace,
+		m.scrollbarThumb(scrollbarTrace),
 	)
 	out := lipgloss.NewStyle().Width(width).Height(height).
 		Border(lipgloss.RoundedBorder()).BorderForeground(border).Render(trace)
@@ -463,7 +476,7 @@ func (m Model) mainView() string {
 	if showSidebar {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, " ", m.sidebarView(sidebarWidth, m.height))
 	}
-	return lipgloss.NewStyle().Background(black).Foreground(textColor).Render(body)
+	return lipgloss.NewStyle().Background(panelBackground()).Foreground(textColor).Render(body)
 }
 
 // Every panel that Tab can reach shows focus the way the chat and the composer
@@ -489,7 +502,7 @@ func (m Model) sidebarView(width, height int) string {
 		len(agentEntries),
 		agentRows,
 		m.agentOffset,
-		thumbAgents,
+		m.scrollbarThumb(scrollbarAgents),
 	)
 	parts := []string{
 		lipgloss.NewStyle().Width(width-2).Height(m.viewerHeight()-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(m.viewerView(width - 4)),
@@ -509,7 +522,7 @@ func (m Model) sidebarView(width, height int) string {
 			totalRows,
 			vulnRows,
 			offsetRows,
-			thumbFindings,
+			m.scrollbarThumb(scrollbarFindings),
 		)
 		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(vulnRows).Border(lipgloss.RoundedBorder()).BorderForeground(vulnBorder).Padding(0, 1).Render(findings))
 	}
@@ -524,12 +537,7 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, agentHeight int) {
 	statsRows := lipgloss.Height(lipgloss.NewStyle().Width(m.viewerContentWidth()).Render(m.statsView()))
 	statsHeight = min(15, statsRows+2)
 	if len(m.snapshot.Vulnerabilities) > 0 {
-		rows := 0
-		width := m.vulnerabilityListWidth()
-		for i := range m.snapshot.Vulnerabilities {
-			rows += len(m.vulnerabilityTitleLines(i, width))
-		}
-		vulnHeight = min(12, rows+2)
+		vulnHeight = min(12, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+2)
 	}
 	agentHeight = max(3, m.height-m.viewerHeight()-statsHeight-vulnHeight)
 	return

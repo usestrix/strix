@@ -219,7 +219,8 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			case vulnHeight > 0 && y < viewerHeight+agentHeight+vulnHeight:
 				m.focus = focusVulnerabilities
 				m.input.Blur()
-				m.vulnOffset = min(max(0, len(m.snapshot.Vulnerabilities)-1), m.vulnOffset+3)
+				totalRows, _ := m.vulnerabilityScrollRows()
+				m.vulnOffset = min(max(0, totalRows-m.vulnerabilityPageSize()), m.vulnOffset+3)
 				m.keepVulnerabilitySelectionInWindow()
 			}
 			return m, nil
@@ -318,30 +319,47 @@ func (m *Model) updateMainScrollbarMouse(
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return false
 	}
-
-	target := scrollbarNone
-	switch {
-	case msg.X == chatWidth-2 && msg.Y >= 1 && msg.Y < chatHeight-1 &&
-		m.viewport.TotalLineCount() > m.viewport.VisibleLineCount():
-		target = scrollbarTrace
-	case showSidebar && msg.X == m.width-3 && msg.Y >= viewerHeight+2 &&
-		msg.Y < viewerHeight+agentHeight-2 &&
-		len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)) > m.agentPageSize():
-		target = scrollbarAgents
-	case showSidebar && vulnHeight > 0 && msg.X == m.width-3 &&
-		msg.Y >= viewerHeight+agentHeight+1 &&
-		msg.Y < viewerHeight+agentHeight+vulnHeight-1:
-		totalRows, _ := m.vulnerabilityScrollRows()
-		if totalRows > m.vulnerabilityPageSize() {
-			target = scrollbarFindings
-		}
-	}
+	target := m.scrollbarAt(msg, showSidebar, chatWidth, chatHeight, viewerHeight, agentHeight, vulnHeight)
 	if target == scrollbarNone {
 		return false
 	}
 	m.draggingScrollbar = target
 	m.scrollFromMouse(target, msg.Y, chatHeight, viewerHeight, agentHeight)
 	return true
+}
+
+// scrollbarGrab is how far either side of the bar still counts as grabbing it. A
+// one column target is unreasonable to hit with a mouse, and nothing else lives
+// in the column beside it.
+const scrollbarGrab = 1
+
+func nearColumn(x, column int) bool {
+	return x >= column-scrollbarGrab && x <= column+scrollbarGrab
+}
+
+// scrollbarAt reports which scrollbar, if any, the pointer is over.
+func (m Model) scrollbarAt(
+	msg tea.MouseMsg,
+	showSidebar bool,
+	chatWidth, chatHeight, viewerHeight, agentHeight, vulnHeight int,
+) scrollbarTarget {
+	switch {
+	case nearColumn(msg.X, chatWidth-2) && msg.Y >= 1 && msg.Y < chatHeight-1 &&
+		m.viewport.TotalLineCount() > m.viewport.VisibleLineCount():
+		return scrollbarTrace
+	case showSidebar && nearColumn(msg.X, m.width-3) && msg.Y >= viewerHeight+2 &&
+		msg.Y < viewerHeight+agentHeight-2 &&
+		len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents)) > m.agentPageSize():
+		return scrollbarAgents
+	case showSidebar && vulnHeight > 0 && nearColumn(msg.X, m.width-3) &&
+		msg.Y >= viewerHeight+agentHeight+1 &&
+		msg.Y < viewerHeight+agentHeight+vulnHeight-1:
+		totalRows, _ := m.vulnerabilityScrollRows()
+		if totalRows > m.vulnerabilityPageSize() {
+			return scrollbarFindings
+		}
+	}
+	return scrollbarNone
 }
 
 func (m *Model) scrollFromMouse(
@@ -367,10 +385,10 @@ func (m *Model) scrollFromMouse(
 	case scrollbarFindings:
 		height := m.vulnerabilityPageSize()
 		totalRows, _ := m.vulnerabilityScrollRows()
-		rowOffset := scrollbarOffset(y-viewerHeight-agentHeight-1, height, totalRows, height)
 		m.focus = focusVulnerabilities
 		m.input.Blur()
-		m.vulnOffset = m.vulnerabilityOffsetAtRow(rowOffset)
+		// The offset is a row, so dragging moves the list continuously.
+		m.vulnOffset = scrollbarOffset(y-viewerHeight-agentHeight-1, height, totalRows, height)
 		m.keepVulnerabilitySelectionInWindow()
 	}
 }
