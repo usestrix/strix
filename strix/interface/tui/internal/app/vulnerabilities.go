@@ -185,7 +185,7 @@ func (m Model) modalView() string {
 		title := lipgloss.NewStyle().Bold(true).Foreground(green).Width(34).Align(lipgloss.Center).Render("Strix Help")
 		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text\nClick     Expand/collapse tool")
 		content := title + "\n\n" + body
-		return lipgloss.NewStyle().Width(38).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(panelBackground()).Padding(1, 2).Render(content)
+		return lipgloss.NewStyle().Width(38).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(black).Padding(1, 2).Render(content)
 	case modalQuit:
 		// #quit_dialog: width 24, border round #333333, title #d4d4d4.
 		return m.confirmView("Quit Strix?", 24, dark, textColor)
@@ -257,7 +257,7 @@ func (m Model) cornerPrompt(title, body string, width int, confirmLabel, cancelL
 	content := inner.Render(title) + "\n" + inner.Render(body) + "\n" +
 		inner.Align(lipgloss.Right).Render(yes+" "+no)
 	return lipgloss.NewStyle().Width(width-2).Border(lipgloss.RoundedBorder()).
-		BorderForeground(amber).Background(panelBackground()).Padding(0, 1).Render(content)
+		BorderForeground(amber).Background(black).Padding(0, 1).Render(content)
 }
 
 // confirmDialog renders a two-button prompt. The focused button fills its
@@ -296,7 +296,7 @@ func (m Model) confirmDialog(
 	content += "\n\n" + inner.Align(lipgloss.Center).Render(yes+" "+no)
 	// Width() sets the content box, so the border's two columns come off it to
 	// keep the dialog the width the design calls for.
-	return lipgloss.NewStyle().Width(width - 2).Border(lipgloss.RoundedBorder()).BorderForeground(border).Background(panelBackground()).Padding(1).Render(content)
+	return lipgloss.NewStyle().Width(width - 2).Border(lipgloss.RoundedBorder()).BorderForeground(border).Background(black).Padding(1).Render(content)
 }
 
 // vulnerabilityBody ports VulnerabilityDetailScreen._render_vulnerability:

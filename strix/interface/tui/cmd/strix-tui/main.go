@@ -11,7 +11,6 @@ import (
 
 func main() {
 	app.SetVersion(os.Getenv("STRIX_VERSION"))
-	app.ApplyTheme()
 	render.DetectKittyGraphics()
 	client, err := app.ConnectFromEnvironment()
 	if err != nil {

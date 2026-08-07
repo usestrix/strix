@@ -233,7 +233,7 @@ func fixedPanelBody(content string, width, height int) string {
 		padding := strings.Repeat(" ", max(0, width-ansi.StringWidth(line)))
 		// End every source style before padding; otherwise inline-code and tool
 		// backgrounds can paint the empty space through to the panel border.
-		body[row] = line + "\x1b[0m" + backgroundSGR() + padding
+		body[row] = line + "\x1b[0m" + blackBG + padding
 	}
 	return strings.Join(body, "\n")
 }
@@ -253,7 +253,7 @@ func (m Model) viewInner() string {
 		return m.splashView()
 	}
 	if !m.ready {
-		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, lipgloss.NewStyle().Foreground(dim).Render("Connecting to Strix…"), lipgloss.WithWhitespaceBackground(panelBackground()))
+		return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, lipgloss.NewStyle().Foreground(dim).Render("Connecting to Strix…"), lipgloss.WithWhitespaceBackground(black))
 	}
 	main := m.mainView()
 	if m.snapshot.SetupMode {
@@ -313,7 +313,7 @@ func (m Model) toastOverlay(view string) string {
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(green).
-		Background(panelBackground()).
+		Background(black).
 		Foreground(textColor).
 		Padding(0, 1).
 		Render(m.toast)
@@ -338,7 +338,7 @@ func (m Model) toastOverlay(view string) string {
 // blackBG is the SGR that selects a solid black background.
 const blackBG = "\x1b[48;2;0;0;0m"
 
-// fillBackground paints the whole frame, unless the terminal owns the background.
+// fillBackground paints the whole frame black like Textual's Screen background.
 // Bubble Tea has no screen compositor, so any cell the view does not explicitly
 // color shows the terminal's default background. lipgloss emits a full reset
 // (\x1b[0m) at the end of every styled span, which also clears the background, so
@@ -349,11 +349,7 @@ func fillBackground(view string) string {
 	if view == "" {
 		return view
 	}
-	fill := backgroundSGR()
-	if fill == "" {
-		return view
-	}
-	return fill + strings.ReplaceAll(view, "\x1b[0m", "\x1b[0m"+fill)
+	return blackBG + strings.ReplaceAll(view, "\x1b[0m", "\x1b[0m"+blackBG)
 }
 
 func (m Model) splashView() string {
@@ -396,7 +392,7 @@ func (m Model) splashView() string {
 	panel := lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(green).Padding(1, 6).Align(lipgloss.Center).Render(content)
 	// #splash_screen background is solid black.
 	return lipgloss.Place(m.width, m.height, lipgloss.Center, lipgloss.Center, panel,
-		lipgloss.WithWhitespaceBackground(panelBackground()))
+		lipgloss.WithWhitespaceBackground(black))
 }
 
 // splashModelWarning ports SplashScreen._build_model_warning_text.
@@ -476,7 +472,7 @@ func (m Model) mainView() string {
 	if showSidebar {
 		body = lipgloss.JoinHorizontal(lipgloss.Top, leftColumn, " ", m.sidebarView(sidebarWidth, m.height))
 	}
-	return lipgloss.NewStyle().Background(panelBackground()).Foreground(textColor).Render(body)
+	return lipgloss.NewStyle().Background(black).Foreground(textColor).Render(body)
 }
 
 // Every panel that Tab can reach shows focus the way the chat and the composer

@@ -150,7 +150,7 @@ var (
 )
 
 // Agent tree colors: a uniform label, dim guides, and a filled block cursor.
-var (
+const (
 	treeLabel    = lipgloss.Color("#e7e5e4")
 	treeGuide    = lipgloss.Color("#4f4f4f")
 	treeCursorFg = lipgloss.Color("#ddedf9")
@@ -164,7 +164,7 @@ var (
 // One resting color for every panel, rather than the three the stylesheet named.
 // The chat pane's was #1a1a1a on black, which is invisible - the bar could not be
 // found, let alone grabbed (#1005).
-var (
+const (
 	thumbResting = lipgloss.Color("#3f3f46")
 	thumbActive  = lipgloss.Color("#9ca3af")
 )
