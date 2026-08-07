@@ -527,7 +527,8 @@ func TestVulnerabilityCopySupportsKeyboardAndMouse(t *testing.T) {
 	}
 
 	model := newModel()
-	updated, _ := model.updateModal(tea.KeyMsg{Type: tea.KeyLeft})
+	// Tab moves between the buttons; the arrows step between reports.
+	updated, _ := model.updateModal(tea.KeyMsg{Type: tea.KeyTab})
 	model = updated.(Model)
 	updated, cmd := model.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)

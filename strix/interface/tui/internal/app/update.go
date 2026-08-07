@@ -534,7 +534,13 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "esc":
 			m.closeModal()
-		case "left", "right", "tab", "shift+tab":
+		// Arrows step between reports, which is worth more here than moving
+		// between two buttons; tab still does that.
+		case "left", "shift+tab":
+			m.showVulnerability(m.selectedVuln - 1)
+		case "right":
+			m.showVulnerability(m.selectedVuln + 1)
+		case "tab":
 			m.modalChoice = 1 - m.modalChoice
 		case "enter":
 			if m.modalChoice == 0 {

@@ -1,6 +1,7 @@
 package app
 
 import (
+	"fmt"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -416,9 +417,53 @@ func (m Model) vulnerabilityDetail() string {
 		doneButton = doneButton.Background(lipgloss.Color("#363636")).Foreground(brightWhite).Bold(true).Padding(0, 1)
 	}
 	buttons := copyButton.Render(copyLabel) + "  " + doneButton.Render("Done")
-	buttonRow := rule + "\n" + lipgloss.NewStyle().Width(inner).Align(lipgloss.Right).Render(buttons)
+	// The navigation strip fills everything the buttons leave, which puts it on
+	// the left of the row and keeps the buttons against the right edge.
+	buttonRow := rule + "\n" +
+		m.vulnerabilityNavigation(inner-lipgloss.Width(buttons)) + buttons
 	content := m.vulnerabilityScrollView() + "\n" + buttonRow
 	return lipgloss.NewStyle().Width(width-2).Height(height-2).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("#262626")).Background(lipgloss.Color("#0a0a0a")).Padding(2, 3).Render(content)
+}
+
+// showVulnerability moves the open report to another finding, keeping the list
+// behind it in step and starting the new report at its top.
+func (m *Model) showVulnerability(index int) {
+	if index < 0 || index >= len(m.snapshot.Vulnerabilities) || index == m.selectedVuln {
+		return
+	}
+	m.selectedVuln = index
+	m.ensureVulnerabilityVisible()
+	// The copy state belongs to the report that was on screen, not this one.
+	m.vulnerabilityCopied = false
+	m.vulnerabilityCopyError = ""
+	m.resizeVulnerabilityViewport()
+	m.vulnViewport.GotoTop()
+}
+
+// vulnerabilityNeighbors reports which way the open report can be stepped. The
+// ends are not wrapped: a report is one of an ordered list, and rolling from the
+// last to the first hides that you reached the end.
+func (m Model) vulnerabilityNeighbors() (previous, next bool) {
+	return m.selectedVuln > 0, m.selectedVuln < len(m.snapshot.Vulnerabilities)-1
+}
+
+// vulnerabilityNavigation is the "3/12  ← prev  → next" strip on the left of the
+// button row. Each arrow appears only while there is a report that way.
+func (m Model) vulnerabilityNavigation(width int) string {
+	total := len(m.snapshot.Vulnerabilities)
+	if total <= 1 {
+		return lipgloss.NewStyle().Width(max(0, width)).Render("")
+	}
+	previous, next := m.vulnerabilityNeighbors()
+	parts := []string{render.Dim().Render(fmt.Sprintf("%d/%d", m.selectedVuln+1, total))}
+	key := lipgloss.NewStyle().Foreground(mid)
+	if previous {
+		parts = append(parts, key.Render("←")+render.Dim().Render(" prev"))
+	}
+	if next {
+		parts = append(parts, key.Render("→")+render.Dim().Render(" next"))
+	}
+	return lipgloss.NewStyle().Width(max(0, width)).Render(truncate(strings.Join(parts, "  "), max(0, width)))
 }
 
 func (m *Model) startVulnerabilityCopy() tea.Cmd {
