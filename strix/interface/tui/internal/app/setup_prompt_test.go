@@ -247,13 +247,10 @@ func TestMountConfirmationAnswers(t *testing.T) {
 		if payload.Approved != tc.approved {
 			t.Fatalf("%s: approved=%v, want %v", tc.name, payload.Approved, tc.approved)
 		}
-		// Declining returns to the start screen, so the prompt comes back.
-		want := ""
-		if !tc.approved {
-			want = "find auth bugs in the login flow"
-		}
-		if got := model.input.Value(); got != want {
-			t.Fatalf("%s: composer = %q, want %q", tc.name, got, want)
+		// Either answer launches, so the prompt stays with the run rather than
+		// coming back to the composer.
+		if got := model.input.Value(); got != "" {
+			t.Fatalf("%s: composer = %q, want it cleared", tc.name, got)
 		}
 		if model.pendingPrompt != "" {
 			t.Fatalf("%s: held prompt was not cleared: %q", tc.name, model.pendingPrompt)
@@ -348,9 +345,10 @@ func TestMountPromptButtonsAreClickable(t *testing.T) {
 	}
 }
 
-// Cancelling has to leave the start screen usable: the prompt back in the
-// composer, the composer focused, and a second attempt able to launch.
-func TestCancellingTheMountReturnsAUsableStartScreen(t *testing.T) {
+// Skipping the mount runs the scan without a directory. It must not throw the
+// session back to the start screen, and it must not hand the prompt back: the
+// run has it.
+func TestSkippingTheMountKeepsTheScanRunning(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
 	model.width, model.height = 130, 40
@@ -369,25 +367,21 @@ func TestCancellingTheMountReturnsAUsableStartScreen(t *testing.T) {
 	updated, _ = model.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
 	model = updated.(Model)
 
-	// The backend answers by returning the session to setup.
-	model.handleEnvelope(stateEnvelope(t, 2, protocol.Snapshot{SetupMode: true, ScanState: "setup"}))
+	// The backend answers by starting the scan with no mount.
+	model.handleEnvelope(stateEnvelope(t, 2, protocol.Snapshot{
+		ScanStarted: true, ScanState: "running",
+	}))
 
 	if model.modal != modalNone {
 		t.Fatalf("the prompt is still open: %v", model.modal)
 	}
-	if got := model.input.Value(); got != "find auth bugs in the login flow" {
-		t.Fatalf("the prompt did not come back: %q", got)
+	if model.snapshot.SetupMode {
+		t.Fatal("skipping the mount fell back to the start screen")
 	}
-	if !model.input.Focused() {
-		t.Fatal("the composer is not focused, so the prompt cannot be edited")
+	if got := model.input.Value(); got != "" {
+		t.Fatalf("the prompt came back to the composer: %q", got)
 	}
-
-	// A second attempt has to reach the backend.
-	connection.Reset()
-	updated, cmd := model.submit(model.input.Value())
-	model = updated.(Model)
-	types := commandTypes(drainCommands(t, cmd, connection))
-	if !contains(types, "setup.start") {
-		t.Fatalf("the retry did not launch: %v", types)
+	if model.pendingPrompt != "" {
+		t.Fatalf("the held prompt was not released: %q", model.pendingPrompt)
 	}
 }

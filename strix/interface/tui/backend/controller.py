@@ -138,13 +138,6 @@ class TuiController:
         self.error = detail
         self.notify_changed()
 
-    def enter_setup(self) -> None:
-        """Return a session to the start screen, e.g. on a declined mount."""
-        self.setup_mode = True
-        self.scan_started = False
-        self.scan_state = "setup"
-        self.notify_changed()
-
     def add_message(self, text: str, level: str = "info") -> None:
         self._append_message(text, level)
         self.notify_changed()
@@ -356,14 +349,12 @@ class TuiController:
         if not isinstance(approved, bool):
             raise TypeError("approved must be a boolean")
         self.pending_workspace_mount = None
-        if not approved:
-            # Nothing was prepared, so return to the start screen untouched.
-            self.workspace_mount = None
-            self.enter_setup()
-            return {"approved": False}
-        self.workspace_mount = mount
+        # Declining skips the mount, it does not abandon the scan. The prompt is
+        # the whole of the input either way; the working directory is only an
+        # extra the agent may look at, so the run goes ahead without one.
+        self.workspace_mount = mount if approved else None
         await self._begin_scan(self._pending_verify)
-        return {"approved": True}
+        return {"approved": approved}
 
     async def _send_message(self, payload: dict[str, Any]) -> dict[str, Any]:
         agent_id = self._required_string(payload, "agent_id")

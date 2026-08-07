@@ -234,12 +234,11 @@ async def test_confirming_the_mount_starts_the_scan_without_a_target() -> None:
 
 
 @pytest.mark.asyncio
-async def test_declining_the_mount_returns_to_the_start_screen() -> None:
-    started = False
+async def test_declining_the_mount_runs_without_one() -> None:
+    started: list[bool] = []
 
-    async def start(_verify: bool = True) -> None:
-        nonlocal started
-        started = True
+    async def start(verify: bool = True) -> None:
+        started.append(verify)
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
@@ -250,14 +249,34 @@ async def test_declining_the_mount_returns_to_the_start_screen() -> None:
     result = await controller.handle("setup.confirm_mount", {"approved": False})
 
     assert result == {"approved": False}
-    # Nothing was prepared, so the session goes back to the start screen and can
-    # be launched again.
-    assert started is False
+    # Declining skips the directory; it does not abandon the scan.
+    assert started == [False]
     assert controller.workspace_mount is None
     assert controller.pending_workspace_mount is None
-    assert controller.setup_mode is True
-    assert controller.scan_started is False
-    assert controller.scan_state == "setup"
+    assert controller.setup_mode is False
+    assert controller.scan_started is True
+    assert controller.scan_state == "running"
+
+
+@pytest.mark.asyncio
+async def test_approving_the_mount_runs_with_it() -> None:
+    started: list[bool] = []
+
+    async def start(verify: bool = True) -> None:
+        started.append(verify)
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    loader._cached = None
+    controller = TuiController(args(), on_start=start)
+    await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
+
+    result = await controller.handle("setup.confirm_mount", {"approved": True})
+
+    assert result == {"approved": True}
+    assert started == [False]
+    assert controller.workspace_mount == str(Path.cwd())
+    assert controller.scan_state == "running"
 
 
 @pytest.mark.asyncio

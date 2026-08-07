@@ -223,8 +223,8 @@ func (m Model) confirmView(title string, width int, border, titleColor lipgloss.
 // The mount prompt's buttons, named so the renderer and the click test cannot
 // drift apart.
 const (
-	mountConfirmLabel = "Confirm"
-	mountCancelLabel  = "Cancel"
+	mountConfirmLabel = "Mount"
+	mountCancelLabel  = "Skip"
 )
 
 // mountConfirmView asks before a target-less scan mounts the working directory.
@@ -239,7 +239,7 @@ func (m Model) mountConfirmView() string {
 	}
 	title := render.Bold(amber).Render("△ Mount working directory?")
 	body := render.Col(white).Render(truncatePath(dir, width-4)) + "\n" +
-		render.Dim().Render("writable in the sandbox")
+		render.Dim().Render("writable in the sandbox · skip to run without it")
 	return m.cornerPrompt(title, body, width, mountConfirmLabel, mountCancelLabel)
 }
 

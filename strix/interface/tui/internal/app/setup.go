@@ -66,13 +66,10 @@ func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 }
 
 // answerMountConfirmation replies to the working-directory mount the backend is
-// waiting on. Declining returns to the start screen, so the prompt goes back in
-// the composer to be edited or given a target instead.
+// waiting on. Either answer starts the scan - declining only means it runs
+// without the directory - so the prompt stays with the run rather than coming
+// back to the composer.
 func (m *Model) answerMountConfirmation(approved bool) tea.Cmd {
-	if !approved && m.pendingPrompt != "" {
-		m.input.SetValue(m.pendingPrompt)
-		m.resizeViewport()
-	}
 	m.pendingPrompt = ""
 	return send(m.client, "setup.confirm_mount", map[string]any{"approved": approved})
 }

@@ -328,10 +328,11 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         parser.error(f"--resume {args.resume}: run.json unreadable: {exc}")
 
     args.targets_info = state.get("targets_info") or []
-    # A target-less run has no targets_info at all: it works in a mounted
-    # directory, driven by its instruction.
+    # A target-less run has no targets_info at all. It is driven by its
+    # instruction, over a mounted working directory or over nothing when the
+    # mount was declined, so either of those is enough to resume it.
     workspace_mount = state.get("workspace_mount") or None
-    if not args.targets_info and not workspace_mount:
+    if not args.targets_info and not workspace_mount and not state.get("user_instruction"):
         parser.error(f"--resume {args.resume}: run.json has no targets_info")
 
     for target in args.targets_info:
