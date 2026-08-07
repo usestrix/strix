@@ -561,8 +561,8 @@ func TestVulnerabilityCopySupportsKeyboardAndMouse(t *testing.T) {
 		X: copyX, Y: copyY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
 	})
 	model = updated.(Model)
-	if cmd == nil || model.modalChoice != 0 {
-		t.Fatalf("mouse Copy was not activated: choice=%d cmd=%v", model.modalChoice, cmd)
+	if cmd == nil || model.reportFocus != reportCopy {
+		t.Fatalf("mouse Copy was not activated: focus=%q cmd=%v", model.reportFocus, cmd)
 	}
 	cmd()
 	if len(copied) != 2 {

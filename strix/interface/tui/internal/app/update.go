@@ -423,6 +423,22 @@ func (m Model) updateSetupMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// pressReportButton performs a button of the report row, however it was reached.
+func (m Model) pressReportButton(button string) (tea.Model, tea.Cmd) {
+	switch button {
+	case reportPrev:
+		m.showVulnerability(m.selectedVuln - 1)
+	case reportNext:
+		m.showVulnerability(m.selectedVuln + 1)
+	case reportCopy:
+		m.reportFocus = reportCopy
+		return m, m.startVulnerabilityCopy()
+	default:
+		m.closeModal()
+	}
+	return m, nil
+}
+
 func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.modal == modalVulnerability {
 		view := m.modalView()
@@ -459,13 +475,22 @@ func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
 		}
 	case modalVulnerability:
+		for _, button := range m.reportButtons() {
+			if button == reportCopy || button == reportDone {
+				continue
+			}
+			if m.centeredLabelHit(view, button, msg.X, msg.Y) {
+				m.reportFocus = button
+				return m.pressReportButton(button)
+			}
+		}
 		if m.centeredLabelHit(view, "Copy", msg.X, msg.Y) {
-			m.modalChoice = 0
+			m.reportFocus = reportCopy
 			cmd := m.startVulnerabilityCopy()
 			return m, cmd
 		}
 		if m.centeredLabelHit(view, "Done", msg.X, msg.Y) {
-			m.modalChoice = 1
+			m.reportFocus = reportDone
 			m.closeModal()
 		}
 	}
@@ -534,22 +559,19 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "esc":
 			m.closeModal()
-		// Arrows step between reports, which is worth more here than moving
-		// between two buttons; tab still does that.
-		case "left", "shift+tab":
+		// The arrows step between reports directly; tab walks the button row.
+		case "left":
 			m.showVulnerability(m.selectedVuln - 1)
 		case "right":
 			m.showVulnerability(m.selectedVuln + 1)
 		case "tab":
-			m.modalChoice = 1 - m.modalChoice
+			m.stepReportFocus(1)
+		case "shift+tab":
+			m.stepReportFocus(-1)
 		case "enter":
-			if m.modalChoice == 0 {
-				cmd := m.startVulnerabilityCopy()
-				return m, cmd
-			}
-			m.closeModal()
+			return m.pressReportButton(m.focusedReportButton())
 		case "c":
-			m.modalChoice = 0
+			m.reportFocus = reportCopy
 			cmd := m.startVulnerabilityCopy()
 			return m, cmd
 		case "up":
@@ -608,6 +630,7 @@ func (m *Model) openModal(mode modalMode) {
 		m.modalChoice = 1
 	}
 	if mode == modalVulnerability {
+		m.reportFocus = reportDone
 		m.modalChoice = 1
 		m.vulnerabilityCopied = false
 		m.vulnerabilityCopyError = ""

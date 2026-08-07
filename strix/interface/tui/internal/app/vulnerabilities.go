@@ -403,24 +403,25 @@ func (m Model) vulnerabilityDetail() string {
 	inner := max(1, width-8)
 	// Button row: right-aligned Copy / Done above a top rule (#vuln_detail_buttons).
 	rule := lipgloss.NewStyle().Foreground(lipgloss.Color("#1a1a1a")).Render(strings.Repeat("─", max(1, inner)))
-	copyLabel := "Copy"
-	if m.vulnerabilityCopied {
-		copyLabel = "Copied!"
-	} else if m.vulnerabilityCopyError != "" {
-		copyLabel = "Copy failed"
+	focused := m.focusedReportButton()
+	var stepping, acting []string
+	for _, button := range m.reportButtons() {
+		rendered := m.reportButton(button, button == focused)
+		if button == reportPrev || button == reportNext {
+			stepping = append(stepping, rendered)
+			continue
+		}
+		acting = append(acting, rendered)
 	}
-	copyButton := lipgloss.NewStyle().Foreground(lipgloss.Color("#525252"))
-	doneButton := lipgloss.NewStyle().Foreground(mid)
-	if m.modalChoice == 0 {
-		copyButton = copyButton.Background(lipgloss.Color("#363636")).Foreground(brightWhite).Bold(true).Padding(0, 1)
-	} else {
-		doneButton = doneButton.Background(lipgloss.Color("#363636")).Foreground(brightWhite).Bold(true).Padding(0, 1)
+	// Stepping sits on the left behind the position, acting on the right.
+	right := strings.Join(acting, "  ")
+	left := strings.Join(stepping, "  ")
+	if total := len(m.snapshot.Vulnerabilities); total > 1 {
+		left = render.Dim().Render(fmt.Sprintf("%d/%d", m.selectedVuln+1, total)) + "  " + left
 	}
-	buttons := copyButton.Render(copyLabel) + "  " + doneButton.Render("Done")
-	// The navigation strip fills everything the buttons leave, which puts it on
-	// the left of the row and keeps the buttons against the right edge.
+	room := max(0, inner-lipgloss.Width(right))
 	buttonRow := rule + "\n" +
-		m.vulnerabilityNavigation(inner-lipgloss.Width(buttons)) + buttons
+		lipgloss.NewStyle().Width(room).Render(truncate(left, room)) + right
 	content := m.vulnerabilityScrollView() + "\n" + buttonRow
 	return lipgloss.NewStyle().Width(width-2).Height(height-2).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("#262626")).Background(lipgloss.Color("#0a0a0a")).Padding(2, 3).Render(content)
 }
@@ -440,6 +441,53 @@ func (m *Model) showVulnerability(index int) {
 	m.vulnViewport.GotoTop()
 }
 
+// The report's buttons. Prev and Next carry their arrows so a click test cannot
+// be fooled by the same word appearing in the body of a finding.
+const (
+	reportPrev = "‹ Prev"
+	reportNext = "Next ›"
+	reportCopy = "Copy"
+	reportDone = "Done"
+)
+
+// reportButtons is the row as it stands, left to right. Stepping is offered only
+// in the directions that have a report.
+func (m Model) reportButtons() []string {
+	previous, next := m.vulnerabilityNeighbors()
+	buttons := make([]string, 0, 4)
+	if previous {
+		buttons = append(buttons, reportPrev)
+	}
+	if next {
+		buttons = append(buttons, reportNext)
+	}
+	return append(buttons, reportCopy, reportDone)
+}
+
+// focusedReportButton is the button Enter would press. It falls back to Done when
+// the focused one has gone, which happens when stepping to either end drops a
+// direction from the row.
+func (m Model) focusedReportButton() string {
+	for _, button := range m.reportButtons() {
+		if button == m.reportFocus {
+			return button
+		}
+	}
+	return reportDone
+}
+
+// stepReportFocus moves along the row, wrapping at its ends.
+func (m *Model) stepReportFocus(delta int) {
+	buttons := m.reportButtons()
+	current := 0
+	for i, button := range buttons {
+		if button == m.focusedReportButton() {
+			current = i
+		}
+	}
+	m.reportFocus = buttons[clampCycle(current+delta, len(buttons))]
+}
+
 // vulnerabilityNeighbors reports which way the open report can be stepped. The
 // ends are not wrapped: a report is one of an ordered list, and rolling from the
 // last to the first hides that you reached the end.
@@ -447,23 +495,22 @@ func (m Model) vulnerabilityNeighbors() (previous, next bool) {
 	return m.selectedVuln > 0, m.selectedVuln < len(m.snapshot.Vulnerabilities)-1
 }
 
-// vulnerabilityNavigation is the "3/12  ← prev  → next" strip on the left of the
-// button row. Each arrow appears only while there is a report that way.
-func (m Model) vulnerabilityNavigation(width int) string {
-	total := len(m.snapshot.Vulnerabilities)
-	if total <= 1 {
-		return lipgloss.NewStyle().Width(max(0, width)).Render("")
+// reportButton renders one button of the report row. Copy reports the outcome of
+// the last attempt in its own label.
+func (m Model) reportButton(label string, focused bool) string {
+	if label == reportCopy {
+		switch {
+		case m.vulnerabilityCopied:
+			label = "Copied!"
+		case m.vulnerabilityCopyError != "":
+			label = "Copy failed"
+		}
 	}
-	previous, next := m.vulnerabilityNeighbors()
-	parts := []string{render.Dim().Render(fmt.Sprintf("%d/%d", m.selectedVuln+1, total))}
-	key := lipgloss.NewStyle().Foreground(mid)
-	if previous {
-		parts = append(parts, key.Render("←")+render.Dim().Render(" prev"))
+	if focused {
+		return lipgloss.NewStyle().Background(lipgloss.Color("#363636")).
+			Foreground(brightWhite).Bold(true).Padding(0, 1).Render(label)
 	}
-	if next {
-		parts = append(parts, key.Render("→")+render.Dim().Render(" next"))
-	}
-	return lipgloss.NewStyle().Width(max(0, width)).Render(truncate(strings.Join(parts, "  "), max(0, width)))
+	return lipgloss.NewStyle().Foreground(lipgloss.Color("#525252")).Render(label)
 }
 
 func (m *Model) startVulnerabilityCopy() tea.Cmd {

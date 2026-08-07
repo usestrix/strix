@@ -110,6 +110,7 @@ type Model struct {
 	agentOffset            int
 	vulnOffset             int
 	modalChoice            int
+	reportFocus            string
 	ready                  bool
 	quitting               bool
 	showSplash             bool

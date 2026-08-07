@@ -154,17 +154,17 @@ func TestReportNavigationHintsFollowAvailability(t *testing.T) {
 		if !strings.Contains(view, testCase.position) {
 			t.Fatalf("report %d does not show %q", testCase.index, testCase.position)
 		}
-		if got := strings.Contains(view, "← prev"); got != testCase.wantPrev {
+		if got := strings.Contains(view, reportPrev); got != testCase.wantPrev {
 			t.Fatalf("report %d prev hint = %v, want %v", testCase.index, got, testCase.wantPrev)
 		}
-		if got := strings.Contains(view, "→ next"); got != testCase.wantNext {
+		if got := strings.Contains(view, reportNext); got != testCase.wantNext {
 			t.Fatalf("report %d next hint = %v, want %v", testCase.index, got, testCase.wantNext)
 		}
 	}
 
 	lone := reportModel(t, 1)
 	view := ansi.Strip(lone.modalView())
-	if strings.Contains(view, "prev") || strings.Contains(view, "next") || strings.Contains(view, "1/1") {
+	if strings.Contains(view, reportPrev) || strings.Contains(view, reportNext) || strings.Contains(view, "1/1") {
 		t.Fatalf("a lone finding offered navigation:\n%s", view)
 	}
 }
@@ -182,5 +182,92 @@ func TestSteppingResetsTheReportView(t *testing.T) {
 	}
 	if m.vulnerabilityCopied {
 		t.Fatal("the copy state carried over to another report")
+	}
+}
+
+// Prev and Next are buttons, not just key hints: they can be clicked.
+func TestReportStepButtonsAreClickable(t *testing.T) {
+	m := reportModel(t, 3)
+	m.selectedVuln = 1
+
+	click := func(label string) Model {
+		t.Helper()
+		view := m.modalView()
+		left, top, _, _ := m.centeredViewBounds(view)
+		for row, line := range strings.Split(view, "\n") {
+			plain := ansi.Strip(line)
+			index := strings.Index(plain, label)
+			if index < 0 {
+				continue
+			}
+			updated, _ := m.updateModalMouse(tea.MouseMsg{
+				X: left + ansi.StringWidth(plain[:index]) + 1, Y: top + row,
+				Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+			})
+			return updated.(Model)
+		}
+		t.Fatalf("%q was not rendered", label)
+		return m
+	}
+
+	if got := click(reportNext).selectedVuln; got != 2 {
+		t.Fatalf("clicking Next selected %d, want 2", got)
+	}
+	if got := click(reportPrev).selectedVuln; got != 0 {
+		t.Fatalf("clicking Prev selected %d, want 0", got)
+	}
+	if got := click(reportNext).modal; got != modalVulnerability {
+		t.Fatalf("clicking Next closed the report: modal=%v", got)
+	}
+}
+
+// Tab walks the whole row, so the step buttons are reachable from the keyboard
+// as well, and Enter presses whichever one is focused.
+func TestTabReachesTheStepButtons(t *testing.T) {
+	m := reportModel(t, 3)
+	m.selectedVuln = 1
+
+	if got := m.focusedReportButton(); got != reportDone {
+		t.Fatalf("the report opened focused on %q, want %q", got, reportDone)
+	}
+	seen := map[string]bool{}
+	for range len(m.reportButtons()) {
+		updated, _ := m.updateModal(tea.KeyMsg{Type: tea.KeyTab})
+		m = updated.(Model)
+		seen[m.focusedReportButton()] = true
+	}
+	for _, want := range []string{reportPrev, reportNext, reportCopy, reportDone} {
+		if !seen[want] {
+			t.Fatalf("tab never reached %q: %v", want, seen)
+		}
+	}
+
+	// Enter on a focused step button steps.
+	m.reportFocus = reportNext
+	updated, _ := m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
+	if got := updated.(Model).selectedVuln; got != 2 {
+		t.Fatalf("enter on Next selected %d, want 2", got)
+	}
+}
+
+// Stepping to an end drops that button from the row; focus must not be stranded
+// on it.
+func TestFocusFallsBackWhenAStepButtonDisappears(t *testing.T) {
+	m := reportModel(t, 2)
+	m.selectedVuln = 0
+	m.reportFocus = reportNext
+
+	updated, _ := m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
+	m = updated.(Model)
+
+	if m.selectedVuln != 1 {
+		t.Fatalf("enter on Next selected %d, want 1", m.selectedVuln)
+	}
+	// Next is gone at the last report, so the focus cannot still be on it.
+	if got := m.focusedReportButton(); got == reportNext {
+		t.Fatalf("focus stayed on a button that is no longer shown: %q", got)
+	}
+	if got := m.focusedReportButton(); got != reportDone {
+		t.Fatalf("focus fell back to %q, want %q", got, reportDone)
 	}
 }
