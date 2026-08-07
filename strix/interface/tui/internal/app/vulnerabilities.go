@@ -1,8 +1,6 @@
 package app
 
 import (
-	"fmt"
-	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -24,20 +22,10 @@ type vulnerabilityRow struct {
 	first bool   // the line that carries the number and the severity dot
 }
 
-// vulnerabilitySeqWidth is how many digits the sequence numbers are padded to. It
-// grows with the count so the numbers stay aligned without spending columns a
-// short list does not need.
-func vulnerabilitySeqWidth(total int) int {
-	digits := len(strconv.Itoa(max(1, total)))
-	return max(2, digits)
-}
-
 // vulnerabilityRows lays every finding out as the lines it will occupy.
 func (m Model) vulnerabilityRows(width int) []vulnerabilityRow {
-	seq := vulnerabilitySeqWidth(len(m.snapshot.Vulnerabilities))
-	// Each line is inset past the number and the dot so wrapped titles line up
-	// under the first line rather than under the number.
-	body := max(1, width-seq-3)
+	// Wrapped lines sit under the title rather than under the severity dot.
+	body := max(1, width-2)
 	rows := make([]vulnerabilityRow, 0, len(m.snapshot.Vulnerabilities))
 	for i := range m.snapshot.Vulnerabilities {
 		for line, text := range strings.Split(wrapBlock(m.vulnerabilityTitle(i), body), "\n") {
@@ -49,28 +37,22 @@ func (m Model) vulnerabilityRows(width int) []vulnerabilityRow {
 
 func (m Model) vulnerabilitiesView(width, height int) string {
 	rows := m.vulnerabilityRows(width)
-	seq := vulnerabilitySeqWidth(len(m.snapshot.Vulnerabilities))
 	start := min(max(0, m.vulnOffset), max(0, len(rows)-1))
 	end := min(len(rows), start+height)
-	indent := strings.Repeat(" ", seq+3)
 	lines := make([]string, 0, max(0, end-start))
 	for _, row := range rows[start:end] {
-		vuln := m.snapshot.Vulnerabilities[row.index]
 		style := lipgloss.NewStyle().Foreground(textColor)
-		number := render.Dim()
 		if row.index == m.selectedVuln {
 			style = style.Bold(true).Foreground(white)
-			number = lipgloss.NewStyle().Foreground(mid)
 		}
-		prefix := indent
+		prefix := "  "
 		if row.first {
-			severity := strings.ToLower(render.StringValue(vuln["severity"]))
+			severity := strings.ToLower(render.StringValue(m.snapshot.Vulnerabilities[row.index]["severity"]))
 			color, ok := panelSeverityColors[severity]
 			if !ok {
 				color = blue // matches SEVERITY_COLORS.get(severity, "#3b82f6")
 			}
-			prefix = number.Render(fmt.Sprintf("%0*d", seq, row.index+1)) + " " +
-				lipgloss.NewStyle().Foreground(color).Render("● ")
+			prefix = lipgloss.NewStyle().Foreground(color).Render("● ")
 		}
 		lines = append(lines, prefix+style.Render(row.text))
 	}

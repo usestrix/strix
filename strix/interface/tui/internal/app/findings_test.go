@@ -30,32 +30,6 @@ func findingsModel(t *testing.T, titles ...string) Model {
 	return m
 }
 
-// Similar titles are hard to tell apart, so each finding carries its position in
-// the list (#1005).
-func TestFindingsAreNumbered(t *testing.T) {
-	m := findingsModel(t, "Reflected XSS in search", "Reflected XSS in profile", "SQL injection")
-
-	view := ansi.Strip(m.vulnerabilitiesView(40, 10))
-
-	for _, want := range []string{"01 ● Reflected XSS in search", "02 ● Reflected XSS in profile", "03 ● SQL injection"} {
-		if !strings.Contains(view, want) {
-			t.Fatalf("missing %q in:\n%s", want, view)
-		}
-	}
-}
-
-// The padding widens with the count so the numbers stay aligned.
-func TestFindingNumberWidthFollowsTheCount(t *testing.T) {
-	for _, testCase := range []struct {
-		total int
-		want  int
-	}{{1, 2}, {9, 2}, {99, 2}, {100, 3}, {1000, 4}} {
-		if got := vulnerabilitySeqWidth(testCase.total); got != testCase.want {
-			t.Fatalf("%d findings padded to %d digits, want %d", testCase.total, got, testCase.want)
-		}
-	}
-}
-
 // The list scrolls by row, not by finding. Stepping a whole entry at a time is
 // what made a list of wrapped titles feel paginated.
 func TestFindingsScrollByRow(t *testing.T) {
