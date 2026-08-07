@@ -271,3 +271,29 @@ func TestFocusFallsBackWhenAStepButtonDisappears(t *testing.T) {
 		t.Fatalf("focus fell back to %q, want %q", got, reportDone)
 	}
 }
+
+// The list must be laid out at one width. Rendering at one and hit-testing at
+// another gives two different row counts for the same title, and then a click
+// resolves to the wrong finding and the scrollbar reports the wrong length.
+func TestFindingsUseOneWidthForRenderAndInteraction(t *testing.T) {
+	// This title wraps to one row at 21 columns and two at 20, which is exactly
+	// the pair of widths the two paths used to disagree on.
+	m := findingsModel(t, "ffffff dddd a a a a", "eeeee eeeee a a a a", "header dddd a a a a")
+
+	width := m.vulnerabilityListWidth()
+	rows := m.vulnerabilityRows(width)
+	rendered := strings.Split(ansi.Strip(m.vulnerabilitiesView(width, len(rows))), "\n")
+
+	if len(rendered) != len(rows) {
+		t.Fatalf("rendered %d rows, interaction counts %d", len(rendered), len(rows))
+	}
+	for row := range rendered {
+		if got := m.vulnerabilityIndexAtRow(row); got != rows[row].index {
+			t.Fatalf("row %d shows finding %d but a click resolves to %d",
+				row, rows[row].index, got)
+		}
+	}
+	if total, _ := m.vulnerabilityScrollRows(); total != len(rendered) {
+		t.Fatalf("the scrollbar reports %d rows, %d are rendered", total, len(rendered))
+	}
+}

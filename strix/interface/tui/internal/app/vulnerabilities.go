@@ -60,9 +60,17 @@ func (m Model) vulnerabilitiesView(width, height int) string {
 	return strings.Join(lines, "\n")
 }
 
+// vulnerabilityListWidth is the one width the findings list is laid out at, for
+// rendering and for every interaction alike. Wrapping a title at two widths a
+// column apart gives two different row counts, and then a click resolves to the
+// wrong finding and the scrollbar reports the wrong length.
+//
+// The panel is sidebarWidth-2 wide with a column of padding either side, and the
+// scrollbar takes one more. That last column is reserved whether or not the bar
+// is showing, so the layout does not shift as the list grows past the panel.
 func (m Model) vulnerabilityListWidth() int {
 	_, sidebarWidth, _, _ := m.layout()
-	return max(1, sidebarWidth-6)
+	return max(1, sidebarWidth-5)
 }
 
 func (m Model) vulnerabilityTitle(index int) string {

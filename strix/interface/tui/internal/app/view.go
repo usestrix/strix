@@ -512,7 +512,7 @@ func (m Model) sidebarView(width, height int) string {
 		vulnRows := max(1, vulnHeight-2)
 		totalRows, offsetRows := m.vulnerabilityScrollRows()
 		findings := withVerticalScrollbar(
-			m.vulnerabilitiesView(max(1, width-5), vulnRows),
+			m.vulnerabilitiesView(m.vulnerabilityListWidth(), vulnRows),
 			width-4,
 			vulnRows,
 			totalRows,
