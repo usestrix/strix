@@ -521,7 +521,6 @@ async def _run_until_lifecycle(
             attempt=recoveries,
             limit=recovery_limit,
             interactive=interactive,
-            spoke=_turn_produced_text(result),
         )
 
 
@@ -806,17 +805,6 @@ async def _agent_status(coordinator: AgentCoordinator, agent_id: str) -> Status 
         return coordinator.statuses.get(agent_id)
 
 
-def _turn_produced_text(result: RunResultBase | None) -> bool:
-    """Whether the turn actually said something, which the user has then read.
-
-    A turn can end without a tool call and without any text at all, so this is
-    not a given: telling an agent its words already landed when it never spoke
-    would invite it to wait on an answer the user never received.
-    """
-    final_output = getattr(result, "final_output", None)
-    return bool(final_output is not None and str(final_output).strip())
-
-
 def _final_output_preview(result: RunResultBase | None) -> str:
     final_output = getattr(result, "final_output", None)
     if final_output is None:
@@ -834,32 +822,16 @@ async def _append_tool_required_message(
     attempt: int,
     limit: int,
     interactive: bool,
-    spoke: bool = False,
 ) -> list[dict[str, str]]:
     finish_tool = "finish_scan" if context.get("parent_id") is None else "agent_finish"
     if interactive:
-        # Only offer waiting on what was said when something was: a turn can end
-        # with no tool call and no text, and an agent told to wait on words it
-        # never wrote parks the user in front of an answer that never came.
-        if spoke:
-            yielding = (
-                "Your text has already been delivered — do not repeat it. "
-                "If that was your complete answer and you only need to wait for their "
-                "reply, call respond_to_user with no message. "
-                "If you have something to add, call respond_to_user with just the new part. "
-            )
-        else:
-            yielding = (
-                "You produced no text, so the user has read nothing. "
-                "If you have something to tell them and nothing to do until they reply, "
-                "call respond_to_user with your message. "
-            )
         message = (
             "Your previous message ended a turn without a tool call. Plain text never ends "
             "execution and never hands control to the user: it is shown to the user, and the "
             "run continues. Continue immediately and call exactly one tool. "
-            + yielding
-            + "If you are blocked waiting for another agent, call wait_for_agents. "
+            "If you have something to tell the user and nothing to do until they reply, "
+            "call respond_to_user. "
+            "If you are blocked waiting for another agent, call wait_for_agents. "
             f"If the whole engagement is complete, call {finish_tool}. "
             "Otherwise use the appropriate execution or planning tool. "
             f"This is recovery attempt {attempt}/{limit}."
