@@ -24,7 +24,6 @@ from strix.core.execution import (
 from strix.core.sessions import seed_initial_input
 from strix.tools.agents_graph.tools import agent_finish, stop_agent
 from strix.tools.finish.tool import finish_scan
-from strix.tools.respond.tool import DELIVERED_PLAIN_TEXT
 
 
 _NO_STREAM_EVENTS: list[Any] = []
@@ -1232,11 +1231,11 @@ async def test_wait_kind_survives_a_snapshot_round_trip() -> None:
 
 
 @pytest.mark.asyncio
-async def test_interactive_nudge_lets_the_agent_park_on_what_it_already_said() -> None:
+async def test_interactive_nudge_offers_waiting_without_repeating() -> None:
     """The nudge is what strands an agent that answered in plain text.
 
-    It arms respond_to_user to wait on that text, and says not to repeat it, so
-    the only way to stop is no longer to send the same answer a second time.
+    It has to say that the text already landed, or the agent restates it just to
+    reach a tool call and the user reads the same answer twice.
     """
     context: dict[str, Any] = {"parent_id": None}
 
@@ -1246,27 +1245,8 @@ async def test_interactive_nudge_lets_the_agent_park_on_what_it_already_said() -
         attempt=1,
         limit=3,
         interactive=True,
-        delivered="Hi! What would you like me to test?",
     )
 
-    assert context[DELIVERED_PLAIN_TEXT] == "Hi! What would you like me to test?"
     nudge = items[0]["content"]
     assert "do not repeat it" in nudge
     assert "respond_to_user with no message" in nudge
-
-
-@pytest.mark.asyncio
-async def test_autonomous_nudge_arms_nothing() -> None:
-    """There is no user to park for, so plain text is not an answer to wait on."""
-    context: dict[str, Any] = {"parent_id": None}
-
-    await execution._append_tool_required_message(
-        session=None,
-        context=context,
-        attempt=1,
-        limit=3,
-        interactive=False,
-        delivered="Scan complete.",
-    )
-
-    assert DELIVERED_PLAIN_TEXT not in context
