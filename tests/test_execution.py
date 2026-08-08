@@ -1228,3 +1228,40 @@ async def test_wait_kind_survives_a_snapshot_round_trip() -> None:
     assert restored.wait_kinds["root"] == "user"
     assert restored.idle_resume_counts["root"] == 1
     assert await execution._plain_waiting_timeout(restored, "root") is None
+
+
+@pytest.mark.asyncio
+async def test_interactive_nudge_offers_waiting_without_repeating() -> None:
+    """The nudge is the instruction an agent reads when it is stranded here.
+
+    It is where the option to wait on what was already said has to be, not only
+    in the system prompt: an agent that ended a turn on plain text reasons off
+    this text, and without the clause it restates its answer to reach a tool
+    call, so the user reads it twice.
+
+    The clause holds whatever the turn did, because the agent is the one who
+    knows whether it spoke — this fires for a turn that produced no text at all.
+    """
+    items = await execution._append_tool_required_message(
+        session=None,
+        context={"parent_id": None},
+        attempt=1,
+        limit=3,
+        interactive=True,
+    )
+
+    assert "with no message if you have already said it" in items[0]["content"]
+
+
+@pytest.mark.asyncio
+async def test_autonomous_nudge_does_not_offer_the_user() -> None:
+    """There is nobody attached to an autonomous run to wait for."""
+    items = await execution._append_tool_required_message(
+        session=None,
+        context={"parent_id": None},
+        attempt=1,
+        limit=3,
+        interactive=False,
+    )
+
+    assert "respond_to_user" not in items[0]["content"]
