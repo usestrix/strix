@@ -7,11 +7,11 @@ shows what the user actually typed; resuming has to match that.
 
 from __future__ import annotations
 
+import ast
 import json
-import re
 import sqlite3
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -23,6 +23,10 @@ from strix.interface.tui.live_view import (
     TuiLiveView,
     _is_internal_agent_turn,
 )
+
+
+if TYPE_CHECKING:
+    from types import ModuleType
 
 
 def _write_run(run_dir: Path, items: list[dict[str, Any]], agent_id: str = "root") -> None:
@@ -184,19 +188,50 @@ def test_internal_turn_classifier_matches_every_injected_form() -> None:
         assert _is_internal_agent_turn(content), content
 
 
+def _injected_strings(module: ModuleType) -> list[str]:
+    """Every string a module can inject, and nothing it merely mentions.
+
+    Parsing rather than searching the text keeps comments out of it, so a stale
+    copy of a message left in a comment cannot pass for the message itself. It
+    also joins adjacent literals for free, which the line wrapping needs, and
+    docstrings are dropped because they describe the code rather than run in it.
+    """
+    tree = ast.parse(Path(module.__file__ or "").read_text(encoding="utf-8"))
+    docstrings = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Module | ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
+            continue
+        first = node.body[0] if node.body else None
+        if isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant):
+            docstrings.add(id(first.value))
+
+    literals: list[str] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant):
+            if isinstance(node.value, str) and id(node) not in docstrings:
+                literals.append(node.value)
+        elif isinstance(node, ast.JoinedStr):
+            literals.append(
+                "".join(
+                    part.value
+                    for part in node.values
+                    if isinstance(part, ast.Constant) and isinstance(part.value, str)
+                )
+            )
+    return literals
+
+
 def test_internal_turn_prefixes_still_match_what_is_injected() -> None:
     """The classifier copies sentences out of another module, so they can drift.
 
     Both nudges are written inline in strix.core.execution, so there is nothing to
-    import and compare against. Read them out of its source instead, joining the
-    adjacent string literals the line wrapping leaves behind.
+    import and compare against. Read them back out of what that module can inject.
     """
-    source = (Path(execution.__file__)).read_text(encoding="utf-8")
-    merged = re.sub(r'"\s*\n\s*"', "", source)
+    injected = _injected_strings(execution)
     nudges = [prefix for prefix in _INTERNAL_TURN_PREFIXES if prefix.startswith("Your previous")]
     assert nudges, "the no-tool-call nudges are no longer in the classifier"
     for nudge in nudges:
-        assert nudge in merged, (
+        assert any(nudge in literal for literal in injected), (
             f"the classifier expects {nudge!r}, which strix.core.execution no longer "
             f"injects. A resumed scan would show that nudge as the user's own message."
         )
