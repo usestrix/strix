@@ -110,7 +110,7 @@ def _get_agent_todos(agent_id: str) -> dict[str, dict[str, Any]]:
 
 
 def _normalize_priority(priority: str | None, default: str = "normal") -> str:
-    candidate = (priority or default or "normal").strip().lower()
+    candidate = str(priority or default or "normal").strip().lower()
     if candidate not in VALID_PRIORITIES:
         raise ValueError(f"Invalid priority. Must be one of: {', '.join(VALID_PRIORITIES)}")
     return candidate

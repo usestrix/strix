@@ -86,3 +86,20 @@ def test_coerce_never_raises() -> None:
     assert _coerce_priority("nonsense") == "normal"
     assert _coerce_priority(None) == "normal"
     assert _coerce_priority("high") == "high"
+    for value in (2, ["high"], {"p": 1}, True):
+        assert _coerce_priority(value) == "normal"  # type: ignore[arg-type]
+
+
+@pytest.mark.asyncio
+async def test_non_string_priority_does_not_fail_the_batch() -> None:
+    result = await _create(
+        [
+            {"title": "Recon", "priority": 2},
+            {"title": "Probe", "priority": ["high"]},
+            {"title": "Report"},
+        ]
+    )
+
+    assert result["success"] is True
+    assert result["created_count"] == 3
+    assert {c["priority"] for c in result["created"]} == {"normal"}
