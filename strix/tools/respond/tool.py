@@ -10,12 +10,18 @@ from agents import RunContextWrapper, function_tool
 from strix.core.agents import coordinator_from_context
 
 
+# Set by strix.core.execution when a turn ends in plain text: that text has
+# already reached the user, so this call may park on it rather than restate it.
+# Single use — execution clears it as soon as the next turn ends any other way.
+DELIVERED_PLAIN_TEXT = "delivered_plain_text"
+
+
 def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
     return ctx.context if isinstance(ctx.context, dict) else {}
 
 
 @function_tool
-async def respond_to_user(ctx: RunContextWrapper, message: str) -> str:
+async def respond_to_user(ctx: RunContextWrapper, message: str = "") -> str:
     """Answer the user and hand control back to them.
 
     This is the ONLY way to yield to the user. Delivering the message and
@@ -45,6 +51,12 @@ async def respond_to_user(ctx: RunContextWrapper, message: str) -> str:
             have followed the tool calls that led here. Lead with the
             answer or the decision you need, and if you are blocked, say
             exactly what you need from them.
+
+            Omit it only when you have just said your piece as plain text
+            and simply need to wait: that text has already reached them,
+            and repeating it makes them read the same answer twice. Any
+            other time this is required — parking with nothing said
+            leaves the user with silence.
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
@@ -57,6 +69,25 @@ async def respond_to_user(ctx: RunContextWrapper, message: str) -> str:
             ensure_ascii=False,
             default=str,
         )
+
+    # Parking on what was already said is allowed only when something was: the
+    # point of this tool is that the user is never left waiting on silence.
+    delivered = str(inner.pop(DELIVERED_PLAIN_TEXT, "") or "").strip()
+    if not message.strip():
+        if not delivered:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": (
+                        "Nothing has been said to the user, so there is nothing to wait on. "
+                        "Call this again with a message, or use the tool that does the work "
+                        "you meant to do."
+                    ),
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+        message = delivered
 
     if not interactive:
         return json.dumps(

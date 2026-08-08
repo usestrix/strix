@@ -35,6 +35,7 @@ from strix.core.sessions import (
     strip_all_images_from_session,
 )
 from strix.llm.compaction import is_context_overflow, maybe_compact
+from strix.tools.respond.tool import DELIVERED_PLAIN_TEXT
 
 
 if TYPE_CHECKING:
@@ -500,6 +501,8 @@ async def _run_until_lifecycle(
         if status != "running":
             await coordinator.reset_recovery(agent_id)
             return result
+        # Whatever was armed for the previous turn is stale now.
+        context.pop(DELIVERED_PLAIN_TEXT, None)
 
         recoveries = await coordinator.record_recovery(agent_id)
         logger.warning(
@@ -521,6 +524,7 @@ async def _run_until_lifecycle(
             attempt=recoveries,
             limit=recovery_limit,
             interactive=interactive,
+            delivered=_final_output_text(result),
         )
 
 
@@ -805,6 +809,14 @@ async def _agent_status(coordinator: AgentCoordinator, agent_id: str) -> Status 
         return coordinator.statuses.get(agent_id)
 
 
+def _final_output_text(result: RunResultBase | None) -> str:
+    """The plain text a turn ended on, which the user has already been shown."""
+    final_output = getattr(result, "final_output", None)
+    if final_output is None:
+        return ""
+    return str(final_output).strip()
+
+
 def _final_output_preview(result: RunResultBase | None) -> str:
     final_output = getattr(result, "final_output", None)
     if final_output is None:
@@ -822,15 +834,22 @@ async def _append_tool_required_message(
     attempt: int,
     limit: int,
     interactive: bool,
+    delivered: str = "",
 ) -> list[dict[str, str]]:
     finish_tool = "finish_scan" if context.get("parent_id") is None else "agent_finish"
     if interactive:
+        # The text has already reached the user, so respond_to_user may park on it
+        # without being given anything to say. Without this the only way to stop
+        # is to say it all over again, and the user reads the same answer twice.
+        context[DELIVERED_PLAIN_TEXT] = delivered
         message = (
             "Your previous message ended a turn without a tool call. Plain text never ends "
             "execution and never hands control to the user: it is shown to the user, and the "
             "run continues. Continue immediately and call exactly one tool. "
-            "If you have something to tell the user and nothing to do until they reply, "
-            "call respond_to_user. "
+            "Your text has already been delivered — do not repeat it. "
+            "If that was your complete answer and you only need to wait for their reply, "
+            "call respond_to_user with no message. "
+            "If you have something to add, call respond_to_user with just the new part. "
             "If you are blocked waiting for another agent, call wait_for_agents. "
             f"If the whole engagement is complete, call {finish_tool}. "
             "Otherwise use the appropriate execution or planning tool. "
