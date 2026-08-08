@@ -160,7 +160,9 @@ def _schema_types(spec: dict[str, Any]) -> set[str]:
 def _decode_structured(value: str, types: set[str]) -> Any:
     stripped = value.strip()
     if not stripped:
-        return value
+        # An empty string is the model's "no value" for a list/dict param; give it
+        # the empty container so it validates instead of failing the type check.
+        return [] if "array" in types else {}
     try:
         decoded = json.loads(stripped)
     except json.JSONDecodeError:

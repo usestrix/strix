@@ -70,13 +70,35 @@ async def test_encoded_list_is_decoded_for_an_array_parameter(schema: dict[str, 
         "auth",
         "Endpoint /admin leaks user data, and session tokens never expire",
         '"auth"',
-        "",
     ],
 )
 async def test_free_form_strings_are_never_split_into_an_array(value: str) -> None:
     parsed = await _roundtrip(_ARRAY, {"tags": value})
 
     assert parsed["tags"] == value
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("schema", [_ARRAY, _NULLABLE_ARRAY])
+@pytest.mark.parametrize("value", ["", "   "])
+async def test_empty_string_becomes_an_empty_array(schema: dict[str, Any], value: str) -> None:
+    parsed = await _roundtrip(schema, {"tags": value})
+
+    assert parsed["tags"] == []
+
+
+@pytest.mark.asyncio
+async def test_empty_string_becomes_an_empty_object() -> None:
+    parsed = await _roundtrip(_OBJECT, {"modifications": ""})
+
+    assert parsed["modifications"] == {}
+
+
+@pytest.mark.asyncio
+async def test_empty_string_for_a_string_parameter_is_untouched() -> None:
+    parsed = await _roundtrip(_STRING, {"todos": ""})
+
+    assert parsed["todos"] == ""
 
 
 @pytest.mark.asyncio
