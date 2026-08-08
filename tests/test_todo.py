@@ -1,5 +1,3 @@
-"""Tests for the per-agent todo tool's create resilience (issue #1014)."""
-
 from __future__ import annotations
 
 import json
@@ -9,11 +7,7 @@ import pytest
 from agents.tool_context import ToolContext
 
 from strix.tools.todo import tools
-from strix.tools.todo.tools import (
-    _coerce_priority,
-    _normalize_priority,
-    create_todo,
-)
+from strix.tools.todo.tools import _coerce_priority, create_todo
 
 
 @pytest.fixture(autouse=True)
@@ -34,15 +28,14 @@ async def _create(todos: list[Any], agent_id: str = "root") -> dict[str, Any]:
     return json.loads(raw)  # type: ignore[no-any-return]
 
 
-def test_medium_is_accepted_as_normal() -> None:
-    # The word every other task system uses, and what a model writes by default.
-    assert _normalize_priority("medium") == "normal"
-    assert _normalize_priority("URGENT") == "critical"
+def test_unknown_priority_falls_back_to_normal() -> None:
+    assert _coerce_priority("medium") == "normal"
+    assert _coerce_priority("urgent") == "normal"
+    assert _coerce_priority("high") == "high"
 
 
 @pytest.mark.asyncio
 async def test_one_bad_priority_no_longer_discards_the_batch() -> None:
-    """The reported bug: an invalid priority failed the whole create call."""
     result = await _create(
         [
             {"title": "Recon", "priority": "medium"},
@@ -54,8 +47,8 @@ async def test_one_bad_priority_no_longer_discards_the_batch() -> None:
     assert result["success"] is True
     assert result["created_count"] == 3
     by_title = {c["title"]: c["priority"] for c in result["created"]}
-    assert by_title["Recon"] == "normal"  # medium -> normal
-    assert by_title["Probe /admin"] == "normal"  # unknown -> default, not a failure
+    assert by_title["Recon"] == "normal"
+    assert by_title["Probe /admin"] == "normal"
     assert by_title["Report"] == "normal"
 
 
@@ -66,7 +59,7 @@ async def test_duplicate_titles_within_a_batch_are_skipped() -> None:
             {"title": "Subdomain enumeration"},
             {"title": "Content discovery"},
             {"title": "Subdomain enumeration"},
-            {"title": "content discovery"},  # case-insensitive
+            {"title": "content discovery"},
         ]
     )
 
