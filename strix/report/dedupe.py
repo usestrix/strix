@@ -62,6 +62,7 @@ def _dedupe_model_settings(
         # must never receive the main endpoint's credentials. A dedicated model
         # gets its own DEDUPE_LLM_EXTRA_HEADERS instead.
         extra_headers=dedupe.extra_headers if dedupe.model else llm.extra_headers,
+        has_tools=False,
     )
     extra = _dedupe_extra_args(dedupe)
     if extra:

@@ -294,6 +294,7 @@ async def _summarize(model: str, prompt: str, max_tokens: int) -> str | None:
         request_timeout=llm.timeout,
         prompt_cache=False,
         extra_headers=llm.extra_headers,
+        has_tools=False,
     ).resolve(ModelSettings(max_tokens=max_tokens))
     try:
         response = (

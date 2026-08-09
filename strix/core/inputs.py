@@ -201,9 +201,12 @@ def make_model_settings(
     request_timeout: float | None = None,
     prompt_cache: bool = True,
     extra_headers: dict[str, str] | None = None,
+    has_tools: bool = True,
 ) -> ModelSettings:
+    # Azure OpenAI rejects any request that carries ``parallel_tool_calls``
+    # without ``tools``, so tool-less requests must omit it entirely.
     model_settings = ModelSettings(
-        parallel_tool_calls=False,
+        parallel_tool_calls=False if has_tools else None,
         retry=DEFAULT_MODEL_RETRY,
         include_usage=True,
         extra_args=request_timeout_extra_args(request_timeout),

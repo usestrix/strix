@@ -78,6 +78,7 @@ async def preflight_model_connection(
         request_timeout=resolved_settings.llm.timeout,
         prompt_cache=False,
         extra_headers=resolved_settings.llm.extra_headers,
+        has_tools=False,
     )
     await asyncio.wait_for(
         model.get_response(
