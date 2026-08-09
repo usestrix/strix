@@ -41,11 +41,16 @@ Common patterns:
 - Shallow quick sweep:
   `dirsearch -u https://target -e php,txt -t 20 --max-rate 50 -x 404 -q --format=json -o quick.json`
 - Recursive deep discovery:
-  `dirsearch -u https://target -w raft-medium-words.txt -e php,bak,old,env -r -R 3 -t 30 --max-rate 100 -x 404 -q --format=json -o deep.json`
+  `dirsearch -u https://target -e php,bak,old,env -r -R 3 -t 30 --max-rate 100 -x 404 -q --format=json -o deep.json`
 - Authenticated scan:
-  `dirsearch -u https://target -w api-words.txt -e json -t 10 --max-rate 30 --cookie "session=..." -x 404 -q`
+  `dirsearch -u https://target -e json -t 10 --max-rate 30 --cookie "session=..." -x 404 -q`
 - Extension-focused backup hunt:
-  `dirsearch -u https://target -w common.txt -e bak,old,swp,sav,orig,dist,env,sql -t 20 -x 404 -q`
+  `dirsearch -u https://target -e bak,old,swp,sav,orig,dist,env,sql -t 20 -x 404 -q`
+
+These examples intentionally use dirsearch's bundled `db/dicc.txt` default so they
+run in the shipped sandbox. If a larger API or raft wordlist has been provisioned,
+pass its verified absolute path with `-w`; do not assume that a named wordlist is
+installed.
 
 Critical correctness rules:
 - Always exclude the baseline noise (`-x 404`, and consider `403` unless you intend to test bypasses)

