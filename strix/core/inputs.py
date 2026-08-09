@@ -203,8 +203,6 @@ def make_model_settings(
     extra_headers: dict[str, str] | None = None,
     has_tools: bool = True,
 ) -> ModelSettings:
-    # Azure OpenAI rejects any request that carries ``parallel_tool_calls``
-    # without ``tools``, so tool-less requests must omit it entirely.
     model_settings = ModelSettings(
         parallel_tool_calls=False if has_tools else None,
         retry=DEFAULT_MODEL_RETRY,
