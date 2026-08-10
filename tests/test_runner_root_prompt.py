@@ -6,6 +6,7 @@ flow through to the root agent's ``build_strix_agent`` call.
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 import httpx
@@ -19,6 +20,30 @@ from strix.config.settings import Settings
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
 from strix.runtime import session_manager
+
+
+_SETTINGS_ENV_PREFIXES = (
+    "STRIX_",
+    "LLM_",
+    "OPENAI_",
+    "DEDUPE_LLM_",
+    "LITELLM_",
+    "OLLAMA_",
+    "PERPLEXITY_",
+    "POSTMAN_",
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_settings_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Drop ambient settings env vars so Settings() builds deterministically.
+
+    A malformed unrelated value (e.g. a non-JSON LLM_EXTRA_HEADERS) would
+    otherwise make Settings() raise before the fields under test are assigned.
+    """
+    for key in list(os.environ):
+        if key.startswith(_SETTINGS_ENV_PREFIXES):
+            monkeypatch.delenv(key, raising=False)
 
 
 def _make_rate_limit_error() -> RateLimitError:
