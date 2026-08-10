@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import tempfile
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -179,3 +180,20 @@ def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
     assert "# Security Penetration Test Report" in content
     assert "Scan complete. No critical issues." in content
+
+
+def test_write_executive_report_failure_preserves_previous_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "penetration_test_report.md"
+    target.write_text("previous report", encoding="utf-8")
+
+    def _disk_full(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", _disk_full)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_executive_report(tmp_path, "new content")
+
+    assert target.read_text(encoding="utf-8") == "previous report"
