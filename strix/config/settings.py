@@ -12,6 +12,10 @@ ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "
 
 DEFAULT_MAX_TURNS = 500
 
+# Runs on the ChatGPT subscription by default (no API key needed; draws from
+# the plan's session limits). Override with STRIX_LLM, e.g. "openai/gpt-5.6-sol".
+DEFAULT_MODEL = "chatgpt/gpt-5.6-sol"
+
 _BASE_CONFIG = SettingsConfigDict(
     case_sensitive=False,
     populate_by_name=True,
@@ -22,7 +26,7 @@ _BASE_CONFIG = SettingsConfigDict(
 class LlmSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
-    model: str | None = Field(default=None, alias="STRIX_LLM")
+    model: str | None = Field(default=DEFAULT_MODEL, alias="STRIX_LLM")
     api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),

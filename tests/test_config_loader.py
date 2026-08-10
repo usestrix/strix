@@ -172,9 +172,25 @@ def test_apply_override_and_load_settings_round_trip(tmp_path: Path) -> None:
     settings = loader.load_settings()
 
     assert settings.llm.model == "round-trip-model"
+
+
+def test_default_model_is_chatgpt_subscription(tmp_path: Path) -> None:
+    """With no STRIX_LLM anywhere, the ChatGPT subscription model is the default."""
+    loader.apply_config_override(tmp_path / "missing.json")
+    settings = loader.load_settings()
+
+    assert settings.llm.model == "round-trip-model"
     assert settings.integrations.perplexity_api_key == "pk"
     # Second call is memoized -> same object.
     assert loader.load_settings() is settings
+
+
+def test_default_model_is_chatgpt_subscription(tmp_path: Path) -> None:
+    """With no STRIX_LLM anywhere, the ChatGPT subscription model is the default."""
+    loader.apply_config_override(tmp_path / "missing.json")
+    settings = loader.load_settings()
+
+    assert settings.llm.model == "chatgpt/gpt-5.6-sol"
 
 
 def test_apply_config_override_invalidates_cache(tmp_path: Path) -> None:

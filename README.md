@@ -81,16 +81,20 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 # Install Strix
 curl -sSL https://strix.ai/install | bash
 
-# Configure your AI provider
-export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="your-api-key"
+# Connect your ChatGPT account (runs on your subscription, no API key needed)
+strix auth login chatgpt
 
-# Run your first security assessment
+# Run your first security assessment (default model: chatgpt/gpt-5.6-sol)
 strix --target ./app-directory
 ```
 
 > [!NOTE]
 > First run automatically pulls the sandbox Docker image. Results are saved to `strix_runs/<run-name>`
+
+> [!NOTE]
+> Strix runs on your ChatGPT subscription by default and draws from your plan's
+> session limits, not metered API credits. To use a paid API key instead:
+> `export STRIX_LLM="openai/gpt-5.4"` and `export LLM_API_KEY="your-api-key"`.
 
 ---
 
@@ -289,7 +293,7 @@ jobs:
 ### Configuration
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openai/gpt-5.4"         # optional — default is chatgpt/gpt-5.6-sol (subscription)
 export LLM_API_KEY="your-api-key"
 
 # Optional
@@ -303,13 +307,13 @@ export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, 
 
 #### Sign in with a ChatGPT subscription
 
-Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
+Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription — this is the default:
 
 ```bash
 strix auth login chatgpt      # sign in with your ChatGPT account
 
-export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
-strix --target ./app-directory
+strix --target ./app-directory   # defaults to chatgpt/gpt-5.6-sol on the subscription
+export STRIX_LLM="chatgpt/gpt-5.4"   # any chatgpt/<model> runs on the subscription
 
 strix auth status             # show the active sign-in
 strix auth logout             # forget the sign-in
