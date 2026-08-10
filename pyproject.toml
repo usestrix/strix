@@ -35,7 +35,11 @@ classifiers = [
 dependencies = [
   "openai-agents[litellm]>=0.19.0,<0.20",
   "openai>=2.45.0,<3",
-  "litellm",
+  # >=1.95.0: fixes litellm's Bedrock Converse tool_choice mapping, which
+  # otherwise omits the required `type` discriminator and makes every
+  # Bedrock Claude request fail with `tool_choice.type: Field required`
+  # (BerriAI/litellm#34347).
+  "litellm>=1.95.0",
   "pydantic>=2.11.3",
   "pydantic-settings>=2.13.0",
   "rich",

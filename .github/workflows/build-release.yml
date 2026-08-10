@@ -55,7 +55,7 @@ jobs:
         env:
           STRIX_WHEEL_PLATFORM_TAG: ${{ matrix.wheel-platform }}
         run: |
-          uv sync --frozen
+          uv sync --frozen --extra bedrock
           uv build --wheel
           uv run python -c 'import glob, os, sys, zipfile; wheels = glob.glob("dist/*.whl"); assert len(wheels) == 1, wheels; archive = zipfile.ZipFile(wheels[0]); tui = "strix/bin/strix-tui.exe" if sys.platform == "win32" else "strix/bin/strix-tui"; assert tui in archive.namelist(); metadata = archive.read(next(name for name in archive.namelist() if name.endswith(".dist-info/WHEEL"))).decode(); assert "Root-Is-Purelib: false" in metadata; assert "Tag: py3-none-" + os.environ["STRIX_WHEEL_PLATFORM_TAG"] in metadata'
 
