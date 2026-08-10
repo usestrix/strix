@@ -230,6 +230,8 @@ ignore = [
 # args they intentionally ignore.
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
+# Test doubles return a fixture guest token.
+"tests/test_caido_bootstrap.py" = ["S105"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]
 # Stdlib HTTP handler overrides (do_GET/do_POST).

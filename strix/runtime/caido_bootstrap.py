@@ -13,6 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import time
 from typing import TYPE_CHECKING
 
 from caido_sdk_client import Client, TokenAuthOptions
@@ -35,16 +36,27 @@ async def _login_as_guest(
     session: BaseSandboxSession,
     *,
     container_url: str,
-    attempts: int = 10,
+    boot_wait_s: int = 300,
 ) -> str:
     """``session.exec`` curl to fetch a guest token; retry until ready.
 
     Caido's GraphQL listener may not be up the instant the container
     starts. The retry loop also doubles as the Caido readiness probe —
     no separate TCP healthcheck needed.
+
+    The loop is bounded by a wall-clock deadline (``boot_wait_s``), not
+    a fixed attempt count: on a loaded host the sandbox entrypoint's
+    ``chown -R`` over the pre-installed toolchain can delay ``caido-cli``
+    by many minutes, and a fixed 10-attempt backoff (~68s) aborts the
+    scan before the listener exists. Fast hosts still fail fast because
+    the first attempts use the same short backoff; slow hosts wait the
+    full budget instead of giving up early.
     """
+    deadline = time.monotonic() + boot_wait_s
+    attempt = 0
     last_err: str | None = None
-    for i in range(1, attempts + 1):
+    while True:
+        attempt += 1
         result = await session.exec(
             "curl",
             "-fsS",
@@ -74,10 +86,14 @@ async def _login_as_guest(
         else:
             stderr = result.stderr.decode("utf-8", errors="replace")[:200]
             last_err = f"curl exit {result.exit_code}: {stderr}"
-        logger.debug("loginAsGuest attempt %d/%d failed: %s", i, attempts, last_err)
-        await asyncio.sleep(min(2.0 * i, 8.0))
+        logger.debug("loginAsGuest attempt %d failed: %s", attempt, last_err)
 
-    raise RuntimeError(f"loginAsGuest failed after {attempts} attempts: {last_err}")
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(2.0 * attempt, 8.0, remaining))
+
+    raise RuntimeError(f"loginAsGuest failed after {boot_wait_s}s ({attempt} attempts): {last_err}")
 
 
 async def bootstrap_caido(
@@ -85,11 +101,16 @@ async def bootstrap_caido(
     *,
     host_url: str,
     container_url: str,
+    boot_wait_s: int = 300,
 ) -> Client:
     """Connect to the in-container Caido sidecar and select a fresh project."""
     logger.info("Bootstrapping Caido client (host=%s, container=%s)", host_url, container_url)
 
-    access_token = await _login_as_guest(session, container_url=container_url)
+    access_token = await _login_as_guest(
+        session,
+        container_url=container_url,
+        boot_wait_s=boot_wait_s,
+    )
 
     client = Client(host_url, auth=TokenAuthOptions(token=access_token))
     await client.connect()

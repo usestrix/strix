@@ -183,6 +183,7 @@ async def create_or_reuse(
         session,
         host_url=host_caido_url,
         container_url=container_caido_url,
+        boot_wait_s=load_settings().runtime.caido_boot_wait_s,
     )
 
     bundle = {
@@ -212,7 +213,7 @@ async def cleanup(scan_id: str) -> None:
     if caido_client is not None:
         try:
             await caido_client.aclose()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug("cleanup(%s): caido_client.aclose() raised", scan_id, exc_info=True)
 
     client = bundle["client"]
@@ -229,5 +230,5 @@ async def cleanup(scan_id: str) -> None:
     if docker_client is not None:
         try:
             docker_client.close()
-        except Exception:  # noqa: BLE001
+        except Exception:
             logger.debug("cleanup(%s): docker_client.close() raised", scan_id, exc_info=True)
