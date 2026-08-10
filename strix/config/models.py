@@ -652,11 +652,15 @@ def _install_openrouter_stream_cost_capture() -> None:
     litellm.OpenrouterConfig = _StrixOpenrouterConfig  # type: ignore[misc]
 
 
-_OPENROUTER_ATTRIBUTION_HEADERS = {
+OPENROUTER_ATTRIBUTION_HEADERS = {
     "HTTP-Referer": "https://strix.ai",
     "X-Title": "Strix",
     "X-OpenRouter-Categories": "cli-agent",
 }
+
+
+def is_openrouter_model(model_name: str | None) -> bool:
+    return bool(model_name) and "openrouter/" in (model_name or "").strip().lower()
 
 
 def _configure_openrouter_attribution(model_name: str | None) -> None:
@@ -664,15 +668,15 @@ def _configure_openrouter_attribution(model_name: str | None) -> None:
 
     current: object = litellm.headers
     existing: dict[str, str] = current if isinstance(current, dict) else {}
-    if not model_name or "openrouter/" not in model_name.strip().lower():
-        if any(key in existing for key in _OPENROUTER_ATTRIBUTION_HEADERS):
+    if not is_openrouter_model(model_name):
+        if any(key in existing for key in OPENROUTER_ATTRIBUTION_HEADERS):
             remaining = {
-                k: v for k, v in existing.items() if k not in _OPENROUTER_ATTRIBUTION_HEADERS
+                k: v for k, v in existing.items() if k not in OPENROUTER_ATTRIBUTION_HEADERS
             }
             litellm.headers = remaining or None  # type: ignore[assignment]
         return
 
-    litellm.headers = {**existing, **_OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
+    litellm.headers = {**existing, **OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
 
 
 def _configure_extra_headers(llm: LlmSettings) -> None:

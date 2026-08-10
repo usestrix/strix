@@ -361,3 +361,32 @@ def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
 
     assert settings.extra_args is not None
     assert settings.extra_args["timeout"] == 120.0
+
+
+def test_openrouter_attribution_rides_on_the_request_headers() -> None:
+    # litellm.headers is ignored once a request carries any header of its own,
+    # so the attribution must be part of the per-request headers.
+    headers = make_model_settings(
+        None, model_name="openrouter/anthropic/claude-sonnet-4-5"
+    ).extra_headers
+    assert headers == {
+        "HTTP-Referer": "https://strix.ai",
+        "X-Title": "Strix",
+        "X-OpenRouter-Categories": "cli-agent",
+    }
+
+
+def test_openrouter_attribution_absent_for_other_providers() -> None:
+    assert make_model_settings(None, model_name="anthropic/claude-sonnet-4-5").extra_headers is None
+
+
+def test_user_headers_override_openrouter_attribution() -> None:
+    headers = make_model_settings(
+        None,
+        model_name="openrouter/anthropic/claude-sonnet-4-5",
+        extra_headers={"X-Title": "Custom", "X-Tenant": "acme"},
+    ).extra_headers
+    assert headers is not None
+    assert headers["X-Title"] == "Custom"
+    assert headers["X-Tenant"] == "acme"
+    assert headers["HTTP-Referer"] == "https://strix.ai"
