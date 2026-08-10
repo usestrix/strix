@@ -204,3 +204,52 @@ def test_disabling_strict_schema_does_not_leak_across_builds(
             assert shared.strict_json_schema, (
                 f"{shared.name} singleton was mutated by the Bedrock build"
             )
+
+
+def test_model_name_override_takes_precedence_over_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``run_strix_scan(model=...)`` can pick a model that differs from
+    ``settings.llm.model`` (e.g. ``STRIX_LLM`` unset, model passed directly).
+    The strict-tool gate must classify that effective model, not whatever
+    happens to be in settings.
+    """
+    monkeypatch.delenv("STRIX_LLM", raising=False)
+    monkeypatch.setattr(loader, "_cached", None)
+    monkeypatch.setattr(loader, "_override", None)
+
+    agent = factory.build_strix_agent(
+        is_root=True,
+        model_name="bedrock/anthropic.claude-4-6-sonnet",
+    )
+
+    assert len(agent.tools) > 20
+    function_tools = [t for t in agent.tools if isinstance(t, FunctionTool)]
+    assert all(not t.strict_json_schema for t in function_tools)
+
+
+def test_model_name_override_can_keep_strict_schema(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Bedrock model in settings should not force non-strict tools when the
+    effective run model (passed explicitly) is a different, non-Bedrock route.
+    """
+    monkeypatch.setenv("STRIX_LLM", "bedrock/anthropic.claude-4-6-sonnet")
+    monkeypatch.setattr(loader, "_cached", None)
+    monkeypatch.setattr(loader, "_override", None)
+
+    agent = factory.build_strix_agent(
+        is_root=True,
+        model_name="anthropic/claude-4-6-sonnet",
+    )
+
+    function_tools = [t for t in agent.tools if isinstance(t, FunctionTool)]
+    assert any(t.strict_json_schema for t in function_tools)
+
+
+def test_child_factory_threads_model_name_through() -> None:
+    factory_fn = factory.make_child_factory(model_name="bedrock/anthropic.claude-4-6-sonnet")
+
+    child = factory_fn(name="child", skills=[])
+
+    function_tools = [t for t in child.tools if isinstance(t, FunctionTool)]
+    assert len(child.tools) > 20
+    assert all(not t.strict_json_schema for t in function_tools)

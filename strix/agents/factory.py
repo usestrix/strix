@@ -599,6 +599,7 @@ def build_strix_agent(
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
+    model_name: str | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -609,6 +610,10 @@ def build_strix_agent(
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
+        model_name: The effective model for this run (e.g. ``RunConfig.model``
+            / ``run_strix_scan(model=...)``), which can differ from
+            ``load_settings().llm.model``. Falls back to the settings model
+            when omitted, e.g. for tests that don't go through the runner.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -638,10 +643,10 @@ def build_strix_agent(
         for tool in tools
     ]
 
-    model_name = load_settings().llm.model
+    effective_model = model_name if model_name is not None else load_settings().llm.model
     if (
-        is_claude_model(model_name)
-        and is_bedrock_route(model_name)
+        is_claude_model(effective_model)
+        and is_bedrock_route(effective_model)
         and _bedrock_claude_strict_tool_limit_exceeded(len(tools))
     ):
         # Bedrock rejects the whole request over the 20-strict-tool cap, not
@@ -686,12 +691,15 @@ def make_child_factory(
     interactive: bool = False,
     chat_completions_tools: bool = False,
     system_prompt_context: dict[str, Any] | None = None,
+    model_name: str | None = None,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
     Run-level arguments (``scan_mode``, ``is_whitebox``, etc.) are
     captured in a closure so each child inherits scan-level configuration
-    without the graph tool knowing about runner internals.
+    without the graph tool knowing about runner internals. ``model_name`` is
+    the effective run model (see ``build_strix_agent``), so children built
+    later in the scan see the same model classification as the root agent.
     """
 
     def _factory(*, name: str, skills: list[str]) -> SandboxAgent[Any]:
@@ -704,6 +712,7 @@ def make_child_factory(
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
             system_prompt_context=system_prompt_context,
+            model_name=model_name,
         )
 
     return _factory

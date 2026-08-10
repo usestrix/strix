@@ -303,6 +303,7 @@ async def run_strix_scan(
             chat_completions_tools=chat_completions_tools,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
+            model_name=resolved_model,
         )
 
         if not is_resume:
@@ -320,6 +321,7 @@ async def run_strix_scan(
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
             system_prompt_context=scope_context,
+            model_name=resolved_model,
         )
 
         async def spawn_child_agent(**kwargs: Any) -> dict[str, Any]:
