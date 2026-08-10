@@ -237,14 +237,6 @@ def make_model_settings(
 def _request_headers(
     model_name: str, extra_headers: dict[str, str] | None
 ) -> dict[str, str] | None:
-    """Per-request headers, carrying OpenRouter app attribution.
-
-    The attribution has to ride on the request itself: LiteLLM's OpenRouter
-    route only falls back to the global ``litellm.headers`` when the request
-    carries no headers at all, and the Agents SDK always sends its User-Agent,
-    so global attribution is silently replaced by LiteLLM's own defaults.
-    User-supplied headers still win.
-    """
     headers: dict[str, str] = {}
     if is_openrouter_model(model_name):
         headers.update(OPENROUTER_ATTRIBUTION_HEADERS)
