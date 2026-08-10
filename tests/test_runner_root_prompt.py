@@ -6,7 +6,6 @@ flow through to the root agent's ``build_strix_agent`` call.
 
 from __future__ import annotations
 
-import types
 from typing import Any
 
 import httpx
@@ -16,6 +15,7 @@ from openai import RateLimitError
 
 import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
+from strix.config.settings import Settings
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
 from strix.runtime import session_manager
@@ -42,17 +42,14 @@ def _patch_engine_scaffold(
     monkeypatch.setattr(runner, "setup_scan_logging", lambda _run_dir: lambda: None)
     monkeypatch.setattr(runner, "set_scan_id", lambda _scan_id: None)
 
-    settings = types.SimpleNamespace(
-        llm=types.SimpleNamespace(
-            model="openai/gpt-4o",
-            reasoning_effort="high",
-            force_required_tool_choice=False,
-            timeout=300,
-            prompt_cache=True,
-            extra_headers=None,
-        ),
-        runtime=types.SimpleNamespace(max_context_images=3),
-    )
+    settings = Settings()
+    settings.llm.model = "openai/gpt-4o"
+    settings.llm.reasoning_effort = "high"
+    settings.llm.force_required_tool_choice = False
+    settings.llm.timeout = 300
+    settings.llm.prompt_cache = True
+    settings.llm.extra_headers = None
+    settings.runtime.max_context_images = 3
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
     monkeypatch.setattr(
