@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 import logging
@@ -17,6 +18,7 @@ from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
+from strix.config.models import is_bedrock_route, is_claude_model
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -535,6 +537,32 @@ def _ensure_unique_tool_names(tools: Sequence[Tool]) -> None:
         raise ValueError(msg)
 
 
+def _bedrock_claude_strict_tool_limit_exceeded(tool_count: int) -> bool:
+    """Whether ``tool_count`` strict-schema tools would exceed Bedrock's cap.
+
+    AWS Bedrock's Converse API rejects a request with more than 20
+    strict-mode tool schemas (``ValidationException: Too many strict
+    tools``). Strix's own ``_BASE_TOOLS`` alone already exceeds 20 once
+    ``_EXTRA_TOOLS``/agent-browser/shell/filesystem tools are added, so any
+    Bedrock Claude scan with more than a couple of extra tools hits this.
+    """
+    return tool_count > 20
+
+
+def _disable_strict_schema(tool: Tool) -> Tool:
+    """Return a non-strict copy, never mutating the shared tool singleton.
+
+    ``_BASE_TOOLS``/``_EXTRA_TOOLS`` entries are shared module-level objects
+    reused by every ``build_strix_agent`` call; flipping ``strict_json_schema``
+    in place would leak across builds (e.g. a Bedrock root agent's tools
+    would stay non-strict for a later non-Bedrock child agent in the same
+    process).
+    """
+    if isinstance(tool, FunctionTool) and tool.strict_json_schema:
+        return dataclasses.replace(tool, strict_json_schema=False)
+    return tool
+
+
 def register_agent_tools(*tools: Tool) -> None:
     """Register tools for every scan agent built afterwards.
 
@@ -609,6 +637,16 @@ def build_strix_agent(
         else tool
         for tool in tools
     ]
+
+    model_name = load_settings().llm.model
+    if (
+        is_claude_model(model_name)
+        and is_bedrock_route(model_name)
+        and _bedrock_claude_strict_tool_limit_exceeded(len(tools))
+    ):
+        # Bedrock rejects the whole request over the 20-strict-tool cap, not
+        # just the tools past #20, so every tool must drop strict mode here.
+        tools = [_disable_strict_schema(tool) for tool in tools]
 
     logger.info(
         "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",
