@@ -362,16 +362,21 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     if not getattr(args, "user_instruction", None):
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
-    # Remount the workspace the run was started with. The user already confirmed
-    # this directory, so the target mount guard does not apply to it; it only has
-    # to still be there.
+    # Remount the workspace the run was started with. Exact $HOME remains
+    # allowed (operator already confirmed it), but system/credential paths are
+    # re-checked so a poisoned run.json cannot rehydrate a refused mount.
     args.workspace_mount = workspace_mount
     if workspace_mount:
-        if not Path(workspace_mount).expanduser().is_dir():
+        mount_path = Path(workspace_mount).expanduser()
+        if not mount_path.is_dir():
             parser.error(
                 f"--resume {args.resume}: the working directory {workspace_mount} "
                 f"is missing. Restore it before resuming, or start a fresh run."
             )
+        try:
+            check_mountable_dir(mount_path, allow_home=True)
+        except ValueError as exc:
+            parser.error(f"--resume {args.resume}: {exc}")
         attach_workspace_mount(args)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
