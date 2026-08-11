@@ -52,6 +52,9 @@ async def _login_as_guest(
     last_err: str | None = None
     attempt = 0
     while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
         attempt += 1
         result = await session.exec(
             "curl",
@@ -63,7 +66,7 @@ async def _login_as_guest(
             "-d",
             _LOGIN_AS_GUEST_BODY,
             f"{container_url}/graphql",
-            timeout=15,
+            timeout=min(15.0, remaining),
         )
         if result.ok():
             try:

@@ -25,11 +25,13 @@ class _FakeSession:
 
     results: list[_FakeResult]
     sleeps: list[float] = field(default_factory=list)
+    timeouts: list[float] = field(default_factory=list)
     calls: int = 0
 
-    async def exec(self, *_args: Any, **_kwargs: Any) -> _FakeResult:
+    async def exec(self, *_args: Any, **kwargs: Any) -> _FakeResult:
         result = self.results[min(self.calls, len(self.results) - 1)]
         self.calls += 1
+        self.timeouts.append(kwargs["timeout"])
         return result
 
 
@@ -80,7 +82,33 @@ async def test_login_as_guest_respects_configurable_deadline(
 
     assert "curl exit 7" in str(exc_info.value)
     assert "180s" in str(exc_info.value)
-    assert session.calls >= 6
+    assert session.calls >= 2
+
+
+async def test_login_as_guest_caps_final_attempt_timeout_to_remaining_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The per-attempt curl timeout must never let a single attempt run past
+    the overall deadline — otherwise a request started just before the
+    deadline can block session creation for up to another 15s beyond the
+    configured STRIX_CAIDO_BOOT_WAIT_S budget.
+    """
+    monkeypatch.setattr("strix.runtime.caido_bootstrap.asyncio.sleep", _no_sleep)
+
+    # First read establishes the deadline; second leaves 3s remaining for the
+    # attempt; every read after that is past the deadline so the loop exits.
+    fake_now = iter([0.0, 7.0])
+
+    def _fake_monotonic() -> float:
+        return next(fake_now, 11.0)
+
+    monkeypatch.setattr("strix.runtime.caido_bootstrap.time.monotonic", _fake_monotonic)
+    session = _FakeSession(results=[_refused_result()])
+
+    with pytest.raises(RuntimeError):
+        await _login_as_guest(session, container_url="http://127.0.0.1:48080", max_wait_s=10)
+
+    assert session.timeouts == [3.0]
 
 
 async def _no_sleep(_seconds: float) -> None:
