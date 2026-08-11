@@ -749,7 +749,13 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     return not model_supports_reasoning(model_name)
 
 
-def model_supports_reasoning(model_name: str) -> bool:
+def model_cost_entry(model_name: str) -> dict[str, Any] | None:
+    """Look up a model's ``litellm.model_cost`` entry, tolerating route prefixes.
+
+    Tries the full (route-prefix-stripped) name first, then falls back to the
+    bare model name after the last ``/`` for routes ``litellm.model_cost``
+    doesn't key under their prefixed form (e.g. Bedrock).
+    """
     import litellm
 
     name = model_name.strip().lower()
@@ -760,6 +766,11 @@ def model_supports_reasoning(model_name: str) -> bool:
     entry = litellm.model_cost.get(name)
     if entry is None and "/" in name:
         entry = litellm.model_cost.get(name.rsplit("/", 1)[1])
+    return entry
+
+
+def model_supports_reasoning(model_name: str) -> bool:
+    entry = model_cost_entry(model_name)
     return bool(entry and entry.get("supports_reasoning"))
 
 
