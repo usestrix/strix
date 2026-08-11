@@ -1328,6 +1328,12 @@ _FORBIDDEN_MOUNT_TREES = frozenset(
         "/lib",
         "/lib64",
         "/nix/store",
+        "/run",
+        "/var/run",
+        "/private/var/run",
+        "/var/lib/docker",
+        "/var/lib/containers",
+        "/var/lib/containerd",
         "/run/current-system/sw",
         "/Applications",
         "/Library",
@@ -1336,6 +1342,16 @@ _FORBIDDEN_MOUNT_TREES = frozenset(
         "/boot",
         "/proc",
         "/sys",
+    }
+)
+
+# Direct children that indicate a container-runtime API socket directory.
+_FORBIDDEN_RUNTIME_SOCKET_NAMES = frozenset(
+    {
+        "docker.sock",
+        "podman.sock",
+        "containerd.sock",
+        "crio.sock",
     }
 )
 
@@ -1416,6 +1432,23 @@ def check_mountable_dir(path: Path) -> None:
         raise ValueError(
             f"Refusing to mount '{resolved}' into the sandbox: '{credential}' "
             "holds credentials, not code."
+        )
+
+    try:
+        socket_child = next(
+            (
+                entry.name
+                for entry in resolved.iterdir()
+                if entry.name.casefold() in _FORBIDDEN_RUNTIME_SOCKET_NAMES
+            ),
+            None,
+        )
+    except OSError:
+        socket_child = None
+    if socket_child is not None:
+        raise ValueError(
+            f"Refusing to mount '{resolved}' into the sandbox: '{socket_child}' "
+            "exposes a container runtime API, not a codebase."
         )
 
 

@@ -166,6 +166,21 @@ def test_check_mountable_dir_rejects_system_subdirs() -> None:
         check_mountable_dir(system_subdir)
 
 
+def test_check_mountable_dir_rejects_var_run() -> None:
+    var_run = next((p for p in (Path("/var/run"), Path("/private/var/run")) if p.is_dir()), None)
+    if var_run is None:
+        pytest.skip("no /var/run on this platform")
+    with pytest.raises(ValueError, match="Refusing to mount"):
+        check_mountable_dir(var_run)
+
+
+def test_check_mountable_dir_rejects_runtime_socket_dir(tmp_path: Path) -> None:
+    sock = tmp_path / "docker.sock"
+    sock.write_text("")
+    with pytest.raises(ValueError, match="container runtime API"):
+        check_mountable_dir(tmp_path)
+
+
 def test_check_mountable_dir_accepts_a_project_under_the_home_root(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
