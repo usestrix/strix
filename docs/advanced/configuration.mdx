@@ -122,6 +122,11 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Runtime backend for the sandbox environment.
 </ParamField>
 
+<ParamField path="STRIX_CAIDO_BOOT_WAIT_S" default="300" type="integer">
+  Maximum time in seconds to wait for the in-sandbox Caido proxy to become ready.
+  Increase this on slow or heavily loaded container hosts.
+</ParamField>
+
 ## Sandbox Configuration
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">
