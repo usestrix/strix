@@ -9,6 +9,7 @@ from pathlib import Path
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.i18n import t
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
@@ -16,6 +17,25 @@ from strix.interface.utils import (
     collect_local_sources,
     validate_config_file,
 )
+
+
+def _pre_resolve_language() -> None:
+    """Set language from --language/-l before argparse runs.
+
+    Argparse evaluates help text at parse time, so we must set the language
+    BEFORE parse_args() is called. This pre-scans sys.argv for the flag.
+    """
+    argv = sys.argv[1:]
+    for i, arg in enumerate(argv):
+        if arg in ("-l", "--language") and i + 1 < len(argv):
+            from strix.i18n import set_language
+            set_language(argv[i + 1])
+            return
+        # Handle --language=pt form
+        if arg.startswith("--language="):
+            from strix.i18n import set_language
+            set_language(arg.split("=", 1)[1])
+            return
 
 
 def get_version() -> str:
@@ -50,8 +70,11 @@ def _positive_int(value: str) -> int:
 
 
 def parse_arguments() -> argparse.Namespace:
+    # Pre-scan for --language before argparse runs so help text can be translated
+    _pre_resolve_language()
+
     parser = argparse.ArgumentParser(
-        description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
+        description=t("cli.description"),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -105,9 +128,15 @@ Examples:
     parser.add_argument(
         "--update",
         action="store_true",
-        help="Update strix to the latest version and exit. Self-updates the "
-        "standalone binary install; for pip/pipx/uv installs, prints the "
-        "matching upgrade command instead.",
+        help=t("cli.update_help"),
+    )
+
+    parser.add_argument(
+        "-l",
+        "--language",
+        type=str,
+        default=None,
+        help=t("cli.language_help"),
     )
 
     parser.add_argument(
@@ -115,48 +144,32 @@ Examples:
         "--target",
         type=str,
         action="append",
-        help="Target to test: URL, repository, local directory path, domain name, IP address, "
-        "an API spec file (OpenAPI/Swagger .json/.yaml or a Postman collection export), or a "
-        "Postman collection by id (postman://<collection-uuid>[?env=<environment-uuid>], needs "
-        "POSTMAN_API_KEY). Local directories are mounted into the sandbox writable. "
-        "Can be specified multiple times for multi-target scans. "
-        "Fresh runs require --target or --target-list.",
+        help=t("cli.target_help"),
     )
     parser.add_argument(
         "--target-list",
         type=str,
         action="append",
         metavar="PATH",
-        help="Path to a file containing targets, one per non-empty, non-comment line. "
-        "Can be specified multiple times and combined with --target.",
+        help=t("cli.target_list_help"),
     )
     parser.add_argument(
         "--instruction",
         type=str,
-        help="Custom instructions for the penetration test. This can be "
-        "specific vulnerability types to focus on (e.g., 'Focus on IDOR and XSS'), "
-        "testing approaches (e.g., 'Perform thorough authentication testing'), "
-        "test credentials (e.g., 'Use the following credentials to access the app: "
-        "admin:password123'), "
-        "or areas of interest (e.g., 'Check login API endpoint for security issues').",
+        help=t("cli.instruction_help"),
     )
 
     parser.add_argument(
         "--instruction-file",
         type=str,
-        help="Path to a file containing detailed custom instructions for the penetration test. "
-        "Use this option when you have lengthy or complex instructions saved in a file "
-        "(e.g., '--instruction-file ./detailed_instructions.txt').",
+        help=t("cli.instruction_file_help"),
     )
 
     parser.add_argument(
         "-n",
         "--non-interactive",
         action="store_true",
-        help=(
-            "Run in non-interactive mode (no TUI, exits on completion). "
-            "Default is interactive mode with TUI."
-        ),
+        help=t("cli.non_interactive_help"),
     )
 
     parser.add_argument(
@@ -165,13 +178,7 @@ Examples:
         type=str,
         choices=["quick", "standard", "deep"],
         default="deep",
-        help=(
-            "Scan mode: "
-            "'quick' for fast CI/CD checks, "
-            "'standard' for routine testing, "
-            "'deep' for thorough security reviews (default). "
-            "Default: deep."
-        ),
+        help=t("cli.scan_mode_help"),
     )
 
     parser.add_argument(
@@ -179,27 +186,19 @@ Examples:
         type=str,
         choices=["auto", "diff", "full"],
         default="auto",
-        help=(
-            "Scope mode for code targets: "
-            "'auto' enables PR diff-scope in CI/headless runs, "
-            "'diff' forces changed-files scope, "
-            "'full' disables diff-scope."
-        ),
+        help=t("cli.scope_mode_help"),
     )
 
     parser.add_argument(
         "--diff-base",
         type=str,
-        help=(
-            "Target branch or commit to compare against (e.g., origin/main). "
-            "Defaults to the repository's default branch."
-        ),
+        help=t("cli.diff_base_help"),
     )
 
     parser.add_argument(
         "--config",
         type=str,
-        help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
+        help=t("cli.config_help"),
     )
 
     parser.add_argument(
@@ -209,10 +208,7 @@ Examples:
         metavar="USD",
         type=_positive_budget,
         default=None,
-        help=(
-            "Maximum LLM cost in USD (> 0). The scan stops cleanly when this limit is reached. "
-            "Graduated wrap-up warnings are sent to all agents as it is approached."
-        ),
+        help=t("cli.max_budget_help"),
     )
 
     parser.add_argument(
@@ -221,21 +217,14 @@ Examples:
         metavar="N",
         type=_positive_int,
         default=DEFAULT_MAX_TURNS,
-        help=(
-            "Maximum turns per agent (> 0, default %(default)s). Each agent is force-stopped "
-            "when it reaches this limit, with graduated wrap-up warnings as it is approached."
-        ),
+        help=t("cli.max_turns_help"),
     )
 
     parser.add_argument(
         "--resume",
         type=str,
         metavar="RUN_NAME",
-        help=(
-            "Resume a prior scan by its run name (the dir under ./strix_runs/). "
-            "Picks up the root + every non-terminal subagent's full LLM history "
-            "and agent topology. Skips fresh run-name generation."
-        ),
+        help=t("cli.resume_help"),
     )
 
     args = parser.parse_args()

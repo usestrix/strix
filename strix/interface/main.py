@@ -16,6 +16,7 @@ from rich.text import Text
 
 from strix.config import codex, load_settings, persist_current
 from strix.core.paths import run_dir_for
+from strix.i18n import t
 from strix.interface.cli_args import parse_arguments
 from strix.interface.environment import (
     check_docker_installed,
@@ -266,17 +267,17 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     completion_text = Text()
     if scan_completed:
-        completion_text.append("Penetration test completed", style="bold #22c55e")
+        completion_text.append(t("cli.completion_title"), style="bold #22c55e")
     else:
-        completion_text.append("SESSION ENDED", style="bold #eab308")
+        completion_text.append(t("cli.session_ended"), style="bold #eab308")
 
     target_text = Text()
-    target_text.append("Target", style="dim")
+    target_text.append(t("cli.target_label"), style="dim")
     target_text.append("  ")
     if len(args.targets_info) == 1:
         target_text.append(args.targets_info[0]["original"], style="bold white")
     else:
-        target_text.append(f"{len(args.targets_info)} targets", style="bold white")
+        target_text.append(t("cli.targets_label", count=len(args.targets_info)), style="bold white")
         for target_info in args.targets_info:
             target_text.append("\n        ")
             target_text.append(target_info["original"], style="white")
@@ -290,14 +291,14 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
 
     results_text = Text()
     results_text.append("\n")
-    results_text.append("Output", style="dim")
+    results_text.append(t("cli.output_label"), style="dim")
     results_text.append("  ")
     results_text.append(str(results_path), style="#60a5fa")
     panel_parts.extend(["\n", results_text])
 
     view_text = Text()
     view_text.append("\n")
-    view_text.append("View", style="dim")
+    view_text.append(t("cli.view_label"), style="dim")
     view_text.append("    ")
     view_text.append(f"strix view {args.run_name}", style="#22c55e")
     panel_parts.extend(["\n", view_text])
@@ -305,7 +306,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     if not scan_completed:
         resume_text = Text()
         resume_text.append("\n")
-        resume_text.append("Resume", style="dim")
+        resume_text.append(t("cli.resume_label"), style="dim")
         resume_text.append("  ")
         resume_text.append(f"strix --resume {args.run_name}", style="#22c55e")
         panel_parts.extend(["\n", resume_text])
@@ -359,16 +360,16 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
     sub_hint = _subscription_error_hint(exc)
     if sub_hint is not None:
         border_style = "yellow"
-        error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
+        error_text.append(t("cli.model_not_available"), style="bold yellow")
         error_text.append("\n\n", style="white")
         error_text.append(f"{sub_hint}\n", style="white")
         error_text.append(f"\nDetails: {exc}", style="dim white")
     else:
         border_style = "red"
-        error_text.append("LLM CONNECTION FAILED", style="bold red")
+        error_text.append(t("cli.llm_connection_failed"), style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("Could not establish connection to the language model.\n", style="white")
-        error_text.append("Please check your configuration and try again.\n", style="white")
+        error_text.append(t("cli.llm_connection_error") + "\n", style="white")
+        error_text.append(t("cli.llm_check_config") + "\n", style="white")
         hint = _provider_import_hint(exc, model_name)
         if hint is not None:
             error_text.append(f"\n{hint}\n", style="bold yellow")
@@ -405,7 +406,7 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
     try:
         prepare_run(args)
     except ValueError as e:
-        _print_error_panel("SCAN PREPARATION FAILED", str(e))
+        _print_error_panel(t("cli.scan_preparation_failed"), str(e))
         sys.exit(1)
     telemetry_start(args)
 
@@ -459,7 +460,7 @@ def main() -> None:
             asyncio.run(run_tui(args))
     except InteractiveSetupUnavailableError as exc:
         exit_reason = "error"
-        _print_error_panel("INTERACTIVE SETUP UNAVAILABLE", str(exc))
+        _print_error_panel(t("cli.interactive_setup_unavailable"), str(exc))
         sys.exit(1)
     except KeyboardInterrupt:
         exit_reason = "interrupted"
