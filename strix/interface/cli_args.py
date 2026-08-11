@@ -131,6 +131,17 @@ Examples:
         "Can be specified multiple times and combined with --target.",
     )
     parser.add_argument(
+        "--workspace-mount",
+        type=str,
+        metavar="PATH",
+        help="Local directory to mount into the sandbox WITHOUT making it a target. It is "
+        "exposed at /workspace/<name> for the agent to read and work in, but carries no "
+        "authorized scope and contributes no diff context — the instruction is the only "
+        "source of truth for what to do with it. Use it for reference material a scan needs "
+        "but must not treat as the thing under test: white-box source when the target is a "
+        "running service, or a toolkit the agent should drive.",
+    )
+    parser.add_argument(
         "--instruction",
         type=str,
         help="Custom instructions for the penetration test. This can be "
@@ -274,12 +285,22 @@ Examples:
     # transcript shows as their opening message.
     args.user_instruction = args.instruction or None
 
+    if args.workspace_mount:
+        mount_path = Path(args.workspace_mount).expanduser()
+        try:
+            check_mountable_dir(mount_path)
+        except ValueError as exc:
+            parser.error(f"--workspace-mount: {exc}")
+        # Resolved here so the bind mount and the persisted run record agree on one
+        # absolute path, whatever the caller's cwd was.
+        args.workspace_mount = str(mount_path.resolve())
+
     if args.resume:
-        if args.target or args.target_list:
+        if args.target or args.target_list or args.workspace_mount:
             parser.error(
-                "Cannot combine --resume with --target/--target-list. "
+                "Cannot combine --resume with --target/--target-list/--workspace-mount. "
                 "--resume picks up where the prior run left off, including the "
-                "original target list."
+                "original target list and workspace mount."
             )
         _load_resume_state(args, parser)
         agents_path = runtime_state_dir(run_dir_for(args.resume)) / "agents.json"

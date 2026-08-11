@@ -29,6 +29,10 @@ strix (--target <target> | --target-list <path>) [options]
   Path to a file containing targets, one per non-empty, non-comment line. Lines starting with `#` are ignored. Can be specified multiple times and combined with `--target`.
 </ParamField>
 
+<ParamField path="--workspace-mount" type="string">
+  Local directory to mount into the sandbox **without** making it a target. It is exposed at `/workspace/<name>` for the agent to read and work in, but carries no authorized scope and contributes no diff context, so the instruction is the only source of truth for what to do with it. Use it for reference material a scan needs but must not treat as the thing under test: white-box source when the target is a running service, or a toolkit the agent should drive. Unlike a local directory passed as `--target`, it is never itself scanned.
+</ParamField>
+
 <ParamField path="--instruction" type="string">
   Custom instructions for the scan. Use for credentials, focus areas, or specific testing approaches.
 </ParamField>
