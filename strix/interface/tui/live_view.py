@@ -312,18 +312,26 @@ class TuiLiveView:
         call_id = call["call_id"]
         event_key = (agent_id, call_id)
         existing = self._tool_event_by_agent_and_call_id.get(event_key)
-        tool_data = {
-            "tool_name": call["tool_name"],
-            "args": call["args"],
-            "status": "running",
-            "agent_id": agent_id,
-            "call_id": call_id,
-        }
         if existing is None:
+            tool_data = {
+                "tool_name": call["tool_name"],
+                "args": call["args"],
+                "status": "running",
+                "agent_id": agent_id,
+                "call_id": call_id,
+            }
             event = self._append_event(agent_id, "tool", tool_data, timestamp=timestamp)
             self._tool_event_by_agent_and_call_id[event_key] = event
         else:
-            existing["data"].update(tool_data)
+            # A replayed or duplicated tool_call_item (duplicate stream event,
+            # hydration replay) must not resurrect a tool that has already
+            # reached a terminal state back to "running" - its result would
+            # then sit next to a status that says the call is still in
+            # flight.
+            update = {"tool_name": call["tool_name"], "args": call["args"]}
+            if existing["data"].get("status") not in {"completed", "failed"}:
+                update["status"] = "running"
+            existing["data"].update(update)
             self._bump_event(existing, timestamp=timestamp)
 
     def _record_tool_output(self, agent_id: str, item: Any) -> None:
