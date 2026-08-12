@@ -1,292 +1,114 @@
-"""StrixDockerSandboxClient â€” preserves the image's ENTRYPOINT and adds
-NET_ADMIN/NET_RAW capabilities + host-gateway.
+­r‡^Ñf¥–Ø¦{[r‰Ý°ë­¦ëHˆˆ”Ýš^ØÚÙ\”Ø[™›ÞÛY[8 %™\Ù\™\ÈH[XYÙIÜÈS•–TÒS•[™YÂ“‘UÐQRS‹Ó‘UÔUÈØ\Xš[]Y\È
+ÈÜÝYØ]]Ø^K‚‚•HÑÉÜÈØÚÙ\”Ø[™›ÞÛY[—ØÜ™X]WØÛÛZ[™\˜Ù\È›Ý^ÜÙHHÛÚÈ›Ü‚™^[™[™ÈÜ™X]WÚÝØ\™ÜØ™Y›Ü™HÛÛZ[™\œË˜Ü™X]X\ÈØ[YˆÙHÝX˜Û\ÜÂ˜[™™Z[\[Y[HY]Ù›ÙH™\˜˜][Hœ›ÛHHÑÈÛÝ\˜ÙKÚ]™YB™[\Î‚‚ŒKˆ›ÜHÑÉÜÈ[ž\Ú[VÈZ[—XÝ™\œšYNÈÝ\HÈZ[‹‹Yˆ‹ˆ‹Ù]‹Û[—X\ÈÛÛ[X[™[œÝXYˆ\È]ÈÝ\ˆ[XYÙIÜÂˆØÚÙ\‹Y[ž\Ú[œÚXÝX[H[ˆ8 %Ú]Ý]]ØZYËXÛX™]™\‚ˆÝ\È[œÚYHHÛÛZ[™\ˆ[™›ÛÝÝ˜\ØØZYØ™]šY\ÈYØZ[œÝBˆXYÜ‚Œ‹ˆ\[™‘UÐQRS‹Ó‘UÔUÈÈØ\ØY
+™\]Z\™YžH›X\\ÔØ[™ˆÝ\ˆ˜]Ë\ÛØÚÙ]ÛÛÊK‚ŒËˆYÜÝ™ØÚÙ\‹š[\›˜[8¡¤ˆÜÝYØ]]Ø^HÈ^˜WÚÜÝØÛÈBˆYÙ[Ø[ˆ™XXÚÜÝ\Ù\™Y\Ë‚‚”[›™YÈÜ[˜ZKXYÙ[ÏOLŒM˜ˆ[\[™ÈHÑÈ™\]Z\™\Âœ™K[Y\™Ú[™ÈH\™[›ÙKˆ˜XÚÈ\Ý™X[H›Üˆ[ˆ[š™XÝ[ÛˆÛÚË‚ˆˆˆ‚‚™œ›ÛH×Ù]\™W×È[\Ü[››Ý][ÛœÂ‚š[\ÜÛÛ^X‚š[\ÜÙÙÚ[™Âš[\ÜÜÂš[\Ü]ZY™œ›ÛH\[™È[\Ü[žK]\˜[Ø\Ý‚™œ›ÛHYÙ[ËœØ[™›Þ™\œ›ÜœÈ[\Ü^ÜÙYÜ[˜]˜Z[X›Q\œ›Ü‚™œ›ÛHYÙ[ËœØ[™›Þ›X[šY™\Ý[\ÜX[šY™\Ý™œ›ÛHYÙ[ËœØ[™›ÞœØ[™›Þ\Ë™ØÚÙ\ˆ[\Ü
+ˆØÚÙ\”Ø[™›ÞÛY[ˆØÚÙ\”Ø[™›ÞÙ\ÜÚ[Û‹ˆØZ[ÙØÚÙ\—Ý›Û[YWÛ[Ý[ËˆÙØÚÙ\—ÜÜÚÙ^KˆÛX[šY™\ÝÜ™\]Z\™\×Ù\ÙKˆÛX[šY™\ÝÜ™\]Z\™\×ÜÞ\×ØYZ[‹ŠB™œ›ÛHYÙ[ËœØ[™›ÞœÙ\ÜÚ[Û‹œØ[™›ÞÜÙ\ÜÚ[Ûˆ[\ÜØ[™›ÞÙ\ÜÚ[Û‚™œ›ÛHYÙ[ËœØ[™›Þ\\È[\Ü^ÜÙYÜ[™Ú[™œ›ÛHØÚÙ\ˆ[\Ü\œ›ÜœÈ\ÈØÚÙ\—Ù\œ›ÜœÈÈ\NˆYÛ›Ü™VÚ[\Ü][\Y[\ÙYZYÛ›Ü™WB™œ›ÛHØÚÙ\‹›[Ù[Ë˜ÛÛZ[™\œÈ[\ÜÛÛZ[™\ˆÈ\NˆYÛ›Ü™VÚ[\Ü][\Y[\ÙYZYÛ›Ü™WB™œ›ÛHØÚÙ\‹\\È[\ÜÙÐÛÛ™šYÈÈ\NˆYÛ›Ü™VÚ[\Ü][\Y[\ÙYZYÛ›Ü™WB™œ›ÛHØÚÙ\‹\\È[\Ü[Ý[\ÈØÚÙ\”ÑÓ[Ý[È\NˆYÛ›Ü™VÚ[\Ü][\Y[\ÙYZYÛ›Ü™WB™œ›ÛHØÚÙ\‹][È[\Ü\œÙWÜ™\ÜÚ]ÜžWÝYÈÈ\NˆYÛ›Ü™VÚ[\Ü][\Y[\ÙYZYÛ›Ü™WB™œ›ÛH™\]Y\ÝË™^Ù\[ÛœÈ[\Ü™\]Y\Ý^Ù\[Û‚‚‚›ÙÙÙ\ˆHÙÙÚ[™Ë™Ù]ÙÙÙ\Š×Û˜[YW×ÊB‚‚—ÔÐS‘“ÖÓ‘UÓÔ’×ÑS•ˆH”Õ’VÑÐÒÑT—ÔÐS‘“ÖÓ‘UÓÔ’È‚‚‚™YˆÙ[œÝ\™WÚ[XYÙWØ]˜Z[X›JˆÛY[ˆ[žKˆ[XYÙNˆÝ‹ˆ[ÜÛXÞNˆ]\˜[È˜]]È‹›™]™\ˆ—KŠHOˆ›Û™N‚ˆYˆÛY[š[XYÙWÙ^\ÝÊ[XYÙJN‚ˆ™]\›‚ˆYˆ[ÜÛXÞHOH›™]™\ˆŽ‚ˆ˜Z\ÙH[[YQ\œ›ÜŠˆˆ‘ØÚÙ\ˆ[XYÙHÚ[XYÙH\ŸH\È›Ý]˜Z[X›HØØ[H[™‚ˆ”Õ’VÒSPQÑWÔSÔÓPÖO[™]™\ˆ›Ü˜šYÈ[[™È]‚ˆ
+Bˆ™\ËYÈH\œÙWÜ™\ÜÚ]ÜžWÝYÊ[XYÙJBˆÛY[™ØÚÙ\—ØÛY[š[XYÙ\Ëœ[
+™\ËYÏ]YÈÜˆ›Û™K[ÝYÜÏQ˜[ÙJB‚‚™YˆÜØ[™›ÞÛ™]ÛÜšÊ
+HOˆÝˆ›Û™N‚ˆ˜[YHHÜË™[š\›Û‹™Ù]
+ÔÐS‘“ÖÓ‘UÓÔ’×ÑS•‹ˆŠKœÝš\
 
-The SDK's ``DockerSandboxClient._create_container`` does not expose a hook for
-extending ``create_kwargs`` before ``containers.create`` is called. We subclass
-and reimplement the method body verbatim from the SDK source, with three
-deltas:
+Bˆ™]\›ˆ˜[YHÜˆ›Û™B‚‚™YˆØ\WÜØ[™›ÞÛ™]ÛÜšÊÜ™X]WÚÝØ\™ÜÎˆXÝÜÝ‹[žWJHOˆ›Û™N‚ˆ™]ÛÜšÈHÜØ[™›ÞÛ™]ÛÜšÊ
+BˆYˆ™]ÛÜšÎ‚ˆÜ™X]WÚÝØ\™ÜÖÈ›™]ÛÜšÈ—HH™]ÛÜšÂˆÜ™X]WÚÝØ\™ÜËœÜ
+œÜÈ‹›Û™JB‚‚™YˆØ\WÜ™\ÛÝ\˜ÙWÛ[Z]ÊÜ™X]WÚÝØ\™ÜÎˆXÝÜÝ‹[žWJHOˆ›Û™N‚ˆˆˆ\HÜ[Û˜[ÙÜ›Ý\™\ÛÝ\˜ÙHØ\Èœ›ÛHH[š\›Û›Y[ˆ[œÙ]Ø›[šÂˆ˜[Y\ÈX]™HØÚÙ\‰ÜÈY˜][
+[˜›Ý[™Y
+KÛÈ\È\ÈÜZ[ˆ\ˆÜÝˆˆˆ‚ˆY[WÛ[Z]HÜË™[š\›Û‹™Ù]
+”Õ’VÔÐS‘“ÖÓQSWÓSRU‹ˆŠKœÝš\
 
-1. Drop the SDK's ``entrypoint=["tail"]`` override; supply ``["tail", "-f",
-   "/dev/null"]`` as ``command`` instead. This lets our image's
-   ``docker-entrypoint.sh`` actually run â€” without it, ``caido-cli`` never
-   starts inside the container and ``bootstrap_caido`` retries against a
-   dead port.
-2. Append NET_ADMIN/NET_RAW to ``cap_add`` (required by ``nmap -sS`` and
-   other raw-socket tools).
-3. Add ``host.docker.internal`` â†’ host-gateway to ``extra_hosts`` so the
-   agent can reach host-served apps.
+BˆYˆY[WÛ[Z]‚ˆÜ™X]WÚÝØ\™ÜÖÈ›Y[WÛ[Z]—HHY[WÛ[Z]‚ˆÚWÜÚ^™HHÜË™[š\›Û‹™Ù]
+”Õ’VÔÐS‘“ÖÔÒWÔÒV‘H‹ˆŠKœÝš\
 
-Pinned to ``openai-agents==0.14.6``. Bumping the SDK requires
-re-merging the parent body. Track upstream for an injection hook.
-"""
+BˆYˆÚWÜÚ^™N‚ˆÜ™X]WÚÝØ\™ÜÖÈœÚWÜÚ^™H—HHÚWÜÚ^™B‚ˆÜ\ÈHÜË™[š\›Û‹™Ù]
+”Õ’VÔÐS‘“ÖÐÔTÈ‹ˆŠKœÝš\
 
-from __future__ import annotations
+BˆYˆÜ\Î‚ˆÚ]ÛÛ^X‹œÝ\™\ÜÊ˜[YQ\œ›Ü‹Ý™\™›ÝÑ\œ›ÜŠN‚ˆ˜[›×ØÜ\ÈH[
+›Ø]
+Ü\ÊH
+ˆWÌÌÌ
+BˆYˆ˜[›×ØÜ\ÈHŠŠŒÈHN‚ˆÜ™X]WÚÝØ\™ÜÖÈ›˜[›×ØÜ\È—HH˜[›×ØÜ\Â‚ˆY×Û[Z]HÜË™[š\›Û‹™Ù]
+”Õ’VÔÐS‘“ÖÔQ×ÓSRU‹ˆŠKœÝš\
 
-import contextlib
-import logging
-import os
-import uuid
-from typing import Any, cast
+BˆYˆY×Û[Z]‚ˆÚ]ÛÛ^X‹œÝ\™\ÜÊ˜[YQ\œ›ÜŠN‚ˆÜ™X]WÚÝØ\™ÜÖÈœY×Û[Z]—HH[
+Y×Û[Z]
+B‚‚™YˆØ\WÛÙ×Û[Z]ÊÜ™X]WÚÝØ\™ÜÎˆXÝÜÝ‹[žWJHOˆ›Û™N‚ˆˆˆ›Ý[™HÛÛZ[™\‰ÜÈœÛÛ‹Yš[HÙÈÛÈH[˜]Ø^H›ØÙ\ÜÈ[ˆHØ[™›Þˆ
+K™ËˆHÛÛ]\ÞK[ÛÜÈÜš][™ÈÈÝÝ]
+HØ[››Ýš[HÜÝ\ÚÂˆ[™ZÙHHØÚÙ\ˆY[[ÛˆÝÛˆÚ]]‚‚ˆ[›ZÙHHÙÜ›Ý\Ø\ÈX›Ý™K\ÈY˜][È
+Š›ÛŠŠˆ8 %ØÚÙ\‰ÜÈÝÛˆY˜][ˆ\È[ˆ[˜›Ý[™YœÛÛ‹Yš[KÚXÚ\È[œØY™H›Üˆ[ˆ]]Û›Û[Ý\ÈYÙ[]ˆ^XÝ]\È\˜š]˜\žHÛÛ[X[™ËˆX^Yš[X›Ý][ÛˆYX[œÈHÛ‹Y\ÚÈØ\\ÂˆX^\Ú^™H
+ˆX^Yš[XˆÙ]Õ’VÔÐS‘“ÖÓÑ×ÓPVÔÒV‘XÈØÙ™˜ˆÈÜ˜XÚÈÝ]ÈØÚÙ\‰ÜÈY˜][ˆˆˆ‚ˆX^ÜÚ^™HHÜË™[š\›Û‹™Ù]
+”Õ’VÔÐS‘“ÖÓÑ×ÓPVÔÒV‘H‹LHŠKœÝš\
 
-from agents.sandbox.errors import ExposedPortUnavailableError
-from agents.sandbox.manifest import Manifest
-from agents.sandbox.sandboxes.docker import (
-    DockerSandboxClient,
-    DockerSandboxSession,
-    _build_docker_volume_mounts,
-    _docker_port_key,
-    _manifest_requires_fuse,
-    _manifest_requires_sys_admin,
-)
-from agents.sandbox.session.sandbox_session import SandboxSession
-from agents.sandbox.types import ExposedPortEndpoint
-from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
-from docker.models.containers import Container  # type: ignore[import-untyped, unused-ignore]
-from docker.types import LogConfig  # type: ignore[import-untyped, unused-ignore]
-from docker.types import Mount as DockerSDKMount  # type: ignore[import-untyped, unused-ignore]
-from docker.utils import parse_repository_tag  # type: ignore[import-untyped, unused-ignore]
-from requests.exceptions import RequestException
+BˆYˆX^ÜÚ^™K›ÝÙ\Š
+H[ˆ
+Œ‹›Ù™ˆ‹››Û™H‹[›[Z]YŠN‚ˆ™]\›‚ˆX^Ùš[HHÜË™[š\›Û‹™Ù]
+”Õ’VÔÐS‘“ÖÓÑ×ÓPVÑ’SH‹ŒÈŠKœÝš\
 
+HÜˆŒÈ‚ˆÜ™X]WÚÝØ\™ÜÖÈ›Ù×ØÛÛ™šYÈ—HHÙÐÛÛ™šYÊˆ\OSÙÐÛÛ™šYË\\Ë’”ÓÓ‹ˆÛÛ™šYÏ^È›X^\Ú^™HŽˆX^ÜÚ^™K›X^Yš[HŽˆX^Ùš[_Kˆ
+B‚‚™YˆØ\WÜ[—ÛX™[ÊÜ™X]WÚÝØ\™ÜÎˆXÝÜÝ‹[žWJHOˆ›Û™N‚ˆ[—ÚYHÜË™Ù][Š”Õ’VÔ•S—ÒQŠBˆYˆ›Ý[—ÚY‚ˆ™]\›‚ˆX™[ÈHÜ™X]WÚÝØ\™ÜËœÙ]Y˜][
+›X™[È‹ßJBˆYˆ›Ý\Ú[œÝ[˜ÙJX™[ËXÝ
+N‚ˆ™]\›‚ˆX™[ÖÈœÝš^\[‹ZY—HH[—ÚYˆ[—Ý\HHÜË™Ù][Š”Õ’VÔ•S—ÕTHŠBˆYˆ[—Ý\N‚ˆX™[ÖÈœÝš^\[‹]\H—HH[—Ý\B‚‚˜Û\ÜÈÝš^ØÚÙ\”Ø[™›ÞÙ\ÜÚ[ÛŠØÚÙ\”Ø[™›ÞÙ\ÜÚ[ÛŠN‚ˆØ[™›ÞÛ™]ÛÜšÎˆÝˆHˆ‚‚ˆ\Þ[˜ÈYˆÜ™\ÛÛ™WÙ^ÜÙYÜÜ
+Ù[‹Üˆ[
+HOˆ^ÜÙYÜ[™Ú[‚ˆžN‚ˆÙ[‹—ØÛÛZ[™\‹œ™[ØY
 
-logger = logging.getLogger(__name__)
+Bˆ^Ù\ØÚÙ\—Ù\œ›ÜœËTQ\œ›Üˆ\ÈN‚ˆ˜Z\ÙH^ÜÙYÜ[˜]˜Z[X›Q\œ›ÜŠˆÜ\Üˆ^ÜÙYÜÜÏ\Ù[‹œÝ]K™^ÜÙYÜÜËˆ™X\ÛÛH˜˜XÚÙ[™Ý[˜]˜Z[X›H‹ˆÛÛ^^Âˆ˜˜XÚÙ[™Žˆ™ØÚÙ\ˆ‹ˆ™]Z[Žˆ˜ÛÛZ[™\—Ü™[ØYÙ˜Z[Y‹ˆ›™]ÛÜšÈŽˆÙ[‹œØ[™›ÞÛ™]ÛÜšËˆKˆØ]\ÙOYKˆ
+Hœ›ÛHB‚ˆ]œÈHÙ]]ŠÙ[‹—ØÛÛZ[™\‹˜]œÈ‹ßJHÜˆßBˆ™]ÛÜšÜÈH]œË™Ù]
+“™]ÛÜšÔÙ][™ÜÈ‹ßJK™Ù]
+“™]ÛÜšÜÈ‹ßJBˆ[™Ú[H™]ÛÜšÜË™Ù]
+Ù[‹œØ[™›ÞÛ™]ÛÜšÊHÜˆßBˆ\H[™Ú[™Ù]
+’TY™\ÜÈŠHÜˆ[™Ú[™Ù]
+‘ÛØ˜[TY™\ÜÈŠBˆYˆ›Ý\Ú[œÝ[˜ÙJ\ÝŠHÜˆ›Ý\‚ˆ˜Z\ÙH^ÜÙYÜ[˜]˜Z[X›Q\œ›ÜŠˆÜ\Üˆ^ÜÙYÜÜÏ\Ù[‹œÝ]K™^ÜÙYÜÜËˆ™X\ÛÛH˜˜XÚÙ[™Ý[˜]˜Z[X›H‹ˆÛÛ^^Âˆ˜˜XÚÙ[™Žˆ™ØÚÙ\ˆ‹ˆ™]Z[Žˆ˜ÛÛZ[™\—Û›ÝÛÛ—Û™]ÛÜšÈ‹ˆ›™]ÛÜšÈŽˆÙ[‹œØ[™›ÞÛ™]ÛÜšËˆKˆ
+BˆÜÝHˆ–ÞÚ\WHˆYˆŽˆˆ[ˆ\[ÙH\ˆ™]\›ˆ^ÜÙYÜ[™Ú[
+ÜÝZÜÝÜ\ÜÏQ˜[ÙJB‚‚˜Û\ÜÈÝš^ØÚÙ\”Ø[™›ÞÛY[
+ØÚÙ\”Ø[™›ÞÛY[
+N‚ˆÈÜÝ\™XÝÜšY\ÈÈš[™[[Ý[[ÈHÛÛZ[™\‹Ù]žHHØÚÙ\‚ˆÈ˜XÚÙ[™™Y›Ü™HÜ™X]J
+XˆXXÚ][H\ÈÜÛÝ\˜ÙK\™Ù]™XYÛÛ›_X‚ˆÝš^Øš[™Û[Ý[Îˆ\ÝÙXÝÜÝ‹[žWWH›Û™HH›Û™Bˆ[XYÙWÜ[ÜÛXÞNˆ]\˜[È˜]]È‹›™]™\ˆ—HH˜]]È‚‚ˆ\Þ[˜ÈYˆØÜ™X]WØÛÛZ[™\ŠˆÙ[‹ˆ[XYÙNˆÝ‹ˆ
+‹ˆX[šY™\ÝˆX[šY™\Ý›Û™HH›Û™Kˆ^ÜÙYÜÜÎˆ\VÚ[‹‹—HH
 
+KˆÙ\ÜÚ[Û—ÚYˆ]ZY•URQ›Û™HH›Û™Kˆ
+HOˆÛÛZ[™\Ž‚ˆÈKKKKH‘QÒSˆ‘TUSHÓÔHÙˆØÚÙ\”Ø[™›ÞÛY[—ØÜ™X]WØÛÛZ[™\ˆKKKKBˆÈÑÈ™YŽˆÜ˜ËØYÙ[ËÜØ[™›ÞÜØ[™›Þ\ËÙØÚÙ\‹œNŒMÍLMÍÈ
+ŒŒMŠK‚ˆÙ[œÝ\™WÚ[XYÙWØ]˜Z[X›JÙ[‹[XYÙKÙ[‹š[XYÙWÜ[ÜÛXÞJB‚ˆ\ÜÙ\Ù[‹š[XYÙWÙ^\ÝÊ[XYÙJBˆ[š\›Û›Y[ˆXÝÜÝ‹Ý—H›Û™HH›Û™BˆYˆX[šY™\Ý‚ˆ[š\›Û›Y[H]ØZ]X[šY™\Ý™[š\›Û›Y[œ™\ÛÛ™J
+BˆÈÝš^[Hœ›ÛHHÑÈ›ÙNˆ›Ü[ž\Ú[Ý™\œšYH[™ˆÈÝ\HZ[YˆÙ]‹Û[\ÈÛÛ[X[™ÛÈH[XYÙIÜÂˆÈS•–TÒS•
+ØÚÙ\‹Y[ž\Ú[œÚ
+H[œÈÙ]\[ˆ^XÂˆÈ‰˜™XÛÛY\È^XÈZ[YˆÙ]‹Û[›ÜˆHÙY\X[]™K‚ˆÈÚ]Ý]\ËØZYËXÛH
+ÈH[‹XÛÛZ[™\ˆÐH\Ý™]™\ˆÙ]ˆÈ[š]X[^™Y‚ˆÜ™X]WÚÝØ\™ÜÎˆXÝÜÝ‹[žWHHÂˆš[XYÙHŽˆ[XYÙKˆ™]XÚŽˆYKˆ˜ÛÛ[X[™ŽˆÈZ[‹‹Yˆ‹‹Ù]‹Û[—Kˆ™[š\›Û›Y[Žˆ[š\›Û›Y[ˆBˆYˆX[šY™\Ý\È›Ý›Û™N‚ˆØÚÙ\—Û[Ý[ÈHØZ[ÙØÚÙ\—Ý›Û[YWÛ[Ý[ÊˆX[šY™\ÝˆÙ\ÜÚ[Û—ÚY\Ù\ÜÚ[Û—ÚYˆ
+BˆYˆØÚÙ\—Û[Ý[Î‚ˆÜ™X]WÚÝØ\™ÜÖÈ›[Ý[È—HHØÚÙ\—Û[Ý[ÂˆYˆÛX[šY™\ÝÜ™\]Z\™\×Ù\ÙJX[šY™\Ý
+N‚ˆÜ™X]WÚÝØ\™ÜË\]Jˆ]šXÙ\ÏVÈ‹Ù]‹Ù\ÙH—KˆØ\ØYVÈ”ÖT×ÐQRSˆ—KˆÙXÝ\š]WÛÜVÈ˜\\›[ÜŽ[˜ÛÛ™š[™Y—Kˆ
+Bˆ[YˆÛX[šY™\ÝÜ™\]Z\™\×ÜÞ\×ØYZ[ŠX[šY™\Ý
+N‚ˆÜ™X]WÚÝØ\™ÜË\]JˆØ\ØYVÈ”ÖT×ÐQRSˆ—KˆÙXÝ\š]WÛÜVÈ˜\\›[ÜŽ[˜ÛÛ™š[™Y—Kˆ
+BˆYˆ^ÜÙYÜÜÎ‚ˆÜ™X]WÚÝØ\™ÜÖÈœÜÈ—HHÂˆÙØÚÙ\—ÜÜÚÙ^JÜ
+Nˆ
+ŒLËŒŒŒH‹›Û™JH›ÜˆÜ[ˆ^ÜÙYÜÜÂˆBˆÈKKKKHS‘‘TUSHÓÔHKKKKB‚ˆÈÝš^[š™XÝ[ÛœÈ8 %\[™Û‰ÝÝ™\Üš]KÛÈ•TÑKÔÖT×ÐQRSˆÝ\š]™\Ë‚ˆØ\ØYHÜ™X]WÚÝØ\™ÜËœÙ]Y˜][
+˜Ø\ØY‹×JBˆYˆ›Ý\Ú[œÝ[˜ÙJØ\ØY\Ý
+N‚ˆØ\ØYH\Ý
+Ø\ØY
+BˆÜ™X]WÚÝØ\™ÜÖÈ˜Ø\ØY—HHØ\ØYˆ›ÜˆØ\[ˆ
+“‘UÐQRSˆ‹“‘UÔUÈŠN‚ˆYˆØ\›Ý[ˆØ\ØY‚ˆØ\ØY˜\[™
+Ø\
+B‚ˆ^˜WÚÜÝÈHÜ™X]WÚÝØ\™ÜËœÙ]Y˜][
+™^˜WÚÜÝÈ‹ßJBˆ^˜WÚÜÝÖÈšÜÝ™ØÚÙ\‹š[\›˜[—HHšÜÝYØ]]Ø^H‚‚ˆØ\WÜØ[™›ÞÛ™]ÛÜšÊÜ™X]WÚÝØ\™ÜÊBˆØ\WÜ™\ÛÝ\˜ÙWÛ[Z]ÊÜ™X]WÚÝØ\™ÜÊBˆØ\WÛÙ×Û[Z]ÊÜ™X]WÚÝØ\™ÜÊBˆØ\WÜ[—ÛX™[ÊÜ™X]WÚÝØ\™ÜÊB‚ˆÈÝš^[š™XÝ[ÛŽˆØØ[ÛÝ\˜ÙH™Y\ËÛÜYÚ[ÝÙ\ÝYš\œÝÛÈBˆÈ™\ÝYÜXÈ[™ÈÛˆÜÙˆH™YH]ÛÝ™\œË‚ˆš[™Û[Ý[ÈHÙ[‹œÝš^Øš[™Û[Ý[ÈÜˆ
 
-_SANDBOX_NETWORK_ENV = "STRIX_DOCKER_SANDBOX_NETWORK"
+BˆYˆš[™Û[Ý[Î‚ˆ[Ý[ÈHÜ™X]WÚÝØ\™ÜËœÙ]Y˜][
+›[Ý[È‹×JBˆ›ÜˆÜXÈ[ˆÛÜY
+š[™Û[Ý[ËÙ^O[[X™HÎˆÝŠÖÈ\™Ù]—JK˜ÛÝ[
+‹ÈŠJN‚ˆ[Ý[Ë˜\[™
+ˆØÚÙ\”ÑÓ[Ý[
+ˆ\™Ù]\ÜXÖÈ\™Ù]—KˆÛÝ\˜ÙO\ÜXÖÈœÛÝ\˜ÙH—Kˆ\OH˜š[™‹ˆ™XYÛÛ›O\ÜXË™Ù]
+œ™XYÛÛ›H‹˜[ÙJKˆ
+Bˆ
+B‚ˆÙÙÙ\‹™XYÊˆÜ™X][™ÈØ[™›ÞÛÛZ[™\Žˆ[XYÙOI\ÈØ\ÏI\È^ÜÙYÜÜÏI\È‹ˆ[XYÙKˆØ\ØYˆ\Ý
+^ÜÙYÜÜÊKˆ
+BˆÛÛZ[™\ˆHÙ[‹™ØÚÙ\—ØÛY[˜ÛÛZ[™\œË˜Ü™X]J
+Š˜Ü™X]WÚÝØ\™ÜÊBˆÙÙÙ\‹š[™›Êˆ”Ø[™›ÞÛÛZ[™\ˆÜ™X]YˆYI\È[XYÙOI\È‹ˆÛÛZ[™\‹œÚÜÚYYˆ\Ø]ŠÛÛZ[™\‹œÚÜÚYŠH[ÙHÈ‹ˆ[XYÙKˆ
+Bˆ™]\›ˆÛÛZ[™\‚‚ˆ\Þ[˜ÈYˆÜ™X]JÙ[‹
+ŠšÝØ\™ÜÎˆ[žJHOˆØ[™›ÞÙ\ÜÚ[ÛŽ‚ˆÙ\ÜÚ[ÛˆH]ØZ]Ý\\Š
+K˜Ü™X]J
+ŠšÝØ\™ÜÊBˆ™]ÛÜšÈHÜØ[™›ÞÛ™]ÛÜšÊ
+Bˆ[›™\ˆHÙ\ÜÚ[Û‹—Ú[›™\‚ˆYˆ™]ÛÜšÈ[™\Ú[œÝ[˜ÙJ[›™\‹ØÚÙ\”Ø[™›ÞÙ\ÜÚ[ÛŠN‚ˆ[›™\‹—×ØÛ\Ü××ÈHÝš^ØÚÙ\”Ø[™›ÞÙ\ÜÚ[Û‚ˆØ\Ý
+”Ýš^ØÚÙ\”Ø[™›ÞÙ\ÜÚ[Ûˆ‹[›™\ŠKœØ[™›ÞÛ™]ÛÜšÈH™]ÛÜšÂˆ™]\›ˆÙ\ÜÚ[Û‚‚ˆ\Þ[˜ÈYˆ[]JÙ[‹Ù\ÜÚ[ÛŽˆØ[™›ÞÙ\ÜÚ[ÛŠHOˆØ[™›ÞÙ\ÜÚ[ÛŽ‚ˆÛÛZ[™\—ÚYHÙ]]ŠÙ]]ŠÙ\ÜÚ[Û‹—Ú[›™\‹œÝ]H‹›Û™JK˜ÛÛZ[™\—ÚY‹›Û™JBˆYˆÛÛZ[™\—ÚY‚ˆÈ™\ÝYY™›ÜÚ[ˆ›Ý›Ý[™ÐTQ\œ›ÜˆÛÝ™\ˆHÛÛ™HÜˆ[š\BˆÈÛÛZ[™\‹ˆ™\]Y\Ý^Ù\[ÛˆÛÝ™\œÈHÜ›‹YÝÛˆY[[ÛˆÛØÚÙ]8 %ˆÈÛÛZ[™\œË™Ù]
 
+HOˆ[œÜXÝØÛÛZ[™\ˆ˜Z\Ù\È™\]Y\ÝÉÂˆÈÛÛ›™XÝ[Û‘\œ›Ü‹ÚXÚ\ÈHÚX›[™ÈÙˆØÚÙ\‹™\œ›ÜœËTQ\œ›Ü‚ˆÈ[™\ˆ™\]Y\ÝË”™\]Y\Ý^Ù\[Ûˆ
+›ÝHÝX˜Û\ÜÊKÛÈ]\ØØ\\ÂˆÈ[ˆTQ\œ›Ü‹[Û›HÝ\™\ÜÈ[™Ý\™˜XÙ\ÈH[˜XÙX˜XÚÈ]™[‚ˆÈÝYÚ\ÈX\™ÝÛˆ\ÈYX[È™H™\ÝYY™›Ü‚ˆÚ]ÛÛ^X‹œÝ\™\ÜÊˆØÚÙ\—Ù\œ›ÜœË“›Ý›Ý[™ØÚÙ\—Ù\œ›ÜœËTQ\œ›Ü‹™\]Y\Ý^Ù\[Û‚ˆ
+N‚ˆÙ[‹™ØÚÙ\—ØÛY[˜ÛÛZ[™\œË™Ù]
+ÛÛZ[™\—ÚY
+KšÚ[
 
-def _sandbox_network() -> str | None:
-    value = os.environ.get(_SANDBOX_NETWORK_ENV, "").strip()
-    return value or None
-
-
-def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
-    network = _sandbox_network()
-    if network:
-        create_kwargs["network"] = network
-        create_kwargs.pop("ports", None)
-
-
-def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
-    """Apply optional cgroup resource caps from the environment. Unset/blank
-    values leave docker's default (unbounded), so this is opt-in per host."""
-    mem_limit = os.environ.get("STRIX_SANDBOX_MEM_LIMIT", "").strip()
-    if mem_limit:
-        create_kwargs["mem_limit"] = mem_limit
-
-    shm_size = os.environ.get("STRIX_SANDBOX_SHM_SIZE", "").strip()
-    if shm_size:
-        create_kwargs["shm_size"] = shm_size
-
-    cpus = os.environ.get("STRIX_SANDBOX_CPUS", "").strip()
-    if cpus:
-        with contextlib.suppress(ValueError, OverflowError):
-            nano_cpus = int(float(cpus) * 1_000_000_000)
-            if 0 < nano_cpus <= 2**63 - 1:
-                create_kwargs["nano_cpus"] = nano_cpus
-
-    pids_limit = os.environ.get("STRIX_SANDBOX_PIDS_LIMIT", "").strip()
-    if pids_limit:
-        with contextlib.suppress(ValueError):
-            create_kwargs["pids_limit"] = int(pids_limit)
-
-
-def _apply_log_limits(create_kwargs: dict[str, Any]) -> None:
-    """Bound the container's json-file log so a runaway process in the sandbox
-    (e.g. a tool that busy-loops writing to stdout) cannot fill the host disk
-    and take the Docker daemon down with it.
-
-    Unlike the cgroup caps above, this defaults **on** â€” docker's own default
-    is an unbounded json-file, which is unsafe for an autonomous agent that
-    executes arbitrary commands. ``max-file`` rotation means the on-disk cap is
-    ``max-size * max-file``. Set ``STRIX_SANDBOX_LOG_MAX_SIZE`` to ``0``/``off``
-    to opt back out to docker's default."""
-    max_size = os.environ.get("STRIX_SANDBOX_LOG_MAX_SIZE", "50m").strip()
-    if max_size.lower() in ("0", "off", "none", "unlimited"):
-        return
-    max_file = os.environ.get("STRIX_SANDBOX_LOG_MAX_FILE", "3").strip() or "3"
-    create_kwargs["log_config"] = LogConfig(
-        type=LogConfig.types.JSON,
-        config={"max-size": max_size, "max-file": max_file},
-    )
-
-
-def _apply_run_labels(create_kwargs: dict[str, Any]) -> None:
-    run_id = os.getenv("STRIX_RUN_ID")
-    if not run_id:
-        return
-    labels = create_kwargs.setdefault("labels", {})
-    if not isinstance(labels, dict):
-        return
-    labels["strix-run-id"] = run_id
-    run_type = os.getenv("STRIX_RUN_TYPE")
-    if run_type:
-        labels["strix-run-type"] = run_type
-
-
-class StrixDockerSandboxSession(DockerSandboxSession):
-    sandbox_network: str = ""
-
-    async def _resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
-        try:
-            self._container.reload()
-        except docker_errors.APIError as e:
-            raise ExposedPortUnavailableError(
-                port=port,
-                exposed_ports=self.state.exposed_ports,
-                reason="backend_unavailable",
-                context={
-                    "backend": "docker",
-                    "detail": "container_reload_failed",
-                    "network": self.sandbox_network,
-                },
-                cause=e,
-            ) from e
-
-        attrs = getattr(self._container, "attrs", {}) or {}
-        networks = attrs.get("NetworkSettings", {}).get("Networks", {})
-        endpoint = networks.get(self.sandbox_network) or {}
-        ip = endpoint.get("IPAddress") or endpoint.get("GlobalIPv6Address")
-        if not isinstance(ip, str) or not ip:
-            raise ExposedPortUnavailableError(
-                port=port,
-                exposed_ports=self.state.exposed_ports,
-                reason="backend_unavailable",
-                context={
-                    "backend": "docker",
-                    "detail": "container_not_on_network",
-                    "network": self.sandbox_network,
-                },
-            )
-        host = f"[{ip}]" if ":" in ip else ip
-        return ExposedPortEndpoint(host=host, port=port, tls=False)
-
-
-class StrixDockerSandboxClient(DockerSandboxClient):
-    # Host directories to bind-mount into the container, set by the docker
-    # backend before ``create()``. Each item is ``{source, target, read_only}``.
-    strix_bind_mounts: list[dict[str, Any]] | None = None
-
-    async def _create_container(
-        self,
-        image: str,
-        *,
-        manifest: Manifest | None = None,
-        exposed_ports: tuple[int, ...] = (),
-        session_id: uuid.UUID | None = None,
-    ) -> Container:
-        # ----- BEGIN VERBATIM COPY of DockerSandboxClient._create_container -----
-        # SDK ref: src/agents/sandbox/sandboxes/docker.py:1434-1477 (v0.14.6).
-        if not self.image_exists(image):
-            repo, tag = parse_repository_tag(image)
-            self.docker_client.images.pull(repo, tag=tag or None, all_tags=False)
-
-        assert self.image_exists(image)
-        environment: dict[str, str] | None = None
-        if manifest:
-            environment = await manifest.environment.resolve()
-        # Strix delta from the SDK body: drop ``entrypoint`` override and
-        # supply ``tail -f /dev/null`` as ``command`` so the image's
-        # ENTRYPOINT (``docker-entrypoint.sh``) runs setup, then ``exec
-        # "$@"`` becomes ``exec tail -f /dev/null`` for the keep-alive.
-        # Without this, caido-cli + the in-container CA trust never get
-        # initialized.
-        create_kwargs: dict[str, Any] = {
-            "image": image,
-            "detach": True,
-            "command": ["tail", "-f", "/dev/null"],
-            "environment": environment,
-        }
-        if manifest is not None:
-            docker_mounts = _build_docker_volume_mounts(
-                manifest,
-                session_id=session_id,
-            )
-            if docker_mounts:
-                create_kwargs["mounts"] = docker_mounts
-            if _manifest_requires_fuse(manifest):
-                create_kwargs.update(
-                    devices=["/dev/fuse"],
-                    cap_add=["SYS_ADMIN"],
-                    security_opt=["apparmor:unconfined"],
-                )
-            elif _manifest_requires_sys_admin(manifest):
-                create_kwargs.update(
-                    cap_add=["SYS_ADMIN"],
-                    security_opt=["apparmor:unconfined"],
-                )
-        if exposed_ports:
-            create_kwargs["ports"] = {
-                _docker_port_key(port): ("127.0.0.1", None) for port in exposed_ports
-            }
-        # ----- END VERBATIM COPY -----
-
-        # Strix injections â€” append, don't overwrite, so FUSE/SYS_ADMIN survives.
-        cap_add = create_kwargs.setdefault("cap_add", [])
-        if not isinstance(cap_add, list):
-            cap_add = list(cap_add)
-            create_kwargs["cap_add"] = cap_add
-        for cap in ("NET_ADMIN", "NET_RAW"):
-            if cap not in cap_add:
-                cap_add.append(cap)
-
-        extra_hosts = create_kwargs.setdefault("extra_hosts", {})
-        extra_hosts["host.docker.internal"] = "host-gateway"
-
-        _apply_sandbox_network(create_kwargs)
-        _apply_resource_limits(create_kwargs)
-        _apply_log_limits(create_kwargs)
-        _apply_run_labels(create_kwargs)
-
-        # Strix injection: local source trees, sorted shallowest-first so a
-        # nested spec lands on top of the tree it covers.
-        bind_mounts = self.strix_bind_mounts or ()
-        if bind_mounts:
-            mounts = create_kwargs.setdefault("mounts", [])
-            for spec in sorted(bind_mounts, key=lambda s: str(s["target"]).count("/")):
-                mounts.append(
-                    DockerSDKMount(
-                        target=spec["target"],
-                        source=spec["source"],
-                        type="bind",
-                        read_only=spec.get("read_only", False),
-                    )
-                )
-
-        logger.debug(
-            "Creating sandbox container: image=%s caps=%s exposed_ports=%s",
-            image,
-            cap_add,
-            list(exposed_ports),
-        )
-        container = self.docker_client.containers.create(**create_kwargs)
-        logger.info(
-            "Sandbox container created: id=%s image=%s",
-            container.short_id if hasattr(container, "short_id") else "?",
-            image,
-        )
-        return container
-
-    async def create(self, **kwargs: Any) -> SandboxSession:
-        session = await super().create(**kwargs)
-        network = _sandbox_network()
-        inner = session._inner
-        if network and isinstance(inner, DockerSandboxSession):
-            inner.__class__ = StrixDockerSandboxSession
-            cast("StrixDockerSandboxSession", inner).sandbox_network = network
-        return session
-
-    async def delete(self, session: SandboxSession) -> SandboxSession:
-        container_id = getattr(getattr(session._inner, "state", None), "container_id", None)
-        if container_id:
-            # Best-effort kill: NotFound/APIError cover a gone or unhappy
-            # container. RequestException covers a torn-down daemon socket â€”
-            # containers.get() -> inspect_container raises requests'
-            # ConnectionError, which is a sibling of docker.errors.APIError
-            # under requests.RequestException (not a subclass), so it escapes
-            # an APIError-only suppress and surfaces a full traceback even
-            # though this teardown is meant to be best-effort.
-            with contextlib.suppress(
-                docker_errors.NotFound, docker_errors.APIError, RequestException
-            ):
-                self.docker_client.containers.get(container_id).kill()
-        return await super().delete(session)
+Bˆ™]\›ˆ]ØZ]Ý\\Š
+K™[]JÙ\ÜÚ[ÛŠB

@@ -1,217 +1,115 @@
-"""Startup environment validation and Docker image management."""
+­r‡^Ñf¥–Ø¦{[r‰Ý°ë­¦ëHˆˆ”Ý\\[š\›Û›Y[˜[Y][Ûˆ[™ØÚÙ\ˆ[XYÙHX[˜YÙ[Y[ˆˆˆ‚‚š[\ÜÙÙÚ[™Âš[\ÜÚ][š[\ÜÞ\Â‚™œ›ÛHšXÚ˜ÛÛœÛÛH[\ÜÛÛœÛÛB™œ›ÛHšXÚœ[™[[\Ü[™[™œ›ÛHšXÚ^[\Ü^‚™œ›ÛHÝš^˜ÛÛ™šYÈ[\ÜÛÙ^ØYÜÙ][™ÜÂ™œ›ÛHÝš^š[\™˜XÙK][È[\Ü
+ˆÚXÚ×ÙØÚÙ\—ØÛÛ›™XÝ[Û‹ˆ[XYÙWÙ^\ÝËˆ›ØÙ\Ü×Ü[Û[™KŠB‚‚›ÙÙÙ\ˆHÙÙÚ[™Ë™Ù]ÙÙÙ\Š×Û˜[YW×ÊB‚‚™Yˆ˜[Y]WÙ[š\›Û›Y[
 
-import logging
-import shutil
-import sys
+HOˆ›Û™N‚ˆÙÙÙ\‹š[™›Ê•˜[Y][™È[š\›Û›Y[ŠBˆÛÛœÛÛHHÛÛœÛÛJ
+BˆZ\ÜÚ[™×Ü™\]Z\™YÝ˜\œÈH×BˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œÈH×B‚ˆÙ][™ÜÈHØYÜÙ][™ÜÊ
+B‚ˆYˆÛÙ^œÝXœØÜš\[Û—Û[Ù[
+Ù][™ÜË›K›[Ù[
+N‚ˆYˆ›ÝÛÙ^š\×Ø]][XØ]Y
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.text import Text
+N‚ˆÛÛœÛÛKœš[
+ˆˆ–Ü™YTÕ’VÓO^ÜÙ][™ÜË›K›[Ù[H\Ù\È[Ý\ˆÚ]ÔÝXœØÜš\[Û‹‚ˆ˜][ÝIÜ™H›ÝÚYÛ™Y[‹–Ë×H[ˆØÞX[—\Ýš^]]ÙÚ[ˆÚ]ÜË×Hš\œÝˆ‚ˆ
+BˆÞ\Ë™^]
+JBˆÙÙÙ\‹š[™›Ê‘[š\›Û›Y[ÒÈ
+Ú]ÔÝXœØÜš\[ÛŠHŠBˆ™]\›‚‚ˆYˆ›ÝÙ][™ÜË›K›[Ù[‚ˆZ\ÜÚ[™×Ü™\]Z\™YÝ˜\œË˜\[™
+”Õ’VÓHŠB‚ˆYˆ›ÝÙ][™ÜË›K˜\WÚÙ^N‚ˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œË˜\[™
+“WÐTWÒÑVHŠB‚ˆYˆ›ÝÙ][™ÜË›K˜\WØ˜\ÙN‚ˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œË˜\[™
+“WÐTWÐTÑHŠB‚ˆYˆ›ÝÙ][™ÜËš[YÜ˜][ÛœËœ\œ^]WØ\WÚÙ^N‚ˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œË˜\[™
+”T”VUWÐTWÒÑVHŠB‚ˆYˆZ\ÜÚ[™×Ü™\]Z\™YÝ˜\œÎ‚ˆ\œ›Ü—Ý^H^
 
-from strix.config import codex, load_settings
-from strix.interface.utils import (
-    check_docker_connection,
-    image_exists,
-    process_pull_line,
-)
+Bˆ\œ›Ü—Ý^˜\[™
+“RTÔÒS‘È‘TURT‘QS•’T“Ó“QS•T’PP“TÈ‹Ý[OH˜›Û™YŠBˆ\œ›Ü—Ý^˜\[™
+——ˆ‹Ý[OHÚ]HŠB‚ˆ›Üˆ˜\ˆ[ˆZ\ÜÚ[™×Ü™\]Z\™YÝ˜\œÎ‚ˆ\œ›Ü—Ý^˜\[™
+ˆ¸ (ˆÝ˜\ŸH‹Ý[OH˜›ÛY[ÝÈŠBˆ\œ›Ü—Ý^˜\[™
+ˆ\È›ÝÙ]ˆ‹Ý[OHÚ]HŠB‚ˆYˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œÎ‚ˆ\œ›Ü—Ý^˜\[™
+—“Ü[Û˜[[š\›Û›Y[˜\šXX›\Î—ˆ‹Ý[OH™[HÚ]HŠBˆ›Üˆ˜\ˆ[ˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œÎ‚ˆ\œ›Ü—Ý^˜\[™
+ˆ¸ (ˆÝ˜\ŸH‹Ý[OH™[HY[ÝÈŠBˆ\œ›Ü—Ý^˜\[™
+ˆ\È›ÝÙ]ˆ‹Ý[OH™[HÚ]HŠB‚ˆ\œ›Ü—Ý^˜\[™
+—”™\]Z\™Y[š\›Û›Y[˜\šXX›\Î—ˆ‹Ý[OHÚ]HŠBˆ›Üˆ˜\ˆ[ˆZ\ÜÚ[™×Ü™\]Z\™YÝ˜\œÎ‚ˆYˆ˜\ˆOH”Õ’VÓHŽ‚ˆ\œ›Ü—Ý^˜\[™
+¸ (ˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+”Õ’VÓH‹Ý[OH˜›ÛÞX[ˆŠBˆ\œ›Ü—Ý^˜\[™
+ˆˆH[Ù[˜[YHÈ\ÙH
+K™Ë‹	ÛÜ[˜ZKÙÜMK	ÈÜˆ‚ˆ‰Ø[›ÜXËØÛ]YK[Ü\ËMMÉÊWˆ‹ˆÝ[OHÚ]H‹ˆ
+B‚ˆYˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œÎ‚ˆ\œ›Ü—Ý^˜\[™
+—“Ü[Û˜[[š\›Û›Y[˜\šXX›\Î—ˆ‹Ý[OHÚ]HŠBˆ›Üˆ˜\ˆ[ˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œÎ‚ˆYˆ˜\ˆOH“WÐTWÐTÑHŽ‚ˆ\œ›Ü—Ý^˜\[™
+¸ (ˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+“WÐTWÐTÑH‹Ý[OH˜›ÛÞX[ˆŠBˆ\œ›Ü—Ý^˜\[™
+ˆˆHÝ\ÝÛHTH˜\ÙHT“Yˆ\Ú[™ÈØØ[[Ù[È
+K™Ë‹Û[XKTÝY[ÊWˆ‹ˆÝ[OHÚ]H‹ˆ
+Bˆ[Yˆ˜\ˆOH”T”VUWÐTWÒÑVHŽ‚ˆ\œ›Ü—Ý^˜\[™
+¸ (ˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+”T”VUWÐTWÒÑVH‹Ý[OH˜›ÛÞX[ˆŠBˆ\œ›Ü—Ý^˜\[™
+ˆˆHTHÙ^H›Üˆ\œ^]HRHÙXˆÙX\˜Ú
+[˜X›\È™X[][YH™\ÙX\˜Ú
+Wˆ‹ˆÝ[OHÚ]H‹ˆ
+Bˆ[Yˆ˜\ˆOH”Õ’VÔ‘PTÓÓ’S‘×ÑQ‘“Ô•Ž‚ˆ\œ›Ü—Ý^˜\[™
+¸ (ˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+”Õ’VÔ‘PTÓÓ’S‘×ÑQ‘“Ô•‹Ý[OH˜›ÛÞX[ˆŠBˆ\œ›Ü—Ý^˜\[™
+ˆˆH™X\ÛÛš[™ÈY™›Ü]™[ˆ›Û™KZ[š[X[ÝËYY][KYÚYÚ‚ˆ›X^
+Y˜][ˆYÚ
+Wˆ‹ˆÝ[OHÚ]H‹ˆ
+B‚ˆ\œ›Ü—Ý^˜\[™
+—‘^[\HÙ]\—ˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+™^ÜÕ’VÓOIÛÜ[˜ZKÙÜMK	×ˆ‹Ý[OH™[HÚ]HŠB‚ˆYˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œÎ‚ˆ›Üˆ˜\ˆ[ˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œÎ‚ˆYˆ˜\ˆOH“WÐTWÐTÑHŽ‚ˆ\œ›Ü—Ý^˜\[™
+ˆ™^ÜWÐTWÐTÑOIÚ‹ËÛØØ[ÜÝŒLMÍ	È‚ˆˆÈ™YYY›ÜˆØØ[[Ù[ÈÛ›Wˆ‹ˆÝ[OH™[HÚ]H‹ˆ
+Bˆ[Yˆ˜\ˆOH”T”VUWÐTWÒÑVHŽ‚ˆ\œ›Ü—Ý^˜\[™
+ˆ™^ÜT”VUWÐTWÒÑVOIÞ[Ý\‹\\œ^]KZÙ^KZ\™I×ˆ‹Ý[OH™[HÚ]H‚ˆ
+Bˆ[Yˆ˜\ˆOH”Õ’VÔ‘PTÓÓ’S‘×ÑQ‘“Ô•Ž‚ˆ\œ›Ü—Ý^˜\[™
+ˆ™^ÜÕ’VÔ‘PTÓÓ’S‘×ÑQ‘“Ô•IÚYÚ	×ˆ‹ˆÝ[OH™[HÚ]H‹ˆ
+B‚ˆ[™[H[™[
+ˆ\œ›Ü—Ý^ˆ]OH–Ø›ÛÚ]WTÕ’V‹ˆ]WØ[YÛH›Y‹ˆ›Ü™\—ÜÝ[OHœ™Y‹ˆY[™ÏJKŠKˆ
+B‚ˆÙÙÙ\‹™XYÊ“Z\ÜÚ[™È™\]Z\™Y[ˆ˜\œÎˆ	\È‹Z\ÜÚ[™×Ü™\]Z\™YÝ˜\œÊBˆÛÛœÛÛKœš[
+—ˆŠBˆÛÛœÛÛKœš[
+[™[
+BˆÛÛœÛÛKœš[
 
+BˆÞ\Ë™^]
+JBˆÙÙÙ\‹š[™›Êˆ‘[š\›Û›Y[ÒÈ
+Ü[Û˜[Z\ÜÚ[™Îˆ	\ÊH‹ˆZ\ÜÚ[™×ÛÜ[Û˜[Ý˜\œÈÜˆ››Û™H‹ˆ
+B‚‚™YˆÚXÚ×ÙØÚÙ\—Ú[œÝ[Y
 
-logger = logging.getLogger(__name__)
+HOˆ›Û™N‚ˆYˆÚ][ÚXÚ
+™ØÚÙ\ˆŠH\È›Û™N‚ˆÙÙÙ\‹™XYÊ‘ØÚÙ\ˆÓH›Ý›Ý[™[ˆUŠBˆÛÛœÛÛHHÛÛœÛÛJ
+Bˆ\œ›Ü—Ý^H^
 
+Bˆ\œ›Ü—Ý^˜\[™
+‘ÐÒÑTˆ“ÕS”ÕSQ‹Ý[OH˜›Û™YŠBˆ\œ›Ü—Ý^˜\[™
+——ˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+•H	ÙØÚÙ\‰ÈÓHØ\È›Ý›Ý[™[ˆ[Ý\ˆU—ˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+ˆ”X\ÙH[œÝ[ØÚÙ\ˆ[™[œÝ\™HH	ÙØÚÙ\‰ÈÛÛ[X[™\È]˜Z[X›K——ˆ‹Ý[OHÚ]H‚ˆ
+B‚ˆ[™[H[™[
+ˆ\œ›Ü—Ý^ˆ]OH–Ø›ÛÚ]WTÕ’V‹ˆ]WØ[YÛH›Y‹ˆ›Ü™\—ÜÝ[OHœ™Y‹ˆY[™ÏJKŠKˆ
+BˆÛÛœÛÛKœš[
+—ˆ‹[™[—ˆŠBˆÞ\Ë™^]
+JBˆÙÙÙ\‹™XYÊ‘ØÚÙ\ˆÓH™\Ù[ŠB‚‚™Yˆ[ÙØÚÙ\—Ú[XYÙJ
+HOˆ›Û™N‚ˆœ›ÛHØÚÙ\‹™\œ›ÜœÈ[\ÜØÚÙ\‘^Ù\[Û‚‚ˆÛÛœÛÛHHÛÛœÛÛJ
+BˆÛY[HÚXÚ×ÙØÚÙ\—ØÛÛ›™XÝ[ÛŠ
+B‚ˆ[[YHHØYÜÙ][™ÜÊ
+Kœ[[YBˆ[XYÙHH[[YKš[XYÙB‚ˆYˆ[XYÙWÙ^\ÝÊÛY[[XYÙJN‚ˆÙÙÙ\‹™XYÊ‘ØÚÙ\ˆ[XYÙH[™XYH™\Ù[ØØ[Nˆ	\È‹[XYÙJBˆ™]\›‚‚ˆYˆ[[YKš[XYÙWÜ[ÜÛXÞHOH›™]™\ˆŽ‚ˆ˜Z\ÙH[[YQ\œ›ÜŠˆˆ‘ØÚÙ\ˆ[XYÙHÚ[XYÙH\ŸH\È›Ý]˜Z[X›HØØ[H[™‚ˆ”Õ’VÒSPQÑWÔSÔÓPÖO[™]™\ˆ›Ü˜šYÈ[[™È]‚ˆ
+B‚ˆÙÙÙ\‹š[™›Ê”[[™ÈØÚÙ\ˆ[XYÙNˆ	\È‹[XYÙJBˆÛÛœÛÛKœš[
 
-def validate_environment() -> None:
-    logger.info("Validating environment")
-    console = Console()
-    missing_required_vars = []
-    missing_optional_vars = []
+BˆÛÛœÛÛKœš[
+ˆ–Ù[WT[[™È[XYÙVË×HÚ[XYÙ_HŠBˆÛÛœÛÛKœš[
+–Ù[HY[Ý×U\ÈÛ›H\[œÈÛˆš\œÝ[ˆ[™X^HZÙHH™]ÈZ[]\Ë‹‹–Ë×HŠBˆÛÛœÛÛKœš[
 
-    settings = load_settings()
+B‚ˆÚ]ÛÛœÛÛKœÝ]\Ê–Ø›ÛÞX[—QÝÛ›ØY[™È[XYÙH^Y\œË‹‹ˆ‹Ü[›™\H™ÝÈŠH\ÈÝ]\Î‚ˆžN‚ˆ^Y\œ×Ú[™›ÎˆXÝÜÝ‹Ý—HHßBˆ\ÝÝ\]HHˆ‚‚ˆ›Üˆ[™H[ˆÛY[˜\Kœ[
+[XYÙKÝ™X[OUYKXÛÙOUYJN‚ˆ\ÝÝ\]HH›ØÙ\Ü×Ü[Û[™J[™K^Y\œ×Ú[™›ËÝ]\Ë\ÝÝ\]JB‚ˆ^Ù\ØÚÙ\‘^Ù\[Ûˆ\ÈN‚ˆÙÙÙ\‹™XYÊ‘˜Z[YÈ[ØÚÙ\ˆ[XYÙH	\È‹[XYÙK^×Ú[™›ÏUYJBˆÛÛœÛÛKœš[
 
-    if codex.subscription_model(settings.llm.model):
-        if not codex.is_authenticated():
-            console.print(
-                f"[red]STRIX_LLM={settings.llm.model} uses your ChatGPT subscription, "
-                "but you're not signed in.[/] Run [cyan]strix auth login chatgpt[/] first."
-            )
-            sys.exit(1)
-        logger.info("Environment OK (ChatGPT subscription)")
-        return
+Bˆ\œ›Ü—Ý^H^
 
-    if not settings.llm.model:
-        missing_required_vars.append("STRIX_LLM")
+Bˆ\œ›Ü—Ý^˜\[™
+‘RSQÈSSPQÑH‹Ý[OH˜›Û™YŠBˆ\œ›Ü—Ý^˜\[™
+——ˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+ˆÛÝ[›ÝÝÛ›ØYˆÚ[XYÙ_Wˆ‹Ý[OHÚ]HŠBˆ\œ›Ü—Ý^˜\[™
+ÝŠJKÝ[OH™[H™YŠB‚ˆ[™[H[™[
+ˆ\œ›Ü—Ý^ˆ]OH–Ø›ÛÚ]WTÕ’V‹ˆ]WØ[YÛH›Y‹ˆ›Ü™\—ÜÝ[OHœ™Y‹ˆY[™ÏJKŠKˆ
+BˆÛÛœÛÛKœš[
+[™[—ˆŠBˆÞ\Ë™^]
+JB‚ˆÙÙÙ\‹š[™›Ê‘ØÚÙ\ˆ[XYÙH	\È™XYH‹[XYÙJBˆÝXØÙ\Ü×Ý^H^
 
-    if not settings.llm.api_key:
-        missing_optional_vars.append("LLM_API_KEY")
+BˆÝXØÙ\Ü×Ý^˜\[™
+‘ØÚÙ\ˆ[XYÙH™XYH‹Ý[OHˆÌŒ˜ÍMYHŠBˆÛÛœÛÛKœš[
+ÝXØÙ\Ü×Ý^
+BˆÛÛœÛÛKœš[
 
-    if not settings.llm.api_base:
-        missing_optional_vars.append("LLM_API_BASE")
-
-    if not settings.integrations.perplexity_api_key:
-        missing_optional_vars.append("PERPLEXITY_API_KEY")
-
-    if missing_required_vars:
-        error_text = Text()
-        error_text.append("MISSING REQUIRED ENVIRONMENT VARIABLES", style="bold red")
-        error_text.append("\n\n", style="white")
-
-        for var in missing_required_vars:
-            error_text.append(f"â€¢ {var}", style="bold yellow")
-            error_text.append(" is not set\n", style="white")
-
-        if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="dim white")
-            for var in missing_optional_vars:
-                error_text.append(f"â€¢ {var}", style="dim yellow")
-                error_text.append(" is not set\n", style="dim white")
-
-        error_text.append("\nRequired environment variables:\n", style="white")
-        for var in missing_required_vars:
-            if var == "STRIX_LLM":
-                error_text.append("â€¢ ", style="white")
-                error_text.append("STRIX_LLM", style="bold cyan")
-                error_text.append(
-                    " - Model name to use (e.g., 'openai/gpt-5.4' or "
-                    "'anthropic/claude-opus-4-7')\n",
-                    style="white",
-                )
-
-        if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="white")
-            for var in missing_optional_vars:
-                if var == "LLM_API_BASE":
-                    error_text.append("â€¢ ", style="white")
-                    error_text.append("LLM_API_BASE", style="bold cyan")
-                    error_text.append(
-                        " - Custom API base URL if using local models (e.g., Ollama, LMStudio)\n",
-                        style="white",
-                    )
-                elif var == "PERPLEXITY_API_KEY":
-                    error_text.append("â€¢ ", style="white")
-                    error_text.append("PERPLEXITY_API_KEY", style="bold cyan")
-                    error_text.append(
-                        " - API key for Perplexity AI web search (enables real-time research)\n",
-                        style="white",
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append("â€¢ ", style="white")
-                    error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
-                    error_text.append(
-                        " - Reasoning effort level: none, minimal, low, medium, high, xhigh, "
-                        "max (default: high)\n",
-                        style="white",
-                    )
-
-        error_text.append("\nExample setup:\n", style="white")
-        error_text.append("export STRIX_LLM='openai/gpt-5.4'\n", style="dim white")
-
-        if missing_optional_vars:
-            for var in missing_optional_vars:
-                if var == "LLM_API_BASE":
-                    error_text.append(
-                        "export LLM_API_BASE='http://localhost:11434'  "
-                        "# needed for local models only\n",
-                        style="dim white",
-                    )
-                elif var == "PERPLEXITY_API_KEY":
-                    error_text.append(
-                        "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append(
-                        "export STRIX_REASONING_EFFORT='high'\n",
-                        style="dim white",
-                    )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-
-        logger.debug("Missing required env vars: %s", missing_required_vars)
-        console.print("\n")
-        console.print(panel)
-        console.print()
-        sys.exit(1)
-    logger.info(
-        "Environment OK (optional missing: %s)",
-        missing_optional_vars or "none",
-    )
-
-
-def check_docker_installed() -> None:
-    if shutil.which("docker") is None:
-        logger.debug("Docker CLI not found in PATH")
-        console = Console()
-        error_text = Text()
-        error_text.append("DOCKER NOT INSTALLED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("The 'docker' CLI was not found in your PATH.\n", style="white")
-        error_text.append(
-            "Please install Docker and ensure the 'docker' command is available.\n\n", style="white"
-        )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n", panel, "\n")
-        sys.exit(1)
-    logger.debug("Docker CLI present")
-
-
-def pull_docker_image() -> None:
-    from docker.errors import DockerException
-
-    console = Console()
-    client = check_docker_connection()
-
-    image = load_settings().runtime.image
-
-    if image_exists(client, image):
-        logger.debug("Docker image already present locally: %s", image)
-        return
-
-    logger.info("Pulling docker image: %s", image)
-    console.print()
-    console.print(f"[dim]Pulling image[/] {image}")
-    console.print("[dim yellow]This only happens on first run and may take a few minutes...[/]")
-    console.print()
-
-    with console.status("[bold cyan]Downloading image layers...", spinner="dots") as status:
-        try:
-            layers_info: dict[str, str] = {}
-            last_update = ""
-
-            for line in client.api.pull(image, stream=True, decode=True):
-                last_update = process_pull_line(line, layers_info, status, last_update)
-
-        except DockerException as e:
-            logger.debug("Failed to pull docker image %s", image, exc_info=True)
-            console.print()
-            error_text = Text()
-            error_text.append("FAILED TO PULL IMAGE", style="bold red")
-            error_text.append("\n\n", style="white")
-            error_text.append(f"Could not download: {image}\n", style="white")
-            error_text.append(str(e), style="dim red")
-
-            panel = Panel(
-                error_text,
-                title="[bold white]STRIX",
-                title_align="left",
-                border_style="red",
-                padding=(1, 2),
-            )
-            console.print(panel, "\n")
-            sys.exit(1)
-
-    logger.info("Docker image %s ready", image)
-    success_text = Text()
-    success_text.append("Docker image ready", style="#22c55e")
-    console.print(success_text)
-    console.print()
+B

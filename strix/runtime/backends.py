@@ -1,4 +1,4 @@
-"""Sandbox backend registry â€” selected via STRIX_RUNTIME_BACKEND (default: docker)."""
+­r‡^Ñf¥–Ø¦{O,yÊ'vÃ®¶›­"""Sandbox backend registry â€” selected via STRIX_RUNTIME_BACKEND (default: docker)."""
 
 from __future__ import annotations
 
@@ -40,10 +40,12 @@ async def _docker_backend(
     import docker
     from agents.sandbox.sandboxes.docker import DockerSandboxClientOptions
 
+    from strix.config.loader import load_settings
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
     client = StrixDockerSandboxClient(docker.from_env())
     client.strix_bind_mounts = bind_mounts or []
+    client.image_pull_policy = load_settings().runtime.image_pull_policy
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)
     await session.start()

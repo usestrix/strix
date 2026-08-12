@@ -1,169 +1,17 @@
----
-title: "Configuration"
-description: "Environment variables for Strix"
----
-
-Configure Strix using environment variables or a config file.
-
-## LLM Configuration
-
-<ParamField path="STRIX_LLM" type="string" required>
-  Model name in LiteLLM format (e.g., `openai/gpt-5.4`, `anthropic/claude-sonnet-4-6`).
-</ParamField>
-
-<ParamField path="LLM_API_KEY" type="string">
-  API key for your LLM provider. Not required for local models or cloud provider auth (Vertex AI, AWS Bedrock).
-</ParamField>
-
-<ParamField path="LLM_API_BASE" type="string">
-  Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
-</ParamField>
-
-<ParamField path="LLM_EXTRA_HEADERS" type="string">
-  Extra HTTP headers sent on every LLM request, as a JSON object (e.g.
-  `{"X-Feature-Key":"value","X-Tenant":"acme"}`). Useful for OpenAI-compatible
-  gateways that require attribution or routing headers in addition to the bearer
-  token. The bearer token itself still comes from `LLM_API_KEY`. Applies to both
-  the LiteLLM and native OpenAI routing paths.
-</ParamField>
-
-<ParamField path="LLM_TIMEOUT" default="300" type="integer">
-  Request timeout in seconds for LLM calls.
-</ParamField>
-
-<ParamField path="STRIX_LLM_MAX_RETRIES" default="5" type="integer">
-  Maximum number of retries for LLM API calls on transient failures.
-</ParamField>
-
-<ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
-  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Defaults to `medium` for quick scan mode.
-</ParamField>
-
-<ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
-  Timeout in seconds for memory compression operations (context summarization).
-</ParamField>
-
-### Dedicated deduplication model
-
-Finding deduplication is a cheap, structured classification task. By default it
-runs on the main model, but you can route it to a smaller/cheaper model without
-affecting the agents that do the actual testing.
-
-<ParamField path="STRIX_DEDUPE_MODEL" type="string">
-  Model used to judge whether a candidate finding duplicates an existing report.
-  Falls back to `STRIX_LLM` when unset.
-</ParamField>
-
-<ParamField path="DEDUPE_LLM_API_KEY" type="string">
-  Optional provider key for the deduplication model.
-</ParamField>
-
-<ParamField path="DEDUPE_LLM_API_BASE" type="string">
-  Optional custom API base URL for the deduplication model. Use when the dedupe
-  model runs on a different endpoint than the main model.
-</ParamField>
-
-<ParamField path="DEDUPE_LLM_EXTRA_HEADERS" type="string">
-  Optional JSON object of extra HTTP headers sent on every deduplication-model
-  request, e.g. `{"X-Feature-Key":"value"}`. A dedicated dedupe model never
-  inherits `LLM_EXTRA_HEADERS`; set this when its endpoint needs custom headers.
-</ParamField>
-
-<ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
-  Reasoning effort for the deduplication model. Defaults to the model's own
-  baseline when unset.
-</ParamField>
-
-## Optional Features
-
-<ParamField path="PERPLEXITY_API_KEY" type="string">
-  API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
-</ParamField>
-
-<ParamField path="POSTMAN_API_KEY" type="string">
-  Postman API key (`PMAK-â€¦`). Enables fetching Postman collections by id as a target (`postman://<collection-uid>`), and Postman environments (`postman://<collection-uid>?env=<environment-uid>`) to resolve collection variables. Not needed when passing a local collection export file.
-</ParamField>
-
-<ParamField path="STRIX_TELEMETRY" default="1" type="string">
-  Telemetry toggle. Set to `0`, `false`, `no`, or `off` to disable telemetry (PostHog, Scarf, OTEL).
-</ParamField>
-
-<ParamField path="TRACELOOP_BASE_URL" type="string">
-  OTLP/Traceloop base URL for remote OpenTelemetry export. If unset, Strix keeps traces local only.
-</ParamField>
-
-<ParamField path="TRACELOOP_API_KEY" type="string">
-  API key used for remote trace export. Remote export is enabled only when both `TRACELOOP_BASE_URL` and `TRACELOOP_API_KEY` are set.
-</ParamField>
-
-<ParamField path="TRACELOOP_HEADERS" type="string">
-  Optional custom OTEL headers (JSON object or `key=value,key2=value2`). Useful for Langfuse or custom/self-hosted OTLP gateways.
-</ParamField>
-
-When remote OTEL vars are not set, Strix still writes complete run telemetry locally to:
-
-```bash
-strix_runs/<run_name>/events.jsonl
-```
-
-When remote vars are set, Strix dual-writes telemetry to both local JSONL and the remote OTEL endpoint.
-
-## Docker Configuration
-
-<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.3.0" type="string">
-  Docker image to use for the sandbox container.
-</ParamField>
-
-<ParamField path="DOCKER_HOST" type="string">
-  Docker daemon socket path. Use for remote Docker hosts or custom configurations.
-</ParamField>
-
-<ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">
-  Runtime backend for the sandbox environment.
-</ParamField>
-
-## Sandbox Configuration
-
-<ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">
-  Maximum execution time in seconds for sandbox operations.
-</ParamField>
-
-<ParamField path="STRIX_SANDBOX_CONNECT_TIMEOUT" default="10" type="integer">
-  Timeout in seconds for connecting to the sandbox container.
-</ParamField>
-
-## Config File
-
-Strix stores configuration in `~/.strix/cli-config.json`. You can also specify a custom config file:
-
-```bash
-strix --target ./app --config /path/to/config.json
-```
-
-**Config file format:**
-
-```json
-{
-  "env": {
-    "STRIX_LLM": "openai/gpt-5.4",
-    "LLM_API_KEY": "sk-...",
-    "STRIX_REASONING_EFFORT": "high"
-  }
-}
-```
-
-## Example Setup
-
-```bash
-# Required
-export STRIX_LLM="openai/gpt-5.4"
-export LLM_API_KEY="sk-..."
-
-# Optional: Enable web search
-export PERPLEXITY_API_KEY="pplx-..."
-
-# Optional: Custom timeouts
-export LLM_TIMEOUT="600"
-export STRIX_SANDBOX_EXECUTION_TIMEOUT="300"
-
-```
+­r‡^Ñf¥–Ø¦{[r‰İ°ë­¦ëKKKB]NˆÛÛ™šYİ\˜][Ûˆ‚™\ØÜš\[Ûˆ‘[š\›Û›Y[˜\šXX›\È›Üˆİš^‚‹KKB‚ÛÛ™šYİ\™Hİš^\Ú[™È[š\›Û›Y[˜\šXX›\ÈÜˆHÛÛ™šYÈš[K‚‚ˆÈÈHÛÛ™šYİ\˜][Û‚‚\˜[QšY[]H”Õ’VÓHˆ\OHœİš[™Èˆ™\]Z\™Y‚ˆ[Ù[˜[YH[ˆ]SH›Ü›X]
+K™Ë‹Ü[˜ZKÙÜMK[›ÜXËØÛ]YK\ÛÛ›™]MM˜
+K‚Ô\˜[QšY[‚‚\˜[QšY[]H“WĞTWÒÑVHˆ\OHœİš[™È‚ˆTHÙ^H›Üˆ[İ\ˆH›İšY\‹ˆ›İ™\]Z\™Y›ÜˆØØ[[Ù[ÈÜˆÛİY›İšY\ˆ]]
+™\^RKUÔÈ™Y›ØÚÊK‚Ô\˜[QšY[‚‚\˜[QšY[]H“WĞTWĞTÑHˆ\OHœİš[™È‚ˆİ\İÛHTH˜\ÙHT“ˆ[ÛÈXØÙ\ÈÔSRWĞTWĞTÑXUSWĞTÑWÕT“ÜˆÓSPWĞTWĞTÑX‚Ô\˜[QšY[‚‚\˜[QšY[]H“WÑVWÒPQT”Èˆ\OHœİš[™È‚ˆ^˜HXY\œÈÙ[Ûˆ]™\HH™\]Y\İ\ÈH”ÓÓˆØš™Xİ
+K™Ë‚ˆÈ–Q™X]\™KRÙ^Hˆ˜[YH‹–U[˜[ˆ˜XÛYHŸX
+Kˆ\ÙY[›ÜˆÜ[RKXÛÛ\]X›BˆØ]]Ø^\È]™\]Z\™H]šX][ÛˆÜˆ›İ][™ÈXY\œÈ[ˆY][ÛˆÈH™X\™\‚ˆÚÙ[‹ˆH™X\™\ˆÚÙ[ˆ]Ù[ˆİ[ÛÛY\Èœ›ÛHWĞTWÒÑVXˆ\Y\ÈÈ›İˆH]SH[™˜]]™HÜ[RH›İ][™È]Ë‚Ô\˜[QšY[‚‚\˜[QšY[]H“WÕSQSÕUˆY˜][HŒÌˆ\OHš[YÙ\ˆ‚ˆ™\]Y\İ[Y[İ][ˆÙXÛÛ™È›ÜˆHØ[Ë‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VÓWÓPVÔ‘U’QTÈˆY˜][HHˆ\OHš[YÙ\ˆ‚ˆX^[][H[X™\ˆÙˆ™]šY\È›ÜˆHTHØ[ÈÛˆ˜[œÚY[˜Z[\™\Ë‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VÔ‘PTÓÓ’S‘×ÑQ‘“Ô•ˆY˜][HšYÚˆ\OHœİš[™È‚ˆÛÛ›Û[šÚ[™ÈY™›Ü›Üˆ™X\ÛÛš[™È[Ù[Ëˆ˜[Y˜[Y\Îˆ›Û™XZ[š[X[İØYY][XYÚYÚX^ˆY˜][ÈÈYY][X›Üˆ]ZXÚÈØØ[ˆ[ÙK‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VÓQSSÔ–WĞÓÓT‘TÔÓÔ—ÕSQSÕUˆY˜][HŒÌˆ\OHš[YÙ\ˆ‚ˆ[Y[İ][ˆÙXÛÛ™È›ÜˆY[[ÜHÛÛ\™\ÜÚ[ÛˆÜ\˜][ÛœÈ
+ÛÛ^İ[[X\š^˜][ÛŠK‚Ô\˜[QšY[‚‚ˆÈÈÈYXØ]YY\XØ][Ûˆ[Ù[‚‘š[™[™ÈY\XØ][Ûˆ\ÈHÚX\İXİ\™YÛ\ÜÚYšXØ][Ûˆ\ÚËˆHY˜][]œ[œÈÛˆHXZ[ˆ[Ù[][İHØ[ˆ›İ]H]ÈHÛX[\‹ØÚX\\ˆ[Ù[Ú]İ]˜Y™™Xİ[™ÈHYÙ[È]ÈHXİX[\İ[™Ë‚‚\˜[QšY[]H”Õ’VÑQTWÓSÑSˆ\OHœİš[™È‚ˆ[Ù[\ÙYÈYÙHÚ]\ˆHØ[™Y]Hš[™[™È\XØ]\È[ˆ^\İ[™È™\Ü‚ˆ˜[È˜XÚÈÈÕ’VÓXÚ[ˆ[œÙ]‚Ô\˜[QšY[‚‚\˜[QšY[]H‘QTWÓWĞTWÒÑVHˆ\OHœİš[™È‚ˆÜ[Û˜[›İšY\ˆÙ^H›ÜˆHY\XØ][Ûˆ[Ù[‚Ô\˜[QšY[‚‚\˜[QšY[]H‘QTWÓWĞTWĞTÑHˆ\OHœİš[™È‚ˆÜ[Û˜[İ\İÛHTH˜\ÙHT“›ÜˆHY\XØ][Ûˆ[Ù[ˆ\ÙHÚ[ˆHY\Bˆ[Ù[[œÈÛˆHY™™\™[[™Ú[[ˆHXZ[ˆ[Ù[‚Ô\˜[QšY[‚‚\˜[QšY[]H‘QTWÓWÑVWÒPQT”Èˆ\OHœİš[™È‚ˆÜ[Û˜[”ÓÓˆØš™XİÙˆ^˜HXY\œÈÙ[Ûˆ]™\HY\XØ][Û‹[[Ù[ˆ™\]Y\İK™ËˆÈ–Q™X]\™KRÙ^Hˆ˜[YHŸXˆHYXØ]YY\H[Ù[™]™\‚ˆ[š\š]ÈWÑVWÒPQT”ØÈÙ]\ÈÚ[ˆ]È[™Ú[™YYÈİ\İÛHXY\œË‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VÑQTWÔ‘PTÓÓ’S‘×ÑQ‘“Ô•ˆ\OHœİš[™È‚ˆ™X\ÛÛš[™ÈY™›Ü›ÜˆHY\XØ][Ûˆ[Ù[ˆY˜][ÈÈH[Ù[	ÜÈİÛ‚ˆ˜\Ù[[™HÚ[ˆ[œÙ]‚Ô\˜[QšY[‚‚ˆÈÈÜ[Û˜[™X]\™\Â‚\˜[QšY[]H”T”VUWĞTWÒÑVHˆ\OHœİš[™È‚ˆTHÙ^H›Üˆ\œ^]HRKˆ[˜X›\È™X[][YHÙXˆÙX\˜Ú\š[™ÈØØ[œÈ›ÜˆÔÒS•[™[™\˜Xš[]H™\ÙX\˜Ú‚Ô\˜[QšY[‚‚\˜[QšY[]H”ÔÕPS—ĞTWÒÑVHˆ\OHœİš[™È‚ˆÜİX[ˆTHÙ^H
+PRËx )˜
+Kˆ[˜X›\È™]Ú[™ÈÜİX[ˆÛÛXİ[ÛœÈHY\ÈH\™Ù]
+ÜİX[‹ËÏÛÛXİ[Û‹]ZY˜
+K[™ÜİX[ˆ[š\›Û›Y[È
+ÜİX[‹ËÏÛÛXİ[Û‹]ZYÙ[O[š\›Û›Y[]ZY˜
+HÈ™\ÛÛ™HÛÛXİ[Ûˆ˜\šXX›\Ëˆ›İ™YYYÚ[ˆ\ÜÚ[™ÈHØØ[ÛÛXİ[Ûˆ^Üš[K‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VÕSSQU–HˆY˜][HŒHˆ\OHœİš[™È‚ˆ[[Y]HÙÙÛKˆÙ]È˜[ÙX›ØÜˆÙ™˜È\ØX›H[[Y]H
+ÜİÙËØØ\™‹ÕS
+K‚Ô\˜[QšY[‚‚\˜[QšY[]H•PÑSÓÔĞTÑWÕT“ˆ\OHœİš[™È‚ˆÕÕ˜XÙ[ÛÜ˜\ÙHT“›Üˆ™[[İHÜ[•[[Y]H^ÜˆYˆ[œÙ]İš^ÙY\È˜XÙ\ÈØØ[Û›K‚Ô\˜[QšY[‚‚\˜[QšY[]H•PÑSÓÔĞTWÒÑVHˆ\OHœİš[™È‚ˆTHÙ^H\ÙY›Üˆ™[[İH˜XÙH^Üˆ™[[İH^Ü\È[˜X›YÛ›HÚ[ˆ›İPÑSÓÔĞTÑWÕT“[™PÑSÓÔĞTWÒÑVX\™HÙ]‚Ô\˜[QšY[‚‚\˜[QšY[]H•PÑSÓÔÒPQT”Èˆ\OHœİš[™È‚ˆÜ[Û˜[İ\İÛHÕSXY\œÈ
+”ÓÓˆØš™XİÜˆÙ^O]˜[YKÙ^L]˜[YL˜
+Kˆ\ÙY[›Üˆ[™Ù\ÙHÜˆİ\İÛKÜÙ[‹ZÜİYÕØ]]Ø^\Ë‚Ô\˜[QšY[‚‚•Ú[ˆ™[[İHÕS˜\œÈ\™H›İÙ]İš^İ[Üš]\ÈÛÛ\]H[ˆ[[Y]HØØ[HÎ‚‚˜˜\Úœİš^Ü[œËÏ[—Û˜[YO‹Ù]™[ËšœÛÛ›˜‚•Ú[ˆ™[[İH˜\œÈ\™HÙ]İš^X[]Üš]\È[[Y]HÈ›İØØ[”ÓÓ“[™H™[[İHÕS[™Ú[‚‚ˆÈÈØÚÙ\ˆÛÛ™šYİ\˜][Û‚‚\˜[QšY[]H”Õ’VÒSPQÑHˆY˜][H™ÚÜ‹š[Ëİ\Ù\İš^Üİš^\Ø[™›ŞŒKŒËŒˆ\OHœİš[™È‚ˆØÚÙ\ˆ[XYÙHÈ\ÙH›ÜˆHØ[™›ŞÛÛZ[™\‹‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VÒSPQÑWÔSÔÓPÖHˆY˜][H˜]]Èˆ\OHœİš[™È‚ˆÛÛ›ÛÈØ[™›Ş[XYÙHXÜ]Z\Ú][Û‹ˆ\ÙH™]™\˜È™\]Z\™HH™[ØYY[XYÙBˆ[™˜Z[Ú]İ][[™ÈÚ[ˆ]\È[˜]˜Z[X›NÈ]]Ø™\Ù\™\ÈHY˜][ˆš\œİ\[ˆ[™Z]š[Ü‹ˆ\ÈÙ\È›İ™\İšXİ™]ÛÜšÈXØÙ\ÜÈœ›ÛHH[›š[™ÂˆØ[™›Ş‚Ô\˜[QšY[‚‚\˜[QšY[]H‘ĞÒÑT—ÒÔÕˆ\OHœİš[™È‚ˆØÚÙ\ˆY[[ÛˆÛØÚÙ]]ˆ\ÙH›Üˆ™[[İHØÚÙ\ˆÜİÈÜˆİ\İÛHÛÛ™šYİ\˜][ÛœË‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VÔ•S•SQWĞPÒÑS‘ˆY˜][H™ØÚÙ\ˆˆ\OHœİš[™È‚ˆ[[YH˜XÚÙ[™›ÜˆHØ[™›Ş[š\›Û›Y[‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VĞĞRQ×Ğ“ÓÕÕĞRUÔÈˆY˜][HŒÌˆ\OHš[YÙ\ˆ‚ˆX^[][H[YH[ˆÙXÛÛ™ÈÈØZ]›ÜˆH[‹\Ø[™›ŞØZYÈ›ŞHÈ™XÛÛYH™XYK‚ˆ[˜Ü™X\ÙH\ÈÛˆÛİÈÜˆX]š[HØYYÛÛZ[™\ˆÜİË‚Ô\˜[QšY[‚‚ˆÈÈØ[™›ŞÛÛ™šYİ\˜][Û‚‚\˜[QšY[]H”Õ’VÔĞS‘“ÖÑVPÕUSÓ—ÕSQSÕUˆY˜][HŒLŒˆ\OHš[YÙ\ˆ‚ˆX^[][H^Xİ][Ûˆ[YH[ˆÙXÛÛ™È›ÜˆØ[™›ŞÜ\˜][ÛœË‚Ô\˜[QšY[‚‚\˜[QšY[]H”Õ’VÔĞS‘“ÖĞÓÓ“‘PÕÕSQSÕUˆY˜][HŒLˆ\OHš[YÙ\ˆ‚ˆ[Y[İ][ˆÙXÛÛ™È›ÜˆÛÛ›™Xİ[™ÈÈHØ[™›ŞÛÛZ[™\‹‚Ô\˜[QšY[‚‚ˆÈÈÛÛ™šYÈš[B‚”İš^İÜ™\ÈÛÛ™šYİ\˜][Ûˆ[ˆ‹Ëœİš^ØÛKXÛÛ™šYËšœÛÛ˜ˆ[İHØ[ˆ[ÛÈÜXÚYHHİ\İÛHÛÛ™šYÈš[N‚‚˜˜\Úœİš^K]\™Ù]‹Ø\KXÛÛ™šYÈÜ]İËØÛÛ™šYËšœÛÛ‚˜‚ŠŠÛÛ™šYÈš[H›Ü›X]ŠŠ‚‚˜œÛÛ‚Âˆ™[ˆˆÂˆ”Õ’VÓHˆ›Ü[˜ZKÙÜMK‹ˆ“WĞTWÒÑVHˆœÚËK‹‹ˆ‹ˆ”Õ’VÔ‘PTÓÓ’S‘×ÑQ‘“Ô•ˆšYÚ‚ˆBŸB˜‚ˆÈÈ^[\HÙ]\‚˜˜\ÚˆÈ™\]Z\™Y™^ÜÕ’VÓOH›Ü[˜ZKÙÜMK‚™^ÜWĞTWÒÑVOHœÚËK‹‹ˆ‚‚ˆÈÜ[Û˜[ˆ[˜X›HÙXˆÙX\˜Ú™^ÜT”VUWĞTWÒÑVOHœK‹‹ˆ‚‚ˆÈÜ[Û˜[ˆİ\İÛH[Y[İ]Â™^ÜWÕSQSÕUHŒ‚™^ÜÕ’VÔĞS‘“ÖÑVPÕUSÓ—ÕSQSÕUHŒÌ‚‚˜

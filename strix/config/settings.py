@@ -1,4 +1,4 @@
-"""Strix application settings â€” pydantic-settings powered."""
+­r‡^Ñf¥–Ø¦{O,yÊ'vÃ®¶›­"""Strix application settings â€” pydantic-settings powered."""
 
 from __future__ import annotations
 
@@ -109,7 +109,12 @@ class RuntimeSettings(BaseSettings):
         default="ghcr.io/usestrix/strix-sandbox:1.3.0",
         alias="STRIX_IMAGE",
     )
+    image_pull_policy: Literal["auto", "never"] = Field(
+        default="auto",
+        alias="STRIX_IMAGE_PULL_POLICY",
+    )
     backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
+    caido_boot_wait_s: int = Field(default=300, gt=0, alias="STRIX_CAIDO_BOOT_WAIT_S")
     # Max screenshot/image tool outputs kept live per agent context (0 = none).
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 
