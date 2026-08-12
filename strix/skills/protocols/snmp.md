@@ -137,23 +137,33 @@ If a write community string (`private`, `write`, etc.) is found:
 Write validation must leave the device exactly as it was found. Always capture the original value first and restore it immediately after confirming the write.
 
 ```bash
-# 1. Capture the original sysContact — required before any SET
-ORIGINAL=$(snmpget -v2c -c <read_community> -Ovq <target> 1.3.6.1.2.1.1.4.0)
+# 1. Capture the original sysContact as raw bytes. -Oqv strips the type prefix,
+#    -Ob and the hex form avoid locale/display rewriting of the value.
+ORIGINAL=$(snmpget -v2c -c <read_community> -Oqv <target> 1.3.6.1.2.1.1.4.0)
+ORIGINAL_HEX=$(snmpget -v2c -c <read_community> -Oqvx <target> 1.3.6.1.2.1.1.4.0)
 
-# 2. Benign validation: change sysContact to prove write access
+# 2. Confirm the captured value round-trips before touching anything.
+#    If ORIGINAL is empty, is rendered as a hex dump, or is wrapped in display
+#    quotes, it is NOT safe to replay as a string — use the hex form in step 4.
+
+# 3. Benign validation: change sysContact to prove write access
 snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s "strix_write_test"
 
-# 3. Confirm the change took effect (this is the evidence to report)
+# 4. Confirm the change took effect (this is the evidence to report)
 snmpget -v2c -c <read_community> <target> 1.3.6.1.2.1.1.4.0
 
-# 4. Restore the original value — mandatory, even if step 3 failed
-snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s "$ORIGINAL"
+# 5. Restore — mandatory, even if step 4 failed. Prefer the hex form, which is
+#    byte-exact and immune to display formatting:
+snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 x "$ORIGINAL_HEX"
 
-# 5. Verify restoration; if it did not restore, surface this to the operator immediately
-snmpget -v2c -c <read_community> <target> 1.3.6.1.2.1.1.4.0
+# 6. Verify byte-for-byte restoration against the captured original
+RESTORED_HEX=$(snmpget -v2c -c <read_community> -Oqvx <target> 1.3.6.1.2.1.1.4.0)
+[ "$RESTORED_HEX" = "$ORIGINAL_HEX" ] || echo "RESTORE FAILED — surface to operator"
 ```
 
-If the original `sysContact` was empty, restore it to an empty string (`s ""`). If step 1 fails, do not proceed with the SET — you cannot restore what you did not capture. Report the write finding with the evidence from step 3 and note that the value was restored.
+Restore with the hex form (`x "$ORIGINAL_HEX"`), not the display string. Net-SNMP renders values for humans: a value containing non-printable bytes comes back as a hex dump, and some builds wrap printable strings in quotes. Replaying that display output with `s` writes the formatting itself into the device as data — the exact case where a "benign" validation leaves the target modified.
+
+If the original `sysContact` was empty, restore it to an empty string (`s ""`). If step 1 fails, do not proceed with the SET — you cannot restore what you did not capture. If step 6 reports a mismatch, stop and surface it immediately; do not continue testing with the device left in a modified state. Report the write finding with the evidence from step 4 and state that the value was restored and verified.
 
 **Destructive Operations — document, never execute**
 ```bash
