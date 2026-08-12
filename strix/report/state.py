@@ -192,12 +192,13 @@ class ReportState:
             if isinstance(scan_results, dict):
                 self.scan_results = scan_results
                 self.final_scan_result = self._format_final_scan_result(scan_results)
-            self._hydrate_llm_usage(data.get("llm_usage"))
             evidence = data.get("evidence_integrity")
             if isinstance(evidence, dict):
-                prior_count = int(evidence.get("crawled_endpoints_count", 0))
-                for i in range(1, prior_count + 1):
-                    self._crawled_endpoint_ids.add(f"prior-ep-{i}")
+                saved_ids = evidence.get("crawled_endpoint_ids")
+                if isinstance(saved_ids, list):
+                    for item in saved_ids:
+                        if isinstance(item, str) and item.strip():
+                            self._crawled_endpoint_ids.add(item.strip())
             logger.info("report state hydrated run.json from %s", run_dir)
 
         json_path = run_dir / "vulnerabilities.json"
@@ -418,11 +419,6 @@ class ReportState:
         if not isinstance(evidence, dict):
             return
 
-        prior_count = int(evidence.get("crawled_endpoints_count", 0))
-        if prior_count > len(self._crawled_endpoint_ids):
-            for i in range(len(self._crawled_endpoint_ids) + 1, prior_count + 1):
-                self._crawled_endpoint_ids.add(f"prior-ep-{i}")
-
         if isinstance(endpoint_identifier, str) and endpoint_identifier.strip():
             self._crawled_endpoint_ids.add(endpoint_identifier.strip())
         elif isinstance(endpoint_identifier, list):
@@ -434,6 +430,7 @@ class ReportState:
                 self._crawled_endpoint_ids.add(f"anon-{len(self._crawled_endpoint_ids) + 1}")
 
         evidence["crawled_endpoints_count"] = len(self._crawled_endpoint_ids)
+        evidence["crawled_endpoint_ids"] = sorted(self._crawled_endpoint_ids)
 
     def cleanup(self, status: str = "stopped") -> None:
         self.save_run_data(status=status)
