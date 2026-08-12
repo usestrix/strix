@@ -133,11 +133,27 @@ If a write community string (`private`, `write`, etc.) is found:
 > **Operator approval required for all write operations below.** Autonomous agents must NOT execute destructive SNMP SET commands without explicit operator authorization. Use only the benign `sysContact` change (shown in the Validation section) for autonomous write-access confirmation.
 
 **Safe Write Confirmation (autonomous)**
+
+Write validation must leave the device exactly as it was found. Always capture the original value first and restore it immediately after confirming the write.
+
 ```bash
-# Benign validation: change sysContact to prove write access
+# 1. Capture the original sysContact — required before any SET
+ORIGINAL=$(snmpget -v2c -c <read_community> -Ovq <target> 1.3.6.1.2.1.1.4.0)
+
+# 2. Benign validation: change sysContact to prove write access
 snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s "strix_write_test"
-snmpget -v2c -c <read_community> <target> 1.3.6.1.2.1.1.4.0  # Confirm change
+
+# 3. Confirm the change took effect (this is the evidence to report)
+snmpget -v2c -c <read_community> <target> 1.3.6.1.2.1.1.4.0
+
+# 4. Restore the original value — mandatory, even if step 3 failed
+snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s "$ORIGINAL"
+
+# 5. Verify restoration; if it did not restore, surface this to the operator immediately
+snmpget -v2c -c <read_community> <target> 1.3.6.1.2.1.1.4.0
 ```
+
+If the original `sysContact` was empty, restore it to an empty string (`s ""`). If step 1 fails, do not proceed with the SET — you cannot restore what you did not capture. Report the write finding with the evidence from step 3 and note that the value was restored.
 
 **Destructive Operations (operator approval required)**
 ```bash
@@ -200,7 +216,7 @@ This retrieves the full router configuration including enable passwords, VPN key
 
 1. **Community string confirmed** — Show successful snmpwalk output with the discovered community string; include sysDescr and sysName as proof
 2. **Information disclosure** — Demonstrate specific sensitive data retrieved: user accounts, network topology, running processes, or credentials
-3. **Write access** — Show successful snmpset changing a benign value (sysContact) and snmpget confirming the change. **Do not modify operational parameters (interfaces, routes) without operator approval**
+3. **Write access** — Show successful snmpset changing a benign value (sysContact) and snmpget confirming the change, then restore the original value and confirm the restoration. **Do not modify operational parameters (interfaces, routes) without operator approval**
 4. **v3 weakness** — Show noAuthNoPriv access or successful auth with weak/default credentials
 5. Provide exact commands used and sanitized output
 
@@ -231,6 +247,9 @@ apt-get install -y snmp
 
 # onesixtyone — fast community string scanner
 apt-get install -y onesixtyone
+
+# hydra — required for the `hydra -P communities.txt <target> snmp` example above
+apt-get install -y hydra
 
 # Community string wordlists
 # SecLists: /usr/share/seclists/Discovery/SNMP/common-snmp-community-strings.txt
