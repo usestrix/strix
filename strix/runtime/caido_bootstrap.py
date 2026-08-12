@@ -13,7 +13,6 @@ import asyncio
 import contextlib
 import json
 import logging
-import math
 import time
 from typing import TYPE_CHECKING
 
@@ -53,7 +52,7 @@ async def _login_as_guest(
     while attempts == 0 or time.monotonic() < deadline:
         attempts += 1
         remaining = deadline - time.monotonic()
-        exec_timeout = max(1, min(15, math.ceil(remaining)))
+        exec_timeout = min(15, remaining)
         result = await session.exec(
             "curl",
             "-fsS",
