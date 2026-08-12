@@ -210,11 +210,17 @@ async def list_requests(
             )
 
         if entries:
-            from strix.report.state import get_global_report_state
+            req_ids = [
+                f"req-{e['request']['id']}"
+                for e in entries
+                if isinstance(e, dict) and isinstance(e.get("request"), dict) and e["request"].get("id")
+            ]
+            if req_ids:
+                from strix.report.state import get_global_report_state
 
-            report_st = get_global_report_state()
-            if report_st:
-                report_st.record_crawled_endpoint(len(entries))
+                report_st = get_global_report_state()
+                if report_st:
+                    report_st.record_crawled_endpoint(req_ids)
 
         return json.dumps(
             {
@@ -304,7 +310,7 @@ async def view_request(
 
         report_st = get_global_report_state()
         if report_st:
-            report_st.record_crawled_endpoint(1)
+            report_st.record_crawled_endpoint(f"req-{request_id}")
 
         if search_pattern:
             return json.dumps(
@@ -426,7 +432,7 @@ async def repeat_request(
 
         report_st = get_global_report_state()
         if report_st:
-            report_st.record_crawled_endpoint(1)
+            report_st.record_crawled_endpoint(f"req-{request_id}")
         return _format_replay_tool_result(replay)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
@@ -496,7 +502,7 @@ async def list_sitemap(
         if isinstance(payload, dict):
             entries = payload.get("entries") or []
             if isinstance(entries, list) and entries:
-                node_ids = [str(e["id"]) for e in entries if isinstance(e, dict) and e.get("id")]
+                node_ids = [f"sitemap-{e['id']}" for e in entries if isinstance(e, dict) and e.get("id")]
                 if node_ids:
                     from strix.report.state import get_global_report_state
 
@@ -535,7 +541,7 @@ async def view_sitemap_entry(
 
         report_st = get_global_report_state()
         if report_st:
-            report_st.record_crawled_endpoint(1)
+            report_st.record_crawled_endpoint(f"sitemap-{entry_id}")
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("view_sitemap_entry", exc)
