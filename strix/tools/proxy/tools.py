@@ -496,11 +496,13 @@ async def list_sitemap(
         if isinstance(payload, dict):
             entries = payload.get("entries") or []
             if isinstance(entries, list) and entries:
-                from strix.report.state import get_global_report_state
+                node_ids = [str(e["id"]) for e in entries if isinstance(e, dict) and e.get("id")]
+                if node_ids:
+                    from strix.report.state import get_global_report_state
 
-                report_st = get_global_report_state()
-                if report_st:
-                    report_st.record_crawled_endpoint(len(entries))
+                    report_st = get_global_report_state()
+                    if report_st:
+                        report_st.record_crawled_endpoint(node_ids)
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("list_sitemap", exc)

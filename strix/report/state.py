@@ -141,6 +141,7 @@ class ReportState:
         }
         self._run_dir: Path | None = None
         self._saved_vuln_ids: set[str] = set()
+        self._crawled_endpoint_ids: set[str] = set()
 
         self.caido_url: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
@@ -407,11 +408,22 @@ class ReportState:
             evidence["budget_exhausted"] = True
             evidence["scope_completion_verified"] = False
 
-    def record_crawled_endpoint(self, count: int = 1) -> None:
+    def record_crawled_endpoint(self, endpoint_identifier: str | list[str] | int = 1) -> None:
         evidence = self.run_record.setdefault("evidence_integrity", {})
-        if isinstance(evidence, dict):
-            current = int(evidence.get("crawled_endpoints_count", 0))
-            evidence["crawled_endpoints_count"] = current + count
+        if not isinstance(evidence, dict):
+            return
+
+        if isinstance(endpoint_identifier, str) and endpoint_identifier.strip():
+            self._crawled_endpoint_ids.add(endpoint_identifier.strip())
+        elif isinstance(endpoint_identifier, list):
+            for item in endpoint_identifier:
+                if isinstance(item, str) and item.strip():
+                    self._crawled_endpoint_ids.add(item.strip())
+        elif isinstance(endpoint_identifier, int) and endpoint_identifier > 0:
+            for i in range(endpoint_identifier):
+                self._crawled_endpoint_ids.add(f"anon-{len(self._crawled_endpoint_ids) + 1}")
+
+        evidence["crawled_endpoints_count"] = len(self._crawled_endpoint_ids)
 
     def cleanup(self, status: str = "stopped") -> None:
         self.save_run_data(status=status)
