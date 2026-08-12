@@ -1,31 +1,107 @@
-­r‡^Ñf¥–Ø¦{[r‰Ý°ë­¦ëHˆˆ”Ø[™›Þ˜XÚÙ[™™YÚ\ÝžH8 %Ù[XÝYšXHÕ’VÔ•S•SQWÐPÒÑS‘
-Y˜][ˆØÚÙ\ŠKˆˆˆ‚‚™œ›ÛH×Ù]\™W×È[\Ü[››Ý][ÛœÂ‚š[\ÜÙÙÚ[™Â™œ›ÛHÛÛXÝ[ÛœË˜X˜È[\Ü]ØZ]X›KØ[X›B™œ›ÛH\[™È[\ÜTWÐÒPÒÒS‘Ë[žB‚‚šYˆTWÐÒPÒÒS‘Î‚ˆœ›ÛHYÙ[ËœØ[™›Þ›X[šY™\Ý[\ÜX[šY™\Ý‚‚›ÙÙÙ\ˆHÙÙÚ[™Ë™Ù]ÙÙÙ\Š×Û˜[YW×ÊB‚‚”Ø[™›Þ˜XÚÙ[™HØ[X›VË‹‹‹]ØZ]X›VÝ\VÐ[žK[žWWWB‚‚˜\Þ[˜ÈYˆÙØÚÙ\—Ø˜XÚÙ[™
-ˆ
-‹ˆ[XYÙNˆÝ‹ˆX[šY™\ÝˆX[šY™\Ýˆ^ÜÙYÜÜÎˆ\VÚ[‹‹—Kˆš[™Û[Ý[Îˆ\ÝÙXÝÜÝ‹[žWWH›Û™HH›Û™KŠHOˆ\VÐ[žK[žWN‚ˆˆˆœš[™È\HÙ\ÜÚ[Ûˆ˜XÚÙYžHHØØ[ØÚÙ\ˆY[[Û‹‚‚ˆ\Ù\È˜Û\ÜÎ˜Ýš^ØÚÙ\”Ø[™›ÞÛY[È[š™XÝ‘UÐQRSˆÂˆ‘UÔUÈØ\È
-ÈÜÝ™ØÚÙ\‹š[\›˜[ÜÝYØ]]Ø^Kˆ[\ÜÂˆØÚÙ\˜^š[HÛÈ\Þ[Y[È]\™Ù]H›Û‹QØÚÙ\‚ˆ˜XÚÙ[™Û‰Ý™YYHØÚÙ\‹\HXœ˜\žH[œÝ[Y‚‚ˆÙ\ÜÚ[Û‹œÝ\
+"""Sandbox backend registry â€” selected via STRIX_RUNTIME_BACKEND (default: docker)."""
 
-X\ÈÚ]X]\šX[^™\ÈHX[šY™\Ý[ÈH[›š[™ÂˆÛÛZ[™\ˆ8 %HÑÉÜÈÛY[˜Ü™X]J
-XÛ›HZ[ÈH[›™\ˆÙ\ÜÚ[Û‚ˆØš™XÝÚ]Ý]\Z[™È]ˆ\Þ[˜ÈÚ]Ù\ÜÚ[ÛŽ˜ÛÝ[Ø[]ÛË]ˆÝš^X[˜YÙ\ÈÙ\ÜÚ[ÛˆY™][YH^XÚ]HšXHÛY[™[]J
-XÛÈÙBˆšYÙÙ\ˆÝ\
+from __future__ import annotations
 
-XÝ\œÙ[™\Ë‚ˆˆˆ‚ˆ[\ÜØÚÙ\‚ˆœ›ÛHYÙ[ËœØ[™›ÞœØ[™›Þ\Ë™ØÚÙ\ˆ[\ÜØÚÙ\”Ø[™›ÞÛY[Ü[ÛœÂ‚ˆœ›ÛHÝš^˜ÛÛ™šYË›ØY\ˆ[\ÜØYÜÙ][™ÜÂˆœ›ÛHÝš^œ[[YK™ØÚÙ\—ØÛY[[\ÜÝš^ØÚÙ\”Ø[™›ÞÛY[‚ˆÛY[HÝš^ØÚÙ\”Ø[™›ÞÛY[
-ØÚÙ\‹™œ›ÛWÙ[Š
-JBˆÛY[œÝš^Øš[™Û[Ý[ÈHš[™Û[Ý[ÈÜˆ×BˆÛY[š[XYÙWÜ[ÜÛXÞHHØYÜÙ][™ÜÊ
-Kœ[[YKš[XYÙWÜ[ÜÛXÞBˆÜ[ÛœÈHØÚÙ\”Ø[™›ÞÛY[Ü[ÛœÊ[XYÙOZ[XYÙK^ÜÙYÜÜÏY^ÜÙYÜÜÊBˆÙ\ÜÚ[ÛˆH]ØZ]ÛY[˜Ü™X]JÜ[ÛœÏ[Ü[ÛœËX[šY™\Ý[X[šY™\Ý
-Bˆ]ØZ]Ù\ÜÚ[Û‹œÝ\
+import logging
+from collections.abc import Awaitable, Callable
+from typing import TYPE_CHECKING, Any
 
-Bˆ™]\›ˆÛY[Ù\ÜÚ[Û‚‚‚—ÐPÒÑS‘ÎˆXÝÜÝ‹Ø[™›Þ˜XÚÙ[™HHÂˆ™ØÚÙ\ˆŽˆÙØÚÙ\—Ø˜XÚÙ[™ŸB‚—Ð’S‘ÓSÕS•ÐPÒÑS‘ÎˆÙ]ÜÝ—HHÈ™ØÚÙ\ˆŸB‚‚™YˆÙ]Ø˜XÚÙ[™
-˜[YNˆÝŠHOˆØ[™›Þ˜XÚÙ[™‚ˆˆˆ”™]\›ˆH˜XÚÙ[™˜XÝÜžH›Üˆ˜[YXÜˆ˜Z\ÙK‚‚ˆ\™ÜÎ‚ˆ˜[YNˆ˜XÚÙ[™Y[YšY\ˆ
-K™Ëˆ™ØÚÙ\ˆ˜
-KˆX]Ú\È^XÝÂˆ›È˜[˜XÚËˆ[šÛ›ÝÛˆ˜[Y\È˜Z\ÙHÛÈÛÛ™šYÈ\ÜÈÝ\™˜XÙBˆ[[YYX][H[œÝXYÙˆÚ[[HXÚÚ[™ÈHY˜][‚ˆˆˆ‚ˆ˜XÚÙ[™HÐPÒÑS‘Ë™Ù]
-˜[YJBˆYˆ˜XÚÙ[™\È›Û™N‚ˆÝ\ÜYH‹‹š›Ú[ŠÛÜY
-ÐPÒÑS‘ÊJBˆ˜Z\ÙH˜[YQ\œ›ÜŠˆˆ•[šÛ›ÝÛˆÕ’VÔ•S•SQWÐPÒÑS‘ˆÛ˜[YH\ŸH
-Ý\ÜYˆÜÝ\ÜYJH‹ˆ
-BˆÙÙÙ\‹™XYÊ”Ù[XÝYØ[™›Þ˜XÚÙ[™ˆ	\È‹˜[YJBˆ™]\›ˆ˜XÚÙ[™‚‚™Yˆ™YÚ\Ý\—Ø˜XÚÙ[™
-ˆ˜[YNˆÝ‹ˆ˜XÚÙ[™ˆØ[™›Þ˜XÚÙ[™ˆ
-‹ˆÝ\Ü×Øš[™Û[Ý[Îˆ›ÛÛH˜[ÙKŠHOˆ›Û™N‚ˆˆˆ”™YÚ\Ý\ˆHÝ\ÝÛH˜XÚÙ[™[™\ˆ˜[YX‚‚ˆ[[™Y›ÜˆÝÛœÝ™X[H\Ù\œÈÚÈÚ\Z\ˆÝÛˆ[[YH8 %™YÚ\Ý\‚ˆ™Y›Ü™H[žHÙ\ÜÚ[Û—ÛX[˜YÙ\‹˜Ü™X]WÛÜ—Ü™]\ÙXØ[ˆ™K\™YÚ\Ý\š[™Âˆ[ˆ^\Ý[™È˜[YHÝ™\Üš]\ÈHš[Üˆ[žKˆÝ\Ü×Øš[™Û[Ý[ØˆY˜][ÈÈ˜[ÙNˆH™[[ÝH[[YHØ[››ÝÙYHHØ[\‰ÜÈš[\Þ\Ý[KÛÂˆ]\È[™YØØ[ÛÝ\˜Ù\È\ÈX[šY™\Ý[šY\ÈÈ\ØY[œÝXY‚ˆˆˆ‚ˆÐPÒÑS‘ÖÛ˜[YWHH˜XÚÙ[™ˆYˆÝ\Ü×Øš[™Û[Ý[Î‚ˆÐ’S‘ÓSÕS•ÐPÒÑS‘Ë˜Y
-˜[YJBˆ[ÙN‚ˆÐ’S‘ÓSÕS•ÐPÒÑS‘Ë™\ØØ\™
-˜[YJBˆÙÙÙ\‹š[™›Ê”™YÚ\Ý\™YØ[™›Þ˜XÚÙ[™ˆ	\È
-š[™[Ý[Îˆ	\ÊH‹˜[YKÝ\Ü×Øš[™Û[Ý[ÊB‚‚™Yˆ˜XÚÙ[™ÜÝ\Ü×Øš[™Û[Ý[Ê˜[YNˆÝŠHOˆ›ÛÛ‚ˆ™]\›ˆ˜[YH[ˆÐ’S‘ÓSÕS•ÐPÒÑS‘Â‚‚™YˆÝ\ÜYØ˜XÚÙ[™Ê
-HOˆ\ÝÜÝ—N‚ˆ™]\›ˆÛÜY
-ÐPÒÑS‘ÊB
+
+if TYPE_CHECKING:
+    from agents.sandbox.manifest import Manifest
+
+
+logger = logging.getLogger(__name__)
+
+
+SandboxBackend = Callable[..., Awaitable[tuple[Any, Any]]]
+
+
+async def _docker_backend(
+    *,
+    image: str,
+    manifest: Manifest,
+    exposed_ports: tuple[int, ...],
+    bind_mounts: list[dict[str, Any]] | None = None,
+) -> tuple[Any, Any]:
+    """Bring up a session backed by the local Docker daemon.
+
+    Uses :class:`StrixDockerSandboxClient` to inject NET_ADMIN /
+    NET_RAW caps + ``host.docker.internal`` host-gateway. Imports
+    ``docker`` lazily so deployments that target a non-Docker
+    backend don't need the docker-py library installed.
+
+    ``session.start()`` is what materializes the manifest into the running
+    container â€” the SDK's ``client.create()`` only builds the inner session
+    object without applying it. ``async with session:`` would call it too, but
+    Strix manages session lifetime explicitly via ``client.delete()`` so we
+    trigger ``start()`` ourselves.
+    """
+    import docker
+    from agents.sandbox.sandboxes.docker import DockerSandboxClientOptions
+
+    from strix.config.loader import load_settings
+    from strix.runtime.docker_client import StrixDockerSandboxClient
+
+    client = StrixDockerSandboxClient(docker.from_env())
+    client.strix_bind_mounts = bind_mounts or []
+    client.image_pull_policy = load_settings().runtime.image_pull_policy
+    options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
+    session = await client.create(options=options, manifest=manifest)
+    await session.start()
+    return client, session
+
+
+_BACKENDS: dict[str, SandboxBackend] = {
+    "docker": _docker_backend,
+}
+
+_BIND_MOUNT_BACKENDS: set[str] = {"docker"}
+
+
+def get_backend(name: str) -> SandboxBackend:
+    """Return the backend factory for ``name`` or raise.
+
+    Args:
+        name: Backend identifier (e.g. ``"docker"``). Match is exact;
+            no fallback. Unknown values raise so config typos surface
+            immediately instead of silently picking a default.
+    """
+    backend = _BACKENDS.get(name)
+    if backend is None:
+        supported = ", ".join(sorted(_BACKENDS))
+        raise ValueError(
+            f"Unknown STRIX_RUNTIME_BACKEND: {name!r} (supported: {supported})",
+        )
+    logger.debug("Selected sandbox backend: %s", name)
+    return backend
+
+
+def register_backend(
+    name: str,
+    backend: SandboxBackend,
+    *,
+    supports_bind_mounts: bool = False,
+) -> None:
+    """Register a custom backend under ``name``.
+
+    Intended for downstream users who ship their own runtime â€” register
+    before any ``session_manager.create_or_reuse`` call. Re-registering
+    an existing name overwrites the prior entry. ``supports_bind_mounts``
+    defaults to False: a remote runtime cannot see the caller's filesystem, so
+    it is handed local sources as manifest entries to upload instead.
+    """
+    _BACKENDS[name] = backend
+    if supports_bind_mounts:
+        _BIND_MOUNT_BACKENDS.add(name)
+    else:
+        _BIND_MOUNT_BACKENDS.discard(name)
+    logger.info("Registered sandbox backend: %s (bind mounts: %s)", name, supports_bind_mounts)
+
+
+def backend_supports_bind_mounts(name: str) -> bool:
+    return name in _BIND_MOUNT_BACKENDS
+
+
+def supported_backends() -> list[str]:
+    return sorted(_BACKENDS)

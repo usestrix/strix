@@ -1,66 +1,225 @@
-­r‡^Ñf¥–Ø¦{[r‰Ý°ë­¦ëHˆˆ•\ÝÈ›ÜˆÝš^˜ÛÛ™šYË›ØY\Žˆ”ÓÓˆÝ™\œšY\Ë[X\È™\ÛÛ][Û‹\œÚ\Ý[˜ÙKˆˆˆ‚‚™œ›ÛH×Ù]\™W×È[\Ü[››Ý][ÛœÂ‚š[\ÜœÛÛ‚™œ›ÛH\[™È[\ÜTWÐÒPÒÒS‘Â‚š[\Ü]\Ý™œ›ÛHY[XÈ[\Ü[X\ÐÚÚXÙ\ËšY[˜[Y][Û‘\œ›Ü‚™œ›ÛHY[XË™šY[È[\ÜšY[[™›Â‚™œ›ÛHÝš^˜ÛÛ™šYÈ[\ÜØY\‚™œ›ÛHÝš^˜ÛÛ™šYËœÙ][™ÜÈ[\ÜÛÛ^Ù][™ÜÂ‚‚šYˆTWÐÒPÒÒS‘Î‚ˆœ›ÛH]Xˆ[\Ü]‚‚—ÓWÑS•—ÒÑVTÈHÂˆ”Õ’VÓH‹ˆ“WÐTWÒÑVH‹ˆ“ÔSRWÐTWÒÑVH‹ˆ“WÐTWÐTÑH‹ˆ“ÔSRWÐTWÐTÑH‹ˆ“ÔSRWÐTÑWÕT“‹ˆ“USWÐTÑWÕT“‹ˆ“ÓSPWÐTWÐTÑH‹ˆ”Õ’VÔ‘PTÓÓ’S‘×ÑQ‘“Ô•‹ˆ”Õ’VÑ“ÔÑWÔ‘TURT‘QÕÓÓÐÒÒPÑH‹ˆ“WÕSQSÕU‹ˆ”T”VUWÐTWÒÑVH‹ˆÈ[[YTÙ][™ÜÂˆ”Õ’VÒSPQÑH‹ˆ”Õ’VÒSPQÑWÔSÔÓPÖH‹ˆ”Õ’VÔ•S•SQWÐPÒÑS‘‹ˆ”Õ’VÐÐRQ×Ð“ÓÕÕÐRUÔÈ‹ˆÈ[[Y]žTÙ][™ÜÂˆ”Õ’VÕSSQU–H‹—B‚‚]\Ý™š^\™J]]Ý\ÙOUYJB™YˆÜ™\Ù]ÛØY\—ÜÝ]J[ÛšÙ^\]Úˆ]\Ý“[ÛšÙ^T]Ú
-HOˆ›Û™N‚ˆˆˆ”™\Ù][Ù[HÛØ˜[È[™ÛX\ˆÛ›ÝÛˆ[ˆ˜\œÈ›Üˆ]\›Z[š\ÝXÈ[œËˆˆˆ‚ˆ›ÜˆÙ^H[ˆÓWÑS•—ÒÑVTÎ‚ˆ[ÛšÙ^\]Ú™[[ŠÙ^K˜Z\Ú[™ÏQ˜[ÙJBˆ[ÛšÙ^\]ÚœÙ]]ŠØY\‹—ØØXÚY‹›Û™JBˆ[ÛšÙ^\]ÚœÙ]]ŠØY\‹—ÛÝ™\œšYH‹›Û™JB‚‚ˆÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKHÂˆÈÜ™XYÚœÛÛ—ÛÝ™\œšY\ÂˆÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKHÂ‚‚™Yˆ\ÝÜ™XYÚœÛÛ—ÛÝ™\œšY\×ÛZ\ÜÚ[™×Ùš[J\Ü]ˆ]
-HOˆ›Û™N‚ˆ\ÜÙ\ØY\‹—Ü™XYÚœÛÛ—ÛÝ™\œšY\Ê\Ü]È››ÜKšœÛÛˆŠHOHßB‚‚™Yˆ\ÝÜ™XYÚœÛÛ—ÛÝ™\œšY\×ØÛÜœ\ÚœÛÛŠ\Ü]ˆ]
-HOˆ›Û™N‚ˆ]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆ]Üš]WÝ^
-žÛ›Ý˜[YœÛÛˆ‹[˜ÛÙ[™ÏH]‹NŠBˆ\ÜÙ\ØY\‹—Ü™XYÚœÛÛ—ÛÝ™\œšY\Ê]
-HOHßB‚‚™Yˆ\ÝÜ™XYÚœÛÛ—ÛÝ™\œšY\×Û›Û—ÙXÝÙ[Š\Ü]ˆ]
-HOˆ›Û™N‚ˆ]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆ]Üš]WÝ^
-œÛÛ‹™[\ÊÈ™[ˆŽˆÈ››Ý‹˜H‹™XÝ—_JK[˜ÛÙ[™ÏH]‹NŠBˆ\ÜÙ\ØY\‹—Ü™XYÚœÛÛ—ÛÝ™\œšY\Ê]
-HOHßB‚‚™Yˆ\ÝÜ™XYÚœÛÛ—ÛÝ™\œšY\×ÛX\×Ý×Û™\ÝYÜÙ][™ÜÊ\Ü]ˆ]
-HOˆ›Û™N‚ˆ]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆ]Üš]WÝ^
-ˆœÛÛ‹™[\ÊÈ™[ˆŽˆÈ”Õ’VÓHŽˆ›^K[[Ù[‹”T”VUWÐTWÒÑVHŽˆœÈŸ_JKˆ[˜ÛÙ[™ÏH]‹N‹ˆ
-Bˆ\ÜÙ\ØY\‹—Ü™XYÚœÛÛ—ÛÝ™\œšY\Ê]
-HOHÂˆ›HŽˆÈ›[Ù[Žˆ›^K[[Ù[ŸKˆš[YÜ˜][ÛœÈŽˆÈœ\œ^]WØ\WÚÙ^HŽˆœÈŸKˆB‚‚™Yˆ\ÝÜ™XYÚœÛÛ—ÛÝ™\œšY\×ÜÚÚ\×ÚÙ^\×Ø[™XYWÚ[—Ù[š\›ÛŠˆ\Ü]ˆ][ÛšÙ^\]Úˆ]\Ý“[ÛšÙ^T]ÚŠHOˆ›Û™N‚ˆ[ÛšÙ^\]ÚœÙ][Š”Õ’VÓH‹™œ›ÛKY[ˆŠBˆ]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆ]Üš]WÝ^
-œÛÛ‹™[\ÊÈ™[ˆŽˆÈ”Õ’VÓHŽˆ™œ›ÛKYš[HŸ_JK[˜ÛÙ[™ÏH]‹NŠBˆÈ[ˆÚ[œÈOˆH”ÓÓˆ˜[YH\È›ÝÝ\™˜XÙY\È[ˆ[š]ÝØ\™Ë‚ˆ\ÜÙ\ØY\‹—Ü™XYÚœÛÛ—ÛÝ™\œšY\Ê]
-HOHßB‚‚™Yˆ\ÝÜ™XYÚœÛÛ—ÛÝ™\œšY\×Ù[—ÝÚ[œ×ØXÜ›ÜÜ×ÙšY[Ø[X\Ù\Êˆ\Ü]ˆ][ÛšÙ^\]Úˆ]\Ý“[ÛšÙ^T]ÚŠHOˆ›Û™N‚ˆÈ\WÚÙ^H™\ÛÛ™\Èœ›ÛH[X\ÐÚÚXÙ\Ê“WÐTWÒÑVH‹“ÔSRWÐTWÒÑVHŠKˆH[‚ˆÈÙ]ÈÛ™H[X\ÈÚ[HH\œÚ\ÝYš[HÛÈ[›Ý\‹ˆ[ˆ]\ÝÝ[Ú[‹ÛÂˆÈHÝ[Hš[H˜[YH]\Ý›Ý™HÝ\™˜XÙY\È[ˆ[š]ÝØ\™È
-ÚXÚÝ]˜[šÜÈ[ŠK‚ˆ[ÛšÙ^\]ÚœÙ][Š“ÔSRWÐTWÒÑVH‹œÚËY[ˆŠBˆ]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆ]Üš]WÝ^
-œÛÛ‹™[\ÊÈ™[ˆŽˆÈ“WÐTWÒÑVHŽˆœÚËYš[HŸ_JK[˜ÛÙ[™ÏH]‹NŠBˆ\ÜÙ\ØY\‹—Ü™XYÚœÛÛ—ÛÝ™\œšY\Ê]
-HOHßB‚‚™Yˆ\ÝÜ™XYÚœÛÛ—ÛÝ™\œšY\×Ù[—ÝÚ[œ×ØØ\ÙWÚ[œÙ[œÚ]]™[Jˆ\Ü]ˆ][ÛšÙ^\]Úˆ]\Ý“[ÛšÙ^T]ÚŠHOˆ›Û™N‚ˆÈÙ][™ÜÈ\ÙHØ\ÙWÜÙ[œÚ]]™OQ˜[ÙKÛÈHÝÙ\˜Ø\ÙH[ˆ˜\ˆ[ÛÈÛÝ[È\ÈÙ]‚ˆ[ÛšÙ^\]ÚœÙ][ŠœÝš^ÛH‹™œ›ÛKY[ˆŠBˆ]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆ]Üš]WÝ^
-œÛÛ‹™[\ÊÈ™[ˆŽˆÈ”Õ’VÓHŽˆ™œ›ÛKYš[HŸ_JK[˜ÛÙ[™ÏH]‹NŠBˆ\ÜÙ\ØY\‹—Ü™XYÚœÛÛ—ÛÝ™\œšY\Ê]
-HOHßB‚‚™Yˆ\ÝÜ™XYÚœÛÛ—ÛÝ™\œšY\×Ý\Ù\×ÚœÛÛ—ÝÚ[—Û›×Ø[X\×Ú[—Ù[š\›ÛŠ\Ü]ˆ]
-HOˆ›Û™N‚ˆÈ›È[X\ÈÙˆ\WÚÙ^H\ÈÙ][ˆH[š\›Û›Y[OˆHš[H˜[YH\È\ÙY]™[‚ˆÈÚ[ˆ]\ÈÝÜ™Y[™\ˆH›Û‹Yš\œÝ[X\Ë‚ˆ]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆ]Üš]WÝ^
-œÛÛ‹™[\ÊÈ™[ˆŽˆÈ“ÔSRWÐTWÒÑVHŽˆœÚËYš[HŸ_JK[˜ÛÙ[™ÏH]‹NŠBˆ\ÜÙ\ØY\‹—Ü™XYÚœÛÛ—ÛÝ™\œšY\Ê]
-HOHÈ›HŽˆÈ˜\WÚÙ^HŽˆœÚËYš[HŸ_B‚‚™Yˆ\ÝÝÛÛÛÝ]]ÛX^Øž]\×Ü™Z™XÝ×ÜÝX—Û›ÝXÙWÝ˜[Y\Ê
-HOˆ›Û™N‚ˆÚ]]\Ýœ˜Z\Ù\Ê˜[Y][Û‘\œ›ÜŠN‚ˆÛÛ^Ù][™ÜÊÕ’VÕÓÓÓÕUUÓPVÐ–UTÏM
-B‚‚™Yˆ\ÝÝÛÛÛÝ]]ÛX^Øž]\×ØXØÙ\×Ù›ÛÜŠ
-HOˆ›Û™N‚ˆ\ÜÙ\ÛÛ^Ù][™ÜÊÕ’VÕÓÓÓÕUUÓPVÐ–UTÏLL
-KÛÛÛÝ]]ÛX^Øž]\ÈOHL‚‚™Yˆ\ÝÜ[[YWØØZY×Ø›ÛÝÝØZ]Ùœ›ÛWÙ[Š[ÛšÙ^\]Úˆ]\Ý“[ÛšÙ^T]Ú
-HOˆ›Û™N‚ˆ[ÛšÙ^\]ÚœÙ][Š”Õ’VÐÐRQ×Ð“ÓÕÕÐRUÔÈ‹ŽLŠB‚ˆ\ÜÙ\ØY\‹›ØYÜÙ][™ÜÊ
-Kœ[[YK˜ØZY×Ø›ÛÝÝØZ]ÜÈOHL‚‚™Yˆ\ÝÜ[[YWÚ[XYÙWÜ[ÜÛXÞWÙœ›ÛWÙ[Š[ÛšÙ^\]Úˆ]\Ý“[ÛšÙ^T]Ú
-HOˆ›Û™N‚ˆ[ÛšÙ^\]ÚœÙ][Š”Õ’VÒSPQÑWÔSÔÓPÖH‹›™]™\ˆŠB‚ˆ\ÜÙ\ØY\‹›ØYÜÙ][™ÜÊ
-Kœ[[YKš[XYÙWÜ[ÜÛXÞHOH›™]™\ˆ‚‚‚ˆÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKHÂˆÈØ[X\Ù\×Ù›Ü‚ˆÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKHÂ‚‚™Yˆ\ÝØ[X\Ù\×Ù›Ü—ÜÚ[\WØ[X\Ê
-HOˆ›Û™N‚ˆš[™›ÈHšY[[™›Ê[X\ÏH”ÒSTWÐSPTÈŠBˆ\ÜÙ\ØY\‹—Ø[X\Ù\×Ù›ÜŠš[™›ÊHOHÈ”ÒSTWÐSPTÈ—B‚‚™Yˆ\ÝØ[X\Ù\×Ù›Ü—Ø[X\×ØÚÚXÙ\Ê
-HOˆ›Û™N‚ˆš[™›ÎˆšY[[™›ÈHšY[
-È\NˆYÛ›Ü™VØ\ÜÚYÛ›Y[BˆY˜][S›Û™Kˆ˜[Y][Û—Ø[X\ÏP[X\ÐÚÚXÙ\Ê‘’T”Õ‹”ÑPÓÓ‘ŠKˆ
-Bˆ\ÜÙ\ØY\‹—Ø[X\Ù\×Ù›ÜŠš[™›ÊHOHÈ‘’T”Õ‹”ÑPÓÓ‘—B‚‚™Yˆ\ÝØ[X\Ù\×Ù›Ü—ÜÝš[™×Ý˜[Y][Û—Ø[X\Ê
-HOˆ›Û™N‚ˆš[™›ÎˆšY[[™›ÈHšY[
-Y˜][S›Û™K˜[Y][Û—Ø[X\ÏH”Õ—ÐSPTÈŠHÈ\NˆYÛ›Ü™VØ\ÜÚYÛ›Y[Bˆ\ÜÙ\ØY\‹—Ø[X\Ù\×Ù›ÜŠš[™›ÊHOHÈ”Õ—ÐSPTÈ—B‚‚™Yˆ\ÝØ[X\Ù\×Ù›Ü—Û›×Ø[X\Ê
-HOˆ›Û™N‚ˆ\ÜÙ\ØY\‹—Ø[X\Ù\×Ù›ÜŠšY[[™›Ê
-JHOH×B‚‚ˆÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKHÂˆÈ\WØÛÛ™šY×ÛÝ™\œšYH
-ÈØYÜÙ][™ÜÈ›Ý[™]š\ˆÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKHÂ‚‚™Yˆ\ÝØ\WÛÝ™\œšYWØ[™ÛØYÜÙ][™Ü×Ü›Ý[™Ýš\
-\Ü]ˆ]
-HOˆ›Û™N‚ˆ]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆ]Üš]WÝ^
-ˆœÛÛ‹™[\ÊÈ™[ˆŽˆÈ”Õ’VÓHŽˆœ›Ý[™]š\[[Ù[‹”T”VUWÐTWÒÑVHŽˆœÈŸ_JKˆ[˜ÛÙ[™ÏH]‹N‹ˆ
-B‚ˆØY\‹˜\WØÛÛ™šY×ÛÝ™\œšYJ]
-BˆÙ][™ÜÈHØY\‹›ØYÜÙ][™ÜÊ
-B‚ˆ\ÜÙ\Ù][™ÜË›K›[Ù[OHœ›Ý[™]š\[[Ù[‚ˆ\ÜÙ\Ù][™ÜËš[YÜ˜][ÛœËœ\œ^]WØ\WÚÙ^HOHœÈ‚ˆÈÙXÛÛ™Ø[\ÈY[[Ú^™YOˆØ[YHØš™XÝ‚ˆ\ÜÙ\ØY\‹›ØYÜÙ][™ÜÊ
-H\ÈÙ][™ÜÂ‚‚™Yˆ\ÝØ\WØÛÛ™šY×ÛÝ™\œšYWÚ[˜[Y]\×ØØXÚJ\Ü]ˆ]
-HOˆ›Û™N‚ˆš\œÝH\Ü]È™š\œÝšœÛÛˆ‚ˆš\œÝÜš]WÝ^
-œÛÛ‹™[\ÊÈ™[ˆŽˆÈ”Õ’VÓHŽˆ™š\œÝ[[Ù[Ÿ_JK[˜ÛÙ[™ÏH]‹NŠBˆÙXÛÛ™H\Ü]ÈœÙXÛÛ™šœÛÛˆ‚ˆÙXÛÛ™Üš]WÝ^
-œÛÛ‹™[\ÊÈ™[ˆŽˆÈ”Õ’VÓHŽˆœÙXÛÛ™[[Ù[Ÿ_JK[˜ÛÙ[™ÏH]‹NŠB‚ˆØY\‹˜\WØÛÛ™šY×ÛÝ™\œšYJš\œÝ
-Bˆ\ÜÙ\ØY\‹›ØYÜÙ][™ÜÊ
-K›K›[Ù[OH™š\œÝ[[Ù[‚‚ˆØY\‹˜\WØÛÛ™šY×ÛÝ™\œšYJÙXÛÛ™
-Bˆ\ÜÙ\ØY\‹›ØYÜÙ][™ÜÊ
-K›K›[Ù[OHœÙXÛÛ™[[Ù[‚‚‚ˆÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKHÂˆÈ\œÚ\ÝØÝ\œ™[ˆÈKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKKHÂ‚‚™Yˆ\ÝÜ\œÚ\ÝØÝ\œ™[ÝÜš]\×Ù[—Ø›ØÚÊ\Ü]ˆ][ÛšÙ^\]Úˆ]\Ý“[ÛšÙ^T]Ú
-HOˆ›Û™N‚ˆ[ÛšÙ^\]ÚœÙ][Š”Õ’VÓH‹œ\œÚ\ÝY[[Ù[ŠBˆ\™Ù]H\Ü]ÈœÝXˆˆÈ˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆØY\‹˜\WØÛÛ™šY×ÛÝ™\œšYJ\™Ù]
-B‚ˆØY\‹œ\œÚ\ÝØÝ\œ™[
+"""Tests for strix.config.loader: JSON overrides, alias resolution, persistence."""
 
-B‚ˆ\ÜÙ\\™Ù]™^\ÝÊ
-Bˆ\ÜÙ\œÛÛ‹›ØYÊ\™Ù]œ™XYÝ^
-[˜ÛÙ[™ÏH]‹NŠJHOHÂˆ™[ˆŽˆÈ”Õ’VÓHŽˆœ\œÚ\ÝY[[Ù[ŸBˆB‚‚™Yˆ\ÝÜ\œÚ\ÝØÝ\œ™[ÜÙ]×ÌŒÛ[ÙJ\Ü]ˆ][ÛšÙ^\]Úˆ]\Ý“[ÛšÙ^T]Ú
-HOˆ›Û™N‚ˆ[ÛšÙ^\]ÚœÙ][Š”Õ’VÓH‹œ\œÚ\ÝY[[Ù[ŠBˆ\™Ù]H\Ü]È˜ÛKXÛÛ™šYËšœÛÛˆ‚ˆØY\‹˜\WØÛÛ™šY×ÛÝ™\œšYJ\™Ù]
-B‚ˆØY\‹œ\œÚ\ÝØÝ\œ™[
+from __future__ import annotations
 
-B‚ˆ\ÜÙ\\™Ù]œÝ]
+import json
+from typing import TYPE_CHECKING
 
-KœÝÛ[ÙH	ˆÍÍÍÈOHÍŒ
+import pytest
+from pydantic import AliasChoices, Field, ValidationError
+from pydantic.fields import FieldInfo
+
+from strix.config import loader
+from strix.config.settings import ContextSettings
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
+
+
+_LLM_ENV_KEYS = [
+    "STRIX_LLM",
+    "LLM_API_KEY",
+    "OPENAI_API_KEY",
+    "LLM_API_BASE",
+    "OPENAI_API_BASE",
+    "OPENAI_BASE_URL",
+    "LITELLM_BASE_URL",
+    "OLLAMA_API_BASE",
+    "STRIX_REASONING_EFFORT",
+    "STRIX_FORCE_REQUIRED_TOOL_CHOICE",
+    "LLM_TIMEOUT",
+    "PERPLEXITY_API_KEY",
+    # RuntimeSettings
+    "STRIX_IMAGE",
+    "STRIX_IMAGE_PULL_POLICY",
+    "STRIX_RUNTIME_BACKEND",
+    # TelemetrySettings
+    "STRIX_TELEMETRY",
+]
+
+
+@pytest.fixture(autouse=True)
+def _reset_loader_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reset module globals and clear known env vars for deterministic runs."""
+    for key in _LLM_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(loader, "_cached", None)
+    monkeypatch.setattr(loader, "_override", None)
+
+
+# --------------------------------------------------------------------------- #
+# _read_json_overrides
+# --------------------------------------------------------------------------- #
+
+
+def test_read_json_overrides_missing_file(tmp_path: Path) -> None:
+    assert loader._read_json_overrides(tmp_path / "nope.json") == {}
+
+
+def test_read_json_overrides_corrupt_json(tmp_path: Path) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text("{not valid json", encoding="utf-8")
+    assert loader._read_json_overrides(path) == {}
+
+
+def test_read_json_overrides_non_dict_env(tmp_path: Path) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": ["not", "a", "dict"]}), encoding="utf-8")
+    assert loader._read_json_overrides(path) == {}
+
+
+def test_read_json_overrides_maps_to_nested_settings(tmp_path: Path) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text(
+        json.dumps({"env": {"STRIX_LLM": "my-model", "PERPLEXITY_API_KEY": "pk"}}),
+        encoding="utf-8",
+    )
+    assert loader._read_json_overrides(path) == {
+        "llm": {"model": "my-model"},
+        "integrations": {"perplexity_api_key": "pk"},
+    }
+
+
+def test_read_json_overrides_skips_keys_already_in_environ(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "from-env")
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"STRIX_LLM": "from-file"}}), encoding="utf-8")
+    # env wins -> the JSON value is not surfaced as an init kwarg.
+    assert loader._read_json_overrides(path) == {}
+
+
+def test_read_json_overrides_env_wins_across_field_aliases(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # api_key resolves from AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"). The env
+    # sets one alias while the persisted file holds another. Env must still win, so
+    # the stale file value must not be surfaced as an init kwarg (which outranks env).
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-env")
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"LLM_API_KEY": "sk-file"}}), encoding="utf-8")
+    assert loader._read_json_overrides(path) == {}
+
+
+def test_read_json_overrides_env_wins_case_insensitively(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Settings use case_sensitive=False, so a lowercase env var also counts as set.
+    monkeypatch.setenv("strix_llm", "from-env")
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"STRIX_LLM": "from-file"}}), encoding="utf-8")
+    assert loader._read_json_overrides(path) == {}
+
+
+def test_read_json_overrides_uses_json_when_no_alias_in_environ(tmp_path: Path) -> None:
+    # No alias of api_key is set in the environment -> the file value is used, even
+    # when it is stored under a non-first alias.
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"OPENAI_API_KEY": "sk-file"}}), encoding="utf-8")
+    assert loader._read_json_overrides(path) == {"llm": {"api_key": "sk-file"}}
+
+
+def test_tool_output_max_bytes_rejects_sub_notice_values() -> None:
+    with pytest.raises(ValidationError):
+        ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=64)
+
+
+def test_tool_output_max_bytes_accepts_floor() -> None:
+    assert ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=1024).tool_output_max_bytes == 1024
+
+
+def test_runtime_image_pull_policy_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_IMAGE_PULL_POLICY", "never")
+
+    assert loader.load_settings().runtime.image_pull_policy == "never"
+
+
+# --------------------------------------------------------------------------- #
+# _aliases_for
+# --------------------------------------------------------------------------- #
+
+
+def test_aliases_for_simple_alias() -> None:
+    finfo = FieldInfo(alias="SIMPLE_ALIAS")
+    assert loader._aliases_for(finfo) == ["SIMPLE_ALIAS"]
+
+
+def test_aliases_for_alias_choices() -> None:
+    finfo: FieldInfo = Field(  # type: ignore[assignment]
+        default=None,
+        validation_alias=AliasChoices("FIRST", "SECOND"),
+    )
+    assert loader._aliases_for(finfo) == ["FIRST", "SECOND"]
+
+
+def test_aliases_for_string_validation_alias() -> None:
+    finfo: FieldInfo = Field(default=None, validation_alias="STR_ALIAS")  # type: ignore[assignment]
+    assert loader._aliases_for(finfo) == ["STR_ALIAS"]
+
+
+def test_aliases_for_no_alias() -> None:
+    assert loader._aliases_for(FieldInfo()) == []
+
+
+# --------------------------------------------------------------------------- #
+# apply_config_override + load_settings round-trip
+# --------------------------------------------------------------------------- #
+
+
+def test_apply_override_and_load_settings_round_trip(tmp_path: Path) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text(
+        json.dumps({"env": {"STRIX_LLM": "round-trip-model", "PERPLEXITY_API_KEY": "pk"}}),
+        encoding="utf-8",
+    )
+
+    loader.apply_config_override(path)
+    settings = loader.load_settings()
+
+    assert settings.llm.model == "round-trip-model"
+    assert settings.integrations.perplexity_api_key == "pk"
+    # Second call is memoized -> same object.
+    assert loader.load_settings() is settings
+
+
+def test_apply_config_override_invalidates_cache(tmp_path: Path) -> None:
+    first = tmp_path / "first.json"
+    first.write_text(json.dumps({"env": {"STRIX_LLM": "first-model"}}), encoding="utf-8")
+    second = tmp_path / "second.json"
+    second.write_text(json.dumps({"env": {"STRIX_LLM": "second-model"}}), encoding="utf-8")
+
+    loader.apply_config_override(first)
+    assert loader.load_settings().llm.model == "first-model"
+
+    loader.apply_config_override(second)
+    assert loader.load_settings().llm.model == "second-model"
+
+
+# --------------------------------------------------------------------------- #
+# persist_current
+# --------------------------------------------------------------------------- #
+
+
+def test_persist_current_writes_env_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "persisted-model")
+    target = tmp_path / "sub" / "cli-config.json"
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    assert target.exists()
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "env": {"STRIX_LLM": "persisted-model"}
+    }
+
+
+def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "persisted-model")
+    target = tmp_path / "cli-config.json"
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    assert target.stat().st_mode & 0o777 == 0o600

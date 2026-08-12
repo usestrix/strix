@@ -1,4 +1,4 @@
-­r‡^Ñf¥–Ø¦{O,yÊ'vÃ®¶›­"""StrixDockerSandboxClient â€” preserves the image's ENTRYPOINT and adds
+"""StrixDockerSandboxClient â€” preserves the image's ENTRYPOINT and adds
 NET_ADMIN/NET_RAW capabilities + host-gateway.
 
 The SDK's ``DockerSandboxClient._create_container`` does not expose a hook for

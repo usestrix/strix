@@ -1,4 +1,4 @@
-≠rá^—f•ñÿ¶{O,y 'v√Æ∂õ≠"""Startup environment validation and Docker image management."""
+"""Startup environment validation and Docker image management."""
 
 import logging
 import shutil

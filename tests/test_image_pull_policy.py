@@ -1,4 +1,4 @@
-≠rá^—f•ñÿ¶{O,y 'v√Æ∂õ≠"""Regression tests for sandbox image acquisition policy."""
+"""Regression tests for sandbox image acquisition policy."""
 
 from __future__ import annotations
 
