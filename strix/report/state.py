@@ -378,6 +378,8 @@ class ReportState:
         self.end_time = None
         self.scan_results = None
         self.final_scan_result = None
+        if self.run_record.get("llm_usage") and self._llm_usage.total_cost == 0.0:
+            self._hydrate_llm_usage(self.run_record["llm_usage"])
         self.run_record.update(
             {
                 "targets_info": config.get("targets", []),
@@ -390,6 +392,7 @@ class ReportState:
                 "diff_base": config.get("diff_base"),
             }
         )
+        self._sync_llm_usage_record()
 
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
         if mark_complete:

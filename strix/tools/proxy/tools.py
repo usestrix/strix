@@ -102,7 +102,7 @@ def _make_endpoint_key(
     host: str | None = None,
     path: str | None = None,
     fallback_id: str | None = None,
-) -> str:
+) -> str | None:
     """Generate canonical endpoint identity string for deduplication across all proxy tools."""
     m = (method or "GET").strip().upper()
     h = (host or "").strip().lower()
@@ -111,11 +111,9 @@ def _make_endpoint_key(
         p = f"/{p}"
     if h:
         return f"ep:{m}:{h}{p}"
-    if p and p != "/":
-        return f"ep:{m}:{p}"
     if fallback_id:
         return f"ep:{fallback_id}"
-    return f"ep:{m}:{p}"
+    return None
 
 
 def _extract_sitemap_endpoint_key(e: dict[str, Any]) -> str | None:
@@ -124,6 +122,9 @@ def _extract_sitemap_endpoint_key(e: dict[str, Any]) -> str | None:
         return None
 
     kind = str(e.get("kind") or e.get("type") or "").upper()
+    if kind in ("DOMAIN", "DIRECTORY", "FOLDER", "ROOT", "COLLECTION"):
+        return None
+
     req = e.get("request") if isinstance(e.get("request"), dict) else {}
 
     method = str(e.get("method") or req.get("method") or "GET").upper()
@@ -142,13 +143,10 @@ def _extract_sitemap_endpoint_key(e: dict[str, Any]) -> str | None:
         except Exception:  # noqa: BLE001
             pass
 
-    label = str(e.get("label") or "").strip()
-    if not host and kind == "DOMAIN" and label and "." in label and "/" not in label:
-        host = label.lower()
+    if not host:
+        return None
 
-    if kind in ("REQUEST", "REQUEST_BODY", "REQUEST_QUERY") or method != "GET" or path or host:
-        return _make_endpoint_key(method=method, host=host, path=path, fallback_id=f"sitemap-{e['id']}")
-    return None
+    return _make_endpoint_key(method=method, host=host, path=path, fallback_id=f"sitemap-{e['id']}")
 
 
 @function_tool(timeout=120)
