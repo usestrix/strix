@@ -152,9 +152,14 @@ snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s "strix_write_test
 # 4. Confirm the change took effect (this is the evidence to report)
 snmpget -v2c -c <read_community> <target> 1.3.6.1.2.1.1.4.0
 
-# 5. Restore — mandatory, even if step 4 failed. Prefer the hex form, which is
-#    byte-exact and immune to display formatting:
-snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 x "$ORIGINAL_HEX"
+# 5. Restore — mandatory, even if step 4 failed. The hex form is byte-exact and
+#    immune to display formatting, but it cannot represent an empty OCTET
+#    STRING, so that case must use the empty string form explicitly:
+if [ -z "$ORIGINAL_HEX" ]; then
+  snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s ""
+else
+  snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 x "$ORIGINAL_HEX"
+fi
 
 # 6. Verify byte-for-byte restoration against the captured original
 RESTORED_HEX=$(snmpget -v2c -c <read_community> -Oqvx <target> 1.3.6.1.2.1.1.4.0)
@@ -163,7 +168,7 @@ RESTORED_HEX=$(snmpget -v2c -c <read_community> -Oqvx <target> 1.3.6.1.2.1.1.4.0
 
 Restore with the hex form (`x "$ORIGINAL_HEX"`), not the display string. Net-SNMP renders values for humans: a value containing non-printable bytes comes back as a hex dump, and some builds wrap printable strings in quotes. Replaying that display output with `s` writes the formatting itself into the device as data — the exact case where a "benign" validation leaves the target modified.
 
-If the original `sysContact` was empty, restore it to an empty string (`s ""`). If step 1 fails, do not proceed with the SET — you cannot restore what you did not capture. If step 6 reports a mismatch, stop and surface it immediately; do not continue testing with the device left in a modified state. Report the write finding with the evidence from step 4 and state that the value was restored and verified.
+An originally-empty `sysContact` yields an empty `ORIGINAL_HEX`, which `snmpset ... x` cannot express — step 5 branches to `s ""` for that case, and step 6 still compares correctly since both sides are empty. If step 1 fails, do not proceed with the SET — you cannot restore what you did not capture. If step 6 reports a mismatch, stop and surface it immediately; do not continue testing with the device left in a modified state. Report the write finding with the evidence from step 4 and state that the value was restored and verified.
 
 **Destructive Operations — document, never execute**
 ```bash
