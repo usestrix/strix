@@ -132,6 +132,11 @@ class ReportState:
             "status": "running",
             "auth_mode": auth_mode,
             "targets_info": [],
+            "evidence_integrity": {
+                "budget_exhausted": False,
+                "crawled_endpoints_count": 0,
+                "scope_completion_verified": True,
+            },
             "llm_usage": self._build_llm_usage_record(),
         }
         self._run_dir: Path | None = None
@@ -395,6 +400,18 @@ class ReportState:
 
         self._sync_llm_usage_record()
         self._save_artifacts()
+
+    def mark_budget_exhausted(self) -> None:
+        evidence = self.run_record.setdefault("evidence_integrity", {})
+        if isinstance(evidence, dict):
+            evidence["budget_exhausted"] = True
+            evidence["scope_completion_verified"] = False
+
+    def record_crawled_endpoint(self, count: int = 1) -> None:
+        evidence = self.run_record.setdefault("evidence_integrity", {})
+        if isinstance(evidence, dict):
+            current = int(evidence.get("crawled_endpoints_count", 0))
+            evidence["crawled_endpoints_count"] = current + count
 
     def cleanup(self, status: str = "stopped") -> None:
         self.save_run_data(status=status)

@@ -50,8 +50,7 @@ import logging
 import os
 import re
 from pathlib import Path, PurePosixPath
-from typing import Any, cast
-
+from strix.report.sanitizer import SecretSanitizer
 
 logger = logging.getLogger(__name__)
 
@@ -305,6 +304,7 @@ def write_sarif_report(
         tool_version=tool_version,
         repository_context=repository_context,
     )
+    sarif = SecretSanitizer.sanitize_data(sarif)
     tmp_path = output_path.with_name(f"{output_path.name}.{os.getpid()}.tmp")
     try:
         with tmp_path.open("w", encoding="utf-8") as sarif_file:

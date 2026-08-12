@@ -17,6 +17,7 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 from strix.core.paths import run_record_path
+from strix.report.sanitizer import SecretSanitizer
 
 
 if TYPE_CHECKING:
@@ -177,6 +178,7 @@ def write_vulnerabilities(
 
 def _atomic_write_text(path: Path, payload: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    sanitized_payload = SecretSanitizer.sanitize_text(payload)
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -185,7 +187,7 @@ def _atomic_write_text(path: Path, payload: str) -> None:
         suffix=".tmp",
         delete=False,
     ) as tmp:
-        tmp.write(payload)
+        tmp.write(sanitized_payload)
         tmp_path = Path(tmp.name)
     tmp_path.replace(path)
 
