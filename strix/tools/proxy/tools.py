@@ -111,13 +111,15 @@ def _make_endpoint_key(
         p = f"/{p}"
     if h:
         return f"ep:{m}:{h}{p}"
+    if p and p != "/":
+        return f"ep:{m}:{p}"
     if fallback_id:
         return f"ep:{fallback_id}"
-    return None
+    return f"ep:{m}:{p}"
 
 
 def _extract_sitemap_endpoint_key(e: dict[str, Any]) -> str | None:
-    """Extract host-qualified canonical endpoint key from a sitemap node dictionary."""
+    """Extract canonical endpoint key from a sitemap node dictionary."""
     if not isinstance(e, dict) or not e.get("id"):
         return None
 
@@ -142,9 +144,6 @@ def _extract_sitemap_endpoint_key(e: dict[str, Any]) -> str | None:
                 path = parsed.path
         except Exception:  # noqa: BLE001
             pass
-
-    if not host:
-        return None
 
     return _make_endpoint_key(method=method, host=host, path=path, fallback_id=f"sitemap-{e['id']}")
 
