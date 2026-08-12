@@ -134,17 +134,24 @@ The most critical WebSocket-specific vulnerability. If the server relies solely 
 
 ### Denial of Service
 
-> **Operator approval required.** DoS testing can disrupt shared or production environments. Do NOT execute these tests autonomously — surface the test plan to the operator and proceed only with explicit authorization. Start with conservative limits and escalate gradually.
+DoS testing can disrupt shared or production environments. The bounds below are **hard limits on autonomous execution**, not a request for approval — do not exceed them, and do not treat scope authorization as permission to exhaust a service.
+
+**Hard autonomous limits**
+- Never exceed **50 concurrent connections** to a target
+- Never exceed **100 messages/second** sustained, or **10 MB** total payload volume per test
+- Never run a load test for longer than **60 seconds**
+- Stop the moment latency degrades past ~2x baseline, errors appear for unrelated requests, or any other client is affected — degradation is the finding; you do not need to reach failure
+- Testing beyond these bounds is **out of scope for autonomous execution**. Document it as a recommended manual test with the proposed parameters and the evidence gathered so far. Do not run it.
 
 **Connection Exhaustion**
-- Open a small number of idle connections (start with 10, not "maximum") and monitor server behavior
+- Open a small number of idle connections (start with 10) and monitor server behavior; step up gradually within the limit above
 - Slowloris-style: keep connections alive with periodic pings — observe at what threshold the server degrades
-- Stop immediately if other users or services are affected
+- Close every connection you opened once the observation is recorded
 
 **Message Flooding**
-- Send messages at incrementally increasing rates; observe response latency and error rates
-- Test oversized messages against documented or observed limits
-- Deeply nested JSON payloads — check if the server enforces depth limits
+- Send messages at incrementally increasing rates within the limit above; observe response latency and error rates
+- Test oversized messages against documented or observed limits — a single message that hits the documented cap is sufficient evidence
+- Deeply nested JSON payloads — check if the server enforces depth limits; nesting depth demonstrates the gap without volume
 
 **Frame Abuse**
 - Fragmented messages never completed — a compliant server should timeout and disconnect (this is expected behavior, not a vulnerability)
