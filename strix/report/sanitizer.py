@@ -7,8 +7,8 @@ from typing import Any
 
 # Regex patterns matching common secret formats
 _SECRET_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # OpenAI API Keys
-    re.compile(r"sk-[a-zA-Z0-9]{20,T}[a-zA-Z0-9_-]*"),
+    # OpenAI API Keys (including sk-proj- and sk-svcacct- variants)
+    re.compile(r"sk-[a-zA-Z0-9_-]{20,}"),
     # Anthropic API Keys
     re.compile(r"sk-ant-api[0-9]{2}-[a-zA-Z0-9_-]{40,}"),
     # GitHub Personal Access Tokens / App Tokens

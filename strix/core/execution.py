@@ -715,6 +715,11 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             logger.info(
                 "agent %s reached the scan budget limit; stopping the scan: %s", agent_id, exc
             )
+            from strix.report.state import get_global_report_state
+
+            report_st = get_global_report_state()
+            if report_st is not None:
+                report_st.mark_budget_exhausted()
             await coordinator.set_status(agent_id, "stopped")
             await coordinator.trigger_budget_stop()
             raise
