@@ -413,6 +413,7 @@ class ReportState:
         if isinstance(evidence, dict):
             evidence["budget_exhausted"] = True
             evidence["scope_completion_verified"] = False
+        self.save_run_data()
 
     def record_crawled_endpoint(self, endpoint_identifier: str | list[str] | int = 1) -> None:
         evidence = self.run_record.setdefault("evidence_integrity", {})

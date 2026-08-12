@@ -502,7 +502,18 @@ async def list_sitemap(
         if isinstance(payload, dict):
             entries = payload.get("entries") or []
             if isinstance(entries, list) and entries:
-                node_ids = [f"sitemap-{e['id']}" for e in entries if isinstance(e, dict) and e.get("id")]
+                node_ids = [
+                    f"sitemap-{e['id']}"
+                    for e in entries
+                    if isinstance(e, dict)
+                    and e.get("id")
+                    and (
+                        str(e.get("type", "")).upper() in ("REQUEST", "REQUEST_BODY", "REQUEST_QUERY")
+                        or str(e.get("kind", "")).upper() in ("REQUEST", "REQUEST_BODY", "REQUEST_QUERY")
+                        or e.get("method")
+                        or e.get("path")
+                    )
+                ]
                 if node_ids:
                     from strix.report.state import get_global_report_state
 
