@@ -109,10 +109,10 @@ def _make_endpoint_key(
     p = (path or "/").strip()
     if p and not p.startswith("/"):
         p = f"/{p}"
-    if h:
-        return f"ep:{m}:{h}{p}"
     if p and p != "/":
         return f"ep:{m}:{p}"
+    if h:
+        return f"ep:{m}:{h}{p}"
     if fallback_id:
         return f"ep:{fallback_id}"
     return f"ep:{m}:{p}"

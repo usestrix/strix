@@ -378,6 +378,10 @@ class ReportState:
         self.end_time = None
         self.scan_results = None
         self.final_scan_result = None
+        evidence = self.run_record.setdefault("evidence_integrity", {})
+        if isinstance(evidence, dict):
+            evidence["budget_exhausted"] = False
+            evidence["scope_completion_verified"] = True
         if self.run_record.get("llm_usage") and self._llm_usage.total_cost == 0.0:
             self._hydrate_llm_usage(self.run_record["llm_usage"])
         self.run_record.update(
@@ -416,6 +420,13 @@ class ReportState:
         if isinstance(evidence, dict):
             evidence["budget_exhausted"] = True
             evidence["scope_completion_verified"] = False
+        self.save_run_data()
+
+    def clear_budget_exhausted(self) -> None:
+        evidence = self.run_record.setdefault("evidence_integrity", {})
+        if isinstance(evidence, dict):
+            evidence["budget_exhausted"] = False
+            evidence["scope_completion_verified"] = True
         self.save_run_data()
 
     def record_crawled_endpoint(self, endpoint_identifier: str | list[str] | int = 1) -> None:
