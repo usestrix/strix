@@ -423,15 +423,23 @@ class ReportState:
         if not isinstance(evidence, dict):
             return
 
-        if isinstance(endpoint_identifier, str) and endpoint_identifier.strip():
-            self._crawled_endpoint_ids.add(endpoint_identifier.strip())
+        def _add_key(key: str) -> None:
+            if not isinstance(key, str) or not key.strip():
+                return
+            clean_key = key.strip()
+            self._crawled_endpoint_ids.add(clean_key)
+            parts = clean_key.split(":", 2)
+            if len(parts) == 3 and parts[0] == "ep":
+                method, target = parts[1], parts[2]
+                if "/" in target and not target.startswith("/"):
+                    path_part = target[target.find("/") :]
+                    self._crawled_endpoint_ids.add(f"ep:{method}:{path_part}")
+
+        if isinstance(endpoint_identifier, str):
+            _add_key(endpoint_identifier)
         elif isinstance(endpoint_identifier, list):
             for item in endpoint_identifier:
-                if isinstance(item, str) and item.strip():
-                    self._crawled_endpoint_ids.add(item.strip())
-        elif isinstance(endpoint_identifier, int) and endpoint_identifier > 0:
-            for i in range(endpoint_identifier):
-                self._crawled_endpoint_ids.add(f"anon-{len(self._crawled_endpoint_ids) + 1}")
+                _add_key(item)
 
         evidence["crawled_endpoints_count"] = len(self._crawled_endpoint_ids)
         evidence["crawled_endpoint_ids"] = sorted(self._crawled_endpoint_ids)
