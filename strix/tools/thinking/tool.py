@@ -1,4 +1,4 @@
-"""``think`` — record a private chain-of-thought note with no side effects."""
+"""``think`` — record a private tactical planning note with no side effects."""
 
 from __future__ import annotations
 
@@ -9,9 +9,9 @@ from agents import function_tool
 
 @function_tool(timeout=10)
 async def think(thought: str) -> str:
-    """Record a private chain-of-thought note. No side effects, no new info.
+    """Record a private tactical planning note. No side effects, no new info.
 
-    Use ``think`` when you need a dedicated space to reason before acting —
+    Use ``think`` when you need a dedicated space to plan before acting —
     not as an output channel. It's particularly valuable for:
 
     - **Tool output analysis** — carefully processing the output of a
@@ -25,12 +25,12 @@ async def think(thought: str) -> str:
     - **Multi-step exploit planning** — breaking down a complex chain into
       manageable steps and tracking what's been confirmed vs. assumed.
 
-    Structure your thought to be useful: current state, what you've
+    Structure your note to be useful: current state, what you've
     confirmed, your next planned actions, risk assessment. Don't use
     ``think`` to chat — use it to plan.
 
     Args:
-        thought: The reasoning to record. Must be non-empty.
+        thought: The tactical planning note to record. Must be non-empty.
     """
     if not thought or not thought.strip():
         return json.dumps({"success": False, "error": "Thought cannot be empty"})
