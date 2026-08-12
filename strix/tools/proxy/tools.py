@@ -111,10 +111,10 @@ def _make_endpoint_key(
         p = f"/{p}"
     if h:
         return f"ep:{m}:{h}{p}"
-    if fallback_id:
-        return f"ep:{fallback_id}"
     if p and p != "/":
         return f"ep:{m}:{p}"
+    if fallback_id:
+        return f"ep:{fallback_id}"
     return f"ep:{m}:{p}"
 
 
