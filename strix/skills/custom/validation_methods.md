@@ -48,7 +48,7 @@ Proof:  Headless browser confirms onerror fired (e.g., network request to canary
 ```
 Follow-up: create a new object and check if `obj.strix_canary_a1b2c3 === "polluted"`.
 
-**Strength:** Deterministic. If the canary appears, the finding is confirmed.
+**Strength:** Deterministic for confirming data flow. Exploitability is confirmed only when the canary demonstrates execution or another concrete security impact.
 **Weakness:** Only works for injection/reflection classes where you control input and observe output.
 
 ### 2. Heuristic / Differential Validation
