@@ -97,6 +97,27 @@ def _err(name: str, exc: Exception) -> str:
     )
 
 
+def _make_endpoint_key(
+    method: str | None = None,
+    host: str | None = None,
+    path: str | None = None,
+    fallback_id: str | None = None,
+) -> str:
+    """Generate canonical endpoint identity string for deduplication across all proxy tools."""
+    m = (method or "GET").strip().upper()
+    h = (host or "").strip().lower()
+    p = (path or "/").strip()
+    if p and not p.startswith("/"):
+        p = f"/{p}"
+    if h:
+        return f"ep:{m}:{h}{p}"
+    if p and p != "/":
+        return f"ep:{m}:{p}"
+    if fallback_id:
+        return f"ep:{fallback_id}"
+    return f"ep:{m}:{p}"
+
+
 @function_tool(timeout=120)
 async def list_requests(
     ctx: RunContextWrapper,
@@ -209,18 +230,23 @@ async def list_requests(
                 },
             )
 
-        if entries:
-            req_ids = [
-                f"req-{e['request']['id']}"
-                for e in entries
-                if isinstance(e, dict) and isinstance(e.get("request"), dict) and e["request"].get("id")
+        if connection.edges:
+            keys = [
+                _make_endpoint_key(
+                    edge.node.request.method,
+                    edge.node.request.host,
+                    edge.node.request.path,
+                    fallback_id=edge.node.request.id,
+                )
+                for edge in connection.edges
+                if edge.node and edge.node.request
             ]
-            if req_ids:
+            if keys:
                 from strix.report.state import get_global_report_state
 
                 report_st = get_global_report_state()
                 if report_st:
-                    report_st.record_crawled_endpoint(req_ids)
+                    report_st.record_crawled_endpoint(keys)
 
         return json.dumps(
             {
@@ -306,11 +332,18 @@ async def view_request(
             )
         content = raw_bytes.decode("utf-8", errors="replace")
 
-        from strix.report.state import get_global_report_state
+        if result and result.request:
+            ep_key = _make_endpoint_key(
+                result.request.method,
+                result.request.host,
+                result.request.path,
+                fallback_id=request_id,
+            )
+            from strix.report.state import get_global_report_state
 
-        report_st = get_global_report_state()
-        if report_st:
-            report_st.record_crawled_endpoint(f"req-{request_id}")
+            report_st = get_global_report_state()
+            if report_st:
+                report_st.record_crawled_endpoint(ep_key)
 
         if search_pattern:
             return json.dumps(
@@ -428,11 +461,17 @@ async def repeat_request(
                 ensure_ascii=False,
                 default=str,
             )
+        ep_key = _make_endpoint_key(
+            mods.get("method"),
+            mods.get("host"),
+            mods.get("path") or mods.get("url"),
+            fallback_id=request_id,
+        )
         from strix.report.state import get_global_report_state
 
         report_st = get_global_report_state()
         if report_st:
-            report_st.record_crawled_endpoint(f"req-{request_id}")
+            report_st.record_crawled_endpoint(ep_key)
         return _format_replay_tool_result(replay)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
@@ -502,8 +541,13 @@ async def list_sitemap(
         if isinstance(payload, dict):
             entries = payload.get("entries") or []
             if isinstance(entries, list) and entries:
-                node_ids = [
-                    f"sitemap-{e['id']}"
+                keys = [
+                    _make_endpoint_key(
+                        e.get("method"),
+                        e.get("host"),
+                        e.get("path"),
+                        fallback_id=f"sitemap-{e.get('id')}",
+                    )
                     for e in entries
                     if isinstance(e, dict)
                     and e.get("id")
@@ -514,12 +558,12 @@ async def list_sitemap(
                         or e.get("path")
                     )
                 ]
-                if node_ids:
+                if keys:
                     from strix.report.state import get_global_report_state
 
                     report_st = get_global_report_state()
                     if report_st:
-                        report_st.record_crawled_endpoint(node_ids)
+                        report_st.record_crawled_endpoint(keys)
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("list_sitemap", exc)
@@ -548,11 +592,19 @@ async def view_sitemap_entry(
             client,
             lambda client: caido_api.view_sitemap_entry_with_client(client, entry_id),
         )
-        from strix.report.state import get_global_report_state
+        if isinstance(payload, dict):
+            entry = payload.get("entry") if isinstance(payload.get("entry"), dict) else payload
+            ep_key = _make_endpoint_key(
+                entry.get("method"),
+                entry.get("host"),
+                entry.get("path"),
+                fallback_id=f"sitemap-{entry_id}",
+            )
+            from strix.report.state import get_global_report_state
 
-        report_st = get_global_report_state()
-        if report_st:
-            report_st.record_crawled_endpoint(f"sitemap-{entry_id}")
+            report_st = get_global_report_state()
+            if report_st:
+                report_st.record_crawled_endpoint(ep_key)
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("view_sitemap_entry", exc)
