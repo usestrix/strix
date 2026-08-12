@@ -435,6 +435,7 @@ class ReportState:
 
         evidence["crawled_endpoints_count"] = len(self._crawled_endpoint_ids)
         evidence["crawled_endpoint_ids"] = sorted(self._crawled_endpoint_ids)
+        self.save_run_data()
 
     def cleanup(self, status: str = "stopped") -> None:
         self.save_run_data(status=status)
