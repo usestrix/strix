@@ -482,27 +482,46 @@ async def repeat_request(
             headers=modified["headers"],
             body=modified["body"],
         )
-        return await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+        replay = await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+
+        host = original.host
+        path = original.path
+        if modified.get("url"):
+            try:
+                from urllib.parse import urlparse
+
+                parsed = urlparse(modified["url"])
+                if parsed.hostname:
+                    host = parsed.hostname
+                if parsed.path:
+                    path = parsed.path
+            except Exception:  # noqa: BLE001
+                pass
+
+        ep_key = _make_endpoint_key(
+            method=modified.get("method") or original.method,
+            host=host,
+            path=path,
+            fallback_id=request_id,
+        )
+        return {"replay": replay, "ep_key": ep_key}
 
     try:
-        replay = await _call(client, _do)
-        if replay is None:
+        res = await _call(client, _do)
+        if not isinstance(res, dict) or res.get("replay") is None:
             return json.dumps(
                 {"success": False, "error": f"Request {request_id} not found"},
                 ensure_ascii=False,
                 default=str,
             )
-        ep_key = _make_endpoint_key(
-            mods.get("method"),
-            mods.get("host"),
-            mods.get("path") or mods.get("url"),
-            fallback_id=request_id,
-        )
-        from strix.report.state import get_global_report_state
+        replay = res["replay"]
+        ep_key = res.get("ep_key")
+        if ep_key:
+            from strix.report.state import get_global_report_state
 
-        report_st = get_global_report_state()
-        if report_st:
-            report_st.record_crawled_endpoint(ep_key)
+            report_st = get_global_report_state()
+            if report_st:
+                report_st.record_crawled_endpoint(ep_key)
         return _format_replay_tool_result(replay)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
