@@ -209,6 +209,13 @@ async def list_requests(
                 },
             )
 
+        if entries:
+            from strix.report.state import get_global_report_state
+
+            report_st = get_global_report_state()
+            if report_st:
+                report_st.record_crawled_endpoint(len(entries))
+
         return json.dumps(
             {
                 "success": True,
@@ -292,6 +299,12 @@ async def view_request(
                 default=str,
             )
         content = raw_bytes.decode("utf-8", errors="replace")
+
+        from strix.report.state import get_global_report_state
+
+        report_st = get_global_report_state()
+        if report_st:
+            report_st.record_crawled_endpoint(1)
 
         if search_pattern:
             return json.dumps(
@@ -409,6 +422,11 @@ async def repeat_request(
                 ensure_ascii=False,
                 default=str,
             )
+        from strix.report.state import get_global_report_state
+
+        report_st = get_global_report_state()
+        if report_st:
+            report_st.record_crawled_endpoint(1)
         return _format_replay_tool_result(replay)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
@@ -511,6 +529,11 @@ async def view_sitemap_entry(
             client,
             lambda client: caido_api.view_sitemap_entry_with_client(client, entry_id),
         )
+        from strix.report.state import get_global_report_state
+
+        report_st = get_global_report_state()
+        if report_st:
+            report_st.record_crawled_endpoint(1)
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("view_sitemap_entry", exc)
