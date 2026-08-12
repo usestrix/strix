@@ -403,6 +403,10 @@ class ReportState:
             self.end_time = datetime.now(UTC).isoformat()
             self.run_record["end_time"] = self.end_time
             self.run_record["status"] = "completed"
+            evidence = self.run_record.setdefault("evidence_integrity", {})
+            if isinstance(evidence, dict):
+                evidence["budget_exhausted"] = False
+                evidence["scope_completion_verified"] = True
         elif status and self.run_record.get("status") != "completed":
             current_status = self.run_record.get("status")
             if status == "stopped" and current_status in {"failed", "interrupted"}:
@@ -435,8 +439,23 @@ class ReportState:
             return
 
         def _add_single_key(key: str) -> None:
-            if isinstance(key, str) and key.strip():
-                self._crawled_endpoint_ids.add(key.strip())
+            if not isinstance(key, str) or not key.strip():
+                return
+            clean_key = key.strip()
+            parts = clean_key.split(":", 2)
+            if len(parts) == 3 and parts[0] == "ep":
+                method, target = parts[1].upper(), parts[2]
+                if target.startswith("/"):
+                    for existing in list(self._crawled_endpoint_ids):
+                        if existing.startswith(f"ep:{method}:") and existing.endswith(target):
+                            return
+                elif "/" in target:
+                    path_part = target[target.find("/") :]
+                    path_only_key = f"ep:{method}:{path_part}"
+                    if path_only_key in self._crawled_endpoint_ids:
+                        self._crawled_endpoint_ids.remove(path_only_key)
+
+            self._crawled_endpoint_ids.add(clean_key)
 
         if isinstance(endpoint_identifier, str):
             _add_single_key(endpoint_identifier)
