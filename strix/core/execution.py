@@ -704,6 +704,11 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 await coordinator.detach_stream(agent_id, stream)
         except BudgetPausedError as exc:
             logger.info("agent %s paused at the scan budget limit: %s", agent_id, exc)
+            from strix.report.state import get_global_report_state
+
+            report_st = get_global_report_state()
+            if report_st is not None:
+                report_st.mark_budget_exhausted()
             await coordinator.pause_for_budget(agent_id)
             raise
         except SubagentBudgetReservedError as exc:
