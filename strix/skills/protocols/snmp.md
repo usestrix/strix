@@ -137,38 +137,58 @@ If a write community string (`private`, `write`, etc.) is found:
 Write validation must leave the device exactly as it was found. Always capture the original value first and restore it immediately after confirming the write.
 
 ```bash
-# 1. Capture the original sysContact as raw bytes. -Oqv strips the type prefix,
-#    -Ob and the hex form avoid locale/display rewriting of the value.
-ORIGINAL=$(snmpget -v2c -c <read_community> -Oqv <target> 1.3.6.1.2.1.1.4.0)
-ORIGINAL_HEX=$(snmpget -v2c -c <read_community> -Oqvx <target> 1.3.6.1.2.1.1.4.0)
+OID=1.3.6.1.2.1.1.4.0
+RO=<read_community>
+RW=<write_community>
+TARGET=<target>
 
-# 2. Confirm the captured value round-trips before touching anything.
-#    If ORIGINAL is empty, is rendered as a hex dump, or is wrapped in display
-#    quotes, it is NOT safe to replay as a string — use the hex form in step 4.
+# 1. Capture the original sysContact as raw bytes, and ABORT if the capture
+#    fails. A timeout, wrong community, or missing instance yields an empty
+#    result that is indistinguishable from a genuinely empty value — treating
+#    that as "originally empty" would wipe a real sysContact in step 5.
+#    -Oqvx strips the type prefix and returns hex, avoiding display rewriting.
+if ! ORIGINAL_HEX=$(snmpget -v2c -c "$RO" -Oqvx "$TARGET" "$OID" 2>&1); then
+  echo "CAPTURE FAILED — do not SET. You cannot restore what you did not capture."
+  exit 1
+fi
+case "$ORIGINAL_HEX" in
+  *"No Such"*|*Timeout*|*Error*|*error*)
+    echo "CAPTURE FAILED ($ORIGINAL_HEX) — do not SET."; exit 1 ;;
+esac
+# Only past this point is a SET permissible.
 
-# 3. Benign validation: change sysContact to prove write access
-snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s "strix_write_test"
+# 2. Benign validation: change sysContact to prove write access
+snmpset -v2c -c "$RW" "$TARGET" "$OID" s "strix_write_test"
 
-# 4. Confirm the change took effect (this is the evidence to report)
-snmpget -v2c -c <read_community> <target> 1.3.6.1.2.1.1.4.0
+# 3. Confirm the change took effect (this is the evidence to report)
+snmpget -v2c -c "$RO" "$TARGET" "$OID"
 
-# 5. Restore — mandatory, even if step 4 failed. The hex form is byte-exact and
+# 4. Restore — mandatory, even if step 3 failed. The hex form is byte-exact and
 #    immune to display formatting, but it cannot represent an empty OCTET
-#    STRING, so that case must use the empty string form explicitly:
+#    STRING, so a genuinely empty original uses the empty string form:
 if [ -z "$ORIGINAL_HEX" ]; then
-  snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 s ""
+  snmpset -v2c -c "$RW" "$TARGET" "$OID" s ""
 else
-  snmpset -v2c -c <write_community> <target> 1.3.6.1.2.1.1.4.0 x "$ORIGINAL_HEX"
+  snmpset -v2c -c "$RW" "$TARGET" "$OID" x "$ORIGINAL_HEX"
 fi
 
-# 6. Verify byte-for-byte restoration against the captured original
-RESTORED_HEX=$(snmpget -v2c -c <read_community> -Oqvx <target> 1.3.6.1.2.1.1.4.0)
-[ "$RESTORED_HEX" = "$ORIGINAL_HEX" ] || echo "RESTORE FAILED — surface to operator"
+# 5. Verify byte-for-byte restoration. A failed verification read also returns
+#    empty, so check the read succeeded before trusting the comparison —
+#    otherwise a failed read would "match" an empty original.
+if ! RESTORED_HEX=$(snmpget -v2c -c "$RO" -Oqvx "$TARGET" "$OID" 2>&1); then
+  echo "VERIFY READ FAILED — device may still be modified. Surface to operator."
+elif [ "$RESTORED_HEX" != "$ORIGINAL_HEX" ]; then
+  echo "RESTORE FAILED — device left modified. Surface to operator."
+else
+  echo "Restored and verified."
+fi
 ```
 
 Restore with the hex form (`x "$ORIGINAL_HEX"`), not the display string. Net-SNMP renders values for humans: a value containing non-printable bytes comes back as a hex dump, and some builds wrap printable strings in quotes. Replaying that display output with `s` writes the formatting itself into the device as data — the exact case where a "benign" validation leaves the target modified.
 
-An originally-empty `sysContact` yields an empty `ORIGINAL_HEX`, which `snmpset ... x` cannot express — step 5 branches to `s ""` for that case, and step 6 still compares correctly since both sides are empty. If step 1 fails, do not proceed with the SET — you cannot restore what you did not capture. If step 6 reports a mismatch, stop and surface it immediately; do not continue testing with the device left in a modified state. Report the write finding with the evidence from step 4 and state that the value was restored and verified.
+The capture in step 1 is a hard gate: if it fails for any reason, no SET may run. An empty result from a timeout, a wrong read community, or a missing instance looks exactly like a genuinely empty `sysContact`, and letting that reach the empty-value branch in step 4 would overwrite a real value with an empty one. Step 5 likewise checks that the verification read succeeded before comparing, since a failed read returns empty and would otherwise "match" an empty original and falsely report success.
+
+An originally-empty `sysContact` — captured successfully, but empty — yields an empty `ORIGINAL_HEX`, which `snmpset ... x` cannot express, so step 4 restores it with `s ""`. If step 5 reports a mismatch or a failed read, stop and surface it immediately; do not continue testing with the device left in a modified state. Report the write finding with the evidence from step 3 and state that the value was restored and verified.
 
 **Destructive Operations — document, never execute**
 ```bash
