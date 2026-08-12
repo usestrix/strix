@@ -1,107 +1,31 @@
-╜r┤^яf╔√ь╕{O,yй'vц╝╤⌡╜"""Sandbox backend registry Б─■ selected via STRIX_RUNTIME_BACKEND (default: docker)."""
+╜r┤^яf╔√ь╕{[r┴щ╟К╜╕КH┬┬■ь[≥⌡ч≤Xзы[≥≥Yз\щ·H8═%ы[XщY XHу▓Vт∙S∙SQWп░PряS▒
+Y≤][┬ьзы\┼K┬┬┬┌┌≥°⌡шHвы²]\≥Wвх[\э²[⌡⌡щ][ш°б┌ [\э²ыыз[≥б≥°⌡шHшшXщ[ш°к≤X≤х[\э²]ьZ]X⌡Kь[X⌡B≥°⌡шH\[≥х[\э²TWпрPррS▒к[·B┌┌ Y┬TWпрPррS▒н┌┬°⌡шHYы[²к°ь[≥⌡ч⌡X[ Y≥\щ[\э²X[ Y≥\щ┌┌⌡ыыы\┬Hыыз[≥к≥ы]ыыы\┼вш≤[YWвйB┌┌■ь[≥⌡ч≤Xзы[≥Hь[X⌡Vк▀▀▀]ьZ]X⌡Vщ\Vп[·K[·WWWB┌┌≤\ч[≤хY┬ыьзы\≈ь≤Xзы[≥
+┬
+▀┬[XYыN┬щ▀┬X[ Y≥\щ┬X[ Y≥\щ┬^эыYээ²н┬\Vз[²▀▀≈K┬ [≥ш[щ[²н┬\щыXщэщ▀[·WWH⌡ш≥HH⌡ш≥K┼HO┬\Vп[·K[·WN┌┬┬┬░° [≥х\Hы\эз[ш┬≤XзыY·HHьь[ьзы\┬Y[[ш▀┌┌┬\ы\х≤ш\эн≤щ ^ьзы\■ь[≥⌡чшY[²х[ ≥Xщ▒UпQRS┬б┬▒Uт░Uхь\х
+хэщ≥ьзы\▀ [²\⌡≤[эщYь]]ь^K┬[\э²б┬ьзы\≤^ [Hшх\ч[Y[²х]\≥ы]H⌡ш▀Qьзы\┌┬≤Xзы[≥ш┴щ≥YYHьзы\▀\HX°≤\·H[°щ[Y┌┌┬ы\эз[ш▀°щ\²
 
-from __future__ import annotations
+X\хз]X]\ X[^≥\хHX[ Y≥\щ[²хH²[⌡ [≥б┬шш²Z[≥\┬8═%HяиэхшY[²≤э≥X]J
+Xш⌡H²Z[хH[⌡≥\┬ы\эз[ш┌┬ь ≥Xщз]щ]\Z[≥х]┬\ч[≤хз]ы\эз[ш▌≤шщ[ь[]шк²]┬щ ^X[≤Yы\хы\эз[ш┬Y≥][YH^Xз]H XHшY[²≥[]J
+XшхыB┬ Yыы\┬щ\²
 
-import logging
-from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+Xщ\°ы[≥\к┌┬┬┬┌┬[\э²ьзы\┌┬°⌡шHYы[²к°ь[≥⌡ч°ь[≥⌡ч\к≥ьзы\┬[\э²ьзы\■ь[≥⌡чшY[²э[ш°б┌┬°⌡шHщ ^≤шш≥ Yк⌡ьY\┬[\э²ьYэы][≥эб┬°⌡шHщ ^°²[²[YK≥ьзы\≈ьшY[²[\э²щ ^ьзы\■ь[≥⌡чшY[²┌┬шY[²Hщ ^ьзы\■ь[≥⌡чшY[²
+ьзы\▀≥°⌡шWы[²┼
+JB┬шY[²°щ ^ь [≥ш[щ[²хH [≥ш[щ[²хэ┬вB┬шY[² [XYыWэ[эшXчHHьYэы][≥эй
+K°²[²[YK [XYыWэ[эшXчB┬э[ш°хHьзы\■ь[≥⌡чшY[²э[ш°й[XYыOZ[XYыK^эыYээ²оY^эыYээ²йB┬ы\эз[ш┬H]ьZ]шY[²≤э≥X]Jэ[ш°о[э[ш°кX[ Y≥\щ[X[ Y≥\щ
+B┬]ьZ]ы\эз[ш▀°щ\²
 
-
-if TYPE_CHECKING:
-    from agents.sandbox.manifest import Manifest
-
-
-logger = logging.getLogger(__name__)
-
-
-SandboxBackend = Callable[..., Awaitable[tuple[Any, Any]]]
-
-
-async def _docker_backend(
-    *,
-    image: str,
-    manifest: Manifest,
-    exposed_ports: tuple[int, ...],
-    bind_mounts: list[dict[str, Any]] | None = None,
-) -> tuple[Any, Any]:
-    """Bring up a session backed by the local Docker daemon.
-
-    Uses :class:`StrixDockerSandboxClient` to inject NET_ADMIN /
-    NET_RAW caps + ``host.docker.internal`` host-gateway. Imports
-    ``docker`` lazily so deployments that target a non-Docker
-    backend don't need the docker-py library installed.
-
-    ``session.start()`` is what materializes the manifest into the running
-    container Б─■ the SDK's ``client.create()`` only builds the inner session
-    object without applying it. ``async with session:`` would call it too, but
-    Strix manages session lifetime explicitly via ``client.delete()`` so we
-    trigger ``start()`` ourselves.
-    """
-    import docker
-    from agents.sandbox.sandboxes.docker import DockerSandboxClientOptions
-
-    from strix.config.loader import load_settings
-    from strix.runtime.docker_client import StrixDockerSandboxClient
-
-    client = StrixDockerSandboxClient(docker.from_env())
-    client.strix_bind_mounts = bind_mounts or []
-    client.image_pull_policy = load_settings().runtime.image_pull_policy
-    options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
-    session = await client.create(options=options, manifest=manifest)
-    await session.start()
-    return client, session
-
-
-_BACKENDS: dict[str, SandboxBackend] = {
-    "docker": _docker_backend,
-}
-
-_BIND_MOUNT_BACKENDS: set[str] = {"docker"}
-
-
-def get_backend(name: str) -> SandboxBackend:
-    """Return the backend factory for ``name`` or raise.
-
-    Args:
-        name: Backend identifier (e.g. ``"docker"``). Match is exact;
-            no fallback. Unknown values raise so config typos surface
-            immediately instead of silently picking a default.
-    """
-    backend = _BACKENDS.get(name)
-    if backend is None:
-        supported = ", ".join(sorted(_BACKENDS))
-        raise ValueError(
-            f"Unknown STRIX_RUNTIME_BACKEND: {name!r} (supported: {supported})",
-        )
-    logger.debug("Selected sandbox backend: %s", name)
-    return backend
-
-
-def register_backend(
-    name: str,
-    backend: SandboxBackend,
-    *,
-    supports_bind_mounts: bool = False,
-) -> None:
-    """Register a custom backend under ``name``.
-
-    Intended for downstream users who ship their own runtime Б─■ register
-    before any ``session_manager.create_or_reuse`` call. Re-registering
-    an existing name overwrites the prior entry. ``supports_bind_mounts``
-    defaults to False: a remote runtime cannot see the caller's filesystem, so
-    it is handed local sources as manifest entries to upload instead.
-    """
-    _BACKENDS[name] = backend
-    if supports_bind_mounts:
-        _BIND_MOUNT_BACKENDS.add(name)
-    else:
-        _BIND_MOUNT_BACKENDS.discard(name)
-    logger.info("Registered sandbox backend: %s (bind mounts: %s)", name, supports_bind_mounts)
-
-
-def backend_supports_bind_mounts(name: str) -> bool:
-    return name in _BIND_MOUNT_BACKENDS
-
-
-def supported_backends() -> list[str]:
-    return sorted(_BACKENDS)
+B┬≥]\⌡┬шY[²ы\эз[ш┌┌┌≈п░PряS▒н┬Xщэщ▀ь[≥⌡ч≤Xзы[≥HHб┬≥ьзы\┬▌┬ыьзы\≈ь≤Xзы[≥÷B┌≈п▓S▒сSуS∙п░PряS▒н┬ы]эщ≈HHх≥ьзы\┬÷B┌┌≥Y┬ы]ь≤Xзы[≥
+≤[YN┬щ┼HO┬ь[≥⌡ч≤Xзы[≥┌┬┬┬■≥]\⌡┬H≤Xзы[≥≤Xщэ·H⌡э┬≤[YXэ┬≤Z\ыK┌┌┬\≥эн┌┬≤[YN┬≤Xзы[≥Y[²Y Y\┬
+K≥к┬≥ьзы\┬≤
+K┬X]з\х^Xщб┬⌡х≤[≤Xзк┬[ ш⌡щш┬≤[Y\х≤Z\ыHшхшш≥ Yх\эхщ\≥≤XыB┬[[YYX][H[°щXYы┬з[[²HXзз[≥хHY≤][┌┬┬┬┌┬≤Xзы[≥Hп░PряS▒к≥ы]
+≤[YJB┬Y┬≤Xзы[≥\х⌡ш≥N┌┬щ\э²YH▀▀ ⌡з[┼шэ²Y
+п░PряS▒йJB┬≤Z\ыH≤[YQ\°⌡э┼┬┬∙[ ш⌡щш┬у▓Vт∙S∙SQWп░PряS▒┬ш≤[YH\÷H
+щ\э²Y┬эщ\э²YJH▀┬
+B┬ыыы\▀≥X²Yй■ы[XщYь[≥⌡ч≤Xзы[≥┬	\х▀≤[YJB┬≥]\⌡┬≤Xзы[≥┌┌≥Y┬≥Yз\щ\≈ь≤Xзы[≥
+┬≤[YN┬щ▀┬≤Xзы[≥┬ь[≥⌡ч≤Xзы[≥┬
+▀┬щ\э²вь [≥ш[щ[²н┬⌡шшH≤[ыK┼HO┬⌡ш≥N┌┬┬┬■≥Yз\щ\┬Hщ\щшH≤Xзы[≥[≥\┬≤[YX┌┌┬[²[≥Y⌡э┬щш°щ≥X[H\ы\°хзхз\Z\┬щш┬²[²[YH8═%≥Yз\щ\┌┬≥Y⌡э≥H[·Hы\эз[ш≈шX[≤Yы\▀≤э≥X]Wшэ≈э≥]\ыXь[┬≥K\≥Yз\щ\ [≥б┬[┬^\щ[≥х≤[YHщ≥\²э ]\хH [э┬[²·K┬щ\э²вь [≥ш[щ[²ь┬Y≤][хх≤[ыN┬H≥[[щH²[²[YHь[⌡⌡щыYHHь[\┴эх [\ч\щ[Kшб┬]\х[≥Yьь[шщ\≤ы\х\хX[ Y≥\щ[² Y\хх\ьY[°щXY┌┬┬┬┌┬п░PряS▒жш≤[YWHH≤Xзы[≥┬Y┬щ\э²вь [≥ш[щ[²н┌┬п▓S▒сSуS∙п░PряS▒к≤Y
+≤[YJB┬[ыN┌┬п▓S▒сSуS∙п░PряS▒к≥\ьь\≥
+≤[YJB┬ыыы\▀ [≥⌡й■≥Yз\щ\≥Yь[≥⌡ч≤Xзы[≥┬	\х
+ [≥[щ[²н┬	\йH▀≤[YKщ\э²вь [≥ш[щ[²йB┌┌≥Y┬≤Xзы[≥эщ\э²вь [≥ш[щ[²й≤[YN┬щ┼HO┬⌡шш┌┬≥]\⌡┬≤[YH[┬п▓S▒сSуS∙п░PряS▒б┌┌≥Y┬щ\э²Yь≤Xзы[≥й
+HO┬\щэщ≈N┌┬≥]\⌡┬шэ²Y
+п░PряS▒йB

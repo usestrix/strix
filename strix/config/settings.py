@@ -1,161 +1,60 @@
-­r‡^Ñf¥–Ø¦{O,yÊ'vÃ®¶›­"""Strix application settings â€” pydantic-settings powered."""
-
-from __future__ import annotations
-
-from typing import Literal
-
-from pydantic import AliasChoices, Field
-from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-
-DEFAULT_MAX_TURNS = 500
-
-_BASE_CONFIG = SettingsConfigDict(
-    case_sensitive=False,
-    populate_by_name=True,
-    extra="ignore",
-)
-
-
-class LlmSettings(BaseSettings):
-    model_config = _BASE_CONFIG
-
-    model: str | None = Field(default=None, alias="STRIX_LLM")
-    api_key: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),
-        repr=False,
-    )
-    api_base: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "LLM_API_BASE",
-            "OPENAI_API_BASE",
-            "OPENAI_BASE_URL",
-            "LITELLM_BASE_URL",
-            "OLLAMA_API_BASE",
-        ),
-    )
-    extra_headers: dict[str, str] | None = Field(
-        default=None,
-        alias="LLM_EXTRA_HEADERS",
-        repr=False,
-    )
-    reasoning_effort: ReasoningEffort = Field(default="high", alias="STRIX_REASONING_EFFORT")
-    force_required_tool_choice: bool = Field(
-        default=False,
-        alias="STRIX_FORCE_REQUIRED_TOOL_CHOICE",
-    )
-    prompt_cache: bool = Field(
-        default=True,
-        alias="STRIX_PROMPT_CACHE",
-    )
-    disable_streaming: bool = Field(
-        default=False,
-        alias="LLM_DISABLE_STREAMING",
-    )
-    timeout: int = Field(default=300, alias="LLM_TIMEOUT")
-    stream_idle_timeout: int = Field(default=300, ge=0, alias="LLM_STREAM_IDLE_TIMEOUT")
-    max_tool_calls_per_turn: int = Field(
-        default=32,
-        ge=0,
-        alias="LLM_MAX_TOOL_CALLS_PER_TURN",
-    )
-
-
-class DedupeSettings(BaseSettings):
-    model_config = _BASE_CONFIG
-
-    model: str | None = Field(default=None, alias="STRIX_DEDUPE_MODEL")
-    reasoning_effort: ReasoningEffort | None = Field(
-        default=None,
-        alias="STRIX_DEDUPE_REASONING_EFFORT",
-    )
-    api_key: str | None = Field(default=None, alias="DEDUPE_LLM_API_KEY", repr=False)
-    api_base: str | None = Field(default=None, alias="DEDUPE_LLM_API_BASE")
-    extra_headers: dict[str, str] | None = Field(
-        default=None,
-        alias="DEDUPE_LLM_EXTRA_HEADERS",
-        repr=False,
-    )
-
-
-class ContextSettings(BaseSettings):
-    """Context-window management: per-tool-output caps and history compaction."""
-
-    model_config = _BASE_CONFIG
-
-    auto_compact: bool = Field(default=True, alias="STRIX_CONTEXT_AUTO_COMPACT")
-    compact_buffer_tokens: int = Field(default=20_000, gt=0, alias="STRIX_CONTEXT_BUFFER_TOKENS")
-    keep_tokens: int = Field(default=8_000, gt=0, alias="STRIX_CONTEXT_KEEP_TOKENS")
-    fallback_context_tokens: int = Field(
-        default=200_000, gt=0, alias="STRIX_CONTEXT_FALLBACK_TOKENS"
-    )
-    summary_max_tokens: int = Field(default=4_096, gt=0, alias="STRIX_CONTEXT_SUMMARY_TOKENS")
-    tool_output_max_tokens: int = Field(default=8_000, gt=0, alias="STRIX_TOOL_OUTPUT_MAX_TOKENS")
-    tool_output_max_lines: int = Field(default=2_000, gt=0, alias="STRIX_TOOL_OUTPUT_MAX_LINES")
-    # Floor above the truncation-notice size so a preview always fits.
-    tool_output_max_bytes: int = Field(
-        default=50 * 1024, ge=1024, alias="STRIX_TOOL_OUTPUT_MAX_BYTES"
-    )
-
-
-class RuntimeSettings(BaseSettings):
-    model_config = _BASE_CONFIG
-
-    image: str = Field(
-        default="ghcr.io/usestrix/strix-sandbox:1.3.0",
-        alias="STRIX_IMAGE",
-    )
-    image_pull_policy: Literal["auto", "never"] = Field(
-        default="auto",
-        alias="STRIX_IMAGE_PULL_POLICY",
-    )
-    backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
-    caido_boot_wait_s: int = Field(default=300, gt=0, alias="STRIX_CAIDO_BOOT_WAIT_S")
-    # Max screenshot/image tool outputs kept live per agent context (0 = none).
-    max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
-
-
-class TelemetrySettings(BaseSettings):
-    model_config = _BASE_CONFIG
-
-    enabled: bool = Field(default=True, alias="STRIX_TELEMETRY")
-
-
-class IntegrationSettings(BaseSettings):
-    model_config = _BASE_CONFIG
-
-    perplexity_api_key: str | None = Field(
-        default=None,
-        alias="PERPLEXITY_API_KEY",
-        repr=False,
-    )
-    postman_api_key: str | None = Field(
-        default=None,
-        alias="POSTMAN_API_KEY",
-        repr=False,
-    )
-
-
-class ViewerSettings(BaseSettings):
-    model_config = _BASE_CONFIG
-
-    # Base URL of the Strix relay the local viewer proxies to for email
-    # verification and encrypted report delivery. The browser never talks to
-    # the relay directly; the local server is the only caller.
-    app_url: str = Field(default="https://app.strix.ai", alias="STRIX_APP_URL")
-
-
-class Settings(BaseSettings):
-    model_config = _BASE_CONFIG
-
-    llm: LlmSettings = Field(default_factory=LlmSettings)
-    dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
-    runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
-    context: ContextSettings = Field(default_factory=ContextSettings)
-    telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
-    integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
-    viewer: ViewerSettings = Field(default_factory=ViewerSettings)
+­r‡^Ñf¥–Ø¦{[r‰İ°ë­¦ëHˆˆ”İš^\XØ][ÛˆÙ][™ÜÈ8 %Y[XË\Ù][™ÜÈİÙ\™Yˆˆˆ‚‚™œ›ÛH×Ù]\™W×È[\Ü[››İ][ÛœÂ‚™œ›ÛH\[™È[\Ü]\˜[‚™œ›ÛHY[XÈ[\Ü[X\ĞÚÚXÙ\ËšY[™œ›ÛHY[X×ÜÙ][™ÜÈ[\Ü˜\ÙTÙ][™ÜËÙ][™ÜĞÛÛ™šYÑXİ‚‚”™X\ÛÛš[™ÑY™›ÜH]\˜[È››Û™H‹›Z[š[X[‹›İÈ‹›YY][H‹šYÚ‹YÚ‹›X^—B‚‘QUSÓPVÕT“”ÈHL‚—ĞTÑWĞÓÓ‘’QÈHÙ][™ÜĞÛÛ™šYÑXİ
+ˆØ\ÙWÜÙ[œÚ]]™OQ˜[ÙKˆÜ[]WØWÛ˜[YOUYKˆ^˜OHšYÛ›Ü™H‹ŠB‚‚˜Û\ÜÈTÙ][™ÜÊ˜\ÙTÙ][™ÜÊN‚ˆ[Ù[ØÛÛ™šYÈHĞTÑWĞÓÓ‘’QÂ‚ˆ[Ù[ˆİˆ›Û™HHšY[
+Y˜][S›Û™K[X\ÏH”Õ’VÓHŠBˆ\WÚÙ^Nˆİˆ›Û™HHšY[
+ˆY˜][S›Û™Kˆ˜[Y][Û—Ø[X\ÏP[X\ĞÚÚXÙ\Ê“WĞTWÒÑVH‹“ÔSRWĞTWÒÑVHŠKˆ™\Q˜[ÙKˆ
+Bˆ\WØ˜\ÙNˆİˆ›Û™HHšY[
+ˆY˜][S›Û™Kˆ˜[Y][Û—Ø[X\ÏP[X\ĞÚÚXÙ\Êˆ“WĞTWĞTÑH‹ˆ“ÔSRWĞTWĞTÑH‹ˆ“ÔSRWĞTÑWÕT“‹ˆ“USWĞTÑWÕT“‹ˆ“ÓSPWĞTWĞTÑH‹ˆ
+Kˆ
+Bˆ^˜WÚXY\œÎˆXİÜİ‹İ—H›Û™HHšY[
+ˆY˜][S›Û™Kˆ[X\ÏH“WÑVWÒPQT”È‹ˆ™\Q˜[ÙKˆ
+Bˆ™X\ÛÛš[™×ÙY™›Üˆ™X\ÛÛš[™ÑY™›ÜHšY[
+Y˜][HšYÚ‹[X\ÏH”Õ’VÔ‘PTÓÓ’S‘×ÑQ‘“Ô•ŠBˆ›Ü˜ÙWÜ™\]Z\™YİÛÛØÚÚXÙNˆ›ÛÛHšY[
+ˆY˜][Q˜[ÙKˆ[X\ÏH”Õ’VÑ“ÔÑWÔ‘TURT‘QÕÓÓĞÒÒPÑH‹ˆ
+Bˆ›Û\ØØXÚNˆ›ÛÛHšY[
+ˆY˜][UYKˆ[X\ÏH”Õ’VÔ“ÓTĞĞPÒH‹ˆ
+Bˆ\ØX›WÜİ™X[Z[™Îˆ›ÛÛHšY[
+ˆY˜][Q˜[ÙKˆ[X\ÏH“WÑTĞP“WÔÕ‘PSRS‘È‹ˆ
+Bˆ[Y[İ]ˆ[HšY[
+Y˜][LÌ[X\ÏH“WÕSQSÕUŠBˆİ™X[WÚYWİ[Y[İ]ˆ[HšY[
+Y˜][LÌÙOL[X\ÏH“WÔÕ‘PSWÒQWÕSQSÕUŠBˆX^İÛÛØØ[×Ü\—İ\›ˆ[HšY[
+ˆY˜][LÌ‹ˆÙOLˆ[X\ÏH“WÓPVÕÓÓĞĞS×ÔT—ÕT“ˆ‹ˆ
+B‚‚˜Û\ÜÈY\TÙ][™ÜÊ˜\ÙTÙ][™ÜÊN‚ˆ[Ù[ØÛÛ™šYÈHĞTÑWĞÓÓ‘’QÂ‚ˆ[Ù[ˆİˆ›Û™HHšY[
+Y˜][S›Û™K[X\ÏH”Õ’VÑQTWÓSÑSŠBˆ™X\ÛÛš[™×ÙY™›Üˆ™X\ÛÛš[™ÑY™›Ü›Û™HHšY[
+ˆY˜][S›Û™Kˆ[X\ÏH”Õ’VÑQTWÔ‘PTÓÓ’S‘×ÑQ‘“Ô•‹ˆ
+Bˆ\WÚÙ^Nˆİˆ›Û™HHšY[
+Y˜][S›Û™K[X\ÏH‘QTWÓWĞTWÒÑVH‹™\Q˜[ÙJBˆ\WØ˜\ÙNˆİˆ›Û™HHšY[
+Y˜][S›Û™K[X\ÏH‘QTWÓWĞTWĞTÑHŠBˆ^˜WÚXY\œÎˆXİÜİ‹İ—H›Û™HHšY[
+ˆY˜][S›Û™Kˆ[X\ÏH‘QTWÓWÑVWÒPQT”È‹ˆ™\Q˜[ÙKˆ
+B‚‚˜Û\ÜÈÛÛ^Ù][™ÜÊ˜\ÙTÙ][™ÜÊN‚ˆˆˆÛÛ^]Ú[™İÈX[˜YÙ[Y[ˆ\‹]ÛÛ[İ]]Ø\È[™\İÜHÛÛ\Xİ[Û‹ˆˆˆ‚‚ˆ[Ù[ØÛÛ™šYÈHĞTÑWĞÓÓ‘’QÂ‚ˆ]]×ØÛÛ\Xİˆ›ÛÛHšY[
+Y˜][UYK[X\ÏH”Õ’VĞÓÓ•VĞUU×ĞÓÓTPÕŠBˆÛÛ\XİØY™™\—İÚÙ[œÎˆ[HšY[
+Y˜][LŒÌİL[X\ÏH”Õ’VĞÓÓ•VĞ•Q‘‘T—ÕÒÑS”ÈŠBˆÙY\İÚÙ[œÎˆ[HšY[
+Y˜][NÌİL[X\ÏH”Õ’VĞÓÓ•VÒÑQTÕÒÑS”ÈŠBˆ˜[˜XÚ×ØÛÛ^İÚÙ[œÎˆ[HšY[
+ˆY˜][LŒÌİL[X\ÏH”Õ’VĞÓÓ•VÑSPÒ×ÕÒÑS”È‚ˆ
+Bˆİ[[X\WÛX^İÚÙ[œÎˆ[HšY[
+Y˜][MÌM‹İL[X\ÏH”Õ’VĞÓÓ•VÔÕSSPT–WÕÒÑS”ÈŠBˆÛÛÛİ]]ÛX^İÚÙ[œÎˆ[HšY[
+Y˜][NÌİL[X\ÏH”Õ’VÕÓÓÓÕUUÓPVÕÒÑS”ÈŠBˆÛÛÛİ]]ÛX^Û[™\Îˆ[HšY[
+Y˜][L—ÌİL[X\ÏH”Õ’VÕÓÓÓÕUUÓPVÓS‘TÈŠBˆÈ›ÛÜˆX›İ™HH[˜Ø][Û‹[›İXÙHÚ^™HÛÈH™]šY]È[Ø^\Èš]Ë‚ˆÛÛÛİ]]ÛX^Ø]\Îˆ[HšY[
+ˆY˜][ML
+ˆLÙOLL[X\ÏH”Õ’VÕÓÓÓÕUUÓPVĞ–UTÈ‚ˆ
+B‚‚˜Û\ÜÈ[[YTÙ][™ÜÊ˜\ÙTÙ][™ÜÊN‚ˆ[Ù[ØÛÛ™šYÈHĞTÑWĞÓÓ‘’QÂ‚ˆ[XYÙNˆİˆHšY[
+ˆY˜][H™ÚÜ‹š[Ëİ\Ù\İš^Üİš^\Ø[™›ŞŒKŒËŒ‹ˆ[X\ÏH”Õ’VÒSPQÑH‹ˆ
+Bˆ[XYÙWÜ[ÜÛXŞNˆ]\˜[È˜]]È‹›™]™\ˆ—HHšY[
+ˆY˜][H˜]]È‹ˆ[X\ÏH”Õ’VÒSPQÑWÔSÔÓPÖH‹ˆ
+Bˆ˜XÚÙ[™ˆİˆHšY[
+Y˜][H™ØÚÙ\ˆ‹[X\ÏH”Õ’VÔ•S•SQWĞPÒÑS‘ŠBˆØZY×Ø›ÛİİØZ]ÜÎˆ[HšY[
+Y˜][LÌİL[X\ÏH”Õ’VĞĞRQ×Ğ“ÓÕÕĞRUÔÈŠBˆÈX^ØÜ™Y[œÚİÚ[XYÙHÛÛİ]]ÈÙ\]™H\ˆYÙ[ÛÛ^
+H›Û™JK‚ˆX^ØÛÛ^Ú[XYÙ\Îˆ[HšY[
+Y˜][LËÙOL[X\ÏH”Õ’VÓPVĞÓÓ•VÒSPQÑTÈŠB‚‚˜Û\ÜÈ[[Y]TÙ][™ÜÊ˜\ÙTÙ][™ÜÊN‚ˆ[Ù[ØÛÛ™šYÈHĞTÑWĞÓÓ‘’QÂ‚ˆ[˜X›Yˆ›ÛÛHšY[
+Y˜][UYK[X\ÏH”Õ’VÕSSQU–HŠB‚‚˜Û\ÜÈ[YÜ˜][Û”Ù][™ÜÊ˜\ÙTÙ][™ÜÊN‚ˆ[Ù[ØÛÛ™šYÈHĞTÑWĞÓÓ‘’QÂ‚ˆ\œ^]WØ\WÚÙ^Nˆİˆ›Û™HHšY[
+ˆY˜][S›Û™Kˆ[X\ÏH”T”VUWĞTWÒÑVH‹ˆ™\Q˜[ÙKˆ
+BˆÜİX[—Ø\WÚÙ^Nˆİˆ›Û™HHšY[
+ˆY˜][S›Û™Kˆ[X\ÏH”ÔÕPS—ĞTWÒÑVH‹ˆ™\Q˜[ÙKˆ
+B‚‚˜Û\ÜÈšY]Ù\”Ù][™ÜÊ˜\ÙTÙ][™ÜÊN‚ˆ[Ù[ØÛÛ™šYÈHĞTÑWĞÓÓ‘’QÂ‚ˆÈ˜\ÙHT“ÙˆHİš^™[^HHØØ[šY]Ù\ˆ›ŞY\ÈÈ›Üˆ[XZ[ˆÈ™\šYšXØ][Ûˆ[™[˜Ü\Y™\Ü[]™\KˆHœ›İÜÙ\ˆ™]™\ˆ[ÜÈÂˆÈH™[^H\™XİNÈHØØ[Ù\™\ˆ\ÈHÛ›HØ[\‹‚ˆ\İ\›ˆİˆHšY[
+Y˜][HšÎ‹ËØ\œİš^˜ZH‹[X\ÏH”Õ’VĞTÕT“ŠB‚‚˜Û\ÜÈÙ][™ÜÊ˜\ÙTÙ][™ÜÊN‚ˆ[Ù[ØÛÛ™šYÈHĞTÑWĞÓÓ‘’QÂ‚ˆNˆTÙ][™ÜÈHšY[
+Y˜][Ù˜XİÜOSTÙ][™ÜÊBˆY\NˆY\TÙ][™ÜÈHšY[
+Y˜][Ù˜XİÜOQY\TÙ][™ÜÊBˆ[[YNˆ[[YTÙ][™ÜÈHšY[
+Y˜][Ù˜XİÜOT[[YTÙ][™ÜÊBˆÛÛ^ˆÛÛ^Ù][™ÜÈHšY[
+Y˜][Ù˜XİÜOPÛÛ^Ù][™ÜÊBˆ[[Y]Nˆ[[Y]TÙ][™ÜÈHšY[
+Y˜][Ù˜XİÜOU[[Y]TÙ][™ÜÊBˆ[YÜ˜][ÛœÎˆ[YÜ˜][Û”Ù][™ÜÈHšY[
+Y˜][Ù˜XİÜOR[YÜ˜][Û”Ù][™ÜÊBˆšY]Ù\ˆšY]Ù\”Ù][™ÜÈHšY[
+Y˜][Ù˜XİÜOUšY]Ù\”Ù][™ÜÊB
