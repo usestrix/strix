@@ -118,6 +118,39 @@ def _make_endpoint_key(
     return f"ep:{m}:{p}"
 
 
+def _extract_sitemap_endpoint_key(e: dict[str, Any]) -> str | None:
+    """Extract host-qualified canonical endpoint key from a sitemap node dictionary."""
+    if not isinstance(e, dict) or not e.get("id"):
+        return None
+
+    kind = str(e.get("kind") or e.get("type") or "").upper()
+    req = e.get("request") if isinstance(e.get("request"), dict) else {}
+
+    method = str(e.get("method") or req.get("method") or "GET").upper()
+    host = str(e.get("host") or req.get("host") or "").lower()
+    path = str(e.get("path") or req.get("path") or "").strip()
+
+    url = str(e.get("url") or req.get("url") or "").strip()
+    if not host and url:
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(url)
+            host = (parsed.netloc or parsed.hostname or "").lower()
+            if not path and parsed.path:
+                path = parsed.path
+        except Exception:  # noqa: BLE001
+            pass
+
+    label = str(e.get("label") or "").strip()
+    if not host and kind == "DOMAIN" and label and "." in label and "/" not in label:
+        host = label.lower()
+
+    if kind in ("REQUEST", "REQUEST_BODY", "REQUEST_QUERY") or method != "GET" or path or host:
+        return _make_endpoint_key(method=method, host=host, path=path, fallback_id=f"sitemap-{e['id']}")
+    return None
+
+
 @function_tool(timeout=120)
 async def list_requests(
     ctx: RunContextWrapper,
@@ -542,21 +575,9 @@ async def list_sitemap(
             entries = payload.get("entries") or []
             if isinstance(entries, list) and entries:
                 keys = [
-                    _make_endpoint_key(
-                        e.get("method"),
-                        e.get("host"),
-                        e.get("path"),
-                        fallback_id=f"sitemap-{e.get('id')}",
-                    )
-                    for e in entries
-                    if isinstance(e, dict)
-                    and e.get("id")
-                    and (
-                        str(e.get("type", "")).upper() in ("REQUEST", "REQUEST_BODY", "REQUEST_QUERY")
-                        or str(e.get("kind", "")).upper() in ("REQUEST", "REQUEST_BODY", "REQUEST_QUERY")
-                        or e.get("method")
-                        or e.get("path")
-                    )
+                    k
+                    for k in (_extract_sitemap_endpoint_key(e) for e in entries if isinstance(e, dict))
+                    if k is not None
                 ]
                 if keys:
                     from strix.report.state import get_global_report_state
@@ -594,17 +615,14 @@ async def view_sitemap_entry(
         )
         if isinstance(payload, dict):
             entry = payload.get("entry") if isinstance(payload.get("entry"), dict) else payload
-            ep_key = _make_endpoint_key(
-                entry.get("method"),
-                entry.get("host"),
-                entry.get("path"),
-                fallback_id=f"sitemap-{entry_id}",
-            )
-            from strix.report.state import get_global_report_state
+            if isinstance(entry, dict):
+                ep_key = _extract_sitemap_endpoint_key(entry)
+                if ep_key:
+                    from strix.report.state import get_global_report_state
 
-            report_st = get_global_report_state()
-            if report_st:
-                report_st.record_crawled_endpoint(ep_key)
+                    report_st = get_global_report_state()
+                    if report_st:
+                        report_st.record_crawled_endpoint(ep_key)
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("view_sitemap_entry", exc)
