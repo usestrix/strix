@@ -134,15 +134,15 @@ def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: 
         ]
 
 
-def test_max_reasoning_effort_sent_as_raw_body_field() -> None:
-    # "max" is absent from the OpenAI SDK's Reasoning enum, and LiteLLM's DeepSeek
-    # mapping collapses every effort to thinking-enabled, so it has to ride along
-    # as a raw body field to reach the provider.
+def test_max_reasoning_effort_sent_as_litellm_argument() -> None:
+    # "max" is absent from the OpenAI SDK's Reasoning enum, so it has to use the
+    # LiteLLM model's extra_args escape hatch to reach acompletion as a top-level
+    # reasoning_effort argument.
     settings = make_model_settings(
         "max", model_name="deepseek/deepseek-v4-flash", request_timeout=30
     )
     assert settings.reasoning is None
-    assert settings.extra_args == {"timeout": 30, "extra_body": {"reasoning_effort": "max"}}
+    assert settings.extra_args == {"timeout": 30, "reasoning_effort": "max"}
 
 
 def test_conversation_tail_breakpoint_moves_with_appended_transcript() -> None:

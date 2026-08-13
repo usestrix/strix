@@ -219,7 +219,7 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            _reasoning_settings(reasoning_effort, model_settings.extra_args),
+            _reasoning_settings(reasoning_effort),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
@@ -247,18 +247,14 @@ def _request_headers(
 
 def _reasoning_settings(
     effort: ReasoningEffort,
-    extra_args: dict[str, Any] | None,
 ) -> ModelSettings:
-    """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
-    a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
-    which collapses every ``reasoning_effort`` level to plain thinking-enabled.
-    Providers that don't support ``max`` reject the request.
+    """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it
+    through ``extra_args`` for the LiteLLM model to promote to its top-level
+    ``reasoning_effort`` argument. Providers that don't support ``max`` reject it.
     """
     if effort != "max":
         return ModelSettings(reasoning=Reasoning(effort=effort))
-    return ModelSettings(
-        extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
-    )
+    return ModelSettings(extra_args={"reasoning_effort": "max"})
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
