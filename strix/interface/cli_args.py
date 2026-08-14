@@ -50,6 +50,13 @@ def _positive_int(value: str) -> int:
 
 
 def parse_arguments() -> argparse.Namespace:
+    # Pre-resolve language before argparse if set in sys.argv
+    for idx, arg in enumerate(sys.argv[:-1]):
+        if arg in ("--language", "-l") and idx + 1 < len(sys.argv):
+            from strix.i18n import set_language
+            set_language(sys.argv[idx + 1])
+            break
+
     parser = argparse.ArgumentParser(
         description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -108,6 +115,12 @@ Examples:
         help="Update strix to the latest version and exit. Self-updates the "
         "standalone binary install; for pip/pipx/uv installs, prints the "
         "matching upgrade command instead.",
+    parser.add_argument(
+        "--language",
+        "-l",
+        type=str,
+        default=None,
+        help="Language preference for CLI messages and audit reports (e.g. en, es, id)",
     )
 
     parser.add_argument(

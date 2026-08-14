@@ -45,11 +45,13 @@ def get_language() -> str:
 
 
 def _detect_language() -> str:
-    """Detect language via STRIX_LANGUAGE, config file, or system LANG."""
+    """Detect language via STRIX_LANGUAGE, config file, or system LANG/LC_ALL."""
+    # 1. Environment Variable STRIX_LANGUAGE
     env_lang = os.getenv("STRIX_LANGUAGE")
     if env_lang:
         return _normalize_lang(env_lang)
 
+    # 2. Config File ~/.strix/cli-config.json
     try:
         cfg_path = Path.home() / ".strix" / "cli-config.json"
         if cfg_path.exists():
@@ -60,7 +62,8 @@ def _detect_language() -> str:
     except Exception:
         pass
 
-    sys_lang = os.getenv("LANG") or os.getenv("LC_ALL")
+    # 3. System Locale (LC_ALL takes precedence over LANG)
+    sys_lang = os.getenv("LC_ALL") or os.getenv("LANG")
     if sys_lang:
         return _normalize_lang(sys_lang)
 
@@ -68,24 +71,32 @@ def _detect_language() -> str:
 
 
 def _load_locale(lang: str) -> Dict[str, str]:
-    """Load locale JSON file with thread-safe caching and user overrides."""
+    """Load locale JSON file with thread-safe caching, type validation, and user overrides."""
     with _locales_lock:
         if lang in _locales_cache:
             return _locales_cache[lang]
 
     translations: Dict[str, str] = {}
 
+    def _safe_merge(source_data: Any) -> None:
+        if isinstance(source_data, dict):
+            for k, v in source_data.items():
+                if isinstance(k, str) and isinstance(v, str):
+                    translations[k] = v
+
+    # Built-in locale
     builtin_path = Path(__file__).parent / "locales" / f"{lang}.json"
     if builtin_path.exists():
         try:
-            translations.update(json.loads(builtin_path.read_text(encoding="utf-8")))
+            _safe_merge(json.loads(builtin_path.read_text(encoding="utf-8")))
         except Exception:
             pass
 
+    # User override locale (~/.strix/locales/{lang}.json)
     user_path = Path.home() / ".strix" / "locales" / f"{lang}.json"
     if user_path.exists():
         try:
-            translations.update(json.loads(user_path.read_text(encoding="utf-8")))
+            _safe_merge(json.loads(user_path.read_text(encoding="utf-8")))
         except Exception:
             pass
 
