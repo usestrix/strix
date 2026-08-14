@@ -1,0 +1,11 @@
+{
+  "cli.description": "Strix - Agen Uji Penetrasi Keamanan Berbasis AI Otonom",
+  "cli.scan_started": "Memulai pemindaian pada target: {target}",
+  "cli.scan_completed": "Pemindaian selesai untuk target: {target}",
+  "cli.vulnerabilities_found": "Ditemukan {count} kerentanan",
+  "report.title": "Laporan Eksekutif Audit Keamanan",
+  "report.description": "Deskripsi",
+  "report.evidence": "Bukti",
+  "report.impact": "Dampak",
+  "report.remediation": "Langkah Perbaikan"
+}
