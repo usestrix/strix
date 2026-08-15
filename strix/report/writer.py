@@ -17,6 +17,7 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 from strix.core.paths import run_record_path
+from strix.report.html_report import render_html_report
 
 
 if TYPE_CHECKING:
@@ -111,6 +112,17 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
         run_record_path(run_dir),
         json.dumps(run_record, ensure_ascii=False, indent=2, default=str),
     )
+
+
+def write_html_report(
+    run_dir: Path,
+    run_record: dict[str, Any],
+    vulnerability_reports: list[dict[str, Any]],
+) -> None:
+    """Render and atomically write a self-contained ``report.html`` into ``run_dir``."""
+    html = render_html_report(run_record, vulnerability_reports)
+    _atomic_write_text(run_dir / "report.html", html)
+    logger.info("Saved HTML findings report to: %s", run_dir / "report.html")
 
 
 def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
