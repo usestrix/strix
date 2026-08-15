@@ -280,6 +280,9 @@ ignore = [
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
 "strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401", "PLC0415"]
 "strix/report/usage.py" = ["PLC0415"]
+# Lazy import of litellm keeps the heavy dependency off the import path until a
+# cost estimate is actually requested.
+"strix/report/pricing.py" = ["PLC0415"]
 # Lazy import of strix.config.models avoids a circular dependency between the
 # report pipeline and the config layer.
 "strix/report/dedupe.py" = ["PLC0415"]

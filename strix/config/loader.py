@@ -60,7 +60,7 @@ def persist_current() -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
 
     env_block: dict[str, str] = {}
-    for sub_name in s.model_fields:
+    for sub_name in type(s).model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
             continue
