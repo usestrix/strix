@@ -7,6 +7,8 @@ from typing import Any
 
 import litellm
 import pytest
+from agents.extensions.models.litellm_model import LitellmModel
+from agents.models.interface import ModelTracing
 
 from strix.core.inputs import (
     build_root_task,
@@ -134,7 +136,10 @@ def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: 
         ]
 
 
-def test_max_reasoning_effort_sent_as_litellm_argument() -> None:
+@pytest.mark.asyncio
+async def test_max_reasoning_effort_sent_as_litellm_argument(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # "max" is absent from the OpenAI SDK's Reasoning enum, so it has to use the
     # LiteLLM model's extra_args escape hatch to reach acompletion as a top-level
     # reasoning_effort argument.
@@ -143,6 +148,27 @@ def test_max_reasoning_effort_sent_as_litellm_argument() -> None:
     )
     assert settings.reasoning is None
     assert settings.extra_args == {"timeout": 30, "reasoning_effort": "max"}
+
+    captured: dict[str, Any] = {}
+
+    async def fake_acompletion(**kwargs: Any) -> litellm.types.utils.ModelResponse:
+        captured.update(kwargs)
+        return litellm.types.utils.ModelResponse()
+
+    monkeypatch.setattr(litellm, "acompletion", fake_acompletion)
+    model = LitellmModel(model="deepseek/deepseek-v4-flash", api_key="test")
+    await model.get_response(
+        system_instructions=None,
+        input="ping",
+        model_settings=settings,
+        tools=[],
+        output_schema=None,
+        handoffs=[],
+        tracing=ModelTracing.DISABLED,
+    )
+
+    assert captured["reasoning_effort"] == "max"
+    assert captured["timeout"] == 30
 
 
 def test_conversation_tail_breakpoint_moves_with_appended_transcript() -> None:
