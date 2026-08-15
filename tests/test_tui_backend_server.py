@@ -243,6 +243,7 @@ def test_defensive_state_projection_preserves_usage_summary() -> None:
         ),
     )
     state = controller.snapshot()
+    state["provider"] = None
     state["future_oversized_field"] = "x" * 100_000
 
     snapshot = bounded_state_projection(state)
