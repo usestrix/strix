@@ -143,6 +143,27 @@ def _with_bounded_result(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
+def _ensure_properties_in_schema(tool: FunctionTool) -> FunctionTool:
+    """Guarantee ``properties`` exists alongside ``required`` in the tool schema.
+
+    Some provider SDKs (e.g. older openai-agents / pydantic combinations) or
+    LiteLLM's schema normalisation can produce a JSON schema with a
+    ``required`` key but no ``properties`` key for tools that take no
+    user-facing arguments (only ``ctx: RunContextWrapper``).  Strict
+    validators like Groq's API reject this with a 400::
+
+        'required' present but 'properties' is missing
+
+    Adding an empty ``properties: {}`` satisfies the constraint without
+    changing the tool's semantics.  The fix is applied to *every*
+    FunctionTool so future zero-parameter tools are covered too.
+    """
+    schema = tool.params_json_schema
+    if isinstance(schema, dict) and "required" in schema and "properties" not in schema:
+        tool.params_json_schema = {**schema, "properties": {}}
+    return tool
+
+
 def _schema_types(spec: dict[str, Any]) -> set[str]:
     types: set[str] = set()
     raw = spec.get("type")
@@ -604,7 +625,9 @@ def build_strix_agent(
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        _with_bounded_result(_with_coerced_arguments(tool))
+        _ensure_properties_in_schema(
+            _with_bounded_result(_with_coerced_arguments(tool))
+        )
         if isinstance(tool, FunctionTool)
         else tool
         for tool in tools
