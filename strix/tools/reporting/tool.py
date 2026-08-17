@@ -757,19 +757,28 @@ def _validate_contextual_cvss(
     reasoning: str | None,
 ) -> list[str]:
     errors: list[str] = []
-    if breakdown:
+    if not breakdown:
+        errors.append(
+            "contextual_cvss_breakdown is required: rate the CVE in this codebase with "
+            "all 8 CVSS v3.1 metrics (attack_vector, attack_complexity, "
+            "privileges_required, user_interaction, scope, confidentiality, integrity, "
+            "availability). When your trace does not change the published rating, repeat "
+            "the advisory's own metrics and adjust only what the usage level proves - a "
+            "package the code never imports is normally N on all three impact metrics."
+        )
+    else:
         for name, valid in _CVSS_VALID.items():
             value = breakdown.get(name)
             if value not in valid:
                 errors.append(
                     f"Invalid contextual_cvss_breakdown {name}: {value}. Must be one of: {valid}"
                 )
-        if not (reasoning or "").strip():
-            errors.append(
-                "contextual_cvss_reasoning is required when contextual_cvss_breakdown is "
-                "set: state what you observed in this codebase that justifies the "
-                "contextual rating. A contextual score with no reasoning is not shown."
-            )
+    if not (reasoning or "").strip():
+        errors.append(
+            "contextual_cvss_reasoning is required: state what you observed in this "
+            "codebase that justifies the contextual rating. A contextual score with "
+            "no reasoning is not shown."
+        )
     return errors
 
 
@@ -837,9 +846,7 @@ def _build_dependency_metadata(
         metadata["introduced_by"] = introduced_by.strip()
     if dependency_path and dependency_path.strip():
         metadata["dependency_path"] = dependency_path.strip()
-    # "unknown" is the absent case — omitting it keeps the jsonb contract clean,
-    # and evidence without a level would have nothing to qualify.
-    if reachability and reachability.strip() and reachability.strip() != "unknown":
+    if reachability and reachability.strip():
         metadata["reachability"] = reachability.strip()
         if reachability_evidence and reachability_evidence.strip():
             metadata["reachability_evidence"] = reachability_evidence.strip()
@@ -975,11 +982,12 @@ async def _do_create_dependency(  # noqa: PLR0912
         errors.append(
             f"Invalid reachability: {reachability!r}. Must be one of: {sorted(_VALID_REACHABILITY)}"
         )
-    elif reachability != "unknown" and not (reachability_evidence or "").strip():
+    elif not (reachability_evidence or "").strip():
         errors.append(
-            "reachability_evidence is required when reachability is not 'unknown': "
-            "cite the concrete proof (import file:line, matched symbol usage, or "
-            "govulncheck call path). Never claim a reachability level without evidence."
+            "reachability_evidence is required: cite the concrete proof (import "
+            "file:line, matched symbol usage, or govulncheck call path), or, for "
+            "'unknown', say what you searched and why the result is inconclusive. "
+            "Never claim a reachability level without evidence."
         )
 
     errors.extend(_validate_contextual_cvss(contextual_cvss_breakdown, contextual_cvss_reasoning))
@@ -1217,8 +1225,9 @@ async def create_dependency_report(
             ``not_imported`` / ``imported`` / ``vulnerable_symbol_used`` /
             ``reachable_call_path`` / ``unknown``. Claim only what the
             evidence proves; when in doubt use ``unknown``.
-        reachability_evidence: The concrete proof for the claimed level
-            (required for any level other than ``unknown``): repo-relative
+        reachability_evidence: **Required.** The concrete proof for the
+            claimed level, or, for ``unknown``, what you searched and why
+            the result is inconclusive: repo-relative
             ``file:line`` of the import or symbol usage, the matched
             advisory symbols, or the govulncheck call-path excerpt.
             Whenever you found the vulnerable symbol in use, also give the
@@ -1232,7 +1241,7 @@ async def create_dependency_report(
             is off in production), and say who controls the input. State
             it plainly when no entry point reaches the sink — that is the
             most useful result a reader can get.
-        contextual_cvss_breakdown: Optional full CVSS v3.1 rating of this
+        contextual_cvss_breakdown: **Required.** Full CVSS v3.1 rating of this
             CVE **in this codebase** — the same 8-metric object as
             ``create_vulnerability_report``'s ``cvss_breakdown``:
             ``attack_vector`` (N/A/L/P), ``attack_complexity`` (L/H),
@@ -1250,11 +1259,13 @@ async def create_dependency_report(
             hops enforce, and the impact metrics from the data and
             privileges reachable at the sink. When provided, this rating
             determines the finding's severity; ``advisory_cvss`` stays as
-            the published reference. Omit the field when the trace does
-            not change the published rating, or when you could not
-            complete the trace.
-        contextual_cvss_reasoning: **Required whenever**
-            ``contextual_cvss_breakdown`` is set. Two to four detailed
+            the published reference. Send it on every report: when the
+            trace does not change the published rating, or when you could
+            not complete the trace, repeat the advisory's own metrics and
+            adjust only what the usage level itself proves (a package the
+            code never imports is normally ``N`` on all three impact
+            metrics), then say so in the reasoning.
+        contextual_cvss_reasoning: **Required.** Two to four detailed
             sentences that a reviewer can verify without opening the repo:
             how the application uses the package, which call sites or
             configuration you inspected (repo-relative ``file:line``),

@@ -248,15 +248,25 @@ findings and rejects empty PoC fields):
 - Set `cwe` to the most specific `CWE-NNN` when the advisory names one.
 - Do NOT cap severity at LOW just because there is no dynamic reproduction — use
   the advisory score.
-- Set `reachability` + `reachability_evidence` from the usage analysis above;
+- Set `reachability` + `reachability_evidence` from the usage analysis above —
+  the tool rejects a report with no evidence, so for `unknown` write what you
+  searched and why the result is inconclusive;
   use `assumptions` for anything softer (confidence, caveats, analysis limits).
-- Set `contextual_cvss_breakdown` + `contextual_cvss_reasoning` when this
-  codebase clearly changes the risk the published score describes (see below).
+- **Always set `contextual_cvss_breakdown` + `contextual_cvss_reasoning`.** Every
+  dependency finding carries a contextual rating of the CVE in this codebase
+  (see below). Start from the published metrics and change only what your
+  evidence proves.
+- Set every other field the report accepts when the information exists:
+  `package`, `ecosystem`, `installed_version`, `fixed_version`, `manifest_path`,
+  `introduced_by` for a transitive package, `dependency_path`, `cwe`,
+  `assumptions`, and the remediation instruction. A blank field costs the reader
+  a triage step.
 
 ### Contextual CVSS
 
 The published score rates the CVE in the abstract. `contextual_cvss_breakdown`
-rates it **here**, in this codebase — the same 8-metric CVSS v3.1 object as a
+rates it **here**, in this codebase, and every dependency report must carry
+one. It is the same 8-metric CVSS v3.1 object as a
 normal finding's `cvss_breakdown` (`attack_vector`, `attack_complexity`,
 `privileges_required`, `user_interaction`, `scope`, `confidentiality`,
 `integrity`, `availability`). You never pass a score: the contextual score and
@@ -285,8 +295,12 @@ come from what the source requires; `attack_complexity` comes from the
 preconditions the hops enforce; `confidentiality`, `integrity`, and
 `availability` come from the data and privileges available at the sink.
 
-No trace, no contextual breakdown: if you did not reach a symbol hit, or you
-could not follow a hop, omit the contextual fields instead of guessing.
+When you have no source-to-sink trace, still rate the finding: copy the
+published metrics, change only the metrics the usage level itself proves, and
+say so in the reasoning. For example, for a `not_imported` package that the
+build still ships, keep the published metrics and lower `confidentiality`,
+`integrity`, and `availability` to `N`, because no code path reaches the
+vulnerable symbol. Never invent a hop you did not read.
 
 `contextual_cvss_reasoning` is required with the breakdown. Write two to four
 sentences that another engineer can check without opening the repository. Name
@@ -300,9 +314,10 @@ for an operator-supplied path behind the `--allow-unsafe-import` flag that
 attacker must already hold shell access on the job host, and the parsed data is
 build metadata rather than customer records."
 
-Omit all the contextual fields when the published rating already fits, and when
-the evidence is thin. A contextual rating is a claim you must be able to
-defend, and it never replaces `advisory_cvss` as the published reference.
+When the published rating already fits this codebase, repeat the published
+metrics in the breakdown and say in the reasoning that the deployment matches
+the advisory. A contextual rating is a claim you must be able to defend, and it
+never replaces `advisory_cvss` as the published reference.
 
 Verify the CVE with `web_search` when available before reporting. Never guess or
 hallucinate a CVE id.
@@ -320,5 +335,7 @@ hallucinate a CVE id.
 - Do not downgrade advisory severity for lack of dynamic reproduction.
 - Do not claim a `reachability` level the evidence does not prove — `unknown`
   with a reason is always acceptable; an overclaimed level never is.
-- Do not send `contextual_cvss_breakdown` without evidence-backed reasoning, and
-  do not use it to quietly de-rate a CVE you simply could not analyze.
+- Do not send a report without `contextual_cvss_breakdown` and
+  `contextual_cvss_reasoning` — the reader rates and ranks the finding with them.
+- Do not use the contextual breakdown to quietly de-rate a CVE you could not
+  analyze. State the limit of the analysis in the reasoning instead.
