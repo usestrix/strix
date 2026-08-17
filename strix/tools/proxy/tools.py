@@ -97,6 +97,57 @@ def _err(name: str, exc: Exception) -> str:
     )
 
 
+def _make_endpoint_key(
+    method: str | None = None,
+    host: str | None = None,
+    path: str | None = None,
+    fallback_id: str | None = None,
+) -> str | None:
+    """Generate canonical endpoint identity string for deduplication across all proxy tools."""
+    m = (method or "GET").strip().upper()
+    h = (host or "").strip().lower()
+    p = (path or "/").strip()
+    if p and not p.startswith("/"):
+        p = f"/{p}"
+    if h:
+        return f"ep:{m}:{h}{p}"
+    if p and p != "/":
+        return f"ep:{m}:{p}"
+    if fallback_id:
+        return f"ep:{fallback_id}"
+    return f"ep:{m}:{p}"
+
+
+def _extract_sitemap_endpoint_key(e: dict[str, Any]) -> str | None:
+    """Extract canonical endpoint key from a sitemap node dictionary."""
+    if not isinstance(e, dict) or not e.get("id"):
+        return None
+
+    kind = str(e.get("kind") or e.get("type") or "").upper()
+    if kind in ("DOMAIN", "DIRECTORY", "FOLDER", "ROOT", "COLLECTION"):
+        return None
+
+    req = e.get("request") if isinstance(e.get("request"), dict) else {}
+
+    method = str(e.get("method") or req.get("method") or "GET").upper()
+    host = str(e.get("host") or req.get("host") or "").lower()
+    path = str(e.get("path") or req.get("path") or "").strip()
+
+    url = str(e.get("url") or req.get("url") or "").strip()
+    if not host and url:
+        try:
+            from urllib.parse import urlparse
+
+            parsed = urlparse(url)
+            host = (parsed.netloc or parsed.hostname or "").lower()
+            if not path and parsed.path:
+                path = parsed.path
+        except Exception:  # noqa: BLE001
+            pass
+
+    return _make_endpoint_key(method=method, host=host, path=path, fallback_id=f"sitemap-{e['id']}")
+
+
 @function_tool(timeout=120)
 async def list_requests(
     ctx: RunContextWrapper,
@@ -209,6 +260,24 @@ async def list_requests(
                 },
             )
 
+        if connection.edges:
+            keys = [
+                _make_endpoint_key(
+                    edge.node.request.method,
+                    edge.node.request.host,
+                    edge.node.request.path,
+                    fallback_id=edge.node.request.id,
+                )
+                for edge in connection.edges
+                if edge.node and edge.node.request
+            ]
+            if keys:
+                from strix.report.state import get_global_report_state
+
+                report_st = get_global_report_state()
+                if report_st:
+                    report_st.record_crawled_endpoint(keys)
+
         return json.dumps(
             {
                 "success": True,
@@ -292,6 +361,19 @@ async def view_request(
                 default=str,
             )
         content = raw_bytes.decode("utf-8", errors="replace")
+
+        if result and result.request:
+            ep_key = _make_endpoint_key(
+                result.request.method,
+                result.request.host,
+                result.request.path,
+                fallback_id=request_id,
+            )
+            from strix.report.state import get_global_report_state
+
+            report_st = get_global_report_state()
+            if report_st:
+                report_st.record_crawled_endpoint(ep_key)
 
         if search_pattern:
             return json.dumps(
@@ -399,16 +481,46 @@ async def repeat_request(
             headers=modified["headers"],
             body=modified["body"],
         )
-        return await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+        replay = await caido_api.replay_send_raw(client, raw=raw, connection=connection)
+
+        host = original.host
+        path = original.path
+        if modified.get("url"):
+            try:
+                from urllib.parse import urlparse
+
+                parsed = urlparse(modified["url"])
+                if parsed.hostname:
+                    host = parsed.hostname
+                if parsed.path:
+                    path = parsed.path
+            except Exception:  # noqa: BLE001
+                pass
+
+        ep_key = _make_endpoint_key(
+            method=modified.get("method") or original.method,
+            host=host,
+            path=path,
+            fallback_id=request_id,
+        )
+        return {"replay": replay, "ep_key": ep_key}
 
     try:
-        replay = await _call(client, _do)
-        if replay is None:
+        res = await _call(client, _do)
+        if not isinstance(res, dict) or res.get("replay") is None:
             return json.dumps(
                 {"success": False, "error": f"Request {request_id} not found"},
                 ensure_ascii=False,
                 default=str,
             )
+        replay = res["replay"]
+        ep_key = res.get("ep_key")
+        if ep_key:
+            from strix.report.state import get_global_report_state
+
+            report_st = get_global_report_state()
+            if report_st:
+                report_st.record_crawled_endpoint(ep_key)
         return _format_replay_tool_result(replay)
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
@@ -475,6 +587,20 @@ async def list_sitemap(
                 page=page,
             ),
         )
+        if isinstance(payload, dict):
+            entries = payload.get("entries") or []
+            if isinstance(entries, list) and entries:
+                keys = [
+                    k
+                    for k in (_extract_sitemap_endpoint_key(e) for e in entries if isinstance(e, dict))
+                    if k is not None
+                ]
+                if keys:
+                    from strix.report.state import get_global_report_state
+
+                    report_st = get_global_report_state()
+                    if report_st:
+                        report_st.record_crawled_endpoint(keys)
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("list_sitemap", exc)
@@ -503,6 +629,16 @@ async def view_sitemap_entry(
             client,
             lambda client: caido_api.view_sitemap_entry_with_client(client, entry_id),
         )
+        if isinstance(payload, dict):
+            entry = payload.get("entry") if isinstance(payload.get("entry"), dict) else payload
+            if isinstance(entry, dict):
+                ep_key = _extract_sitemap_endpoint_key(entry)
+                if ep_key:
+                    from strix.report.state import get_global_report_state
+
+                    report_st = get_global_report_state()
+                    if report_st:
+                        report_st.record_crawled_endpoint(ep_key)
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
         return _err("view_sitemap_entry", exc)

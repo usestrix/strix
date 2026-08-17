@@ -133,10 +133,16 @@ class ReportState:
             "status": "running",
             "auth_mode": auth_mode,
             "targets_info": [],
+            "evidence_integrity": {
+                "budget_exhausted": False,
+                "crawled_endpoints_count": 0,
+                "scope_completion_verified": True,
+            },
             "llm_usage": self._build_llm_usage_record(),
         }
         self._run_dir: Path | None = None
         self._saved_vuln_ids: set[str] = set()
+        self._crawled_endpoint_ids: set[str] = set()
 
         self.caido_url: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
@@ -187,7 +193,13 @@ class ReportState:
             if isinstance(scan_results, dict):
                 self.scan_results = scan_results
                 self.final_scan_result = self._format_final_scan_result(scan_results)
-            self._hydrate_llm_usage(data.get("llm_usage"))
+            evidence = data.get("evidence_integrity")
+            if isinstance(evidence, dict):
+                saved_ids = evidence.get("crawled_endpoint_ids")
+                if isinstance(saved_ids, list):
+                    for item in saved_ids:
+                        if isinstance(item, str) and item.strip():
+                            self._crawled_endpoint_ids.add(item.strip())
             logger.info("report state hydrated run.json from %s", run_dir)
 
         json_path = run_dir / "vulnerabilities.json"
@@ -367,6 +379,12 @@ class ReportState:
         self.end_time = None
         self.scan_results = None
         self.final_scan_result = None
+        evidence = self.run_record.setdefault("evidence_integrity", {})
+        if isinstance(evidence, dict):
+            evidence["budget_exhausted"] = False
+            evidence["scope_completion_verified"] = True
+        if self.run_record.get("llm_usage") and self._llm_usage.total_cost == 0.0:
+            self._hydrate_llm_usage(self.run_record["llm_usage"])
         self.run_record.update(
             {
                 "targets_info": config.get("targets", []),
@@ -379,12 +397,17 @@ class ReportState:
                 "diff_base": config.get("diff_base"),
             }
         )
+        self._sync_llm_usage_record()
 
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
         if mark_complete:
             self.end_time = datetime.now(UTC).isoformat()
             self.run_record["end_time"] = self.end_time
             self.run_record["status"] = "completed"
+            evidence = self.run_record.setdefault("evidence_integrity", {})
+            if isinstance(evidence, dict):
+                evidence["budget_exhausted"] = False
+                evidence["scope_completion_verified"] = True
         elif status and self.run_record.get("status") != "completed":
             current_status = self.run_record.get("status")
             if status == "stopped" and current_status in {"failed", "interrupted"}:
@@ -396,6 +419,54 @@ class ReportState:
 
         self._sync_llm_usage_record()
         self._save_artifacts()
+
+    def mark_budget_exhausted(self) -> None:
+        evidence = self.run_record.setdefault("evidence_integrity", {})
+        if isinstance(evidence, dict):
+            evidence["budget_exhausted"] = True
+            evidence["scope_completion_verified"] = False
+        self.save_run_data()
+
+    def clear_budget_exhausted(self) -> None:
+        evidence = self.run_record.setdefault("evidence_integrity", {})
+        if isinstance(evidence, dict):
+            evidence["budget_exhausted"] = False
+            evidence["scope_completion_verified"] = True
+        self.save_run_data()
+
+    def record_crawled_endpoint(self, endpoint_identifier: str | list[str] | int = 1) -> None:
+        evidence = self.run_record.setdefault("evidence_integrity", {})
+        if not isinstance(evidence, dict):
+            return
+
+        def _add_single_key(key: str) -> None:
+            if not isinstance(key, str) or not key.strip():
+                return
+            clean_key = key.strip()
+            parts = clean_key.split(":", 2)
+            if len(parts) == 3 and parts[0] == "ep":
+                method, target = parts[1].upper(), parts[2]
+                if target.startswith("/"):
+                    for existing in list(self._crawled_endpoint_ids):
+                        if existing.startswith(f"ep:{method}:") and existing.endswith(target):
+                            return
+                elif "/" in target:
+                    path_part = target[target.find("/") :]
+                    path_only_key = f"ep:{method}:{path_part}"
+                    if path_only_key in self._crawled_endpoint_ids:
+                        self._crawled_endpoint_ids.remove(path_only_key)
+
+            self._crawled_endpoint_ids.add(clean_key)
+
+        if isinstance(endpoint_identifier, str):
+            _add_single_key(endpoint_identifier)
+        elif isinstance(endpoint_identifier, list):
+            for item in endpoint_identifier:
+                _add_single_key(item)
+
+        evidence["crawled_endpoints_count"] = len(self._crawled_endpoint_ids)
+        evidence["crawled_endpoint_ids"] = sorted(self._crawled_endpoint_ids)
+        self.save_run_data()
 
     def cleanup(self, status: str = "stopped") -> None:
         self.save_run_data(status=status)

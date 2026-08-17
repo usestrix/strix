@@ -17,6 +17,7 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 from strix.core.paths import run_record_path
+from strix.report.sanitizer import SecretSanitizer
 
 
 if TYPE_CHECKING:
@@ -115,10 +116,12 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
 
 def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
     path = run_dir / "penetration_test_report.md"
-    with path.open("w", encoding="utf-8") as f:
-        f.write("# Security Penetration Test Report\n\n")
-        f.write(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
-        f.write(f"{final_scan_result}\n")
+    content = (
+        "# Security Penetration Test Report\n\n"
+        f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+        f"{final_scan_result}\n"
+    )
+    _atomic_write_text(path, content)
     logger.info("Saved final penetration test report to: %s", path)
 
 
@@ -177,6 +180,7 @@ def write_vulnerabilities(
 
 def _atomic_write_text(path: Path, payload: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    sanitized_payload = SecretSanitizer.sanitize_text(payload)
     with tempfile.NamedTemporaryFile(
         mode="w",
         encoding="utf-8",
@@ -185,7 +189,7 @@ def _atomic_write_text(path: Path, payload: str) -> None:
         suffix=".tmp",
         delete=False,
     ) as tmp:
-        tmp.write(payload)
+        tmp.write(sanitized_payload)
         tmp_path = Path(tmp.name)
     tmp_path.replace(path)
 

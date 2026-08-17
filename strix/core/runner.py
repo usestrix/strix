@@ -434,6 +434,11 @@ async def run_strix_scan(
         return result  # noqa: TRY300
     except BudgetExceededError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
+        from strix.report.state import get_global_report_state
+
+        report_st = get_global_report_state()
+        if report_st is not None:
+            report_st.mark_budget_exhausted()
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
