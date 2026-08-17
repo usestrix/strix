@@ -483,6 +483,11 @@ class StrixProvider(MultiProvider):
             )
         else:
             model = super().get_model(model_name)
+            if type(model).__name__ == "LitellmModel":
+                if llm.api_key:
+                    model.api_key = llm.api_key
+                if llm.api_base:
+                    model.base_url = llm.api_base
             if llm.disable_streaming:
                 model = _NonStreamingModel(model)
                 # The wrapper emits its single event only once the whole request
@@ -562,11 +567,9 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     _configure_openrouter_attribution(llm.model)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
-        _configure_litellm_default("api_key", llm.api_key)
         _mirror_api_key_to_provider_env(llm.model, llm.api_key)
     if llm.api_base:
         os.environ["OPENAI_BASE_URL"] = llm.api_base
-        _configure_litellm_default("api_base", llm.api_base)
         set_default_openai_api("chat_completions")
     else:
         set_default_openai_api("responses")
