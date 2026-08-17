@@ -1067,15 +1067,26 @@ func TestBudgetPauseShowsOneWarningToastUntilResumed(t *testing.T) {
 
 func TestStatsViewShowsSubscription(t *testing.T) {
 	model := New(nil)
-	model.snapshot.Model = "gpt-5"
+	model.snapshot.Model = "grok/grok-4"
 	model.snapshot.Subscription = true
+	model.snapshot.SubscriptionLabel = "Grok subscription"
 	model.snapshot.Usage = map[string]any{"total_tokens": float64(1200), "cost": 3.5}
 	stats := ansi.Strip(model.statsView())
-	if !strings.Contains(stats, "ChatGPT subscription") {
+	if !strings.Contains(stats, "Grok subscription") {
 		t.Fatalf("stats missing subscription line: %q", stats)
 	}
 	if strings.Contains(stats, "$") {
 		t.Fatalf("subscription runs must not show a cost: %q", stats)
+	}
+}
+
+func TestStatsViewSubscriptionFallsBackWithoutLabel(t *testing.T) {
+	model := New(nil)
+	model.snapshot.Model = "gpt-5"
+	model.snapshot.Subscription = true
+	stats := ansi.Strip(model.statsView())
+	if !strings.Contains(stats, "Subscription") {
+		t.Fatalf("stats missing generic subscription line: %q", stats)
 	}
 }
 

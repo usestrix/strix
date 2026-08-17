@@ -14,7 +14,7 @@ import logging
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from strix.config import Settings, codex, load_settings
+from strix.config import Settings, load_settings, subscription
 from strix.core.paths import run_dir_for
 from strix.interface.utils import (
     assign_workspace_subdirs,
@@ -226,7 +226,7 @@ def telemetry_start(args: argparse.Namespace) -> None:
     model = load_settings().llm.model
     kwargs = {
         "model": model,
-        "auth_mode": codex.auth_mode(model),
+        "auth_mode": subscription.auth_mode(model),
         "scan_mode": args.scan_mode,
         "is_whitebox": is_whitebox_scan(args.targets_info),
         "interactive": not args.non_interactive,
@@ -241,13 +241,15 @@ def _persist_run_record(args: argparse.Namespace) -> None:
 
     run_dir = run_dir_for(args.run_name)
     run_dir.mkdir(parents=True, exist_ok=True)
+    model = load_settings().llm.model
     run_record = {
         "run_id": args.run_name,
         "run_name": args.run_name,
         "status": "running",
         "start_time": datetime.now(UTC).isoformat(),
         "end_time": None,
-        "auth_mode": codex.auth_mode(load_settings().llm.model),
+        "auth_mode": subscription.auth_mode(model),
+        "subscription_provider": subscription.provider_label(model),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
         "instruction": args.instruction,

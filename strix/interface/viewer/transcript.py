@@ -6,6 +6,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from strix.config import subscription
 from strix.core.paths import run_record_path
 from strix.interface.tui.live_view import TuiLiveView
 
@@ -57,7 +58,39 @@ def read_run_summary(run_dir: Path) -> dict[str, Any]:
         record = {}
     status = record.get("status")
     finished = status in _TERMINAL_STATUSES and bool(record.get("end_time"))
-    return {**record, "finished": finished}
+    summary = {**record, "finished": finished}
+    _backfill_subscription_provider(summary)
+    return summary
+
+
+def _first_recorded_model(record: dict[str, Any]) -> str | None:
+    """The first non-empty per-agent model slug in a run record, or None."""
+    usage = record.get("llm_usage")
+    if not isinstance(usage, dict):
+        return None
+    agents = usage.get("agents")
+    if not isinstance(agents, list):
+        return None
+    for agent in agents:
+        if isinstance(agent, dict):
+            model = agent.get("model")
+            if isinstance(model, str) and model:
+                return model
+    return None
+
+
+def _backfill_subscription_provider(record: dict[str, Any]) -> None:
+    """Name the subscription provider for runs recorded before that field
+    existed, deriving it from the recorded ``provider/model`` slug so the viewer
+    labels them correctly without a rescan. Newer runs already carry the field.
+    """
+    if record.get("subscription_provider"):
+        return
+    if record.get("auth_mode") != "subscription":
+        return
+    label = subscription.provider_label(_first_recorded_model(record))
+    if label:
+        record["subscription_provider"] = label
 
 
 def primary_target(record: dict[str, Any]) -> str | None:

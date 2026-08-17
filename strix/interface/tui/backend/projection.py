@@ -175,6 +175,7 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "messages": [],
         "usage": {},
         "subscription": state["subscription"],
+        "subscription_label": state["subscription_label"],
         "viewer_status": state["viewer_status"],
         "viewer_url": None,
         "error": terminal_projection(state["error"], max_string=256),

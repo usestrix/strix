@@ -436,7 +436,16 @@ def main() -> None:
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
         if is_binary_install() and sys.platform != "win32":
-            os.execv(sys.executable, sys.argv)  # noqa: S606  # nosec B606
+            # The PyInstaller onefile bootloader passes its state to the child
+            # process via environment variables; if they leak into the re-exec,
+            # the new binary reuses the old extracted application instead of
+            # unpacking itself, so the pre-update version runs again.
+            env = {
+                key: value
+                for key, value in os.environ.items()
+                if not key.startswith("_PYI_") and key != "_MEIPASS2"
+            }
+            os.execve(sys.executable, sys.argv, env)  # noqa: S606  # nosec B606
         sys.exit(0)
 
     check_docker_installed()

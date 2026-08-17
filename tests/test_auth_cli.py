@@ -6,23 +6,34 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from strix.config import codex
+from strix.config import codex, grok
 from strix.interface import auth_cli
 
 
 if TYPE_CHECKING:
     from pathlib import Path
 
+_CHATGPT = auth_cli._PROVIDERS["chatgpt"]
+
 
 @pytest.fixture(autouse=True)
 def _tmp_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(codex, "AUTH_PATH", tmp_path / "home" / ".strix" / "subscription-auth.json")
+    store = tmp_path / "home" / ".strix" / "subscription-auth.json"
+    monkeypatch.setattr(codex, "AUTH_PATH", store)
+    monkeypatch.setattr(grok, "AUTH_PATH", store)
 
 
-def test_login_provider_is_chatgpt() -> None:
-    assert auth_cli.LOGIN_PROVIDER == "chatgpt"
-    assert codex.PROVIDER in auth_cli._ACCEPTED_PROVIDERS
-    assert "chatgpt" in auth_cli._ACCEPTED_PROVIDERS
+def test_default_provider_is_chatgpt() -> None:
+    assert auth_cli._DEFAULT_PROVIDER == "chatgpt"
+    assert set(auth_cli._PROVIDERS) == {"chatgpt", "grok"}
+
+
+def test_provider_aliases_resolve() -> None:
+    assert auth_cli._resolve_provider(codex.PROVIDER) is _CHATGPT
+    assert auth_cli._resolve_provider("ChatGPT") is _CHATGPT
+    assert auth_cli._resolve_provider("grok") is auth_cli._PROVIDERS["grok"]
+    assert auth_cli._resolve_provider("xai") is auth_cli._PROVIDERS["grok"]
+    assert auth_cli._resolve_provider("gemini") is None
 
 
 def test_unknown_subcommand_returns_usage_error() -> None:
@@ -51,37 +62,62 @@ def test_finish_requires_state_on_loopback(monkeypatch: pytest.MonkeyPatch) -> N
 
     # Loopback (require_state=True): missing or mismatched state is rejected.
     with pytest.raises(codex.CodexAuthError) as missing:
-        auth_cli._finish("code", None, "verifier", "expected", require_state=True)
+        auth_cli._finish(_CHATGPT, "code", None, "verifier", "expected", require_state=True)
     assert missing.value.code == "state_mismatch"
     with pytest.raises(codex.CodexAuthError) as mismatch:
-        auth_cli._finish("code", "wrong", "verifier", "expected", require_state=True)
+        auth_cli._finish(_CHATGPT, "code", "wrong", "verifier", "expected", require_state=True)
     assert mismatch.value.code == "state_mismatch"
 
     # Matching state proceeds to the exchange.
-    assert auth_cli._finish("code", "expected", "verifier", "expected", require_state=True) == {
-        "ok": True
-    }
+    assert auth_cli._finish(
+        _CHATGPT, "code", "expected", "verifier", "expected", require_state=True
+    ) == {"ok": True}
 
 
 def test_finish_manual_paste_allows_absent_state(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(codex, "exchange_code", lambda *_: {"ok": True})
     # Manual paste (require_state=False): a bare code with no state is accepted,
     # but a present-and-wrong state is still rejected.
-    assert auth_cli._finish("code", None, "verifier", "expected", require_state=False) == {
-        "ok": True
-    }
+    assert auth_cli._finish(
+        _CHATGPT, "code", None, "verifier", "expected", require_state=False
+    ) == {"ok": True}
     with pytest.raises(codex.CodexAuthError):
-        auth_cli._finish("code", "wrong", "verifier", "expected", require_state=False)
+        auth_cli._finish(_CHATGPT, "code", "wrong", "verifier", "expected", require_state=False)
 
 
 def test_finish_rejects_missing_code() -> None:
     with pytest.raises(codex.CodexAuthError) as exc:
-        auth_cli._finish(None, "expected", "verifier", "expected", require_state=True)
+        auth_cli._finish(_CHATGPT, None, "expected", "verifier", "expected", require_state=True)
     assert exc.value.code == "no_code"
 
 
 def test_model_subcommand_removed() -> None:
     assert auth_cli.run_auth(["model", "gpt-5.5"]) == 2
+
+
+def _sign_in_both() -> None:
+    codex.save_record({"type": "oauth", "access": "c", "refresh": "r", "account_id": "a"})
+    grok.save_record({"type": "oauth", "access": "g", "refresh": "r"})
+
+
+def test_logout_all_removes_every_provider() -> None:
+    _sign_in_both()
+    assert codex.is_authenticated()
+    assert grok.is_authenticated()
+
+    assert auth_cli.run_auth(["logout"]) == 0
+
+    assert not codex.is_authenticated()
+    assert not grok.is_authenticated()
+
+
+def test_logout_single_provider_leaves_the_other() -> None:
+    _sign_in_both()
+
+    assert auth_cli.run_auth(["logout", "grok"]) == 0
+
+    assert codex.is_authenticated()
+    assert not grok.is_authenticated()
 
 
 @pytest.mark.parametrize("provider", ["chatgpt", "codex", "ChatGPT"])

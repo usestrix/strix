@@ -39,6 +39,17 @@ def test_context_window_chatgpt_prefix_skips_provider_auth(
         context_budget._model_info.cache_clear()
 
 
+def test_context_window_grok_prefix_resolves_to_xai() -> None:
+    # LiteLLM maps xAI models only provider-qualified: neither "grok/grok-4" nor
+    # bare "grok-4" resolves, so the subscription prefix becomes "xai/".
+    context_budget._model_info.cache_clear()
+    try:
+        assert context_budget.context_window("grok/grok-4") == 256_000
+        assert context_budget.output_limit("grok/grok-4") == 256_000
+    finally:
+        context_budget._model_info.cache_clear()
+
+
 def test_context_window_unmapped_uses_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     context_budget._model_info.cache_clear()
 

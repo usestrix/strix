@@ -110,6 +110,28 @@ def test_state_populates_model_warning_for_non_frontier_model() -> None:
     assert "not a recommended frontier model" in warning
 
 
+def test_snapshot_carries_the_subscription_provider_label() -> None:
+    os.environ["STRIX_LLM"] = "grok/grok-4"
+    loader._cached = None
+
+    snapshot = TuiController(args()).snapshot()
+
+    # The TUI renders this label, so it must name the actual provider rather
+    # than assuming ChatGPT.
+    assert snapshot["subscription"] is True
+    assert snapshot["subscription_label"] == "Grok subscription"
+
+
+def test_snapshot_has_no_subscription_label_for_api_key_runs() -> None:
+    os.environ["STRIX_LLM"] = "openai/gpt-5.4"
+    loader._cached = None
+
+    snapshot = TuiController(args()).snapshot()
+
+    assert snapshot["subscription"] is False
+    assert snapshot["subscription_label"] == ""
+
+
 def test_setup_restores_prepared_cli_targets() -> None:
     setup_args = args()
     setup_args.targets_info = [

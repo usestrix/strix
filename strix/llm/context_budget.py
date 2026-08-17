@@ -10,7 +10,7 @@ from typing import Any
 
 import litellm
 
-from strix.config import load_settings
+from strix.config import load_settings, subscription
 
 
 logger = logging.getLogger(__name__)
@@ -19,7 +19,6 @@ logger = logging.getLogger(__name__)
 # ``litellm/``, ``ollama/`` ...). Strip a leading provider segment on lookup.
 _STRIPPABLE_PREFIXES = (
     "openai/",
-    "chatgpt/",
     "litellm/",
     "any-llm/",
     "ollama/",
@@ -30,6 +29,8 @@ _DEFAULT_OUTPUT_TOKENS = 8_192
 
 
 def _lookup_key(model: str) -> str:
+    if subscription.provider_for_model(model) is not None:
+        return subscription.litellm_model_name(model) or model
     for prefix in _STRIPPABLE_PREFIXES:
         if model.startswith(prefix):
             return model[len(prefix) :]
@@ -46,9 +47,12 @@ def _safe_get_model_info(model: str) -> dict[str, Any] | None:
 @lru_cache(maxsize=128)
 def _model_info(model: str) -> dict[str, int]:
     lookup_key = _lookup_key(model)
-    # Provider-qualified ChatGPT lookups may start a synchronous device-login
-    # poll. LiteLLM keys the metadata by the underlying model slug.
-    candidates = (lookup_key,) if model.startswith("chatgpt/") else (model, lookup_key)
+    # Subscription prefixes are never LiteLLM keys, and a provider-qualified
+    # ChatGPT lookup may start a synchronous device-login poll: only ask about
+    # the resolved name.
+    candidates = (
+        (lookup_key,) if subscription.provider_for_model(model) is not None else (model, lookup_key)
+    )
     for candidate in candidates:
         info = _safe_get_model_info(candidate)
         if info is not None:

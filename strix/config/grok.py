@@ -1,11 +1,12 @@
-"""ChatGPT (Codex) subscription auth: OAuth login, token refresh, and the OpenAI
-client that routes inference through the ChatGPT backend.
+"""Grok (xAI) subscription auth: OAuth login, token refresh, and the OpenAI
+client that routes inference through xAI's API.
 
-Mirrors OpenAI's Codex CLI: OAuth 2.0 + PKCE against ``auth.openai.com``, with the
-access token sent as a ``Bearer`` token to ``chatgpt.com/backend-api/codex``. Using
-a ChatGPT subscription outside OpenAI's own products is not officially supported by
-OpenAI; the user chooses this path knowingly. The OAuth constants are OpenAI's own
-Codex CLI values (the backend only accepts that client).
+Mirrors xAI's Grok CLI: OAuth 2.0 + PKCE against ``auth.x.ai``, with the access
+token sent as a ``Bearer`` token to ``api.x.ai/v1`` (OpenAI-compatible, so the
+subscription and a metered API key share one endpoint — only the bearer differs).
+Using a Grok/SuperGrok subscription outside xAI's own products is not officially
+supported by xAI; the user chooses this path knowingly. The OAuth constants are
+xAI's own Grok CLI values (the backend only accepts that client).
 """
 
 from __future__ import annotations
@@ -35,25 +36,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-PROVIDER = "codex"
+PROVIDER = "grok"
 
-CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
-AUTHORIZE_URL = "https://auth.openai.com/oauth/authorize"
-TOKEN_URL = "https://auth.openai.com/oauth/token"  # noqa: S105  # nosec B105 - URL, not a secret
-CALLBACK_HOST = "localhost"
-CALLBACK_PORT = 1455
-CALLBACK_PATH = "/auth/callback"
+CLIENT_ID = "b1a00492-073a-47ea-816f-4c329264a828"
+AUTHORIZE_URL = "https://auth.x.ai/oauth2/authorize"
+TOKEN_URL = "https://auth.x.ai/oauth2/token"  # noqa: S105  # nosec B105 - URL, not a secret
+CALLBACK_HOST = "127.0.0.1"
+CALLBACK_PORT = 56121
+CALLBACK_PATH = "/callback"
 REDIRECT_URI = f"http://{CALLBACK_HOST}:{CALLBACK_PORT}{CALLBACK_PATH}"
-SCOPE = "openid profile email offline_access"
+SCOPE = "openid profile email offline_access grok-cli:access api:access"
 
-CODEX_BASE_URL = "https://chatgpt.com/backend-api/codex"
-ORIGINATOR = "codex_cli_rs"
-_ACCOUNT_CLAIM = "https://api.openai.com/auth"
+XAI_BASE_URL = "https://api.x.ai/v1"
 
 _TOKEN_TIMEOUT = 30
 _EXPIRY_SKEW_S = 300
 
-# Kept separate from cli-config.json so OAuth tokens never land in the env-var config.
+# Shared with the other subscription providers; kept separate from cli-config.json
+# so OAuth tokens never land in the env-var config.
 AUTH_PATH = Path.home() / ".strix" / "subscription-auth.json"
 
 
@@ -61,7 +61,7 @@ def read_record() -> dict[str, Any] | None:
     record = subscription_store.read(AUTH_PATH).get(PROVIDER)
     if not isinstance(record, dict) or record.get("type") != "oauth":
         return None
-    if not (record.get("access") and record.get("refresh") and record.get("account_id")):
+    if not (record.get("access") and record.get("refresh")):
         return None
     return record
 
@@ -98,37 +98,10 @@ def _refresh_guard() -> Iterator[None]:
         yield
 
 
-class CodexAuthError(Exception):
+class GrokAuthError(Exception):
     def __init__(self, code: str, message: str | None = None) -> None:
         self.code = code
         super().__init__(message or code)
-
-
-class CodexContentGuardrailError(Exception):
-    """The ChatGPT backend refused a request via its content guardrail.
-    Terminal — retrying identical content never clears the block."""
-
-    def __init__(self, model: str, original: BaseException | None = None) -> None:
-        self.model = model
-        self.original = original
-        super().__init__(
-            f"'{model}' was blocked by ChatGPT's content guardrails "
-            f"(flagged as a possible cybersecurity risk). "
-            f"Set STRIX_LLM to a model that isn't blocked and re-run."
-        )
-
-
-_GUARDRAIL_MARKERS = (
-    "flagged for possible cybersecurity risk",
-    "trusted access for cyber",
-)
-
-
-def is_content_guardrail_error(exc: BaseException) -> bool:
-    if isinstance(exc, CodexContentGuardrailError):
-        return True
-    text = str(exc).lower()
-    return any(marker in text for marker in _GUARDRAIL_MARKERS)
 
 
 def _b64url(raw: bytes) -> str:
@@ -154,9 +127,6 @@ def build_authorize_url(challenge: str, state: str) -> str:
         "code_challenge": challenge,
         "code_challenge_method": "S256",
         "state": state,
-        "id_token_add_organizations": "true",
-        "codex_cli_simplified_flow": "true",
-        "originator": ORIGINATOR,
     }
     return f"{AUTHORIZE_URL}?{urllib.parse.urlencode(params)}"
 
@@ -200,12 +170,12 @@ def _post_form(payload: dict[str, str]) -> dict[str, Any]:
             if status_code >= 400:
                 detail = response.text[:300]
     except requests.RequestException as exc:
-        raise CodexAuthError("unavailable", str(exc)) from exc
+        raise GrokAuthError("unavailable", str(exc)) from exc
     if status_code >= 400:
-        raise CodexAuthError("token_http_error", f"HTTP {status_code}: {detail}")
+        raise GrokAuthError("token_http_error", f"HTTP {status_code}: {detail}")
     data = json.loads(body or b"{}")
     if not isinstance(data, dict):
-        raise CodexAuthError("bad_response", "token endpoint returned non-object")
+        raise GrokAuthError("bad_response", "token endpoint returned non-object")
     return data
 
 
@@ -217,21 +187,15 @@ def _record_from_token_response(
     refresh = data.get("refresh_token") or refresh_fallback
     expires_in = data.get("expires_in")
     if not isinstance(access, str) or not access:
-        raise CodexAuthError("bad_response", "token response missing access_token")
+        raise GrokAuthError("bad_response", "token response missing access_token")
     if not isinstance(refresh, str) or not refresh:
-        raise CodexAuthError("bad_response", "token response missing refresh_token")
-    account_id = _account_id_from_jwt(access) or _account_id_from_jwt(
-        data.get("id_token") if isinstance(data.get("id_token"), str) else ""
-    )
-    if not account_id:
-        raise CodexAuthError("no_account_id", "could not read chatgpt_account_id from token")
+        raise GrokAuthError("bad_response", "token response missing refresh_token")
     ttl = expires_in if isinstance(expires_in, int | float) else 3600
     return {
         "type": "oauth",
         "provider": PROVIDER,
         "access": access,
         "refresh": refresh,
-        "account_id": account_id,
         "expires_at": time.time() + ttl,
     }
 
@@ -260,30 +224,11 @@ def refresh_tokens(refresh_token: str) -> dict[str, Any]:
     return _record_from_token_response(data, refresh_fallback=refresh_token)
 
 
-def _account_id_from_jwt(token: str | None) -> str | None:
-    """Read the account id claim without verifying the JWT (the server enforces
-    authenticity on use); it feeds the ``chatgpt-account-id`` header."""
-    if not token or token.count(".") != 2:
-        return None
-    payload_b64 = token.split(".")[1]
-    padding = "=" * (-len(payload_b64) % 4)
-    try:
-        payload = json.loads(base64.urlsafe_b64decode(payload_b64 + padding))
-    except (ValueError, json.JSONDecodeError):
-        return None
-    if not isinstance(payload, dict):
-        return None
-    auth = payload.get(_ACCOUNT_CLAIM)
-    if isinstance(auth, dict):
-        account_id = auth.get("chatgpt_account_id")
-        if isinstance(account_id, str) and account_id:
-            return account_id
-    organizations = payload.get("organizations")
-    if isinstance(organizations, list) and organizations and isinstance(organizations[0], dict):
-        org_id = organizations[0].get("id")
-        if isinstance(org_id, str) and org_id:
-            return org_id
-    return None
+def _access_token(record: dict[str, Any]) -> str:
+    access = record["access"]
+    if not isinstance(access, str) or not access:
+        raise GrokAuthError("bad_response", "stored access token is missing or malformed")
+    return access
 
 
 def _near_expiry(record: dict[str, Any]) -> bool:
@@ -293,35 +238,35 @@ def _near_expiry(record: dict[str, Any]) -> bool:
     return expires_at - _EXPIRY_SKEW_S <= time.time()
 
 
-def get_valid_token() -> tuple[str, str]:
-    """Return ``(access_token, account_id)``, refreshing under the cross-process
-    guard if near expiry."""
+def get_valid_token() -> str:
+    """Return a valid access token, refreshing under the cross-process guard if
+    near expiry."""
     record = read_record()
     if record is None:
-        raise CodexAuthError("not_authenticated", "not signed in; run: strix auth login")
+        raise GrokAuthError("not_authenticated", "not signed in; run: strix auth login grok")
     if not _near_expiry(record):
-        return record["access"], record["account_id"]
+        return _access_token(record)
     with _refresh_guard():
         record = read_record()
         if record is None:
-            raise CodexAuthError("not_authenticated", "not signed in; run: strix auth login")
+            raise GrokAuthError("not_authenticated", "not signed in; run: strix auth login grok")
         if not _near_expiry(record):
-            return record["access"], record["account_id"]
+            return _access_token(record)
         try:
             refreshed = refresh_tokens(record["refresh"])
-        except CodexAuthError:
+        except GrokAuthError:
             # A peer process may have already spent this single-use refresh token.
             latest = read_record()
             if latest and latest["refresh"] != record["refresh"] and not _near_expiry(latest):
-                return latest["access"], latest["account_id"]
+                return _access_token(latest)
             raise
         save_record(refreshed)
-        return refreshed["access"], refreshed["account_id"]
+        return _access_token(refreshed)
 
 
 def build_openai_client() -> AsyncOpenAI:
-    """An ``AsyncOpenAI`` for the ChatGPT backend. A per-request hook re-stamps a
-    fresh bearer token so long scans survive token expiry."""
+    """An ``AsyncOpenAI`` for xAI's API. A per-request hook re-stamps a fresh
+    bearer token so long scans survive token expiry."""
     import asyncio
 
     import httpx
@@ -330,22 +275,17 @@ def build_openai_client() -> AsyncOpenAI:
     get_valid_token()  # fail fast at configure time if the sign-in is dead
 
     async def _auth_hook(request: httpx.Request) -> None:
-        access, account_id = await asyncio.to_thread(get_valid_token)
+        access = await asyncio.to_thread(get_valid_token)
         request.headers["Authorization"] = f"Bearer {access}"
-        request.headers["chatgpt-account-id"] = account_id
 
     http_client = httpx.AsyncClient(
         timeout=httpx.Timeout(600.0, connect=30.0),
         event_hooks={"request": [_auth_hook]},
     )
     return AsyncOpenAI(
-        api_key="strix-codex-oauth",  # placeholder; the hook overwrites Authorization
-        base_url=CODEX_BASE_URL,
+        api_key="strix-grok-oauth",  # placeholder; the hook overwrites Authorization
+        base_url=XAI_BASE_URL,
         http_client=http_client,
-        default_headers={
-            "OpenAI-Beta": "responses=experimental",
-            "originator": ORIGINATOR,
-        },
     )
 
 
@@ -359,11 +299,11 @@ def get_subscription_client() -> AsyncOpenAI:
     return _subscription_client
 
 
-SUBSCRIPTION_PREFIX = "chatgpt/"
+SUBSCRIPTION_PREFIX = "grok/"
 
 
 def subscription_model(model_name: str | None) -> str | None:
-    """The model slug behind a ``chatgpt/<model>`` STRIX_LLM, or None."""
+    """The model slug behind a ``grok/<model>`` STRIX_LLM, or None."""
     name = (model_name or "").strip()
     if not name.lower().startswith(SUBSCRIPTION_PREFIX):
         return None

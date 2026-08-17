@@ -101,6 +101,7 @@ export function RunDetails({
   const totalTokens = num(usage.total_tokens);
   const cost = num(usage.cost);
   const subscription = str(raw.auth_mode) === "subscription";
+  const subscriptionProvider = str(raw.subscription_provider);
 
   const sub = (n: number, word: string) => (
     <span className="text-[#666]"> ({formatNumber(n)} {word})</span>
@@ -180,7 +181,7 @@ export function RunDetails({
                 <Field label="Provider">
                   <span className="inline-flex items-center gap-1.5">
                     <span className="rounded-full border border-[#22c55e]/40 bg-[#22c55e]/10 px-2 py-0.5 text-[11px] text-[#22c55e]">
-                      ChatGPT subscription
+                      {subscriptionProvider ? `${subscriptionProvider} subscription` : "Subscription"}
                     </span>
                   </span>
                 </Field>

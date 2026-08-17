@@ -70,6 +70,53 @@ def test_read_run_summary_finished_flag(tmp_path: Path) -> None:
     assert read_run_summary(partial)["finished"] is False
 
 
+def _write_record(base: Path, name: str, record: dict[str, object]) -> Path:
+    run_dir = base / "strix_runs" / name
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    return run_dir
+
+
+def test_read_run_summary_backfills_subscription_provider(tmp_path: Path) -> None:
+    # An older subscription run recorded no provider name; it is derived from
+    # the recorded provider/model slug so the viewer can label it.
+    run_dir = _write_record(
+        tmp_path,
+        "grok-run",
+        {
+            "auth_mode": "subscription",
+            "llm_usage": {"agents": [{"agent_id": "root", "model": "grok/grok-4"}]},
+        },
+    )
+    assert read_run_summary(run_dir)["subscription_provider"] == "Grok"
+
+
+def test_read_run_summary_keeps_explicit_provider(tmp_path: Path) -> None:
+    run_dir = _write_record(
+        tmp_path,
+        "chatgpt-run",
+        {
+            "auth_mode": "subscription",
+            "subscription_provider": "ChatGPT",
+            "llm_usage": {"agents": [{"agent_id": "root", "model": "grok/grok-4"}]},
+        },
+    )
+    # An explicit field is authoritative and never overwritten by the slug.
+    assert read_run_summary(run_dir)["subscription_provider"] == "ChatGPT"
+
+
+def test_read_run_summary_ignores_api_key_runs(tmp_path: Path) -> None:
+    run_dir = _write_record(
+        tmp_path,
+        "api-key-run",
+        {
+            "auth_mode": "api_key",
+            "llm_usage": {"agents": [{"agent_id": "root", "model": "openai/gpt-5.4"}]},
+        },
+    )
+    assert "subscription_provider" not in read_run_summary(run_dir)
+
+
 def test_read_missing_artifacts_return_defaults(tmp_path: Path) -> None:
     run_dir = _make_run(tmp_path, "empty", status="running", end_time=None)
     assert read_vulnerabilities(run_dir) == []
