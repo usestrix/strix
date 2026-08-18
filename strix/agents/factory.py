@@ -16,6 +16,7 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
+from strix.agents.tool_schema import sanitize_tool_schema
 from strix.config import load_settings
 from strix.tools.agents_graph.tools import (
     agent_finish,
@@ -604,7 +605,7 @@ def build_strix_agent(
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        _with_bounded_result(_with_coerced_arguments(tool))
+        _with_bounded_result(_with_coerced_arguments(sanitize_tool_schema(tool)))
         if isinstance(tool, FunctionTool)
         else tool
         for tool in tools
