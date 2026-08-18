@@ -88,13 +88,12 @@ def _no_client() -> str:
     )
 
 
-def _err(name: str, exc: Exception) -> str:
+def _err(name: str, exc: Exception, **details: Any) -> str:
     logger.exception("%s failed", name)
-    return json.dumps(
-        {"success": False, "error": f"{name} failed: {exc}"},
-        ensure_ascii=False,
-        default=str,
-    )
+    payload: dict[str, Any] = {"success": False, "error": f"{name} failed: {exc}"}
+    if details:
+        payload["details"] = details
+    return json.dumps(payload, ensure_ascii=False, default=str)
 
 
 @function_tool(timeout=120)
@@ -224,7 +223,12 @@ async def list_requests(
             default=str,
         )
     except Exception as exc:  # noqa: BLE001
-        return _err("list_requests", exc)
+        return _err(
+            "list_requests",
+            exc,
+            httpql_filter=httpql_filter,
+            scope_id=scope_id,
+        )
 
 
 @function_tool(timeout=60)
@@ -477,7 +481,13 @@ async def list_sitemap(
         )
         return json.dumps(payload, ensure_ascii=False, default=str)
     except Exception as exc:  # noqa: BLE001
-        return _err("list_sitemap", exc)
+        return _err(
+            "list_sitemap",
+            exc,
+            scope_id=scope_id,
+            parent_id=parent_id,
+            depth=depth,
+        )
 
 
 @function_tool(timeout=60)
