@@ -1,6 +1,6 @@
 """Pure translation between Strix's Agents-SDK I/O and ``claude -p`` structured output.
 
-No subprocess, no network — this module is a function of bytes to objects, so it
+No subprocess, no network, this module is a function of bytes to objects, so it
 tests against recorded ``claude -p`` transcripts with no live calls. See
 ``.artifacts/SPIKE-DECISION.md`` for the 4b protocol these functions implement.
 
@@ -176,7 +176,7 @@ def _stringify(content: Any) -> str:
                 # explicit marker rather than dropping it silently, so the model
                 # knows a screenshot was produced and does not narrate having
                 # inspected one it never received.
-                parts.append("[image returned by tool — not visible to this backend]")
+                parts.append("[image returned by tool, not visible to this backend]")
                 continue
             text = block_dict.get("text") or block_dict.get("output") or block_dict.get("content")
             if isinstance(text, str):

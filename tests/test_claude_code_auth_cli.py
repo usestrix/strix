@@ -1,4 +1,4 @@
-"""``strix auth ... claude`` provider dispatch — every verb delegates to the CLI."""
+"""``strix auth ... claude`` provider dispatch, every verb delegates to the CLI."""
 
 from __future__ import annotations
 
