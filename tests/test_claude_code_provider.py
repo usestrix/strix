@@ -54,6 +54,12 @@ def test_subscription_resolver_covers_both_backends() -> None:
     assert subscription.is_subscription("openai/gpt-5.4") is False
 
 
+def test_subscription_label() -> None:
+    assert subscription.label("claude-code/claude-opus-4-8") == "Claude subscription"
+    assert subscription.label("chatgpt/gpt-5.4") == "ChatGPT subscription"
+    assert subscription.label("anthropic/claude-opus-4-8") == "subscription"
+
+
 def test_reasoning_flags() -> None:
     assert claude_code.reasoning_flags(None) == []
     assert claude_code.reasoning_flags("none") == []
