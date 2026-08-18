@@ -120,3 +120,26 @@ def test_build_prompt_includes_history_tools_and_task() -> None:
 def test_build_prompt_string_input() -> None:
     prompt = claude_bridge.build_prompt(None, "just a string", [])
     assert "just a string" in prompt
+
+
+def test_image_tool_result_is_marked_not_dropped() -> None:
+    # A browser/visual tool result carrying an image must not vanish silently:
+    # the model should see a marker so it doesn't claim to have inspected a
+    # screenshot the text bridge could not deliver.
+    prompt = claude_bridge.build_prompt(
+        None,
+        [
+            {
+                "type": "function_call_output",
+                "call_id": "c1",
+                "output": [
+                    {"type": "output_text", "text": "page loaded"},
+                    {"type": "output_image", "image_url": "data:image/png;base64,AAAA"},
+                ],
+            },
+        ],
+        [],
+    )
+    assert "page loaded" in prompt
+    assert "image returned by tool" in prompt
+    assert "AAAA" not in prompt  # the base64 payload is not dumped into the prompt

@@ -13,9 +13,19 @@ from strix.config import claude_code, codex
 
 
 def auth_mode(model_name: str | None) -> str:
-    """``"subscription"`` if the model runs on any flat-rate backend, else ``"api_key"``."""
-    if codex.subscription_model(model_name) or claude_code.claude_code_model(model_name):
+    """``"subscription"`` if the model runs at a genuine $0 flat rate, else ``"api_key"``.
+
+    ChatGPT OAuth can only produce a subscription session, so its prefix alone is
+    conclusive. Claude Code, though, can be signed in on either a subscription or
+    an ``ANTHROPIC_API_KEY``; a ``claude-code/`` run on an API key meters normally,
+    so the prefix is not enough — consult the actual session. Classifying an
+    API-key run as a subscription would force its cost to $0 and defeat the budget
+    guard on a metered scan.
+    """
+    if codex.subscription_model(model_name):
         return "subscription"
+    if claude_code.claude_code_model(model_name):
+        return "subscription" if claude_code.session_state() == "subscription" else "api_key"
     return "api_key"
 
 

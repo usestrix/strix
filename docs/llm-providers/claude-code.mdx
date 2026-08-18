@@ -73,3 +73,8 @@ subscription session, whereas an API key drops cleanly into a secret. Use
 
 `STRIX_DEDUPE_MODEL` stays on an API key or another provider — deduplication does not run on
 the Claude subscription for now.
+
+Screenshots and other image tool results are not passed to the model on this backend. It
+bridges each turn as text, so a browser or visual tool's image is surfaced to the model as a
+marker noting an image was produced, not the image itself. Tools that depend on the model
+seeing a screenshot work best on the API-key path.

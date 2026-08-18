@@ -16,10 +16,12 @@ if TYPE_CHECKING:
 
 
 @pytest.fixture(autouse=True)
-def _clear_version_cache() -> Iterator[None]:
+def _clear_caches() -> Iterator[None]:
     claude_code._raw_version.cache_clear()
+    claude_code.session_state.cache_clear()
     yield
     claude_code._raw_version.cache_clear()
+    claude_code.session_state.cache_clear()
 
 
 @pytest.mark.parametrize(
@@ -45,13 +47,24 @@ def test_auth_mode() -> None:
     assert claude_code.auth_mode(None) == "api_key"
 
 
-def test_subscription_resolver_covers_both_backends() -> None:
+def test_subscription_resolver_covers_both_backends(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(claude_code, "session_state", lambda: "subscription")
     assert subscription.auth_mode("claude-code/claude-opus-4-8") == "subscription"
     assert subscription.auth_mode("chatgpt/gpt-5.4") == "subscription"
     assert subscription.auth_mode("anthropic/claude-opus-4-8") == "api_key"
     assert subscription.auth_mode(None) == "api_key"
     assert subscription.is_subscription("claude-code/x") is True
     assert subscription.is_subscription("openai/gpt-5.4") is False
+
+
+def test_claude_code_on_api_key_is_not_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A claude-code/ run whose CLI is signed in on an API key meters normally, so
+    # it must report api_key (never $0), or the budget guard would be defeated.
+    monkeypatch.setattr(claude_code, "session_state", lambda: "api_key")
+    assert subscription.auth_mode("claude-code/claude-opus-4-8") == "api_key"
+    assert subscription.is_subscription("claude-code/claude-opus-4-8") is False
+    # ChatGPT is unaffected: its OAuth can only yield a subscription session.
+    assert subscription.auth_mode("chatgpt/gpt-5.4") == "subscription"
 
 
 def test_subscription_label() -> None:
