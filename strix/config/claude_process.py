@@ -2,17 +2,25 @@
 
 One ``claude -p`` invocation per Strix turn (the SDK model is stateless — Strix
 resends the full conversation each turn, so a warm pipe would carry nothing).
-A module-level semaphore bounds how many ``claude`` processes run at once, so a
+
+The turn is a plain request/response (write the prompt, read all output), so it
+runs as a **blocking** ``subprocess.run`` inside ``asyncio.to_thread``. That is
+deliberate: on Windows Strix forces a ``SelectorEventLoop``, which cannot spawn
+subprocesses (``asyncio.create_subprocess_exec`` raises a bare
+``NotImplementedError`` there), so the async-subprocess API is unusable. A
+threaded blocking call works under any event-loop policy on every platform.
+
+A module-level semaphore bounds how many ``claude`` processes run at once so a
 wide multi-agent graph doesn't fork an unbounded number of heavyweight CLIs.
 """
 
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import json
 import logging
 import os
+import subprocess  # we invoke a trusted, user-installed CLI, never a shell
 from typing import Any, cast
 
 from strix.config import claude_bridge, claude_code
@@ -21,7 +29,9 @@ from strix.config import claude_bridge, claude_code
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_PROCS = 8
-_KILL_GRACE_S = 5.0
+# A single agent turn can involve real model latency; bound it generously so a
+# genuinely hung subprocess still cannot wedge the run forever.
+_DEFAULT_TURN_TIMEOUT_S = 900
 
 _BASE_ARGS = (
     "-p",
@@ -44,10 +54,20 @@ def _max_procs() -> int:
         try:
             value = int(raw)
         except ValueError:
-            value = _DEFAULT_MAX_PROCS
-        else:
-            return max(1, value)
+            return _DEFAULT_MAX_PROCS
+        return max(1, value)
     return _DEFAULT_MAX_PROCS
+
+
+def _turn_timeout() -> float:
+    raw = os.environ.get("STRIX_CLAUDE_CODE_TIMEOUT")
+    if raw:
+        try:
+            value = float(raw)
+        except ValueError:
+            return _DEFAULT_TURN_TIMEOUT_S
+        return value if value > 0 else _DEFAULT_TURN_TIMEOUT_S
+    return _DEFAULT_TURN_TIMEOUT_S
 
 
 # Holder rather than module globals so rebinding needs no `global` statement.
@@ -72,45 +92,48 @@ def _build_argv(slug: str, extra_args: list[str]) -> list[str]:
             "Install it, then run `claude /login`."
         )
     schema = json.dumps(claude_bridge.RESULT_SCHEMA, separators=(",", ":"))
-    return [
-        binary,
-        *_BASE_ARGS,
-        "--model",
-        slug,
-        "--json-schema",
-        schema,
-        *extra_args,
-    ]
+    return [binary, *_BASE_ARGS, "--model", slug, "--json-schema", schema, *extra_args]
+
+
+def _run_blocking(argv: list[str], prompt: str, timeout: float) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(  # noqa: S603  # trusted binary, fixed argv, no shell
+        argv,
+        input=prompt,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=False,
+    )
 
 
 async def run_turn(slug: str, prompt: str, *, extra_args: list[str] | None = None) -> str:
     """Run one ``claude -p`` turn and return its terminal ``result`` line, unparsed.
 
-    Raises :class:`claude_code.ClaudeCodeError` on a non-zero exit or a stream
-    with no result line; the caller decodes the JSON via ``claude_bridge``.
+    Raises :class:`claude_code.ClaudeCodeError` on a non-zero exit, a timeout, or
+    a stream with no result line; the caller decodes the JSON via ``claude_bridge``.
     """
     argv = _build_argv(slug, extra_args or [])
+    timeout = _turn_timeout()
     async with _get_semaphore():
-        proc = await asyncio.create_subprocess_exec(
-            *argv,
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
         try:
-            stdout, stderr = await proc.communicate(prompt.encode("utf-8"))
-        except BaseException:
-            await _terminate(proc)
-            raise
+            completed = await asyncio.to_thread(_run_blocking, argv, prompt, timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise claude_code.ClaudeCodeError(f"claude -p timed out after {timeout:.0f}s") from exc
+        except OSError as exc:
+            raise claude_code.ClaudeCodeError(f"could not launch claude -p: {exc}") from exc
 
-    if proc.returncode != 0:
-        tail = _tail(stderr)
-        raise claude_code.ClaudeCodeError(f"claude -p exited with code {proc.returncode}: {tail}")
+    if completed.returncode != 0:
+        raise claude_code.ClaudeCodeError(
+            f"claude -p exited with code {completed.returncode}: {_tail(completed.stderr)}"
+        )
 
-    result_line = _extract_result_line(stdout.decode("utf-8", errors="replace"))
+    result_line = _extract_result_line(completed.stdout)
     if result_line is None:
-        tail = _tail(stderr)
-        raise claude_code.ClaudeCodeError(f"claude -p produced no result line (stderr: {tail})")
+        raise claude_code.ClaudeCodeError(
+            f"claude -p produced no result line (stderr: {_tail(completed.stderr)})"
+        )
     return result_line
 
 
@@ -130,22 +153,6 @@ def _extract_result_line(stdout: str) -> str | None:
     return found
 
 
-def _tail(stderr: bytes, *, limit: int = 400) -> str:
-    text = stderr.decode("utf-8", errors="replace").strip()
+def _tail(stderr: str, *, limit: int = 400) -> str:
+    text = stderr.strip()
     return text[-limit:] if text else "(no stderr)"
-
-
-async def _terminate(proc: asyncio.subprocess.Process) -> None:
-    if proc.returncode is not None:
-        return
-    try:
-        proc.terminate()
-    except ProcessLookupError:
-        return
-    try:
-        await asyncio.wait_for(proc.wait(), timeout=_KILL_GRACE_S)
-    except TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            proc.kill()
-        with contextlib.suppress(ProcessLookupError):
-            await proc.wait()

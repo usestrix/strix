@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import asyncio
+import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -169,51 +172,49 @@ def test_extract_result_line_picks_the_result() -> None:
     assert '"type": "result"' in line
 
 
-class _FakeProc:
-    def __init__(self, stdout: bytes, returncode: int, stderr: bytes = b"") -> None:
-        self._stdout = stdout
-        self._stderr = stderr
-        self.returncode = returncode
-        self.terminated = False
-
-    async def communicate(self, _stdin: bytes | None = None) -> tuple[bytes, bytes]:
-        return self._stdout, self._stderr
-
-    def terminate(self) -> None:
-        self.terminated = True
-
-    async def wait(self) -> int:
-        return self.returncode
+def _completed(stdout: str, returncode: int, stderr: str = "") -> subprocess.CompletedProcess[str]:
+    return subprocess.CompletedProcess(
+        args=["claude"], returncode=returncode, stdout=stdout, stderr=stderr
+    )
 
 
-def _patch_spawn(monkeypatch: pytest.MonkeyPatch, proc: _FakeProc) -> None:
+def _patch_run(
+    monkeypatch: pytest.MonkeyPatch, completed: subprocess.CompletedProcess[str]
+) -> None:
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
-
-    async def _spawn(*_args: Any, **_kwargs: Any) -> _FakeProc:
-        return proc
-
-    monkeypatch.setattr(claude_process.asyncio, "create_subprocess_exec", _spawn)
+    monkeypatch.setattr(claude_process, "_run_blocking", lambda *_a, **_k: completed)
 
 
 def test_run_turn_returns_result_line(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout = (
-        b'{"type": "system", "subtype": "init"}\n'
-        b'{"type": "result", "subtype": "success", "is_error": false, "result": "{}"}\n'
+        '{"type": "system", "subtype": "init"}\n'
+        '{"type": "result", "subtype": "success", "is_error": false, "result": "{}"}\n'
     )
-    _patch_spawn(monkeypatch, _FakeProc(stdout, 0))
+    _patch_run(monkeypatch, _completed(stdout, 0))
     line = asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
     assert '"type": "result"' in line
 
 
 def test_run_turn_nonzero_exit_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_spawn(monkeypatch, _FakeProc(b"", 1, b"boom on stderr"))
+    _patch_run(monkeypatch, _completed("", 1, "boom on stderr"))
     with pytest.raises(claude_code.ClaudeCodeError, match="exited with code 1"):
         asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
 
 
 def test_run_turn_no_result_line_raises(monkeypatch: pytest.MonkeyPatch) -> None:
-    _patch_spawn(monkeypatch, _FakeProc(b'{"type": "system"}\n', 0))
+    _patch_run(monkeypatch, _completed('{"type": "system"}\n', 0))
     with pytest.raises(claude_code.ClaudeCodeError, match="no result line"):
+        asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+
+
+def test_run_turn_timeout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+
+    def _boom(*_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
+        raise subprocess.TimeoutExpired(cmd="claude", timeout=1.0)
+
+    monkeypatch.setattr(claude_process, "_run_blocking", _boom)
+    with pytest.raises(claude_code.ClaudeCodeError, match="timed out"):
         asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
 
 
@@ -223,30 +224,44 @@ def test_missing_binary_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
 
 
+def test_run_turn_works_under_selector_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression: on Windows Strix forces a SelectorEventLoop, which cannot spawn
+    # subprocesses via asyncio. The threaded blocking call must still work.
+    stdout = '{"type": "result", "is_error": false, "result": "{}"}\n'
+    _patch_run(monkeypatch, _completed(stdout, 0))
+
+    async def _drive_once() -> str:
+        return await claude_process.run_turn("claude-opus-4-8", "prompt")
+
+    loop = asyncio.SelectorEventLoop()
+    try:
+        line = loop.run_until_complete(_drive_once())
+    finally:
+        loop.close()
+    assert '"type": "result"' in line
+
+
 def test_semaphore_bounds_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_CLAUDE_CODE_MAX_PROCS", "2")
     monkeypatch.setitem(claude_process._sem_state, "semaphore", None)
     monkeypatch.setitem(claude_process._sem_state, "size", None)
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
 
+    lock = threading.Lock()
     live = 0
     peak = 0
 
-    class _SlowProc(_FakeProc):
-        async def communicate(self, _stdin: bytes | None = None) -> tuple[bytes, bytes]:
-            nonlocal live, peak
+    def _slow(*_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
+        nonlocal live, peak
+        with lock:
             live += 1
             peak = max(peak, live)
-            await asyncio.sleep(0.02)
+        time.sleep(0.02)
+        with lock:
             live -= 1
-            return self._stdout, self._stderr
+        return _completed('{"type": "result", "is_error": false, "result": "{}"}\n', 0)
 
-    result = b'{"type": "result", "is_error": false, "result": "{}"}\n'
-
-    async def _spawn(*_a: Any, **_k: Any) -> _SlowProc:
-        return _SlowProc(result, 0)
-
-    monkeypatch.setattr(claude_process.asyncio, "create_subprocess_exec", _spawn)
+    monkeypatch.setattr(claude_process, "_run_blocking", _slow)
 
     async def _run_all() -> None:
         await asyncio.gather(*[claude_process.run_turn("claude-opus-4-8", "p") for _ in range(8)])
