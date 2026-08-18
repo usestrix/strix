@@ -21,6 +21,7 @@ from strix.config.models import (
     _ClaudeCodeModel,
     _NonStreamingModel,
     _TurnGuardModel,
+    uses_chat_completions_tool_schema,
 )
 
 
@@ -140,6 +141,16 @@ def test_get_model_leaves_api_key_path_untouched(
     model = StrixProvider().get_model("anthropic/claude-opus-4-8")
     assert isinstance(model, _TurnGuardModel)
     assert model._inner is sentinel
+
+
+def test_claude_code_uses_json_function_tools() -> None:
+    # The bridge renders tools as JSON function schemas and reads back
+    # {name, arguments}, so special tool types (apply_patch) must be converted to
+    # plain function tools — i.e. chat-completions schema mode, not the native
+    # Responses path the ChatGPT backend uses.
+    settings = load_settings()
+    assert uses_chat_completions_tool_schema("claude-code/claude-opus-4-8", settings) is True
+    assert uses_chat_completions_tool_schema("chatgpt/gpt-5.4", settings) is False
 
 
 def test_claude_code_takes_priority_over_codex(

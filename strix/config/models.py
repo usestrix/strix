@@ -692,6 +692,13 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     llm = settings.llm
     set_tracing_disabled(True)
     if codex.subscription_model(llm.model) or claude_code.claude_code_model(llm.model):
+        # Neither subscription backend routes through LiteLLM, but stray metadata
+        # lookups (token counting, model info) still hit it with an unmapped name
+        # and would print LiteLLM's "Provider List" banner. Silence it here since
+        # the usual _configure_litellm_compatibility() path is skipped.
+        import litellm
+
+        litellm.suppress_debug_info = True
         return
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
@@ -874,8 +881,14 @@ def _configure_litellm_default(name: str, value: str) -> None:
 
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
-    if codex.subscription_model(model_name) or claude_code.claude_code_model(model_name):
+    # The ChatGPT backend speaks the native Responses API, which handles special
+    # tool types (apply_patch) itself. The Claude Code bridge does NOT — it
+    # renders tools as JSON function schemas and reads back {name, arguments},
+    # so those special tools must be converted to plain function tools (True).
+    if codex.subscription_model(model_name):
         return False
+    if claude_code.claude_code_model(model_name):
+        return True
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
         return True
