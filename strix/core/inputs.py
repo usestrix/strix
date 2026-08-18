@@ -104,89 +104,109 @@ def _render_workspace_files(scan_config: dict[str, Any]) -> list[str]:
     ]
 
 
-def build_root_task(scan_config: dict[str, Any]) -> str:
-    targets = scan_config.get("targets", []) or []
-    diff_scope = scan_config.get("diff_scope") or {}
-    user_instructions = scan_config.get("user_instructions", "") or ""
+def _emit_sections(context: list[str], sections: dict[str, list[str]]) -> None:
+    for label, items in sections.items():
+        if items:
+            context.append(f"\n\n{label}:")
+            context.extend(items)
 
-    sections: dict[str, list[str]] = {
+
+def _split_target_sections(
+    targets: list[dict[str, Any]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Sort targets into on-disk plumbing and network sections.
+
+    On-disk material (repos, local code, API specs) is where mounted code lives;
+    network targets (URLs/IPs) are what the run was pointed at. Both are injected
+    as context for the task — never as a hard scope — so the split only controls
+    how each is framed, not whether it is shown.
+    """
+    ondisk: dict[str, list[str]] = {
         "Repositories": [],
         "Local Codebases": [],
-        "URLs": [],
-        "IP Addresses": [],
         "API Specifications": [],
     }
-
+    network: dict[str, list[str]] = {"URLs": [], "IP Addresses": []}
     for target in targets:
         ttype = target.get("type")
         details = target.get("details") or {}
         workspace_subdir = details.get("workspace_subdir")
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else "/workspace"
-
         if ttype == "repository":
             url = details.get("target_repo", "")
             cloned = details.get("cloned_repo_path")
-            sections["Repositories"].append(
+            ondisk["Repositories"].append(
                 f"- {url} (available at: {workspace_path})" if cloned else f"- {url}",
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
-            sections["Local Codebases"].append(
+            ondisk["Local Codebases"].append(
                 f"- {path} (available at: {workspace_path}; "
                 "this is the user's real directory, mounted live and writable — "
                 ".git/.agents/.codex are read-only)"
             )
         elif ttype == "web_application":
-            sections["URLs"].append(f"- {details.get('target_url', '')}")
+            network["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":
-            sections["IP Addresses"].append(f"- {details.get('target_ip', '')}")
+            network["IP Addresses"].append(f"- {details.get('target_ip', '')}")
         elif ttype == "api_spec":
-            sections["API Specifications"].extend(_render_api_spec(details))
+            ondisk["API Specifications"].extend(_render_api_spec(details))
+    return ondisk, network
 
-    parts: list[str] = []
-    for label, items in sections.items():
-        if items:
-            parts.append(f"\n\n{label}:")
-            parts.extend(items)
+
+def build_root_task(scan_config: dict[str, Any]) -> str:
+    """Build the root agent's task.
+
+    Scope is not derived or enforced here: the user's prompt is the task and the
+    source of truth for what to test. Alongside it we render only non-scope
+    context — where mounted code/specs live on disk, the working directory, any
+    user-provided files, and PR diff-scope. Targets are always injected too, but
+    framed as context ("not a scope restriction"), never as an enforced boundary;
+    with no prompt they stand as the task so a target-only launch still has one.
+    """
+    diff_scope = scan_config.get("diff_scope") or {}
+    user_instructions = (scan_config.get("user_instructions") or "").strip()
+
+    ondisk, network = _split_target_sections(scan_config.get("targets", []) or [])
+
+    context: list[str] = []
+    _emit_sections(context, ondisk)
 
     # A workspace mount is a directory to work in, not an asset to test. It is
     # listed apart from the targets so it never reads as scope.
     if workspace_mount := scan_config.get("workspace_mount") or "":
         subdir = scan_config.get("workspace_subdir") or ""
         workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
-        parts.append("\n\nWorking Directory:")
-        parts.append(
+        context.append("\n\nWorking Directory:")
+        context.append(
             f"- {workspace_mount} (available at: {workspace_path}; "
             "this is the user's real directory, mounted live and writable — "
             ".git/.agents/.codex are read-only)"
         )
-        parts.append(
+        context.append(
             "- No scan target was set. This directory is where you work, not a "
-            "target to assess: the instructions below are the only source of "
-            "truth for what to do."
-        )
-    # Whether anything above gave the run a scope. Workspace files never do, so
-    # this is read before they are listed.
-    has_scope = bool(parts)
-
-    parts.extend(_render_workspace_files(scan_config))
-
-    if not has_scope and user_instructions:
-        # Neither a target nor a directory, but there is an instruction: the user
-        # declined the mount, so the instruction is all there is. Say so, or the
-        # agent goes looking for a scope that was never given.
-        parts.append(
-            "\n\nNo scan target and no working directory were provided. The "
-            "instructions below are the only source of truth for what to do; "
-            "work from them and from what you can reach yourself."
+            "target to assess: the task is the only source of truth for what to do."
         )
 
-    parts.extend(_render_diff_scope(diff_scope))
+    context.extend(_render_workspace_files(scan_config))
 
-    task = " ".join(parts)
-    if user_instructions:
-        task = f"{task}\n\nSpecial instructions: {user_instructions}"
-    return task
+    # The target is always injected so the agent knows what the run was pointed
+    # at — as context for the task, never as a hard scope.
+    _emit_sections(context, network)
+
+    context.extend(_render_diff_scope(diff_scope))
+    context_text = " ".join(context).strip()
+
+    if not context_text:
+        return user_instructions
+    if not user_instructions:
+        return context_text
+    return (
+        f"{user_instructions}\n\n"
+        "Run context (what this scan was pointed at — informs the task above; "
+        "not a scope restriction):\n"
+        f"{context_text}"
+    )
 
 
 def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:

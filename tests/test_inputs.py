@@ -193,7 +193,13 @@ def test_build_root_task_repository_target() -> None:
     assert "https://example.com/repo.git" in task
 
 
-def test_build_root_task_web_application_with_instructions() -> None:
+def test_build_root_task_web_target_injected_as_context() -> None:
+    """The prompt leads; the target is injected below it as context, not scope.
+
+    The prompt carries no ``Special instructions:`` label and the target is
+    framed as context ("not a scope restriction"), never as an authoritative
+    scope block.
+    """
     config = {
         "targets": [
             {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
@@ -202,9 +208,11 @@ def test_build_root_task_web_application_with_instructions() -> None:
     }
     task = build_root_task(config)
 
-    assert "URLs:" in task
+    assert task.startswith("Focus on auth.")
     assert "https://app.example.com" in task
-    assert "Special instructions: Focus on auth." in task
+    assert "not a scope restriction" in task
+    assert "Special instructions:" not in task
+    assert "SYSTEM-VERIFIED" not in task
 
 
 def test_build_root_task_workspace_mount_is_not_a_target() -> None:
@@ -220,7 +228,7 @@ def test_build_root_task_workspace_mount_is_not_a_target() -> None:
     assert "Working Directory:" in task
     assert "/workspace/api" in task
     assert "No scan target was set" in task
-    assert "Special instructions: Find IDOR in the checkout flow." in task
+    assert task.startswith("Find IDOR in the checkout flow.")
     # It must not be presented as an asset to test.
     for label in ("Local Codebases:", "Repositories:", "URLs:", "IP Addresses:"):
         assert label not in task
