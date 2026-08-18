@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings
+from strix.config import claude_code, codex, load_settings
 from strix.interface.utils import (
     check_docker_connection,
     image_exists,
@@ -17,6 +17,48 @@ from strix.interface.utils import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_claude_code(console: Console, model: str | None) -> None:
+    """Preflight for a ``claude-code/...`` run. Exits the process on any hard stop.
+
+    The ``claude`` binary and its signed-in session must live on the **host**
+    running Strix — not inside the target sandbox. This is the single most
+    common way this backend confuses people, so preflight says it out loud.
+    """
+    if claude_code.binary_path() is None:
+        console.print(
+            f"[red]STRIX_LLM={model} needs the Claude Code CLI, which isn't on PATH.[/] "
+            "Install it on this host, then run [cyan]claude /login[/] on your Pro/Max plan."
+        )
+        sys.exit(1)
+    if not claude_code.meets_min_version():
+        major, minor, patch = claude_code.MIN_CLAUDE_VERSION
+        console.print(
+            f"[red]Your Claude Code CLI ({claude_code.version() or 'unknown'}) is too old.[/] "
+            f"Strix needs at least [cyan]{major}.{minor}.{patch}[/]. Update it and retry."
+        )
+        sys.exit(1)
+
+    state = claude_code.session_state()
+    if state == "signed_out":
+        console.print(
+            f"[red]STRIX_LLM={model} uses your Claude subscription, but the Claude Code CLI "
+            "isn't signed in.[/] Run [cyan]claude /login[/] (Pro/Max) first."
+        )
+        sys.exit(1)
+    if state == "api_key":
+        console.print(
+            "[yellow]Warning:[/] the Claude Code CLI is running on an API key, not a "
+            "subscription. This scan will meter against that key rather than run at $0. "
+            "Run [cyan]claude /login[/] with your Pro/Max account to use the subscription."
+        )
+    elif state == "unknown":
+        console.print(
+            "[yellow]Warning:[/] couldn't determine the Claude Code sign-in state; "
+            "proceeding. If the scan fails to authenticate, run [cyan]claude /login[/]."
+        )
+    logger.info("Environment OK (Claude Code subscription)")
 
 
 def validate_environment() -> None:
@@ -35,6 +77,10 @@ def validate_environment() -> None:
             )
             sys.exit(1)
         logger.info("Environment OK (ChatGPT subscription)")
+        return
+
+    if claude_code.claude_code_model(settings.llm.model):
+        _validate_claude_code(console, settings.llm.model)
         return
 
     if not settings.llm.model:
