@@ -61,13 +61,13 @@ def test_write_sarif_tool_version_is_reported(tmp_path: Path) -> None:
 
 
 def test_write_sarif_locationless_finding_is_anchored_not_dropped(tmp_path: Path) -> None:
-    # A finding with no code location must still appear (anchored to a stable
-    # fallback), never be silently dropped from the report.
+    # A finding with no code location must still appear at a stable tracked
+    # repository anchor, never be silently dropped from the report.
     write_sarif(tmp_path, [_finding(id="vuln-0002", code_locations=None)])
     results = _read(tmp_path)["runs"][0]["results"]
     assert len(results) == 1
     uri = results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
-    assert uri == "SECURITY.md"
+    assert uri == "README.md"
 
 
 def test_write_sarif_fingerprint_stable_across_title_rewording(tmp_path: Path) -> None:
@@ -165,10 +165,17 @@ def test_write_sarif_omits_fixes_without_fix_pairs(tmp_path: Path) -> None:
 
 
 def test_write_sarif_adds_logical_location_for_endpoint(tmp_path: Path) -> None:
-    # DAST findings hang off an endpoint; it must be preserved as a logical
-    # location so the finding keeps an addressable anchor.
+    # Findings with source locations retain them and add the endpoint as a
+    # logical location, so code scanning can navigate to both.
     write_sarif(tmp_path, [_finding(endpoint="GET /api/users/{id}")])
     locations = _read(tmp_path)["runs"][0]["results"][0]["locations"]
+    physical = [loc["physicalLocation"] for loc in locations if "physicalLocation" in loc]
+    assert physical == [
+        {
+            "artifactLocation": {"uri": "app.py"},
+            "region": {"startLine": 4},
+        }
+    ]
     logical = [
         entry
         for loc in locations
@@ -176,6 +183,24 @@ def test_write_sarif_adds_logical_location_for_endpoint(tmp_path: Path) -> None:
         if entry.get("kind") == "endpoint"
     ]
     assert logical == [{"fullyQualifiedName": "GET /api/users/{id}", "kind": "endpoint"}]
+
+
+def test_write_sarif_endpoint_finding_without_code_location_uses_synthetic_anchor(
+    tmp_path: Path,
+) -> None:
+    # Endpoint-only DAST findings need a tracked physical anchor for
+    # code-scanning, while preserving the endpoint as logical context.
+    write_sarif(tmp_path, [_finding(code_locations=None, endpoint="POST /api/upload")])
+    locations = _read(tmp_path)["runs"][0]["results"][0]["locations"]
+    physical = [loc["physicalLocation"] for loc in locations if "physicalLocation" in loc]
+    assert physical == [{"artifactLocation": {"uri": "README.md"}}]
+    logical = [
+        entry
+        for loc in locations
+        for entry in loc.get("logicalLocations", [])
+        if entry.get("kind") == "endpoint"
+    ]
+    assert logical == [{"fullyQualifiedName": "POST /api/upload", "kind": "endpoint"}]
 
 
 def test_write_sarif_synthetic_finding_falls_back_to_resource_logical_location(
