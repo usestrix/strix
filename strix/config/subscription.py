@@ -1,6 +1,6 @@
 """Unified subscription-vs-API-key resolution.
 
-Both subscription backends — ChatGPT (``codex``) and Claude Code — bill at a
+Both subscription backends, ChatGPT (``codex``) and Claude Code, bill at a
 flat rate, so a run on either reports ``auth_mode="subscription"`` and zero
 per-token cost. Four call sites ask this question (report state, scan setup,
 usage viewer, resumed-run detection); they all go through here so a third
@@ -18,7 +18,7 @@ def auth_mode(model_name: str | None) -> str:
     ChatGPT OAuth can only produce a subscription session, so its prefix alone is
     conclusive. Claude Code, though, can be signed in on either a subscription or
     an ``ANTHROPIC_API_KEY``; a ``claude-code/`` run on an API key meters normally,
-    so the prefix is not enough — consult the actual session. Classifying an
+    so the prefix is not enough, consult the actual session. Classifying an
     API-key run as a subscription would force its cost to $0 and defeat the budget
     guard on a metered scan.
     """

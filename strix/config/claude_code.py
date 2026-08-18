@@ -1,10 +1,10 @@
-"""Claude Code subscription backend — provider metadata and CLI probing.
+"""Claude Code subscription backend, provider metadata and CLI probing.
 
 Strix runs its agents on a Claude Pro/Max subscription by shelling out to the
 user's installed Claude Code binary in non-interactive mode (``claude -p``).
 Claude Code owns auth, token refresh, and the wire protocol; this module only
 locates the binary, reports its version and sign-in state, and parses the
-``claude-code/<model>`` STRIX_LLM prefix. There is deliberately no OAuth here —
+``claude-code/<model>`` STRIX_LLM prefix. There is deliberately no OAuth here,
 that is the whole point of Option B (see ``.artifacts/DESIGN.md``).
 """
 
@@ -118,7 +118,7 @@ def session_state() -> str:
     """One of ``"subscription"``, ``"api_key"``, ``"signed_out"``, ``"unknown"``.
 
     Parses ``claude auth status`` JSON. ``"unknown"`` means the probe itself
-    failed (binary missing, timeout, unparseable output) — the caller decides
+    failed (binary missing, timeout, unparseable output), the caller decides
     whether that is fatal.
 
     Cached: the CLI's sign-in state does not change within a scan process, and

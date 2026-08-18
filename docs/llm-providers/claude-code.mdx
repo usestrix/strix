@@ -25,7 +25,7 @@ Claude Code (this is global to the CLI, not just Strix).
 ## Requirements
 
 <Warning>
-  The `claude` CLI must be installed and signed in **on the host running Strix** — not
+  The `claude` CLI must be installed and signed in **on the host running Strix**, not
   inside the target sandbox container. This is the most common source of confusion. If
   `strix` runs somewhere without a signed-in `claude`, the run fails preflight with an
   actionable message.
@@ -33,7 +33,7 @@ Claude Code (this is global to the CLI, not just Strix).
 
 - Claude Code CLI **2.0.0 or newer** on the host's `PATH`.
 - Signed in on a **Pro or Max** plan (`claude /login`). If Claude Code is signed in on an
-  API key instead, Strix warns you before the scan — otherwise it would silently meter
+  API key instead, Strix warns you before the scan, otherwise it would silently meter
   against that key.
 
 ## Usage and cost
@@ -71,7 +71,7 @@ subscription session, whereas an API key drops cleanly into a secret. Use
 
 ## Not covered in v1.0
 
-`STRIX_DEDUPE_MODEL` stays on an API key or another provider — deduplication does not run on
+`STRIX_DEDUPE_MODEL` stays on an API key or another provider, deduplication does not run on
 the Claude subscription for now.
 
 Screenshots and other image tool results are not passed to the model on this backend. It

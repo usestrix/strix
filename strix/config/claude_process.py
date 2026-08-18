@@ -1,6 +1,6 @@
 """Subprocess transport for the Claude Code backend.
 
-One ``claude -p`` invocation per Strix turn (the SDK model is stateless — Strix
+One ``claude -p`` invocation per Strix turn (the SDK model is stateless, Strix
 resends the full conversation each turn, so a warm pipe would carry nothing).
 
 The turn is a plain request/response (write the prompt, read all output), so it
