@@ -160,17 +160,11 @@ def _public_evidence_reference(artifact: str) -> str:
 
 def _public_report(report: dict[str, Any]) -> dict[str, Any]:
     public = dict(report)
-    evidence = str(report.get("evidence") or "").strip()
     artifact = str(public.get("evidence_artifact") or "").strip()
-    report_id = str(public.get("id") or "").strip()
-
-    if evidence and not artifact and report_id:
-        artifact = evidence_artifact_relpath(report_id)
-        public["evidence_artifact"] = artifact
 
     if artifact:
         public["evidence"] = _public_evidence_reference(artifact)
-    elif evidence:
+    else:
         public.pop("evidence", None)
 
     return public
@@ -185,14 +179,25 @@ def _write_evidence_artifact(run_dir: Path, report: dict[str, Any]) -> None:
     artifact = str(report.get("evidence_artifact") or "").strip() or evidence_artifact_relpath(
         report_id,
     )
-    report["evidence_artifact"] = artifact
+    if evidence == _public_evidence_reference(artifact):
+        # Hydration left the public reference in place because the private
+        # artifact was unreadable. Never overwrite the original evidence with
+        # that reference on a subsequent save.
+        return
+
     evidence_path = run_dir / artifact
-    evidence_path.parent.mkdir(parents=True, exist_ok=True)
-    with suppress(OSError):
-        evidence_path.parent.chmod(_PRIVATE_EVIDENCE_DIR_MODE)
-    write_secret_text(evidence_path, f"{evidence}\n")
-    with suppress(OSError):
-        evidence_path.chmod(SECRET_FILE_MODE)
+    try:
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        with suppress(OSError):
+            evidence_path.parent.chmod(_PRIVATE_EVIDENCE_DIR_MODE)
+        write_secret_text(evidence_path, f"{evidence}\n")
+        with suppress(OSError):
+            evidence_path.chmod(SECRET_FILE_MODE)
+    except OSError:
+        logger.exception("Could not write private evidence artifact: %s", evidence_path)
+        return
+
+    report["evidence_artifact"] = artifact
 
 
 def write_vulnerabilities(

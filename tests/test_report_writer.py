@@ -234,6 +234,51 @@ def test_write_vulnerabilities_externalizes_raw_evidence(tmp_path: Path) -> None
     assert evidence_path.parent.stat().st_mode & 0o777 == 0o700
 
 
+def test_write_vulnerabilities_does_not_overwrite_unreadable_private_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_evidence = "Authorization: Bearer preserved-token"
+    reports = [_sample_report(id="vuln-0001", evidence=raw_evidence)]
+    write_vulnerabilities(tmp_path, reports, set())
+
+    evidence_path = tmp_path / "private_evidence" / "vuln-0001.md"
+    public_report = json.loads((tmp_path / "vulnerabilities.json").read_text(encoding="utf-8"))[0]
+    original_read_text = type(evidence_path).read_text
+
+    def fail_private_evidence_read(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == evidence_path:
+            raise OSError("private evidence unavailable")
+        return original_read_text(path, *args, **kwargs)
+
+    monkeypatch.setattr(type(evidence_path), "read_text", fail_private_evidence_read)
+    hydrate_report_evidence(tmp_path, public_report)
+    monkeypatch.undo()
+
+    write_vulnerabilities(tmp_path, [public_report], {"vuln-0001"})
+
+    assert evidence_path.read_text(encoding="utf-8") == f"{raw_evidence}\n"
+
+
+def test_write_vulnerabilities_persists_public_artifacts_when_private_evidence_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    raw_evidence = "Authorization: Bearer unsaved-token"
+    reports = [_sample_report(id="vuln-0001", evidence=raw_evidence)]
+
+    def fail_private_evidence_write(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("strix.report.writer.write_secret_text", fail_private_evidence_write)
+    write_vulnerabilities(tmp_path, reports, set())
+
+    public = json.loads((tmp_path / "vulnerabilities.json").read_text(encoding="utf-8"))[0]
+    public_markdown = (tmp_path / "vulnerabilities" / "vuln-0001.md").read_text(encoding="utf-8")
+    assert raw_evidence not in json.dumps(public)
+    assert raw_evidence not in public_markdown
+    assert "evidence" not in public
+    assert "evidence_artifact" not in public
 def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     write_executive_report(tmp_path, "Scan complete. No critical issues.")
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
