@@ -7,7 +7,6 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from openai.types.responses import ResponseOutputMessage
 
@@ -22,6 +21,7 @@ from strix.report.state import get_global_report_state
 
 if TYPE_CHECKING:
     from agents.items import ModelResponse
+    from agents.model_settings import ModelSettings
 
     from strix.config.settings import DedupeSettings
 
@@ -29,30 +29,36 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _dedupe_extra_args(dedupe: DedupeSettings) -> dict[str, str]:
-    """Per-call credential + endpoint for the dedupe model.
+def dedupe_model_provider(dedupe: DedupeSettings) -> StrixProvider:
+    """Provider carrying the dedupe model's own credential + endpoint.
 
     Provider env vars and the global base URL are process-wide, so a
     shared-provider dedupe key or a distinct dedupe endpoint can't be installed
     globally without clobbering (or being clobbered by) the main model's
-    config. Passing them per call keeps the two apart. Only applies when a
-    dedicated dedupe model is configured.
+    config. Binding them to the dedupe model keeps the two apart. They must
+    ride on the model rather than on ``ModelSettings.extra_args``: LiteLLM
+    already receives an explicit ``api_key`` on every call, so an ``extra_args``
+    copy arrives as a duplicate keyword argument and the call fails before it
+    is sent. Only applies when a dedicated dedupe model is configured.
     """
     if not dedupe.model:
-        return {}
-    extra: dict[str, str] = {}
-    if dedupe.api_key and dedupe.api_key.strip():
-        extra["api_key"] = dedupe.api_key.strip()
-    if dedupe.api_base and dedupe.api_base.strip():
-        extra["api_base"] = dedupe.api_base.strip()
-    return extra
+        return StrixProvider()
+    return StrixProvider(
+        api_key=_stripped_or_none(dedupe.api_key),
+        api_base=_stripped_or_none(dedupe.api_base),
+    )
+
+
+def _stripped_or_none(value: str | None) -> str | None:
+    stripped = (value or "").strip()
+    return stripped or None
 
 
 def _dedupe_model_settings(
     dedupe: DedupeSettings, model_name: str, request_timeout: float | None
 ) -> ModelSettings:
     llm = load_settings().llm
-    settings = make_model_settings(
+    return make_model_settings(
         dedupe.reasoning_effort,
         model_name=model_name,
         force_required_tool_choice=False,
@@ -64,10 +70,6 @@ def _dedupe_model_settings(
         extra_headers=dedupe.extra_headers if dedupe.model else llm.extra_headers,
         has_tools=False,
     )
-    extra = _dedupe_extra_args(dedupe)
-    if extra:
-        settings = settings.resolve(ModelSettings(extra_args=extra))
-    return settings
 
 
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.
@@ -371,7 +373,7 @@ async def check_duplicate(
 
         configure_sdk_model_defaults(settings)
         resolved_model = model_name.strip()
-        model = StrixProvider().get_model(resolved_model)
+        model = dedupe_model_provider(dedupe).get_model(resolved_model)
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,
