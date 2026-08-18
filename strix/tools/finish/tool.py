@@ -63,7 +63,7 @@ def _do_finish(
             recommendations=recommendations.strip(),
         )
         vuln_count = len(report_state.vulnerability_reports)
-    except (ImportError, AttributeError) as e:
+    except (ImportError, AttributeError, OSError, RuntimeError) as e:
         logger.exception("finish_scan persistence failed")
         return {"success": False, "error": f"Failed to complete scan: {e!s}"}
     else:

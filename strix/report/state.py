@@ -312,7 +312,11 @@ class ReportState:
         if self.vulnerability_found_callback:
             self.vulnerability_found_callback(report)
 
-        self.save_run_data()
+        try:
+            self.save_run_data()
+        except Exception:
+            self.vulnerability_reports.pop()
+            raise
         return report_id
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
@@ -371,6 +375,10 @@ class ReportState:
         technical_analysis: str,
         recommendations: str,
     ) -> None:
+        prev_scan_results = self.scan_results
+        prev_final_scan_result = self.final_scan_result
+        prev_run_scan_results = self.run_record.get("scan_results")
+
         self.scan_results = {
             "scan_completed": True,
             "executive_summary": executive_summary.strip(),
@@ -384,7 +392,17 @@ class ReportState:
         self.run_record["scan_results"] = self.scan_results
 
         logger.info("Updated scan final fields")
-        self.save_run_data(mark_complete=True)
+        try:
+            self.save_run_data(mark_complete=True)
+        except Exception:
+            self.scan_results = prev_scan_results
+            self.final_scan_result = prev_final_scan_result
+            if prev_run_scan_results is None:
+                self.run_record.pop("scan_results", None)
+            else:
+                self.run_record["scan_results"] = prev_run_scan_results
+            raise
+
         posthog.end(self, exit_reason="finished_by_tool")
         scarf.end(self, exit_reason="finished_by_tool")
 
@@ -410,6 +428,9 @@ class ReportState:
         )
 
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
+        prev_end_time = self.end_time
+        prev_status = self.run_record.get("status")
+
         if mark_complete:
             self.end_time = datetime.now(UTC).isoformat()
             self.run_record["end_time"] = self.end_time
@@ -424,10 +445,26 @@ class ReportState:
             self.run_record["status"] = status
 
         self._sync_llm_usage_record()
-        self._save_artifacts()
+        try:
+            self._save_artifacts()
+        except Exception:
+            if mark_complete or status:
+                self.end_time = prev_end_time
+                if prev_end_time is None:
+                    self.run_record.pop("end_time", None)
+                else:
+                    self.run_record["end_time"] = prev_end_time
+                if prev_status is not None:
+                    self.run_record["status"] = prev_status
+                else:
+                    self.run_record.pop("status", None)
+            raise
 
     def cleanup(self, status: str = "stopped") -> None:
-        self.save_run_data(status=status)
+        try:
+            self.save_run_data(status=status)
+        except (OSError, RuntimeError):
+            logger.exception("Failed to save scan data during cleanup")
 
     def _format_final_scan_result(self, scan_results: dict[str, Any]) -> str:
         return f"""# Executive Summary
@@ -480,6 +517,7 @@ class ReportState:
             logger.info("Essential scan data saved to: %s", run_dir)
         except (OSError, RuntimeError):
             logger.exception("Failed to save scan data")
+            raise
 
     def _sarif_repository_context(self) -> dict[str, Any] | None:
         """Repo/commit/branch context for SARIF provenance (repo scans only).
