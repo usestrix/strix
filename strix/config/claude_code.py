@@ -121,7 +121,7 @@ def session_state() -> str:
     whether that is fatal.
     """
     try:
-        result = _run_claude(["auth", "status"])
+        result = _run_claude(["auth", "status", "--json"])
     except (ClaudeCodeError, OSError, subprocess.SubprocessError):
         return "unknown"
     payload = _parse_status_json(result.stdout)
@@ -163,10 +163,10 @@ def reasoning_flags(effort: ReasoningEffort | None) -> list[str]:
     """Map ``STRIX_REASONING_EFFORT`` to ``claude`` CLI flags.
 
     Claude Code exposes ``--effort {low,medium,high,xhigh,max}``. Strix's
-    ``none``/``minimal`` collapse to ``low`` (the CLI has no lower rung); an
-    unset effort returns no flag so the CLI keeps its own default.
+    ``none`` and ``minimal`` collapse to ``low`` (the CLI has no lower rung); an
+    *unset* effort (``None``) returns no flag so the CLI keeps its own default.
     """
-    if effort is None or effort == "none":
+    if effort is None:
         return []
-    mapped = {"minimal": "low"}.get(effort, effort)
+    mapped = {"none": "low", "minimal": "low"}.get(effort, effort)
     return ["--effort", mapped]

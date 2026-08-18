@@ -86,6 +86,18 @@ def test_logout_default_still_chatgpt(monkeypatch: pytest.MonkeyPatch) -> None:
     assert called["codex"] is True
 
 
+def test_logout_unknown_provider_errors(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A typo must not silently log out of ChatGPT.
+    called = {"codex": False}
+
+    def _mark_logout() -> None:
+        called["codex"] = True
+
+    monkeypatch.setattr(codex, "logout", _mark_logout)
+    assert auth_cli.run_auth(["logout", "gogle"]) == 2
+    assert called["codex"] is False
+
+
 def test_status_reports_claude_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(codex, "read_record", lambda: None)
     monkeypatch.setattr(claude_code, "session_state", lambda: "subscription")

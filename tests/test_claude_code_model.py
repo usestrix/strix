@@ -14,7 +14,7 @@ from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from openai.types.responses import ResponseCompletedEvent
 
-from strix.config import claude_code, claude_process, codex, loader
+from strix.config import claude_bridge, claude_code, claude_process, codex, loader
 from strix.config.loader import load_settings
 from strix.config.models import (
     StrixProvider,
@@ -59,13 +59,18 @@ async def _drive(model: _ClaudeCodeModel) -> list[Any]:
     ]
 
 
-def test_stream_response_yields_one_completed_event(monkeypatch: pytest.MonkeyPatch) -> None:
-    result_line = (FIXTURES / "simple_text.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+def _result_event(fixture: str) -> dict[str, Any]:
+    lines = (FIXTURES / fixture).read_text(encoding="utf-8").splitlines()
+    return claude_bridge.parse_transcript(lines)
 
-    async def _fake_run_turn(slug: str, prompt: str, **_: Any) -> str:
+
+def test_stream_response_yields_one_completed_event(monkeypatch: pytest.MonkeyPatch) -> None:
+    event = _result_event("simple_text.jsonl")
+
+    async def _fake_run_turn(slug: str, prompt: str, **_: Any) -> dict[str, Any]:
         assert slug == "claude-opus-4-8"
         assert "go" in prompt
-        return result_line
+        return event
 
     monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
     model = _ClaudeCodeModel("claude-opus-4-8", reasoning_effort="high")
@@ -79,10 +84,10 @@ def test_stream_response_yields_one_completed_event(monkeypatch: pytest.MonkeyPa
 
 
 def test_get_response_returns_model_response(monkeypatch: pytest.MonkeyPatch) -> None:
-    result_line = (FIXTURES / "tool_request.jsonl").read_text(encoding="utf-8").splitlines()[-1]
+    event = _result_event("tool_request.jsonl")
 
-    async def _fake_run_turn(_slug: str, _prompt: str, **_: Any) -> str:
-        return result_line
+    async def _fake_run_turn(_slug: str, _prompt: str, **_: Any) -> dict[str, Any]:
+        return event
 
     monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
     model = _ClaudeCodeModel("claude-opus-4-8")
@@ -170,19 +175,6 @@ def test_claude_code_takes_priority_over_codex(
 # --------------------------------------------------------------------------- #
 
 
-def test_extract_result_line_picks_the_result() -> None:
-    lines = [
-        "Shell cwd was reset to C:\\dev",
-        '{"type": "system", "subtype": "init"}',
-        "not json",
-        '{"type": "assistant", "message": {}}',
-        '{"type": "result", "subtype": "success", "is_error": false}',
-    ]
-    line = claude_process._extract_result_line("\n".join(lines))
-    assert line is not None
-    assert '"type": "result"' in line
-
-
 def _completed(stdout: str, returncode: int, stderr: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
         args=["claude"], returncode=returncode, stdout=stdout, stderr=stderr
@@ -196,26 +188,55 @@ def _patch_run(
     monkeypatch.setattr(claude_process, "_run_blocking", lambda *_a, **_k: completed)
 
 
-def test_run_turn_returns_result_line(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_turn_returns_result_event(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout = (
         '{"type": "system", "subtype": "init"}\n'
         '{"type": "result", "subtype": "success", "is_error": false, "result": "{}"}\n'
     )
     _patch_run(monkeypatch, _completed(stdout, 0))
-    line = asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
-    assert '"type": "result"' in line
+    result = asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+    assert result["type"] == "result"
+    assert result["is_error"] is False
 
 
-def test_run_turn_nonzero_exit_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_turn_returns_error_result_even_on_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A rate-limited turn may exit non-zero while still emitting an error result
+    # line; run_turn must surface that line so the model layer can tag the 429 as
+    # retryable, rather than raising an unclassified generic error.
+    stdout = '{"type": "result", "is_error": true, "api_error_status": 429, "result": "429"}\n'
+    _patch_run(monkeypatch, _completed(stdout, 1, "rate limited"))
+    result = asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+    assert result["api_error_status"] == 429
+
+
+def test_run_turn_nonzero_exit_with_no_result_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_run(monkeypatch, _completed("", 1, "boom on stderr"))
     with pytest.raises(claude_code.ClaudeCodeError, match="exited with code 1"):
         asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
 
 
-def test_run_turn_no_result_line_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_turn_no_result_event_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_run(monkeypatch, _completed('{"type": "system"}\n', 0))
-    with pytest.raises(claude_code.ClaudeCodeError, match="no result line"):
+    with pytest.raises(claude_code.ClaudeCodeError, match="no result event"):
         asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+
+
+def test_semaphore_reused_across_separate_event_loops(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Regression: `strix -n` runs warm-up and the scan in two separate
+    # asyncio.run() loops. A single process-wide semaphore bound to the first
+    # loop would fail in the second; the per-loop cache must isolate them.
+    stdout = '{"type": "result", "is_error": false, "result": "{}"}\n'
+    _patch_run(monkeypatch, _completed(stdout, 0))
+
+    async def _one() -> dict[str, Any]:
+        return await claude_process.run_turn("claude-opus-4-8", "prompt")
+
+    first = asyncio.run(_one())
+    second = asyncio.run(_one())  # separate loop; must not raise
+    assert first["type"] == "result"
+    assert second["type"] == "result"
 
 
 def test_run_turn_timeout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -241,21 +262,19 @@ def test_run_turn_works_under_selector_loop(monkeypatch: pytest.MonkeyPatch) -> 
     stdout = '{"type": "result", "is_error": false, "result": "{}"}\n'
     _patch_run(monkeypatch, _completed(stdout, 0))
 
-    async def _drive_once() -> str:
+    async def _drive_once() -> dict[str, Any]:
         return await claude_process.run_turn("claude-opus-4-8", "prompt")
 
     loop = asyncio.SelectorEventLoop()
     try:
-        line = loop.run_until_complete(_drive_once())
+        result = loop.run_until_complete(_drive_once())
     finally:
         loop.close()
-    assert '"type": "result"' in line
+    assert result["type"] == "result"
 
 
 def test_semaphore_bounds_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_CLAUDE_CODE_MAX_PROCS", "2")
-    monkeypatch.setitem(claude_process._sem_state, "semaphore", None)
-    monkeypatch.setitem(claude_process._sem_state, "size", None)
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
 
     lock = threading.Lock()

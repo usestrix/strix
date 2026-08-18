@@ -62,7 +62,7 @@ def test_subscription_label() -> None:
 
 def test_reasoning_flags() -> None:
     assert claude_code.reasoning_flags(None) == []
-    assert claude_code.reasoning_flags("none") == []
+    assert claude_code.reasoning_flags("none") == ["--effort", "low"]
     assert claude_code.reasoning_flags("minimal") == ["--effort", "low"]
     assert claude_code.reasoning_flags("low") == ["--effort", "low"]
     assert claude_code.reasoning_flags("high") == ["--effort", "high"]
