@@ -227,3 +227,18 @@ def test_resume_still_requires_targets_or_a_workspace(
         cli_main.parse_arguments()
 
     assert "has no targets_info" in capsys.readouterr().err
+
+def test_resume_non_object_run_json_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    monkeypatch.chdir(tmp_path)
+    run_dir = tmp_path / "strix_runs" / "pentest_abcd"
+    run_dir.mkdir(parents=True)
+    (run_dir / "run.json").write_text("[]", encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_abcd"])
+    with pytest.raises(SystemExit) as exc_info:
+        cli_main.parse_arguments()
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "run.json unreadable" in captured.err
+    assert "not an object" in captured.err

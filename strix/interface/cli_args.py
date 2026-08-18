@@ -346,7 +346,7 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         )
     try:
         state = read_run_record(run_dir)
-    except RuntimeError as exc:
+    except (RuntimeError, TypeError) as exc:
         parser.error(f"--resume {args.resume}: run.json unreadable: {exc}")
 
     args.targets_info = state.get("targets_info") or []
