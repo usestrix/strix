@@ -14,7 +14,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings, persist_current
+from strix.config import claude_code, codex, load_settings, persist_current
 from strix.core.paths import run_dir_for
 from strix.interface.cli_args import parse_arguments
 from strix.interface.environment import (
@@ -104,8 +104,11 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
 
 
 def _subscription_error_hint(exc: BaseException) -> str | None:
-    """Return an actionable hint for a known ChatGPT-subscription error, or None."""
-    if not codex.subscription_model(load_settings().llm.model):
+    """Return an actionable hint for a known subscription-backend error, or None."""
+    model = load_settings().llm.model
+    if claude_code.claude_code_model(model):
+        return _claude_code_error_hint(exc)
+    if not codex.subscription_model(model):
         return None
     joined = " ".join(_exception_messages(exc)).lower()
     if "not supported when using codex with a chatgpt account" in joined:
@@ -122,6 +125,34 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
         return (
             "Your ChatGPT sign-in has expired or was revoked. Sign in again:\n"
             "  strix auth login chatgpt"
+        )
+    return None
+
+
+def _claude_code_error_hint(exc: BaseException) -> str | None:
+    """Return an actionable hint for a known Claude Code subprocess error, or None."""
+    joined = " ".join(_exception_messages(exc)).lower()
+    if "not on path" in joined or "claude code cli" in joined:
+        return (
+            "The Claude Code CLI isn't installed on this host. Install it, then:\n  claude /login"
+        )
+    if (
+        "401" in joined
+        or "unauthorized" in joined
+        or "not signed in" in joined
+        or "invalid_grant" in joined
+        or "authentication" in joined
+    ):
+        return "Your Claude Code session has expired. Sign in again:\n  claude /login"
+    if "429" in joined or "rate limit" in joined or "overloaded" in joined:
+        return (
+            "Your Claude subscription is rate-limited. Multi-agent scans burst hard — "
+            "Max 20x is realistically needed; on Pro, use a quick scan with fewer agents."
+        )
+    if "model" in joined and ("not found" in joined or "invalid" in joined):
+        return (
+            "That model isn't available on your plan. Try a model your subscription "
+            "includes, e.g. STRIX_LLM=claude-code/claude-sonnet-4-6."
         )
     return None
 
