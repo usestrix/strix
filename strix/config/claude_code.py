@@ -113,12 +113,16 @@ def is_available() -> bool:
     return binary_path() is not None and meets_min_version()
 
 
+@lru_cache(maxsize=1)
 def session_state() -> str:
     """One of ``"subscription"``, ``"api_key"``, ``"signed_out"``, ``"unknown"``.
 
     Parses ``claude auth status`` JSON. ``"unknown"`` means the probe itself
     failed (binary missing, timeout, unparseable output) — the caller decides
     whether that is fatal.
+
+    Cached: the CLI's sign-in state does not change within a scan process, and
+    several call sites (preflight, the cost resolver) ask for it per run.
     """
     try:
         result = _run_claude(["auth", "status", "--json"])

@@ -171,6 +171,13 @@ def _stringify(content: Any) -> str:
         blocks: list[Any] = content
         for block in blocks:
             block_dict = _as_dict(block)
+            if _is_image_block(block_dict):
+                # This text bridge cannot carry an image to claude -p. Emit an
+                # explicit marker rather than dropping it silently, so the model
+                # knows a screenshot was produced and does not narrate having
+                # inspected one it never received.
+                parts.append("[image returned by tool — not visible to this backend]")
+                continue
             text = block_dict.get("text") or block_dict.get("output") or block_dict.get("content")
             if isinstance(text, str):
                 parts.append(text)
@@ -178,6 +185,12 @@ def _stringify(content: Any) -> str:
                 parts.append(json.dumps(text))
         return "\n".join(parts)
     return json.dumps(content)
+
+
+def _is_image_block(block: dict[str, Any]) -> bool:
+    return "image" in str(block.get("type") or "").lower() or bool(
+        block.get("image_url") or block.get("source")
+    )
 
 
 # --------------------------------------------------------------------------- #
