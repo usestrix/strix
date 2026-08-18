@@ -8,6 +8,7 @@ from typing import Any
 import litellm
 import pytest
 
+from strix.agents.prompt import render_system_prompt
 from strix.core.inputs import (
     build_root_task,
     build_scope_context,
@@ -194,12 +195,7 @@ def test_build_root_task_repository_target() -> None:
 
 
 def test_build_root_task_web_target_injected_as_context() -> None:
-    """The prompt leads; the target is injected below it as context, not scope.
-
-    The prompt carries no ``Special instructions:`` label and the target is
-    framed as context ("not a scope restriction"), never as an authoritative
-    scope block.
-    """
+    """The prompt leads and the configured target remains visible below it."""
     config = {
         "targets": [
             {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
@@ -210,7 +206,7 @@ def test_build_root_task_web_target_injected_as_context() -> None:
 
     assert task.startswith("Focus on auth.")
     assert "https://app.example.com" in task
-    assert "not a scope restriction" in task
+    assert "configured targets and supporting material" in task
     assert "Special instructions:" not in task
     assert "SYSTEM-VERIFIED" not in task
 
@@ -241,6 +237,50 @@ def test_build_scope_context_authorizes_nothing_without_targets() -> None:
     )
 
     assert scope["authorized_targets"] == []
+    assert scope["user_instruction_hosts_expand_scope"] is True
+
+
+def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() -> None:
+    config = {
+        "targets": [
+            {
+                "type": "web_application",
+                "details": {"target_url": "https://app.example.com/search?q=test"},
+            }
+        ],
+        "user_instructions": "Also test https://api.example.net/v1.",
+    }
+    context = build_scope_context(config)
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, system_prompt_context=context)
+    task = build_root_task(config)
+
+    assert "SYSTEM-VERIFIED SCOPE" in prompt
+    assert "https://app.example.com/search?q=test" in prompt
+    assert "https://api.example.net/v1" in task
+    assert "Every network host explicitly named in the user's root scan task" in prompt
+    assert "exact hostname and all of its descendant subdomains" in prompt
+    assert "scheme, port, path, query, or fragment" in prompt
+    assert "not `example.com`, sibling hosts such as `api.example.com`" in prompt
+
+
+def test_scope_prompt_does_not_make_repository_origin_a_live_target() -> None:
+    context = build_scope_context(
+        {
+            "targets": [
+                {
+                    "type": "repository",
+                    "details": {"target_repo": "https://github.com/acme/app.git"},
+                }
+            ]
+        }
+    )
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, system_prompt_context=context)
+
+    assert "repository: https://github.com/acme/app.git" in prompt
+    assert "Repository hosting origins named only by configured repository targets" in prompt
+    assert "are not live web targets" in prompt
 
 
 def test_build_root_task_diff_scope() -> None:

@@ -117,9 +117,9 @@ def _split_target_sections(
     """Sort targets into on-disk plumbing and network sections.
 
     On-disk material (repos, local code, API specs) is where mounted code lives;
-    network targets (URLs/IPs) are what the run was pointed at. Both are injected
-    as context for the task — never as a hard scope — so the split only controls
-    how each is framed, not whether it is shown.
+    network targets (URLs/IPs) are what the run was pointed at. Scope semantics
+    are supplied separately by the system prompt, so this split only controls
+    how each kind of context is framed.
     """
     ondisk: dict[str, list[str]] = {
         "Repositories": [],
@@ -157,12 +157,10 @@ def _split_target_sections(
 def build_root_task(scan_config: dict[str, Any]) -> str:
     """Build the root agent's task.
 
-    Scope is not derived or enforced here: the user's prompt is the task and the
-    source of truth for what to test. Alongside it we render only non-scope
-    context — where mounted code/specs live on disk, the working directory, any
-    user-provided files, and PR diff-scope. Targets are always injected too, but
-    framed as context ("not a scope restriction"), never as an enforced boundary;
-    with no prompt they stand as the task so a target-only launch still has one.
+    The user's prompt is the task. Alongside it we render configured targets and
+    supporting context such as mounted code/spec paths, the working directory,
+    user-provided files, and PR diff-scope. Prompt-level authorization semantics
+    are rendered separately in the system prompt.
     """
     diff_scope = scan_config.get("diff_scope") or {}
     user_instructions = (scan_config.get("user_instructions") or "").strip()
@@ -190,8 +188,8 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
 
     context.extend(_render_workspace_files(scan_config))
 
-    # The target is always injected so the agent knows what the run was pointed
-    # at — as context for the task, never as a hard scope.
+    # Network targets remain visible in the task as useful starting points; the
+    # system prompt defines their host-level scope semantics.
     _emit_sections(context, network)
 
     context.extend(_render_diff_scope(diff_scope))
@@ -203,8 +201,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         return context_text
     return (
         f"{user_instructions}\n\n"
-        "Run context (what this scan was pointed at — informs the task above; "
-        "not a scope restriction):\n"
+        "Run context (configured targets and supporting material for the task above):\n"
         f"{context_text}"
     )
 
@@ -242,7 +239,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         "scope_source": "system_scan_config",
         "authorization_source": "strix_platform_verified_targets",
         "authorized_targets": authorized,
-        "user_instructions_do_not_expand_scope": True,
+        "user_instruction_hosts_expand_scope": True,
     }
 
 

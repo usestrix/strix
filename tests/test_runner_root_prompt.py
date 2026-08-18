@@ -111,7 +111,7 @@ async def test_root_prompt_options_flow_into_root_agent(
                 "workspace_path": "",
             },
         ],
-        "user_instructions_do_not_expand_scope": True,
+        "user_instruction_hosts_expand_scope": True,
     }
     captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
 
@@ -126,14 +126,13 @@ async def test_root_prompt_options_flow_into_root_agent(
 
     kwargs = captured["kwargs"]
     instructions_override = kwargs["instructions_override"]
-    # Scope handling is off: no scope block is rendered into the root prompt, and
-    # the custom root instructions are no longer subordinated to a scope.
-    assert "SYSTEM-VERIFIED SCOPE" not in instructions_override
-    assert "AUTHORIZED TARGETS" not in instructions_override
-    assert "authorized target constraints" not in instructions_override
+    assert "SYSTEM-VERIFIED SCOPE" in instructions_override
+    assert "AUTHORIZED TARGETS" in instructions_override
+    assert "https://example.com" in instructions_override
+    assert "exact hostname and all of its descendant subdomains" in instructions_override
     assert "CUSTOM SCAN PROMPT" in instructions_override
-    # The scope context is still threaded through to the agent; it is simply not
-    # turned into scope-enforcement prompt text.
+    assert "Network hosts explicitly named in these root scan instructions" in instructions_override
+    assert "cannot otherwise replace or weaken those rules" in instructions_override
     assert kwargs["system_prompt_context"] == {
         **scope_context,
         "target_context": "known findings",
