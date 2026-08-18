@@ -6,13 +6,14 @@ import asyncio
 import contextlib
 import math
 import webbrowser
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.core.agents import COMPACTION_FAILED, COMPACTION_SUCCESS
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.backend.projection import (
     MAX_TERMINAL_EVENTS,
@@ -34,6 +35,14 @@ if TYPE_CHECKING:
 
 
 _STOPPABLE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
+_COMPACT_COMMANDS = frozenset({"/compact", "/compress"})
+_COMPACTION_SUCCESS_MESSAGE = "Context compaction complete."
+_COMPACTION_UNAVAILABLE_MESSAGE = "Context compaction could not be completed for this agent."
+_COMPACTION_FAILED_MESSAGE = "Context compaction failed. Please try again."
+_COMPACTION_RESULT_MESSAGES = {
+    COMPACTION_SUCCESS: _COMPACTION_SUCCESS_MESSAGE,
+    COMPACTION_FAILED: _COMPACTION_FAILED_MESSAGE,
+}
 
 ChangeCallback = Callable[[], None]
 StartCallback = Callable[[bool], Awaitable[None]]
@@ -364,6 +373,16 @@ class TuiController:
         if self.scan_loop is None or self.scan_loop.is_closed():
             raise RuntimeError("Scan loop is not ready")
         self.live_view.record_user_message(agent_id, message)
+        if message.strip().lower() in _COMPACT_COMMANDS:
+            compacted = await self._run_on_scan_loop(
+                self.coordinator.compact_agent_session(agent_id)
+            )
+            feedback = _COMPACTION_RESULT_MESSAGES.get(
+                compacted,
+                _COMPACTION_UNAVAILABLE_MESSAGE,
+            )
+            self.live_view.record_system_message(agent_id, feedback)
+            return {"compacted": compacted == COMPACTION_SUCCESS}
         if self.scan_loop is asyncio.get_running_loop():
             delivered = await self.coordinator.send(
                 agent_id,
@@ -381,6 +400,17 @@ class TuiController:
         if not delivered:
             raise RuntimeError("Message could not be delivered")
         return {"sent": True}
+
+    async def _run_on_scan_loop(self, coroutine: Coroutine[Any, Any, Any]) -> Any:
+        scan_loop = self.scan_loop
+        if scan_loop is None:
+            raise RuntimeError("Scan loop is not ready")
+        if scan_loop is asyncio.get_running_loop():
+            return await coroutine
+        future: asyncio.Future[Any] = asyncio.wrap_future(
+            asyncio.run_coroutine_threadsafe(coroutine, scan_loop)
+        )
+        return await future
 
     async def _stop_agent(self, payload: dict[str, Any]) -> dict[str, Any]:
         agent_id = self._required_string(payload, "agent_id")

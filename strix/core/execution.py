@@ -7,6 +7,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Callable
+from functools import partial
 from typing import TYPE_CHECKING, Any, cast
 
 import litellm
@@ -107,6 +108,16 @@ async def _compact_session(
     )
 
 
+async def _force_compact_session(
+    agent: Any,
+    session: Session | None,
+    run_config: RunConfig,
+) -> bool:
+    if session is None:
+        return False
+    return await _compact_session(agent, session, run_config, force=True)
+
+
 _MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
@@ -188,6 +199,7 @@ async def run_agent_loop(
         agent_id,
         session=session,
         interrupt_on_message=interactive,
+        compact=partial(_force_compact_session, agent, session, run_config),
     )
     result: RunResultBase | None = None
 
