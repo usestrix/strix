@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import csv
 import json
+import stat
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
 from strix.report.writer import (
+    hydrate_report_evidence,
     read_run_record,
     render_vulnerability_md,
     write_executive_report,
@@ -163,6 +165,33 @@ def test_write_vulnerabilities_creates_markdown_csv_and_json(tmp_path: Path) -> 
     assert csv_rows[0]["severity"] == "CRITICAL"
 
 
+def test_write_vulnerabilities_separates_private_evidence_from_public_artifacts(
+    tmp_path: Path,
+) -> None:
+    raw_evidence = "session_token=SECRET123\\ncredential=PRIVATE-TEST-VALUE"
+    reports = [_sample_report(id="vuln-0001", evidence=raw_evidence)]
+
+    write_vulnerabilities(tmp_path, reports, set())
+
+    evidence_path = tmp_path / "private_evidence" / "vuln-0001.md"
+    assert evidence_path.read_text(encoding="utf-8") == f"{raw_evidence}\n"
+    assert stat.S_IMODE(evidence_path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(evidence_path.parent.stat().st_mode) == 0o700
+
+    public_json = (tmp_path / "vulnerabilities.json").read_text(encoding="utf-8")
+    public_markdown = (tmp_path / "vulnerabilities" / "vuln-0001.md").read_text(
+        encoding="utf-8",
+    )
+    assert raw_evidence not in public_json
+    assert raw_evidence not in public_markdown
+    assert "private_evidence/vuln-0001.md" in public_json
+    assert "private_evidence/vuln-0001.md" in public_markdown
+
+    restored = json.loads(public_json)[0]
+    hydrate_report_evidence(tmp_path, restored)
+    assert restored["evidence"] == raw_evidence
+
+
 def test_write_vulnerabilities_skips_already_saved_ids(tmp_path: Path) -> None:
     reports = [_sample_report(id="vuln-0001")]
     saved: set[str] = {"vuln-0001"}
@@ -172,6 +201,37 @@ def test_write_vulnerabilities_skips_already_saved_ids(tmp_path: Path) -> None:
     assert new_count == 0
     assert not (tmp_path / "vulnerabilities" / "vuln-0001.md").exists()
     assert (tmp_path / "vulnerabilities.csv").exists()
+
+
+def test_write_vulnerabilities_externalizes_raw_evidence(tmp_path: Path) -> None:
+    raw_evidence = (
+        "```http\n"
+        "GET /api/me HTTP/1.1\n"
+        "Authorization: Bearer live-session-token\n"
+        "Cookie: session=abc123\n"
+        "```"
+    )
+    reports = [_sample_report(id="vuln-0001", evidence=raw_evidence)]
+
+    write_vulnerabilities(tmp_path, reports, set())
+
+    public_json = (tmp_path / "vulnerabilities.json").read_text(encoding="utf-8")
+    public_report = json.loads(public_json)[0]
+    public_md = (tmp_path / "vulnerabilities" / "vuln-0001.md").read_text(encoding="utf-8")
+    evidence_path = tmp_path / "private_evidence" / "vuln-0001.md"
+
+    assert "live-session-token" not in public_json
+    assert "session=abc123" not in public_json
+    assert public_report["evidence_artifact"] == "private_evidence/vuln-0001.md"
+    assert "Raw verification evidence is stored" in public_report["evidence"]
+
+    assert "live-session-token" not in public_md
+    assert "session=abc123" not in public_md
+    assert "`private_evidence/vuln-0001.md`" in public_md
+
+    assert evidence_path.read_text(encoding="utf-8") == f"{raw_evidence}\n"
+    assert evidence_path.stat().st_mode & 0o777 == 0o600
+    assert evidence_path.parent.stat().st_mode & 0o777 == 0o700
 
 
 def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:

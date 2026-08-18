@@ -236,7 +236,7 @@ async def _do_create(  # noqa: PLR0912
         return {"success": False, "error": "Validation failed", "errors": errors}
 
     try:
-        cvss_score, severity, _vector = _calculate_cvss(cvss_breakdown)
+        cvss_score, severity, cvss_vector = _calculate_cvss(cvss_breakdown)
     except ValueError as exc:
         return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
 
@@ -299,6 +299,7 @@ async def _do_create(  # noqa: PLR0912
             assumptions=assumptions,
             fix_effort=fix_effort,
             cvss=cvss_score,
+            cvss_vector=cvss_vector,
             cvss_breakdown=cvss_breakdown,
             endpoint=endpoint,
             method=method,
@@ -401,6 +402,21 @@ async def create_vulnerability_report(
       attacker-controlled exploit and direct security impact. Client
       errors, compatibility issues, fingerprinting, and attack-surface
       discovery alone should not be filed as vulnerabilities.
+    - **Circular preconditions void a finding.** If exploitation
+      requires the attacker to already control a same-origin page, an
+      authenticated session the attacker cannot obtain, or another
+      unproven compromise, the premise is circular — downgrade to
+      informational (legacy code / hardening item), do not file as
+      XSS/injection with a real CVSS. Self-XSS and same-origin-gated
+      issues are informational unless a realistic cross-origin or
+      direct-victim path is demonstrated.
+    - **A successful 2xx on a data/telemetry endpoint proves the
+      endpoint parsed the request — nothing more.** Do not claim data
+      persistence, downstream consumption, metric pollution, rate-limit
+      absence, or backend resource abuse from request success or
+      batch-response timing alone. Those claims need ingestion,
+      persistence, or reporting-impact evidence; without it, file at
+      most an informational "unverified integrity risk" or omit.
     - Before filing, verify that the impact narrative, PoC, and every
       non-None CVSS impact metric describe the same demonstrated
       consequence. When evidence is incomplete, lower the metric or
@@ -432,6 +448,27 @@ async def create_vulnerability_report(
     - Field discipline: ``poc_description`` is steps only — NO code (all
       code goes in ``poc_script_code``); ``remediation_steps`` is prose
       only — NO code/diffs (code fixes go in ``code_locations``).
+    - Conditional impact: keep verified consequences and plausible
+      follow-on risks clearly separated. State unverified execution
+      paths (e.g. "may trigger in MIME-sniffing clients") explicitly as
+      conditional in ``impact``, and never let them inflate CVSS
+      metrics; the metrics must reflect only the demonstrated
+      consequence.
+    - ``evidence`` is persisted into a separate local verification
+      artifact outside the client report files
+      (``vulnerabilities.json`` / per-finding markdown). Put the real
+      replay material there — including test-account credentials,
+      session tokens, object keys, and exact URLs/requests/responses
+      used during the assessment — so reviewers can re-run and confirm
+      the finding. External/client-facing artifacts keep only a safe
+      reference to that local evidence artifact.
+    - ``title`` must describe the precise defect (e.g. "File upload
+      without content validation" not "arbitrary file upload" when
+      extensions are allowlisted), without exaggerating.
+    - ``remediation_steps``: prefer the fix order that preserves
+      intended functionality (e.g. decode/re-encode content before
+      forcing download-only headers, which breaks inline previews), and
+      state trade-offs when a mitigation has user-visible side effects.
     - Numbered steps allowed only in PoC and Remediation sections.
     - Avoid hedging language; be precise and non-vague.
     - Follow a standard pentest report structure across the fields:
@@ -559,7 +596,9 @@ async def create_vulnerability_report(
         remediation_steps: Specific, actionable fix (prose, no code).
         evidence: Concrete proof the issue is real and exploitable —
             request/response excerpts, observed behavior, tool output.
-            Use fenced code blocks; no internal identifiers/paths.
+            Use fenced code blocks. This content is stored in a separate
+            local evidence artifact rather than the client report files;
+            no internal identifiers/paths.
         assumptions: Short note on the assumptions/prerequisites that
             make this finding impactful or exploitable (e.g. "assumes an
             authenticated low-privilege user").

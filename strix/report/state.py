@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import subprocess
 import threading
 from collections.abc import Callable
@@ -18,6 +19,7 @@ from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.usage import LLMUsageLedger
 from strix.report.writer import (
+    hydrate_report_evidence,
     read_run_record,
     write_executive_report,
     write_run_record,
@@ -216,6 +218,7 @@ class ReportState:
                 )
             self.vulnerability_reports = [r for r in data if isinstance(r, dict)]
             for r in self.vulnerability_reports:
+                hydrate_report_evidence(run_dir, r)
                 rid = r.get("id")
                 if isinstance(rid, str):
                     self._saved_vuln_ids.add(rid)
@@ -239,6 +242,7 @@ class ReportState:
         assumptions: str | None = None,
         fix_effort: str | None = None,
         cvss: float | None = None,
+        cvss_vector: str | None = None,
         cvss_breakdown: dict[str, str] | None = None,
         endpoint: str | None = None,
         method: str | None = None,
@@ -282,6 +286,8 @@ class ReportState:
             report["fix_effort"] = fix_effort.strip().lower()
         if cvss is not None:
             report["cvss"] = cvss
+        if cvss_vector:
+            report["cvss_vector"] = cvss_vector
         if cvss_breakdown:
             report["cvss_breakdown"] = cvss_breakdown
         if endpoint:
@@ -430,21 +436,41 @@ class ReportState:
         self.save_run_data(status=status)
 
     def _format_final_scan_result(self, scan_results: dict[str, Any]) -> str:
+        # The finish_scan prompt asks the LLM to lead each field with its own
+        # "# <Section>" heading; the template below adds the same headings, so
+        # strip a leading duplicate from each field to avoid doubled headings.
+        titles = {
+            "executive_summary": "Executive Summary",
+            "methodology": "Methodology",
+            "technical_analysis": "Technical Analysis",
+            "recommendations": "Recommendations",
+        }
+
+        def section(key: str) -> str:
+            text = str(scan_results.get(key, "")).strip()
+            return re.sub(
+                rf"^#\s+{re.escape(titles[key])}\s*\n+",
+                "",
+                text,
+                count=1,
+                flags=re.IGNORECASE,
+            ).strip()
+
         return f"""# Executive Summary
 
-{str(scan_results.get("executive_summary", "")).strip()}
+{section("executive_summary")}
 
 # Methodology
 
-{str(scan_results.get("methodology", "")).strip()}
+{section("methodology")}
 
 # Technical Analysis
 
-{str(scan_results.get("technical_analysis", "")).strip()}
+{section("technical_analysis")}
 
 # Recommendations
 
-{str(scan_results.get("recommendations", "")).strip()}
+{section("recommendations")}
 """
 
     def _save_artifacts(self) -> None:
