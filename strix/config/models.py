@@ -562,7 +562,26 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     _configure_openrouter_attribution(llm.model)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
-        _configure_litellm_default("api_key", llm.api_key)
+        # Do NOT set litellm.api_key as a module-level global when a custom
+        # api_base is configured. When api_base is active the model resolves
+        # through openai-agents' LitellmModel, which always forwards
+        # api_key=self.api_key (None by default, because Strix never populates
+        # it on the instance) as an *explicit* kwarg in every
+        # litellm.acompletion() call.  litellm's internal dispatch then merges
+        # the module-level global into the same kwargs dict that already
+        # carries the explicit kwarg, producing:
+        #
+        #   TypeError: acompletion() got multiple values for keyword argument
+        #              'api_key'          (anthropic/ prefix path)
+        #   TypeError: AsyncCompletions.create() got an unexpected keyword
+        #              argument 'api_key' (openai/ prefix path)
+        #
+        # The key is still delivered to the provider via
+        # _mirror_api_key_to_provider_env (sets the provider-specific
+        # *_API_KEY env var, e.g. ANTHROPIC_API_KEY) and set_default_openai_key
+        # above, so skipping the global default here is safe.
+        if not llm.api_base:
+            _configure_litellm_default("api_key", llm.api_key)
         _mirror_api_key_to_provider_env(llm.model, llm.api_key)
     if llm.api_base:
         os.environ["OPENAI_BASE_URL"] = llm.api_base
