@@ -21,3 +21,16 @@ def auth_mode(model_name: str | None) -> str:
 
 def is_subscription(model_name: str | None) -> bool:
     return auth_mode(model_name) == "subscription"
+
+
+def label(model_name: str | None) -> str:
+    """Human-facing name for the subscription backend a model runs on.
+
+    Falls back to a generic label when the model matches neither backend (the
+    caller should only show this for a subscription run in the first place).
+    """
+    if claude_code.claude_code_model(model_name):
+        return "Claude subscription"
+    if codex.subscription_model(model_name):
+        return "ChatGPT subscription"
+    return "subscription"

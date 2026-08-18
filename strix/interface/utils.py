@@ -386,8 +386,10 @@ def build_live_stats_text(report_state: Any) -> Text:
     stats_text.append("Model ", style="dim")
     stats_text.append(str(model), style="white")
     if is_subscription_run(report_state):
+        from strix.config import subscription as sub_cfg
+
         stats_text.append("  ·  ", style="dim white")
-        stats_text.append("ChatGPT subscription", style="#22c55e")
+        stats_text.append(sub_cfg.label(model), style="#22c55e")
     stats_text.append("\n")
 
     vuln_count = len(report_state.vulnerability_reports)
@@ -432,8 +434,10 @@ def build_tui_stats_text(report_state: Any) -> Text:
     stats_text.append(str(model), style="white")
     subscription = is_subscription_run(report_state)
     if subscription:
+        from strix.config import subscription as sub_cfg
+
         stats_text.append("\n")
-        stats_text.append("ChatGPT subscription", style="#22c55e")
+        stats_text.append(sub_cfg.label(model), style="#22c55e")
 
     usage = _llm_usage(report_state)
     if usage and _int_stat(usage, "total_tokens") > 0:
