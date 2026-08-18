@@ -21,15 +21,20 @@ if TYPE_CHECKING:
 @pytest.fixture
 def _reset_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("STRIX_LLM", raising=False)
-    monkeypatch.setattr(loader, "_cached", None)
-    monkeypatch.setattr(loader, "_override", None)
+    loader._cached = None
+    loader._override = None
     yield
+    # load_settings() memoizes into loader._cached by direct assignment, which
+    # monkeypatch does not track; reset it so a claude-code model doesn't leak
+    # into an unrelated test's ReportState (which would then report $0 cost).
+    loader._cached = None
+    loader._override = None
 
 
 def _preflight(monkeypatch: pytest.MonkeyPatch, *, model: str, state: str, present: bool) -> None:
     monkeypatch.setenv("STRIX_LLM", model)
-    monkeypatch.setattr(loader, "_cached", None)
-    monkeypatch.setattr(loader, "_override", None)
+    loader._cached = None
+    loader._override = None
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude" if present else None)
     monkeypatch.setattr(claude_code, "meets_min_version", lambda: True)
     monkeypatch.setattr(claude_code, "session_state", lambda: state)
@@ -58,8 +63,8 @@ def test_preflight_old_version_exits(
     monkeypatch: pytest.MonkeyPatch, _reset_settings: None
 ) -> None:
     monkeypatch.setenv("STRIX_LLM", "claude-code/claude-opus-4-8")
-    monkeypatch.setattr(loader, "_cached", None)
-    monkeypatch.setattr(loader, "_override", None)
+    loader._cached = None
+    loader._override = None
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
     monkeypatch.setattr(claude_code, "meets_min_version", lambda: False)
     monkeypatch.setattr(claude_code, "version", lambda: "1.0.0")
