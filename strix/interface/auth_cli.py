@@ -350,6 +350,13 @@ def _logout(console: Console, argv: list[str]) -> int:
         )
         return 0
 
+    if provider not in _ACCEPTED_PROVIDERS:
+        console.print(
+            f"[red]Unknown provider:[/] {provider}. "
+            f"Use '{LOGIN_PROVIDER}' (ChatGPT) or '{CLAUDE_PROVIDER}' (Claude)."
+        )
+        return 2
+
     codex.logout()
     console.print("[green]Signed out.[/] Stored ChatGPT subscription credentials removed.")
     return 0

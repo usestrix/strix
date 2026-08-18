@@ -21,7 +21,8 @@ import json
 import logging
 import os
 import subprocess  # we invoke a trusted, user-installed CLI, never a shell
-from typing import Any, cast
+import weakref
+from typing import Any
 
 from strix.config import claude_bridge, claude_code
 
@@ -70,18 +71,24 @@ def _turn_timeout() -> float:
     return _DEFAULT_TURN_TIMEOUT_S
 
 
-# Holder rather than module globals so rebinding needs no `global` statement.
-_sem_state: dict[str, object] = {"semaphore": None, "size": None}
+# One semaphore per event loop. An asyncio.Semaphore binds to the loop it is
+# first awaited on, so a single cached instance shared between the warm-up loop
+# (`asyncio.run(warm_up_llm())`) and the separate scan loop would fail once it
+# had waiters on both. Keyed by loop and auto-dropped when the loop is collected.
+_sems: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[asyncio.Semaphore, int]] = (
+    weakref.WeakKeyDictionary()
+)
 
 
 def _get_semaphore() -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
     size = _max_procs()
-    semaphore = _sem_state["semaphore"]
-    if not isinstance(semaphore, asyncio.Semaphore) or _sem_state["size"] != size:
+    cached = _sems.get(loop)
+    if cached is None or cached[1] != size:
         semaphore = asyncio.Semaphore(size)
-        _sem_state["semaphore"] = semaphore
-        _sem_state["size"] = size
-    return semaphore
+        _sems[loop] = (semaphore, size)
+        return semaphore
+    return cached[0]
 
 
 def _build_argv(slug: str, extra_args: list[str]) -> list[str]:
@@ -108,11 +115,13 @@ def _run_blocking(argv: list[str], prompt: str, timeout: float) -> subprocess.Co
     )
 
 
-async def run_turn(slug: str, prompt: str, *, extra_args: list[str] | None = None) -> str:
-    """Run one ``claude -p`` turn and return its terminal ``result`` line, unparsed.
+async def run_turn(
+    slug: str, prompt: str, *, extra_args: list[str] | None = None
+) -> dict[str, Any]:
+    """Run one ``claude -p`` turn and return its terminal ``result`` event.
 
     Raises :class:`claude_code.ClaudeCodeError` on a non-zero exit, a timeout, or
-    a stream with no result line; the caller decodes the JSON via ``claude_bridge``.
+    a stream with no result event; the caller decodes it via ``claude_bridge``.
     """
     argv = _build_argv(slug, extra_args or [])
     timeout = _turn_timeout()
@@ -124,33 +133,20 @@ async def run_turn(slug: str, prompt: str, *, extra_args: list[str] | None = Non
         except OSError as exc:
             raise claude_code.ClaudeCodeError(f"could not launch claude -p: {exc}") from exc
 
-    if completed.returncode != 0:
+    # A result event, if present, is authoritative even on a non-zero exit: the
+    # CLI reports API errors (429/overload) in its api_error_status, and the model
+    # layer decodes that into a retryable ClaudeStreamError. So try to parse it
+    # first; only fall back to a generic error when there is no result event.
+    try:
+        return claude_bridge.parse_transcript(completed.stdout.splitlines())
+    except claude_bridge.ClaudeStreamError as exc:
+        if completed.returncode != 0:
+            raise claude_code.ClaudeCodeError(
+                f"claude -p exited with code {completed.returncode}: {_tail(completed.stderr)}"
+            ) from exc
         raise claude_code.ClaudeCodeError(
-            f"claude -p exited with code {completed.returncode}: {_tail(completed.stderr)}"
-        )
-
-    result_line = _extract_result_line(completed.stdout)
-    if result_line is None:
-        raise claude_code.ClaudeCodeError(
-            f"claude -p produced no result line (stderr: {_tail(completed.stderr)})"
-        )
-    return result_line
-
-
-def _extract_result_line(stdout: str) -> str | None:
-    """Return the last stream-json line whose parsed ``type`` is ``result``."""
-    found: str | None = None
-    for raw in stdout.splitlines():
-        text = raw.strip()
-        if not text.startswith("{"):
-            continue
-        try:
-            event = json.loads(text)
-        except ValueError:
-            continue
-        if isinstance(event, dict) and cast("dict[str, Any]", event).get("type") == "result":
-            found = text
-    return found
+            f"claude -p produced no result event (stderr: {_tail(completed.stderr)})"
+        ) from exc
 
 
 def _tail(stderr: str, *, limit: int = 400) -> str:

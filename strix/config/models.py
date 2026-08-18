@@ -275,10 +275,7 @@ class _ClaudeCodeModel(Model):
         tools: list[Tool],
     ) -> ModelResponse:
         prompt = claude_bridge.build_prompt(system_instructions, input, tools)
-        result_line = await claude_process.run_turn(
-            self._slug, prompt, extra_args=self._extra_args()
-        )
-        result = claude_bridge.parse_transcript([result_line])
+        result = await claude_process.run_turn(self._slug, prompt, extra_args=self._extra_args())
         return claude_bridge.decode_result(result)
 
     async def get_response(
