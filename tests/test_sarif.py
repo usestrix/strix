@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
-from strix.report.sarif import write_sarif
+from strix.report.sarif import _primary_fingerprint, write_sarif
 
 
 if TYPE_CHECKING:
@@ -68,6 +68,23 @@ def test_write_sarif_locationless_finding_is_anchored_not_dropped(tmp_path: Path
     assert len(results) == 1
     uri = results[0]["locations"][0]["physicalLocation"]["artifactLocation"]["uri"]
     assert uri == "README.md"
+
+
+def test_write_sarif_synthetic_fingerprint_preserves_legacy_identity(tmp_path: Path) -> None:
+    finding = _finding(code_locations=None)
+    write_sarif(tmp_path, [finding])
+    emitted = _read(tmp_path)["runs"][0]["results"][0]["partialFingerprints"][
+        "primaryLocationLineHash"
+    ]
+
+    legacy = _primary_fingerprint(
+        "CWE-89",
+        finding,
+        [{"physicalLocation": {"artifactLocation": {"uri": "SECURITY.md"}}}],
+        is_synthetic=True,
+    )
+
+    assert emitted == legacy
 
 
 def test_write_sarif_fingerprint_stable_across_title_rewording(tmp_path: Path) -> None:

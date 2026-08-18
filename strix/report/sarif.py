@@ -69,6 +69,9 @@ TOOL_INFORMATION_URI = "https://strix.ai"
 # tooling distinguish it from real source locations while retaining a
 # code-scanning-compatible result location and stable fingerprint.
 _SYNTHETIC_LOCATION_URI = "README.md"
+# Preserve the pre-README synthetic identity so code-scanning retains prior
+# alert dismissal and triage state across this display-location migration.
+_LEGACY_SYNTHETIC_FINGERPRINT_URI = "SECURITY.md"
 
 
 # SARIF only has three result levels; Strix's five severities collapse here.
@@ -851,10 +854,12 @@ def _primary_fingerprint(
 
     Returns None when no anchor is available AND not synthetic.
     """
-    primary_physical = _first_physical_location(locations)
     uri = ""
     start_line: int | None = None
-    if primary_physical:
+    primary_physical = _first_physical_location(locations)
+    if is_synthetic:
+        uri = _LEGACY_SYNTHETIC_FINGERPRINT_URI
+    elif primary_physical:
         uri = (primary_physical.get("artifactLocation") or {}).get("uri", "") or ""
         region = primary_physical.get("region") or {}
         sl = region.get("startLine")
