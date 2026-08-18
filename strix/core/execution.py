@@ -10,7 +10,7 @@ import re
 import uuid
 from collections.abc import Callable
 from dataclasses import replace
-from functools import cache
+from functools import cache, partial
 from typing import TYPE_CHECKING, Any, cast
 
 from agents import ItemHelpers, MessageOutputItem, RunConfig, Runner
@@ -164,6 +164,16 @@ def _with_image_scrub(run_config: RunConfig, context: dict[str, Any]) -> RunConf
     return replace(run_config, call_model_input_filter=_scrub)
 
 
+async def _force_compact_session(
+    agent: Any,
+    session: Session | None,
+    run_config: RunConfig,
+) -> bool:
+    if session is None:
+        return False
+    return await _compact_session(agent, session, run_config, force=True)
+
+
 _MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
@@ -290,6 +300,7 @@ async def _run_agent_loop(
         session=session,
         interrupt_on_message=interactive,
         resumable=interactive,
+        compact=partial(_force_compact_session, agent, session, run_config),
     )
     result: RunResultBase | None = None
 
