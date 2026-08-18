@@ -21,7 +21,9 @@ npx skills add usestrix/strix
   ```bash
   curl -sSL https://strix.ai/install | bash        # install
   export STRIX_LLM="openai/gpt-5.4"                 # any LiteLLM model id
-  export LLM_API_KEY="<key>"
+  # or a subscription: STRIX_LLM="chatgpt/gpt-5.4" (strix auth login chatgpt)
+  #                    STRIX_LLM="claude-code/claude-opus-4-8" (strix auth login claude; needs the claude CLI on PATH)
+  export LLM_API_KEY="<key>"                        # not needed for subscription backends
   strix -n -t ./ --scan-mode quick --max-budget 10  # headless scan; always use -n
   ```
   - Requires Docker running. Scans take minutes (`quick`) to hours (`deep`) — run in the background.

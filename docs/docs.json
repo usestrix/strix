@@ -34,6 +34,7 @@
               "llm-providers/overview",
               "llm-providers/openai",
               "llm-providers/anthropic",
+              "llm-providers/claude-code",
               "llm-providers/openrouter",
               "llm-providers/vertex",
               "llm-providers/bedrock",
