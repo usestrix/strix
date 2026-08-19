@@ -16,6 +16,7 @@ from strix.config.models import (
     is_claude_model,
     is_known_openai_bare_model,
     is_openrouter_model,
+    model_cost_entry,
     model_supports_reasoning,
     request_timeout_extra_args,
 )
@@ -24,6 +25,13 @@ from strix.core.sessions import scrub_images_from_items
 
 if TYPE_CHECKING:
     from strix.config.settings import ReasoningEffort
+
+
+# Floor for the explicit ``max_tokens`` set on Claude-on-Bedrock requests with
+# thinking enabled (see ``_bedrock_thinking_max_tokens``): large enough that a
+# long tool call (e.g. ``create_vulnerability_report``) isn't truncated by
+# Bedrock Converse's low internal default when no fixed thinking budget is set.
+_BEDROCK_THINKING_MAX_TOKENS = 32000
 
 
 def _accepts_required_tool_choice(model_name: str | None) -> bool:
@@ -237,6 +245,13 @@ def make_model_settings(
     has_tools: bool = True,
 ) -> ModelSettings:
     headers = _request_headers(model_name, extra_headers)
+    active_reasoning_effort = (
+        reasoning_effort
+        if reasoning_effort is not None
+        and reasoning_effort != "none"
+        and model_supports_reasoning(model_name)
+        else None
+    )
     model_settings = ModelSettings(
         parallel_tool_calls=False if has_tools else None,
         retry=DEFAULT_MODEL_RETRY,
@@ -244,13 +259,16 @@ def make_model_settings(
         extra_args=request_timeout_extra_args(request_timeout),
         extra_headers=headers,
     )
-    if (
-        reasoning_effort is not None
-        and reasoning_effort != "none"
-        and model_supports_reasoning(model_name)
-    ):
+    if active_reasoning_effort is not None:
         model_settings = model_settings.resolve(
-            _reasoning_settings(reasoning_effort, model_settings.extra_args),
+            _reasoning_settings(active_reasoning_effort, model_settings.extra_args),
+        )
+    bedrock_thinking_max_tokens = (
+        _bedrock_thinking_max_tokens(model_name) if active_reasoning_effort is not None else None
+    )
+    if bedrock_thinking_max_tokens is not None:
+        model_settings = model_settings.resolve(
+            ModelSettings(max_tokens=bedrock_thinking_max_tokens),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
@@ -290,6 +308,26 @@ def _reasoning_settings(
     return ModelSettings(
         extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
     )
+
+
+def _bedrock_thinking_max_tokens(model_name: str) -> int | None:
+    """Explicit ``max_tokens`` for a Claude-on-Bedrock request with thinking enabled.
+
+    Bedrock Converse has no fixed thinking budget to derive ``maxTokens`` from
+    (see litellm's ``supports_adaptive_thinking``), so without an explicit value
+    it falls back to a low internal default that truncates long tool calls.
+    Clamped to the model's own ``max_output_tokens`` (via the same litellm
+    lookup ``model_supports_reasoning`` uses) so we never request more than the
+    model accepts; an unmapped model still gets the floor.
+    """
+    if not (is_claude_model(model_name) and is_bedrock_route(model_name)):
+        return None
+
+    entry = model_cost_entry(model_name)
+    ceiling = entry.get("max_output_tokens") if entry else None
+    if not isinstance(ceiling, int) or ceiling <= 0:
+        return _BEDROCK_THINKING_MAX_TOKENS
+    return min(_BEDROCK_THINKING_MAX_TOKENS, ceiling)
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:

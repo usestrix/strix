@@ -145,6 +145,98 @@ def test_max_reasoning_effort_sent_as_raw_body_field() -> None:
     assert settings.extra_args == {"timeout": 30, "extra_body": {"reasoning_effort": "max"}}
 
 
+def test_bedrock_claude_thinking_gets_explicit_max_tokens() -> None:
+    # Bedrock Converse has no fixed thinking budget to derive maxTokens from, so
+    # without an explicit value it falls back to a low internal default that
+    # truncates long tool calls (issue #623).
+    settings = make_model_settings("high", model_name="bedrock/global.anthropic.claude-opus-4-8")
+    assert settings.max_tokens == 32000
+
+
+def test_bedrock_claude_thinking_max_tokens_clamped_to_model_ceiling(
+    monkeypatch: Any,
+) -> None:
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {
+            "global.anthropic.claude-opus-4-8": {
+                "max_output_tokens": 8000,
+                "supports_reasoning": True,
+            }
+        },
+        raising=False,
+    )
+    settings = make_model_settings("high", model_name="bedrock/global.anthropic.claude-opus-4-8")
+    assert settings.max_tokens == 8000
+
+
+def test_bedrock_claude_thinking_max_tokens_falls_back_when_ceiling_unknown(
+    monkeypatch: Any,
+) -> None:
+    # A model litellm knows supports reasoning but has no max_output_tokens
+    # entry for (e.g. a brand-new custom alias) still gets the floor rather
+    # than no max_tokens at all.
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {"global.anthropic.claude-brand-new-9": {"supports_reasoning": True}},
+        raising=False,
+    )
+    settings = make_model_settings("high", model_name="bedrock/global.anthropic.claude-brand-new-9")
+    assert settings.max_tokens == 32000
+
+
+def test_max_tokens_unset_when_reasoning_disabled_for_bedrock_claude() -> None:
+    settings = make_model_settings(None, model_name="bedrock/global.anthropic.claude-opus-4-8")
+    assert settings.max_tokens is None
+
+    settings = make_model_settings("none", model_name="bedrock/global.anthropic.claude-opus-4-8")
+    assert settings.max_tokens is None
+
+
+def test_max_tokens_unset_for_non_bedrock_claude_with_reasoning() -> None:
+    settings = make_model_settings("high", model_name="anthropic/claude-sonnet-4-5")
+    assert settings.max_tokens is None
+
+
+@pytest.mark.parametrize("model_name", ["gpt-5", "vertex_ai/gemini-2.5-pro"])
+def test_max_tokens_unset_for_non_claude_with_reasoning(model_name: str) -> None:
+    assert make_model_settings("high", model_name=model_name).max_tokens is None
+
+
+def test_max_tokens_unset_for_non_claude_bedrock_model_with_reasoning(
+    monkeypatch: Any,
+) -> None:
+    # is_claude_model must independently gate the Bedrock helper, not just
+    # is_bedrock_route -- a non-Anthropic Bedrock model must stay unaffected.
+    monkeypatch.setattr(
+        litellm,
+        "model_cost",
+        {"global.meta.llama-5-70b": {"supports_reasoning": True, "max_output_tokens": 8000}},
+        raising=False,
+    )
+    settings = make_model_settings("high", model_name="bedrock/global.meta.llama-5-70b")
+    assert settings.max_tokens is None
+
+
+def test_bedrock_claude_thinking_max_tokens_survives_full_resolve_chain() -> None:
+    # Confirms .resolve() composition doesn't let one ModelSettings field clobber
+    # another (reasoning, max_tokens, and prompt-cache extra_args all coexist).
+    # force_required_tool_choice is passed too: _accepts_required_tool_choice only
+    # matches OpenAI routes, so it stays a no-op here, but the resolve() call for
+    # it still runs and must not disturb the other three fields.
+    settings = make_model_settings(
+        "high",
+        model_name="bedrock/global.anthropic.claude-opus-4-8",
+        force_required_tool_choice=True,
+    )
+    assert settings.max_tokens == 32000
+    assert settings.reasoning is not None
+    assert settings.tool_choice is None
+    assert (settings.extra_args or {}).get("cache_control_injection_points")
+
+
 def test_conversation_tail_breakpoint_moves_with_appended_transcript() -> None:
     # LiteLLM must place the index=-1 cache_control on the last message however
     # long the transcript grows.
