@@ -1,0 +1,173 @@
+---
+title: "MCP Tools"
+description: "Connect explicitly approved host-side tools to Strix agents"
+---
+
+Strix can connect to [Model Context Protocol (MCP)](https://modelcontextprotocol.io)
+servers and expose selected tools to scan agents.
+
+<Warning>
+  MCP servers run on your host with your user permissions, outside the Docker
+  sandbox. Only enable servers and tools you trust.
+</Warning>
+
+## How enablement works
+
+MCP definitions and Strix enablement are separate:
+
+1. Define servers in `~/.strix/.mcp.json` or `.mcp.json` in the directory where
+   you run Strix.
+2. Explicitly enable a server with an allowlist.
+3. Strix records the definition's source path and fingerprint in its active
+   config file.
+4. At scan start, Strix connects only to definitions that are still enabled and
+   unchanged.
+
+Project definitions override user definitions with the same server name. If a
+definition changes, moves, disappears, or becomes shadowed by a project
+definition, Strix refuses to use the saved enablement until you review and
+enable it again.
+
+## Define a server
+
+Each definition must contain exactly one of `command` or `url`.
+
+<Tabs>
+  <Tab title="Local stdio server">
+    Use `command`, with optional `args` and `env`, for a process launched by
+    Strix:
+
+    ```json .mcp.json
+    {
+      "mcpServers": {
+        "security-data": {
+          "command": "python",
+          "args": ["/absolute/path/to/server.py"],
+          "env": {
+            "API_TOKEN": "${SECURITY_DATA_TOKEN}"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Remote server">
+    Use `url` with the `streamableHttp` or `sse` transport. Headers are
+    optional:
+
+    ```json .mcp.json
+    {
+      "mcpServers": {
+        "security-data": {
+          "type": "streamableHttp",
+          "url": "https://mcp.example.com/mcp",
+          "headers": {
+            "Authorization": "Bearer ${SECURITY_DATA_TOKEN}"
+          }
+        }
+      }
+    }
+    ```
+  </Tab>
+</Tabs>
+
+Environment placeholders are expanded when Strix connects:
+
+- `${NAME}` requires the variable to be set.
+- `${NAME:-default}` uses `default` when the variable is unset.
+
+Keep secrets in environment variables rather than writing them directly into
+`.mcp.json`.
+
+## Enable selected tools
+
+List discovered definitions, enable only the tools the scan needs, and test the
+connection:
+
+```bash
+strix mcp list
+strix mcp enable security-data --allow 'search_*' --deny 'delete_*'
+strix mcp test security-data
+```
+
+Allow and deny values use case-sensitive glob patterns. Repeat either option to
+add more patterns:
+
+```bash
+strix mcp enable security-data \
+  --allow search_advisories \
+  --allow get_advisory \
+  --call-timeout 60 \
+  --root-only
+```
+
+| Option | Behavior |
+| --- | --- |
+| `--allow <pattern>` | Allow matching tools. Repeatable and required unless using `--all-tools`. |
+| `--all-tools` | Allow every tool exposed by the server. Review the server before using this. |
+| `--deny <pattern>` | Remove matching tools from the allowed set. Repeatable. |
+| `--root-only` | Expose tools only to the root agent, not child agents. |
+| `--call-timeout <seconds>` | Set the per-tool timeout. Defaults to `120`. |
+
+Without `--root-only`, enabled tools are available to both the root agent and
+its child agents. Tool names are exposed to agents with the
+`mcp_<server>__<tool>` prefix.
+
+## Manage servers
+
+| Command | Purpose |
+| --- | --- |
+| `strix mcp list` | Show discovered and previously saved server states. |
+| `strix mcp test [name]` | Connect to one enabled server, or all enabled servers. |
+| `strix mcp disable <name>` | Revoke saved enablement, even if the definition is now missing. |
+
+Common states from `strix mcp list`:
+
+| State | Meaning |
+| --- | --- |
+| `disabled` | The definition was discovered but has not been enabled. |
+| `enabled` | The saved source and fingerprint match the current definition. |
+| `changed — re-enable required` | Review the current definition, then run `enable` again. |
+| `missing — saved enablement` | The definition disappeared; run `disable` to revoke the record. |
+
+## Choose where enablement is stored
+
+By default, `strix mcp enable` saves the approval in
+`~/.strix/cli-config.json`. To keep enablement in another Strix config file,
+place `--config` before the MCP subcommand and use the same file for the scan:
+
+```bash
+strix mcp --config ./.strix-config.json enable security-data --allow 'search_*'
+strix --config ./.strix-config.json --target ./app
+```
+
+The Strix config stores approval metadata and tool filters. Server connection
+details remain in `.mcp.json`.
+
+## Disable MCP for a scan
+
+Use `--no-mcp` for hermetic or CI runs, including resumed scans:
+
+```bash
+strix --no-mcp --target ./app
+```
+
+To disable MCP globally for the current environment:
+
+```bash
+export STRIX_MCP_ENABLED=false
+```
+
+This does not delete definitions or saved enablement records.
+
+## Troubleshooting
+
+- Run `strix mcp list` to check whether a definition is disabled, changed, or
+  missing.
+- Run `strix mcp test <name>` to verify startup, authentication, and tool
+  discovery before starting a scan.
+- If Strix reports a missing environment variable, export it in the shell that
+  launches Strix.
+- If a definition changed intentionally, inspect it and run `strix mcp enable`
+  again with the desired allowlist.

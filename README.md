@@ -120,7 +120,21 @@ This installs nine skills: **penetration-testing-with-strix** (run headless scan
 
 ---
 
-## MCP tools
+## ✨ Features
+
+### Agentic Pentesting Tools
+
+Strix agents come equipped with a comprehensive offensive security toolkit - the same tools used by professional penetration testers and ethical hackers:
+
+- **HTTP Interception Proxy** - Full request/response manipulation and analysis with Caido
+- **Browser Exploitation** - Automated browser for testing XSS, CSRF, clickjacking, and auth bypass flows
+- **Shell & Command Execution** - Interactive terminal for exploit development and post-exploitation
+- **Custom Exploit Runtime** - Python sandbox for writing and validating proof-of-concept exploits
+- **Reconnaissance & OSINT** - Automated attack surface mapping, subdomain enumeration, and fingerprinting
+- **Static & Dynamic Code Analysis** - SAST + DAST capabilities for comprehensive application security testing
+- **Vulnerability Knowledge Base** - Structured findings with CVSS scoring and OWASP classification
+
+### MCP Tools
 
 Strix can make explicitly enabled MCP tools available to scan agents. MCP
 servers execute on your **host**, outside the Docker sandbox, so enable only
@@ -138,22 +152,6 @@ strix --no-mcp --target ./app
 
 Definitions are disabled by default. A project definition that changes or
 shadows another definition must be enabled again before it can run.
-
----
-
-## ✨ Features
-
-### Agentic Pentesting Tools
-
-Strix agents come equipped with a comprehensive offensive security toolkit - the same tools used by professional penetration testers and ethical hackers:
-
-- **HTTP Interception Proxy** - Full request/response manipulation and analysis with Caido
-- **Browser Exploitation** - Automated browser for testing XSS, CSRF, clickjacking, and auth bypass flows
-- **Shell & Command Execution** - Interactive terminal for exploit development and post-exploitation
-- **Custom Exploit Runtime** - Python sandbox for writing and validating proof-of-concept exploits
-- **Reconnaissance & OSINT** - Automated attack surface mapping, subdomain enumeration, and fingerprinting
-- **Static & Dynamic Code Analysis** - SAST + DAST capabilities for comprehensive application security testing
-- **Vulnerability Knowledge Base** - Structured findings with CVSS scoring and OWASP classification
 
 ### Comprehensive Vulnerability Scanner
 

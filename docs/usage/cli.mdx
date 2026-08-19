@@ -64,6 +64,11 @@ strix (--target <target> | --target-list <path>) [options]
   Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
 </ParamField>
 
+<ParamField path="--no-mcp" type="boolean">
+  Disable all user-enabled host-side MCP tools for this scan. See
+  [MCP Tools](/tools/mcp).
+</ParamField>
+
 <ParamField path="--max-budget" type="number">
   Maximum LLM spend in USD for the whole scan, counted cumulatively across the
   root agent and every child agent. The budget is checked after each model

@@ -54,6 +54,7 @@
             "group": "Tools",
             "pages": [
               "tools/overview",
+              "tools/mcp",
               "tools/browser",
               "tools/proxy",
               "tools/terminal",
