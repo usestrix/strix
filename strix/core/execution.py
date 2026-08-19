@@ -729,8 +729,29 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             await coordinator.trigger_budget_stop()
             raise
         except Exception as exc:
+            prompt_policy_rejection = _is_openrouter_prompt_policy_rejection(exc)
             if (
-                image_strips < 3
+                prompt_policy_rejection
+                and prompt_policy_retries < _MAX_OPENROUTER_PROMPT_POLICY_RETRIES
+            ):
+                prompt_policy_retries += 1
+                delay = _transient_model_retry_delay(prompt_policy_retries)
+                logger.warning(
+                    "intermittent OpenRouter prompt-policy rejection for %s; replaying "
+                    "unchanged turn (attempt %d/%d, backoff %.1fs): %r",
+                    agent_id,
+                    prompt_policy_retries,
+                    _MAX_OPENROUTER_PROMPT_POLICY_RETRIES,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                if session is not None:
+                    input_data = []
+                continue
+            if (
+                not prompt_policy_rejection
+                and image_strips < 3
                 and session is not None
                 and getattr(exc, "status_code", None) in _INPUT_REJECTION_CODES
             ):
@@ -767,25 +788,6 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
-            if (
-                prompt_policy_retries < _MAX_OPENROUTER_PROMPT_POLICY_RETRIES
-                and _is_openrouter_prompt_policy_rejection(exc)
-            ):
-                prompt_policy_retries += 1
-                delay = _transient_model_retry_delay(prompt_policy_retries)
-                logger.warning(
-                    "intermittent OpenRouter prompt-policy rejection for %s; replaying "
-                    "unchanged turn (attempt %d/%d, backoff %.1fs): %r",
-                    agent_id,
-                    prompt_policy_retries,
-                    _MAX_OPENROUTER_PROMPT_POLICY_RETRIES,
-                    delay,
-                    exc,
-                )
-                await asyncio.sleep(delay)
-                if session is not None:
-                    input_data = []
-                continue
             if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
                 model_retries += 1
                 delay = _transient_model_retry_delay(model_retries)

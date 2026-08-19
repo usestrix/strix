@@ -124,6 +124,8 @@ def _patch_fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _run_once(
     monkeypatch: pytest.MonkeyPatch,
     streams: list[_FakeStream],
+    *,
+    session: Any = None,
 ) -> Any:
     _patch_fast_backoff(monkeypatch)
     calls = {"n": 0}
@@ -146,7 +148,7 @@ async def _run_once(
         run_config=cast("RunConfig", object()),
         context={},
         max_turns=5,
-        session=None,
+        session=session,
         interactive=False,
         event_sink=None,
         hooks=None,
@@ -191,6 +193,41 @@ async def test_run_cycle_gives_up_after_openrouter_prompt_policy_retry_limit(
     ]
     with pytest.raises(BadRequestError):
         await _run_once(monkeypatch, streams)
+
+
+@pytest.mark.asyncio
+async def test_openrouter_prompt_policy_retry_preserves_session_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Session:
+        async def get_items(self) -> list[Any]:
+            return []
+
+    image_strips = 0
+
+    async def _strip_images(_session: Any) -> bool:
+        nonlocal image_strips
+        image_strips += 1
+        return True
+
+    async def _no_compaction(*_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+    async def _no_salvage(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(execution, "strip_all_images_from_session", _strip_images)
+    monkeypatch.setattr(execution, "_compact_session", _no_compaction)
+    monkeypatch.setattr(execution, "_salvage_stream_to_session", _no_salvage)
+    streams = [
+        _FakeStream(exc=_openrouter_prompt_policy_rejection())
+        for _ in range(execution._MAX_OPENROUTER_PROMPT_POLICY_RETRIES + 1)
+    ]
+
+    with pytest.raises(BadRequestError):
+        await _run_once(monkeypatch, streams, session=_Session())
+
+    assert image_strips == 0
 
 
 @pytest.mark.asyncio
