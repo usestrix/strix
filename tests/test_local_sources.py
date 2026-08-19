@@ -8,6 +8,7 @@ from typing import Any
 
 import pytest
 
+from strix.core.targets import canonical_network_host
 from strix.interface.scan_setup import attach_workspace_mount
 from strix.interface.utils import (
     check_mountable_dir,
@@ -200,6 +201,35 @@ def test_infer_web_ip_target_becomes_exact_ip() -> None:
         "ip_address",
         {"target_ip": "192.0.2.10"},
     )
+
+
+@pytest.mark.parametrize(
+    ("target", "expected"),
+    [
+        ("fiuu.com/search-result/?s=", ("web_host", "fiuu.com")),
+        ("https://FIUU.com/blog/", ("web_host", "fiuu.com")),
+        ("192.0.2.10/search-result/?s=", ("ip_address", "192.0.2.10")),
+        ("https://192.0.2.10/blog/", ("ip_address", "192.0.2.10")),
+        ("2001:db8::1", ("ip_address", "2001:db8::1")),
+        ("https://[2001:db8::1]/blog/", ("ip_address", "2001:db8::1")),
+        ("localhost:3000/admin", ("web_host", "localhost")),
+        ("https://münich.example/path", ("web_host", "xn--mnich-kva.example")),
+        (
+            "fiuu.com/callback?next=https://other.example/path",
+            ("web_host", "fiuu.com"),
+        ),
+    ],
+)
+def test_canonical_network_host_handles_prompt_network_references(
+    target: str, expected: tuple[str, str]
+) -> None:
+    assert canonical_network_host(target) == expected
+
+
+@pytest.mark.parametrize("target", ["fiuu.com:bad/path", "https://fiuu.com:70000/path"])
+def test_canonical_network_host_rejects_invalid_ports(target: str) -> None:
+    with pytest.raises(ValueError, match="invalid host"):
+        canonical_network_host(target)
 
 
 def test_infer_repository_keeps_its_path() -> None:

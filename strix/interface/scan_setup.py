@@ -139,6 +139,23 @@ def build_targets_info(args: argparse.Namespace) -> None:
     assign_workspace_subdirs(args.targets_info)
 
 
+def build_prompt_targets_info(targets: list[str]) -> list[dict[str, Any]]:
+    """Resolve prompt-extracted network references into canonical target records."""
+    targets_info: list[dict[str, Any]] = []
+    for target in targets:
+        scope_type, canonical = canonical_network_host(target)
+        if scope_type == "ip_address":
+            target_type = "ip_address"
+            details = {"target_ip": canonical}
+        else:
+            target_type = "web_application"
+            details = {"target_host": canonical}
+        targets_info.append({"type": target_type, "details": details, "original": canonical})
+
+    rewrite_localhost_targets(targets_info, HOST_GATEWAY_HOSTNAME)
+    return dedupe_targets(targets_info)
+
+
 def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
     """Read the spec up front so bad input fails before the run starts.
 

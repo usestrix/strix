@@ -286,6 +286,31 @@ def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() ->
     )
 
 
+def test_scope_prompt_authorizes_subdomains_for_each_configured_host() -> None:
+    targets = [
+        {
+            "type": "web_application",
+            "details": {"target_host": "fiuu.com"},
+            "original": "fiuu.com",
+        },
+        {
+            "type": "web_application",
+            "details": {"target_host": "api.fiuu.com"},
+            "original": "api.fiuu.com",
+        },
+    ]
+    context = build_scope_context({"targets": targets})
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, system_prompt_context=context)
+
+    assert context["authorized_targets"] == [
+        {"type": "web_host", "value": "fiuu.com", "workspace_path": ""},
+        {"type": "web_host", "value": "api.fiuu.com", "workspace_path": ""},
+    ]
+    assert "host: fiuu.com (includes fiuu.com and *.fiuu.com)" in prompt
+    assert "host: api.fiuu.com (includes api.fiuu.com and *.api.fiuu.com)" in prompt
+
+
 def test_scope_prompt_keeps_web_ip_targets_exact() -> None:
     context = build_scope_context(
         {

@@ -338,13 +338,10 @@ func TestLeadingSlashIsPromptTextNotACommand(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter did not submit")
 	}
-	types := commandTypes(drainCommands(t, cmd, connection))
-	if !contains(types, "setup.start") {
-		t.Fatalf("a slash-leading prompt did not launch a scan: %v", types)
-	}
-	// The entire value remains prompt text; no token is promoted to a target.
-	if contains(types, "setup.add_target") || !contains(types, "setup.set_instruction") {
-		t.Fatalf("slash-leading prompt was not preserved as instruction text: %v", types)
+	payload := decodeSetupStart(t, drainCommands(t, cmd, connection))
+	// The entire value remains prompt text; the path is not promoted to a target.
+	if payload.Instruction != "/etc/passwd is world readable, check it" || len(payload.Targets) != 0 {
+		t.Fatalf("slash-leading prompt was not preserved as instruction text: %#v", payload)
 	}
 	for _, line := range result.setupLog {
 		if strings.Contains(ansi.Strip(line), "Unknown command") {

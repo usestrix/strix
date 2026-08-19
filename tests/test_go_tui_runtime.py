@@ -350,6 +350,45 @@ async def test_setup_preflights_model_before_starting(
 
 
 @pytest.mark.asyncio
+async def test_setup_copies_inferred_target_records_into_prepared_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(args())
+    runtime.controller.targets_info = [
+        {
+            "type": "web_application",
+            "details": {"target_host": "fiuu.com"},
+            "original": "fiuu.com",
+        },
+        {
+            "type": "ip_address",
+            "details": {"target_ip": "192.0.2.10"},
+            "original": "192.0.2.10",
+        },
+    ]
+    runtime.controller.targets = ["fiuu.com", "192.0.2.10"]
+    prepared: list[argparse.Namespace] = []
+
+    monkeypatch.setattr(
+        go_tui,
+        "load_settings",
+        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
+    )
+    monkeypatch.setattr(go_tui, "preflight_model_connection", lambda _model: asyncio.sleep(0))
+    monkeypatch.setattr(go_tui, "prepare_run", prepared.append)
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
+    monkeypatch.setattr(runtime, "init_run_state", lambda: None)
+    monkeypatch.setattr(runtime, "start_scan", lambda: None)
+
+    await runtime.start_from_setup()
+
+    assert prepared[0].targets_info == runtime.controller.targets_info
+    assert runtime.args.targets_info == runtime.controller.targets_info
+    assert prepared[0].workspace_mount is None
+    assert prepared[0].targets_info is not runtime.controller.targets_info
+
+
+@pytest.mark.asyncio
 async def test_optimistic_setup_skips_model_preflight(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

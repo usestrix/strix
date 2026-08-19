@@ -114,6 +114,7 @@ class GoTuiRuntime:
         candidate.max_turns = self.controller.max_turns
         candidate.scope_mode = self.controller.scope_mode
         candidate.diff_base = self.controller.diff_base
+        candidate.targets_info = deepcopy(self.controller.targets_info)
         model = (load_settings().llm.model or "").strip()
         # A bare prompt launches optimistically: it skips the network preflight
         # and lets any model error surface once the agent starts, like a coding

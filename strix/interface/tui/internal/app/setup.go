@@ -2,6 +2,8 @@ package app
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"strings"
 	"sync"
 
@@ -24,29 +26,130 @@ func (m Model) submit(value string) (tea.Model, tea.Cmd) {
 	return m, send(m.client, "agent.send_message", map[string]any{"agent_id": m.snapshot.Agents[m.selectedAgent].ID, "message": value})
 }
 
-// submitSetupPrompt treats free text as the task verbatim. Target-looking words
-// are not promoted into configured targets: hosts named in the task receive
-// prompt-level scope, while configured targets come only from explicit flags.
+// submitSetupPrompt keeps free text as the task verbatim while passing any
+// network references alongside it for the backend to reconcile as targets.
 func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
-	commands := []tea.Cmd{send(m.client, "setup.set_instruction", map[string]any{"instruction": value})}
+	targets := networkTargets(value)
 	// With a target, verify the model connection before the scan commits to it.
 	// A bare prompt launches optimistically, like a coding agent, and mounts the
 	// working directory - the backend asks about that from the live view, so the
 	// prompt is held here in case it is declined.
-	verify := len(m.snapshot.Targets) > 0
-	payload := map[string]any{"verify": verify}
+	verify := len(targets) > 0 || len(m.snapshot.Targets) > 0
+	payload := map[string]any{"instruction": value, "targets": targets, "verify": verify}
 	if verify {
 		m.setupMsg("Verifying model connection...", render.Col(amber))
 	} else {
 		m.pendingPrompt = value
 		payload["mount_working_dir"] = true
 	}
-	commands = append(commands, send(m.client, "setup.start", payload))
-	// Ordered, not batched: setup.start leaves setup mode, so it must be the
-	// last command to reach the backend. Batched sends race, and once the
-	// preflight is skipped setup.start wins, making the target and instruction
-	// commands land after the guard closes and fail with a red error.
-	return *m, tea.Sequence(commands...)
+	return *m, send(m.client, "setup.start", payload)
+}
+
+// networkTargets extracts ordered raw candidates. Canonicalization and scope
+// reconciliation remain the backend's responsibility.
+func networkTargets(instruction string) []string {
+	targets := make([]string, 0)
+	seen := make(map[string]struct{})
+	for _, field := range strings.Fields(instruction) {
+		candidate := strings.Trim(field, "\"'`()<> {},;.")
+		if _, duplicate := seen[candidate]; candidate == "" || duplicate || !isNetworkTarget(candidate) {
+			continue
+		}
+		seen[candidate] = struct{}{}
+		targets = append(targets, candidate)
+	}
+	return targets
+}
+
+func isNetworkTarget(candidate string) bool {
+	lower := strings.ToLower(candidate)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		parsed, err := url.Parse(candidate)
+		return err == nil && parsed.Host != "" && !strings.HasSuffix(parsed.Host, ":") && validNetworkHost(parsed.Hostname(), true)
+	}
+	if strings.Contains(candidate, "://") || strings.ContainsAny(candidate, "@\\") {
+		return false
+	}
+	if ip := net.ParseIP(candidate); ip != nil {
+		return true
+	}
+	parsed, err := url.Parse("//" + candidate)
+	if err != nil || parsed.Host == "" || parsed.User != nil || strings.HasSuffix(parsed.Host, ":") {
+		return false
+	}
+	if isLikelyFileName(candidate) {
+		return false
+	}
+	return validNetworkHost(parsed.Hostname(), false)
+}
+
+func validNetworkHost(host string, allowSingleLabel bool) bool {
+	if ip := net.ParseIP(host); ip != nil {
+		return true
+	}
+	host = strings.TrimSuffix(host, ".")
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	if host == "" || len(host) > 253 || (!allowSingleLabel && !strings.Contains(host, ".")) {
+		return false
+	}
+	if strings.IndexFunc(host, func(char rune) bool { return char > 127 }) >= 0 {
+		return true
+	}
+	labels := strings.Split(host, ".")
+	for _, label := range labels {
+		if label == "" || len(label) > 63 || !isASCIILetterOrDigit(label[0]) || !isASCIILetterOrDigit(label[len(label)-1]) {
+			return false
+		}
+		for i := 1; i < len(label)-1; i++ {
+			if !isASCIILetterOrDigit(label[i]) && label[i] != '-' {
+				return false
+			}
+		}
+	}
+	tld := labels[len(labels)-1]
+	if len(tld) < 2 || strings.HasPrefix(tld, "-") || strings.HasSuffix(tld, "-") {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(tld), "xn--") {
+		return len(tld) > len("xn--")
+	}
+	for i := range len(tld) {
+		if !isASCIILetter(tld[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+func isLikelyFileName(candidate string) bool {
+	if strings.ContainsAny(candidate, "/:?#") {
+		return false
+	}
+	dot := strings.LastIndex(candidate, ".")
+	if dot < 0 {
+		return false
+	}
+	_, found := nonHostFileExtensions[strings.ToLower(candidate[dot+1:])]
+	return found
+}
+
+var nonHostFileExtensions = map[string]struct{}{
+	"cfg": {}, "conf": {}, "css": {}, "csv": {}, "env": {}, "gif": {}, "go": {},
+	"htm": {}, "html": {}, "ini": {}, "jpeg": {}, "jpg": {}, "js": {}, "json": {},
+	"jsx": {}, "less": {}, "lock": {}, "log": {}, "md": {}, "markdown": {}, "pdf": {},
+	"png": {}, "py": {}, "pyc": {}, "rst": {}, "scss": {}, "sql": {}, "svg": {},
+	"toml": {}, "ts": {}, "tsx": {}, "txt": {}, "vue": {}, "xml": {}, "yaml": {},
+	"yml": {},
+}
+
+func isASCIILetterOrDigit(char byte) bool {
+	return isASCIILetter(char) || char >= '0' && char <= '9'
+}
+
+func isASCIILetter(char byte) bool {
+	return char >= 'a' && char <= 'z' || char >= 'A' && char <= 'Z'
 }
 
 // answerMountConfirmation replies to the working-directory mount the backend is

@@ -199,8 +199,10 @@ strix --target https://your-app.com
 
 Web targets are host-level: paths and queries passed to `--target` are removed,
 and repeated URLs on the same host collapse to one target. Put exact starting
-endpoints in `--instruction`. Free-form text entered in the interactive start
-screen remains the task and is not split into inferred targets.
+endpoints in `--instruction`. Network references entered in the interactive
+start screen are inferred as host/IP targets while the complete text remains the
+task. Scheme, port, path, and query differences on the same host collapse to one
+target; distinct hosts, subdomains, and IP addresses remain separate targets.
 
 ### API Testing (OpenAPI / Swagger / Postman)
 

@@ -7,12 +7,14 @@ import contextlib
 import math
 import webbrowser
 from collections.abc import Awaitable, Callable
+from copy import deepcopy
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from strix.config import load_settings
 from strix.config.models import is_recommended_or_frontier_model
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.interface.scan_setup import build_prompt_targets_info
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.backend.projection import (
     MAX_TERMINAL_EVENTS,
@@ -24,7 +26,7 @@ from strix.interface.tui.backend.projection import (
     sanitize_terminal_text,
     terminal_projection,
 )
-from strix.interface.utils import is_subscription_run
+from strix.interface.utils import dedupe_targets, is_subscription_run
 
 
 if TYPE_CHECKING:
@@ -63,10 +65,11 @@ class TuiController:
         self.scan_started = not self.setup_mode
         self._start_in_progress = False
         self.scan_state = "setup" if self.setup_mode else "running"
-        self.targets = [
+        self.targets_info = deepcopy(cast("list[dict[str, Any]]", args.targets_info))
+        self.targets: list[str] = [
             str(target["original"])
-            for target in args.targets_info
-            if isinstance(target, dict) and target.get("original")
+            for target in self.targets_info
+            if target.get("original")
         ]
         instruction = args.instruction
         self.instruction = instruction.strip() if isinstance(instruction, str) else ""
@@ -289,12 +292,32 @@ class TuiController:
     async def _start(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.scan_started or self._start_in_progress:
             raise RuntimeError("Scan is already starting or running")
+
+        instruction = payload.get("instruction", self.instruction)
+        if not isinstance(instruction, str):
+            raise TypeError("instruction must be a string")
+        raw_targets_value = payload.get("targets", [])
+        if not isinstance(raw_targets_value, list):
+            raise TypeError("targets must be a list of non-empty strings")
+        raw_targets: list[str] = []
+        for target in cast("list[object]", raw_targets_value):
+            if not isinstance(target, str) or not target.strip():
+                raise TypeError("targets must be a list of non-empty strings")
+            raw_targets.append(target)
+        prompt_targets = build_prompt_targets_info([target.strip() for target in raw_targets])
+        targets_info = dedupe_targets([*deepcopy(self.targets_info), *prompt_targets])
+        targets = [
+            str(target["original"])
+            for target in targets_info
+            if target.get("original")
+        ]
         # A bare prompt launches optimistically, like a coding agent: it skips
         # the network model preflight and surfaces any model error live. A named
         # target keeps the preflight so a real scan does not commit blind.
-        verify = payload.get("verify", True)
-        if not isinstance(verify, bool):
+        requested_verify = payload.get("verify", True)
+        if not isinstance(requested_verify, bool):
             raise TypeError("verify must be a boolean")
+        verify = bool(targets) or requested_verify
         # Launching with no target mounts the working directory, so it requires
         # the user's explicit confirmation rather than happening silently.
         mount_working_dir = payload.get("mount_working_dir", False)
@@ -305,9 +328,12 @@ class TuiController:
             raise ValueError("No model configured. Set STRIX_LLM first.")
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
-        if not self.targets:
+        if not targets:
             if not mount_working_dir:
                 raise ValueError("No target set. Add a target first.")
+            self.instruction = instruction.strip()
+            self.targets_info = targets_info
+            self.targets = targets
             # Mounting the working directory needs the user's confirmation, and
             # that is asked in the live view. Enter it now and prepare nothing
             # until the answer arrives, so declining leaves no run behind.
@@ -317,7 +343,19 @@ class TuiController:
             self.scan_started = True
             self.scan_state = "preparing"
             return {"started": True}
-        await self._begin_scan(verify)
+        previous: tuple[str, list[dict[str, Any]], list[str]] = (
+            self.instruction,
+            self.targets_info,
+            self.targets,
+        )
+        self.instruction = instruction.strip()
+        self.targets_info = targets_info
+        self.targets = targets
+        try:
+            await self._begin_scan(verify)
+        except BaseException:
+            self.instruction, self.targets_info, self.targets = previous
+            raise
         return {"started": True}
 
     async def _begin_scan(self, verify: bool) -> None:

@@ -162,6 +162,117 @@ async def test_start_launches_with_a_configured_model() -> None:
 
 
 @pytest.mark.asyncio
+async def test_prompt_targets_are_canonicalized_deduplicated_and_started() -> None:
+    started: list[bool] = []
+
+    async def start(verify: bool = True) -> None:
+        started.append(verify)
+
+    prompt = (
+        "i need you to test fiuu.com/search-result/?s=, fiuu.com/blog/ "
+        "(fiuu.com/blog/-9 will show you the sql query), fiuu.com/newsroom/, "
+        "and fiuu.com/faq/ for sqli. all of the pages likely use mysql and the same database"
+    )
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    loader._cached = None
+    controller = TuiController(args(), on_start=start)
+
+    result = await controller.handle(
+        "setup.start",
+        {
+            "instruction": prompt,
+            "targets": [
+                "fiuu.com/search-result/?s=",
+                "https://FIUU.com/blog/",
+                "fiuu.com/blog/-9",
+                "api.fiuu.com/admin",
+                "192.0.2.10/search-result/?s=",
+                "https://192.0.2.10/blog/",
+            ],
+            # The backend still requires verification once targets resolve.
+            "verify": False,
+        },
+    )
+
+    assert result == {"started": True}
+    assert started == [True]
+    assert controller.instruction == prompt
+    assert controller.targets == ["fiuu.com", "api.fiuu.com", "192.0.2.10"]
+    assert controller.targets_info == [
+        {
+            "type": "web_application",
+            "details": {"target_host": "fiuu.com"},
+            "original": "fiuu.com",
+        },
+        {
+            "type": "web_application",
+            "details": {"target_host": "api.fiuu.com"},
+            "original": "api.fiuu.com",
+        },
+        {
+            "type": "ip_address",
+            "details": {"target_ip": "192.0.2.10"},
+            "original": "192.0.2.10",
+        },
+    ]
+    assert controller.pending_workspace_mount is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_prompt_targets_do_not_partially_mutate_setup() -> None:
+    controller = TuiController(args())
+
+    with pytest.raises(ValueError, match="invalid host"):
+        await controller.handle(
+            "setup.start",
+            {
+                "instruction": "changed",
+                "targets": ["fiuu.com/path", "https://bad host/path"],
+            },
+        )
+
+    assert controller.instruction == ""
+    assert controller.targets == []
+    assert controller.targets_info == []
+    assert controller.setup_mode is True
+
+
+@pytest.mark.asyncio
+async def test_failed_prompt_target_start_rolls_back_before_retry() -> None:
+    attempts = 0
+
+    async def start(_verify: bool = True) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("preparation failed")
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    loader._cached = None
+    controller = TuiController(args(), on_start=start)
+
+    with pytest.raises(RuntimeError, match="preparation failed"):
+        await controller.handle(
+            "setup.start",
+            {"instruction": "test old.example", "targets": ["old.example"]},
+        )
+
+    assert controller.instruction == ""
+    assert controller.targets == []
+    assert controller.targets_info == []
+    assert controller.setup_mode is True
+
+    await controller.handle(
+        "setup.start",
+        {"instruction": "test new.example", "targets": ["new.example"]},
+    )
+
+    assert controller.instruction == "test new.example"
+    assert controller.targets == ["new.example"]
+    assert controller.targets_info[0]["details"] == {"target_host": "new.example"}
+
+
+@pytest.mark.asyncio
 async def test_start_without_target_requires_mount_consent() -> None:
     started = False
 
