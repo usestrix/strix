@@ -12,9 +12,11 @@ from strix.agents.prompt import render_system_prompt
 from strix.core.inputs import (
     build_root_task,
     build_scope_context,
+    build_scope_target_labels,
     child_initial_input,
     make_model_settings,
 )
+from strix.interface.utils import build_target_summary_text
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -241,7 +243,7 @@ def test_build_scope_context_authorizes_nothing_without_targets() -> None:
 
 
 def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() -> None:
-    config = {
+    config: dict[str, Any] = {
         "targets": [
             {
                 "type": "web_application",
@@ -263,8 +265,8 @@ def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() ->
     assert context["authorized_targets"] == [
         {"type": "web_host", "value": "app.example.com", "workspace_path": ""}
     ]
-    assert "web_host: app.example.com (includes app.example.com and *.app.example.com)" in prompt
-    assert prompt.count("web_host: app.example.com") == 1
+    assert "host: app.example.com (includes app.example.com and *.app.example.com)" in prompt
+    assert prompt.count("host: app.example.com") == 1
     assert "https://app.example.com/search?q=test" not in prompt
     assert "https://app.example.com/search?q=test" in task
     assert "https://api.example.net/v1" in task
@@ -272,6 +274,13 @@ def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() ->
     assert "exact hostname and all of its descendant subdomains" in prompt
     assert "scheme, port, path, query, or fragment" in prompt
     assert "not `example.com`, sibling hosts such as `api.example.com`" in prompt
+
+    assert build_scope_target_labels(config["targets"]) == [
+        "host: app.example.com (includes *.app.example.com)"
+    ]
+    assert build_target_summary_text(config["targets"]).plain == (
+        "Target  host: app.example.com (includes *.app.example.com)"
+    )
 
 
 def test_scope_prompt_keeps_web_ip_targets_exact() -> None:

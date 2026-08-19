@@ -21,10 +21,27 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.core.inputs import build_scope_target_labels
 from strix.utils.api_spec import detect_spec_format
 
 
 logger = logging.getLogger(__name__)
+
+
+def build_target_summary_text(targets_info: list[dict[str, Any]]) -> Text:
+    """Render configured targets as their deduplicated prompt-level scope."""
+    labels = build_scope_target_labels(targets_info)
+    target_text = Text()
+    target_text.append("Target", style="dim")
+    target_text.append("  ")
+    if len(labels) == 1:
+        target_text.append(labels[0], style="bold white")
+    else:
+        target_text.append(f"{len(labels)} targets", style="bold white")
+        for label in labels:
+            target_text.append("\n        ")
+            target_text.append(label, style="white")
+    return target_text
 
 
 def get_severity_color(severity: str) -> str:

@@ -128,7 +128,7 @@ async def test_root_prompt_options_flow_into_root_agent(
     instructions_override = kwargs["instructions_override"]
     assert "SYSTEM-VERIFIED SCOPE" in instructions_override
     assert "AUTHORIZED TARGETS" in instructions_override
-    assert "web_host: example.com (includes example.com and *.example.com)" in instructions_override
+    assert "host: example.com (includes example.com and *.example.com)" in instructions_override
     assert "exact hostname and all of its descendant subdomains" in instructions_override
     assert "CUSTOM SCAN PROMPT" in instructions_override
     assert "Network hosts explicitly named in these root scan instructions" in instructions_override

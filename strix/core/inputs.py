@@ -268,6 +268,21 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_scope_target_labels(targets: list[dict[str, Any]]) -> list[str]:
+    """Build concise, deduplicated scope labels for CLI summaries."""
+    labels: list[str] = []
+    for target in build_scope_context({"targets": targets})["authorized_targets"]:
+        ttype = target["type"]
+        value = target["value"]
+        if ttype == "web_host":
+            labels.append(f"host: {value} (includes *.{value})")
+        elif ttype == "ip_address":
+            labels.append(f"ip: {value} (exact address)")
+        else:
+            labels.append(f"{ttype}: {value}")
+    return labels
+
+
 def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,
