@@ -200,14 +200,15 @@ def test_build_root_task_web_target_injected_as_context() -> None:
     """The prompt leads and the configured target remains visible below it."""
     config = {
         "targets": [
-            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+            {"type": "web_application", "details": {"target_host": "app.example.com"}},
         ],
         "user_instructions": "Focus on auth.",
     }
     task = build_root_task(config)
 
     assert task.startswith("Focus on auth.")
-    assert "https://app.example.com" in task
+    assert "Hosts:" in task
+    assert "app.example.com" in task
     assert "configured targets and supporting material" in task
     assert "Special instructions:" not in task
     assert "SYSTEM-VERIFIED" not in task
@@ -228,7 +229,7 @@ def test_build_root_task_workspace_mount_is_not_a_target() -> None:
     assert "No scan target was set" in task
     assert task.startswith("Find IDOR in the checkout flow.")
     # It must not be presented as an asset to test.
-    for label in ("Local Codebases:", "Repositories:", "URLs:", "IP Addresses:"):
+    for label in ("Local Codebases:", "Repositories:", "Hosts:", "IP Addresses:"):
         assert label not in task
 
 
@@ -240,6 +241,7 @@ def test_build_scope_context_authorizes_nothing_without_targets() -> None:
 
     assert scope["authorized_targets"] == []
     assert scope["user_instruction_hosts_expand_scope"] is True
+    assert build_target_summary_text([]).plain == "Target  task-defined scope"
 
 
 def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() -> None:
@@ -247,14 +249,14 @@ def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() ->
         "targets": [
             {
                 "type": "web_application",
-                "details": {"target_url": "https://app.example.com/search?q=test"},
-            },
-            {
-                "type": "web_application",
-                "details": {"target_url": "https://app.example.com/blog/"},
-            },
+                "details": {"target_host": "app.example.com"},
+                "original": "app.example.com",
+            }
         ],
-        "user_instructions": "Also test https://api.example.net/v1.",
+        "user_instructions": (
+            "Test https://app.example.com/search?q=test and "
+            "https://app.example.com/blog/. Also test https://api.example.net/v1."
+        ),
     }
     context = build_scope_context(config)
 
@@ -269,6 +271,7 @@ def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() ->
     assert prompt.count("host: app.example.com") == 1
     assert "https://app.example.com/search?q=test" not in prompt
     assert "https://app.example.com/search?q=test" in task
+    assert "https://app.example.com/blog/" in task
     assert "https://api.example.net/v1" in task
     assert "Every network host explicitly named in the user's root scan task" in prompt
     assert "exact hostname and all of its descendant subdomains" in prompt
@@ -288,8 +291,8 @@ def test_scope_prompt_keeps_web_ip_targets_exact() -> None:
         {
             "targets": [
                 {
-                    "type": "web_application",
-                    "details": {"target_url": "https://192.0.2.10:8443/admin"},
+                    "type": "ip_address",
+                    "details": {"target_ip": "192.0.2.10"},
                 }
             ]
         }

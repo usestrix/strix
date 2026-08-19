@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from strix.interface.utils import stage_api_specs
+
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -40,8 +42,8 @@ def test_parse_arguments_accepts_target_list_file(
     args = cli_main.parse_arguments()
 
     assert [target["original"] for target in args.targets_info] == [
-        "https://test1.com/",
-        "http://test2.com:5789/",
+        "test1.com",
+        "test2.com",
     ]
     assert [target["type"] for target in args.targets_info] == [
         "web_application",
@@ -64,8 +66,64 @@ def test_parse_arguments_combines_target_and_target_list(
     args = cli_main.parse_arguments()
 
     assert [target["original"] for target in args.targets_info] == [
-        "https://test1.com/",
-        "http://test2.com:5789/",
+        "test1.com",
+        "test2.com",
+    ]
+
+
+def test_parse_arguments_collapses_endpoint_targets_by_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target_list = tmp_path / "targets.txt"
+    target_list.write_text("https://EXAMPLE.com/blog/\n", encoding="utf-8")
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "strix",
+            "-t",
+            "https://example.com/search?q=test",
+            "--target-list",
+            str(target_list),
+        ],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.targets_info == [
+        {
+            "type": "web_application",
+            "details": {"target_host": "example.com"},
+            "original": "example.com",
+        }
+    ]
+
+
+def test_parse_arguments_collapses_loopback_aliases_to_runtime_host(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "strix",
+            "-t",
+            "http://127.0.0.1/api",
+            "-t",
+            "http://localhost/admin",
+        ],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.targets_info == [
+        {
+            "type": "web_application",
+            "details": {"target_host": "host.docker.internal"},
+            "original": "host.docker.internal",
+        }
     ]
 
 
@@ -227,3 +285,180 @@ def test_resume_still_requires_targets_or_a_workspace(
         cli_main.parse_arguments()
 
     assert "has no targets_info" in capsys.readouterr().err
+
+
+def test_resume_migrates_and_deduplicates_legacy_endpoint_targets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "legacy_abcd",
+        {
+            "run_name": "legacy_abcd",
+            "targets_info": [
+                {
+                    "type": "web_application",
+                    "details": {"target_url": "https://Example.com/search?q=test"},
+                    "original": "https://Example.com/search?q=test",
+                },
+                {
+                    "type": "web_application",
+                    "details": {"target_url": "https://example.com/blog/"},
+                    "original": "https://example.com/blog/",
+                },
+            ],
+            "user_instruction": "Test both endpoints.",
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "legacy_abcd"])
+
+    args = cli_main.parse_arguments()
+
+    assert args.targets_info == [
+        {
+            "type": "web_application",
+            "details": {"target_host": "example.com"},
+            "original": "example.com",
+        }
+    ]
+    persisted = json.loads((tmp_path / "strix_runs" / "legacy_abcd" / "run.json").read_text())
+    assert persisted["targets_info"] == args.targets_info
+
+
+def test_resume_rejects_malformed_target_records(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "malformed_abcd",
+        {
+            "run_name": "malformed_abcd",
+            "targets_info": ["not-an-object"],
+            "user_instruction": "test example.com",
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "malformed_abcd"])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "invalid persisted target" in capsys.readouterr().err
+
+
+def test_resume_rejects_malformed_target_details(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "malformed_details",
+        {
+            "run_name": "malformed_details",
+            "targets_info": [{"type": "repository", "details": "not-an-object"}],
+            "user_instruction": "test example.com",
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "malformed_details"])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "invalid persisted target" in capsys.readouterr().err
+
+
+def test_resume_revalidates_repository_target_text(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "malformed_repo",
+        {
+            "run_name": "malformed_repo",
+            "targets_info": [
+                {
+                    "type": "repository",
+                    "details": {"target_repo": "git@github.com:acme/service.git\nforged"},
+                    "original": "git@github.com:acme/service.git\nforged",
+                }
+            ],
+            "user_instruction": "review the repository",
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "malformed_repo"])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "invalid persisted target" in capsys.readouterr().err
+
+
+def test_resume_migrates_loopback_ip_to_runtime_host(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "loopback_abcd",
+        {
+            "run_name": "loopback_abcd",
+            "targets_info": [
+                {
+                    "type": "ip_address",
+                    "details": {"target_ip": "127.0.0.1"},
+                    "original": "127.0.0.1",
+                }
+            ],
+            "user_instruction": "test the local service",
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "loopback_abcd"])
+
+    args = cli_main.parse_arguments()
+
+    assert args.targets_info == [
+        {
+            "type": "web_application",
+            "details": {"target_host": "host.docker.internal"},
+            "original": "host.docker.internal",
+        }
+    ]
+    persisted = json.loads((tmp_path / "strix_runs" / "loopback_abcd" / "run.json").read_text())
+    assert persisted["targets_info"] == args.targets_info
+
+
+def test_resume_restores_only_run_local_staged_api_spec(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    spec = tmp_path / "openapi.json"
+    spec.write_text("{}", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    targets = [
+        {
+            "type": "api_spec",
+            "details": {"target_spec": str(spec), "spec_format": "openapi"},
+            "original": str(spec),
+        }
+    ]
+    stage_api_specs(targets, "api_abcd")
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "api_abcd",
+        {
+            "run_name": "api_abcd",
+            "targets_info": targets,
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "api_abcd"])
+
+    args = cli_main.parse_arguments()
+
+    assert args.local_sources == [
+        {
+            "source_path": str(tmp_path / "strix_runs" / "api_abcd" / ".state" / "api-specs"),
+            "workspace_subdir": "api-specs",
+            "protect_metadata": False,
+        }
+    ]

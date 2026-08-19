@@ -263,7 +263,6 @@ class TuiController:
 
     async def handle(self, command: str, payload: dict[str, Any]) -> dict[str, Any]:
         handlers = {
-            "setup.add_target": self._add_target,
             "setup.set_instruction": self._set_instruction,
             "setup.start": self._start,
             "setup.confirm_mount": self._confirm_mount,
@@ -278,13 +277,6 @@ class TuiController:
         result = await handler(payload)
         self.notify_changed()
         return result
-
-    async def _add_target(self, payload: dict[str, Any]) -> dict[str, Any]:
-        self._require_setup_mutable()
-        target = self._required_string(payload, "target")
-        if target not in self.targets:
-            self.targets.append(target)
-        return {"target": target, "total": len(self.targets)}
 
     async def _set_instruction(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()

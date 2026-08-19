@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import ipaddress
 import json
 from typing import TYPE_CHECKING, Any
-from urllib.parse import urlsplit
 
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
@@ -22,6 +20,7 @@ from strix.config.models import (
     request_timeout_extra_args,
 )
 from strix.core.sessions import scrub_images_from_items
+from strix.core.targets import canonical_network_host
 
 
 if TYPE_CHECKING:
@@ -128,7 +127,7 @@ def _split_target_sections(
         "Local Codebases": [],
         "API Specifications": [],
     }
-    network: dict[str, list[str]] = {"URLs": [], "IP Addresses": []}
+    network: dict[str, list[str]] = {"Hosts": [], "IP Addresses": []}
     for target in targets:
         ttype = target.get("type")
         details = target.get("details") or {}
@@ -148,7 +147,7 @@ def _split_target_sections(
                 ".git/.agents/.codex are read-only)"
             )
         elif ttype == "web_application":
-            network["URLs"].append(f"- {details.get('target_url', '')}")
+            network["Hosts"].append(f"- {details.get('target_host', '')}")
         elif ttype == "ip_address":
             network["IP Addresses"].append(f"- {details.get('target_ip', '')}")
         elif ttype == "api_spec":
@@ -208,16 +207,9 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     )
 
 
-def _network_scope_target(value: str) -> tuple[str, str]:
-    """Reduce a web URL to its hostname-level prompt scope."""
-    hostname = (urlsplit(value).hostname or "").rstrip(".").lower()
-    if not hostname:
-        return "web_application", value
-    try:
-        ipaddress.ip_address(hostname)
-    except ValueError:
-        return "web_host", hostname
-    return "ip_address", hostname
+def _scope_target_from_url(value: str) -> tuple[str, str]:
+    """Extract host-level prompt scope from an API-spec base URL."""
+    return canonical_network_host(value)
 
 
 def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
@@ -235,7 +227,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     value_keys = {
         "repository": "target_repo",
         "local_code": "target_path",
-        "web_application": "target_url",
+        "web_application": "target_host",
         "ip_address": "target_ip",
         "api_spec": "target_spec",
     }
@@ -248,7 +240,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         workspace_subdir = details.get("workspace_subdir")
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else ""
         if ttype == "web_application":
-            scope_type, scope_value = _network_scope_target(str(value or ""))
+            scope_type, scope_value = canonical_network_host(str(value or ""))
             add_authorized(scope_type, scope_value)
         else:
             add_authorized(str(ttype), str(value or ""), workspace_path)
@@ -257,7 +249,7 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
         # so the agent can exercise every endpoint without expanding scope.
         if ttype == "api_spec":
             for base_url in details.get("base_urls") or []:
-                scope_type, scope_value = _network_scope_target(str(base_url))
+                scope_type, scope_value = _scope_target_from_url(str(base_url))
                 add_authorized(scope_type, scope_value)
 
     return {

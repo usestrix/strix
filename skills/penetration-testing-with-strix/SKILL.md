@@ -64,7 +64,7 @@ strix -n -t ./ --scan-mode standard --max-budget 10
 strix -n -t https://staging.example.com --max-budget 20
 
 # Repo + deployed app together (best coverage)
-strix -n -t https://github.com/org/app -t https://staging.example.com
+strix -n -t https://github.com/org/app.git -t https://staging.example.com
 
 # Focused testing with credentials or scope hints
 strix -n -t https://app.example.com \
@@ -78,7 +78,7 @@ Key flags:
 
 | Flag | Meaning |
 |---|---|
-| `-t, --target` | URL, repo URL, local path, domain, or IP. Repeatable. |
+| `-t, --target` | Host-level web URL/domain, repo URL, local path, or IP. Repeatable; duplicate web hosts collapse. |
 | `-n, --non-interactive` | Headless, exits on completion. Required for agents. |
 | `-m, --scan-mode` | `quick` (minutes) / `standard` (~30 min) / `deep` (hours, default). |
 | `--instruction` / `--instruction-file` | Credentials, focus areas, scope rules. |
@@ -87,6 +87,9 @@ Key flags:
 | `--resume RUN_NAME` | Resume a prior run from `strix_runs/`. |
 
 Scans take minutes (`quick`) to hours (`deep`). Run them in the background and poll for completion rather than blocking.
+
+Put exact endpoint paths and query strings in `--instruction`, not `--target`.
+Configured web targets are reduced to hosts; repository paths are preserved.
 
 ### Exit codes (headless)
 

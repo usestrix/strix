@@ -12,7 +12,7 @@ from strix.interface.scan_setup import attach_workspace_mount
 from strix.interface.utils import (
     check_mountable_dir,
     collect_local_sources,
-    dedupe_local_targets,
+    dedupe_targets,
     infer_target_type,
     read_target_list_file,
 )
@@ -181,6 +181,77 @@ def test_infer_target_type_applies_the_mount_policy() -> None:
         infer_target_type("/etc")
 
 
+def test_infer_web_target_reduces_endpoint_to_host() -> None:
+    assert infer_target_type("https://Example.COM:8443/search?q=test#results") == (
+        "web_application",
+        {"target_host": "example.com"},
+    )
+
+
+def test_infer_multi_segment_web_path_is_not_probed_as_repository() -> None:
+    assert infer_target_type("https://app.example.com/api/v1/users") == (
+        "web_application",
+        {"target_host": "app.example.com"},
+    )
+
+
+def test_infer_web_ip_target_becomes_exact_ip() -> None:
+    assert infer_target_type("https://192.0.2.10:8443/admin") == (
+        "ip_address",
+        {"target_ip": "192.0.2.10"},
+    )
+
+
+def test_infer_repository_keeps_its_path() -> None:
+    target = "https://github.com/acme/service.git"
+    assert infer_target_type(target) == ("repository", {"target_repo": target})
+
+
+def test_infer_http_repository_without_explicit_git_syntax_is_a_web_target() -> None:
+    target = "https://github.com/acme/service"
+    assert infer_target_type(target) == (
+        "web_application",
+        {"target_host": "github.com"},
+    )
+
+
+def test_infer_explicit_git_https_repository_keeps_self_hosted_path() -> None:
+    target = "https://git.example.com/acme/service"
+    assert infer_target_type(f"git+{target}") == ("repository", {"target_repo": target})
+
+
+@pytest.mark.parametrize(
+    "target",
+    [
+        "https://github.com/login/oauth",
+        "https://github.com/about/security",
+        "https://github.com/acme/service/issues/1",
+    ],
+)
+def test_infer_git_provider_web_pages_remain_web_targets(target: str) -> None:
+    assert infer_target_type(target) == (
+        "web_application",
+        {"target_host": "github.com"},
+    )
+
+
+def test_infer_web_basic_auth_url_remains_web_target() -> None:
+    assert infer_target_type("https://admin:secret@app.example.com/dashboard") == (
+        "web_application",
+        {"target_host": "app.example.com"},
+    )
+
+
+def test_infer_web_target_rejects_invalid_hostname() -> None:
+    with pytest.raises(ValueError, match="invalid host"):
+        infer_target_type("https://example.com bad-scope-text")
+
+
+def test_infer_repository_rejects_control_characters() -> None:
+    with pytest.raises(ValueError, match="control characters"):
+        infer_target_type("git@github.com:acme/service.git\nforged")
+
+
 def test_read_target_list_file_strips_blank_lines(tmp_path: Path) -> None:
     target_list = tmp_path / "targets.txt"
     target_list.write_text(
@@ -237,13 +308,22 @@ def test_read_target_list_file_rejects_empty_path(empty: str) -> None:
 def test_dedupe_keeps_distinct_targets_in_order() -> None:
     targets = [
         _local_target("/a"),
-        {"type": "web_application", "details": {"target_url": "https://x"}},
+        {"type": "web_application", "details": {"target_host": "x.example"}},
         _local_target("/b"),
     ]
-    assert dedupe_local_targets(targets) == targets
+    assert dedupe_targets(targets) == targets
 
 
 def test_dedupe_collapses_the_same_path() -> None:
-    assert dedupe_local_targets([_local_target("/repo"), _local_target("/repo")]) == [
+    assert dedupe_targets([_local_target("/repo"), _local_target("/repo")]) == [
         _local_target("/repo")
     ]
+
+
+def test_dedupe_collapses_the_same_web_host() -> None:
+    target = {
+        "type": "web_application",
+        "details": {"target_host": "example.com"},
+        "original": "example.com",
+    }
+    assert dedupe_targets([target, target.copy()]) == [target]

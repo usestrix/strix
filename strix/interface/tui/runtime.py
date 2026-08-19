@@ -18,7 +18,6 @@ from strix.core.agents import AgentCoordinator
 from strix.core.hooks import BudgetExceededError
 from strix.core.runner import run_strix_scan
 from strix.interface.scan_setup import (
-    build_targets_info,
     preflight_model_connection,
     prepare_run,
     telemetry_start,
@@ -115,12 +114,6 @@ class GoTuiRuntime:
         candidate.max_turns = self.controller.max_turns
         candidate.scope_mode = self.controller.scope_mode
         candidate.diff_base = self.controller.diff_base
-        existing_targets = [
-            str(target["original"])
-            for target in candidate.targets_info
-            if isinstance(target, dict) and target.get("original")
-        ]
-        targets_changed = self.controller.targets != existing_targets
         model = (load_settings().llm.model or "").strip()
         # A bare prompt launches optimistically: it skips the network preflight
         # and lets any model error surface once the agent starts, like a coding
@@ -134,12 +127,6 @@ class GoTuiRuntime:
         # A confirmed target-less launch mounts the working directory for the
         # agent to work in, without making it a scan target.
         candidate.workspace_mount = self.controller.workspace_mount
-        if targets_changed:
-            # Rebuild the full typed set so path canonicalization and local
-            # deduplication match the CLI.
-            candidate.target = list(self.controller.targets)
-            candidate.target_list = []
-            build_targets_info(candidate)
         prepare_run(candidate)
         telemetry_start(candidate)
 

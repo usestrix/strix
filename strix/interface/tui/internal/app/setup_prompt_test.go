@@ -258,33 +258,38 @@ func TestMountConfirmationAnswers(t *testing.T) {
 	}
 }
 
-// A prompt that names a target adds it and launches.
-func TestSetupPromptWithTargetLaunches(t *testing.T) {
+// URLs in free-form setup text remain task text rather than becoming targets.
+func TestSetupPromptWithURLsLaunchesAsInstructionOnly(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
 	model.snapshot = protocol.Snapshot{SetupMode: true}
 
-	_, cmd := model.submit("https://juice-shop.example.com hit the coupon endpoint")
+	prompt := "test https://example.com/search?q=x and https://example.com/blog/"
+	updated, cmd := model.submit(prompt)
+	model = updated.(Model)
 	envelopes := drainCommands(t, cmd, connection)
 	types := commandTypes(envelopes)
 
-	for _, want := range []string{"setup.add_target", "setup.set_instruction", "setup.start"} {
+	for _, want := range []string{"setup.set_instruction", "setup.start"} {
 		if !contains(types, want) {
 			t.Fatalf("missing %s in %v", want, types)
 		}
 	}
-	// A named target keeps the upfront model check.
-	if verify, found := startVerify(t, envelopes); !found || !verify {
-		t.Fatalf("targeted prompt should launch with verify=true, got verify=%v found=%v", verify, found)
+	if contains(types, "setup.add_target") {
+		t.Fatalf("free-form URLs were promoted into targets: %v", types)
 	}
-	// The target and instruction must reach the backend before setup.start
-	// closes the setup guard.
+	if verify, found := startVerify(t, envelopes); !found || verify {
+		t.Fatalf("instruction-only prompt should launch with verify=false, got verify=%v found=%v", verify, found)
+	}
+	if mount, found := startPayloadFlag(t, envelopes, "mount_working_dir"); !found || !mount {
+		t.Fatalf("instruction-only prompt did not request mount choice: mount=%v found=%v", mount, found)
+	}
 	start := firstIndex(types, "setup.start")
-	if target := lastIndex(types, "setup.add_target"); start < target {
-		t.Fatalf("setup.start (%d) must come after setup.add_target (%d): %v", start, target, types)
-	}
 	if instr := lastIndex(types, "setup.set_instruction"); start < instr {
 		t.Fatalf("setup.start (%d) must come after setup.set_instruction (%d): %v", start, instr, types)
+	}
+	if model.pendingPrompt != prompt {
+		t.Fatalf("prompt was not preserved verbatim: %q", model.pendingPrompt)
 	}
 }
 

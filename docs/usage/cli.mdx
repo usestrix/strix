@@ -6,13 +6,17 @@ description: "Command-line options for Strix"
 ## Basic Usage
 
 ```bash
-strix (--target <target> | --target-list <path>) [options]
+strix [(--target <target> | --target-list <path>)] [options]
 ```
 
 ## Options
 
 <ParamField path="--target, -t" type="string">
-  Target to test. Accepts URLs, repositories, local directories, domains, IP addresses, API spec files (OpenAPI/Swagger `.json`/`.yaml`, a Postman collection export), or a live Postman collection by id (`postman://<collection-uuid>`). Can be specified multiple times. Fresh runs require at least one target source: `--target` or `--target-list`.
+  Target to test. Accepts URLs, repositories, local directories, domains, IP addresses, API spec files (OpenAPI/Swagger `.json`/`.yaml`, a Postman collection export), or a live Postman collection by id (`postman://<collection-uuid>`). Can be specified multiple times. Fresh headless runs require at least one target source: `--target` or `--target-list`.
+
+  Web URL targets are canonicalized to their hostname, and repeated URLs on the same host become one target. Put endpoint paths, query strings, and other starting-point details in `--instruction`; hosts explicitly named there are also in prompt-level scope. Free-form text entered on the interactive start screen is kept entirely as the task and is not split into inferred targets.
+
+  HTTP repository URLs ending in `.git` are recognized automatically. For a repository URL without `.git`, prefix it with `git+` (for example, `git+https://github.com/org/repo`). This explicit syntax prevents ordinary web paths from being mistaken for repositories.
 
   When the target is an API spec, Strix copies it into the agent's workspace and authorizes the base URLs it declares (including those resolved from a Postman environment) as in-scope hosts - so the agent reads the contract and tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
 
@@ -139,7 +143,7 @@ strix --target https://example.com --max-budget 25 --max-turns 300
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 # Multi-target white-box testing
-strix -t https://github.com/org/app -t https://staging.example.com
+strix -t https://github.com/org/app.git -t https://staging.example.com
 
 # API spec + live target (OpenAPI/Swagger file or Postman collection)
 strix -t ./openapi.yaml -t https://api.example.com

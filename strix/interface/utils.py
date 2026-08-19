@@ -14,7 +14,6 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 import docker
-import requests
 from docker.errors import DockerException, ImageNotFound
 from rich.console import Console
 from rich.panel import Panel
@@ -22,6 +21,8 @@ from rich.text import Text
 
 from strix.config import load_settings
 from strix.core.inputs import build_scope_target_labels
+from strix.core.paths import run_dir_for
+from strix.core.targets import canonical_network_host
 from strix.utils.api_spec import detect_spec_format
 
 
@@ -34,7 +35,9 @@ def build_target_summary_text(targets_info: list[dict[str, Any]]) -> Text:
     target_text = Text()
     target_text.append("Target", style="dim")
     target_text.append("  ")
-    if len(labels) == 1:
+    if not labels:
+        target_text.append("task-defined scope", style="bold white")
+    elif len(labels) == 1:
         target_text.append(labels[0], style="bold white")
     else:
         target_text.append(f"{len(labels)} targets", style="bold white")
@@ -497,12 +500,7 @@ def _derive_target_label_for_run_name(targets_info: list[dict[str, Any]] | None)
     original = first.get("original", "") or ""
 
     if target_type == "web_application":
-        url = details.get("target_url", original)
-        try:
-            parsed = urlparse(url)
-            return str(parsed.netloc or parsed.path or url)
-        except Exception:
-            return str(url)
+        return str(details.get("target_host", original) or original)
 
     if target_type == "repository":
         repo = details.get("target_repo", original)
@@ -1137,15 +1135,31 @@ def resolve_diff_scope_context(
     )
 
 
+def _validated_repository_target(value: str) -> str:
+    """Validate repository transport text without discarding its path."""
+    if any(char.isspace() or ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise ValueError("Repository targets cannot contain whitespace or control characters")
+    if value.startswith("git@"):
+        host, separator, _path = value[4:].partition(":")
+        if not separator:
+            raise ValueError("SSH repository targets must include a host and path")
+        canonical_network_host(host)
+    elif urlparse(value).scheme in {"git", "http", "https"}:
+        canonical_network_host(value)
+    return value
+
+
 def _is_http_git_repo(url: str) -> bool:
-    check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
-    try:
-        with requests.get(check_url, headers={"User-Agent": "git/2.43.0"}, timeout=10) as resp:
-            if resp.status_code >= 400:
-                return resp.status_code == 401
-            return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
-    except (requests.RequestException, ValueError):
-        return False
+    """Classify deterministic repository URL forms without probing the target."""
+    return urlparse(url).path.rstrip("/").endswith(".git")
+
+
+def _canonical_network_target(value: str) -> tuple[str, dict[str, str]]:
+    """Reduce a web input to one canonical host or exact IP target."""
+    scope_type, canonical = canonical_network_host(value)
+    if scope_type == "ip_address":
+        return scope_type, {"target_ip": canonical}
+    return "web_application", {"target_host": canonical}
 
 
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
@@ -1155,10 +1169,14 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
     target = target.strip()
 
     if target.startswith("git@"):
-        return "repository", {"target_repo": target}
+        return "repository", {"target_repo": _validated_repository_target(target)}
 
     if target.startswith("git://"):
-        return "repository", {"target_repo": target}
+        return "repository", {"target_repo": _validated_repository_target(target)}
+
+    if target.startswith(("git+http://", "git+https://")):
+        repository = target.removeprefix("git+")
+        return "repository", {"target_repo": _validated_repository_target(repository)}
 
     parsed = urlparse(target)
     if parsed.scheme == "postman":
@@ -1180,16 +1198,9 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         return "api_spec", details
 
     if parsed.scheme in ("http", "https"):
-        if parsed.username or parsed.password:
-            return "repository", {"target_repo": target}
-        if parsed.path.rstrip("/").endswith(".git"):
-            return "repository", {"target_repo": target}
-        if parsed.query or parsed.fragment:
-            return "web_application", {"target_url": target}
-        path_segments = [s for s in parsed.path.split("/") if s]
-        if len(path_segments) >= 2 and _is_http_git_repo(target):
-            return "repository", {"target_repo": target}
-        return "web_application", {"target_url": target}
+        if _is_http_git_repo(target):
+            return "repository", {"target_repo": _validated_repository_target(target)}
+        return _canonical_network_target(target)
 
     try:
         ip_obj = ipaddress.ip_address(target)
@@ -1215,26 +1226,25 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         raise ValueError(f"Invalid path: {target} - {e!s}") from e
 
     if target.endswith(".git"):
-        return "repository", {"target_repo": target}
+        return "repository", {"target_repo": _validated_repository_target(target)}
 
     if "/" in target:
         host_part, _, path_part = target.partition("/")
         if "." in host_part and not host_part.startswith(".") and path_part:
             full_url = f"https://{target}"
             if _is_http_git_repo(full_url):
-                return "repository", {"target_repo": full_url}
-            return "web_application", {"target_url": full_url}
+                return "repository", {"target_repo": _validated_repository_target(full_url)}
+            return _canonical_network_target(full_url)
 
     if "." in target and "/" not in target and not target.startswith("."):
-        parts = target.split(".")
-        if len(parts) >= 2 and all(p and p.strip() for p in parts):
-            return "web_application", {"target_url": f"https://{target}"}
+        return _canonical_network_target(target)
 
     raise ValueError(
         f"Invalid target: {target}\n"
         "Target must be one of:\n"
         "- A valid URL (http:// or https://)\n"
-        "- A Git repository URL (https://host/org/repo or git@host:org/repo.git)\n"
+        "- A Git repository URL (https://host/org/repo.git, "
+        "git+https://host/org/repo, or git@host:org/repo.git)\n"
         "- A local directory path\n"
         "- An API spec file (OpenAPI/Swagger .json/.yaml or a Postman collection)\n"
         "- A Postman collection by id (postman://<collection-uid>[?env=<environment-uid>], "
@@ -1457,17 +1467,66 @@ def check_mountable_dir(path: Path) -> None:
         )
 
 
-def dedupe_local_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def canonicalize_targets_info(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Migrate target records to the canonical host-level web schema."""
+    canonical: list[dict[str, Any]] = []
+    for target in targets_info:
+        if not isinstance(target, dict):
+            raise TypeError("target records must be objects")
+        raw_details = target.get("details") or {}
+        if not isinstance(raw_details, dict):
+            raise TypeError("target details must be an object")
+        details = dict(raw_details)
+        target_type = target.get("type")
+        if target_type == "repository":
+            repository = _validated_repository_target(
+                str(details.get("target_repo") or target.get("original") or "")
+            )
+            details["target_repo"] = repository
+            canonical.append({**target, "details": details, "original": repository})
+            continue
+        if target_type not in {"web_application", "ip_address"}:
+            canonical.append({**target, "details": details})
+            continue
+        value = str(
+            details.get("target_host")
+            or details.get("target_ip")
+            or details.get("target_url")
+            or target.get("original")
+            or ""
+        )
+        canonical_type, network_details = _canonical_network_target(value)
+        details.pop("target_url", None)
+        details.pop("target_host", None)
+        details.pop("target_ip", None)
+        details.update(network_details)
+        normalized = {**target, "type": canonical_type, "details": details}
+        normalized["original"] = next(iter(network_details.values()))
+        canonical.append(normalized)
+    return canonical
+
+
+def dedupe_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Deduplicate canonical host, IP, and local-directory targets."""
     result: list[dict[str, Any]] = []
-    seen_paths: set[str] = set()
+    seen: set[tuple[str, str]] = set()
     for target in targets_info:
         details = target.get("details") or {}
-        path = details.get("target_path")
-        if target.get("type") != "local_code" or not path:
+        if not isinstance(details, dict):
+            raise TypeError("target details must be an object")
+        target_type = str(target.get("type") or "")
+        identity_keys = {
+            "web_application": "target_host",
+            "ip_address": "target_ip",
+            "local_code": "target_path",
+        }
+        identity = str(details.get(identity_keys.get(target_type, "")) or "")
+        if not identity:
             result.append(target)
             continue
-        if path not in seen_paths:
-            seen_paths.add(path)
+        key = (target_type, identity)
+        if key not in seen:
+            seen.add(key)
             result.append(target)
     return result
 
@@ -1491,31 +1550,42 @@ def _is_localhost_host(host: str) -> bool:
 
 
 def rewrite_localhost_targets(targets_info: list[dict[str, Any]], host_gateway: str) -> None:
-    from yarl import URL
-
     for target_info in targets_info:
         target_type = target_info.get("type")
         details = target_info.get("details", {})
 
         if target_type == "web_application":
-            target_url = details.get("target_url", "")
-            try:
-                url = URL(target_url)
-            except (ValueError, TypeError):
-                continue
-
-            if url.host and _is_localhost_host(url.host):
-                details["target_url"] = str(url.with_host(host_gateway))
+            target_host = str(details.get("target_host") or "")
+            if target_host and _is_localhost_host(target_host):
+                details["target_host"] = host_gateway
+                target_info["original"] = host_gateway
 
         elif target_type == "ip_address":
             target_ip = details.get("target_ip", "")
             if target_ip and _is_localhost_host(target_ip):
-                details["target_ip"] = host_gateway
+                target_info["type"] = "web_application"
+                details.pop("target_ip", None)
+                details["target_host"] = host_gateway
+                target_info["original"] = host_gateway
 
 
 #: API spec targets are copied into one workspace directory rather than mounted
 #: from wherever they happen to live on the host.
 API_SPEC_WORKSPACE_SUBDIR = "api-specs"
+
+
+def _api_spec_staging_dir(run_name: str) -> Path:
+    return run_dir_for(run_name) / ".state" / API_SPEC_WORKSPACE_SUBDIR
+
+
+def _api_spec_source(staging: Path) -> list[dict[str, Any]]:
+    return [
+        {
+            "source_path": str(staging),
+            "workspace_subdir": API_SPEC_WORKSPACE_SUBDIR,
+            "protect_metadata": False,
+        }
+    ]
 
 
 def write_fetched_collection(collection: dict[str, Any], collection_uid: str) -> str:
@@ -1543,7 +1613,7 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
     if not specs:
         return []
 
-    staging = Path(tempfile.gettempdir()) / "strix_api_specs" / run_name
+    staging = _api_spec_staging_dir(run_name)
     staging.mkdir(parents=True, exist_ok=True)
 
     used: set[str] = set()
@@ -1560,13 +1630,26 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
         shutil.copy2(source, staging / name)
         details["workspace_path"] = f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/{name}"
 
-    return [
-        {
-            "source_path": str(staging),
-            "workspace_subdir": API_SPEC_WORKSPACE_SUBDIR,
-            "protect_metadata": False,
-        }
-    ]
+    return _api_spec_source(staging)
+
+
+def restore_staged_api_specs(
+    targets_info: list[dict[str, Any]], run_name: str
+) -> list[dict[str, Any]]:
+    """Restore only API specs previously staged inside this run directory."""
+    specs = [target for target in targets_info if target.get("type") == "api_spec"]
+    if not specs:
+        return []
+    staging = _api_spec_staging_dir(run_name)
+    for target in specs:
+        workspace_path = str((target.get("details") or {}).get("workspace_path") or "")
+        prefix = f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/"
+        if not workspace_path.startswith(prefix):
+            raise ValueError("persisted API specification has an invalid workspace path")
+        name = workspace_path.removeprefix(prefix)
+        if not name or "/" in name or not (staging / name).is_file():
+            raise ValueError(f"staged API specification '{name or 'unknown'}' is missing")
+    return _api_spec_source(staging)
 
 
 def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None) -> str:

@@ -191,11 +191,16 @@ strix view my-run-name
 strix --target ./app-directory
 
 # Security review of a GitHub repository
-strix --target https://github.com/org/repo
+strix --target https://github.com/org/repo.git
 
 # Black-box web application assessment
 strix --target https://your-app.com
 ```
+
+Web targets are host-level: paths and queries passed to `--target` are removed,
+and repeated URLs on the same host collapse to one target. Put exact starting
+endpoints in `--instruction`. Free-form text entered in the interactive start
+screen remains the task and is not split into inferred targets.
 
 ### API Testing (OpenAPI / Swagger / Postman)
 
@@ -226,7 +231,7 @@ strix --target "postman://<collection-uuid>?env=<environment-uuid>"
 strix --target https://your-app.com --instruction "Perform authenticated testing using credentials: user:pass"
 
 # Multi-target testing (source code + deployed app)
-strix -t https://github.com/org/app -t https://your-app.com
+strix -t https://github.com/org/app.git -t https://your-app.com
 
 # Targets from a file, one target per non-empty, non-comment line
 strix --target-list ./targets.txt

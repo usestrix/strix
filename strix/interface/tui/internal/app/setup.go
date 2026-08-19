@@ -2,8 +2,6 @@ package app
 
 import (
 	"fmt"
-	"net"
-	"regexp"
 	"strings"
 	"sync"
 
@@ -26,30 +24,16 @@ func (m Model) submit(value string) (tea.Model, tea.Cmd) {
 	return m, send(m.client, "agent.send_message", map[string]any{"agent_id": m.snapshot.Agents[m.selectedAgent].ID, "message": value})
 }
 
-// submitSetupPrompt handles free text the way a coding agent's prompt does:
-// anything that looks like a target is added, the rest becomes the scan
-// instruction, and the prompt alone is enough to launch. With no target, the
-// backend scans the current working directory.
+// submitSetupPrompt treats free text as the task verbatim. Target-looking words
+// are not promoted into configured targets: hosts named in the task receive
+// prompt-level scope, while configured targets come only from explicit flags.
 func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
-	var commands []tea.Cmd
-	fields := strings.Fields(value)
-	targets := 0
-	for _, field := range fields {
-		token := strings.Trim(field, ",;")
-		if !looksLikeTarget(token) || m.hasTarget(token) {
-			continue
-		}
-		targets++
-		commands = append(commands, send(m.client, "setup.add_target", map[string]any{"target": token}))
-	}
-	if len(fields) > targets {
-		commands = append(commands, send(m.client, "setup.set_instruction", map[string]any{"instruction": value}))
-	}
+	commands := []tea.Cmd{send(m.client, "setup.set_instruction", map[string]any{"instruction": value})}
 	// With a target, verify the model connection before the scan commits to it.
 	// A bare prompt launches optimistically, like a coding agent, and mounts the
 	// working directory - the backend asks about that from the live view, so the
 	// prompt is held here in case it is declined.
-	verify := targets > 0 || len(m.snapshot.Targets) > 0
+	verify := len(m.snapshot.Targets) > 0
 	payload := map[string]any{"verify": verify}
 	if verify {
 		m.setupMsg("Verifying model connection...", render.Col(amber))
@@ -72,54 +56,6 @@ func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 func (m *Model) answerMountConfirmation(approved bool) tea.Cmd {
 	m.pendingPrompt = ""
 	return send(m.client, "setup.confirm_mount", map[string]any{"approved": approved})
-}
-
-func (m Model) hasTarget(candidate string) bool {
-	for _, target := range m.snapshot.Targets {
-		if target == candidate {
-			return true
-		}
-	}
-	return false
-}
-
-// looksLikeTarget reports whether a whitespace-delimited token names something
-// scannable: a URL, repo, filesystem path, domain, or IP address.
-func looksLikeTarget(token string) bool {
-	if token == "" {
-		return false
-	}
-	if strings.Contains(token, "://") || strings.HasSuffix(token, ".git") {
-		return true
-	}
-	if strings.HasPrefix(token, "/") || strings.HasPrefix(token, "./") || strings.HasPrefix(token, "~/") || strings.HasPrefix(token, "../") {
-		return true
-	}
-	if ip := net.ParseIP(token); ip != nil {
-		return true
-	}
-	host := token
-	if at := strings.LastIndex(host, "@"); at >= 0 {
-		host = host[at+1:]
-	}
-	host = strings.SplitN(host, "/", 2)[0]
-	host = strings.SplitN(host, ":", 2)[0]
-	if !domainPattern.MatchString(host) {
-		return false
-	}
-	tld := host[strings.LastIndex(host, ".")+1:]
-	return len(tld) >= 2 && !isNumeric(tld)
-}
-
-var domainPattern = regexp.MustCompile(`^([a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?\.)+[a-zA-Z0-9]{2,}$`)
-
-func isNumeric(value string) bool {
-	for _, char := range value {
-		if char < '0' || char > '9' {
-			return false
-		}
-	}
-	return true
 }
 
 // statusVisible mirrors #agent_status_display: shown only when an agent is

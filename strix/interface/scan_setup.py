@@ -16,11 +16,13 @@ from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
 from strix.core.paths import run_dir_for
+from strix.core.targets import canonical_network_host
 from strix.interface.utils import (
     assign_workspace_subdirs,
+    canonicalize_targets_info,
     clone_repository,
     collect_local_sources,
-    dedupe_local_targets,
+    dedupe_targets,
     derive_local_base_name,
     generate_run_name,
     infer_target_type,
@@ -117,6 +119,10 @@ def build_targets_info(args: argparse.Namespace) -> None:
 
         if target_type == "local_code":
             display_target = target_dict.get("target_path", target)
+        elif target_type == "web_application":
+            display_target = target_dict["target_host"]
+        elif target_type == "ip_address":
+            display_target = target_dict["target_ip"]
         else:
             display_target = target
 
@@ -127,10 +133,10 @@ def build_targets_info(args: argparse.Namespace) -> None:
             {"type": target_type, "details": target_dict, "original": display_target}
         )
 
-    args.targets_info = dedupe_local_targets(args.targets_info)
-
-    assign_workspace_subdirs(args.targets_info)
+    args.targets_info = canonicalize_targets_info(args.targets_info)
     rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+    args.targets_info = dedupe_targets(args.targets_info)
+    assign_workspace_subdirs(args.targets_info)
 
 
 def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
@@ -154,7 +160,11 @@ def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
             raw = load_spec(str(details["target_spec"]))
             extra_variables = None
         base_urls = spec_base_urls(raw, extra_variables=extra_variables)
+        for base_url in base_urls:
+            canonical_network_host(base_url)
     except SpecParseError as exc:
+        raise ValueError(f"Invalid API spec '{target}': {exc}") from None
+    except ValueError as exc:
         raise ValueError(f"Invalid API spec '{target}': {exc}") from None
 
     details["spec_title"] = spec_title(raw)
@@ -164,9 +174,8 @@ def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:
 def prepare_run(args: argparse.Namespace) -> None:
     """Resolve the run name, clone repos, compute diff-scope, and persist state.
 
-    Shared by the CLI startup path and the interactive TUI setup phase (once the
-    user has supplied a target via ``/target``). Mutates *args* in place and
-    raises :class:`ValueError` on any preparation failure.
+    Shared by the CLI startup path and the interactive TUI setup phase. Mutates
+    *args* in place and raises :class:`ValueError` on any preparation failure.
     """
     args.run_name = args.resume or generate_run_name(args.targets_info)
 

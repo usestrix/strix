@@ -9,12 +9,20 @@ from pathlib import Path
 from strix.config import apply_config_override
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
-from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
+from strix.interface.scan_setup import (
+    HOST_GATEWAY_HOSTNAME,
+    attach_workspace_mount,
+    build_targets_info,
+)
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
+    canonicalize_targets_info,
     check_mountable_dir,
     collect_local_sources,
+    dedupe_targets,
     resolve_workspace_files,
+    restore_staged_api_specs,
+    rewrite_localhost_targets,
     validate_config_file,
 )
 
@@ -60,7 +68,7 @@ Examples:
   strix --target https://example.com
 
   # GitHub repository analysis
-  strix --target https://github.com/user/repo
+  strix --target https://github.com/user/repo.git
   strix --target git@github.com:user/repo.git
 
   # Local code analysis
@@ -81,7 +89,7 @@ Examples:
   strix --target 192.168.1.42
 
   # Multiple targets (e.g., white-box testing with source and deployed app)
-  strix --target https://github.com/user/repo --target https://example.com
+  strix --target https://github.com/user/repo.git --target https://example.com
   strix --target ./my-project --target https://staging.example.com --target https://prod.example.com
 
   # Targets from a file, one target per non-empty, non-comment line
@@ -123,9 +131,10 @@ Examples:
         help="Target to test: URL, repository, local directory path, domain name, IP address, "
         "an API spec file (OpenAPI/Swagger .json/.yaml or a Postman collection export), or a "
         "Postman collection by id (postman://<collection-uuid>[?env=<environment-uuid>], needs "
-        "POSTMAN_API_KEY). Local directories are mounted into the sandbox writable. "
+        "POSTMAN_API_KEY). Web URLs are reduced to their host; put endpoint paths and queries "
+        "in --instruction. Local directories are mounted into the sandbox writable. "
         "Can be specified multiple times for multi-target scans. "
-        "Fresh runs require --target or --target-list.",
+        "Fresh headless runs require --target or --target-list.",
     )
     parser.add_argument(
         "--target-list",
@@ -320,8 +329,7 @@ Examples:
                     "(or use --resume <run_name> to continue a prior scan)"
                 )
             # Interactive launch with no target: open the normal TUI on its
-            # start screen, where the user gives a target or a bare prompt
-            # before the scan starts.
+            # start screen, where the user gives the task before the scan starts.
             args.needs_setup = True
             return args
 
@@ -335,7 +343,7 @@ Examples:
 
 def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     """Populate ``args.targets_info`` and friends from a prior run's run.json."""
-    from strix.report.writer import read_run_record
+    from strix.report.writer import read_run_record, write_run_record
 
     run_dir = run_dir_for(args.resume)
     state_path = run_dir / "run.json"
@@ -346,10 +354,19 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         )
     try:
         state = read_run_record(run_dir)
-    except RuntimeError as exc:
+    except (RuntimeError, TypeError) as exc:
         parser.error(f"--resume {args.resume}: run.json unreadable: {exc}")
 
-    args.targets_info = state.get("targets_info") or []
+    persisted_targets = state.get("targets_info") or []
+    try:
+        args.targets_info = canonicalize_targets_info(persisted_targets)
+        rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+        args.targets_info = dedupe_targets(args.targets_info)
+    except (TypeError, ValueError) as exc:
+        parser.error(f"--resume {args.resume}: invalid persisted target: {exc}")
+    if args.targets_info != persisted_targets:
+        state["targets_info"] = args.targets_info
+        write_run_record(run_dir, state)
     # A target-less run has no targets_info at all. It is driven by its
     # instruction, over a mounted working directory or over nothing when the
     # mount was declined, so either of those is enough to resume it.
@@ -384,6 +401,10 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     if not getattr(args, "user_instruction", None):
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
+    try:
+        args.local_sources.extend(restore_staged_api_specs(args.targets_info, str(args.resume)))
+    except ValueError as exc:
+        parser.error(f"--resume {args.resume}: could not restore API specification: {exc}")
     # Remount the workspace the run was started with. The user already confirmed
     # this directory, so the target mount guard does not apply to it; it only has
     # to still be there.
