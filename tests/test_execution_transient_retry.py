@@ -36,6 +36,15 @@ def _status_error(status: int) -> APIStatusError:
     )
 
 
+def _openrouter_prompt_policy_rejection() -> BadRequestError:
+    return BadRequestError(
+        "OpenrouterException - Message: Invalid prompt: your prompt was flagged as "
+        "potentially violating our usage policy. Please try again with a different prompt",
+        response=httpx.Response(400, request=_request()),
+        body=None,
+    )
+
+
 def test_midstream_api_error_is_transient() -> None:
     assert execution._is_transient_model_error(_midstream_api_error()) is True
 
@@ -77,6 +86,12 @@ def test_content_guardrail_is_not_retried() -> None:
     )
     assert codex.is_content_guardrail_error(guardrail) is True
     assert execution._is_transient_model_error(guardrail) is False
+
+
+def test_openrouter_prompt_policy_rejection_has_dedicated_classification() -> None:
+    rejection = _openrouter_prompt_policy_rejection()
+    assert execution._is_openrouter_prompt_policy_rejection(rejection) is True
+    assert execution._is_transient_model_error(rejection) is False
 
 
 def test_client_errors_are_not_transient() -> None:
@@ -148,6 +163,34 @@ async def test_run_cycle_retries_transient_midstream_error(
 
     assert result is streams[1]
     assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_retries_openrouter_prompt_policy_rejection_three_times(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = [
+        _FakeStream(exc=_openrouter_prompt_policy_rejection())
+        for _ in range(execution._MAX_OPENROUTER_PROMPT_POLICY_RETRIES)
+    ]
+    streams.append(_FakeStream())
+
+    result, attempts, _coordinator = await _run_once(monkeypatch, streams)
+
+    assert result is streams[-1]
+    assert attempts == 4
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_gives_up_after_openrouter_prompt_policy_retry_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = [
+        _FakeStream(exc=_openrouter_prompt_policy_rejection())
+        for _ in range(execution._MAX_OPENROUTER_PROMPT_POLICY_RETRIES + 1)
+    ]
+    with pytest.raises(BadRequestError):
+        await _run_once(monkeypatch, streams)
 
 
 @pytest.mark.asyncio
