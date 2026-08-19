@@ -992,6 +992,57 @@ async def test_interactive_text_only_turn_is_nudged_instead_of_parking(
 
 
 @pytest.mark.asyncio
+async def test_interactive_serialized_tool_call_gets_targeted_nudge(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Tool-call JSON returned as text must be retried as an actual tool call."""
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    calls: list[Any] = []
+    outputs = [
+        '{"action": "exec_command", "params": {"cmd": "ls"}}',
+        "scan completed",
+    ]
+
+    async def _cycle(*_args: Any, **kwargs: Any) -> Any:
+        calls.append(kwargs.get("input_data"))
+        status = "running" if len(calls) == 1 else "completed"
+        await coordinator.set_status("root", status)
+        return MagicMock(final_output=outputs[len(calls) - 1])
+
+    monkeypatch.setattr(execution, "_run_cycle_parked", _cycle)
+
+    await _drive(coordinator, "root", interactive=True)
+
+    assert len(calls) == 2
+    nudge = calls[1][0]["content"]
+    assert "returned as plain text instead of being executed" in nudge
+    assert coordinator.statuses["root"] == "completed"
+
+
+@pytest.mark.parametrize(
+    ("final_output", "expected"),
+    [
+        ('{"action": "exec_command", "params": {"cmd": "ls"}}', True),
+        (
+            "```json\n"
+            '{"tool_calls": [{"function": {"name": "exec_command", '
+            '"arguments": "{\\"cmd\\": \\"ls\\"}"}}]}\n'
+            "```",
+            True,
+        ),
+        ({"name": "finish_scan", "arguments": {}}, True),
+        ('{"status": "complete"}', False),
+        ("ordinary final text", False),
+    ],
+)
+def test_detects_tool_calls_serialized_as_final_output(final_output: Any, expected: bool) -> None:
+    result = MagicMock(final_output=final_output)
+
+    assert execution._looks_like_unexecuted_tool_call(result) is expected
+
+
+@pytest.mark.asyncio
 async def test_interactive_explicit_park_gets_no_nudge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
