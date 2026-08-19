@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from strix.core.paths import latest_run_dir, runs_base_dir
+from strix.interface.viewer.cli import run_view
 from strix.interface.viewer.server import serve
 from strix.interface.viewer.transcript import (
     build_run_state,
@@ -46,6 +47,31 @@ def test_latest_run_dir_none_when_no_runs(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.chdir(tmp_path)
     assert latest_run_dir() is None
     assert runs_base_dir() == tmp_path / "strix_runs"
+
+
+def test_view_cli_help_includes_host(capsys: pytest.CaptureFixture[str]) -> None:
+    try:
+        run_view(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("--help should exit")
+
+    help_text = capsys.readouterr().out
+    assert "--host HOST" in help_text
+    assert "0.0.0.0" in help_text
+
+
+def test_server_can_bind_all_ipv4_interfaces(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path, "remote", status="running", end_time=None)
+
+    httpd, url, _ = serve(run_dir, host="0.0.0.0", open_browser=False)
+    try:
+        assert httpd.server_address[0] == "0.0.0.0"
+        assert url == f"http://0.0.0.0:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_latest_run_dir_picks_newest_by_record_mtime(
