@@ -199,14 +199,15 @@ def test_server_serves_api_and_static(tmp_path: Path, monkeypatch: pytest.Monkey
     (assets / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
     monkeypatch.setattr("strix.interface.viewer.server.bundle_dir", lambda: assets)
 
-    httpd, url, _ = serve(run_dir, open_browser=False)
+    httpd, url, token = serve(run_dir, open_browser=False)
     try:
-        status, ctype, body = _get(f"{url}/api/run")
+        cookie = _session_cookie(url, token)
+        status, ctype, body = _get(f"{url}/api/run", cookie=cookie)
         assert status == 200
         assert "application/json" in ctype
         assert json.loads(body)["finished"] is True
 
-        status, _, body = _get(f"{url}/api/transcript")
+        status, _, body = _get(f"{url}/api/transcript", cookie=cookie)
         assert {a["id"] for a in json.loads(body)["agents"]} == {"root", "child"}
 
         # Real asset is served.
@@ -455,6 +456,22 @@ def test_unauthorized_client_cannot_acquire_capability(
         httpd.server_close()
 
 
+def test_run_data_requires_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_dir = _make_run(tmp_path, "private", status="completed", end_time="2026-01-01T00:00:00Z")
+    _bundle(tmp_path, monkeypatch)
+
+    httpd, url, token = serve(run_dir, open_browser=False)
+    try:
+        cookie = _session_cookie(url, token)
+        for path in ("/api/run", "/api/vulnerabilities", "/api/report", "/api/transcript"):
+            assert _get_status(url + path) == 403, path
+            assert _get_status(url + path, cookie=f"{_cookie_name(url)}=wrong") == 403, path
+            assert _get_status(url + path, cookie=cookie) == 200, path
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_auth_status_reflects_expiry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_dir = _make_run(tmp_path, "status", status="running", end_time=None)
     _bundle(tmp_path, monkeypatch)
@@ -587,11 +604,10 @@ def test_historical_run_data_requires_verification(
 
     httpd, url, token = serve(launched, open_browser=False)
     try:
-        # The launched run is always viewable, no verification and no cookie.
-        status, _, _ = _get(f"{url}/api/run")
-        assert status == 200
-
+        # The launched run needs the session capability, but not email verification.
+        assert _get_status(f"{url}/api/run") == 403
         cookie = _session_cookie(url, token)
+        assert _get_status(f"{url}/api/run", cookie=cookie) == 200
 
         # A different run needs the session capability first: a cookie-less
         # caller is forbidden even once the machine is verified.
