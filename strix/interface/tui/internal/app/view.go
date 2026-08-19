@@ -46,7 +46,11 @@ func (m *Model) renderEvent(event protocol.Event, width int) renderedBlock {
 		block = render.Chat(event.Data)
 	case "tool":
 		name := render.StringValue(event.Data["tool_name"])
-		block, expandable = render.CollapseTool(render.Tool(event.Data), name, expanded)
+		block = render.Tool(event.Data)
+		if render.ToolPreviewLines(name) > 0 {
+			block = wrapBlock(block, width)
+		}
+		block, expandable = render.CollapseTool(block, name, expanded)
 	}
 	entry := renderedBlock{version: event.Version, width: width, expanded: expanded, expandable: expandable}
 	if block != "" {

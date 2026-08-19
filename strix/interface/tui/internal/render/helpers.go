@@ -93,6 +93,38 @@ func StringValue(value any) string {
 	}
 	return fmt.Sprint(value)
 }
+
+// mcpTextResult unwraps only exact MCP text envelopes. Other data stays JSON
+// so metadata, images, and structured fields are never hidden by the display.
+func mcpTextResult(value any) string {
+	if text, ok := exactMCPText(value); ok {
+		return text
+	}
+	if raw, ok := value.(string); ok {
+		var decoded any
+		if json.Unmarshal([]byte(raw), &decoded) == nil {
+			if text, ok := exactMCPText(decoded); ok {
+				return text
+			}
+		}
+	}
+	return StringValue(value)
+}
+
+func exactMCPText(value any) (string, bool) {
+	result, ok := value.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	text, ok := result["text"].(string)
+	if !ok {
+		return "", false
+	}
+	if len(result) == 1 || (len(result) == 2 && result["type"] == "text") {
+		return text, true
+	}
+	return "", false
+}
 func StripControls(value string) string {
 	return strings.Map(func(r rune) rune {
 		if r == '\n' || r == '\t' || r >= 32 {

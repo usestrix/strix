@@ -684,6 +684,7 @@ def make_child_factory(
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
+    extra_tools: Sequence[Tool] | None = None,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -703,6 +704,7 @@ def make_child_factory(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
+            extra_tools=extra_tools,
         )
 
     return _factory

@@ -85,6 +85,7 @@ class GoTuiRuntime:
             "workspace_files": getattr(self.args, "workspace_files", None) or [],
             "scope_mode": self.args.scope_mode,
             "diff_base": self.args.diff_base,
+            "no_mcp": bool(getattr(self.args, "no_mcp", False)),
             "resume_instruction": self.args.user_explicit_instruction or "",
             "workspace_mount": getattr(self.args, "workspace_mount", None) or "",
             "workspace_subdir": getattr(self.args, "workspace_subdir", None) or "",
@@ -185,6 +186,7 @@ class GoTuiRuntime:
                 max_turns=self.args.max_turns,
                 max_budget_usd=self.args.max_budget_usd,
                 event_sink=self.capture_event,
+                status_sink=lambda phase: self.controller.add_message(phase, "info"),
             )
             await self._sync_agent_state()
             if self.controller.scan_state == "running":

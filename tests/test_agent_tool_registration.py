@@ -70,6 +70,15 @@ def test_per_call_extra_tools_stack_with_registry() -> None:
     assert names[-1] == "finish_scan"
 
 
+def test_child_factory_captures_scan_scoped_tools_without_global_registration() -> None:
+    scoped = _tool("mcp_server__read")
+
+    child = factory.make_child_factory(extra_tools=[scoped])(name="child", skills=[])
+
+    assert "mcp_server__read" in [tool.name for tool in child.tools]
+    assert factory.registered_agent_tools() == ()
+
+
 def test_register_agent_tools_rejects_duplicate_names() -> None:
     factory.register_agent_tools(_tool("same_name"))
 

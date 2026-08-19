@@ -60,7 +60,7 @@ def persist_current() -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
 
     env_block: dict[str, str] = {}
-    for sub_name in s.model_fields:
+    for sub_name in type(s).model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
             continue
@@ -71,7 +71,71 @@ def persist_current() -> None:
                     env_block[alias.upper()] = value
                     break
 
-    write_secret_text(target, json.dumps({"env": env_block}, indent=2))
+    data = _read_config_document(target, strict=True)
+    data["env"] = env_block
+    _write_config_document(target, data)
+
+
+def config_path() -> Path:
+    """Return the active persisted configuration path."""
+    return _override or _DEFAULT_PATH
+
+
+def update_mcp_config(mcp: dict[str, Any]) -> None:
+    """Persist MCP opt-in state without dropping unrelated config keys."""
+    global _cached  # noqa: PLW0603
+    target = config_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = _read_config_document(target, strict=True)
+    data["mcp"] = mcp
+    _write_config_document(target, data)
+    _cached = None
+
+
+def update_mcp_server(name: str, updates: dict[str, Any]) -> None:
+    """Merge one MCP server record without persisting environment-derived settings."""
+    global _cached  # noqa: PLW0603
+    target = config_path()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    data = _read_config_document(target, strict=True)
+    mcp = data.get("mcp", {})
+    if not isinstance(mcp, dict):
+        raise TypeError(f"Cannot update malformed MCP settings in {target}: expected JSON object")
+    servers = mcp.get("servers", {})
+    if not isinstance(servers, dict):
+        raise TypeError(
+            f"Cannot update malformed MCP settings in {target}: servers must be an object"
+        )
+    old = servers.get(name, {})
+    if not isinstance(old, dict):
+        raise TypeError(
+            f"Cannot update malformed MCP settings in {target}: server must be an object"
+        )
+    data["mcp"] = {**mcp, "servers": {**servers, name: {**old, **updates}}}
+    _write_config_document(target, data)
+    _cached = None
+
+
+def _read_config_document(path: Path, *, strict: bool = False) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as exc:
+        if strict:
+            raise ValueError(f"Cannot update malformed Strix configuration {path}: {exc}") from exc
+        return {}
+    if isinstance(data, dict):
+        return data
+    if strict:
+        raise ValueError(
+            f"Cannot update malformed Strix configuration {path}: expected JSON object"
+        )
+    return {}
+
+
+def _write_config_document(path: Path, data: dict[str, Any]) -> None:
+    write_secret_text(path, json.dumps(data, indent=2))
 
 
 def _aliases_for(finfo: FieldInfo) -> list[str]:
@@ -95,13 +159,10 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
     """
     if not path.exists():
         return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-    env_block = data.get("env", {}) if isinstance(data, dict) else {}
+    data = _read_config_document(path)
+    env_block = data.get("env", {})
     if not isinstance(env_block, dict):
-        return {}
+        env_block = {}
 
     env_block_upper = {str(k).upper(): v for k, v in env_block.items()}
     env_present = {k.upper() for k in os.environ}
@@ -122,4 +183,10 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
                     break
         if sub_data:
             nested[sub_name] = sub_data
+    mcp_block = data.get("mcp")
+    if isinstance(mcp_block, dict):
+        mcp_data = dict(mcp_block)
+        if "STRIX_MCP_ENABLED" in env_present:
+            mcp_data.pop("enabled", None)
+        nested["mcp"] = mcp_data
     return nested

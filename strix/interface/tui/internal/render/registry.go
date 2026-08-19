@@ -30,7 +30,11 @@ func renderGenericTool(name string, args map[string]any, result any, status stri
 		b.WriteString("  " + Dim().Render(k) + ": " + StringValue(args[k]) + "\n")
 	}
 	if (status == "completed" || status == "failed" || status == "error") && result != nil {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Result: ") + StringValue(result))
+		resultText := StringValue(result)
+		if strings.HasPrefix(name, "mcp_") {
+			resultText = mcpTextResult(result)
+		}
+		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Result: ") + resultText)
 	} else {
 		icon, style := statusIcon(status)
 		b.WriteString(style.Render(icon))
@@ -101,6 +105,9 @@ const outputPreviewLines = 10
 // it is collapsed; 0 means the tool is never collapsed. Only tools whose
 // output can grow unbounded (terminal, patches, proxy) collapse.
 func ToolPreviewLines(name string) int {
+	if strings.HasPrefix(name, "mcp_") {
+		return outputPreviewLines
+	}
 	switch name {
 	case "exec_command", "write_stdin", "apply_patch",
 		"view_request", "repeat_request", "view_sitemap_entry":
