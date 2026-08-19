@@ -148,5 +148,5 @@ def test_build_scope_context_authorizes_base_urls(tmp_path: Path) -> None:
 
     types = {a["type"] for a in authorized}
     assert "api_spec" in types
-    assert "web_application" in types
-    assert any(a["value"] == "https://api.shop.test/v1" for a in authorized)
+    assert "web_host" in types
+    assert any(a["value"] == "api.shop.test" for a in authorized)

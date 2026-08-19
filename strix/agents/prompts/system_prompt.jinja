@@ -76,7 +76,13 @@ SYSTEM-VERIFIED SCOPE:
 
 AUTHORIZED TARGETS:
 {% for target in system_prompt_context.authorized_targets %}
+{% if target.type == "web_host" %}
+- web_host: {{ target.value }} (includes {{ target.value }} and *.{{ target.value }})
+{% elif target.type == "ip_address" %}
+- ip_address: {{ target.value }} (exact address)
+{% else %}
 - {{ target.type }}: {{ target.value }}{% if target.workspace_path %} (workspace: {{ target.workspace_path }}){% endif %}
+{% endif %}
 {% endfor %}
 {% endif %}
 

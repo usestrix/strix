@@ -246,7 +246,11 @@ def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() ->
             {
                 "type": "web_application",
                 "details": {"target_url": "https://app.example.com/search?q=test"},
-            }
+            },
+            {
+                "type": "web_application",
+                "details": {"target_url": "https://app.example.com/blog/"},
+            },
         ],
         "user_instructions": "Also test https://api.example.net/v1.",
     }
@@ -256,12 +260,39 @@ def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() ->
     task = build_root_task(config)
 
     assert "SYSTEM-VERIFIED SCOPE" in prompt
-    assert "https://app.example.com/search?q=test" in prompt
+    assert context["authorized_targets"] == [
+        {"type": "web_host", "value": "app.example.com", "workspace_path": ""}
+    ]
+    assert "web_host: app.example.com (includes app.example.com and *.app.example.com)" in prompt
+    assert prompt.count("web_host: app.example.com") == 1
+    assert "https://app.example.com/search?q=test" not in prompt
+    assert "https://app.example.com/search?q=test" in task
     assert "https://api.example.net/v1" in task
     assert "Every network host explicitly named in the user's root scan task" in prompt
     assert "exact hostname and all of its descendant subdomains" in prompt
     assert "scheme, port, path, query, or fragment" in prompt
     assert "not `example.com`, sibling hosts such as `api.example.com`" in prompt
+
+
+def test_scope_prompt_keeps_web_ip_targets_exact() -> None:
+    context = build_scope_context(
+        {
+            "targets": [
+                {
+                    "type": "web_application",
+                    "details": {"target_url": "https://192.0.2.10:8443/admin"},
+                }
+            ]
+        }
+    )
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, system_prompt_context=context)
+
+    assert context["authorized_targets"] == [
+        {"type": "ip_address", "value": "192.0.2.10", "workspace_path": ""}
+    ]
+    assert "ip_address: 192.0.2.10 (exact address)" in prompt
+    assert "https://192.0.2.10:8443/admin" not in prompt
 
 
 def test_scope_prompt_does_not_make_repository_origin_a_live_target() -> None:

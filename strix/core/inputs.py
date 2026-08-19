@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import ipaddress
 import json
 from typing import TYPE_CHECKING, Any
+from urllib.parse import urlsplit
 
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
@@ -206,8 +208,30 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     )
 
 
+def _network_scope_target(value: str) -> tuple[str, str]:
+    """Reduce a web URL to its hostname-level prompt scope."""
+    hostname = (urlsplit(value).hostname or "").rstrip(".").lower()
+    if not hostname:
+        return "web_application", value
+    try:
+        ipaddress.ip_address(hostname)
+    except ValueError:
+        return "web_host", hostname
+    return "ip_address", hostname
+
+
 def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     authorized: list[dict[str, str]] = []
+    authorized_keys: set[tuple[str, str, str]] = set()
+
+    def add_authorized(ttype: str, value: str, workspace_path: str = "") -> None:
+        key = (ttype, value, workspace_path)
+        if key not in authorized_keys:
+            authorized.append(
+                {"type": ttype, "value": value, "workspace_path": workspace_path},
+            )
+            authorized_keys.add(key)
+
     value_keys = {
         "repository": "target_repo",
         "local_code": "target_path",
@@ -223,17 +247,18 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
 
         workspace_subdir = details.get("workspace_subdir")
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else ""
-        authorized.append(
-            {"type": ttype, "value": value, "workspace_path": workspace_path},
-        )
+        if ttype == "web_application":
+            scope_type, scope_value = _network_scope_target(str(value or ""))
+            add_authorized(scope_type, scope_value)
+        else:
+            add_authorized(str(ttype), str(value or ""), workspace_path)
 
         # An API spec authorizes the hosts it declares as in-scope web targets
         # so the agent can exercise every endpoint without expanding scope.
         if ttype == "api_spec":
-            authorized.extend(
-                {"type": "web_application", "value": base_url, "workspace_path": ""}
-                for base_url in details.get("base_urls") or []
-            )
+            for base_url in details.get("base_urls") or []:
+                scope_type, scope_value = _network_scope_target(str(base_url))
+                add_authorized(scope_type, scope_value)
 
     return {
         "scope_source": "system_scan_config",
