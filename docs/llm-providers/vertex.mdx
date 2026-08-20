@@ -47,6 +47,13 @@ export VERTEXAI_PROJECT="your-project-id"
 export VERTEXAI_LOCATION="global"
 ```
 
+Strix passes Vertex AI requests through LiteLLM, which reads the project and location
+from `VERTEXAI_PROJECT` and `VERTEXAI_LOCATION`. Do not add an underscore after
+`VERTEX`: `VERTEX_AI_PROJECT` and `VERTEX_AI_LOCATION` are not recognized.
+
+If Strix reports `Could not resolve project_id`, check these variable names before
+retrying the scan.
+
 ## Prerequisites
 
 1. Enable the Vertex AI API in your Google Cloud project
