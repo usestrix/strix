@@ -216,3 +216,53 @@ def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.Monk
     loader.persist_current()
 
     assert target.stat().st_mode & 0o777 == 0o600
+
+
+def test_persist_current_preserves_file_only_keys(tmp_path: Path) -> None:
+    # Keys stored in the file but absent from the current environment (e.g.
+    # STRIX_LLM in a bare shell/cron/CI run) must survive a persist.
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"STRIX_LLM": "file-model", "PERPLEXITY_API_KEY": "pk"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    stored = json.loads(target.read_text(encoding="utf-8"))["env"]
+    assert stored["STRIX_LLM"] == "file-model"
+    assert stored["PERPLEXITY_API_KEY"] == "pk"
+
+
+def test_persist_current_env_var_overrides_stored_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("STRIX_LLM", "env-model")
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"STRIX_LLM": "file-model"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    stored = json.loads(target.read_text(encoding="utf-8"))["env"]
+    assert stored["STRIX_LLM"] == "env-model"
+
+
+def test_persist_current_keeps_unknown_stored_keys(tmp_path: Path) -> None:
+    # Keys outside the current schema (written by a newer version) must not
+    # be dropped by an older binary rewriting the file.
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"STRIX_LLM": "file-model", "FUTURE_OPTION": "on"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    stored = json.loads(target.read_text(encoding="utf-8"))["env"]
+    assert stored["FUTURE_OPTION"] == "on"

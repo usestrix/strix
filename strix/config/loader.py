@@ -54,12 +54,19 @@ def apply_config_override(path: Path) -> None:
 
 
 def persist_current() -> None:
-    """Write currently-set env vars to the active config file (0o600)."""
+    """Write currently-set env vars to the active config file (0o600).
+
+    The existing ``"env"`` block on disk is merged in first so keys that are
+    not present in the current process environment (e.g. loaded only from the
+    file itself, or written by a newer version) are preserved. Current env
+    vars still win on conflicts. If the file is missing or contains invalid
+    JSON, behavior is unchanged: only the env-derived block is written.
+    """
     s = load_settings()
     target = _override or _DEFAULT_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    env_block: dict[str, str] = {}
+    env_block: dict[str, str] = _read_existing_env_block(target)
     for sub_name in s.model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
@@ -72,6 +79,24 @@ def persist_current() -> None:
                     break
 
     write_secret_text(target, json.dumps({"env": env_block}, indent=2))
+
+
+def _read_existing_env_block(path: Path) -> dict[str, str]:
+    """Return the ``"env"`` block already stored in ``path``.
+
+    Missing files, invalid JSON, and non-dict ``"env"`` values all yield an
+    empty dict so persistence degrades to the previous overwrite behavior.
+    """
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    env_block = data.get("env", {}) if isinstance(data, dict) else {}
+    if not isinstance(env_block, dict):
+        return {}
+    return {str(k): str(v) for k, v in env_block.items()}
 
 
 def _aliases_for(finfo: FieldInfo) -> list[str]:
