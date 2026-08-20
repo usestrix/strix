@@ -266,3 +266,40 @@ def test_persist_current_keeps_unknown_stored_keys(tmp_path: Path) -> None:
 
     stored = json.loads(target.read_text(encoding="utf-8"))["env"]
     assert stored["FUTURE_OPTION"] == "on"
+
+
+def test_persist_current_removes_stale_sibling_alias(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # api_key resolves from AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"). If the
+    # file holds the first alias while the env sets the second, keeping both would
+    # let the stale LLM_API_KEY win on the next load. It must be dropped.
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-new")
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"LLM_API_KEY": "sk-old"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    stored = json.loads(target.read_text(encoding="utf-8"))["env"]
+    assert stored == {"OPENAI_API_KEY": "sk-new"}
+
+
+def test_persist_current_preserves_non_string_stored_values(tmp_path: Path) -> None:
+    # Structured values written by newer versions must survive verbatim instead
+    # of being flattened through str().
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"FUTURE_HEADERS": {"X-Team": "sec"}, "FUTURE_RETRIES": 3}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    stored = json.loads(target.read_text(encoding="utf-8"))["env"]
+    assert stored["FUTURE_HEADERS"] == {"X-Team": "sec"}
+    assert stored["FUTURE_RETRIES"] == 3

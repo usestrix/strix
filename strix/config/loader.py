@@ -66,26 +66,34 @@ def persist_current() -> None:
     target = _override or _DEFAULT_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    env_block: dict[str, str] = _read_existing_env_block(target)
+    env_block: dict[str, Any] = _read_existing_env_block(target)
     for sub_name in s.model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
             continue
         for finfo in type(sub_model).model_fields.values():
-            for alias in _aliases_for(finfo):
-                value = os.environ.get(alias.upper())
+            aliases = [alias.upper() for alias in _aliases_for(finfo)]
+            for alias in aliases:
+                value = os.environ.get(alias)
                 if value:
-                    env_block[alias.upper()] = value
+                    # Drop sibling aliases of this field so a stale stored
+                    # value (e.g. LLM_API_KEY) can't shadow the fresh one on
+                    # the next load.
+                    for key in [k for k in env_block if k.upper() in aliases]:
+                        del env_block[key]
+                    env_block[alias] = value
                     break
 
     write_secret_text(target, json.dumps({"env": env_block}, indent=2))
 
 
-def _read_existing_env_block(path: Path) -> dict[str, str]:
+def _read_existing_env_block(path: Path) -> dict[str, Any]:
     """Return the ``"env"`` block already stored in ``path``.
 
-    Missing files, invalid JSON, and non-dict ``"env"`` values all yield an
-    empty dict so persistence degrades to the previous overwrite behavior.
+    Values are preserved verbatim so structured entries written by newer
+    versions survive the rewrite. Missing files, invalid JSON, and non-dict
+    ``"env"`` values all yield an empty dict so persistence degrades to the
+    previous overwrite behavior.
     """
     if not path.exists():
         return {}
@@ -96,7 +104,7 @@ def _read_existing_env_block(path: Path) -> dict[str, str]:
     env_block = data.get("env", {}) if isinstance(data, dict) else {}
     if not isinstance(env_block, dict):
         return {}
-    return {str(k): str(v) for k, v in env_block.items()}
+    return {str(k): v for k, v in env_block.items()}
 
 
 def _aliases_for(finfo: FieldInfo) -> list[str]:
