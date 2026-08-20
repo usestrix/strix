@@ -9,6 +9,7 @@ from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
     is_recommended_or_frontier_model,
     request_timeout_extra_args,
+    supports_strict_tool_schemas,
 )
 
 
@@ -90,3 +91,24 @@ def test_frontier_model_families_are_accepted(model_name: str) -> None:
 )
 def test_non_frontier_models_are_rejected(model_name: str) -> None:
     assert not is_recommended_or_frontier_model(model_name)
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "anthropic/claude-sonnet-4-6",
+        "bedrock/anthropic.claude-opus-4-8-v1:0",
+        "vertex_ai/claude-sonnet-5",
+        "Sonnet-5",
+    ],
+)
+def test_claude_routes_reject_strict_tool_schemas(model_name: str) -> None:
+    assert not supports_strict_tool_schemas(model_name)
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ["openai/gpt-5.4", "gpt-5.4", "gemini/gemini-3.1-pro-preview", "deepseek/deepseek-v4"],
+)
+def test_other_routes_keep_strict_tool_schemas(model_name: str) -> None:
+    assert supports_strict_tool_schemas(model_name)
