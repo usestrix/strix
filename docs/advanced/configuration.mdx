@@ -35,6 +35,14 @@ Configure Strix using environment variables or a config file.
   Maximum number of retries for LLM API calls on transient failures.
 </ParamField>
 
+<ParamField path="STRIX_LLM_FALLBACK" type="string">
+  Optional model that retries any turn blocked by a content guardrail. Unset disables this behavior, leaving a denial terminal for that agent.
+</ParamField>
+
+<ParamField path="STRIX_LLM_DENIED_RETRIES" default="3" type="integer">
+  Content-guardrail denials an agent may take before it is pinned to `STRIX_LLM_FALLBACK` for the rest of its lifecycle. Below that count it returns to the main model on the next turn. Counted per agent.
+</ParamField>
+
 <ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
   Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Defaults to `medium` for quick scan mode.
 </ParamField>

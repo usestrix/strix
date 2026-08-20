@@ -42,6 +42,8 @@ async def test_persistent_rate_limit_stops_gracefully(
             timeout=300,
             prompt_cache=True,
             extra_headers=None,
+            fallback_model=None,
+            denied_retries=3,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
     )

@@ -22,6 +22,7 @@ from strix.config import load_settings
 from strix.config.models import (
     StrixProvider,
     configure_sdk_model_defaults,
+    fallback_model_rejection,
     uses_chat_completions_tool_schema,
 )
 from strix.config.settings import DEFAULT_MAX_TURNS
@@ -179,6 +180,28 @@ async def run_strix_scan(
     if coordinator is None:
         coordinator = AgentCoordinator()
     coordinator.set_snapshot_path(agents_path)
+    fallback_model = settings.llm.fallback_model
+    if fallback_model and (
+        rejection := fallback_model_rejection(fallback_model, resolved_model, settings)
+    ):
+        raise RuntimeError(
+            f"STRIX_LLM_FALLBACK '{fallback_model}' {rejection}; it could never serve a "
+            f"turn for '{resolved_model}'. Pick a fallback from the same provider family."
+        )
+    coordinator.configure_denial_fallback(
+        fallback_model,
+        settings.llm.denied_retries,
+        model_settings=make_model_settings(
+            settings.llm.reasoning_effort,
+            model_name=fallback_model,
+            force_required_tool_choice=settings.llm.force_required_tool_choice,
+            request_timeout=settings.llm.timeout,
+            prompt_cache=settings.llm.prompt_cache,
+            extra_headers=settings.llm.extra_headers,
+        )
+        if fallback_model
+        else None,
+    )
 
     from strix.tools.notes.tools import hydrate_notes_from_disk
     from strix.tools.todo.tools import hydrate_todos_from_disk

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import dataclasses
 import logging
 import uuid
 from collections.abc import Callable
@@ -643,7 +644,20 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     image_strips = 0
     compactions = 0
     model_retries = 0
+    retry_on_fallback = False
     while True:
+        active_run_config = run_config
+        if coordinator.denial_fallback_model and (
+            retry_on_fallback or await coordinator.is_on_denial_fallback(agent_id)
+        ):
+            active_run_config = dataclasses.replace(
+                run_config,
+                model=coordinator.denial_fallback_model,
+                model_settings=(
+                    coordinator.denial_fallback_model_settings or run_config.model_settings
+                ),
+            )
+        retry_on_fallback = False
         stream: Any = None
         pre_run_items: list[Any] = []
         try:
@@ -656,7 +670,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     except Exception:
                         logger.exception("image-budget enforcement failed for %s", agent_id)
                 try:
-                    await _compact_session(agent, session, run_config, force=False)
+                    await _compact_session(agent, session, active_run_config, force=False)
                 except Exception:
                     logger.exception("proactive compaction failed for %s", agent_id)
                 with contextlib.suppress(Exception):
@@ -664,7 +678,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             stream = Runner.run_streamed(
                 agent,
                 input=input_data,
-                run_config=run_config,
+                run_config=active_run_config,
                 context=context,
                 max_turns=max_turns,
                 session=session,
@@ -744,7 +758,9 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 and is_context_overflow(exc)
             ):
                 try:
-                    compacted = await _compact_session(agent, session, run_config, force=True)
+                    compacted = await _compact_session(
+                        agent, session, active_run_config, force=True
+                    )
                 except Exception:
                     logger.exception("overflow compaction recovery failed for %s", agent_id)
                     compacted = False
@@ -757,6 +773,33 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
+            if (
+                coordinator.denial_fallback_model
+                and codex.is_content_guardrail_error(exc)
+                and not await coordinator.is_on_denial_fallback(agent_id)
+            ):
+                denials = await coordinator.record_denial(agent_id)
+                retry_on_fallback = True
+                if denials >= coordinator.denied_retries:
+                    await coordinator.mark_denial_fallback(agent_id)
+                    logger.warning(
+                        "agent %s hit %d content denial(s); pinned to %s for the rest "
+                        "of its lifecycle",
+                        agent_id,
+                        denials,
+                        coordinator.denial_fallback_model,
+                    )
+                else:
+                    logger.warning(
+                        "agent %s content-denied (%d/%d); replaying this turn on %s",
+                        agent_id,
+                        denials,
+                        coordinator.denied_retries,
+                        coordinator.denial_fallback_model,
+                    )
+                if session is not None:
+                    input_data = []
+                continue
             if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
                 model_retries += 1
                 delay = _transient_model_retry_delay(model_retries)

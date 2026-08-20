@@ -18,6 +18,7 @@ if TYPE_CHECKING:
 
     from agents.items import TResponseInputItem
     from agents.memory import Session
+    from agents.model_settings import ModelSettings
 
 
 logger = logging.getLogger(__name__)
@@ -53,6 +54,11 @@ class AgentCoordinator:
         self.errors: dict[str, str] = {}
         self.recovery_counts: dict[str, int] = {}
         self.idle_resume_counts: dict[str, int] = {}
+        self.denial_counts: dict[str, int] = {}
+        self.denial_fallback: set[str] = set()
+        self._denial_fallback_model: str | None = None
+        self._denial_fallback_model_settings: ModelSettings | None = None
+        self._denied_retries: int = 3
         self.wait_kinds: dict[str, WaitKind] = {}
         self.runtimes: dict[str, AgentRuntime] = {}
         self._parent_notified: set[str] = set()
@@ -66,6 +72,29 @@ class AgentCoordinator:
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
+
+    def configure_denial_fallback(
+        self,
+        model: str | None,
+        denied_retries: int,
+        model_settings: ModelSettings | None = None,
+    ) -> None:
+        """Configure the per-agent content denial fallback."""
+        self._denial_fallback_model = model
+        self._denial_fallback_model_settings = model_settings
+        self._denied_retries = denied_retries
+
+    @property
+    def denial_fallback_model(self) -> str | None:
+        return self._denial_fallback_model
+
+    @property
+    def denial_fallback_model_settings(self) -> ModelSettings | None:
+        return self._denial_fallback_model_settings
+
+    @property
+    def denied_retries(self) -> int:
+        return self._denied_retries
 
     def mark_shutting_down(self) -> None:
         self.is_shutting_down = True
@@ -242,6 +271,27 @@ class AgentCoordinator:
             if self.idle_resume_counts.pop(agent_id, None) is None:
                 return
         await self._maybe_snapshot()
+
+    async def record_denial(self, agent_id: str) -> int:
+        """Count a content denial; return the new total."""
+        async with self._lock:
+            count = self.denial_counts.get(agent_id, 0) + 1
+            self.denial_counts[agent_id] = count
+        await self._maybe_snapshot()
+        return count
+
+    async def mark_denial_fallback(self, agent_id: str) -> None:
+        """Mark an agent as using its content denial fallback."""
+        async with self._lock:
+            if agent_id in self.denial_fallback:
+                return
+            self.denial_fallback.add(agent_id)
+        await self._maybe_snapshot()
+
+    async def is_on_denial_fallback(self, agent_id: str) -> bool:
+        """Return whether an agent is using its content denial fallback."""
+        async with self._lock:
+            return agent_id in self.denial_fallback
 
     async def set_status(
         self, agent_id: str, status: Status | str, *, error: str | None = None
@@ -473,6 +523,8 @@ class AgentCoordinator:
                 "pending_counts": dict(self.pending_counts),
                 "recovery_counts": dict(self.recovery_counts),
                 "idle_resume_counts": dict(self.idle_resume_counts),
+                "denial_counts": dict(self.denial_counts),
+                "denial_fallback": sorted(self.denial_fallback),
                 "wait_kinds": dict(self.wait_kinds),
                 "mailboxes": {
                     aid: [dict(m) for m in runtime.mailbox]
@@ -495,6 +547,8 @@ class AgentCoordinator:
             self.errors = dict(snap.get("errors", {}))
             self.recovery_counts = dict(snap.get("recovery_counts", {}))
             self.idle_resume_counts = dict(snap.get("idle_resume_counts", {}))
+            self.denial_counts = dict(snap.get("denial_counts", {}))
+            self.denial_fallback = set(snap.get("denial_fallback", []))
             self.wait_kinds = dict(snap.get("wait_kinds", {}))
             mailboxes = snap.get("mailboxes", {})
             if isinstance(mailboxes, dict):

@@ -737,6 +737,25 @@ def _configure_litellm_default(name: str, value: str) -> None:
     setattr(litellm, name, value)
 
 
+def fallback_model_rejection(fallback: str, primary: str, settings: Settings) -> str | None:
+    """Why ``fallback`` cannot stand in for ``primary`` mid-run, or None if it can.
+
+    Provider credentials, SDK route, and each agent's tool wrappers are all set
+    up once from the primary model, so a fallback that needs a different
+    provider or tool schema would be rejected on every request it serves.
+    """
+    if (
+        _split_model_provider(_normalized_model_name(fallback))[0]
+        != (_split_model_provider(_normalized_model_name(primary))[0])
+    ):
+        return "needs a different provider, whose credentials are not configured"
+    if uses_chat_completions_tool_schema(fallback, settings) != uses_chat_completions_tool_schema(
+        primary, settings
+    ):
+        return "needs a different tool schema than the agents are built with"
+    return None
+
+
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
     if codex.subscription_model(model_name):
