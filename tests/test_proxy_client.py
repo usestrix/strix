@@ -29,6 +29,62 @@ class _FakeClient:
         self.closed = True
 
 
+class _FakeGraphQL:
+    def __init__(self) -> None:
+        self.variables: dict[str, Any] | None = None
+
+    async def query(self, _document: str, variables: dict[str, Any]) -> dict[str, Any]:
+        self.variables = variables
+        return {"sitemapRootEntries": {"edges": [], "count": {"value": 0}}}
+
+
+class _FakeSitemapClient:
+    def __init__(self) -> None:
+        self.graphql = _FakeGraphQL()
+
+
+class _FakeRequestListBuilder:
+    def __init__(self) -> None:
+        self.scope_id: str | None = None
+        self.after_cursor: str | None = None
+
+    def first(self, _first: int) -> _FakeRequestListBuilder:
+        return self
+
+    def filter(self, _filter: str) -> _FakeRequestListBuilder:
+        return self
+
+    def after(self, after: str) -> _FakeRequestListBuilder:
+        self.after_cursor = after
+        return self
+
+    def scope(self, scope_id: str) -> _FakeRequestListBuilder:
+        self.scope_id = scope_id
+        return self
+
+    def ascending(self, _target: str, _field: str) -> _FakeRequestListBuilder:
+        return self
+
+    def descending(self, _target: str, _field: str) -> _FakeRequestListBuilder:
+        return self
+
+    async def execute(self) -> str:
+        return "ok"
+
+
+class _FakeRequestSDK:
+    def __init__(self) -> None:
+        self.builder = _FakeRequestListBuilder()
+
+    def list(self) -> _FakeRequestListBuilder:
+        return self.builder
+
+
+class _FakeRequestsClient:
+    def __init__(self) -> None:
+        self.request = _FakeRequestSDK()
+
+
 @pytest.fixture(autouse=True)
 def _clear_cache() -> Iterator[None]:
     caido_api._CLIENT_CACHE.clear()
@@ -207,3 +263,40 @@ def test_ctx_client_returns_client_when_present() -> None:
 def test_ctx_client_returns_none_without_client() -> None:
     assert tools._ctx_client(cast("Any", _Ctx({}))) is None
     assert tools._ctx_client(cast("Any", _Ctx(None))) is None
+
+
+async def test_list_sitemap_normalizes_empty_scope_id_to_null() -> None:
+    client = _FakeSitemapClient()
+
+    result = await caido_api.list_sitemap_with_client(
+        cast("Any", client), scope_id="  ", parent_id=""
+    )
+
+    assert result["success"] is True
+    assert client.graphql.variables == {"scopeId": None}
+
+
+async def test_list_requests_normalizes_string_null_optional_arguments() -> None:
+    client = _FakeRequestsClient()
+
+    result = await caido_api.list_requests_with_client(
+        cast("Any", client), scope_id="null", after="null"
+    )
+
+    assert result == "ok"
+    assert client.request.builder.scope_id is None
+    assert client.request.builder.after_cursor is None
+
+
+@pytest.mark.parametrize("value", ["", "  ", "null", "None", "UNDEFINED"])
+def test_normalize_optional_id_treats_llm_null_sentinels_as_none(value: str) -> None:
+    assert caido_api._normalize_optional_id(value, name="scope_id") is None
+
+
+def test_normalize_optional_id_rejects_non_numeric_value() -> None:
+    with pytest.raises(ValueError, match="integer-shaped Caido ID"):
+        caido_api._normalize_optional_id("all", name="scope_id")
+
+
+def test_normalize_optional_string_preserves_real_cursor() -> None:
+    assert caido_api._normalize_optional_string(" cursor-value ") == "cursor-value"
