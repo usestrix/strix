@@ -38,7 +38,7 @@ Design notes:
     the run carries ``versionControlProvenance`` + ``automationDetails``
     so code-scanning can bind alerts to the scanned commit and branch.
   * Findings without safe locations still appear in the SARIF output,
-    anchored to SECURITY.md and flagged via
+    anchored to a stable, tracked repository file and flagged via
     ``properties.synthetic_location`` rather than being dropped silently.
 """
 
@@ -63,13 +63,15 @@ TOOL_INFORMATION_URI = "https://strix.ai"
 
 # Synthetic anchor for findings that have no safe code location. SARIF
 # requires every result to carry at least one location, and GitHub
-# code-scanning's UI handles locationless results unreliably. Anchoring
-# to SECURITY.md keeps the result valid + visible while a
-# ``properties.synthetic_location: true`` flag lets downstream tooling
-# distinguish synthetic anchors from real source locations. Anchoring
-# also lets the partialFingerprints + class-hash code path cover these
-# findings instead of re-orphaning them on every run.
-_SYNTHETIC_LOCATION_URI = "SECURITY.md"
+# code-scanning's UI handles locationless results unreliably. Anchor those
+# findings to README.md, which is tracked in every scanned checkout. The
+# location is synthetic, so ``properties.synthetic_location: true`` lets
+# tooling distinguish it from real source locations while retaining a
+# code-scanning-compatible result location and stable fingerprint.
+_SYNTHETIC_LOCATION_URI = "README.md"
+# Preserve the pre-README synthetic identity so code-scanning retains prior
+# alert dismissal and triage state across this display-location migration.
+_LEGACY_SYNTHETIC_FINGERPRINT_URI = "SECURITY.md"
 
 
 # SARIF only has three result levels; Strix's five severities collapse here.
@@ -209,8 +211,8 @@ def build_sarif_report(
     can bind alerts to the scanned commit; it is omitted for URL / IP
     (DAST) targets that have no repository.
 
-    Findings without safe source locations are anchored synthetically
-    to SECURITY.md and flagged via ``properties.synthetic_location``.
+    Findings without safe source locations are anchored synthetically to
+    a stable repository file and flagged via ``properties.synthetic_location``.
     They're still emitted as proper SARIF results so they (a) flow
     through code-scanning normally rather than being shunted into a
     run-properties summary the UI can't render, and (b) carry the
@@ -446,8 +448,8 @@ def _build_result(
 ) -> dict[str, Any]:
     """Build one SARIF result using validated locations.
 
-    ``is_synthetic`` flags results whose location is the SECURITY.md
-    anchor rather than a real code location — surfaces as
+    ``is_synthetic`` flags results whose location is the synthetic
+    repository anchor rather than a real code location — surfaces as
     ``properties.synthetic_location: true`` so reviewers and downstream
     tooling can distinguish anchored-locationless findings from
     source-linked ones.
@@ -621,11 +623,9 @@ def _build_fixes(report: dict[str, Any]) -> list[dict[str, Any]] | None:
 def _synthetic_location() -> dict[str, Any]:
     """Synthetic anchor for findings with no safe code location.
 
-    SARIF requires every result to carry at least one location, and
-    code-scanning's UI handles locationless results unreliably.
-    Anchoring to SECURITY.md gives the result a valid + visible
-    location; the result's ``properties.synthetic_location: true``
-    flag lets reviewers + tooling distinguish synthetic from real.
+    A SARIF artifact URI is resolved against the scanned checkout, not
+    Strix's run directory. ``README.md`` is a stable tracked file that
+    keeps locationless findings visible to code-scanning consumers.
     """
     return {
         "physicalLocation": {
@@ -638,15 +638,19 @@ def _build_locations(report: dict[str, Any]) -> tuple[list[dict[str, Any]], bool
     """Return ``(locations, is_synthetic, dropped_count)`` for a finding.
 
     Physical locations come from validated ``code_locations``. When none
-    are safe, the result is anchored to SECURITY.md (``is_synthetic``).
-    An ``endpoint`` (typical of DAST findings) is added as a
-    ``logicalLocations`` entry; a locationless, endpoint-less finding
-    gets a ``resource`` logical location carrying the target so the
-    finding keeps a human-meaningful anchor.
+    are safe, the result is anchored to a stable repository file
+    (``is_synthetic``). An ``endpoint`` (typical of DAST findings) is
+    added as a ``logicalLocations`` entry. A locationless, endpoint-less
+    finding gets a ``resource`` logical location carrying the target so
+    the finding keeps a human-meaningful anchor.
     """
     physical, dropped_location_count = _build_physical_locations(report.get("code_locations"))
     is_synthetic = not physical
-    locations: list[dict[str, Any]] = list(physical) if physical else [_synthetic_location()]
+
+    if physical:
+        locations: list[dict[str, Any]] = list(physical)
+    else:
+        locations = [_synthetic_location()]
 
     endpoint = _string_value(report.get("endpoint"))
     if endpoint:
@@ -838,22 +842,24 @@ def _primary_fingerprint(
       - HTTP method + endpoint when present (BOLA/IDOR/missing-authz
         findings carry these explicitly in the report dict)
 
-    Synthetic-anchored findings (``is_synthetic=True``) all share
-    uri="SECURITY.md" and have no real start_line. Hashing by
-    (rule_id, "SECURITY.md") alone would collapse every locationless
-    finding of the same CWE into a single alert. To distinguish them,
-    the synthetic path adds the class keyword extracted from the title
-    (same logic ``_class_fingerprint`` uses). The class keyword
-    catalogue is closed and stable, so cross-run identity holds — same
-    vulnerability class on the same rule_id always lands on the same
-    hash, and two different classes on the same rule_id don't collide.
+    Synthetic-anchored findings (``is_synthetic=True``) have no real
+    source location. Hashing by rule_id alone would collapse every
+    locationless finding of the same CWE into a single alert. To
+    distinguish them, the synthetic path adds the class keyword
+    extracted from the title (same logic ``_class_fingerprint`` uses).
+    The class keyword catalogue is closed and stable, so cross-run
+    identity holds — same vulnerability class on the same rule_id
+    always lands on the same hash, and two different classes on the
+    same rule_id don't collide.
 
     Returns None when no anchor is available AND not synthetic.
     """
-    primary_physical = _first_physical_location(locations)
     uri = ""
     start_line: int | None = None
-    if primary_physical:
+    primary_physical = _first_physical_location(locations)
+    if is_synthetic:
+        uri = _LEGACY_SYNTHETIC_FINGERPRINT_URI
+    elif primary_physical:
         uri = (primary_physical.get("artifactLocation") or {}).get("uri", "") or ""
         region = primary_physical.get("region") or {}
         sl = region.get("startLine")
@@ -864,7 +870,7 @@ def _primary_fingerprint(
     endpoint = _string_value(report.get("endpoint")) or ""
     route = f"{method.upper()} {endpoint}".strip() if (method or endpoint) else ""
 
-    if not uri and not route:
+    if not uri and not route and not is_synthetic:
         return None
 
     parts = [f"rule:{rule_id}"]
