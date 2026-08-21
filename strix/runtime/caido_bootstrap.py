@@ -96,15 +96,17 @@ async def bootstrap_caido(
     access_token = await _login_as_guest(session, container_url=container_url)
 
     client = Client(host_url, auth=TokenAuthOptions(token=access_token))
-    await client.connect()
-
     try:
+        # connect() is inside the guard as well: a cancellation there (scan
+        # teardown while the bootstrap is still in flight) would otherwise
+        # leave the half-connected transport behind.
+        await client.connect()
         project = await client.project.create(
             CreateProjectOptions(name="sandbox", temporary=True),
         )
         await client.project.select(project.id)
     except BaseException:
-        # The connected client never reaches the session bundle if project
+        # The client never reaches the session bundle if connect or project
         # setup fails, so close it here to avoid leaking the transport.
         with contextlib.suppress(Exception):
             await client.aclose()
