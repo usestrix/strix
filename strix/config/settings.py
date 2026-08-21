@@ -82,6 +82,39 @@ class DedupeSettings(BaseSettings):
     )
 
 
+class VerifySettings(BaseSettings):
+    """Opt-in verify-before-emit pass.
+
+    When enabled, each candidate finding at or above ``min_severity`` is
+    re-adjudicated by a (typically cheaper) model just before it is persisted —
+    a sibling of the existing dedupe reject. The pass is deliberately
+    asymmetric and fail-open: only a high-confidence FALSE_POSITIVE verdict
+    suppresses a report; REAL, uncertain, unparseable, below-threshold, or any
+    error all emit, so a verifier miss can never drop a real finding.
+    """
+
+    model_config = _BASE_CONFIG
+
+    enabled: bool = Field(default=False, alias="STRIX_VERIFY")
+    model: str | None = Field(default=None, alias="STRIX_VERIFY_MODEL")
+    reasoning_effort: ReasoningEffort | None = Field(
+        default=None,
+        alias="STRIX_VERIFY_REASONING_EFFORT",
+    )
+    # Only findings at/above this severity are verified — low/info findings are
+    # cheap to triage by hand and rarely worth an extra model round-trip.
+    min_severity: str = Field(default="high", alias="STRIX_VERIFY_MIN_SEVERITY")
+    # A FALSE_POSITIVE verdict must clear this confidence to actually suppress.
+    min_confidence: float = Field(default=0.8, ge=0.0, le=1.0, alias="STRIX_VERIFY_MIN_CONFIDENCE")
+    api_key: str | None = Field(default=None, alias="VERIFY_LLM_API_KEY", repr=False)
+    api_base: str | None = Field(default=None, alias="VERIFY_LLM_API_BASE")
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        alias="VERIFY_LLM_EXTRA_HEADERS",
+        repr=False,
+    )
+
+
 class ContextSettings(BaseSettings):
     """Context-window management: per-tool-output caps and history compaction."""
 
@@ -149,6 +182,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
+    verify: VerifySettings = Field(default_factory=VerifySettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
