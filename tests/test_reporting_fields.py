@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -91,6 +92,55 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["fix_effort"] == "low"
     assert report["fix_pr_body"] == "## Fix\nEncode output."
     assert report["finding_class"] == "dynamic"
+
+
+async def test_create_report_externalizes_public_evidence_and_restores_on_hydrate(
+    report_state: ReportState,
+) -> None:
+    raw_evidence = (
+        "```http\n"
+        "GET /api/me HTTP/1.1\n"
+        "Authorization: Bearer live-session-token\n"
+        "Cookie: session=abc123\n"
+        "```"
+    )
+
+    result = await _do_create(
+        title="IDOR in profile API",
+        description="Profile endpoint accepts another user's id.",
+        impact="Cross-account data disclosure.",
+        target="https://app.example.com",
+        technical_analysis="Handler trusts the caller-supplied id.",
+        poc_description="1. Request another user's profile id.",
+        poc_script_code="GET /api/profile?id=2",
+        remediation_steps="Authorize object ownership server-side.",
+        evidence=raw_evidence,
+        assumptions="Assumes any authenticated user can reach the endpoint.",
+        fix_effort="low",
+        cvss_breakdown=_CVSS,
+        endpoint="/api/profile",
+        method="GET",
+        cve=None,
+        cwe="CWE-639",
+        code_locations=None,
+    )
+
+    assert result["success"] is True
+
+    run_dir = report_state.get_run_dir()
+    public_json = (run_dir / "vulnerabilities.json").read_text(encoding="utf-8")
+    public_report = json.loads(public_json)[0]
+
+    assert "live-session-token" not in public_json
+    assert "session=abc123" not in public_json
+    assert public_report["evidence_artifact"] == "private_evidence/vuln-0001.md"
+    assert "Raw verification evidence is stored" in public_report["evidence"]
+
+    reloaded = ReportState(run_name="test-run")
+    reloaded.hydrate_from_run_dir()
+
+    assert reloaded.vulnerability_reports[0]["evidence"] == raw_evidence
+    assert reloaded.vulnerability_reports[0]["evidence_artifact"] == "private_evidence/vuln-0001.md"
 
 
 async def test_create_report_requires_evidence_and_assumptions(

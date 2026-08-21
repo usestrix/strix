@@ -156,16 +156,32 @@ async def finish_scan(
       field.
     - Tone: formal, third-person, objective, concise. This is a
       consultant deliverable, not an engineering log.
+    - **Disclose writes to the target.** If the assessment created any
+      data on the target (test accounts, uploaded files, telemetry
+      events, modified records), the report must state in
+      ``methodology`` what was written, how much, and whether cleanup
+      was performed. Never claim "no data was modified" when the PoCs
+      wrote to production endpoints — that conflicts with the PoC
+      evidence and undermines the deliverable's credibility.
     - Each section has a specific role:
 
         - ``executive_summary`` — for non-technical leadership. Risk
           posture, business impact (data exposure / compliance /
           reputation), notable criticals, overarching remediation
-          theme.
+          theme. Distinguish what was actually verified: "endpoints
+          require authentication" is not "object-level authorization
+          held up" — never claim authorization/IDOR coverage unless
+          cross-account or ownership checks were demonstrated.
         - ``methodology`` — frameworks followed (OWASP WSTG, PTES,
           OSSTMM, NIST), engagement type (black/gray/white box), scope
           and constraints, categories of testing performed. **No**
-          internal execution detail.
+          internal execution detail. State what was NOT tested or only
+          partially tested (missing credentials, unauthenticated-only
+          coverage, WAF interference) so "no findings" cannot be read
+          as a guarantee. Include a coverage summary — counts of
+          endpoints/APIs enumerated vs. actually tested, and the reason
+          each untested area was skipped — so the reader can judge how
+          much of the surface the assessment actually exercised.
         - ``technical_analysis`` — consolidated findings overview with
           severity model and systemic root causes. Reference individual
           vuln reports for repro steps; don't duplicate raw evidence.

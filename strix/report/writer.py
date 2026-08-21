@@ -8,6 +8,7 @@ import json
 import logging
 import re
 import tempfile
+from contextlib import suppress
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
@@ -17,6 +18,7 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 from strix.core.paths import run_record_path
+from strix.utils.secret_files import SECRET_FILE_MODE, write_secret_text
 
 
 if TYPE_CHECKING:
@@ -25,6 +27,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+_PRIVATE_EVIDENCE_DIR = "private_evidence"
+_PRIVATE_EVIDENCE_DIR_MODE = 0o700
 
 _FENCE_RE = re.compile(r"^```([^\n`]*)\r?\n(.*?)\r?\n?```$", re.DOTALL)
 _BACKTICK_RUN = re.compile(r"`+")
@@ -122,6 +126,80 @@ def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
     logger.info("Saved final penetration test report to: %s", path)
 
 
+def evidence_artifact_relpath(report_id: str) -> str:
+    return f"{_PRIVATE_EVIDENCE_DIR}/{report_id}.md"
+
+
+def hydrate_report_evidence(run_dir: Path, report: dict[str, Any]) -> dict[str, Any]:
+    """Restore raw evidence from the private local artifact when present."""
+    artifact = str(report.get("evidence_artifact") or "").strip()
+    evidence = str(report.get("evidence") or "").strip()
+    if not artifact:
+        return report
+    if evidence and evidence != _public_evidence_reference(artifact):
+        return report
+
+    evidence_path = run_dir / artifact
+    if not evidence_path.is_file():
+        return report
+
+    try:
+        report["evidence"] = evidence_path.read_text(encoding="utf-8").rstrip("\n")
+    except OSError:
+        logger.warning("Could not read evidence artifact: %s", evidence_path)
+    return report
+
+
+def _public_evidence_reference(artifact: str) -> str:
+    return (
+        "Raw verification evidence is stored in the local artifact "
+        f"`{artifact}`. This report omits live credentials, session tokens, "
+        "and other replay material."
+    )
+
+
+def _public_report(report: dict[str, Any]) -> dict[str, Any]:
+    public = dict(report)
+    artifact = str(public.get("evidence_artifact") or "").strip()
+
+    if artifact:
+        public["evidence"] = _public_evidence_reference(artifact)
+    else:
+        public.pop("evidence", None)
+
+    return public
+
+
+def _write_evidence_artifact(run_dir: Path, report: dict[str, Any]) -> None:
+    evidence = str(report.get("evidence") or "").strip()
+    report_id = str(report.get("id") or "").strip()
+    if not evidence or not report_id:
+        return
+
+    artifact = str(report.get("evidence_artifact") or "").strip() or evidence_artifact_relpath(
+        report_id,
+    )
+    if evidence == _public_evidence_reference(artifact):
+        # Hydration left the public reference in place because the private
+        # artifact was unreadable. Never overwrite the original evidence with
+        # that reference on a subsequent save.
+        return
+
+    evidence_path = run_dir / artifact
+    try:
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        with suppress(OSError):
+            evidence_path.parent.chmod(_PRIVATE_EVIDENCE_DIR_MODE)
+        write_secret_text(evidence_path, f"{evidence}\n")
+        with suppress(OSError):
+            evidence_path.chmod(SECRET_FILE_MODE)
+    except OSError:
+        logger.exception("Could not write private evidence artifact: %s", evidence_path)
+        return
+
+    report["evidence_artifact"] = artifact
+
+
 def write_vulnerabilities(
     run_dir: Path,
     vulnerability_reports: list[dict[str, Any]],
@@ -131,16 +209,22 @@ def write_vulnerabilities(
     vuln_dir.mkdir(exist_ok=True)
 
     new_reports = [r for r in vulnerability_reports if r["id"] not in saved_vuln_ids]
+    public_reports = []
+
+    for report in vulnerability_reports:
+        _write_evidence_artifact(run_dir, report)
+        public_report = _public_report(report)
+        public_reports.append(public_report)
+
+        report_path = vuln_dir / f"{report['id']}.md"
+        if report["id"] not in saved_vuln_ids or report_path.exists():
+            _atomic_write_text(report_path, render_vulnerability_md(public_report))
 
     for report in new_reports:
-        _atomic_write_text(
-            vuln_dir / f"{report['id']}.md",
-            render_vulnerability_md(report),
-        )
         saved_vuln_ids.add(report["id"])
 
     sorted_reports = sorted(
-        vulnerability_reports,
+        public_reports,
         key=lambda r: (_SEVERITY_ORDER.get(r["severity"], 5), r["timestamp"]),
     )
     csv_path = run_dir / "vulnerabilities.csv"
@@ -162,7 +246,7 @@ def write_vulnerabilities(
 
     _atomic_write_text(
         run_dir / "vulnerabilities.json",
-        json.dumps(vulnerability_reports, ensure_ascii=False, indent=2, default=str),
+        json.dumps(public_reports, ensure_ascii=False, indent=2, default=str),
     )
 
     if new_reports:
@@ -215,6 +299,8 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     cvss = report.get("cvss")
     if cvss is not None:
         metadata.append(("CVSS", cvss))
+    if report.get("cvss_vector"):
+        metadata.append(("CVSS Vector", report["cvss_vector"]))
     advisory_cvss = dep_meta.get("advisory_cvss")
     if advisory_cvss is not None and advisory_cvss != cvss:
         metadata.append(("Advisory CVSS", advisory_cvss))
