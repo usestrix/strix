@@ -149,6 +149,7 @@ class ReportState:
 
         self.caido_url: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
+        self.vulnerability_updated_callback: Callable[[dict[str, Any]], None] | None = None
 
         self._sarif_repo_ctx: dict[str, Any] | None = None
         self._sarif_repo_ctx_ready: bool = False
@@ -314,6 +315,53 @@ class ReportState:
 
         self.save_run_data()
         return report_id
+
+    def update_vulnerability_report(
+        self,
+        report_id: str,
+        update_reason: str,
+        **updates: Any,
+    ) -> dict[str, Any] | None:
+        """Amend a filed vulnerability report and persist the updated state."""
+        report = next(
+            (item for item in self.vulnerability_reports if item.get("id") == report_id),
+            None,
+        )
+        if report is None:
+            return None
+
+        timestamp = datetime.now(UTC).isoformat()
+        previous_severity = report.get("severity")
+        previous_cvss = report.get("cvss")
+        changed_fields: list[str] = []
+        for field, value in updates.items():
+            if report.get(field) != value:
+                changed_fields.append(field)
+            report[field] = value
+
+        history_entry: dict[str, Any] = {
+            "timestamp": timestamp,
+            "update_reason": update_reason.strip(),
+            "fields_changed": changed_fields,
+        }
+        if ("severity" in updates and updates.get("severity") != previous_severity) or (
+            "cvss" in updates and updates.get("cvss") != previous_cvss
+        ):
+            history_entry["previous_severity"] = previous_severity
+            history_entry["previous_cvss_score"] = previous_cvss
+
+        history = report.setdefault("update_history", [])
+        if not isinstance(history, list):
+            history = []
+            report["update_history"] = history
+        history.append(history_entry)
+        report["updated_at"] = timestamp
+
+        self._saved_vuln_ids.discard(report_id)
+        if self.vulnerability_updated_callback:
+            self.vulnerability_updated_callback(report)
+        self.save_run_data()
+        return report
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
         return list(self.vulnerability_reports)

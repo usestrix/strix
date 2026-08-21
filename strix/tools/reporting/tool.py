@@ -1,8 +1,8 @@
-"""Reporting tools — file vuln findings (with dedup + CVSS) and read them back.
+"""Reporting tools — file findings (with dedup + CVSS) and read them back.
 
 ``create_vulnerability_report`` / ``create_dependency_report`` file findings;
-``list_reports`` / ``get_report`` let any agent (notably the root orchestrator)
-review what's been filed so far across the whole scan.
+``update_vulnerability_report`` amends a known dynamic finding;
+``list_reports`` / ``get_report`` let the root orchestrator review findings.
 """
 
 from __future__ import annotations
@@ -162,6 +162,24 @@ _REQUIRED_FIELDS = {
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 
+_AMENDABLE_FIELDS = (
+    "title",
+    "description",
+    "impact",
+    "technical_analysis",
+    "poc_description",
+    "poc_script_code",
+    "remediation_steps",
+    "evidence",
+    "assumptions",
+    "fix_effort",
+    "cvss_breakdown",
+    "endpoint",
+    "method",
+    "cwe",
+    "code_locations",
+)
+
 
 async def _do_create(  # noqa: PLR0912
     *,
@@ -277,7 +295,10 @@ async def _do_create(  # noqa: PLR0912
                 "success": False,
                 "error": (
                     f"Potential duplicate of '{duplicate_title}' "
-                    f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
+                    f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability. "
+                    f"If new validated evidence shows greater or lower impact than filed, "
+                    f"amend this finding with update_vulnerability_report using id "
+                    f"'{duplicate_id}' instead."
                 ),
                 "duplicate_of": duplicate_id,
                 "duplicate_title": duplicate_title,
@@ -329,6 +350,189 @@ async def _do_create(  # noqa: PLR0912
         }
 
 
+async def _do_update(  # noqa: PLR0911, PLR0912, PLR0915
+    *,
+    report_id: str,
+    update_reason: str,
+    title: str | None = None,
+    description: str | None = None,
+    impact: str | None = None,
+    technical_analysis: str | None = None,
+    poc_description: str | None = None,
+    poc_script_code: str | None = None,
+    remediation_steps: str | None = None,
+    evidence: str | None = None,
+    assumptions: str | None = None,
+    fix_effort: str | None = None,
+    cvss_breakdown: dict[str, str] | None = None,
+    endpoint: str | None = None,
+    method: str | None = None,
+    cwe: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Validate and amend one known dynamic vulnerability report."""
+    if not report_id.strip():
+        return {"success": False, "error": "report_id cannot be empty"}
+    if not update_reason.strip():
+        return {"success": False, "error": "update_reason cannot be empty"}
+
+    raw_updates = {
+        name: value
+        for name, value in {
+            "title": title,
+            "description": description,
+            "impact": impact,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "remediation_steps": remediation_steps,
+            "evidence": evidence,
+            "assumptions": assumptions,
+            "fix_effort": fix_effort,
+            "cvss_breakdown": cvss_breakdown,
+            "endpoint": endpoint,
+            "method": method,
+            "cwe": cwe,
+            "code_locations": code_locations,
+        }.items()
+        if value is not None and name in _AMENDABLE_FIELDS
+    }
+    if not raw_updates:
+        return {
+            "success": False,
+            "error": "At least one amendable field must be supplied",
+        }
+
+    try:
+        from strix.report.state import get_global_report_state
+
+        report_state = get_global_report_state()
+        if report_state is None:
+            return {
+                "success": False,
+                "error": "Report state is unavailable",
+            }
+
+        existing = report_state.get_existing_vulnerabilities()
+        report = next((item for item in existing if item.get("id") == report_id), None)
+        if report is None:
+            valid_ids = [str(item["id"]) for item in existing if item.get("id")]
+            result: dict[str, Any] = {
+                "success": False,
+                "error": f"Report with id '{report_id}' was not found",
+            }
+            if valid_ids:
+                result["valid_report_ids"] = valid_ids
+            return result
+
+        errors: list[str] = []
+        updates: dict[str, Any] = {}
+        for field, value in raw_updates.items():
+            if field in {
+                "title",
+                "description",
+                "impact",
+                "technical_analysis",
+                "poc_description",
+                "poc_script_code",
+                "remediation_steps",
+                "evidence",
+                "assumptions",
+                "endpoint",
+                "method",
+            }:
+                normalized_value = str(value).strip()
+                if not normalized_value:
+                    errors.append(
+                        _REQUIRED_FIELDS.get(
+                            field,
+                            f"{field.replace('_', ' ').capitalize()} cannot be empty",
+                        ),
+                    )
+                else:
+                    updates[field] = normalized_value
+
+        if "fix_effort" in raw_updates:
+            normalized_fix_effort = str(fix_effort).strip().lower()
+            if normalized_fix_effort not in _VALID_FIX_EFFORT:
+                errors.append(
+                    f"Invalid fix_effort: {normalized_fix_effort!r}. "
+                    f"Must be one of: {sorted(_VALID_FIX_EFFORT)}"
+                )
+            else:
+                updates["fix_effort"] = normalized_fix_effort
+
+        if "cvss_breakdown" in raw_updates:
+            if not isinstance(cvss_breakdown, dict) or not cvss_breakdown:
+                errors.append("cvss_breakdown: must be an object with the 8 CVSS metrics")
+            else:
+                for name, valid in _CVSS_VALID.items():
+                    metric_value = cvss_breakdown.get(name)
+                    if metric_value not in valid:
+                        errors.append(
+                            f"Invalid {name}: {metric_value}. Must be one of: {valid}",
+                        )
+                updates["cvss_breakdown"] = cvss_breakdown
+
+        if "cwe" in raw_updates:
+            parsed_cwe = _extract_cwe(str(cwe))
+            cwe_err = _validate_cwe(parsed_cwe)
+            if cwe_err:
+                errors.append(cwe_err)
+            else:
+                updates["cwe"] = parsed_cwe
+
+        if "code_locations" in raw_updates:
+            if not isinstance(code_locations, list) or not code_locations:
+                errors.append("code_locations must contain at least one location")
+            else:
+                parsed_locations = _normalize_code_locations(code_locations)
+                if not parsed_locations:
+                    errors.append("code_locations must contain at least one valid location")
+                else:
+                    errors.extend(_validate_code_locations(parsed_locations))
+                    updates["code_locations"] = parsed_locations
+
+        if errors:
+            return {"success": False, "error": "Validation failed", "errors": errors}
+
+        if "cvss_breakdown" in updates:
+            try:
+                cvss_score, severity, _vector = _calculate_cvss(updates["cvss_breakdown"])
+            except ValueError as exc:
+                return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
+            updates["cvss"] = cvss_score
+            updates["severity"] = severity
+
+        updated = report_state.update_vulnerability_report(
+            report_id,
+            update_reason,
+            **updates,
+        )
+        if updated is None:
+            return {
+                "success": False,
+                "error": f"Report with id '{report_id}' was not found",
+            }
+    except (AttributeError, KeyError, TypeError, ValueError) as exc:
+        logger.exception("update_vulnerability_report persistence failed")
+        return {"success": False, "error": f"Failed to update vulnerability report: {exc!s}"}
+
+    logger.info(
+        "Vulnerability report updated: id=%s fields=%s",
+        report_id,
+        sorted(raw_updates),
+    )
+    return {
+        "success": True,
+        "message": f"Vulnerability report '{report_id}' updated successfully",
+        "report_id": report_id,
+        "severity": updated.get("severity"),
+        "cvss_score": updated.get("cvss"),
+        "updated_at": updated.get("updated_at"),
+    }
+
+
 def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
     """Return the (agent_id, agent_name) of the agent invoking this tool."""
     inner = ctx.context if isinstance(ctx.context, dict) else {}
@@ -377,6 +581,8 @@ async def create_vulnerability_report(
     - Suspicions you haven't confirmed with a PoC.
     - Tracking multiple vulnerabilities at once — one report per vuln.
     - Re-reporting something you (or another agent) already filed.
+    - A chain that only amplifies an existing finding's impact on the same
+      asset and root cause. Use ``update_vulnerability_report`` instead.
     - Known-CVE dependency / supply-chain findings that can't be
       dynamically PoC'd — a vulnerable dependency version pinned in a
       lockfile/manifest that matches a published advisory. File those
@@ -408,8 +614,10 @@ async def create_vulnerability_report(
 
     Automatic LLM-based **deduplication** rejects reports that describe
     the same root cause on the same asset as an existing report. If you
-    get a ``duplicate_of`` response, do NOT retry — move on to other
-    areas.
+    get a ``duplicate_of`` response, do not re-submit the same vulnerability.
+    If new validated evidence shows greater or lower impact for that finding,
+    amend it with ``update_vulnerability_report`` using the returned id.
+    Otherwise, move on to other areas.
 
     **Report output rules** (this content may be rendered into generated
     reports):
@@ -697,6 +905,69 @@ async def create_vulnerability_report(
         fix_pr_body=fix_pr_body,
         agent_id=agent_id,
         agent_name=agent_name,
+    )
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=180, strict_mode=False)
+async def update_vulnerability_report(
+    ctx: RunContextWrapper,
+    report_id: str,
+    update_reason: str,
+    title: str | None = None,
+    description: str | None = None,
+    impact: str | None = None,
+    technical_analysis: str | None = None,
+    poc_description: str | None = None,
+    poc_script_code: str | None = None,
+    remediation_steps: str | None = None,
+    evidence: str | None = None,
+    assumptions: str | None = None,
+    fix_effort: str | None = None,
+    cvss_breakdown: dict[str, str] | None = None,
+    endpoint: str | None = None,
+    method: str | None = None,
+    cwe: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+) -> str:
+    """Amend a known vulnerability report when new evidence changes its impact.
+
+    Use ``create_vulnerability_report`` when the chain proves a distinct issue.
+    Use this tool when the same root cause on the same asset has greater impact.
+    The tool recomputes severity and score from ``cvss_breakdown``.
+
+    Apply the same report output rules and CVSS calibration discipline as the
+    create tool. An amendment must use evidence from a validated result. Do
+    not use this tool for a speculative upgrade.
+
+    Pass at least one amendable field:
+
+    - ``title``, ``description``, ``impact``, ``technical_analysis``,
+      ``poc_description``, ``poc_script_code``, ``remediation_steps``,
+      ``evidence``, ``assumptions``, ``fix_effort``, ``cvss_breakdown``,
+      ``endpoint``, ``method``, ``cwe``, or ``code_locations``.
+
+    Do not change ``target``, ``cve``, or dependency metadata. File a new
+    report instead when those values must change.
+    """
+    result = await _do_update(
+        report_id=report_id,
+        update_reason=update_reason,
+        title=title,
+        description=description,
+        impact=impact,
+        technical_analysis=technical_analysis,
+        poc_description=poc_description,
+        poc_script_code=poc_script_code,
+        remediation_steps=remediation_steps,
+        evidence=evidence,
+        assumptions=assumptions,
+        fix_effort=fix_effort,
+        cvss_breakdown=cvss_breakdown,
+        endpoint=endpoint,
+        method=method,
+        cwe=cwe,
+        code_locations=code_locations,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 

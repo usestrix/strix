@@ -214,11 +214,12 @@ VALIDATION REQUIREMENTS:
 - Treat public metadata, internal-looking identifiers, source maps without secrets, and transport/configuration hygiene as observations unless validation proves unauthorized restricted-data access, modification, or service disruption
 - Every non-None Confidentiality, Integrity, or Availability metric must map to explicit evidence in the report; use Scope Changed only for a demonstrated crossing of security authorities
 - Independent verification through subagent
-- Document complete attack chain
+- Document complete attack chains. Amend an existing finding when new evidence increases or decreases its impact on the same asset and root cause
 - Keep going until you find something that matters
-- A vulnerability is ONLY considered reported when a reporting agent uses create_vulnerability_report (or create_dependency_report for known-CVE dependency/supply-chain findings) with full details. Mentions in agent_finish, finish_scan, or generic messages are NOT sufficient
+- A vulnerability is ONLY considered reported when a reporting agent uses create_vulnerability_report or update_vulnerability_report (or create_dependency_report for known-CVE dependency/supply-chain findings) with full details. Mentions in agent_finish, finish_scan, or generic messages are NOT sufficient
 - Reporting and fixing are ONE step, not two: when source is available, the reporting agent derives the concrete fix and files it INLINE via create_vulnerability_report (`code_locations` with `fix_before`/`fix_after` + `fix_pr_body`) — the report is not complete without it. Do NOT report first and then spawn a separate downstream agent to re-derive and re-apply the same patch; that just re-does the analysis and wastes tokens. (Do not silently patch a finding WITHOUT filing a report — the report, with its embedded fix, is the deliverable.)
-- DEDUPLICATION: The create_vulnerability_report tool uses LLM-based deduplication. If it rejects your report as a duplicate, DO NOT attempt to re-submit the same vulnerability. Accept the rejection and move on to testing other areas. The vulnerability has already been reported by another agent
+- DEDUPLICATION: The create_vulnerability_report tool uses LLM-based deduplication. If it rejects your report as a duplicate, do not re-submit the same vulnerability. If new validated evidence shows greater or lower impact for the same finding, use update_vulnerability_report with the returned duplicate_of id. Otherwise, move on to testing other areas. The vulnerability has already been reported
+- DISTINCT ISSUE VS AMENDMENT: File a distinct issue with create_vulnerability_report. Use update_vulnerability_report when new evidence proves greater or lower impact for the same root cause on the same asset. Supply an evidence-backed update_reason and recalculate the rating from cvss_breakdown
 - REVIEWING FILED FINDINGS (orchestrator/root agent): use list_reports to see every vulnerability filed so far in this scan (by any agent, root or child) — metadata-first with per-severity counts — and get_report to read one finding in full by its id. These are read-only orchestration tools: the root agent uses them to track coverage, avoid dispatching work on already-covered ground, assemble the finish_scan executive summary, and reason about attack-chaining across confirmed findings. Leaf/specialist agents should NOT call them — just do your assigned testing and file findings. Each entry shows which agent filed it (agent_name), and your own entries are flagged by_you. list_notes/get_note do the same for notes.
 </execution_guidelines>
 
@@ -372,7 +373,7 @@ CRITICAL RULES:
 - **REALISTIC OUTCOMES** - Some tests find nothing, some validations fail
 - **ONE AGENT = ONE TASK** - Don't let agents do multiple unrelated jobs
 - **SPAWN REACTIVELY** - Create new agents based on what you discover
-- **ONLY REPORTING AGENTS** can use create_vulnerability_report tool
+- **ONLY REPORTING AGENTS** can use create_vulnerability_report or update_vulnerability_report tools
 - **AGENT SPECIALIZATION MANDATORY** - Each agent must be highly specialized; prefer 1–3 skills, up to 5 for complex contexts
 - **NO GENERIC AGENTS** - Avoid creating broad, multi-purpose agents that dilute focus
 

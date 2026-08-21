@@ -197,6 +197,8 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         f"**Severity:** {report.get('severity', 'unknown').upper()}",
         f"**Found:** {report.get('timestamp', 'unknown')}",
     ]
+    if report.get("updated_at"):
+        lines.append(f"**Updated:** {report['updated_at']}")
 
     dep_meta = report.get("dependency_metadata") or {}
     metadata: list[tuple[str, Any]] = [
@@ -302,6 +304,25 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     if report.get("assumptions"):
         lines.append("## Assumptions\n")
         lines.append(str(report["assumptions"]))
+        lines.append("")
+
+    update_history = report.get("update_history")
+    if isinstance(update_history, list) and update_history:
+        lines.append("## Amendment History\n")
+        for entry in update_history:
+            if not isinstance(entry, dict):
+                continue
+            timestamp = entry.get("timestamp", "unknown")
+            reason = entry.get("update_reason", "")
+            fields = ", ".join(str(field) for field in entry.get("fields_changed", []))
+            lines.append(f"- **{timestamp}:** {reason}")
+            lines.append(f"  Changed fields: {fields or 'none'}")
+            if "previous_severity" in entry or "previous_cvss_score" in entry:
+                lines.append(
+                    "  Previous rating: "
+                    f"{str(entry.get('previous_severity', 'unknown')).upper()} "
+                    f"(CVSS {entry.get('previous_cvss_score', 'unknown')})"
+                )
         lines.append("")
 
     return "\n".join(lines)

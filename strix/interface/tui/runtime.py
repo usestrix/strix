@@ -102,6 +102,9 @@ class GoTuiRuntime:
         self.report_state.vulnerability_found_callback = lambda _report: (
             self.controller.notify_changed()
         )
+        self.report_state.vulnerability_updated_callback = lambda _report: (
+            self.controller.notify_changed()
+        )
         self.controller.notify_changed()
 
     async def start_from_setup(self, verify: bool = True) -> None:

@@ -12,6 +12,7 @@ import threading
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
+from unittest.mock import Mock
 
 import pytest
 
@@ -93,6 +94,25 @@ def test_binary_command_ignores_unconstrained_path_sidecar(
 
     with pytest.raises(RuntimeError, match="Bubble Tea TUI binary not found"):
         GoTuiRuntime.binary_command()
+
+
+@pytest.mark.asyncio
+async def test_init_run_state_wires_updated_report_callback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    runtime = GoTuiRuntime(args())
+    notify_changed = Mock()
+    monkeypatch.setattr(runtime.controller, "notify_changed", notify_changed)
+
+    runtime.init_run_state()
+
+    assert runtime.report_state is not None
+    assert runtime.report_state.vulnerability_updated_callback is not None
+    notify_changed.reset_mock()
+    runtime.report_state.vulnerability_updated_callback({"id": "vuln-0001"})
+    notify_changed.assert_called_once_with()
 
 
 def test_child_environment_excludes_credentials(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -38,6 +38,35 @@ def _resolve_sandbox_image() -> str:
     return image
 
 
+def _configure_report_callbacks(report_state: ReportState, console: Console) -> None:
+    def display_vulnerability(report: dict[str, Any], *, updated: bool = False) -> None:
+        report_id = report.get("id", "unknown")
+
+        vuln_text = format_vulnerability_report(report)
+
+        title = (
+            f"[bold yellow]{report_id.upper()} — UPDATED FINDING"
+            if updated
+            else f"[bold red]{report_id.upper()}"
+        )
+        vuln_panel = Panel(
+            vuln_text,
+            title=title,
+            title_align="left",
+            border_style="yellow" if updated else "red",
+            padding=(1, 2),
+        )
+
+        console.print(vuln_panel)
+        console.print()
+
+    report_state.vulnerability_found_callback = display_vulnerability
+    report_state.vulnerability_updated_callback = lambda report: display_vulnerability(
+        report,
+        updated=True,
+    )
+
+
 async def run_cli(args: Any) -> None:  # noqa: PLR0915
     console = Console()
 
@@ -105,23 +134,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     report_state.set_scan_config(scan_config)
     report_state.save_run_data()
 
-    def display_vulnerability(report: dict[str, Any]) -> None:
-        report_id = report.get("id", "unknown")
-
-        vuln_text = format_vulnerability_report(report)
-
-        vuln_panel = Panel(
-            vuln_text,
-            title=f"[bold red]{report_id.upper()}",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-
-        console.print(vuln_panel)
-        console.print()
-
-    report_state.vulnerability_found_callback = display_vulnerability
+    _configure_report_callbacks(report_state, console)
 
     def cleanup_on_exit() -> None:
         report_state.cleanup()

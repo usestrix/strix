@@ -133,14 +133,15 @@ async def finish_scan(
        combination. You may rule out combinations you can confidently
        call unrelated — note why instead of padding chains. Any
        validated chain must already be filed via
-       ``create_vulnerability_report`` — a demonstrated end-to-end chain
-       is a PoC-backed vulnerability, so it uses that tool even when one
-       link is a dependency CVE (the standalone CVE stays in its own
-       ``create_dependency_report``) — and surfaced prominently in
+       ``create_vulnerability_report`` — or update the existing finding with
+       ``update_vulnerability_report`` when the chain amplifies that finding
+       on the same asset and root cause. A demonstrated new chain is a
+       PoC-backed vulnerability, so file it even when one link is a
+       dependency CVE. Keep the standalone CVE in its own
+       ``create_dependency_report``. Surface the result prominently in
        ``executive_summary`` / ``technical_analysis``. Finding no real
-       chain after a serious attempt is acceptable; skipping the
-       chaining reasoning, or ignoring a plausibly-related combination,
-       is not.
+       chain after a serious attempt is acceptable. Skipping the chaining
+       reasoning, or ignoring a plausibly-related combination, is not.
 
     **Calling this multiple times overwrites the previous report.**
     Make the single call comprehensive.
