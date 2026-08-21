@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}
+VULNERABILITIES_FILENAME = "vulnerabilities.json"
 
 _FENCE_RE = re.compile(r"^```([^\n`]*)\r?\n(.*?)\r?\n?```$", re.DOTALL)
 _BACKTICK_RUN = re.compile(r"`+")
@@ -113,6 +114,17 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
     )
 
 
+def read_vulnerabilities(run_dir: Path) -> list[dict[str, Any]]:
+    path = run_dir / VULNERABILITIES_FILENAME
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"{VULNERABILITIES_FILENAME} at {path} is unreadable: {exc}") from exc
+    if not isinstance(data, list):
+        raise TypeError(f"{VULNERABILITIES_FILENAME} at {path} is not a list")
+    return [report for report in data if isinstance(report, dict)]
+
+
 def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
     path = run_dir / "penetration_test_report.md"
     with path.open("w", encoding="utf-8") as f:
@@ -161,7 +173,7 @@ def write_vulnerabilities(
     _atomic_write_text(csv_path, csv_buf.getvalue())
 
     _atomic_write_text(
-        run_dir / "vulnerabilities.json",
+        run_dir / VULNERABILITIES_FILENAME,
         json.dumps(vulnerability_reports, ensure_ascii=False, indent=2, default=str),
     )
 
