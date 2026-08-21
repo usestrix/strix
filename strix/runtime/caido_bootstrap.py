@@ -15,12 +15,10 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from caido_sdk_client import Client, TokenAuthOptions
-from caido_sdk_client.types import CreateProjectOptions
-
 
 if TYPE_CHECKING:
     from agents.sandbox.session import BaseSandboxSession
+    from caido_sdk_client import Client
 
 
 logger = logging.getLogger(__name__)
@@ -87,6 +85,12 @@ async def bootstrap_caido(
     container_url: str,
 ) -> Client:
     """Connect to the in-container Caido sidecar and select a fresh project."""
+    # The Caido SDK (and its generated GraphQL schema) is slow to import and is
+    # only needed once a sandbox is actually being bootstrapped, so it is
+    # imported here rather than at module scope.
+    from caido_sdk_client import Client, TokenAuthOptions
+    from caido_sdk_client.types import CreateProjectOptions
+
     logger.info("Bootstrapping Caido client (host=%s, container=%s)", host_url, container_url)
 
     access_token = await _login_as_guest(session, container_url=container_url)
