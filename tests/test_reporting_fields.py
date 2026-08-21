@@ -12,7 +12,7 @@ from strix.report.dedupe import (
     check_duplicate,
 )
 from strix.report.state import ReportState, set_global_report_state
-from strix.tools.finish.tool import finish_scan
+from strix.tools.finish.tool import _do_finish, finish_scan
 from strix.tools.reporting.tool import (
     _do_create,
     _do_create_dependency,
@@ -1087,3 +1087,103 @@ async def test_dependency_report_rejects_contextual_breakdown_without_reasoning(
     assert result["success"] is False
     assert any("contextual_cvss_reasoning is required" in error for error in result["errors"])
     assert report_state.vulnerability_reports == []
+
+
+def test_save_artifacts_propagates_write_error(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _failing_write(*_args: object, **_kwargs: object) -> None:
+        raise OSError("Disk quota exceeded")
+
+    monkeypatch.setattr("strix.report.state.write_executive_report", _failing_write)
+    report_state.final_scan_result = "Test report"
+
+    with pytest.raises(OSError, match="Disk quota exceeded"):
+        report_state.save_run_data()
+
+
+@pytest.mark.asyncio
+async def test_finish_scan_reports_failure_on_artifact_write_error(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _failing_write(*_args: object, **_kwargs: object) -> None:
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr("strix.report.state.write_executive_report", _failing_write)
+
+    result = _do_finish(
+        parent_id=None,
+        executive_summary="Summary",
+        methodology="Methodology",
+        technical_analysis="Analysis",
+        recommendations="Recommendations",
+    )
+
+    assert result["success"] is False
+    assert "Failed to complete scan: Permission denied" in result["error"]
+    assert "scan_completed" not in result or result.get("scan_completed") is not True
+    assert report_state.scan_results is None
+
+
+@pytest.mark.asyncio
+async def test_failed_finish_rolls_back_in_memory_completion_state(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _failing_write(*_args: object, **_kwargs: object) -> None:
+        raise OSError("Permission denied")
+
+    monkeypatch.setattr("strix.report.state.write_executive_report", _failing_write)
+
+    result = _do_finish(
+        parent_id=None,
+        executive_summary="Summary",
+        methodology="Methodology",
+        technical_analysis="Analysis",
+        recommendations="Recommendations",
+    )
+
+    assert result["success"] is False
+    assert report_state.scan_results is None
+    assert report_state.final_scan_result is None
+    assert report_state.run_record.get("status") == "running"
+
+    monkeypatch.undo()
+    report_state.cleanup(status="stopped")
+    assert report_state.run_record.get("status") == "stopped"
+    assert report_state.run_record.get("scan_results") is None
+
+
+@pytest.mark.asyncio
+async def test_create_vulnerability_report_reports_failure_on_write_error(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _failing_write(*_args: object, **_kwargs: object) -> None:
+        raise OSError("Read-only file system")
+
+    monkeypatch.setattr("strix.report.state.write_vulnerabilities", _failing_write)
+
+    result = await _do_create(
+        title="SQL Injection in Login",
+        description="Exploitable SQL injection in authentication form.",
+        impact="Full database access.",
+        target="http://example.com/login",
+        technical_analysis="Unsanitized user input passed to query.",
+        poc_description="Submit ' OR '1'='1 payload.",
+        poc_script_code="curl http://example.com/login",
+        remediation_steps="Use parameterized queries.",
+        evidence="HTTP 500 SQL error trace",
+        assumptions="Target DB is PostgreSQL",
+        fix_effort="low",
+        cvss_breakdown=_CVSS,
+        endpoint="/login",
+        method="POST",
+        cve=None,
+        cwe="CWE-89",
+        code_locations=None,
+        fix_pr_body=None,
+    )
+
+    assert result["success"] is False
+    assert "Failed to create vulnerability report: Read-only file system" in result["error"]
+    assert report_state.vulnerability_reports == []
+
