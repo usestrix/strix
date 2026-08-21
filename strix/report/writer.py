@@ -114,12 +114,14 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
 
 
 def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
-    path = run_dir / "penetration_test_report.md"
-    with path.open("w", encoding="utf-8") as f:
-        f.write("# Security Penetration Test Report\n\n")
-        f.write(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
-        f.write(f"{final_scan_result}\n")
-    logger.info("Saved final penetration test report to: %s", path)
+    report_path = run_dir / "penetration_test_report.md"
+    payload = (
+        "# Security Penetration Test Report\n\n"
+        f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n"
+        f"{final_scan_result}\n"
+    )
+    _atomic_write_text(report_path, payload)
+    logger.info("Saved final penetration test report to: %s", report_path)
 
 
 def write_vulnerabilities(
@@ -177,17 +179,24 @@ def write_vulnerabilities(
 
 def _atomic_write_text(path: Path, payload: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        encoding="utf-8",
-        dir=str(path.parent),
-        prefix=f".{path.name}.",
-        suffix=".tmp",
-        delete=False,
-    ) as tmp:
-        tmp.write(payload)
-        tmp_path = Path(tmp.name)
-    tmp_path.replace(path)
+    tmp_path: Path | None = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            dir=str(path.parent),
+            prefix=f".{path.name}.",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp:
+            tmp_path = Path(tmp.name)
+            tmp.write(payload)
+        assert tmp_path is not None
+        tmp_path.replace(path)
+    except Exception:  # leave no temp file behind on any failure
+        if tmp_path is not None:
+            tmp_path.unlink(missing_ok=True)
+        raise
 
 
 def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PLR0915

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import csv
 import json
-from typing import TYPE_CHECKING, Any
+import tempfile
+from pathlib import Path
+from typing import Any, Self
 
 import pytest
 
@@ -15,10 +17,6 @@ from strix.report.writer import (
     write_run_record,
     write_vulnerabilities,
 )
-
-
-if TYPE_CHECKING:
-    from pathlib import Path
 
 
 def _sample_report(**overrides: Any) -> dict[str, Any]:
@@ -179,3 +177,72 @@ def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
     assert "# Security Penetration Test Report" in content
     assert "Scan complete. No critical issues." in content
+
+
+def test_write_executive_report_failure_preserves_previous_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "penetration_test_report.md"
+    target.write_text("previous report", encoding="utf-8")
+
+    def _disk_full(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(tempfile, "NamedTemporaryFile", _disk_full)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_executive_report(tmp_path, "new content")
+
+    assert target.read_text(encoding="utf-8") == "previous report"
+
+
+def test_write_executive_report_write_failure_preserves_previous_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "penetration_test_report.md"
+    target.write_text("previous report", encoding="utf-8")
+
+    temp_path = tmp_path / ".penetration_test_report.md.stub.tmp"
+    temp_path.touch()
+
+    class _FailingTempFile:
+        name = str(temp_path)
+
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+        def write(self, _payload: str) -> int:
+            raise OSError("disk full")
+
+    monkeypatch.setattr(
+        tempfile,
+        "NamedTemporaryFile",
+        lambda *_args, **_kwargs: _FailingTempFile(),
+    )
+
+    with pytest.raises(OSError, match="disk full"):
+        write_executive_report(tmp_path, "new content")
+
+    assert target.read_text(encoding="utf-8") == "previous report"
+    assert not temp_path.exists()  # the partial temp file is cleaned up
+
+
+def test_write_executive_report_replace_failure_preserves_previous_report(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "penetration_test_report.md"
+    target.write_text("previous report", encoding="utf-8")
+
+    def _failing_replace(_self: Path, _destination: Path) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr(Path, "replace", _failing_replace)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_executive_report(tmp_path, "new content")
+
+    assert target.read_text(encoding="utf-8") == "previous report"
+    assert not list(tmp_path.glob(".*.tmp"))  # no orphaned temp files
