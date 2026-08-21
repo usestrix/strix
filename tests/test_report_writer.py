@@ -179,3 +179,21 @@ def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
     assert "# Security Penetration Test Report" in content
     assert "Scan complete. No critical issues." in content
+
+
+def test_write_executive_report_preserves_previous_report_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    report_path = tmp_path / "penetration_test_report.md"
+    report_path.write_text("previous report", encoding="utf-8")
+
+    def boom(*_args: Any, **_kwargs: Any) -> None:
+        raise OSError("disk full")
+
+    monkeypatch.setattr("strix.report.writer.tempfile.NamedTemporaryFile", boom)
+
+    with pytest.raises(OSError, match="disk full"):
+        write_executive_report(tmp_path, "new content")
+
+    assert report_path.read_text(encoding="utf-8") == "previous report"
