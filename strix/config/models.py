@@ -297,7 +297,12 @@ class _ClaudeCodeModel(Model):
         tools: list[Tool],
     ) -> ModelResponse:
         prompt = claude_bridge.build_prompt(system_instructions, input, tools)
-        result = await claude_process.run_turn(self._slug, prompt, extra_args=self._extra_args())
+        result = await claude_process.run_turn(
+            self._slug,
+            prompt,
+            extra_args=self._extra_args(),
+            structured=bool(tools),
+        )
         response = claude_bridge.decode_result(result)
         _record_claude_code_cost(result)
         return response

@@ -96,15 +96,20 @@ def _get_semaphore() -> asyncio.Semaphore:
     return cached[0]
 
 
-def _build_argv(slug: str, extra_args: list[str]) -> list[str]:
+def _build_argv(slug: str, extra_args: list[str], *, structured: bool = True) -> list[str]:
     binary = claude_code.binary_path()
     if binary is None:
         raise claude_code.ClaudeCodeError(
             "STRIX_LLM=claude-code/... needs the Claude Code CLI on PATH. "
             "Install it, then run `claude /login`."
         )
-    schema = json.dumps(claude_bridge.RESULT_SCHEMA, separators=(",", ":"))
-    return [binary, *_BASE_ARGS, "--model", slug, "--json-schema", schema, *extra_args]
+    argv = [binary, *_BASE_ARGS, "--model", slug]
+    if structured:
+        # Only agent turns speak the {text, tool_calls} envelope. Forcing the
+        # schema on a one-shot completion would bury the caller's answer inside it.
+        schema = json.dumps(claude_bridge.RESULT_SCHEMA, separators=(",", ":"))
+        argv += ["--json-schema", schema]
+    return [*argv, *extra_args]
 
 
 def _spawn(argv: list[str]) -> subprocess.Popen[str]:
@@ -196,14 +201,22 @@ def _decode_transcript(completed: subprocess.CompletedProcess[str]) -> dict[str,
 
 
 async def run_turn(
-    slug: str, prompt: str, *, extra_args: list[str] | None = None
+    slug: str,
+    prompt: str,
+    *,
+    extra_args: list[str] | None = None,
+    structured: bool = True,
 ) -> dict[str, Any]:
     """Run one ``claude -p`` turn and return its terminal ``result`` event.
+
+    ``structured`` selects the reply contract: agent turns force the
+    ``{text, tool_calls}`` schema, one-shot completions return the model's own
+    answer verbatim.
 
     Raises :class:`claude_code.ClaudeCodeError` on a non-zero exit, a timeout, or
     a stream with no result event; the caller decodes it via ``claude_bridge``.
     """
-    argv = _build_argv(slug, extra_args or [])
+    argv = _build_argv(slug, extra_args or [], structured=structured)
     completed = await _execute(argv, prompt, _turn_timeout())
     return _decode_transcript(completed)
 

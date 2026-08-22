@@ -212,6 +212,35 @@ def test_build_prompt_includes_history_tools_and_task() -> None:
     assert "tool_calls" in prompt  # the task instruction naming the reply shape
 
 
+def test_toolless_prompt_asks_for_the_answer_not_an_agent_step() -> None:
+    # Strix calls this backend two ways. A turn with tools is an agent step and
+    # must reply in the {text, tool_calls} envelope; a turn with tools=[] is a
+    # one-shot completion (dedupe, preflight) whose caller parses the reply. Give
+    # the second kind the agent framing and the model narrates a step instead of
+    # answering -- which is why dedupe never found the JSON object it asked for.
+    agent_turn = claude_bridge.build_prompt("sys", "do the thing", [_FakeTool()])
+    assert "tool_calls" in agent_turn
+
+    completion = claude_bridge.build_prompt("Reply with JSON.", "compare these", [])
+    assert "tool_calls" not in completion
+    assert "Answer the request above directly" in completion
+
+
+def test_toolless_reply_keeps_the_callers_own_json() -> None:
+    # A one-shot completion answers with the caller's shape, often a JSON object.
+    # Reading that as the {text, tool_calls} envelope finds no "text" key and
+    # reports an empty response, discarding the answer.
+    answer = '{"is_duplicate": false, "duplicate_id": "", "confidence": 0.9}'
+    response = claude_bridge.decode_result({"is_error": False, "result": answer})
+    assert response.output[0].content[0].text == answer
+
+    # An actual envelope is still unwrapped.
+    enveloped = claude_bridge.decode_result(
+        {"is_error": False, "result": '{"text": "hello", "tool_calls": []}'}
+    )
+    assert enveloped.output[0].content[0].text == "hello"
+
+
 def test_build_prompt_string_input() -> None:
     prompt = claude_bridge.build_prompt(None, "just a string", [])
     assert "just a string" in prompt

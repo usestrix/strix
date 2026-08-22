@@ -247,6 +247,30 @@ def _patch_run(
     monkeypatch.setattr(claude_process, "_communicate", lambda *_a, **_k: completed)
 
 
+def test_argv_carries_the_schema_only_for_agent_turns(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    assert "--json-schema" in claude_process._build_argv("claude-opus-4-8", [])
+    assert "--json-schema" not in claude_process._build_argv(
+        "claude-opus-4-8", [], structured=False
+    )
+
+
+def test_toolless_turn_requests_an_unstructured_reply(monkeypatch: pytest.MonkeyPatch) -> None:
+    # tools=[] means a one-shot completion (dedupe, preflight): the caller parses
+    # the reply itself, so the envelope must not be forced onto it.
+    seen: list[bool] = []
+
+    async def _fake_run_turn(_slug: str, _prompt: str, **kwargs: Any) -> dict[str, Any]:
+        seen.append(bool(kwargs.get("structured")))
+        return {"is_error": False, "result": "OK"}
+
+    monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
+    model = _ClaudeCodeModel("claude-opus-4-8")
+
+    asyncio.run(_drive(model))  # _drive passes tools=[]
+    assert seen == [False]
+
+
 def test_run_turn_returns_result_event(monkeypatch: pytest.MonkeyPatch) -> None:
     stdout = (
         '{"type": "system", "subtype": "init"}\n'

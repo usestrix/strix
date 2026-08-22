@@ -94,14 +94,33 @@ def build_prompt(
     if tool_block:
         sections.append(tool_block)
     sections.append("# Conversation\n\n" + _render_input(input))
-    sections.append(
+    sections.append(_task_section(tools=bool(tool_block)))
+    return "\n\n".join(sections)
+
+
+def _task_section(*, tools: bool) -> str:
+    """Closing instruction. A tool-less turn is a plain completion, not an agent step.
+
+    Strix calls this backend two ways: agent turns, which carry tools and must
+    reply in the ``{text, tool_calls}`` schema, and one-shot completions with
+    ``tools=[]`` (deduplication, preflight) whose callers parse the reply
+    themselves. Handing the second kind the agent framing makes the model narrate
+    a "step" instead of answering, which is why dedupe could never find the JSON
+    object it asked for.
+    """
+    if not tools:
+        return (
+            "# Your task\n\n"
+            "Answer the request above directly. Reply with the answer itself and "
+            "nothing else, in exactly the format the instructions ask for."
+        )
+    return (
         "# Your task\n\n"
         "Produce the next single assistant step. Put your narration in `text`. "
         "To act, list the tools to run in `tool_calls` using the exact names and "
         "argument shapes above. Request only tools you need this step; leave "
         "`tool_calls` empty when no action is needed or the task is done."
     )
-    return "\n\n".join(sections)
 
 
 def _render_tools(tools: list[Tool]) -> str:
@@ -291,8 +310,13 @@ def _structured_payload(result: dict[str, Any]) -> dict[str, Any]:
             parsed = json.loads(raw)
         except json.JSONDecodeError:
             return {"text": raw, "tool_calls": []}
-        if isinstance(parsed, dict):
+        # Only a reply shaped like RESULT_SCHEMA is our envelope. A tool-less turn
+        # returns the caller's own answer, which is frequently a JSON object of its
+        # own (dedupe asks for one); treating that as the envelope would read its
+        # missing "text" key as an empty response and discard the answer.
+        if isinstance(parsed, dict) and ("text" in parsed or "tool_calls" in parsed):
             return cast("dict[str, Any]", parsed)
+        return {"text": raw, "tool_calls": []}
     return {"text": "", "tool_calls": []}
 
 
