@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 
 from agents.retry import ModelRetryNormalizedError, RetryPolicyContext
+from agents.run_internal.model_retry import _normalize_retry_error
 
-from strix.config import codex
+from strix.config import claude_bridge, codex
 from strix.config.models import DEFAULT_MODEL_RETRY, _retry_statusless_provider_errors
 
 
@@ -54,8 +55,24 @@ def test_client_error_is_not_retried() -> None:
 
 
 def test_rate_limit_and_server_errors_are_retried() -> None:
-    for status in (429, 500, 502, 503, 504):
+    for status in (429, 500, 502, 503, 504, 529):
         assert _retries(ModelRetryNormalizedError(status_code=status)) is True
+
+
+def test_claude_code_overload_is_retried_end_to_end() -> None:
+    # The Claude Code backend bypasses LiteLLM, so it is the only route that can
+    # surface a bare 529 ("Overloaded"): LiteLLM's exception mapper folds 529 into
+    # a 500 before any policy sees it. Assert the *outcome* through the normalizer
+    # the runner actually uses for a custom Model, not just the tagging — tagging a
+    # status the policy does not list turns a retryable overload into a dead scan.
+    overloaded = claude_bridge.ClaudeStreamError("API Error: Overloaded", status_code=529)
+    normalized = _normalize_retry_error(overloaded, None)
+    assert normalized.status_code == 529
+    assert _retries(normalized, overloaded) is True
+
+    # A rate limit on the same path stays retryable.
+    throttled = claude_bridge.ClaudeStreamError("API Error: 429", status_code=429)
+    assert _retries(_normalize_retry_error(throttled, None), throttled) is True
 
 
 def test_timeout_error_is_retried() -> None:

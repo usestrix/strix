@@ -639,7 +639,11 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
     policy=retry_policies.any(
         retry_policies.provider_suggested(),
         retry_policies.network_error(),
-        retry_policies.http_status((429, 500, 502, 503, 504)),
+        # 529 is Anthropic's "Overloaded". LiteLLM-backed routes never surface it
+        # bare (its exception mapper folds 529 into a 500 InternalServerError), so
+        # this tuple never needed it; the Claude Code backend bypasses LiteLLM and
+        # reports the status the CLI gives it, making it the first route that can.
+        retry_policies.http_status((429, 500, 502, 503, 504, 529)),
         _retry_statusless_provider_errors,
     ),
 )
