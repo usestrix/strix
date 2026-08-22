@@ -7,12 +7,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
+from openai.types.responses import (
+    ResponseFunctionToolCall,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 
 from strix.config import claude_bridge
 
 
 if TYPE_CHECKING:
-    from agents.items import TResponseInputItem
+    from agents.items import ModelResponse, TResponseInputItem
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code"
@@ -31,17 +36,29 @@ def _tool_output(blocks: list[dict[str, Any]]) -> TResponseInputItem:
     )
 
 
-def _decode(name: str) -> object:
+def _decode(name: str) -> ModelResponse:
     lines = (FIXTURES / name).read_text(encoding="utf-8").splitlines()
     return claude_bridge.decode_result(claude_bridge.parse_transcript(lines))
+
+
+def _assistant_text(response: ModelResponse) -> str:
+    """The assistant prose from a decoded turn, narrowed out of the output union."""
+    message = response.output[0]
+    assert isinstance(message, ResponseOutputMessage)
+    block = message.content[0]
+    assert isinstance(block, ResponseOutputText)
+    return block.text
+
+
+def _tool_calls(response: ModelResponse) -> list[ResponseFunctionToolCall]:
+    """Just the function calls, narrowed out of the output union."""
+    return [item for item in response.output if isinstance(item, ResponseFunctionToolCall)]
 
 
 def test_decode_simple_text() -> None:
     response = _decode("simple_text.jsonl")
     assert len(response.output) == 1
-    message = response.output[0]
-    assert message.type == "message"
-    assert message.content[0].text.startswith("Reconnaissance complete")
+    assert _assistant_text(response).startswith("Reconnaissance complete")
     # input_tokens folds both cache counters in, matching what LiteLLM's Anthropic
     # transformation reports for the same model on the metered route: 1200 raw
     # + 29225 cache reads + 24303 cache writes.
@@ -129,7 +146,7 @@ def test_result_cost_reads_the_cli_total() -> None:
 
 def test_decode_tool_request() -> None:
     response = _decode("tool_request.jsonl")
-    calls = [item for item in response.output if getattr(item, "type", None) == "function_call"]
+    calls = _tool_calls(response)
     assert [c.name for c in calls] == ["shell", "browser"]
     assert json.loads(calls[0].arguments) == {"command": "nmap -sV 10.0.0.1"}
     # Every emitted call gets a stable id shared between id and call_id.
@@ -139,7 +156,7 @@ def test_decode_tool_request() -> None:
 
 def test_decode_skips_non_json_lines() -> None:
     response = _decode("noisy.jsonl")
-    assert response.output[0].content[0].text == "done"
+    assert _assistant_text(response) == "done"
 
 
 def test_decode_rate_limit_raises_retryable() -> None:
@@ -168,7 +185,7 @@ def test_structured_output_falls_back_to_result_string() -> None:
         "usage": {"input_tokens": 5, "output_tokens": 1},
     }
     response = claude_bridge.decode_result(result)
-    assert response.output[0].content[0].text == "hi"
+    assert _assistant_text(response) == "hi"
 
 
 def test_mcp_prefixed_tool_names_are_stripped() -> None:
@@ -181,7 +198,7 @@ def test_mcp_prefixed_tool_names_are_stripped() -> None:
         "usage": {"input_tokens": 1, "output_tokens": 1},
     }
     response = claude_bridge.decode_result(result)
-    calls = [i for i in response.output if getattr(i, "type", None) == "function_call"]
+    calls = _tool_calls(response)
     assert calls[0].name == "shell"
 
 
@@ -232,13 +249,13 @@ def test_toolless_reply_keeps_the_callers_own_json() -> None:
     # reports an empty response, discarding the answer.
     answer = '{"is_duplicate": false, "duplicate_id": "", "confidence": 0.9}'
     response = claude_bridge.decode_result({"is_error": False, "result": answer})
-    assert response.output[0].content[0].text == answer
+    assert _assistant_text(response) == answer
 
     # An actual envelope is still unwrapped.
     enveloped = claude_bridge.decode_result(
         {"is_error": False, "result": '{"text": "hello", "tool_calls": []}'}
     )
-    assert enveloped.output[0].content[0].text == "hello"
+    assert _assistant_text(enveloped) == "hello"
 
 
 def test_build_prompt_string_input() -> None:
