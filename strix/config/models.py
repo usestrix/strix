@@ -272,7 +272,7 @@ class _ClaudeCodeModel(Model):
     (the model is stateless; Strix resends the full conversation each turn),
     forcing a single structured reply that ``claude_bridge`` folds into a
     ``ModelResponse``. Auth, token refresh, and the wire protocol are Claude
-    Code's problem, not ours. See ``.artifacts/DESIGN.md`` (Option B).
+    Code's problem, not ours.
 
     A ``ClaudeStreamError`` carrying a 429/5xx ``status_code`` propagates
     unwrapped so the runner's retry policy classifies it exactly as it would an

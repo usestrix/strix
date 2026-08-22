@@ -290,7 +290,7 @@ def _login_claude(console: Console) -> int:
         return result.returncode
     console.print(
         "[green]Signed in with Claude.[/] Set [cyan]STRIX_LLM[/] to a "
-        "[cyan]claude-code/[/] model, e.g. [cyan]claude-code/claude-opus-4-8[/]."
+        "[cyan]claude-code/[/] model, e.g. [cyan]claude-code/claude-opus-5[/]."
     )
     return 0
 

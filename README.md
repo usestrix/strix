@@ -329,7 +329,7 @@ sign-in — Strix never stores your Claude credentials:
 ```bash
 strix auth login claude      # delegates to the Claude Code CLI (claude auth login)
 
-export STRIX_LLM="claude-code/claude-opus-4-8"   # claude-code/<model> runs on the subscription
+export STRIX_LLM="claude-code/claude-opus-5"   # claude-code/<model> runs on the subscription
 strix --target ./app-directory
 
 strix auth status            # show the active sign-in

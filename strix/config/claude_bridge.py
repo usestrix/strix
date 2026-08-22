@@ -1,8 +1,7 @@
 """Pure translation between Strix's Agents-SDK I/O and ``claude -p`` structured output.
 
 No subprocess, no network, this module is a function of bytes to objects, so it
-tests against recorded ``claude -p`` transcripts with no live calls. See
-``.artifacts/SPIKE-DECISION.md`` for the 4b protocol these functions implement.
+tests against recorded ``claude -p`` transcripts with no live calls.
 
 The contract with Claude Code (driven via ``--json-schema`` + ``--tools ""``):
 Strix renders one turn's worth of history and tool descriptions into a single
@@ -297,8 +296,8 @@ def _structured_payload(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def _strip_namespace(name: str) -> str:
-    # If a future 4a path surfaces MCP-prefixed names (mcp__strix__shell), the run
-    # loop only knows the bare tool name it registered.
+    # If an MCP-based transport ever surfaces prefixed names (mcp__strix__shell),
+    # the run loop only knows the bare tool name it registered.
     if name.startswith("mcp__"):
         return name.rsplit("__", 1)[-1]
     return name

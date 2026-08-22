@@ -4,8 +4,8 @@ Strix runs its agents on a Claude Pro/Max subscription by shelling out to the
 user's installed Claude Code binary in non-interactive mode (``claude -p``).
 Claude Code owns auth, token refresh, and the wire protocol; this module only
 locates the binary, reports its version and sign-in state, and parses the
-``claude-code/<model>`` STRIX_LLM prefix. There is deliberately no OAuth here,
-that is the whole point of Option B (see ``.artifacts/DESIGN.md``).
+``claude-code/<model>`` STRIX_LLM prefix. There is deliberately no OAuth here:
+not lifting the token out of the user's credentials file is the whole point.
 """
 
 from __future__ import annotations
