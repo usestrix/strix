@@ -1552,7 +1552,30 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
     ]
 
 
-def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None) -> str:
+DEFAULT_GIT_CLONE_TIMEOUT_SECONDS: float = 120.0
+
+
+def clone_repository(
+    repo_url: str,
+    run_name: str,
+    dest_name: str | None = None,
+    timeout: float = DEFAULT_GIT_CLONE_TIMEOUT_SECONDS,
+) -> str:
+    """Clone a git repository to a temporary workspace for scanning.
+
+    Args:
+        repo_url: The URL or path of the git repository to clone.
+        run_name: The current run identifier used for namespacing temporary files.
+        dest_name: Optional custom subdirectory/destination name for the clone.
+        timeout: Maximum time in seconds to wait for the clone operation before timing out.
+
+    Returns:
+        The absolute path to the cloned repository directory.
+
+    Raises:
+        ValueError: If git fails to clone, times out, or git is not installed.
+        FileNotFoundError: If git executable cannot be found in PATH.
+    """
     console = Console()
 
     git_executable = shutil.which("git")
@@ -1584,10 +1607,18 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=timeout,
             )
 
         return str(clone_path.absolute())
 
+    except subprocess.TimeoutExpired as e:
+        if clone_path.exists():
+            shutil.rmtree(clone_path, ignore_errors=True)
+        raise ValueError(
+            f"Cloning repository {repo_url} timed out after {int(timeout)}s. "
+            "Please check network connectivity or clone the repository locally first."
+        ) from e
     except subprocess.CalledProcessError as e:
         detail = e.stderr if hasattr(e, "stderr") and e.stderr else str(e)
         raise ValueError(f"Could not clone repository {repo_url}: {detail}") from e
