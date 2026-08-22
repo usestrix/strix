@@ -177,7 +177,7 @@ async def test_root_prompt_options_default_to_none(
 
     kwargs = captured["kwargs"]
     assert kwargs["instructions_override"] is None
-    assert kwargs["system_prompt_context"] == {"scope": "built-in"}
+    assert kwargs["system_prompt_context"] == {"scope": "built-in", "tool_mode": "native"}
 
 
 @pytest.mark.asyncio

@@ -245,6 +245,18 @@ Examples:
     )
 
     parser.add_argument(
+        "--llm-tool-mode",
+        dest="llm_tool_mode",
+        choices=["native", "text-tags"],
+        default="native",
+        help=(
+            "Tool dispatch mode for the LLM. Use 'text-tags' to provide a fallback "
+            "dispatch mode for local or small models that fail to emit structured tool_calls. "
+            "Default: native."
+        ),
+    )
+
+    parser.add_argument(
         "--resume",
         type=str,
         metavar="RUN_NAME",
@@ -266,6 +278,10 @@ Examples:
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
+
+    if args.llm_tool_mode and args.llm_tool_mode != "native":
+        import os
+        os.environ["LLM_TOOL_MODE"] = args.llm_tool_mode
 
     if args.update:
         sys.exit(0 if self_update() else 1)

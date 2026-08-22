@@ -63,6 +63,10 @@ class LlmSettings(BaseSettings):
         ge=0,
         alias="LLM_MAX_TOOL_CALLS_PER_TURN",
     )
+    tool_mode: Literal["native", "text-tags"] = Field(
+        default="native",
+        alias="LLM_TOOL_MODE",
+    )
 
 
 class DedupeSettings(BaseSettings):
