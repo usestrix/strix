@@ -4,14 +4,31 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 
 from strix.config import claude_bridge
 
 
+if TYPE_CHECKING:
+    from agents.items import TResponseInputItem
+
+
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code"
+
+
+def _tool_output(blocks: list[dict[str, Any]]) -> TResponseInputItem:
+    """A ``function_call_output`` whose output is a list of raw content blocks.
+
+    The SDK's ``FunctionCallOutput`` TypedDict declares ``output`` as a plain
+    string, so a block list has to be cast in; the runtime item really does carry
+    one when a tool returns mixed text and images.
+    """
+    return cast(
+        "TResponseInputItem",
+        {"type": "function_call_output", "call_id": "c1", "output": blocks},
+    )
 
 
 def _decode(name: str) -> object:
@@ -207,14 +224,12 @@ def test_image_tool_result_is_marked_not_dropped() -> None:
     prompt = claude_bridge.build_prompt(
         None,
         [
-            {
-                "type": "function_call_output",
-                "call_id": "c1",
-                "output": [
+            _tool_output(
+                [
                     {"type": "output_text", "text": "page loaded"},
                     {"type": "output_image", "image_url": "data:image/png;base64,AAAA"},
-                ],
-            },
+                ]
+            ),
         ],
         [],
     )
@@ -230,11 +245,7 @@ def test_non_image_block_with_a_source_key_keeps_its_text() -> None:
     prompt = claude_bridge.build_prompt(
         None,
         [
-            {
-                "type": "function_call_output",
-                "call_id": "c1",
-                "output": [{"type": "output_text", "text": "see app.py:5", "source": "app.py"}],
-            },
+            _tool_output([{"type": "output_text", "text": "see app.py:5", "source": "app.py"}]),
         ],
         [],
     )
