@@ -499,7 +499,20 @@ class _TextTagDispatchModel(Model):
 
         for item in response.output:
             if getattr(item, "type", None) == "message":
-                content = getattr(item, "content", "")
+                raw_content = getattr(item, "content", "")
+                
+                if isinstance(raw_content, list):
+                    content = ""
+                    for part in raw_content:
+                        if isinstance(part, str):
+                            content += part
+                        elif isinstance(part, dict) and "text" in part:
+                            content += part["text"]
+                        elif hasattr(part, "text"):
+                            content += part.text
+                else:
+                    content = str(raw_content) if raw_content else ""
+                    
                 if content and "[TOOL:" in content:
                     matches = list(TEXT_TAG_PATTERN.finditer(content))
                     if matches:
