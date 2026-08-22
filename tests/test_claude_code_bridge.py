@@ -25,11 +25,52 @@ def test_decode_simple_text() -> None:
     message = response.output[0]
     assert message.type == "message"
     assert message.content[0].text.startswith("Reconnaissance complete")
-    assert response.usage.input_tokens == 1200
+    # input_tokens folds both cache counters in, matching what LiteLLM's Anthropic
+    # transformation reports for the same model on the metered route: 1200 raw
+    # + 29225 cache reads + 24303 cache writes.
+    assert response.usage.input_tokens == 54_728
     assert response.usage.output_tokens == 45
-    assert response.usage.total_tokens == 1245
+    assert response.usage.total_tokens == 54_773
     assert response.usage.input_tokens_details.cached_tokens == 29225
     assert response.usage.input_tokens_details.cache_write_tokens == 24303
+
+
+def test_usage_folds_cache_tokens_like_litellm() -> None:
+    # Regression guard for a ~50x undercount, with the numbers taken from a real
+    # `claude -p` turn: Anthropic excludes both cache counters from input_tokens,
+    # and litellm's Anthropic transformation folds them back in. A turn on
+    # claude-code/ must report what the same turn on anthropic/ would.
+    raw = {
+        "is_error": False,
+        "structured_output": {"text": "ok", "tool_calls": []},
+        "usage": {
+            "input_tokens": 3,
+            "cache_creation_input_tokens": 7253,
+            "cache_read_input_tokens": 0,
+            "output_tokens": 140,
+            "output_tokens_details": {"thinking_tokens": 36},
+        },
+    }
+    usage = claude_bridge.decode_result(raw).usage
+    assert usage.input_tokens == 7256
+    assert usage.total_tokens == 7396
+    assert usage.output_tokens_details.reasoning_tokens == 36
+
+
+def test_usage_ignores_a_cache_excluding_total_tokens() -> None:
+    # A `total_tokens` supplied by the CLI would carry Anthropic's cache-excluding
+    # meaning; honouring it reopens exactly the undercount the fold closes.
+    raw = {
+        "is_error": False,
+        "structured_output": {"text": "", "tool_calls": []},
+        "usage": {
+            "input_tokens": 10,
+            "cache_read_input_tokens": 990,
+            "output_tokens": 5,
+            "total_tokens": 15,
+        },
+    }
+    assert claude_bridge.decode_result(raw).usage.total_tokens == 1005
 
 
 def test_decode_tool_request() -> None:

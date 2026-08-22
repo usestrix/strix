@@ -311,11 +311,16 @@ def _error_status(result: dict[str, Any]) -> int | None:
 
 def _decode_usage(raw: Any) -> Usage:
     data: dict[str, Any] = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
-    input_tokens = int(data.get("input_tokens") or 0)
-    output_tokens = int(data.get("output_tokens") or 0)
     cached = int(data.get("cache_read_input_tokens") or 0)
     cache_write = int(data.get("cache_creation_input_tokens") or 0)
-    total = data.get("total_tokens")
+    # Anthropic reports input_tokens EXCLUDING both cache counters. Every other
+    # Strix route normalizes through LiteLLM, whose Anthropic transformation does
+    # `prompt_tokens += cache_creation_input_tokens + cache_read_input_tokens`, so
+    # reporting the bare number here undercounts a cache-heavy turn by orders of
+    # magnitude (a real turn measured 143 tokens against an actual 7396) and
+    # starves the budget guard on a metered session.
+    input_tokens = int(data.get("input_tokens") or 0) + cached + cache_write
+    output_tokens = int(data.get("output_tokens") or 0)
     return Usage(
         requests=1,
         input_tokens=input_tokens,
@@ -323,6 +328,17 @@ def _decode_usage(raw: Any) -> Usage:
             cached_tokens=cached, cache_write_tokens=cache_write
         ),
         output_tokens=output_tokens,
-        output_tokens_details=OutputTokensDetails(reasoning_tokens=0),
-        total_tokens=int(total) if isinstance(total, int) else input_tokens + output_tokens,
+        output_tokens_details=OutputTokensDetails(reasoning_tokens=_thinking_tokens(data)),
+        # Derived, never read back from the payload: a `total_tokens` the CLI
+        # supplied would carry Anthropic's cache-excluding semantics and reopen
+        # the same undercount.
+        total_tokens=input_tokens + output_tokens,
     )
+
+
+def _thinking_tokens(data: dict[str, Any]) -> int:
+    """Extended-thinking tokens, which Anthropic nests under output_tokens_details."""
+    details = data.get("output_tokens_details")
+    if not isinstance(details, dict):
+        return 0
+    return int(cast("dict[str, Any]", details).get("thinking_tokens") or 0)

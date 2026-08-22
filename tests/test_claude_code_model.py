@@ -85,7 +85,8 @@ def test_stream_response_yields_one_completed_event(monkeypatch: pytest.MonkeyPa
     assert isinstance(events[0], ResponseCompletedEvent)
     response = events[0].response
     assert response.output[0].content[0].text.startswith("Reconnaissance")
-    assert response.usage.input_tokens == 1200
+    # 1200 raw input + 29225 cache reads + 24303 cache writes, as _decode_usage folds them.
+    assert response.usage.input_tokens == 54_728
 
 
 def test_get_response_returns_model_response(monkeypatch: pytest.MonkeyPatch) -> None:
