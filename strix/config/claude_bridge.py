@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
 
@@ -315,18 +316,57 @@ def _error_status(result: dict[str, Any]) -> int | None:
     return None
 
 
+def _finite_number(value: Any) -> float | None:
+    """``value`` as a float when it is a real, finite number, else None.
+
+    Everything here is decoded from CLI stdout, and ``json.loads`` accepts the
+    non-standard ``Infinity``/``NaN`` literals, so a malformed field would
+    otherwise reach the accounting layer as an unusable float. ``bool`` is
+    excluded explicitly because it is an ``int`` subclass.
+    """
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    number = float(value)
+    return number if math.isfinite(number) else None
+
+
+def _token_count(data: dict[str, Any], key: str) -> int:
+    """Non-negative token count for ``key``, tolerating a malformed payload.
+
+    A field that is missing, null, or not a finite number degrades to zero: a
+    usage block Strix cannot read is a reporting problem, not a reason to fail an
+    agent turn that already succeeded. A value that is present but unreadable is
+    logged, so a wire-format change shows up as something other than silence.
+    """
+    raw = data.get(key)
+    number = _finite_number(raw)
+    if number is None:
+        if raw is not None:
+            logger.debug("unreadable claude -p usage field %s: %r", key, raw)
+        return 0
+    return max(0, int(number))
+
+
+def _thinking_tokens(data: dict[str, Any]) -> int:
+    """Extended-thinking tokens, which Anthropic nests under output_tokens_details."""
+    details = data.get("output_tokens_details")
+    if not isinstance(details, dict):
+        return 0
+    return _token_count(cast("dict[str, Any]", details), "thinking_tokens")
+
+
 def _decode_usage(raw: Any) -> Usage:
     data: dict[str, Any] = cast("dict[str, Any]", raw) if isinstance(raw, dict) else {}
-    cached = int(data.get("cache_read_input_tokens") or 0)
-    cache_write = int(data.get("cache_creation_input_tokens") or 0)
+    cached = _token_count(data, "cache_read_input_tokens")
+    cache_write = _token_count(data, "cache_creation_input_tokens")
     # Anthropic reports input_tokens EXCLUDING both cache counters. Every other
     # Strix route normalizes through LiteLLM, whose Anthropic transformation does
     # `prompt_tokens += cache_creation_input_tokens + cache_read_input_tokens`, so
     # reporting the bare number here undercounts a cache-heavy turn by orders of
     # magnitude (a real turn measured 143 tokens against an actual 7396) and
     # starves the budget guard on a metered session.
-    input_tokens = int(data.get("input_tokens") or 0) + cached + cache_write
-    output_tokens = int(data.get("output_tokens") or 0)
+    input_tokens = _token_count(data, "input_tokens") + cached + cache_write
+    output_tokens = _token_count(data, "output_tokens")
     return Usage(
         requests=1,
         input_tokens=input_tokens,
@@ -351,17 +391,8 @@ def result_cost(result: dict[str, Any]) -> float | None:
     ``claude-code/<slug>`` name LiteLLM does not carry a first-party price for.
 
     On a subscription the ledger discards this; on an API-key session it is the
-    charge the budget guard has to see.
+    charge the budget guard has to see, so an unreadable value must read as
+    "nothing to record" rather than reach the guard.
     """
-    cost = result.get("total_cost_usd")
-    if isinstance(cost, bool) or not isinstance(cost, int | float):
-        return None
-    return float(cost) if cost > 0 else None
-
-
-def _thinking_tokens(data: dict[str, Any]) -> int:
-    """Extended-thinking tokens, which Anthropic nests under output_tokens_details."""
-    details = data.get("output_tokens_details")
-    if not isinstance(details, dict):
-        return 0
-    return int(cast("dict[str, Any]", details).get("thinking_tokens") or 0)
+    cost = _finite_number(result.get("total_cost_usd"))
+    return cost if cost is not None and cost > 0 else None

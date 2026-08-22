@@ -73,6 +73,33 @@ def test_usage_ignores_a_cache_excluding_total_tokens() -> None:
     assert claude_bridge.decode_result(raw).usage.total_tokens == 1005
 
 
+def test_usage_survives_a_malformed_payload() -> None:
+    # The usage block is CLI stdout, so it is untrusted input. An unreadable field
+    # must degrade to zero rather than fail a turn that already produced a valid
+    # result -- `int("not a number")` would raise straight through the run loop.
+    raw = {
+        "is_error": False,
+        "structured_output": {"text": "ok", "tool_calls": []},
+        "usage": {
+            "input_tokens": "not a number",
+            "cache_read_input_tokens": {"nested": 1},
+            "cache_creation_input_tokens": float("nan"),
+            "output_tokens": -5,
+        },
+    }
+    usage = claude_bridge.decode_result(raw).usage
+    assert usage.input_tokens == 0
+    assert usage.output_tokens == 0
+    assert usage.total_tokens == 0
+
+
+def test_result_cost_rejects_non_finite_values() -> None:
+    # json.loads accepts the non-standard `Infinity` and `NaN` literals, and an
+    # infinite cost handed to the ledger would trip the budget guard permanently.
+    assert claude_bridge.result_cost({"total_cost_usd": float("inf")}) is None
+    assert claude_bridge.result_cost({"total_cost_usd": float("nan")}) is None
+
+
 def test_result_cost_reads_the_cli_total() -> None:
     assert claude_bridge.result_cost({"total_cost_usd": 0.046686}) == pytest.approx(0.046686)
     # Absent, zero, or non-numeric means "nothing to record", not "free".
