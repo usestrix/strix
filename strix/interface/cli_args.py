@@ -50,6 +50,16 @@ def _positive_int(value: str) -> int:
     return parsed
 
 
+def _non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be an integer greater than or equal to 0")
+    return parsed
+
+
 def parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
@@ -241,6 +251,18 @@ Examples:
         help=(
             "Maximum turns per agent (> 0, default %(default)s). Each agent is force-stopped "
             "when it reaches this limit, with graduated wrap-up warnings as it is approached."
+        ),
+    )
+
+    parser.add_argument(
+        "--git-clone-timeout",
+        dest="git_clone_timeout",
+        metavar="SECONDS",
+        type=_non_negative_int,
+        default=None,
+        help=(
+            "Maximum time in seconds to wait when cloning a remote git repository "
+            "(default: from STRIX_GIT_CLONE_TIMEOUT or 300s, 0 disables timeout)."
         ),
     )
 
