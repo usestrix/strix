@@ -242,6 +242,28 @@ class _NonStreamingModel(Model):
         yield _completed_stream_event(response, getattr(self._inner, "model", None))
 
 
+def _record_claude_code_cost(result: dict[str, Any]) -> None:
+    """Hand Claude Code's own per-turn cost to the run ledger.
+
+    This backend never reaches LiteLLM, so ``litellm_cost_callback`` -- the hook
+    every metered route relies on -- never fires for it. The ledger drops the
+    value on a subscription run (``zero_cost``) and uses it in place of a local
+    estimate on an API-key run, where the budget guard depends on it.
+    """
+    cost = claude_bridge.result_cost(result)
+    if cost is None:
+        return
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    try:
+        report_state.record_observed_llm_cost(cost)
+    except Exception:
+        logger.exception("Failed to record observed Claude Code cost")
+
+
 class _ClaudeCodeModel(Model):
     """Run a turn on a Claude Pro/Max subscription via the ``claude -p`` binary.
 
@@ -276,7 +298,9 @@ class _ClaudeCodeModel(Model):
     ) -> ModelResponse:
         prompt = claude_bridge.build_prompt(system_instructions, input, tools)
         result = await claude_process.run_turn(self._slug, prompt, extra_args=self._extra_args())
-        return claude_bridge.decode_result(result)
+        response = claude_bridge.decode_result(result)
+        _record_claude_code_cost(result)
+        return response
 
     async def get_response(
         self,

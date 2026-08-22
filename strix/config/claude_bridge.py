@@ -336,6 +336,23 @@ def _decode_usage(raw: Any) -> Usage:
     )
 
 
+def result_cost(result: dict[str, Any]) -> float | None:
+    """The dollar cost Claude Code computed for this turn, or None.
+
+    Authoritative in a way a local estimate is not: the CLI prices every model the
+    turn touched (it may dispatch a cheaper side model of its own) at that model's
+    real rate, whereas Strix would have to guess a single rate from a
+    ``claude-code/<slug>`` name LiteLLM does not carry a first-party price for.
+
+    On a subscription the ledger discards this; on an API-key session it is the
+    charge the budget guard has to see.
+    """
+    cost = result.get("total_cost_usd")
+    if isinstance(cost, bool) or not isinstance(cost, int | float):
+        return None
+    return float(cost) if cost > 0 else None
+
+
 def _thinking_tokens(data: dict[str, Any]) -> int:
     """Extended-thinking tokens, which Anthropic nests under output_tokens_details."""
     details = data.get("output_tokens_details")

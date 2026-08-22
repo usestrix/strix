@@ -73,6 +73,16 @@ def test_usage_ignores_a_cache_excluding_total_tokens() -> None:
     assert claude_bridge.decode_result(raw).usage.total_tokens == 1005
 
 
+def test_result_cost_reads_the_cli_total() -> None:
+    assert claude_bridge.result_cost({"total_cost_usd": 0.046686}) == pytest.approx(0.046686)
+    # Absent, zero, or non-numeric means "nothing to record", not "free".
+    assert claude_bridge.result_cost({}) is None
+    assert claude_bridge.result_cost({"total_cost_usd": 0}) is None
+    assert claude_bridge.result_cost({"total_cost_usd": "0.15"}) is None
+    # bool is an int subclass; True must not read as a $1 charge.
+    assert claude_bridge.result_cost({"total_cost_usd": True}) is None
+
+
 def test_decode_tool_request() -> None:
     response = _decode("tool_request.jsonl")
     calls = [item for item in response.output if getattr(item, "type", None) == "function_call"]

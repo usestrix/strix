@@ -23,6 +23,7 @@ from strix.config.models import (
     _TurnGuardModel,
     uses_chat_completions_tool_schema,
 )
+from strix.report import state as report_state
 
 
 if TYPE_CHECKING:
@@ -87,6 +88,47 @@ def test_stream_response_yields_one_completed_event(monkeypatch: pytest.MonkeyPa
     assert response.output[0].content[0].text.startswith("Reconnaissance")
     # 1200 raw input + 29225 cache reads + 24303 cache writes, as _decode_usage folds them.
     assert response.usage.input_tokens == 54_728
+
+
+def test_turn_hands_the_cli_reported_cost_to_the_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This backend never reaches LiteLLM, so litellm_cost_callback -- the hook every
+    # metered route relies on -- never fires for it. Without this the ledger sees no
+    # cost at all on an API-key session and the budget guard has nothing to stop.
+    event = _result_event("simple_text.jsonl")  # carries total_cost_usd: 0.15
+    recorded: list[float] = []
+
+    class _Recorder:
+        def record_observed_llm_cost(self, cost: float) -> None:
+            recorded.append(cost)
+
+    async def _fake_run_turn(_slug: str, _prompt: str, **_kwargs: Any) -> dict[str, Any]:
+        return event
+
+    monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
+    monkeypatch.setattr(report_state, "get_global_report_state", _Recorder)
+
+    asyncio.run(_drive(_ClaudeCodeModel("claude-opus-4-8")))
+    assert recorded == [0.15]
+
+
+def test_turn_records_nothing_when_the_cli_reports_no_cost(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    event = _result_event("noisy.jsonl")  # no total_cost_usd
+    recorded: list[float] = []
+
+    class _Recorder:
+        def record_observed_llm_cost(self, cost: float) -> None:
+            recorded.append(cost)
+
+    async def _fake_run_turn(_slug: str, _prompt: str, **_kwargs: Any) -> dict[str, Any]:
+        return event
+
+    monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
+    monkeypatch.setattr(report_state, "get_global_report_state", _Recorder)
+
+    asyncio.run(_drive(_ClaudeCodeModel("claude-opus-4-8")))
+    assert recorded == []
 
 
 def test_get_response_returns_model_response(monkeypatch: pytest.MonkeyPatch) -> None:
