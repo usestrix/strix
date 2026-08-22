@@ -90,11 +90,9 @@ def test_stream_response_yields_one_completed_event(monkeypatch: pytest.MonkeyPa
     assert response.usage.input_tokens == 54_728
 
 
-def test_turn_hands_the_cli_reported_cost_to_the_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
-    # This backend never reaches LiteLLM, so litellm_cost_callback -- the hook every
-    # metered route relies on -- never fires for it. Without this the ledger sees no
-    # cost at all on an API-key session and the budget guard has nothing to stop.
-    event = _result_event("simple_text.jsonl")  # carries total_cost_usd: 0.15
+def _costs_recorded_for(monkeypatch: pytest.MonkeyPatch, fixture: str) -> list[float]:
+    """Drive one turn off ``fixture`` and return what reached the cost ledger."""
+    event = _result_event(fixture)
     recorded: list[float] = []
 
     class _Recorder:
@@ -108,27 +106,20 @@ def test_turn_hands_the_cli_reported_cost_to_the_ledger(monkeypatch: pytest.Monk
     monkeypatch.setattr(report_state, "get_global_report_state", _Recorder)
 
     asyncio.run(_drive(_ClaudeCodeModel("claude-opus-4-8")))
-    assert recorded == [0.15]
+    return recorded
+
+
+def test_turn_hands_the_cli_reported_cost_to_the_ledger(monkeypatch: pytest.MonkeyPatch) -> None:
+    # This backend never reaches LiteLLM, so litellm_cost_callback -- the hook every
+    # metered route relies on -- never fires for it. Without this the ledger sees no
+    # cost at all on an API-key session and the budget guard has nothing to stop.
+    assert _costs_recorded_for(monkeypatch, "simple_text.jsonl") == [0.15]
 
 
 def test_turn_records_nothing_when_the_cli_reports_no_cost(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    event = _result_event("noisy.jsonl")  # no total_cost_usd
-    recorded: list[float] = []
-
-    class _Recorder:
-        def record_observed_llm_cost(self, cost: float) -> None:
-            recorded.append(cost)
-
-    async def _fake_run_turn(_slug: str, _prompt: str, **_kwargs: Any) -> dict[str, Any]:
-        return event
-
-    monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
-    monkeypatch.setattr(report_state, "get_global_report_state", _Recorder)
-
-    asyncio.run(_drive(_ClaudeCodeModel("claude-opus-4-8")))
-    assert recorded == []
+    assert _costs_recorded_for(monkeypatch, "noisy.jsonl") == []
 
 
 def test_get_response_returns_model_response(monkeypatch: pytest.MonkeyPatch) -> None:

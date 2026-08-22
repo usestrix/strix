@@ -119,8 +119,8 @@ def _spawn(argv: list[str]) -> subprocess.Popen[str]:
     )
 
 
-def _kill(process: subprocess.Popen[str]) -> None:
-    """Kill the child if it is still running. A no-op once it has exited."""
+def _kill_if_running(process: subprocess.Popen[str]) -> None:
+    """Kill the child unless it has already exited."""
     if process.poll() is not None:
         return
     with contextlib.suppress(OSError):
@@ -130,12 +130,13 @@ def _kill(process: subprocess.Popen[str]) -> None:
 def _communicate(
     process: subprocess.Popen[str], prompt: str, timeout: float
 ) -> subprocess.CompletedProcess[str]:
+    """Feed the prompt in, read the streams out, and wait. Blocking; runs on a thread."""
     try:
         stdout, stderr = process.communicate(prompt, timeout=timeout)
     except subprocess.TimeoutExpired:
         # Popen.communicate() leaves the child running on timeout, unlike
         # subprocess.run(); reap it here so the timeout is not itself a leak.
-        _kill(process)
+        _kill_if_running(process)
         process.communicate()
         raise
     return subprocess.CompletedProcess(
@@ -143,23 +144,21 @@ def _communicate(
     )
 
 
-async def run_turn(
-    slug: str, prompt: str, *, extra_args: list[str] | None = None
-) -> dict[str, Any]:
-    """Run one ``claude -p`` turn and return its terminal ``result`` event.
+async def _execute(
+    argv: list[str], prompt: str, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    """Run one bounded ``claude -p`` process, never leaving the child behind.
 
-    Raises :class:`claude_code.ClaudeCodeError` on a non-zero exit, a timeout, or
-    a stream with no result event; the caller decodes it via ``claude_bridge``.
+    Raises :class:`claude_code.ClaudeCodeError` if the process cannot be launched,
+    times out, or fails mid-turn.
     """
-    argv = _build_argv(slug, extra_args or [])
-    timeout = _turn_timeout()
     async with _get_semaphore():
         try:
             process = _spawn(argv)
         except OSError as exc:
             raise claude_code.ClaudeCodeError(f"could not launch claude -p: {exc}") from exc
         try:
-            completed = await asyncio.to_thread(_communicate, process, prompt, timeout)
+            return await asyncio.to_thread(_communicate, process, prompt, timeout)
         except subprocess.TimeoutExpired as exc:
             raise claude_code.ClaudeCodeError(f"claude -p timed out after {timeout:.0f}s") from exc
         except OSError as exc:  # the child is already running, so this is a pipe failure
@@ -173,12 +172,17 @@ async def run_turn(
             # subscription quota, and real concurrency can exceed
             # STRIX_CLAUDE_CODE_MAX_PROCS exactly when turns are being abandoned.
             # Killing it also lets the stranded worker thread finish.
-            _kill(process)
+            _kill_if_running(process)
 
-    # A result event, if present, is authoritative even on a non-zero exit: the
-    # CLI reports API errors (429/overload) in its api_error_status, and the model
-    # layer decodes that into a retryable ClaudeStreamError. So try to parse it
-    # first; only fall back to a generic error when there is no result event.
+
+def _decode_transcript(completed: subprocess.CompletedProcess[str]) -> dict[str, Any]:
+    """Pull the terminal ``result`` event out of a finished turn's stdout.
+
+    A result event is authoritative even on a non-zero exit: the CLI reports API
+    errors (429/overload) in its ``api_error_status``, and the model layer decodes
+    that into a retryable ``ClaudeStreamError``. So parse first, and fall back to a
+    generic error only when there is no result event to read.
+    """
     try:
         return claude_bridge.parse_transcript(completed.stdout.splitlines())
     except claude_bridge.ClaudeStreamError as exc:
@@ -189,6 +193,19 @@ async def run_turn(
         raise claude_code.ClaudeCodeError(
             f"claude -p produced no result event (stderr: {_tail(completed.stderr)})"
         ) from exc
+
+
+async def run_turn(
+    slug: str, prompt: str, *, extra_args: list[str] | None = None
+) -> dict[str, Any]:
+    """Run one ``claude -p`` turn and return its terminal ``result`` event.
+
+    Raises :class:`claude_code.ClaudeCodeError` on a non-zero exit, a timeout, or
+    a stream with no result event; the caller decodes it via ``claude_bridge``.
+    """
+    argv = _build_argv(slug, extra_args or [])
+    completed = await _execute(argv, prompt, _turn_timeout())
+    return _decode_transcript(completed)
 
 
 def _tail(stderr: str, *, limit: int = 400) -> str:
