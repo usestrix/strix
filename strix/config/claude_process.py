@@ -4,11 +4,15 @@ One ``claude -p`` invocation per Strix turn (the SDK model is stateless, Strix
 resends the full conversation each turn, so a warm pipe would carry nothing).
 
 The turn is a plain request/response (write the prompt, read all output), so it
-runs as a **blocking** ``subprocess.run`` inside ``asyncio.to_thread``. That is
-deliberate: on Windows Strix forces a ``SelectorEventLoop``, which cannot spawn
-subprocesses (``asyncio.create_subprocess_exec`` raises a bare
+runs as a **blocking** ``Popen.communicate`` inside ``asyncio.to_thread``. That
+is deliberate: on Windows Strix forces a ``SelectorEventLoop``, which cannot
+spawn subprocesses (``asyncio.create_subprocess_exec`` raises a bare
 ``NotImplementedError`` there), so the async-subprocess API is unusable. A
 threaded blocking call works under any event-loop policy on every platform.
+
+``Popen`` rather than ``subprocess.run`` because a thread cannot be cancelled:
+holding the handle is the only way an abandoned turn can stop the child instead
+of leaking it past the semaphore slot it already gave back.
 
 A module-level semaphore bounds how many ``claude`` processes run at once so a
 wide multi-agent graph doesn't fork an unbounded number of heavyweight CLIs.
@@ -17,6 +21,7 @@ wide multi-agent graph doesn't fork an unbounded number of heavyweight CLIs.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -102,16 +107,39 @@ def _build_argv(slug: str, extra_args: list[str]) -> list[str]:
     return [binary, *_BASE_ARGS, "--model", slug, "--json-schema", schema, *extra_args]
 
 
-def _run_blocking(argv: list[str], prompt: str, timeout: float) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(  # noqa: S603  # trusted binary, fixed argv, no shell
+def _spawn(argv: list[str]) -> subprocess.Popen[str]:
+    return subprocess.Popen(  # noqa: S603  # trusted binary, fixed argv, no shell
         argv,
-        input=prompt,
-        capture_output=True,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
         text=True,
         encoding="utf-8",
         errors="replace",
-        timeout=timeout,
-        check=False,
+    )
+
+
+def _kill(process: subprocess.Popen[str]) -> None:
+    """Kill the child if it is still running. A no-op once it has exited."""
+    if process.poll() is not None:
+        return
+    with contextlib.suppress(OSError):
+        process.kill()
+
+
+def _communicate(
+    process: subprocess.Popen[str], prompt: str, timeout: float
+) -> subprocess.CompletedProcess[str]:
+    try:
+        stdout, stderr = process.communicate(prompt, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        # Popen.communicate() leaves the child running on timeout, unlike
+        # subprocess.run(); reap it here so the timeout is not itself a leak.
+        _kill(process)
+        process.communicate()
+        raise
+    return subprocess.CompletedProcess(
+        args=process.args, returncode=process.wait(), stdout=stdout, stderr=stderr
     )
 
 
@@ -127,11 +155,25 @@ async def run_turn(
     timeout = _turn_timeout()
     async with _get_semaphore():
         try:
-            completed = await asyncio.to_thread(_run_blocking, argv, prompt, timeout)
-        except subprocess.TimeoutExpired as exc:
-            raise claude_code.ClaudeCodeError(f"claude -p timed out after {timeout:.0f}s") from exc
+            process = _spawn(argv)
         except OSError as exc:
             raise claude_code.ClaudeCodeError(f"could not launch claude -p: {exc}") from exc
+        try:
+            completed = await asyncio.to_thread(_communicate, process, prompt, timeout)
+        except subprocess.TimeoutExpired as exc:
+            raise claude_code.ClaudeCodeError(f"claude -p timed out after {timeout:.0f}s") from exc
+        except OSError as exc:  # the child is already running, so this is a pipe failure
+            raise claude_code.ClaudeCodeError(f"claude -p failed mid-turn: {exc}") from exc
+        finally:
+            # asyncio.to_thread cannot be cancelled: the worker thread runs to
+            # completion whatever happens out here. On an outer timeout, a budget
+            # stop, or a wind-down, this coroutine unwinds and releases its
+            # semaphore slot at once, so without this kill the abandoned `claude`
+            # keeps running for the rest of the turn timeout, still spending
+            # subscription quota, and real concurrency can exceed
+            # STRIX_CLAUDE_CODE_MAX_PROCS exactly when turns are being abandoned.
+            # Killing it also lets the stranded worker thread finish.
+            _kill(process)
 
     # A result event, if present, is authoritative even on a non-zero exit: the
     # CLI reports API errors (429/overload) in its api_error_status, and the model

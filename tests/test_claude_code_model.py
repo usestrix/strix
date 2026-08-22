@@ -229,11 +229,31 @@ def _completed(stdout: str, returncode: int, stderr: str = "") -> subprocess.Com
     )
 
 
+class _FakeProcess:
+    """Stand-in for Popen: run_turn only needs poll()/kill() for its cleanup path.
+
+    Defaults to already-exited, which is the state a real child is in once
+    communicate() has returned, so the cleanup kill is a no-op on the happy path.
+    """
+
+    def __init__(self, *, running: bool = False) -> None:
+        self.killed = False
+        self._running = running
+
+    def poll(self) -> int | None:
+        return None if self._running else 0
+
+    def kill(self) -> None:
+        self.killed = True
+        self._running = False
+
+
 def _patch_run(
     monkeypatch: pytest.MonkeyPatch, completed: subprocess.CompletedProcess[str]
 ) -> None:
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
-    monkeypatch.setattr(claude_process, "_run_blocking", lambda *_a, **_k: completed)
+    monkeypatch.setattr(claude_process, "_spawn", lambda *_a, **_k: _FakeProcess())
+    monkeypatch.setattr(claude_process, "_communicate", lambda *_a, **_k: completed)
 
 
 def test_run_turn_returns_result_event(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -293,9 +313,42 @@ def test_run_turn_timeout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     def _boom(*_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
         raise subprocess.TimeoutExpired(cmd="claude", timeout=1.0)
 
-    monkeypatch.setattr(claude_process, "_run_blocking", _boom)
+    monkeypatch.setattr(claude_process, "_spawn", lambda *_a, **_k: _FakeProcess())
+    monkeypatch.setattr(claude_process, "_communicate", _boom)
     with pytest.raises(claude_code.ClaudeCodeError, match="timed out"):
         asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+
+
+def test_cancelled_turn_kills_the_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
+    # asyncio.to_thread cannot be cancelled: the worker thread runs to completion
+    # regardless. An abandoned turn (outer timeout, budget stop, wind-down) releases
+    # its semaphore slot immediately, so without an explicit kill the `claude` child
+    # outlives it -- still spending subscription quota, and letting real concurrency
+    # exceed STRIX_CLAUDE_CODE_MAX_PROCS precisely when turns are being abandoned.
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    process = _FakeProcess(running=True)
+    started = threading.Event()
+
+    def _blocks_until_killed(*_a: Any, **_k: Any) -> subprocess.CompletedProcess[str]:
+        started.set()
+        # Mirrors the real transport: communicate() returns once the child dies.
+        deadline = time.monotonic() + 5.0
+        while not process.killed and time.monotonic() < deadline:
+            time.sleep(0.01)
+        return _completed("", 0)
+
+    monkeypatch.setattr(claude_process, "_spawn", lambda *_a, **_k: process)
+    monkeypatch.setattr(claude_process, "_communicate", _blocks_until_killed)
+
+    async def _cancel_mid_turn() -> None:
+        task = asyncio.create_task(claude_process.run_turn("claude-opus-4-8", "prompt"))
+        assert await asyncio.to_thread(started.wait, 5.0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(_cancel_mid_turn())
+    assert process.killed is True
 
 
 def test_missing_binary_raises(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -339,7 +392,8 @@ def test_semaphore_bounds_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
             live -= 1
         return _completed('{"type": "result", "is_error": false, "result": "{}"}\n', 0)
 
-    monkeypatch.setattr(claude_process, "_run_blocking", _slow)
+    monkeypatch.setattr(claude_process, "_spawn", lambda *_a, **_k: _FakeProcess())
+    monkeypatch.setattr(claude_process, "_communicate", _slow)
 
     async def _run_all() -> None:
         await asyncio.gather(*[claude_process.run_turn("claude-opus-4-8", "p") for _ in range(8)])
