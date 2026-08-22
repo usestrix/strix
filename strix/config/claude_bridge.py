@@ -161,6 +161,15 @@ def _render_item(item: dict[str, Any]) -> str:
     return ""
 
 
+# The block types the rest of Strix already treats as images: llm/compaction.py
+# and interface/tui/live_view.py match on exactly these, core/sessions.py on the
+# input_image the SDK's sandbox tools emit. Matching a stray ``image_url`` or
+# ``source`` key instead swallows any text block that happens to carry one.
+_IMAGE_BLOCK_TYPES = frozenset({"image", "image_url", "input_image", "output_image"})
+
+_IMAGE_MARKER = "[image returned by tool, not visible to this backend]"
+
+
 def _stringify(content: Any) -> str:
     if content is None:
         return ""
@@ -176,7 +185,7 @@ def _stringify(content: Any) -> str:
                 # explicit marker rather than dropping it silently, so the model
                 # knows a screenshot was produced and does not narrate having
                 # inspected one it never received.
-                parts.append("[image returned by tool, not visible to this backend]")
+                parts.append(_IMAGE_MARKER)
                 continue
             text = block_dict.get("text") or block_dict.get("output") or block_dict.get("content")
             if isinstance(text, str):
@@ -188,9 +197,7 @@ def _stringify(content: Any) -> str:
 
 
 def _is_image_block(block: dict[str, Any]) -> bool:
-    return "image" in str(block.get("type") or "").lower() or bool(
-        block.get("image_url") or block.get("source")
-    )
+    return str(block.get("type") or "").lower() in _IMAGE_BLOCK_TYPES
 
 
 # --------------------------------------------------------------------------- #

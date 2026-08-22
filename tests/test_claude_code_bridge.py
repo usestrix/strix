@@ -194,3 +194,29 @@ def test_image_tool_result_is_marked_not_dropped() -> None:
     assert "page loaded" in prompt
     assert "image returned by tool" in prompt
     assert "AAAA" not in prompt  # the base64 payload is not dumped into the prompt
+
+
+def test_non_image_block_with_a_source_key_keeps_its_text() -> None:
+    # The marker *replaces* the block it fires on, so a detector keyed on the mere
+    # presence of `source` or `image_url` silently deletes real tool output. Match
+    # the block type, the way compaction.py / sessions.py / live_view.py already do.
+    prompt = claude_bridge.build_prompt(
+        None,
+        [
+            {
+                "type": "function_call_output",
+                "call_id": "c1",
+                "output": [{"type": "output_text", "text": "see app.py:5", "source": "app.py"}],
+            },
+        ],
+        [],
+    )
+    assert "see app.py:5" in prompt
+    assert "image returned by tool" not in prompt
+
+
+def test_image_blocks_are_detected_by_type() -> None:
+    for block_type in ("input_image", "output_image", "image", "image_url"):
+        assert claude_bridge._is_image_block({"type": block_type}) is True
+    assert claude_bridge._is_image_block({"type": "output_text", "source": "app.py"}) is False
+    assert claude_bridge._is_image_block({"type": "input_text", "text": "hi"}) is False
