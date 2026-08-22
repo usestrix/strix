@@ -261,7 +261,7 @@ def apply_modifications(
             if key not in overrides
         ]
         pairs.extend(overrides.items())
-        final_url = urlunparse(parsed._replace(query=urlencode(pairs)))
+        final_url = urlunparse(parsed._replace(query=urlencode(pairs, doseq=True)))
     if "headers" in modifications:
         headers.update(modifications["headers"])
     if "body" in modifications:

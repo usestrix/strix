@@ -67,3 +67,16 @@ def test_params_add_new_param() -> None:
     pairs = _query_pairs(result["url"])
     assert ("a", "1") in pairs
     assert ("new", "1") in pairs
+
+
+def test_params_override_with_multiple_values() -> None:
+    result = apply_modifications(
+        _components(),
+        {"params": {"tag": ["a", "b"]}},
+        "http://victim.com/search?tag=old&q=x",
+    )
+    pairs = _query_pairs(result["url"])
+    assert ("tag", "a") in pairs
+    assert ("tag", "b") in pairs
+    assert ("tag", "old") not in pairs
+    assert ("q", "x") in pairs
