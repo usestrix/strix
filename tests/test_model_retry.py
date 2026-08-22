@@ -75,6 +75,17 @@ def test_claude_code_overload_is_retried_end_to_end() -> None:
     assert _retries(_normalize_retry_error(throttled, None), throttled) is True
 
 
+def test_claude_code_entitlement_error_is_not_retried() -> None:
+    # An org policy or plan change will not clear on a second attempt. Retrying it
+    # burns the whole backoff ladder on every turn of every agent before the scan
+    # gives up, and the user never sees the CLI's own actionable message.
+    denied = claude_bridge.ClaudeStreamError(
+        "Your organization has disabled Claude subscription access for Claude Code",
+        status_code=403,
+    )
+    assert _retries(_normalize_retry_error(denied, None), denied) is False
+
+
 def test_timeout_error_is_retried() -> None:
     # A stalled model stream trips the per-request read/inactivity timeout, which
     # the SDK normalizes as a timeout. DEFAULT_MODEL_RETRY must retry it so a hung

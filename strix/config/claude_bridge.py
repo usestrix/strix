@@ -328,11 +328,28 @@ def _strip_namespace(name: str) -> str:
     return name
 
 
+# Phrases Claude Code uses when the account may not run inference on the plan at
+# all -- an org policy, a plan change, or revoked entitlement. Observed verbatim:
+# "Your organization has disabled Claude subscription access for Claude Code -
+#  Use an Anthropic API key instead, or ask your admin to enable access".
+_ENTITLEMENT_MARKERS = (
+    "subscription access for claude code",
+    "disabled claude subscription access",
+    "use an anthropic api key instead",
+)
+
+
 def _error_status(result: dict[str, Any]) -> int | None:
     explicit = result.get("api_error_status")
     if isinstance(explicit, int):
         return explicit
     haystack = f"{result.get('result', '')} {result.get('subtype', '')}".lower()
+    if any(marker in haystack for marker in _ENTITLEMENT_MARKERS):
+        # 403, so the run stops instead of retrying. These arrive with no
+        # api_error_status, and an untagged error hits the statusless fallback --
+        # five attempts with 2s..90s backoff, per turn, per agent, for something
+        # a second attempt cannot clear.
+        return 403
     if "429" in haystack or "rate limit" in haystack or "rate_limit" in haystack:
         return 429
     if "overloaded" in haystack or "529" in haystack:

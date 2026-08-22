@@ -170,6 +170,27 @@ def test_missing_result_line_raises() -> None:
         claude_bridge.parse_transcript(['{"type": "system", "subtype": "init"}'])
 
 
+def test_entitlement_error_is_not_retryable() -> None:
+    # Observed verbatim on a Max account whose org had Claude Code subscription
+    # access turned off. It arrives with no api_error_status, so an untagged error
+    # would hit the statusless retry fallback: five attempts with 2s..90s backoff,
+    # per turn, per agent, for something a second attempt cannot clear.
+    result = {
+        "is_error": True,
+        "subtype": "success",
+        "result": (
+            "Your organization has disabled Claude subscription access for Claude Code "
+            "- Use an Anthropic API key instead, or ask your admin to enable access"
+        ),
+    }
+    with pytest.raises(claude_bridge.ClaudeStreamError) as excinfo:
+        claude_bridge.decode_result(result)
+    assert excinfo.value.status_code == 403
+
+    # A transient failure must stay untagged so the statusless fallback still runs.
+    assert claude_bridge._error_status({"result": "some transient provider hiccup"}) is None
+
+
 def test_error_status_inferred_from_message() -> None:
     result = {"is_error": True, "result": "API Error: Overloaded, please retry"}
     with pytest.raises(claude_bridge.ClaudeStreamError) as excinfo:

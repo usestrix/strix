@@ -144,6 +144,17 @@ def _claude_code_error_hint(exc: BaseException) -> str | None:
         or "authentication" in joined
     ):
         return "Your Claude Code session has expired. Sign in again:\n  claude /login"
+    if (
+        "subscription access for claude code" in joined
+        or "disabled claude subscription access" in joined
+        or "use an anthropic api key instead" in joined
+    ):
+        return (
+            "Your Anthropic organization has disabled Claude Code subscription access.\n"
+            "Ask an admin to enable it, or switch to the metered path:\n"
+            "  export STRIX_LLM=anthropic/claude-opus-5\n"
+            "  export LLM_API_KEY=<key>"
+        )
     if "429" in joined or "rate limit" in joined or "overloaded" in joined:
         return (
             "Your Claude subscription is rate-limited. Multi-agent scans burst hard — "
