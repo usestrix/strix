@@ -69,10 +69,13 @@ CI is better served by the **API-key path**. A CI runner cannot easily hold a si
 subscription session, whereas an API key drops cleanly into a secret. Use
 `anthropic/<model>` + `LLM_API_KEY` in CI unless the runner can hold a `claude` session.
 
-## Not covered in v1.0
+## Deduplication
 
-`STRIX_DEDUPE_MODEL` stays on an API key or another provider, deduplication does not run on
-the Claude subscription for now.
+Deduplication runs on whatever model the scan runs on, so on a `claude-code/` scan it runs on
+the subscription too. Point `STRIX_DEDUPE_MODEL` at another provider if you would rather it
+did not.
+
+## Not covered in v1.0
 
 Screenshots and other image tool results are not passed to the model on this backend. It
 bridges each turn as text, so a browser or visual tool's image is surfaced to the model as a
