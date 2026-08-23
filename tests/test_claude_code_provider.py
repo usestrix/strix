@@ -106,6 +106,27 @@ def test_meets_min_version(monkeypatch: pytest.MonkeyPatch) -> None:
     assert claude_code.meets_min_version() is False
 
 
+@pytest.mark.parametrize(
+    "raw",
+    [
+        # Verified against the published npm bundles: none of these carry the
+        # whole contract. 2.0.0 has no --json-schema at all (it lands in 2.0.45),
+        # and api_error_status -- what the retry policy classifies a 429/529 on --
+        # is still missing at 2.1.100. Letting them through preflight buys a
+        # cryptic runtime failure instead of an actionable "update your CLI".
+        "2.0.0 (Claude Code)",
+        "2.0.44 (Claude Code)",
+        "2.1.100 (Claude Code)",
+        "2.1.219 (Claude Code)",
+    ],
+)
+def test_versions_without_the_full_contract_are_rejected(
+    monkeypatch: pytest.MonkeyPatch, raw: str
+) -> None:
+    monkeypatch.setattr(claude_code, "version", lambda: raw)
+    assert claude_code.meets_min_version() is False
+
+
 def _fake_status(payload: dict[str, object]) -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
         args=["claude", "auth", "status"], returncode=0, stdout=json.dumps(payload), stderr=""

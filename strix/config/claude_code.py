@@ -27,9 +27,24 @@ logger = logging.getLogger(__name__)
 PROVIDER = "claude-code"
 SUBSCRIPTION_PREFIX = "claude-code/"
 
-# The stream-json result schema this backend relies on (structured_output,
-# api_error_status) has been stable since Claude Code 2.0.
-MIN_CLAUDE_VERSION = (2, 0, 0)
+# Everything this backend drives has to exist in the installed CLI, and 2.0 is far
+# too low a bar. Checked against the published npm bundles:
+#
+#   2.0.0    no --json-schema, no --effort, no --no-session-persistence,
+#            no --disable-slash-commands, no api_error_status
+#   2.0.45   --json-schema appears
+#   2.0.60   --disable-slash-commands appears
+#   2.0.77   --no-session-persistence appears
+#   2.1.100  api_error_status still absent (last release shipping a readable
+#            cli.js bundle; later ones ship a downloaded binary)
+#   2.1.220  verified end to end on Windows, 2.1.239 on Linux
+#
+# api_error_status is what the retry policy classifies a 429/529 on, so a CLI
+# without it degrades every rate limit into an unclassified error. The floor is
+# therefore the lowest release actually verified to carry the whole contract;
+# it is conservative by construction, since the exact release that added
+# api_error_status is not visible in the published artifacts.
+MIN_CLAUDE_VERSION = (2, 1, 220)
 
 _PROBE_TIMEOUT_S = 8
 
