@@ -1563,19 +1563,34 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
     if dest_name:
         repo_name = dest_name
     else:
-        repo_name = Path(repo_url).stem if repo_url.endswith(".git") else Path(repo_url).name
+        repo_name = derive_repo_base_name(repo_url)
 
-    clone_path = temp_dir / repo_name
+    # Guard against path traversal: the derived name must not resolve
+    # outside the temp directory (e.g. ".." or ".").
+    clone_path = (temp_dir / repo_name).resolve()
+    if not str(clone_path).startswith(str(temp_dir.resolve())):
+        raise ValueError(
+            f"Refusing to clone: derived directory name '{repo_name}' "
+            f"escapes the temporary directory"
+        )
 
     if clone_path.exists():
         shutil.rmtree(clone_path)
 
     try:
+        # Reject targets that start with '-' to block argument injection
+        if repo_url.startswith("-"):
+            raise ValueError(
+                f"Refusing to clone: target '{repo_url}' starts with '-' "
+                f"and would be interpreted as a git flag"
+            )
+
         with console.status(f"[bold cyan]Cloning repository {repo_url}...", spinner="dots"):
             subprocess.run(  # noqa: S603
                 [
                     git_executable,
                     "clone",
+                    "--",          # end-of-options: everything after is a positional arg
                     repo_url,
                     str(clone_path),
                 ],
