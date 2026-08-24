@@ -1,0 +1,80 @@
+---
+title: "Claude subscription (Claude Code)"
+description: "Run Strix on a Claude Pro/Max subscription instead of a metered API key"
+---
+
+Run Strix on your Claude Pro/Max subscription. Strix drives your installed
+[Claude Code](https://docs.claude.com/en/docs/claude-code) CLI in non-interactive mode
+(`claude -p`), so Claude Code owns authentication, token refresh, and the wire protocol.
+Strix never stores your Claude credentials.
+
+This is additive: the metered API-key path (`anthropic/<model>` + `LLM_API_KEY`) is
+unchanged.
+
+## Setup
+
+```bash
+strix auth login claude                            # delegates to `claude auth login`
+export STRIX_LLM="claude-code/claude-opus-4-8"     # claude-code/<model> runs on the subscription
+strix --target ./app-directory
+```
+
+`strix auth status` shows the active sign-in; `strix auth logout claude` signs you out of
+Claude Code (this is global to the CLI, not just Strix).
+
+## Requirements
+
+<Warning>
+  The `claude` CLI must be installed and signed in **on the host running Strix**, not
+  inside the target sandbox container. This is the most common source of confusion. If
+  `strix` runs somewhere without a signed-in `claude`, the run fails preflight with an
+  actionable message.
+</Warning>
+
+- Claude Code CLI **2.0.0 or newer** on the host's `PATH`.
+- Signed in on a **Pro or Max** plan (`claude /login`). If Claude Code is signed in on an
+  API key instead, Strix warns you before the scan, otherwise it would silently meter
+  against that key.
+
+## Usage and cost
+
+Usage shows **real token counts at $0 cost**: the run is on a flat subscription, so per-token
+cost is zero while token totals are still tracked and displayed.
+
+<Note>
+  The value of this backend rests on Anthropic's subscription billing terms, which they
+  control and revise. Behaviour can change **without a Strix release**. This integration is
+  built so that if Anthropic tightens access, the failure mode is "your `claude` CLI tells
+  you what to do", not "Strix broke".
+</Note>
+
+## Concurrency and rate limits
+
+Strix runs multiple agents in parallel, and a parallel multi-agent pentest is exactly the
+bursty workload subscription plans throttle. Expect `429`s; Strix retries them with backoff.
+
+- **Max 20x** is realistically the floor for multi-agent runs.
+- On **Pro**, prefer a quick scan with fewer agents.
+- `STRIX_CLAUDE_CODE_MAX_PROCS` (default `8`) bounds how many `claude` subprocesses run at
+  once.
+
+## Reasoning effort
+
+`STRIX_REASONING_EFFORT` maps to Claude Code's `--effort` flag (`none`/`minimal` collapse to
+`low`). Leave it unset to keep Claude Code's own default.
+
+## CI
+
+CI is better served by the **API-key path**. A CI runner cannot easily hold a signed-in
+subscription session, whereas an API key drops cleanly into a secret. Use
+`anthropic/<model>` + `LLM_API_KEY` in CI unless the runner can hold a `claude` session.
+
+## Not covered in v1.0
+
+`STRIX_DEDUPE_MODEL` stays on an API key or another provider, deduplication does not run on
+the Claude subscription for now.
+
+Screenshots and other image tool results are not passed to the model on this backend. It
+bridges each turn as text, so a browser or visual tool's image is surfaced to the model as a
+marker noting an image was produced, not the image itself. Tools that depend on the model
+seeing a screenshot work best on the API-key path.

@@ -36,7 +36,7 @@ from openai.types.responses import (
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
 
-from strix.config import codex
+from strix.config import claude_bridge, claude_code, claude_process, codex
 from strix.config.loader import load_settings
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
@@ -240,6 +240,82 @@ class _NonStreamingModel(Model):
             prompt=prompt,
         )
         yield _completed_stream_event(response, getattr(self._inner, "model", None))
+
+
+class _ClaudeCodeModel(Model):
+    """Run a turn on a Claude Pro/Max subscription via the ``claude -p`` binary.
+
+    Implements the Agents-SDK ``Model`` interface directly — there is no
+    OpenAI-compatible endpoint here. Each turn shells out to Claude Code once
+    (the model is stateless; Strix resends the full conversation each turn),
+    forcing a single structured reply that ``claude_bridge`` folds into a
+    ``ModelResponse``. Auth, token refresh, and the wire protocol are Claude
+    Code's problem, not ours. See ``.artifacts/DESIGN.md`` (Option B).
+
+    A ``ClaudeStreamError`` carrying a 429/5xx ``status_code`` propagates
+    unwrapped so the runner's retry policy classifies it exactly as it would an
+    HTTP error from any other backend.
+    """
+
+    def __init__(self, slug: str, *, reasoning_effort: ReasoningEffort | None = None) -> None:
+        self._slug = slug
+        self._reasoning_effort = reasoning_effort
+
+    @property
+    def model(self) -> str:
+        return f"{claude_code.SUBSCRIPTION_PREFIX}{self._slug}"
+
+    def _extra_args(self) -> list[str]:
+        return claude_code.reasoning_flags(self._reasoning_effort)
+
+    async def _run(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        tools: list[Tool],
+    ) -> ModelResponse:
+        prompt = claude_bridge.build_prompt(system_instructions, input, tools)
+        result = await claude_process.run_turn(self._slug, prompt, extra_args=self._extra_args())
+        return claude_bridge.decode_result(result)
+
+    async def get_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> ModelResponse:
+        # The Model interface fixes this signature; this backend only needs the
+        # instructions, input, and tools — the rest are Responses-API concerns.
+        del model_settings, output_schema, handoffs, tracing
+        del previous_response_id, conversation_id, prompt
+        return await self._run(system_instructions, input, tools)
+
+    async def stream_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> AsyncIterator[TResponseStreamEvent]:
+        del model_settings, output_schema, handoffs, tracing
+        del previous_response_id, conversation_id, prompt
+        response = await self._run(system_instructions, input, tools)
+        yield _completed_stream_event(response, self.model)
 
 
 class _TurnGuardModel(Model):
@@ -470,13 +546,20 @@ class StrixProvider(MultiProvider):
 
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
+        cc_slug = claude_code.claude_code_model(model_name)
         slug = codex.subscription_model(model_name)
         idle_timeout = float(llm.stream_idle_timeout)
-        if slug:
+        if cc_slug:
+            # The Claude Code backend emits its single event only after the
+            # subprocess turn completes, so an idle-gap timeout is meaningless
+            # and LLM_DISABLE_STREAMING does not apply — same stance as codex.
+            model: Model = _ClaudeCodeModel(cc_slug, reasoning_effort=llm.reasoning_effort)
+            idle_timeout = 0.0
+        elif slug:
             # The ChatGPT subscription backend is always streamed; it has no
             # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
             # does not apply here.
-            model: Model = _CodexResponsesModel(
+            model = _CodexResponsesModel(
                 slug,
                 codex.get_subscription_client(),
                 reasoning_effort=llm.reasoning_effort,
@@ -556,7 +639,14 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
     set_tracing_disabled(True)
-    if codex.subscription_model(llm.model):
+    if codex.subscription_model(llm.model) or claude_code.claude_code_model(llm.model):
+        # Neither subscription backend routes through LiteLLM, but stray metadata
+        # lookups (token counting, model info) still hit it with an unmapped name
+        # and would print LiteLLM's "Provider List" banner. Silence it here since
+        # the usual _configure_litellm_compatibility() path is skipped.
+        import litellm
+
+        litellm.suppress_debug_info = True
         return
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
@@ -739,8 +829,14 @@ def _configure_litellm_default(name: str, value: str) -> None:
 
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
+    # The ChatGPT backend speaks the native Responses API, which handles special
+    # tool types (apply_patch) itself. The Claude Code bridge does NOT — it
+    # renders tools as JSON function schemas and reads back {name, arguments},
+    # so those special tools must be converted to plain function tools (True).
     if codex.subscription_model(model_name):
         return False
+    if claude_code.claude_code_model(model_name):
+        return True
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
         return True

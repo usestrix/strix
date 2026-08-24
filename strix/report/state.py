@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from agents.usage import Usage
 
-from strix.config import codex
+from strix.config import subscription
 from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.report.coverage import write_coverage
@@ -133,7 +133,7 @@ class ReportState:
         self.scan_config: dict[str, Any] | None = None
         self._llm_usage = LLMUsageLedger()
         self._telemetry_llm_usage_baseline: dict[str, Any] = {}
-        auth_mode = codex.auth_mode(load_settings().llm.model)
+        auth_mode = subscription.auth_mode(load_settings().llm.model)
         self._llm_usage.zero_cost = auth_mode == "subscription"
         self.run_record: dict[str, Any] = {
             "run_id": self.run_id,

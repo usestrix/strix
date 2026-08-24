@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import logging
+import subprocess  # we invoke a trusted, user-installed CLI, never a shell
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -21,7 +22,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings
+from strix.config import claude_code, codex, load_settings
 
 
 if TYPE_CHECKING:
@@ -38,7 +39,18 @@ _CALLBACK_TIMEOUT_S = 300
 LOGIN_PROVIDER = "chatgpt"
 _ACCEPTED_PROVIDERS = frozenset({LOGIN_PROVIDER, codex.PROVIDER})
 
-_USAGE = "Usage:\n  strix auth login chatgpt [--manual]\n  strix auth status\n  strix auth logout"
+# Claude Code owns its own credentials; ``strix auth ... claude`` delegates every
+# verb to the ``claude`` binary. ``claude-code`` is accepted as an alias.
+CLAUDE_PROVIDER = "claude"
+_CLAUDE_PROVIDERS = frozenset({CLAUDE_PROVIDER, claude_code.PROVIDER})
+
+_USAGE = (
+    "Usage:\n"
+    "  strix auth login chatgpt [--manual]\n"
+    "  strix auth login claude\n"
+    "  strix auth status\n"
+    "  strix auth logout [chatgpt|claude]"
+)
 
 
 def run_auth(argv: list[str]) -> int:
@@ -55,7 +67,7 @@ def run_auth(argv: list[str]) -> int:
     handlers: dict[str, Callable[[], int]] = {
         "login": lambda: _login(console, rest),
         "status": lambda: _status(console),
-        "logout": lambda: _logout(console),
+        "logout": lambda: _logout(console, rest),
     }
     handler = handlers.get(subcommand)
     if handler is not None:
@@ -84,10 +96,14 @@ def _login(console: Console, argv: list[str]) -> int:
     except SystemExit as exc:  # argparse already printed the message
         return int(exc.code or 2)
 
-    if args.provider.lower() not in _ACCEPTED_PROVIDERS:
+    provider = args.provider.lower()
+    if provider in _CLAUDE_PROVIDERS:
+        return _login_claude(console)
+
+    if provider not in _ACCEPTED_PROVIDERS:
         console.print(
             f"[red]Unsupported provider:[/] {args.provider}. "
-            f"Only '{LOGIN_PROVIDER}' (ChatGPT subscription) is supported."
+            f"Use '{LOGIN_PROVIDER}' (ChatGPT) or '{CLAUDE_PROVIDER}' (Claude subscription)."
         )
         return 2
 
@@ -242,27 +258,107 @@ def _first(query: dict[str, list[str]], key: str) -> str | None:
     return values[0] if values else None
 
 
-def _status(console: Console) -> int:
-    record = codex.read_record()
-    if record is None:
-        console.print("[yellow]Not signed in.[/] Run [cyan]strix auth login chatgpt[/] to sign in.")
+def _run_claude(args: list[str]) -> subprocess.CompletedProcess[bytes]:
+    """Invoke the ``claude`` binary interactively, inheriting the terminal."""
+    binary = claude_code.binary_path()
+    if binary is None:
+        raise claude_code.ClaudeCodeError("the `claude` CLI is not on PATH")
+    return subprocess.run([binary, *args], check=False)  # noqa: S603
+
+
+def _login_claude(console: Console) -> int:
+    if claude_code.binary_path() is None:
+        console.print(
+            "[red]The Claude Code CLI isn't installed.[/] Install it, then run "
+            "[cyan]strix auth login claude[/] again."
+        )
         return 1
-    settings = load_settings()
-    console.print("[green]Signed in[/] with a ChatGPT subscription.")
-    console.print(f"  Account: [bold]{record.get('account_id')}[/]")
-    if codex.subscription_model(settings.llm.model):
-        console.print(f"  Runs use the subscription (STRIX_LLM=[bold]{settings.llm.model}[/]).")
+    console.print()
+    console.print("[bold]Signing in with Claude[/] [dim](via the Claude Code CLI)[/]")
+    console.print(
+        "[dim]This uses your Claude Pro/Max plan for inference instead of a metered API key. "
+        "Claude Code owns the sign-in; Strix never stores your Claude credentials.[/]"
+    )
+    console.print()
+    try:
+        result = _run_claude(["auth", "login"])
+    except (claude_code.ClaudeCodeError, OSError, subprocess.SubprocessError) as exc:
+        console.print(f"[red]Sign-in failed:[/] {exc}")
+        return 1
+    if result.returncode != 0:
+        console.print("[red]Sign-in failed.[/] Try running [cyan]claude /login[/] directly.")
+        return result.returncode
+    console.print(
+        "[green]Signed in with Claude.[/] Set [cyan]STRIX_LLM[/] to a "
+        "[cyan]claude-code/[/] model, e.g. [cyan]claude-code/claude-opus-4-8[/]."
+    )
+    return 0
+
+
+def _status(console: Console) -> int:
+    signed_in = False
+
+    record = codex.read_record()
+    if record is not None:
+        signed_in = True
+        console.print("[green]Signed in[/] with a ChatGPT subscription.")
+        console.print(f"  Account: [bold]{record.get('account_id')}[/]")
+
+    state = claude_code.session_state()
+    if state == "subscription":
+        signed_in = True
+        console.print("[green]Signed in[/] with a Claude subscription (via Claude Code).")
+    elif state == "api_key":
+        signed_in = True
+        console.print(
+            "[yellow]Claude Code is signed in on an API key[/], not a subscription. "
+            "A [cyan]claude-code/[/] run would meter against that key. "
+            "Run [cyan]strix auth login claude[/] with your Pro/Max account."
+        )
+
+    if not signed_in:
+        console.print(
+            "[yellow]Not signed in.[/] Run [cyan]strix auth login chatgpt[/] or "
+            "[cyan]strix auth login claude[/] to sign in."
+        )
+        return 1
+
+    model = load_settings().llm.model
+    if codex.subscription_model(model) or claude_code.claude_code_model(model):
+        console.print(f"  Runs use the subscription (STRIX_LLM=[bold]{model}[/]).")
     else:
         console.print(
-            "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to e.g. [cyan]chatgpt/gpt-5.4[/] "
-            "to run on the subscription."
+            "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to a [cyan]chatgpt/[/] or "
+            "[cyan]claude-code/[/] model to run on a subscription."
         )
     return 0
 
 
-def _logout(console: Console) -> int:
+def _logout(console: Console, argv: list[str]) -> int:
+    provider = argv[0].lower() if argv else LOGIN_PROVIDER
+    if provider in _CLAUDE_PROVIDERS:
+        try:
+            result = _run_claude(["auth", "logout"])
+        except (claude_code.ClaudeCodeError, OSError, subprocess.SubprocessError) as exc:
+            console.print(f"[red]Logout failed:[/] {exc}")
+            return 1
+        if result.returncode != 0:
+            return result.returncode
+        console.print(
+            "[green]Signed out of Claude Code.[/] "
+            "[dim]This affects Claude Code globally, not just Strix.[/]"
+        )
+        return 0
+
+    if provider not in _ACCEPTED_PROVIDERS:
+        console.print(
+            f"[red]Unknown provider:[/] {provider}. "
+            f"Use '{LOGIN_PROVIDER}' (ChatGPT) or '{CLAUDE_PROVIDER}' (Claude)."
+        )
+        return 2
+
     codex.logout()
-    console.print("[green]Signed out.[/] Stored subscription credentials removed.")
+    console.print("[green]Signed out.[/] Stored ChatGPT subscription credentials removed.")
     return 0
 
 
