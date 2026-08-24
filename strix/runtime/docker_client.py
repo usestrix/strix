@@ -66,11 +66,23 @@ def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
         create_kwargs.pop("ports", None)
 
 
+_RESOURCE_LIMIT_DISABLE = ("0", "off", "none", "unlimited")
+
+
 def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
-    """Apply optional cgroup resource caps from the environment. Unset/blank
-    values leave docker's default (unbounded), so this is opt-in per host."""
-    mem_limit = os.environ.get("STRIX_SANDBOX_MEM_LIMIT", "").strip()
-    if mem_limit:
+    """Apply cgroup resource caps from the environment.
+
+    Security: memory and pids caps default **on** (mirroring ``_apply_log_limits``
+    below), because docker's own default is unbounded. An autonomous agent that
+    executes arbitrary attacker-influenced commands can be prompt-injected into a
+    fork bomb or memory balloon that exhausts the host and takes the Docker
+    daemon down with it. A default memory cap + pids-limit contains that blast
+    radius. Set ``STRIX_SANDBOX_MEM_LIMIT`` / ``STRIX_SANDBOX_PIDS_LIMIT`` to a
+    different value to override, or to ``0``/``off``/``none``/``unlimited`` to
+    opt back out to docker's default. CPU and shm caps remain opt-in (blank =
+    unbounded) since they are throughput knobs, not host-safety guardrails."""
+    mem_limit = os.environ.get("STRIX_SANDBOX_MEM_LIMIT", "4g").strip()
+    if mem_limit and mem_limit.lower() not in _RESOURCE_LIMIT_DISABLE:
         create_kwargs["mem_limit"] = mem_limit
 
     shm_size = os.environ.get("STRIX_SANDBOX_SHM_SIZE", "").strip()
@@ -84,8 +96,8 @@ def _apply_resource_limits(create_kwargs: dict[str, Any]) -> None:
             if 0 < nano_cpus <= 2**63 - 1:
                 create_kwargs["nano_cpus"] = nano_cpus
 
-    pids_limit = os.environ.get("STRIX_SANDBOX_PIDS_LIMIT", "").strip()
-    if pids_limit:
+    pids_limit = os.environ.get("STRIX_SANDBOX_PIDS_LIMIT", "512").strip()
+    if pids_limit and pids_limit.lower() not in _RESOURCE_LIMIT_DISABLE:
         with contextlib.suppress(ValueError):
             create_kwargs["pids_limit"] = int(pids_limit)
 
@@ -229,8 +241,36 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             if cap not in cap_add:
                 cap_add.append(cap)
 
-        extra_hosts = create_kwargs.setdefault("extra_hosts", {})
-        extra_hosts["host.docker.internal"] = "host-gateway"
+        # host.docker.internal → host-gateway lets the agent reach host-served
+        # apps; documented and intentional, so it stays on by default. Gate it
+        # behind an opt-out for hosts that don't want a sandboxed, arbitrary-
+        # command agent able to reach back to services on the host: set
+        # STRIX_SANDBOX_HOST_GATEWAY=0/false/no/off to drop the mapping.
+        host_gateway = os.environ.get("STRIX_SANDBOX_HOST_GATEWAY", "1").strip().lower()
+        if host_gateway not in ("0", "false", "no", "off"):
+            extra_hosts = create_kwargs.setdefault("extra_hosts", {})
+            extra_hosts["host.docker.internal"] = "host-gateway"
+
+        # SECURITY (in-container privilege escalation): the image ships
+        # `pentester ALL=(ALL) NOPASSWD:ALL`, so a prompt-injected agent can
+        # `sudo` to root inside the sandbox. ``no-new-privileges`` blocks setuid/
+        # file-capability escalation and is the intended compensating control.
+        # It is **opt-in (default off)** because it also disables the setuid
+        # `sudo` binary that docker-entrypoint.sh itself depends on (uid remap,
+        # `update-ca-certificates`, proxy-config writes) and the file-caps that
+        # give `nmap -sS` raw sockets when it runs as non-root — enabling it
+        # unconditionally would break container startup and core tooling. Turn it
+        # on (STRIX_SANDBOX_NO_NEW_PRIVILEGES=1) once the entrypoint no longer
+        # relies on sudo. Appended so a FUSE/SYS_ADMIN apparmor:unconfined opt
+        # from the SDK body survives.
+        no_new_privs = os.environ.get("STRIX_SANDBOX_NO_NEW_PRIVILEGES", "0").strip().lower()
+        if no_new_privs in ("1", "true", "yes", "on"):
+            security_opt = create_kwargs.setdefault("security_opt", [])
+            if not isinstance(security_opt, list):
+                security_opt = list(security_opt)
+                create_kwargs["security_opt"] = security_opt
+            if not any(str(opt).startswith("no-new-privileges") for opt in security_opt):
+                security_opt.append("no-new-privileges")
 
         _apply_sandbox_network(create_kwargs)
         _apply_resource_limits(create_kwargs)

@@ -9,6 +9,7 @@ is injected by the runner via :func:`configure_spill_writer`.
 from __future__ import annotations
 
 import logging
+import secrets
 import uuid
 from typing import TYPE_CHECKING
 
@@ -18,6 +19,43 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+# --- Untrusted-tool-output provenance envelope ------------------------------
+#
+# Tool results derived from the target (HTTP responses, crawled page text,
+# command output over target files) are merged into the model's user channel and
+# are otherwise indistinguishable from operator/system instructions. An attacker
+# who controls target bytes can therefore try to inject instructions ("ignore
+# previous rules", forged [NOTICE]/[URGENT] markers, etc.).
+#
+# We cannot fully solve prompt injection, but we can make injected text visibly
+# attacker-sourced: wrap untrusted tool output in delimiters that carry a random
+# per-run nonce. The nonce is generated once per process (i.e. once per scan run)
+# and never shown as an instruction the model must obey — only as a data fence.
+# Because the nonce is unpredictable, target bytes cannot forge a matching
+# closing delimiter to "break out" of the fence, and the paired system-prompt
+# rule tells the model that everything inside the fence is DATA, never
+# instructions.
+_UNTRUSTED_NONCE = secrets.token_hex(8)
+_UNTRUSTED_OPEN = f"<<UNTRUSTED-TOOL-OUTPUT nonce={_UNTRUSTED_NONCE}>>"
+_UNTRUSTED_CLOSE = f"<<END-UNTRUSTED nonce={_UNTRUSTED_NONCE}>>"
+
+
+def untrusted_nonce() -> str:
+    """Return this run's provenance nonce (stable for the process lifetime)."""
+    return _UNTRUSTED_NONCE
+
+
+def wrap_untrusted(text: str) -> str:
+    """Fence target-derived output as data so injected instructions are visible.
+
+    Any copy of the real (nonce-bearing) delimiters found inside ``text`` is
+    neutralized first, so attacker bytes cannot smuggle a premature close and
+    make later content read as trusted.
+    """
+    safe = text.replace(_UNTRUSTED_OPEN, "<<untrusted>>").replace(_UNTRUSTED_CLOSE, "<<untrusted>>")
+    return f"{_UNTRUSTED_OPEN}\n{safe}\n{_UNTRUSTED_CLOSE}"
 
 _TRUNCATION_NOTICE = "[... {lines} lines ({bytes} bytes) truncated ...]"
 _WORKSPACE_SPILL_NOTICE = (

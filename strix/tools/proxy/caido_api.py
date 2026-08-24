@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import time
 import urllib.request
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
+
+
+logger = logging.getLogger(__name__)
 
 
 # The generated Caido GraphQL schema module is slow to import and is only needed
@@ -53,8 +57,33 @@ _REQ_FIELD_MAP: dict[SortBy, tuple[str, str]] = {
 }
 
 
+# Loopback hosts the Caido control plane is allowed to live on. This module is
+# importable from the agent's sandbox, so an induced agent could set
+# STRIX_CAIDO_URL and silently redirect every proxy control-plane call (and the
+# captured-traffic archive it exposes) to an attacker-controlled host. The
+# override is honored only when it still points at loopback, so at most the port
+# can change — never the host. No legitimate caller sets this to a non-loopback
+# host anywhere in the codebase.
+_LOOPBACK_CAIDO_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
+
+
 def caido_url() -> str:
-    return os.environ.get("STRIX_CAIDO_URL", _DEFAULT_CAIDO_URL).rstrip("/")
+    override = os.environ.get("STRIX_CAIDO_URL")
+    if not override:
+        return _DEFAULT_CAIDO_URL
+    candidate = override.rstrip("/")
+    parsed = urlparse(candidate)
+    host = (parsed.hostname or "").lower()
+    if host in _LOOPBACK_CAIDO_HOSTS:
+        return candidate
+    # Security: refuse to point the proxy control plane at a non-loopback host.
+    logger.warning(
+        "Ignoring STRIX_CAIDO_URL=%r: host %r is not loopback; the Caido control "
+        "plane is pinned to loopback to prevent traffic-archive exfiltration.",
+        override,
+        parsed.hostname,
+    )
+    return _DEFAULT_CAIDO_URL
 
 
 def _graphql_url() -> str:
@@ -170,22 +199,59 @@ async def get_request_with_client(
 _FRAMING_HEADERS = frozenset({"content-length", "transfer-encoding"})
 
 
+def _reject_crlf(label: str, value: str) -> None:
+    """Refuse a request component that smuggles a CR or LF.
+
+    Security (request smuggling / header injection): the request line and
+    headers are assembled by joining on ``\\r\\n`` below, so a raw CR/LF in the
+    method, path, a header name, or a header VALUE injects extra request lines
+    or headers into the wire bytes. ``_FRAMING_HEADERS`` only strips framing
+    headers by KEY, so a value like ``x\\r\\nTransfer-Encoding: chunked`` would
+    silently reinstate the very desync that filtering removed. Reject control
+    characters on the default structured path; callers that genuinely need a
+    malformed request must opt in via ``allow_crlf`` so the intent is explicit.
+    """
+    if "\r" in value or "\n" in value:
+        raise ValueError(
+            f"CRLF/header injection blocked in {label}: raw CR/LF characters are not "
+            "allowed on the structured request path (they would inject request lines or "
+            "smuggle framing headers). To send a deliberately malformed request for "
+            "testing, call build_raw_request(..., allow_crlf=True)."
+        )
+
+
 def build_raw_request(
     *,
     method: str,
     url: str,
     headers: dict[str, str],
     body: str,
+    allow_crlf: bool = False,
 ) -> tuple[ConnectionInfoInput, bytes]:
+    """Assemble raw HTTP request bytes for replay.
+
+    ``allow_crlf`` is the explicit, recorded escape hatch for intentionally
+    malformed requests (e.g. deliberate request-smuggling PoCs). It defaults to
+    ``False``: the normal structured path rejects CR/LF in the method, path, and
+    every header name/value so model-supplied input cannot inject headers or
+    desync framing silently.
+    """
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
         raise ValueError(f"Invalid URL: {url}")
+    if not allow_crlf:
+        _reject_crlf("method", method)
+        for name, value in headers.items():
+            _reject_crlf("header name", str(name))
+            _reject_crlf(f"header value ({name})", str(value))
     is_tls = parsed.scheme.lower() == "https"
     host = parsed.hostname or ""
     port = parsed.port or (443 if is_tls else 80)
     path = parsed.path or "/"
     if parsed.query:
         path = f"{path}?{parsed.query}"
+    if not allow_crlf:
+        _reject_crlf("request path", path)
 
     final_headers = {**headers}
     final_headers.setdefault("Host", parsed.netloc)

@@ -1129,6 +1129,52 @@ def _is_http_git_repo(url: str) -> bool:
         return False
 
 
+#: Only these URL schemes are ever handed to ``git clone``. Anything else (most
+#: importantly git's ``ext::``/``fd::`` remote helpers, which run arbitrary shell
+#: on the host) is rejected before a target is even classified as a repository.
+_ALLOWED_REPO_SCHEMES = ("https", "http", "ssh")
+
+
+def validate_repo_url(repo_url: str) -> str:
+    """Return ``repo_url`` unchanged, or raise ``ValueError`` if unsafe to clone.
+
+    Security: ``git clone`` runs on the HOST. git's ``ext::``/``fd::`` transports
+    execute arbitrary commands (``ext::sh -c '...'``), and a URL starting with
+    ``-`` is parsed as a git option (argument injection). Only plain
+    ``https``/``http``/``ssh`` URLs and the ``git@host:path`` scp-form are allowed;
+    ``git://`` and helper transports are refused. This is enforced both here (so a
+    bad URL is never classified as a repository) and again in ``clone_repository``.
+    """
+    candidate = (repo_url or "").strip()
+    if not candidate:
+        raise ValueError("Empty repository URL.")
+    if candidate.startswith("-"):
+        raise ValueError(
+            f"Refusing repository URL starting with '-' (git option injection): {repo_url!r}"
+        )
+    if "::" in candidate:
+        raise ValueError(
+            f"Refusing repository URL containing '::' (git remote-helper transport, "
+            f"e.g. ext::/fd:: → host command execution): {repo_url!r}"
+        )
+    scheme = urlparse(candidate).scheme.lower()
+    if scheme in ("ext", "fd"):
+        raise ValueError(f"Refusing repository URL with '{scheme}::' transport: {repo_url!r}")
+    if candidate.startswith("git@"):  # scp-form git@host:path (no URL scheme)
+        return candidate
+    if scheme in _ALLOWED_REPO_SCHEMES:
+        return candidate
+    raise ValueError(
+        f"Unsupported repository URL scheme {scheme or '(none)'!r} in {repo_url!r}; "
+        "only https://, http://, ssh://, and git@host:path are allowed."
+    )
+
+
+def _repository_result(repo_url: str) -> tuple[str, dict[str, str]]:
+    """Classify ``repo_url`` as a repository target, validating the scheme first."""
+    return "repository", {"target_repo": validate_repo_url(repo_url)}
+
+
 def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
     if not target or not isinstance(target, str):
         raise ValueError("Target must be a non-empty string")
@@ -1136,10 +1182,11 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
     target = target.strip()
 
     if target.startswith("git@"):
-        return "repository", {"target_repo": target}
+        return _repository_result(target)
 
     if target.startswith("git://"):
-        return "repository", {"target_repo": target}
+        # git:// is not in the clone allowlist; validate_repo_url rejects it.
+        return _repository_result(target)
 
     parsed = urlparse(target)
     if parsed.scheme == "postman":
@@ -1162,14 +1209,14 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
 
     if parsed.scheme in ("http", "https"):
         if parsed.username or parsed.password:
-            return "repository", {"target_repo": target}
+            return _repository_result(target)
         if parsed.path.rstrip("/").endswith(".git"):
-            return "repository", {"target_repo": target}
+            return _repository_result(target)
         if parsed.query or parsed.fragment:
             return "web_application", {"target_url": target}
         path_segments = [s for s in parsed.path.split("/") if s]
         if len(path_segments) >= 2 and _is_http_git_repo(target):
-            return "repository", {"target_repo": target}
+            return _repository_result(target)
         return "web_application", {"target_url": target}
 
     try:
@@ -1196,14 +1243,17 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         raise ValueError(f"Invalid path: {target} - {e!s}") from e
 
     if target.endswith(".git"):
-        return "repository", {"target_repo": target}
+        # Security: this is the ext::/fd:: RCE sink — a bare string ending ".git"
+        # (e.g. 'ext::sh -c "..." .git') would otherwise be classified as a repo
+        # and cloned. validate_repo_url rejects the '::'/'-' forms here.
+        return _repository_result(target)
 
     if "/" in target:
         host_part, _, path_part = target.partition("/")
         if "." in host_part and not host_part.startswith(".") and path_part:
             full_url = f"https://{target}"
             if _is_http_git_repo(full_url):
-                return "repository", {"target_repo": full_url}
+                return _repository_result(full_url)
             return "web_application", {"target_url": full_url}
 
     if "." in target and "/" not in target and not target.startswith("."):
@@ -1553,6 +1603,11 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
 def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None) -> str:
     console = Console()
 
+    # Security: defense-in-depth — even though infer_target_type already rejects
+    # unsafe schemes, re-validate here so no other caller can reach the clone with
+    # an ext::/fd:: transport or an option-injecting URL.
+    repo_url = validate_repo_url(repo_url)
+
     git_executable = shutil.which("git")
     if git_executable is None:
         raise FileNotFoundError("Git executable not found in PATH")
@@ -1575,7 +1630,19 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
             subprocess.run(  # noqa: S603
                 [
                     git_executable,
+                    # Security hardening for a HOST-side clone:
+                    #  - protocol.ext.allow=never kills git's ext:: RCE helper.
+                    #  - protocol.allow=user disables non-user-initiated transports.
+                    #  - `--` stops any remaining option injection via the URL.
+                    "-c",
+                    "protocol.ext.allow=never",
+                    "-c",
+                    "protocol.allow=user",
                     "clone",
+                    # No --depth: a shallow clone would strip the history that
+                    # --diff-base scans need. The RCE fix is the protocol pins
+                    # and the `--` option terminator, not the depth.
+                    "--",
                     repo_url,
                     str(clone_path),
                 ],

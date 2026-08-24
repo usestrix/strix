@@ -61,6 +61,14 @@ def start(
     has_instructions: bool,
     auth_mode: str | None = None,
 ) -> None:
+    # Security/privacy: build props (which calls is_first_run(), touching
+    # ~/.strix/.seen on disk) only when telemetry is enabled. A user who opted
+    # out must trigger no telemetry-purpose disk write, not just no network call.
+    # Note: scarf sends props as a URL query string (wider log/referrer surface
+    # than a request body), but moving to a POST body would change the endpoint's
+    # contract, so that is left as-is here; the marker fix is the priority.
+    if not _is_enabled():
+        return
     _send(
         "scan_started",
         {

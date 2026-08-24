@@ -35,7 +35,12 @@ classifiers = [
 dependencies = [
   "openai-agents[litellm]>=0.19.0,<0.20",
   "openai>=2.45.0,<3",
-  "litellm",
+  # Security: litellm holds the user's LLM API key; leaving it unbounded lets a
+  # resolver silently pull a future major with a different (possibly compromised
+  # or breaking) API surface. Bound it like every other dep. Floor is the version
+  # in uv.lock (1.90.1); ceiling caps the current major so a v2 can't slip in
+  # unreviewed.
+  "litellm>=1.90,<2",
   "pydantic>=2.11.3",
   "pydantic-settings>=2.13.0",
   "rich",

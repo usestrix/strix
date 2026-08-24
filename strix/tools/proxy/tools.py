@@ -4,12 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import dataclasses
+import ipaddress
 import json
 import logging
 import re
+import socket
 from dataclasses import is_dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
+from urllib.parse import urlparse
 
 from agents import RunContextWrapper, function_tool
 
@@ -18,6 +21,123 @@ from strix.tools.proxy import caido_api
 
 
 logger = logging.getLogger(__name__)
+
+
+# --- Code-level scope / SSRF egress enforcement -----------------------------
+#
+# ``repeat_request`` sends a fully model-controlled URL to a real HTTP client.
+# The scope the agent is supposed to stay within is otherwise expressed only as
+# prompt text, so a prompt-injected target ("test http://169.254.169.254/...")
+# flows straight to a request against cloud metadata / internal services. This
+# module keeps a code-level DENY-by-default guard for internal/link-local/
+# loopback destinations, with an allow-exception for hosts the platform
+# explicitly authorized as in-scope.
+#
+# The authorized-target list is built in ``strix.core.inputs.build_scope_context``
+# (not importable here without a cycle, and not reachable from the tool's run
+# context). It is threaded in here by ``strix.agents.factory.build_strix_agent``,
+# which owns ``system_prompt_context.authorized_targets`` and calls
+# ``register_authorized_hosts`` for every agent it builds (root + children).
+_AUTHORIZED_HOSTS: set[str] = set()
+
+
+def _host_from_target_value(value: str) -> str | None:
+    """Best-effort extraction of a network host from an authorized-target value.
+
+    Target values are URLs (``http://api.example.com/...``), bare hosts, or
+    ``host:port``. Repository URLs / local paths yield nothing usable and are
+    simply ignored.
+    """
+    raw = (value or "").strip()
+    if not raw:
+        return None
+    parsed = urlparse(raw if "://" in raw else f"//{raw}", scheme="")
+    host = parsed.hostname
+    if host:
+        return host.lower()
+    return None
+
+
+def register_authorized_hosts(targets: Any) -> None:
+    """Register in-scope hosts so ``repeat_request`` can allow-except them.
+
+    Called by the agent factory with ``system_prompt_context.authorized_targets``
+    (a list of ``{"type", "value", ...}`` dicts). Idempotent and additive: every
+    agent in a scan shares the same platform-verified scope, so unioning is safe.
+    """
+    if not isinstance(targets, list):
+        return
+    for target in targets:
+        if not isinstance(target, dict):
+            continue
+        host = _host_from_target_value(str(target.get("value", "")))
+        if host:
+            _AUTHORIZED_HOSTS.add(host)
+
+
+def _ip_is_internal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """RFC1918 / link-local (incl. 169.254.169.254 metadata) / loopback / unspecified."""
+    return ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified
+
+
+# Hostnames that name an internal endpoint without resolving to a fixed literal.
+_BLOCKED_HOSTNAMES = frozenset({"host.docker.internal", "localhost"})
+
+
+def _blocked_destination_reason(url: str) -> str | None:
+    """Return a deny reason if ``url``'s host is internal and not authorized, else None.
+
+    DENY-by-default for RFC1918, link-local (169.254/16 incl. cloud metadata),
+    loopback (127/8, ::1), and ``host.docker.internal`` — UNLESS the host is on
+    the platform-verified authorized-target list. The hostname is resolved via
+    DNS so a name that points at an internal/metadata address is caught too
+    (a standard SSRF bypass); public hosts pass (scope for those is enforced by
+    the prompt, not this guard).
+    """
+    host = (urlparse(url).hostname or "").strip().rstrip(".").lower()
+    if not host:
+        return f"could not determine destination host from URL: {url!r}"
+
+    # Explicitly in-scope: the platform authorized this exact host (covers a
+    # legitimately-scoped internal IP or an internal hostname target).
+    if host in _AUTHORIZED_HOSTS:
+        return None
+
+    if host in _BLOCKED_HOSTNAMES:
+        return (
+            f"destination host {host!r} is a sandbox-internal endpoint and is not in the "
+            "authorized target scope"
+        )
+
+    candidates: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    try:
+        candidates.append(ipaddress.ip_address(host))
+    except ValueError:
+        # A hostname — resolve it and screen every address it points at.
+        try:
+            for info in socket.getaddrinfo(host, None):
+                try:
+                    candidates.append(ipaddress.ip_address(info[4][0]))
+                except ValueError:
+                    continue
+        except OSError:
+            # Unresolvable here: not our call to block (Caido will surface the
+            # DNS failure), and it cannot reach an internal address anyway.
+            return None
+
+    for ip in candidates:
+        if _ip_is_internal(ip):
+            return (
+                f"destination {host!r} resolves to internal/link-local/loopback address "
+                f"{ip} (RFC1918 / 169.254 metadata / 127.0.0.0/8) and is not in the "
+                "authorized target scope; blocked to prevent SSRF against internal "
+                "services or the cloud metadata endpoint"
+            )
+    return None
+
+
+class _ScopeDeniedError(Exception):
+    """Raised when a replay target fails the code-level egress guard."""
 
 
 if TYPE_CHECKING:
@@ -401,6 +521,14 @@ async def repeat_request(
         components = caido_api.parse_raw_request(raw_str)
         full_url = caido_api.full_url_from_components(original, components, mods)
         modified = caido_api.apply_modifications(components, mods, full_url)
+        # Security (scope/SSRF egress): the destination URL here is
+        # model-controlled (``modifications["url"]``). Validate its host before
+        # any bytes go on the wire — deny internal/metadata/loopback targets
+        # that are not explicitly in the authorized scope. DNS resolution can
+        # block, so run the check off the event loop.
+        denied = await asyncio.to_thread(_blocked_destination_reason, modified["url"])
+        if denied is not None:
+            raise _ScopeDeniedError(denied)
         connection, raw = caido_api.build_raw_request(
             method=modified["method"],
             url=modified["url"],
@@ -418,6 +546,18 @@ async def repeat_request(
                 default=str,
             )
         return _format_replay_tool_result(replay)
+    except _ScopeDeniedError as exc:
+        # Deliberate deny — a clear, model-visible result (not an unexpected error).
+        logger.warning("repeat_request blocked out-of-scope destination: %s", exc)
+        return json.dumps(
+            {
+                "success": False,
+                "blocked": True,
+                "error": f"repeat_request blocked: {exc}",
+            },
+            ensure_ascii=False,
+            default=str,
+        )
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
 

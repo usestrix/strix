@@ -35,10 +35,11 @@ from strix.tools.notes.tools import (
     list_notes,
     update_note,
 )
-from strix.tools.output_store import bound_and_store, bound_text
+from strix.tools.output_store import bound_and_store, bound_text, wrap_untrusted
 from strix.tools.proxy.tools import (
     list_requests,
     list_sitemap,
+    register_authorized_hosts,
     repeat_request,
     scope_rules,
     view_request,
@@ -122,6 +123,50 @@ async def _bound_result(result: Any) -> Any:
         return result
     max_lines, max_bytes = _tool_output_limits()
     return await bound_and_store(result, max_lines=max_lines, max_bytes=max_bytes)
+
+
+# Tools whose results are derived from the target and are therefore untrusted:
+# HTTP responses / proxied traffic, crawled page text, external web content, and
+# shell/command output over target files. Their results are fenced in the
+# provenance envelope (see ``strix.tools.output_store.wrap_untrusted``) so
+# injected instructions in target bytes read as data, not as system commands.
+# Deliberately excludes control/lifecycle tools (finish_scan, agent_finish,
+# respond_to_user, wait_for_agents) and internal bookkeeping tools whose JSON
+# results are parsed by the runner/tool-use behavior and must stay unwrapped.
+_UNTRUSTED_RESULT_TOOLS: frozenset[str] = frozenset(
+    {
+        "list_requests",
+        "view_request",
+        "repeat_request",
+        "list_sitemap",
+        "view_sitemap_entry",
+        "web_search",
+        "exec_command",
+        "write_stdin",
+    }
+)
+
+
+def _with_untrusted_provenance(tool: FunctionTool) -> FunctionTool:
+    """Fence a target-facing tool's string result as untrusted data (idempotent)."""
+    if getattr(tool, "_strix_untrusted", False):
+        return tool
+    invoke_tool = tool.on_invoke_tool
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        result = await invoke_tool(ctx, raw_input)
+        return wrap_untrusted(result) if isinstance(result, str) else result
+
+    tool.on_invoke_tool = invoke
+    tool._strix_untrusted = True  # type: ignore[attr-defined]
+    return tool
+
+
+def _maybe_provenance(tool: FunctionTool) -> FunctionTool:
+    """Apply the untrusted-output envelope when ``tool`` is target-facing."""
+    if tool.name in _UNTRUSTED_RESULT_TOOLS:
+        return _with_untrusted_provenance(tool)
+    return tool
 
 
 def _format_tool_error(exc: Exception) -> str:
@@ -445,6 +490,9 @@ def _configure_shell_tools(
             wrapped = _wrap_write_stdin(wrapped)
         if chat_completions:
             wrapped = _function_tool_with_error_result(wrapped)
+        # Security (prompt-injection provenance): shell output carries target
+        # file contents and crawled page text — untrusted. Fence it as data.
+        wrapped = _maybe_provenance(wrapped)
         setattr(toolset, name, wrapped)
 
 
@@ -637,11 +685,23 @@ def build_strix_agent(
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        _with_bounded_result(_with_strictness(_with_coerced_arguments(tool), strict_tool_schemas))
+        _maybe_provenance(
+            _with_bounded_result(
+                _with_strictness(_with_coerced_arguments(tool), strict_tool_schemas)
+            )
+        )
         if isinstance(tool, FunctionTool)
         else tool
         for tool in tools
     ]
+
+    # Security (prompt-injection provenance): expose this run's authorized target
+    # hosts to the proxy egress guard. system_prompt_context carries the
+    # platform-verified authorized_targets (built in strix.core.inputs); every
+    # agent built here (root + children) contributes them so repeat_request can
+    # allow-except a legitimately in-scope internal host.
+    if system_prompt_context:
+        register_authorized_hosts(system_prompt_context.get("authorized_targets"))
 
     logger.info(
         "Built %s agent '%s' (skills=%d, tools=%d, scan_mode=%s, whitebox=%s)",

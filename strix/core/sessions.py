@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sqlite3
 from contextlib import contextmanager
@@ -41,7 +42,13 @@ class _PooledConnectionSession(SQLiteSession):
 
 
 def open_agent_session(agent_id: str, path: Path) -> SQLiteSession:
-    path.parent.mkdir(parents=True, exist_ok=True)
+    # Security: the session sqlite db holds the agent's full transcript, which can
+    # include credentials/tokens captured from the target. Keep its directory
+    # owner-only (chmod is best-effort — a no-op on Windows — so it never crashes).
+    parent = path.parent
+    parent.mkdir(parents=True, exist_ok=True)
+    with contextlib.suppress(OSError):
+        parent.chmod(0o700)
     return _PooledConnectionSession(session_id=agent_id, db_path=path)
 
 

@@ -20,10 +20,45 @@ fi
 CAIDO_PORT=48080
 CAIDO_LOG="/tmp/caido_startup.log"
 
-if [ ! -f /app/certs/ca.p12 ]; then
-  echo "ERROR: CA certificate file /app/certs/ca.p12 not found."
-  exit 1
-fi
+# --- Generate a FRESH MITM CA per container start (SECURITY) -----------------
+# The CA private key must never be baked into the published image: a shared key
+# would let anyone who pulled the image forge trusted TLS for every Strix user.
+# Generate a unique CA here, before caido-cli (which imports it) and before the
+# system-wide + nssdb browser trust steps below.
+CERT_DIR="/app/certs"
+CA_KEY="${CERT_DIR}/ca.key"
+CA_CRT="${CERT_DIR}/ca.crt"
+CA_P12="${CERT_DIR}/ca.p12"
+CA_P12_PASS_FILE="${CERT_DIR}/ca.p12.pass"
+
+echo "Generating per-container MITM CA in ${CERT_DIR}..."
+
+# Random per-container PKCS#12 password, written 0600 (subshell-scoped umask so
+# the rest of the script is unaffected). Replaces the previous empty password,
+# which offered no protection to the key material in the .p12 bundle.
+CA_P12_PASS="$(openssl rand -hex 32)"
+( umask 077; printf '%s' "${CA_P12_PASS}" > "${CA_P12_PASS_FILE}" )
+
+openssl ecparam -name prime256v1 -genkey -noout -out "${CA_KEY}"
+openssl req -x509 -new -key "${CA_KEY}" \
+    -out "${CA_CRT}" \
+    -days 3650 \
+    -subj "/C=US/ST=CA/O=Security Testing/CN=Testing Root CA" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign"
+openssl pkcs12 -export \
+    -out "${CA_P12}" \
+    -inkey "${CA_KEY}" \
+    -in "${CA_CRT}" \
+    -passout "pass:${CA_P12_PASS}" \
+    -name "Testing Root CA"
+chmod 644 "${CA_CRT}"
+chmod 600 "${CA_KEY}" "${CA_P12}"
+
+# Trust the freshly-generated CA system-wide (needs root; sudo is NOPASSWD).
+sudo cp "${CA_CRT}" /usr/local/share/ca-certificates/ca.crt
+sudo update-ca-certificates
+echo "✅ Per-container MITM CA generated and trusted"
 
 # Caido enforces a Host allowlist (DNS-rebinding protection) and rejects requests
 # whose Host header is a hostname it doesn't recognize. To reach Caido over a
@@ -38,13 +73,21 @@ if [ -n "${STRIX_CAIDO_ALLOWED_DOMAINS:-}" ]; then
   done
 fi
 
-caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
+# SECURITY: bind Caido to loopback INSIDE the container, not 0.0.0.0. The host
+# reaches it via Docker's published-port mapping (the SDK publishes the port on
+# 127.0.0.1) and the in-container Python client curls http://127.0.0.1:48080, so
+# a wildcard bind is unnecessary and exposes Caido — which proxies and archives
+# every intercepted request/response, including captured credentials — to any
+# other container on the same Docker bridge network. --allow-guests is retained
+# because the local Python client authenticates via loginAsGuest; the loopback
+# bind is what removes the container-network exposure.
+caido-cli --listen 127.0.0.1:${CAIDO_PORT} \
           --allow-guests \
           --no-logging \
           --no-open \
           "${CAIDO_UI_DOMAIN_ARGS[@]}" \
-          --import-ca-cert /app/certs/ca.p12 \
-          --import-ca-cert-pass "" > "$CAIDO_LOG" 2>&1 &
+          --import-ca-cert "${CA_P12}" \
+          --import-ca-cert-pass "${CA_P12_PASS}" > "$CAIDO_LOG" 2>&1 &
 
 CAIDO_PID=$!
 echo "Started Caido with PID $CAIDO_PID on port $CAIDO_PORT"

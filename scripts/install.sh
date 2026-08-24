@@ -143,6 +143,86 @@ check_version() {
     fi
 }
 
+# Security: the release tarball is downloaded over the network and then executed,
+# so TLS alone is not enough — a compromised/mirrored release or a MITM that can
+# present a valid cert for github.com would otherwise run arbitrary code as the
+# user. Verify a published SHA256 checksum before extracting.
+#
+# FAIL-CLOSED contract:
+#   * If a SHA256SUMS (or <filename>.sha256) is published for this release and it
+#     does NOT match the downloaded file, abort — do not extract or install.
+#   * If NO checksum file is published yet, we cannot verify integrity. We do NOT
+#     silently proceed as if verified: print a loud warning and continue only as
+#     an explicit "at your own risk" fallback.
+#
+# TODO(release-workflow): .github/workflows/build-release.yml must be updated to
+# publish a SHA256SUMS file (and/or per-asset <filename>.sha256) alongside the
+# release assets so this verification is actually enforced. That workflow is not
+# edited here. The real end-to-end fix is publisher signing (cosign / build
+# provenance attestation), since a same-origin checksum only detects corruption,
+# not a compromise of the release pipeline itself.
+verify_checksum() {
+    local file=$1
+
+    # Pick an available SHA-256 checker: coreutils sha256sum or BSD/macOS shasum.
+    local sha_cmd=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha_cmd="sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then
+        sha_cmd="shasum -a 256"
+    else
+        echo -e "${YELLOW}⚠ Neither 'sha256sum' nor 'shasum' is available; cannot verify integrity.${NC}"
+        echo -e "${YELLOW}⚠ Proceeding WITHOUT checksum verification — install at your own risk.${NC}"
+        return 0
+    fi
+
+    local sums_url="https://github.com/$REPO/releases/download/v${specific_version}/SHA256SUMS"
+    local asset_sum_url="${url}.sha256"
+
+    # Prefer a combined SHA256SUMS manifest; fall back to a per-asset .sha256.
+    if curl -sfL -o SHA256SUMS "$sums_url" 2>/dev/null && [ -s SHA256SUMS ]; then
+        echo -e "${MUTED}Verifying checksum (SHA256SUMS)...${NC}"
+        # Check only our file's line; a mismatch or missing entry is fatal.
+        if grep -E "[[:space:]]\*?${file}\$" SHA256SUMS > SHA256SUMS.filtered 2>/dev/null \
+            && [ -s SHA256SUMS.filtered ]; then
+            if $sha_cmd -c SHA256SUMS.filtered >/dev/null 2>&1; then
+                echo -e "${GREEN}✓ Checksum verified${NC}"
+                return 0
+            fi
+            echo -e "${RED}✗ Checksum verification FAILED for ${file}.${NC}"
+            echo -e "${RED}Refusing to install a binary whose checksum does not match.${NC}"
+            exit 1
+        fi
+        echo -e "${YELLOW}⚠ SHA256SUMS did not contain an entry for ${file}.${NC}"
+        echo -e "${YELLOW}⚠ Proceeding WITHOUT checksum verification — install at your own risk.${NC}"
+        return 0
+    fi
+
+    if curl -sfL -o "${file}.sha256" "$asset_sum_url" 2>/dev/null && [ -s "${file}.sha256" ]; then
+        echo -e "${MUTED}Verifying checksum (${file}.sha256)...${NC}"
+        # Normalize to "<hash>  <file>" so `-c` checks against the real filename
+        # regardless of whether the published file is a bare hash or "hash name".
+        local expected_hash
+        expected_hash=$(awk '{print $1}' "${file}.sha256")
+        if [ -n "$expected_hash" ]; then
+            printf '%s  %s\n' "$expected_hash" "$file" > "${file}.sha256.check"
+            if $sha_cmd -c "${file}.sha256.check" >/dev/null 2>&1; then
+                echo -e "${GREEN}✓ Checksum verified${NC}"
+                return 0
+            fi
+            echo -e "${RED}✗ Checksum verification FAILED for ${file}.${NC}"
+            echo -e "${RED}Refusing to install a binary whose checksum does not match.${NC}"
+            exit 1
+        fi
+    fi
+
+    # No checksum published yet: cannot verify. Warn loudly, do not pretend it's verified.
+    echo -e "${YELLOW}⚠ No published checksum (SHA256SUMS or ${file}.sha256) found for this release.${NC}"
+    echo -e "${YELLOW}⚠ Integrity could NOT be verified — the binary is run at your own risk.${NC}"
+    echo -e "${MUTED}  (Release integrity is only guaranteed once SHA256SUMS is published.)${NC}"
+    return 0
+}
+
 download_and_install() {
     print_message info "\n${CYAN}🦉 Installing Strix${NC} ${MUTED}version: ${NC}$specific_version"
     print_message info "${MUTED}Platform: ${NC}$target\n"
@@ -157,6 +237,8 @@ download_and_install() {
         echo -e "${RED}Download failed${NC}"
         exit 1
     fi
+
+    verify_checksum "$filename"
 
     echo -e "${MUTED}Extracting...${NC}"
     if [ "$os" = "windows" ]; then
@@ -296,15 +378,14 @@ verify_installation() {
 
     if [[ "$which_strix" != "$INSTALL_DIR/strix" && "$which_strix" != "$INSTALL_DIR/strix.exe" ]]; then
         if [[ -n "$which_strix" ]]; then
-            echo -e "${YELLOW}⚠ Found conflicting strix at: ${NC}$which_strix"
-            echo -e "${MUTED}Attempting to remove...${NC}"
-
-            if rm -f "$which_strix" 2>/dev/null; then
-                echo -e "${GREEN}✓ Removed conflicting installation${NC}"
-            else
-                echo -e "${YELLOW}Could not remove automatically.${NC}"
-                echo -e "${MUTED}Please remove manually: ${NC}rm $which_strix"
-            fi
+            # Security: never delete a binary outside the install dir we own. The
+            # file first on PATH named "strix" may be an unrelated tool (or a
+            # deliberate user override); auto-`rm`-ing it would destroy data we
+            # don't control. Only report the conflict and let the user resolve it.
+            echo -e "${YELLOW}⚠ Found another 'strix' earlier on your PATH: ${NC}$which_strix"
+            echo -e "${MUTED}Strix was installed to ${NC}$INSTALL_DIR${MUTED}, but the above will run first.${NC}"
+            echo -e "${MUTED}If that is a different tool, keep it. To use this install, put ${NC}$INSTALL_DIR${MUTED} ahead on your PATH,${NC}"
+            echo -e "${MUTED}or remove the other one yourself: ${NC}rm $which_strix"
         fi
     fi
 

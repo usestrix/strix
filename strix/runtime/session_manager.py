@@ -59,7 +59,16 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
             continue
         resolved = Path(host_path).expanduser().resolve()
         target = f"{_WORKSPACE_ROOT}/{ws_subdir}"
-        bind_mounts.append({"source": str(resolved), "target": target, "read_only": False})
+        # SECURITY: scan-target source trees are bind-mounted read-only by
+        # default. The sandboxed agent runs attacker-influenced commands; a
+        # writable host bind mount would let a prompt-injected agent modify or
+        # plant files in the user's real source tree (e.g. tamper with a repo it
+        # was only asked to audit). Opt in to a writable mount per-source with
+        # ``writable: True`` when a scan genuinely needs to write back.
+        writable = bool(src.get("writable"))
+        bind_mounts.append(
+            {"source": str(resolved), "target": target, "read_only": not writable}
+        )
         if src.get("protect_metadata"):
             bind_mounts.extend(_metadata_mounts(resolved, target))
     return bind_mounts

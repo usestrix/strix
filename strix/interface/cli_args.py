@@ -384,9 +384,10 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     if not getattr(args, "user_instruction", None):
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
-    # Remount the workspace the run was started with. The user already confirmed
-    # this directory, so the target mount guard does not apply to it; it only has
-    # to still be there.
+    # Remount the workspace the run was started with. run.json lives INSIDE the
+    # RW-mounted workspace, so the sandboxed agent can rewrite workspace_mount
+    # (e.g. to "/"); we must therefore revalidate it on resume exactly like a
+    # fresh mount rather than trusting the persisted value. See below.
     args.workspace_mount = workspace_mount
 
     # Replace the workspace files the run started with, unless this resume names
@@ -406,11 +407,20 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         except ValueError as error:
             parser.error(f"--resume {args.resume}: invalid workspace file: {error}")
     if workspace_mount:
-        if not Path(workspace_mount).expanduser().is_dir():
+        mount_path = Path(workspace_mount).expanduser()
+        if not mount_path.is_dir():
             parser.error(
                 f"--resume {args.resume}: the working directory {workspace_mount} "
                 f"is missing. Restore it before resuming, or start a fresh run."
             )
+        # Security: mirror the local_code branch above — run.json lives inside the
+        # RW-mounted workspace, so an agent could rewrite workspace_mount to "/",
+        # $HOME, or a system dir and have the next --resume bind-mount it RW.
+        # Revalidate it exactly like a fresh mount instead of trusting the record.
+        try:
+            check_mountable_dir(mount_path)
+        except ValueError as exc:
+            parser.error(f"--resume {args.resume}: {exc}")
         attach_workspace_mount(args)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
