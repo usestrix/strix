@@ -195,7 +195,11 @@ verify_checksum() {
     if curl -sfL -o SHA256SUMS "$sums_url" 2>/dev/null && [ -s SHA256SUMS ]; then
         echo -e "${MUTED}Verifying checksum (SHA256SUMS)...${NC}"
         # Check only our file's line; a mismatch OR a missing entry is fatal.
-        if grep -E "[[:space:]]\*?${file}\$" SHA256SUMS > SHA256SUMS.filtered 2>/dev/null \
+        # Match the filename as an exact field, not a regex — a grep pattern would
+        # interpret '.' in the asset name as "any char" and could match the wrong
+        # line. $2 is the name in text mode ("hash  name") and "*name" in binary
+        # mode ("hash *name"); accept both.
+        if awk -v file="$file" '$2 == file || $2 == "*" file' SHA256SUMS > SHA256SUMS.filtered 2>/dev/null \
             && [ -s SHA256SUMS.filtered ]; then
             if $sha_cmd -c SHA256SUMS.filtered >/dev/null 2>&1; then
                 echo -e "${GREEN}✓ Checksum verified${NC}"

@@ -75,13 +75,19 @@ fi
 
 # SECURITY: bind Caido to loopback INSIDE the container, not 0.0.0.0. The host
 # reaches it via Docker's published-port mapping (the SDK publishes the port on
-# 127.0.0.1) and the in-container Python client curls http://127.0.0.1:48080, so
-# a wildcard bind is unnecessary and exposes Caido — which proxies and archives
-# every intercepted request/response, including captured credentials — to any
-# other container on the same Docker bridge network. --allow-guests is retained
-# because the local Python client authenticates via loginAsGuest; the loopback
-# bind is what removes the container-network exposure.
-caido-cli --listen 127.0.0.1:${CAIDO_PORT} \
+# Caido must bind 0.0.0.0 inside the container: the host-side SDK reaches it via
+# the container's BRIDGE IP (docker_client resolves NetworkSettings.IPAddress and
+# session_manager.resolve_exposed_port), not via container loopback — a
+# 127.0.0.1 bind makes it listen only on container-loopback and the host client
+# cannot connect (SDK bootstrap fails). The bind therefore cannot itself remove
+# the sibling-container exposure that Caido (which archives every intercepted
+# request/response, captured credentials included) presents on a shared bridge.
+# That exposure is instead contained by running the sandbox on its own network
+# and by host port-publishing staying loopback-only (docker_client binds
+# 127.0.0.1 on the host side); --allow-guests is retained for the loginAsGuest
+# client. Left as 0.0.0.0 deliberately — do not "harden" to 127.0.0.1, it breaks
+# the host proxy bootstrap.
+caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
           --allow-guests \
           --no-logging \
           --no-open \
