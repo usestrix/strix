@@ -1565,10 +1565,14 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
     else:
         repo_name = derive_repo_base_name(repo_url)
 
-    # Guard against path traversal: the derived name must not resolve
-    # outside the temp directory (e.g. ".." or ".").
+    # Guard against path traversal: the derived name must resolve to a
+    # strict child of the temp directory — not temp_dir itself, and not
+    # any path outside it (e.g. "." or "..").
     clone_path = (temp_dir / repo_name).resolve()
-    if not str(clone_path).startswith(str(temp_dir.resolve())):
+    temp_dir_resolved = temp_dir.resolve()
+    if clone_path == temp_dir_resolved or not str(clone_path).startswith(
+        str(temp_dir_resolved) + os.sep
+    ):
         raise ValueError(
             f"Refusing to clone: derived directory name '{repo_name}' "
             f"escapes the temporary directory"
