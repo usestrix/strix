@@ -93,3 +93,8 @@ Thumbs.db
 schema.graphql
 
 .opencode/
+
+# Root-only local data and reference checkouts
+/.benchmarks/
+/references/
+/strix_runs_main/

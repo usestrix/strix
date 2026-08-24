@@ -6,31 +6,27 @@ description: "Command-line options for Strix"
 ## Basic Usage
 
 ```bash
-strix (--target <target> | --target-list <path> | --mount <path>) [options]
+strix (--target <target> | --target-list <path>) [options]
 ```
 
 ## Options
 
 <ParamField path="--target, -t" type="string">
-  Target to test. Accepts URLs, repositories, local directories, domains, or IP addresses. Can be specified multiple times. Fresh runs require at least one target source: `--target`, `--target-list`, or `--mount`.
+  Target to test. Accepts URLs, repositories, local directories, domains, IP addresses, API spec files (OpenAPI/Swagger `.json`/`.yaml`, a Postman collection export), or a live Postman collection by id (`postman://<collection-uuid>`). Can be specified multiple times. Fresh runs require at least one target source: `--target` or `--target-list`.
+
+  When the target is an API spec, Strix copies it into the agent's workspace and authorizes the base URLs it declares (including those resolved from a Postman environment) as in-scope hosts - so the agent reads the contract and tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
+
+  <Note>
+    A local directory is mounted into the sandbox live and **writable**, so the agent edits your real files (`.git` excepted). Commit or stash first.
+  </Note>
+
+  <Note>
+    Fetching a Postman collection by id requires `POSTMAN_API_KEY`. Add `?env=<environment-uuid>` to also pull a Postman environment, which resolves `{{baseUrl}}` / token variables the collection references (e.g. `postman://<collection-uuid>?env=<environment-uid>`).
+  </Note>
 </ParamField>
 
 <ParamField path="--target-list" type="string">
   Path to a file containing targets, one per non-empty, non-comment line. Lines starting with `#` are ignored. Can be specified multiple times and combined with `--target`.
-</ParamField>
-
-<ParamField path="--mount" type="string">
-  Bind-mount a local directory into the sandbox (read-only) instead of copying it in file-by-file. Use this for large repositories that are too big to stream into the container. Can be specified multiple times.
-
-  Strix copies local `--target` directories into the sandbox one file at a time, which stalls on very large trees. When a local target exceeds the copy limit (see `STRIX_MAX_LOCAL_COPY_MB`, default 1024 MB) Strix exits early and asks you to re-run with `--mount`.
-
-  <Note>
-    The mount is read-only to protect your source from accidental modification. This is not a hard security boundary: a root process inside the container can remount it writable, so treat `--mount` as "scan my own code", not as isolation from untrusted code.
-  </Note>
-
-  <Note>
-    The size pre-flight only covers local directory targets. Remote repositories (cloned at scan time) are not size-checked.
-  </Note>
 </ParamField>
 
 <ParamField path="--instruction" type="string">
@@ -39,6 +35,13 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
 
 <ParamField path="--instruction-file" type="string">
   Path to a file containing detailed instructions.
+</ParamField>
+
+<ParamField path="--workspace-file" type="string">
+  Path to a file on your machine to place into the sandbox workspace before the
+  scan starts. Repeat the option for more files. Write `PATH:DEST` to choose the
+  destination inside `/workspace`. `DEST` defaults to the file name. See
+  [Workspace files](/usage/instructions#workspace-files).
 </ParamField>
 
 <ParamField path="--scan-mode, -m" type="string" default="deep">
@@ -61,11 +64,28 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
   Path to a custom config file (JSON) to use instead of `~/.strix/cli-config.json`.
 </ParamField>
 
-<ParamField path="--max-budget-usd" type="number">
+<ParamField path="--max-budget" type="number">
   Maximum LLM spend in USD for the whole scan, counted cumulatively across the
   root agent and every child agent. The budget is checked after each model
-  response; once the running cost reaches the threshold, the scan stops cleanly
-  with a `stopped` status (not a failure) and the sandbox is torn down.
+  response.
+
+  In non-interactive mode (`-n`), once the running cost reaches the threshold,
+  the scan stops cleanly with a `stopped` status (not a failure) and the sandbox
+  is torn down. Sub-agents are stopped early, at 90% of the budget, reserving
+  the final slice for the root agent to wind down and produce the final report.
+
+  In interactive mode, reaching the budget pauses the scan instead of ending
+  it: every agent parks, and sending any message resumes the scan with the cap
+  extended by the original budget amount. There is no sub-agent reserve in
+  interactive mode.
+
+  As the budget is approached, graduated wrap-up warnings are surfaced to
+  **every** agent so they can finish their work and call their lifecycle tool
+  before the hard stop. The bands sit just below each role's own stop point: the
+  root is warned at **70%, 85% and 95%** (it stops at 100%), while sub-agents are
+  warned at **75%, 80% and 85%** (they stop at the 90% reserve). In interactive
+  mode every agent uses the **70%, 85% and 95%** bands. Percentages shown in the
+  warnings are the real cumulative spend against the full budget.
 
   Must be greater than `0`. Omit the flag for no limit.
 
@@ -84,6 +104,19 @@ strix (--target <target> | --target-list <path> | --mount <path>) [options]
     counts.
 </ParamField>
 
+<ParamField path="--max-turns" type="integer" default="500">
+  Maximum number of turns (one model response plus its tool round) allotted to
+  **each** agent, applied per run. When an agent reaches this limit it is
+  force-stopped.
+
+  As the limit is approached, graduated wrap-up warnings (at 70%, 85% and 95%)
+  are injected into that agent's next model turn so it can prioritise its
+  remaining work and call its lifecycle tool (`finish_scan` for the root agent,
+  `agent_finish` for sub-agents) before the hard stop.
+
+  Must be greater than `0`.
+</ParamField>
+
 ## Examples
 
 ```bash
@@ -99,17 +132,27 @@ strix --target api.example.com --instruction "Focus on IDOR and auth bypass"
 # CI/CD mode
 strix -n --target ./ --scan-mode quick
 
+# Cap cost and per-agent turns
+strix --target https://example.com --max-budget 25 --max-turns 300
+
 # Force diff-scope against a specific base ref
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 
 # Multi-target white-box testing
 strix -t https://github.com/org/app -t https://staging.example.com
 
+# API spec + live target (OpenAPI/Swagger file or Postman collection)
+strix -t ./openapi.yaml -t https://api.example.com
+
+# Postman collection pulled live by id (+ optional environment)
+strix -t "postman://<collection-uuid>?env=<environment-uuid>"
+
 # Targets from a file
 strix --target-list ./targets.txt
 
-# Large local repository — bind-mount instead of copying it in
-strix --mount ./huge-monorepo
+# Extra files placed in the sandbox workspace
+strix --target ./my-project --workspace-file ./wordlist.txt
+strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
 ```
 
 ## Exit Codes

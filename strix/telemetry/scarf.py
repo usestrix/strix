@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 import urllib.parse
-import urllib.request
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
+
+import requests
 
 from strix.config import load_settings
 from strix.telemetry._common import (
+    SEND_TIMEOUT,
     SESSION_ID,
     base_props,
     get_version,
@@ -42,8 +43,7 @@ def _send(event: str, properties: dict[str, Any]) -> bool:
         url = f"{_SCARF_ENDPOINT}{path}"
         if query:
             url = f"{url}?{query}"
-        req = urllib.request.Request(url, method="POST")  # noqa: S310
-        with urllib.request.urlopen(req, timeout=10):  # noqa: S310  # nosec B310
+        with requests.post(url, timeout=SEND_TIMEOUT):
             pass
     except Exception:  # noqa: BLE001
         logger.debug("scarf send failed for event %s", event, exc_info=True)
@@ -113,19 +113,11 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
         if sev in vulnerabilities_counts:
             vulnerabilities_counts[sev] += 1
 
-    duration = 0.0
-    try:
-        scan_start = datetime.fromisoformat(report_state.start_time.replace("Z", "+00:00"))
-        end_iso = report_state.end_time or datetime.now(scan_start.tzinfo).isoformat()
-        duration = (
-            datetime.fromisoformat(end_iso.replace("Z", "+00:00")) - scan_start
-        ).total_seconds()
-    except (ValueError, TypeError, AttributeError):
-        pass
+    duration = report_state.get_process_duration_seconds()
 
     llm_props: dict[str, int | float] = {}
     try:
-        usage = report_state.get_total_llm_usage()
+        usage = report_state.get_process_llm_usage()
         if isinstance(usage, dict):
             llm_props = {
                 "llm_requests": int(usage.get("requests") or 0),

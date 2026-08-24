@@ -97,19 +97,19 @@ def _is_newer(latest: str, current: str) -> bool:
 def _fetch_latest_version() -> str | None:
     try:
         if is_binary_install():
-            response = requests.get(
+            with requests.get(
                 f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest",
                 timeout=REQUEST_TIMEOUT_SECONDS,
-            )
-            response.raise_for_status()
-            tag = response.json().get("tag_name", "")
+            ) as response:
+                response.raise_for_status()
+                tag = response.json().get("tag_name", "")
             return tag.lstrip("v") or None
-        response = requests.get(
+        with requests.get(
             f"https://pypi.org/pypi/{PYPI_PACKAGE}/json",
             timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        version = response.json().get("info", {}).get("version")
+        ) as response:
+            response.raise_for_status()
+            version = response.json().get("info", {}).get("version")
         return str(version) if version else None
     except Exception:  # noqa: BLE001
         logger.debug("update check failed", exc_info=True)
@@ -119,12 +119,13 @@ def _fetch_latest_version() -> str | None:
 def _fetch_asset_digest(version: str, filename: str) -> str | None:
     """Return the expected sha256 (hex) for a release asset, if the API provides one."""
     try:
-        response = requests.get(
+        with requests.get(
             f"https://api.github.com/repos/{GITHUB_REPO}/releases/tags/v{version}",
             timeout=REQUEST_TIMEOUT_SECONDS,
-        )
-        response.raise_for_status()
-        for asset in response.json().get("assets", []):
+        ) as response:
+            response.raise_for_status()
+            assets = response.json().get("assets", [])
+        for asset in assets:
             if asset.get("name") == filename:
                 digest = asset.get("digest") or ""
                 if digest.startswith("sha256:"):

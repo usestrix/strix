@@ -16,7 +16,7 @@ GCP misconfigurations expose project data, service account keys, and lateral mov
 
 **Storage & Data**
 - Cloud Storage (GCS) buckets and objects
-- BigQuery datasets, Cloud SQL instances, Firestore (see `firebase_firestore` skill)
+- BigQuery datasets, Cloud SQL instances, Firestore (see `firebase` skill)
 - Secret Manager, Cloud KMS keys
 
 **Compute**

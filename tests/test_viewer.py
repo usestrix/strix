@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import urllib.error
 import urllib.request
 from typing import TYPE_CHECKING
+from urllib.parse import urlsplit
 
 from strix.core.paths import latest_run_dir, runs_base_dir
+from strix.interface.viewer.cli import run_view
 from strix.interface.viewer.server import serve
 from strix.interface.viewer.transcript import (
     build_run_state,
@@ -44,6 +47,31 @@ def test_latest_run_dir_none_when_no_runs(tmp_path: Path, monkeypatch: pytest.Mo
     monkeypatch.chdir(tmp_path)
     assert latest_run_dir() is None
     assert runs_base_dir() == tmp_path / "strix_runs"
+
+
+def test_view_cli_help_includes_host(capsys: pytest.CaptureFixture[str]) -> None:
+    try:
+        run_view(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("--help should exit")
+
+    help_text = capsys.readouterr().out
+    assert "--host HOST" in help_text
+    assert "0.0.0.0" in help_text
+
+
+def test_server_can_bind_all_ipv4_interfaces(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path, "remote", status="running", end_time=None)
+
+    httpd, url, _ = serve(run_dir, host="0.0.0.0", open_browser=False)
+    try:
+        assert httpd.server_address[0] == "0.0.0.0"
+        assert url == f"http://0.0.0.0:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
 
 
 def test_latest_run_dir_picks_newest_by_record_mtime(
@@ -86,6 +114,75 @@ def test_build_run_state_from_agents_json(tmp_path: Path) -> None:
     assert state["events"] == []
 
 
+def test_build_run_state_keeps_same_call_id_separate_per_agent(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path, "tools", status="completed", end_time=None)
+    agents_db = run_dir / ".state" / "agents.db"
+    rows = [
+        (
+            "root",
+            {
+                "type": "function_call",
+                "call_id": "exec_command_0",
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": "echo root"}),
+            },
+        ),
+        (
+            "root",
+            {
+                "type": "function_call_output",
+                "call_id": "exec_command_0",
+                "output": json.dumps({"success": True, "output": "root"}),
+            },
+        ),
+        (
+            "child",
+            {
+                "type": "function_call",
+                "call_id": "exec_command_0",
+                "name": "exec_command",
+                "arguments": json.dumps({"cmd": "echo child"}),
+            },
+        ),
+        (
+            "child",
+            {
+                "type": "function_call_output",
+                "call_id": "exec_command_0",
+                "output": json.dumps({"success": True, "output": "child"}),
+            },
+        ),
+    ]
+    with sqlite3.connect(agents_db) as conn:
+        conn.execute(
+            """
+            create table agent_messages (
+                id integer primary key,
+                session_id text not null,
+                message_data text not null,
+                created_at text not null
+            )
+            """
+        )
+        conn.executemany(
+            """
+            insert into agent_messages (session_id, message_data, created_at)
+            values (?, ?, '2026-01-01T00:00:00+00:00')
+            """,
+            [(agent_id, json.dumps(message)) for agent_id, message in rows],
+        )
+
+    state = build_run_state(run_dir)
+    tools = [event for event in state["events"] if event["type"] == "tool"]
+
+    assert len(tools) == 2
+    by_agent = {event["agent_id"]: event for event in tools}
+    assert by_agent["root"]["data"]["args"] == {"cmd": "echo root"}
+    assert by_agent["root"]["data"]["result"]["output"] == "root"
+    assert by_agent["child"]["data"]["args"] == {"cmd": "echo child"}
+    assert by_agent["child"]["data"]["result"]["output"] == "child"
+
+
 def _get(url: str, *, cookie: str | None = None) -> tuple[int, str, bytes]:
     headers = {"Cookie": cookie} if cookie else {}
     req = urllib.request.Request(url, headers=headers)  # noqa: S310 - localhost test server
@@ -102,14 +199,15 @@ def test_server_serves_api_and_static(tmp_path: Path, monkeypatch: pytest.Monkey
     (assets / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
     monkeypatch.setattr("strix.interface.viewer.server.bundle_dir", lambda: assets)
 
-    httpd, url, _ = serve(run_dir, open_browser=False)
+    httpd, url, token = serve(run_dir, open_browser=False)
     try:
-        status, ctype, body = _get(f"{url}/api/run")
+        cookie = _session_cookie(url, token)
+        status, ctype, body = _get(f"{url}/api/run", cookie=cookie)
         assert status == 200
         assert "application/json" in ctype
         assert json.loads(body)["finished"] is True
 
-        status, _, body = _get(f"{url}/api/transcript")
+        status, _, body = _get(f"{url}/api/transcript", cookie=cookie)
         assert {a["id"] for a in json.loads(body)["agents"]} == {"root", "child"}
 
         # Real asset is served.
@@ -271,6 +369,11 @@ def _session_cookie(url: str, token: str) -> str:
     return raw.split(";", 1)[0]
 
 
+def _cookie_name(url: str) -> str:
+    """The per-server session cookie name, derived from the bound port."""
+    return f"strix_viewer_session_{urlsplit(url).port}"
+
+
 def _get_status(url: str, *, cookie: str | None = None) -> int:
     headers = {"Cookie": cookie} if cookie else {}
     req = urllib.request.Request(url, headers=headers)  # noqa: S310 - localhost test server
@@ -311,7 +414,7 @@ def test_capability_issued_only_for_tokened_bootstrap(
         # Only the correct bootstrap token mints the session cookie.
         with urllib.request.urlopen(f"{url}/?token={token}") as resp:  # noqa: S310  # nosec B310
             cookie = str(resp.headers.get("Set-Cookie", ""))
-        assert "strix_viewer_session=" in cookie
+        assert f"{_cookie_name(url)}=" in cookie
         assert "HttpOnly" in cookie and "SameSite=Strict" in cookie
 
         # Static assets never carry it.
@@ -344,10 +447,26 @@ def test_unauthorized_client_cannot_acquire_capability(
             url,
             "/api/agents/steer",
             {"agent_id": "root", "message": "pwn"},
-            cookie="strix_viewer_session=",
+            cookie=f"{_cookie_name(url)}=",
         )
         assert status == 403
         assert delivered == []
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def test_run_data_requires_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_dir = _make_run(tmp_path, "private", status="completed", end_time="2026-01-01T00:00:00Z")
+    _bundle(tmp_path, monkeypatch)
+
+    httpd, url, token = serve(run_dir, open_browser=False)
+    try:
+        cookie = _session_cookie(url, token)
+        for path in ("/api/run", "/api/vulnerabilities", "/api/report", "/api/transcript"):
+            assert _get_status(url + path) == 403, path
+            assert _get_status(url + path, cookie=f"{_cookie_name(url)}=wrong") == 403, path
+            assert _get_status(url + path, cookie=cookie) == 200, path
     finally:
         httpd.shutdown()
         httpd.server_close()
@@ -485,11 +604,10 @@ def test_historical_run_data_requires_verification(
 
     httpd, url, token = serve(launched, open_browser=False)
     try:
-        # The launched run is always viewable, no verification and no cookie.
-        status, _, _ = _get(f"{url}/api/run")
-        assert status == 200
-
+        # The launched run needs the session capability, but not email verification.
+        assert _get_status(f"{url}/api/run") == 403
         cookie = _session_cookie(url, token)
+        assert _get_status(f"{url}/api/run", cookie=cookie) == 200
 
         # A different run needs the session capability first: a cookie-less
         # caller is forbidden even once the machine is verified.
@@ -539,6 +657,53 @@ def test_runs_list_requires_session_and_verification(
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def test_concurrent_servers_use_distinct_cookies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cookies are host-scoped, not port-scoped: two viewers on 127.0.0.1 must
+    not share a cookie slot, and one server's cookie must not pass the other's
+    session gate."""
+    run_a = _make_run(tmp_path / "a", "run-a", status="running", end_time=None)
+    run_b = _make_run(tmp_path / "b", "run-b", status="running", end_time=None)
+    _bundle(tmp_path, monkeypatch)
+    monkeypatch.setattr(
+        "strix.interface.viewer.auth.read_auth", lambda: {"email": "a@b.com", "token": "t"}
+    )
+    monkeypatch.setattr("strix.interface.viewer.auth.is_verified", lambda: True)
+
+    httpd_a, url_a, token_a = serve(run_a, open_browser=False)
+    httpd_b, url_b, token_b = serve(run_b, open_browser=False)
+    try:
+        cookie_a = _session_cookie(url_a, token_a)
+        cookie_b = _session_cookie(url_b, token_b)
+
+        # The two servers mint differently named cookies, so a browser stores both.
+        assert cookie_a.split("=", 1)[0] == _cookie_name(url_a)
+        assert cookie_b.split("=", 1)[0] == _cookie_name(url_b)
+        assert cookie_a.split("=", 1)[0] != cookie_b.split("=", 1)[0]
+
+        def _status(url: str, cookie: str) -> dict[str, object]:
+            _, _, body = _get(f"{url}/api/auth/status", cookie=cookie)
+            return dict(json.loads(body))
+
+        # Each server honors its own cookie...
+        assert _status(url_a, cookie_a)["verified"] is True
+        assert _status(url_b, cookie_b)["verified"] is True
+        # ...but treats the other server's cookie as session-less.
+        assert _status(url_a, cookie_b)["verified"] is False
+        assert _status(url_b, cookie_a)["verified"] is False
+        # Even both cookies together (what a real browser would send) only
+        # match the token minted by the receiving server.
+        both = f"{cookie_a}; {cookie_b}"
+        assert _status(url_a, both)["verified"] is True
+        assert _status(url_b, both)["verified"] is True
+    finally:
+        httpd_a.shutdown()
+        httpd_a.server_close()
+        httpd_b.shutdown()
+        httpd_b.server_close()
 
 
 def test_server_rejects_path_traversal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

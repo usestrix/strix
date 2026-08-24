@@ -108,6 +108,18 @@ Try the Strix full-stack penetration testing platform at **[app.strix.ai](https:
 
 ---
 
+## 🤖 Use Strix from Your Coding Agent
+
+Strix is agent-ready. Give Claude Code, Cursor, Codex, or any [SKILL.md-compatible](https://agentskills.io) agent the ability to run pentests, fix findings, and set up CI scanning:
+
+```bash
+npx skills add usestrix/strix
+```
+
+This installs nine skills: **penetration-testing-with-strix** (run headless scans and read results), **managed-pentesting-with-strix** (drive the managed [app.strix.ai](https://app.strix.ai) platform via REST — no local Docker or LLM key), **fix-security-vulnerabilities-with-strix** (remediate + re-scan to verify), **ci-security-scanning-with-strix** (PR scanning in CI), plus target-specific workflows: **application-security-testing**, **web-app-penetration-testing**, **api-security-testing**, **owasp-top-10-testing**, and **find-security-vulnerabilities-in-code**. Agents can run Strix two ways with the same engine — the open-source CLI locally, or the managed cloud when there's no local infra — and read [`AGENTS.md`](AGENTS.md) for a quick reference, [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) for the CLI docs, and [docs.app.strix.ai](https://docs.app.strix.ai) for the API.
+
+---
+
 ## ✨ Features
 
 ### Agentic Pentesting Tools
@@ -155,9 +167,14 @@ strix view
 
 # ...or open a specific run by name
 strix view my-run-name
+
+# Expose the viewer on all IPv4 interfaces at a fixed port
+strix view --host 0.0.0.0 --port 8080 --no-open
 ```
 
 `strix view` starts a lightweight local server (bound to `127.0.0.1` on a random port) and opens your browser to a private, tokened link. Nothing leaves your machine: the dashboard reads the run's files straight off disk, with no cloud account or upload required. The UI ships prebuilt with Strix, so there is no extra install and no JS build step.
+
+Use `--host 0.0.0.0` to make the viewer reachable from other machines. Replace `0.0.0.0` in the printed URL with the server's reachable IP or hostname. The token in that URL grants access to the selected run's scan data, history, and steering, so only share it with trusted users and restrict the port with your firewall. Requests without the token-derived session cannot read run data.
 
 ### What's in the dashboard
 
@@ -184,6 +201,28 @@ strix --target https://github.com/org/repo
 # Black-box web application assessment
 strix --target https://your-app.com
 ```
+
+### API Testing (OpenAPI / Swagger / Postman)
+
+Point Strix at an API contract and it tests every declared endpoint instead of
+having to discover them by crawling. Pair the spec with the live base URL so the
+agent knows where to send traffic:
+
+```bash
+# OpenAPI / Swagger file (.json / .yaml)
+strix --target ./openapi.yaml --target https://api.your-app.com
+
+# Postman collection export
+strix --target ./collection.postman_collection.json --target https://api.your-app.com
+
+# Postman collection pulled live by id (no manual export)
+export POSTMAN_API_KEY="PMAK-..."
+strix --target postman://<collection-uuid>
+
+# ...with a Postman environment to resolve {{baseUrl}} / token variables
+strix --target "postman://<collection-uuid>?env=<environment-uuid>"
+```
+
 
 ### Advanced Testing Scenarios
 
@@ -311,10 +350,11 @@ Have questions? Found a bug? Want to contribute? **[Join our Discord!](https://d
 
 ## Acknowledgements
 
-Strix builds on the incredible work of open-source projects like [LiteLLM](https://github.com/BerriAI/litellm), [Caido](https://github.com/caido/caido), [Nuclei](https://github.com/projectdiscovery/nuclei), [Playwright](https://github.com/microsoft/playwright), and [Textual](https://github.com/Textualize/textual). Huge thanks to their maintainers!
+Strix builds on the incredible work of open-source projects like [LiteLLM](https://github.com/BerriAI/litellm), [Caido](https://github.com/caido/caido), [Nuclei](https://github.com/projectdiscovery/nuclei), [Playwright](https://github.com/microsoft/playwright), and [Bubble Tea](https://github.com/charmbracelet/bubbletea). Huge thanks to their maintainers!
 
 
 > [!WARNING]
-> Only test apps you own or have permission to test. You are responsible for using Strix ethically and legally.
+> **Authorized use only.** Strix actively tests the targets you point it at, so only run it against systems you own or have **explicit, written permission** to test, and stay within the agreed scope. Unauthorized testing is illegal in most jurisdictions.
+> You alone are responsible for obtaining authorization and complying with the law. Strix is provided "as is" with no warranty or liability for misuse.
 
 </div>

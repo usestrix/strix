@@ -107,8 +107,11 @@ def resolve_run_dir(base_dir: Path, run_param: str | None, default_run_dir: Path
     return candidate
 
 
-# Name of the cookie carrying the per-process session capability.
-SESSION_COOKIE = "strix_viewer_session"
+# Prefix of the cookie carrying the per-process session capability. The bound
+# port is appended (``strix_viewer_session_<port>``) because browsers scope
+# cookies by host only, never by port: concurrent viewers on 127.0.0.1 would
+# otherwise share one cookie slot and clobber each other's session.
+SESSION_COOKIE_PREFIX = "strix_viewer_session"
 
 
 class _ViewerState:
@@ -132,9 +135,13 @@ class _ViewerState:
         # exchanged for a session cookie only when presented on the initial page
         # load. It is the request-level authorization the review asked for:
         # reachability of the port (e.g. when bound with ``--host``) is not
-        # enough to steer a live scan, trigger a report, or browse history --
-        # the token is never handed to a caller who merely reaches ``/``.
+        # enough to read run data, steer a live scan, trigger a report, or
+        # browse history -- the token is never handed to a caller who merely
+        # reaches ``/``.
         self.session_token = secrets.token_urlsafe(32)
+        # Finalized in ``serve()`` once the port is known (the server binds
+        # after this state is constructed); see SESSION_COOKIE_PREFIX.
+        self.cookie_name = SESSION_COOKIE_PREFIX
 
 
 def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
@@ -228,11 +235,11 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             self.end_headers()
 
         def _handle_api(self, path: str, query: dict[str, list[str]]) -> None:
-            # The launched run is always viewable with no verification. The
-            # cross-run history list (/api/runs) unlocks its entries only for a
-            # caller that holds this process's session capability *and* is email
-            # verified, so merely reaching an exposed --host port never leaks the
-            # run list (the payload still advertises the count as a teaser).
+            # The cross-run history list (/api/runs) unlocks its entries only for
+            # a caller that holds this process's session capability *and* is
+            # email verified, so merely reaching an exposed --host port never
+            # leaks the run list (the payload still advertises the count as a
+            # teaser).
             if path == "/api/runs":
                 unlocked = self._has_session() and auth.is_verified()
                 payload = build_runs_payload(state.base_dir, verified=unlocked)
@@ -247,6 +254,13 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._handle_auth_status()
                 return
 
+            # All remaining GET endpoints expose run metadata or scan output.
+            # Require the capability even for the run used to launch the viewer;
+            # reachability of an exposed --host port must not grant data access.
+            if not self._has_session():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
+
             run_values = query.get("run")
             run_param = run_values[0] if run_values else None
             run_dir = resolve_run_dir(state.base_dir, run_param, state.run_dir)
@@ -254,18 +268,12 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown run"})
                 return
 
-            # The launched run is always viewable. Any *other* run's data is part
-            # of the gated history: it needs this process's session capability
-            # (so merely reaching an exposed --host port is not enough) *and*
-            # email verification -- otherwise knowing a run name would leak its
-            # metadata, vulnerabilities, report, and transcript.
-            if run_dir.resolve() != state.run_dir.resolve():
-                if not self._has_session():
-                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
-                    return
-                if not auth.is_verified():
-                    self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unverified"})
-                    return
+            # Any run other than the one used to launch the viewer is part of the
+            # email-gated history. The session check above applies to both paths;
+            # verification adds a second gate for historical run data.
+            if run_dir.resolve() != state.run_dir.resolve() and not auth.is_verified():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unverified"})
+                return
 
             if path == "/api/run":
                 self._send_json(HTTPStatus.OK, read_run_summary(run_dir))
@@ -379,7 +387,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             except auth.RelayError as exc:
                 self._send_relay_error(exc)
                 return
-            # The password is returned only to the local (127.0.0.1) browser.
+            # The password is returned only to a session-authorized browser.
             self._send_json(
                 HTTPStatus.OK,
                 {"ok": True, "password": password, "filename": filename},
@@ -476,7 +484,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             the browser this process handed the page to can pass. A direct
             caller on an exposed port has no cookie and is rejected.
             """
-            supplied = self._cookies().get(SESSION_COOKIE, "")
+            supplied = self._cookies().get(state.cookie_name, "")
             return bool(supplied) and secrets.compare_digest(supplied, state.session_token)
 
         def _token_presented(self, query: dict[str, list[str]]) -> bool:
@@ -512,7 +520,7 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 # SameSite=Strict (never sent from a cross-site context).
                 self.send_header(
                     "Set-Cookie",
-                    f"{SESSION_COOKIE}={state.session_token}; Path=/; HttpOnly; SameSite=Strict",
+                    f"{state.cookie_name}={state.session_token}; Path=/; HttpOnly; SameSite=Strict",
                 )
             self.end_headers()
             self.wfile.write(content)
@@ -586,6 +594,7 @@ def serve(
 
     httpd.daemon_threads = True
     bound_port = int(httpd.server_address[1])
+    state.cookie_name = f"{SESSION_COOKIE_PREFIX}_{bound_port}"
     url = f"http://{host}:{bound_port}"
 
     thread = threading.Thread(target=httpd.serve_forever, name="strix-viewer", daemon=True)

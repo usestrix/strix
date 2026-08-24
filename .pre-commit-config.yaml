@@ -20,7 +20,8 @@ repos:
           pydantic,
           fastapi,
           pytest,
-          "openai-agents[litellm]==0.14.6",
+          hatchling,
+          "openai-agents[litellm]>=0.19.0,<0.20",
         ]
         args: [--install-types, --non-interactive]
 

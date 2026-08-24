@@ -11,17 +11,15 @@ import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError, URLError
-from urllib.parse import urlparse
-from urllib.request import Request, urlopen
+from urllib.parse import parse_qs, urlparse
 
-import docker
-from docker.errors import DockerException, ImageNotFound
+import requests
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.utils.api_spec import detect_spec_format
 
 
 logger = logging.getLogger(__name__)
@@ -132,6 +130,27 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
         if cvss_parts:
             text.append("CVSS Vector: ", style=field_style)
             text.append("/".join(cvss_parts), style="dim")
+
+    dependency_metadata = report.get("dependency_metadata") or {}
+    if dependency_metadata:
+        contextual_vector = dependency_metadata.get("contextual_cvss_vector")
+        if contextual_vector:
+            text.append("\n\n")
+            text.append("Contextual CVSS Vector: ", style=field_style)
+            text.append(contextual_vector, style="dim")
+
+        advisory_cvss = dependency_metadata.get("advisory_cvss")
+        if advisory_cvss is not None and advisory_cvss != report.get("cvss"):
+            text.append("\n\n")
+            text.append("Advisory CVSS: ", style=field_style)
+            text.append(f"{float(advisory_cvss):.1f}", style="dim")
+
+        contextual_reasoning = dependency_metadata.get("contextual_cvss_reasoning")
+        if contextual_reasoning:
+            text.append("\n\n")
+            text.append("Contextual CVSS Reasoning", style=field_style)
+            text.append("\n")
+            text.append(contextual_reasoning)
 
     description = report.get("description")
     if description:
@@ -253,7 +272,7 @@ def _llm_usage(report_state: Any) -> dict[str, Any]:
     return usage if isinstance(usage, dict) else {}
 
 
-def _is_subscription(report_state: Any) -> bool:
+def is_subscription_run(report_state: Any) -> bool:
     """Whether this run uses a model subscription (no metered cost).
 
     Prefers the run record so it's correct for hydrated/resumed runs; falls back
@@ -291,13 +310,18 @@ def _detail_value(usage: dict[str, Any], detail_key: str, value_key: str) -> int
     return _int_stat(details, value_key)
 
 
+def has_model_response(report_state: Any) -> bool:
+    usage = _llm_usage(report_state)
+    return bool(usage) and _int_stat(usage, "requests") > 0
+
+
 def _build_llm_usage_stats(
     stats_text: Text,
     report_state: Any,
     *,
     live: bool = False,
 ) -> None:
-    subscription = _is_subscription(report_state)
+    subscription = is_subscription_run(report_state)
     usage = _llm_usage(report_state)
     if not usage or _int_stat(usage, "requests") <= 0:
         stats_text.append("\n")
@@ -361,7 +385,7 @@ def build_live_stats_text(report_state: Any) -> Text:
     model = load_settings().llm.model or "unknown"
     stats_text.append("Model ", style="dim")
     stats_text.append(str(model), style="white")
-    if _is_subscription(report_state):
+    if is_subscription_run(report_state):
         stats_text.append("  ·  ", style="dim white")
         stats_text.append("ChatGPT subscription", style="#22c55e")
     stats_text.append("\n")
@@ -406,7 +430,7 @@ def build_tui_stats_text(report_state: Any) -> Text:
 
     model = load_settings().llm.model or "unknown"
     stats_text.append(str(model), style="white")
-    subscription = _is_subscription(report_state)
+    subscription = is_subscription_run(report_state)
     if subscription:
         stats_text.append("\n")
         stats_text.append("ChatGPT subscription", style="#22c55e")
@@ -479,6 +503,15 @@ def _derive_target_label_for_run_name(targets_info: list[dict[str, Any]] | None)
 
     if target_type == "ip_address":
         return str(details.get("target_ip", original) or original)
+
+    if target_type == "api_spec":
+        if details.get("source") == "postman_api":
+            return "postman-collection"
+        spec_path = details.get("target_spec", original)
+        try:
+            return str(Path(spec_path).stem or spec_path)
+        except Exception:
+            return str(spec_path)
 
     return str(original or "pentest")
 
@@ -1088,12 +1121,11 @@ def resolve_diff_scope_context(
 def _is_http_git_repo(url: str) -> bool:
     check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
     try:
-        req = Request(check_url, headers={"User-Agent": "git/strix"})  # noqa: S310
-        with urlopen(req, timeout=10) as resp:  # noqa: S310  # nosec B310
+        with requests.get(check_url, headers={"User-Agent": "git/2.43.0"}, timeout=10) as resp:
+            if resp.status_code >= 400:
+                return resp.status_code == 401
             return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
-    except HTTPError as e:
-        return e.code == 401
-    except (URLError, OSError, ValueError):
+    except (requests.RequestException, ValueError):
         return False
 
 
@@ -1110,6 +1142,24 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         return "repository", {"target_repo": target}
 
     parsed = urlparse(target)
+    if parsed.scheme == "postman":
+        collection_uid = f"{parsed.netloc}{parsed.path}".strip("/")
+        if not collection_uid:
+            raise ValueError(
+                f"Missing Postman collection id in '{target}' (expected postman://<collection-uid>)"
+            )
+        details = {
+            "target_spec": target,
+            "spec_format": "postman",
+            "source": "postman_api",
+            "collection_uid": collection_uid,
+        }
+        query = parse_qs(parsed.query)
+        env_uid = (query.get("env") or query.get("environment") or [""])[0].strip()
+        if env_uid:
+            details["environment_uid"] = env_uid
+        return "api_spec", details
+
     if parsed.scheme in ("http", "https"):
         if parsed.username or parsed.password:
             return "repository", {"target_repo": target}
@@ -1133,7 +1183,14 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
     try:
         if path.exists():
             if path.is_dir():
+                check_mountable_dir(path)
                 return "local_code", {"target_path": str(path.resolve())}
+            spec_format = detect_spec_format(path)
+            if spec_format is not None:
+                return "api_spec", {
+                    "target_spec": str(path.resolve()),
+                    "spec_format": spec_format,
+                }
             raise ValueError(f"Path exists but is not a directory: {target}")
     except (OSError, RuntimeError) as e:
         raise ValueError(f"Invalid path: {target} - {e!s}") from e
@@ -1160,6 +1217,9 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         "- A valid URL (http:// or https://)\n"
         "- A Git repository URL (https://host/org/repo or git@host:org/repo.git)\n"
         "- A local directory path\n"
+        "- An API spec file (OpenAPI/Swagger .json/.yaml or a Postman collection)\n"
+        "- A Postman collection by id (postman://<collection-uid>[?env=<environment-uid>], "
+        "needs POSTMAN_API_KEY)\n"
         "- A domain name (e.g., example.com)\n"
         "- An IP address (e.g., 192.168.1.10)"
     )
@@ -1261,7 +1321,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
-                    "mount": bool(details.get("mount", False)),
+                    "protect_metadata": True,
                 }
             )
 
@@ -1270,123 +1330,126 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                 {
                     "source_path": details["cloned_repo_path"],
                     "workspace_subdir": workspace_subdir,
-                    "mount": False,
+                    "protect_metadata": False,
                 }
             )
 
     return local_sources
 
 
-def directory_size_bytes(path: Path) -> int:
-    """Total size in bytes of regular files under ``path`` (symlinks not followed).
+# Refused along with everything under them.
+_FORBIDDEN_MOUNT_TREES = frozenset(
+    {
+        "/bin",
+        "/sbin",
+        "/usr",
+        "/etc",
+        "/lib",
+        "/lib64",
+        "/nix/store",
+        "/run/current-system/sw",
+        "/Applications",
+        "/Library",
+        "/System",
+        "/dev",
+        "/boot",
+        "/proc",
+        "/sys",
+    }
+)
 
-    Best-effort: files that disappear or can't be stat'd mid-walk are skipped.
-    Used as a cheap (stat-only) pre-flight to estimate the cost of streaming a
-    local target into the sandbox before we actually try to copy it.
+# Refused themselves, but they hold projects too, so their contents are fine.
+_FORBIDDEN_MOUNT_ROOTS = frozenset(
+    {
+        "/",
+        "/private",
+        "/var",
+        "/opt",
+        "/home",
+        "/root",
+        "/srv",
+        "/Users",
+        "/Volumes",
+    }
+)
 
-    Directories that can't be listed (e.g. permission denied) are logged and
-    skipped rather than silently dropped — so an under-count is at least
-    visible — but the returned total then excludes their contents.
-    """
+_FORBIDDEN_WINDOWS_TREE_NAMES = frozenset(
+    {"windows", "program files", "program files (x86)", "programdata"}
+)
 
-    def _on_walk_error(error: OSError) -> None:
-        logger.warning("Could not read %s while measuring size: %s", error.filename, error)
-
-    total = 0
-    for root, _dirs, files in os.walk(path, followlinks=False, onerror=_on_walk_error):
-        for name in files:
-            file_path = os.path.join(root, name)  # noqa: PTH118
-            try:
-                if os.path.islink(file_path):  # noqa: PTH114
-                    continue
-                total += os.path.getsize(file_path)  # noqa: PTH202
-            except OSError:
-                continue
-    return total
-
-
-def find_oversized_local_targets(
-    targets_info: list[dict[str, Any]], max_bytes: int
-) -> list[tuple[str, int]]:
-    """Return ``(path, size_bytes)`` for non-mounted local targets over ``max_bytes``.
-
-    Mounted targets are bind-mounted rather than copied, so their size is
-    irrelevant and they are excluded. A ``max_bytes`` of zero or less disables
-    the check entirely (returns no targets).
-    """
-    if max_bytes <= 0:
-        return []
-    oversized: list[tuple[str, int]] = []
-    for target in targets_info:
-        if target.get("type") != "local_code":
-            continue
-        details = target.get("details") or {}
-        if details.get("mount"):
-            continue
-        target_path = details.get("target_path")
-        if not target_path:
-            continue
-        size = directory_size_bytes(Path(target_path))
-        if size > max_bytes:
-            oversized.append((target_path, size))
-    return oversized
+_FORBIDDEN_MOUNT_DIR_NAMES = frozenset(
+    {
+        ".ssh",
+        ".tsh",
+        ".brev",
+        ".gnupg",
+        ".aws",
+        ".azure",
+        ".kube",
+        ".docker",
+        ".config",
+        ".npm",
+        ".pki",
+        ".terraform.d",
+    }
+)
 
 
-def build_mount_targets_info(mount_paths: list[str]) -> list[dict[str, Any]]:
-    """Build ``targets_info`` entries for ``--mount`` directories.
+def _is_within(path: Path, ancestor: Path) -> bool:
+    ancestor_parts = [part.casefold() for part in ancestor.parts]
+    path_parts = [part.casefold() for part in path.parts]
+    return path_parts[: len(ancestor_parts)] == ancestor_parts
 
-    Each path must be an existing local directory; it is bind-mounted into the
-    sandbox (read-only) instead of being copied file-by-file. Raises
-    ``ValueError`` for an empty path, or one that does not exist or is not a
-    directory.
-    """
-    targets_info: list[dict[str, Any]] = []
-    for raw in mount_paths:
-        if not raw or not raw.strip():
-            raise ValueError("--mount path must not be empty.")
-        path = Path(raw).expanduser()
-        try:
-            resolved = path.resolve()
-            is_dir = resolved.is_dir()
-        except (OSError, RuntimeError) as e:
-            raise ValueError(f"Invalid mount path '{raw}': {e!s}") from e
-        if not is_dir:
-            raise ValueError(
-                f"Mount path '{raw}' is not an existing directory. "
-                "--mount requires a path to a local directory."
-            )
-        targets_info.append(
-            {
-                "type": "local_code",
-                "details": {"target_path": str(resolved), "mount": True},
-                "original": str(resolved),
-            }
+
+def check_mountable_dir(path: Path) -> None:
+    resolved = path.resolve()
+    if not resolved.is_dir():
+        raise ValueError(f"'{path}' is not an existing directory.")
+
+    # Both the literal and the resolved form: macOS reaches /etc through the
+    # /private/etc symlink, and only the resolved path is compared below.
+    exact = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
+    exact |= {str(Path(root).resolve()).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
+    exact.add(str(Path.home().resolve()).casefold())
+    tree_roots = set(_FORBIDDEN_MOUNT_TREES)
+    if os.name == "nt":
+        drive = Path(resolved.anchor)
+        tree_roots |= {str(drive / name) for name in _FORBIDDEN_WINDOWS_TREE_NAMES}
+        exact.add(str(drive / "Users").casefold())
+    trees = [Path(root) for root in tree_roots] + [Path(root).resolve() for root in tree_roots]
+    if (
+        str(resolved).casefold() in exact
+        or resolved.parent == resolved
+        or any(_is_within(resolved, tree) for tree in trees)
+    ):
+        raise ValueError(
+            f"Refusing to mount '{resolved}' into the sandbox: it is a system "
+            "or home directory, not a codebase. Point the target at the "
+            "project directory you want tested."
         )
-    return targets_info
+
+    credential = next(
+        (part for part in resolved.parts if part.casefold() in _FORBIDDEN_MOUNT_DIR_NAMES), None
+    )
+    if credential is not None:
+        raise ValueError(
+            f"Refusing to mount '{resolved}' into the sandbox: '{credential}' "
+            "holds credentials, not code."
+        )
 
 
 def dedupe_local_targets(targets_info: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Collapse local_code targets that resolve to the same path.
-
-    When a directory is supplied both as a copied ``--target`` and via
-    ``--mount`` (or as duplicate values of either), keep one entry and prefer
-    the bind-mounted one — so the same tree is never both streamed in and
-    mounted. Order is preserved; non-local targets pass through untouched.
-    """
     result: list[dict[str, Any]] = []
-    index_by_path: dict[str, int] = {}
+    seen_paths: set[str] = set()
     for target in targets_info:
         details = target.get("details") or {}
         path = details.get("target_path")
         if target.get("type") != "local_code" or not path:
             result.append(target)
             continue
-        existing = index_by_path.get(path)
-        if existing is None:
-            index_by_path[path] = len(result)
+        if path not in seen_paths:
+            seen_paths.add(path)
             result.append(target)
-        elif details.get("mount") and not (result[existing].get("details") or {}).get("mount"):
-            result[existing] = target  # bind mount supersedes the copied entry
     return result
 
 
@@ -1431,6 +1494,62 @@ def rewrite_localhost_targets(targets_info: list[dict[str, Any]], host_gateway: 
                 details["target_ip"] = host_gateway
 
 
+#: API spec targets are copied into one workspace directory rather than mounted
+#: from wherever they happen to live on the host.
+API_SPEC_WORKSPACE_SUBDIR = "api-specs"
+
+
+def write_fetched_collection(collection: dict[str, Any], collection_uid: str) -> str:
+    """Write a collection fetched from the Postman API to a local file.
+
+    Returns the file path, so a ``postman://`` target continues as an ordinary
+    spec file from here on and the API key never leaves the host.
+    """
+    staging = Path(tempfile.gettempdir()) / "strix_api_specs" / "fetched"
+    staging.mkdir(parents=True, exist_ok=True)
+    path = staging / f"{sanitize_name(collection_uid)}.postman_collection.json"
+    path.write_text(json.dumps(collection, indent=2), encoding="utf-8")
+    return str(path)
+
+
+def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[dict[str, Any]]:
+    """Copy every ``api_spec`` target into one directory for the sandbox.
+
+    A spec is a single file the agent reads, not a tree it works in, so it is
+    copied to a per-run staging directory that is exposed at
+    ``/workspace/api-specs`` instead of mounting its host location. Each target's
+    ``workspace_path`` records where the agent will find it.
+    """
+    specs = [t for t in targets_info if t.get("type") == "api_spec"]
+    if not specs:
+        return []
+
+    staging = Path(tempfile.gettempdir()) / "strix_api_specs" / run_name
+    staging.mkdir(parents=True, exist_ok=True)
+
+    used: set[str] = set()
+    for target in specs:
+        details = target["details"]
+        source = Path(str(details["target_spec"]))
+        name = source.name
+        stem, suffix = source.stem, source.suffix
+        count = 1
+        while name in used:
+            count += 1
+            name = f"{stem}-{count}{suffix}"
+        used.add(name)
+        shutil.copy2(source, staging / name)
+        details["workspace_path"] = f"/workspace/{API_SPEC_WORKSPACE_SUBDIR}/{name}"
+
+    return [
+        {
+            "source_path": str(staging),
+            "workspace_subdir": API_SPEC_WORKSPACE_SUBDIR,
+            "protect_metadata": False,
+        }
+    ]
+
+
 def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None) -> str:
     console = Console()
 
@@ -1468,46 +1587,19 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         return str(clone_path.absolute())
 
     except subprocess.CalledProcessError as e:
-        error_text = Text()
-        error_text.append("REPOSITORY CLONE FAILED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append(f"Could not clone repository: {repo_url}\n", style="white")
-        error_text.append(
-            f"Error: {e.stderr if hasattr(e, 'stderr') and e.stderr else str(e)}", style="dim red"
-        )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n")
-        console.print(panel)
-        console.print()
-        sys.exit(1)
-    except FileNotFoundError:
-        error_text = Text()
-        error_text.append("GIT NOT FOUND", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Git is not installed or not available in PATH.\n", style="white")
-        error_text.append("Please install Git to clone repositories.\n", style="white")
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n")
-        console.print(panel)
-        console.print()
-        sys.exit(1)
+        detail = e.stderr if hasattr(e, "stderr") and e.stderr else str(e)
+        raise ValueError(f"Could not clone repository {repo_url}: {detail}") from e
+    except FileNotFoundError as e:
+        raise ValueError(
+            "Git is not installed or not available in PATH. "
+            "Please install Git to clone repositories."
+        ) from e
 
 
 def check_docker_connection() -> Any:
+    import docker
+    from docker.errors import DockerException
+
     try:
         return docker.from_env()
     except DockerException:
@@ -1533,6 +1625,8 @@ def check_docker_connection() -> Any:
 
 
 def image_exists(client: Any, image_name: str) -> bool:
+    from docker.errors import ImageNotFound
+
     try:
         client.images.get(image_name)
     except ImageNotFound:
@@ -1610,3 +1704,83 @@ def validate_config_file(config_path: str) -> Path:
         sys.exit(1)
 
     return path
+
+
+# --- Workspace files -------------------------------------------------------
+#
+# ``--workspace-file`` places a single host file into the sandbox workspace,
+# outside every target tree. Content rides the same upload as the target
+# sources, so a large file makes session bring-up slower.
+
+
+def _workspace_file_dest(spec: str, source: Path) -> str:
+    """Return the workspace-relative destination declared by ``spec``."""
+    _, sep, dest = spec.rpartition(":")
+    candidate = dest.strip() if sep and dest.strip() else source.name
+    if candidate.startswith("/") or Path(candidate).is_absolute():
+        if not candidate.startswith("/workspace/"):
+            raise ValueError(
+                f"'{spec}' must land inside the workspace: use a relative "
+                "destination or a path under /workspace"
+            )
+        candidate = candidate.removeprefix("/workspace/")
+    candidate = candidate.strip("/")
+    if not candidate:
+        raise ValueError(f"'{spec}' has an empty destination path")
+    if any(part in ("", ".", "..") for part in candidate.split("/")):
+        raise ValueError(f"'{spec}' has an invalid destination path: {candidate}")
+    # A control character would let the path span more than the one line it is
+    # rendered on in the agent task, so the whole spec is rejected.
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
+        raise ValueError(f"'{spec}' has a control character in its destination path")
+    return candidate
+
+
+def resolve_workspace_files(specs: list[str] | None) -> list[dict[str, str]]:
+    """Validate ``PATH[:DEST]`` specs into source/destination pairs.
+
+    Each spec names a readable host file. ``DEST`` is the path inside
+    ``/workspace``; it defaults to the file name. Raises ``ValueError`` with a
+    user-facing message when a spec is unusable.
+    """
+    resolved: list[dict[str, str]] = []
+    seen: dict[str, str] = {}
+    for spec in specs or []:
+        raw, sep, dest = spec.rpartition(":")
+        source_text = raw if sep and dest.strip() else spec
+        source = Path(source_text.strip()).expanduser()
+        if not source.is_file():
+            raise ValueError(f"'{source}' is not an existing file")
+        try:
+            with source.open("rb"):
+                pass
+        except OSError as error:
+            raise ValueError(f"Cannot read '{source}': {error}") from error
+        workspace_rel = _workspace_file_dest(spec, source)
+        if workspace_rel in seen:
+            raise ValueError(
+                f"Two workspace files target /workspace/{workspace_rel}: "
+                f"'{seen[workspace_rel]}' and '{source}'"
+            )
+        seen[workspace_rel] = str(source)
+        resolved.append(
+            {
+                "source_path": str(source.resolve()),
+                "workspace_path": f"/workspace/{workspace_rel}",
+            }
+        )
+    return resolved
+
+
+def read_workspace_files(workspace_files: list[dict[str, str]] | None) -> list[dict[str, Any]]:
+    """Read resolved workspace files into engine ``extra_files`` entries."""
+    entries: list[dict[str, Any]] = []
+    for workspace_file in workspace_files or []:
+        source = Path(workspace_file["source_path"])
+        entries.append(
+            {
+                "workspace_path": workspace_file["workspace_path"],
+                "content": source.read_bytes(),
+            }
+        )
+    return entries

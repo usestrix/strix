@@ -68,9 +68,9 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
     }
 
     try:
-        response = requests.post(url, headers=headers, json=payload, timeout=300)
-        response.raise_for_status()
-        content = response.json()["choices"][0]["message"]["content"]
+        with requests.post(url, headers=headers, json=payload, timeout=300) as response:
+            response.raise_for_status()
+            content = response.json()["choices"][0]["message"]["content"]
     except requests.exceptions.Timeout:
         logger.warning("web_search timed out")
         return {

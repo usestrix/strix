@@ -12,7 +12,7 @@ Use this skill for source-heavy analysis where static and structural signals sho
 Run tools from repo root and store outputs in a dedicated artifact directory:
 
 ```bash
-mkdir -p /workspace/.strix-source-aware
+mkdir -p /workspace/.source-aware
 ```
 
 ## Baseline Coverage Bundle (Recommended)
@@ -20,7 +20,7 @@ mkdir -p /workspace/.strix-source-aware
 Run this baseline once per repository before deep narrowing:
 
 ```bash
-ART=/workspace/.strix-source-aware
+ART=/workspace/.source-aware
 mkdir -p "$ART"
 
 semgrep scan --config p/default --config p/golang --config p/secrets \
@@ -30,7 +30,7 @@ python3 - <<'PY'
 import json
 from pathlib import Path
 
-art = Path("/workspace/.strix-source-aware")
+art = Path("/workspace/.source-aware")
 semgrep_json = art / "semgrep.json"
 targets_file = art / "sg-targets.txt"
 
@@ -70,10 +70,10 @@ Use Semgrep as the default static triage pass:
 ```bash
 # Preferred deterministic profile set (works with --metrics=off)
 semgrep scan --config p/default --config p/golang --config p/secrets \
-  --metrics=off --json --output /workspace/.strix-source-aware/semgrep.json .
+  --metrics=off --json --output /workspace/.source-aware/semgrep.json .
 
 # If you choose auto config, do not combine it with --metrics=off
-semgrep scan --config auto --json --output /workspace/.strix-source-aware/semgrep-auto.json .
+semgrep scan --config auto --json --output /workspace/.source-aware/semgrep-auto.json .
 ```
 
 If diff scope is active, restrict to changed files first, then expand only when needed.
@@ -85,8 +85,8 @@ Use `sg` for structure-aware code hunting:
 ```bash
 # Ruleless structural pass over deterministic target list (no sgconfig.yml required)
 xargs -r -n 200 sg run --pattern '$F($$$ARGS)' --json=stream \
-  < /workspace/.strix-source-aware/sg-targets.txt \
-  > /workspace/.strix-source-aware/ast-grep.json 2> /workspace/.strix-source-aware/ast-grep.log || true
+  < /workspace/.source-aware/sg-targets.txt \
+  > /workspace/.source-aware/ast-grep.json 2> /workspace/.source-aware/ast-grep.log || true
 ```
 
 Target high-value patterns such as:
@@ -105,20 +105,53 @@ tree-sitter parse -q <file>
 
 Use outputs to improve route/symbol/sink maps for subsequent targeted scans.
 
+## Cross-Component Semantic Mapping
+
+Pattern scanners find local sinks but often miss a security decision in one component followed by a different interpretation in another. For complex middleware, proxies, frameworks, and plugin systems:
+
+1. Identify shared request/context fields and every writer/reader.
+2. Order the readers and writers by lifecycle phase: parse, route, authenticate, rewrite, authorize, dispatch, render.
+3. Mark fields whose semantic type changes (URL/path, MIME/handler, alias/package, external/internal route).
+4. Trace normal, error, retry, subrequest, and internal-redirect paths separately.
+5. Compare the representation checked by security code with the representation consumed by the final sink.
+
+Load `semantic_confusion` when this graph reveals overloaded fields, multiple parsers, normalization steps, or protocol translation.
+
+## Resolution and Namespace Risks
+
+In repositories with developer tooling, plugins, templates, or package runners, inspect lookup order rather than only dependency versions:
+
+- command runners that fall back from local binaries or `PATH` to a public registry
+- scoped/private package names exposing unscoped binary or alias names
+- plugin, template, module, and autoload search paths writable by a lower-privileged actor
+- CI/composite actions and devcontainer/bootstrap scripts that transitively execute package commands
+- missing local artifacts that silently activate a remote or broader fallback
+
+Record candidate names and verify ownership/existence without claiming or publishing them. A namespace gap is reportable only when the target actually resolves or executes the attacker-contestable name under realistic conditions.
+
+For npm/JavaScript, distinguish the package name from the executable name and
+model the actual working directory, dependency tree, global bin directory,
+cache, and registry configuration. `load_skill(["npx_confusion"])` when a bare
+`npx`/`npm exec` command may fall back from a missing executable to a public
+package. Trivy cannot detect this class because no installed package version
+needs to be vulnerable.
+
+Load `infrastructure_lifecycle` when source, images, firmware, or history contain abandoned domains, provider resources, package namespaces, update URLs, mail identities, telemetry, or control endpoints. Use targeted string/dataflow analysis when this is the research question; the full baseline scanner bundle is not required merely to trace one endpoint consumer.
+
 ## Secret and Supply Chain Coverage
 
 Detect hardcoded credentials:
 
 ```bash
-gitleaks detect --source . --report-format json --report-path /workspace/.strix-source-aware/gitleaks.json
-trufflehog filesystem --json . > /workspace/.strix-source-aware/trufflehog.json
+gitleaks detect --source . --report-format json --report-path /workspace/.source-aware/gitleaks.json
+trufflehog filesystem --json . > /workspace/.source-aware/trufflehog.json
 ```
 
 Run repository-wide dependency and config checks:
 
 ```bash
 trivy fs --scanners vuln,misconfig --timeout 30m --offline-scan \
-  --format json --output /workspace/.strix-source-aware/trivy-fs.json . || true
+  --format json --output /workspace/.source-aware/trivy-fs.json . || true
 ```
 
 Known-CVE dependency findings are the one exception to the "report only after
@@ -132,9 +165,9 @@ For frontends and Node services, layer these on top of the language-agnostic
 passes above:
 
 ```bash
-retire --path . --outputformat json --outputpath /workspace/.strix-source-aware/retire.json || true
+retire --path . --outputformat json --outputpath /workspace/.source-aware/retire.json || true
 eslint --no-config-lookup --rule '{"no-eval":2,"no-implied-eval":2}' \
-  -f json -o /workspace/.strix-source-aware/eslint.json . || true
+  -f json -o /workspace/.source-aware/eslint.json . || true
 ```
 
 When you hit a minified bundle, run `js-beautify <file>` for a readable
@@ -144,6 +177,8 @@ lighter syntax/anti-pattern check when ESLint is over-eager. The
 step to mine those bundles for endpoint candidates.
 
 ## Converting Static Signals Into Exploits
+
+When source contains model-provider SDKs, prompt templates, retrieval/vector stores, tool/function calling, model loading, training/feedback pipelines, or token/agent-loop accounting, load `llm_applications`. Use its OWASP 2026 LLM01-LLM10 map to trace data provenance, model output, retrieval authorization, tool authority, and resource multipliers rather than treating the provider call as the sink.
 
 1. Rank candidates by impact and exploitability.
 2. Trace source-to-sink flow for top candidates.

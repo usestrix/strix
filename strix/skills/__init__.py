@@ -4,6 +4,9 @@ import threading
 from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TypeGuard
+
+import yaml
 
 from strix.telemetry import posthog, scarf
 from strix.utils.resource_paths import get_strix_resource_path
@@ -11,12 +14,17 @@ from strix.utils.resource_paths import get_strix_resource_path
 
 logger = logging.getLogger(__name__)
 
-_FRONTMATTER_PATTERN = re.compile(r"^---\s*\n.*?\n---\s*\n", re.DOTALL)
+_FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(?P<body>.*?)\n---\s*\n", re.DOTALL)
 
 _INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination"})
 _ROOT_SKILL_CATEGORY = "root"
 
 _EXTRA_SKILL_DIRS: list[Path] = []
+_SKILL_METADATA_CACHE: dict[tuple[Path, int, int], dict[str, str]] = {}
+
+
+def _is_frontmatter_mapping(value: object) -> TypeGuard[dict[object, object]]:
+    return isinstance(value, dict)
 
 
 def register_skill_dir(path: str | Path) -> None:
@@ -109,13 +117,18 @@ def _get_ambiguous_skill_names() -> set[str]:
     return {name for name, count in counts.items() if count > 1}
 
 
-def _qualified_skill_files(skill_name: str) -> list[Path]:
+def _qualified_skill_file_for_name(skill_name: str) -> Path | None:
     category, _, name = skill_name.partition("/")
     for skills_dir in skill_search_dirs():
         candidate = _qualified_skill_file(skills_dir, category, name)
         if candidate is not None:
-            return [candidate]
-    return []
+            return candidate
+    return None
+
+
+def _qualified_skill_files(skill_name: str) -> list[Path]:
+    candidate = _qualified_skill_file_for_name(skill_name)
+    return [candidate] if candidate is not None else []
 
 
 def _bare_skill_files(skill_name: str) -> list[Path]:
@@ -145,10 +158,59 @@ def _bare_skill_files(skill_name: str) -> list[Path]:
     return candidates
 
 
-def get_available_skills() -> dict[str, list[str]]:
-    grouped: dict[str, list[str]] = {}
+def _parse_skill_content(content: str, source: Path | None = None) -> tuple[dict[str, str], str]:
+    """Parse skill frontmatter once and return metadata plus markdown body."""
+    frontmatter = _FRONTMATTER_PATTERN.match(content)
+    if frontmatter is None:
+        return {}, content.lstrip()
+
+    try:
+        parsed: object = yaml.safe_load(frontmatter.group("body"))
+    except yaml.YAMLError as error:
+        logger.warning("Failed to parse skill frontmatter %s: %s", source or "<content>", error)
+        parsed = None
+    if not _is_frontmatter_mapping(parsed):
+        logger.warning("Skill frontmatter is not a mapping: %s", source or "<content>")
+        return {}, content[frontmatter.end() :].lstrip()
+
+    metadata = {str(key): "" if value is None else str(value) for key, value in parsed.items()}
+    return metadata, content[frontmatter.end() :].lstrip()
+
+
+def _read_skill_metadata(file_path: Path) -> dict[str, str]:
+    try:
+        stat = file_path.stat()
+    except OSError:
+        logger.warning("Skill file disappeared while reading metadata: %s", file_path)
+        return {}
+    cache_key = (file_path, stat.st_mtime_ns, stat.st_size)
+    cached = _SKILL_METADATA_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        logger.warning("Failed to read skill metadata: %s", file_path)
+        return {}
+    metadata, _ = _parse_skill_content(content, file_path)
+    _SKILL_METADATA_CACHE[cache_key] = metadata
+    return metadata
+
+
+def get_available_skills() -> dict[str, list[dict[str, str]]]:
+    grouped: dict[str, list[dict[str, str]]] = {}
     for category, name in _iter_user_skill_files():
-        grouped.setdefault(category, []).append(name)
+        file_path = _qualified_skill_file_for_name(f"{category}/{name}")
+        if file_path is None:
+            logger.warning(
+                "Skill disappeared while gathering available skills: %s/%s",
+                category,
+                name,
+            )
+            continue
+        metadata = _read_skill_metadata(file_path)
+        description = " ".join(metadata.get("description", "").split())
+        grouped.setdefault(category, []).append({"name": name, "description": description})
     return grouped
 
 
@@ -228,7 +290,8 @@ def load_skills(skill_names: list[str]) -> dict[str, str]:
             continue
 
         var_name = skill_name.split("/")[-1]
-        skill_content[var_name] = _FRONTMATTER_PATTERN.sub("", content).lstrip()
+        _, skill_body = _parse_skill_content(content, file_path)
+        skill_content[var_name] = skill_body
         logger.debug("Loaded skill: %s -> %s", skill_name, var_name)
         _track_skill_loaded(var_name, file_path)
 

@@ -1,6 +1,7 @@
 import json
 import logging
 import subprocess
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
@@ -13,6 +14,7 @@ from agents.usage import Usage
 from strix.config import codex
 from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for
+from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.usage import LLMUsageLedger
 from strix.report.writer import (
@@ -35,6 +37,13 @@ def _strix_version() -> str | None:
         return version("strix-agent")
     except PackageNotFoundError:
         return None
+
+
+def _number(value: Any) -> int | float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _parse_repo_full_name(uri: str) -> str | None:
@@ -95,6 +104,8 @@ def get_global_report_state() -> Optional["ReportState"]:
 def set_global_report_state(report_state: "ReportState") -> None:
     global _global_report_state  # noqa: PLW0603
     _global_report_state = report_state
+    # New run: drop any streamed-cost entries a prior run left unconsumed.
+    streamed_openrouter_costs.clear()
 
 
 class ReportState:
@@ -111,6 +122,7 @@ class ReportState:
         self.run_name = run_name
         self.run_id = run_name or f"run-{uuid4().hex[:8]}"
         self.start_time = datetime.now(UTC).isoformat()
+        self.process_start_time = self.start_time
         self.end_time: str | None = None
 
         self.vulnerability_reports: list[dict[str, Any]] = []
@@ -119,6 +131,7 @@ class ReportState:
         self.scan_results: dict[str, Any] | None = None
         self.scan_config: dict[str, Any] | None = None
         self._llm_usage = LLMUsageLedger()
+        self._telemetry_llm_usage_baseline: dict[str, Any] = {}
         auth_mode = codex.auth_mode(load_settings().llm.model)
         self._llm_usage.zero_cost = auth_mode == "subscription"
         self.run_record: dict[str, Any] = {
@@ -184,6 +197,7 @@ class ReportState:
                 self.scan_results = scan_results
                 self.final_scan_result = self._format_final_scan_result(scan_results)
             self._hydrate_llm_usage(data.get("llm_usage"))
+            self._telemetry_llm_usage_baseline = self._build_llm_usage_record()
             logger.info("report state hydrated run.json from %s", run_dir)
 
         json_path = run_dir / "vulnerabilities.json"
@@ -326,6 +340,25 @@ class ReportState:
 
     def get_total_llm_usage(self) -> dict[str, Any]:
         return dict(self.run_record.get("llm_usage") or self._build_llm_usage_record())
+
+    def get_process_llm_usage(self) -> dict[str, int | float]:
+        """Return LLM usage accumulated since this process started."""
+        usage = self._llm_usage.to_record()
+        return {
+            key: max(
+                0, _number(usage.get(key)) - _number(self._telemetry_llm_usage_baseline.get(key))
+            )
+            for key in ("requests", "input_tokens", "output_tokens", "total_tokens", "cost")
+        }
+
+    def get_process_duration_seconds(self) -> float:
+        """Return this process's elapsed wall time for telemetry."""
+        try:
+            start = datetime.fromisoformat(self.process_start_time.replace("Z", "+00:00"))
+            duration = (datetime.now(start.tzinfo) - start).total_seconds()
+            return max(0.0, duration)
+        except (ValueError, TypeError, AttributeError):
+            return 0.0
 
     def get_total_llm_cost(self) -> float:
         """Live accumulated LLM cost, independent of the persisted run-record snapshot."""
@@ -507,6 +540,72 @@ class ReportState:
         self._sync_llm_usage_record()
 
 
+def openrouter_stream_cost(usage: Any) -> float | None:
+    """Total OpenRouter-reported cost from a raw stream ``usage`` block, or None.
+
+    Non-BYOK responses bill everything to ``usage.cost``. BYOK responses put the
+    OpenRouter fee in ``usage.cost`` (often 0) and the provider charge in
+    ``usage.cost_details.upstream_inference_cost``, so BYOK totals sum the two.
+    """
+    if not isinstance(usage, dict):
+        return None
+    total = 0.0
+    cost = usage.get("cost")
+    if isinstance(cost, int | float) and cost > 0:
+        total += float(cost)
+    if bool(usage.get("is_byok")):
+        details = usage.get("cost_details")
+        upstream = details.get("upstream_inference_cost") if isinstance(details, dict) else None
+        if isinstance(upstream, int | float) and upstream > 0:
+            total += float(upstream)
+    return total if total > 0 else None
+
+
+def _response_id(completion_response: Any) -> str | None:
+    response_id = getattr(completion_response, "id", None)
+    if response_id is None and isinstance(completion_response, dict):
+        response_id = cast("dict[str, Any]", completion_response).get("id")
+    return response_id if isinstance(response_id, str) and response_id else None
+
+
+class StreamedOpenRouterCosts:
+    """Correlates OpenRouter's per-stream cost from the parser to the cost callback.
+
+    LiteLLM rebuilds streamed responses from token-only chunks and drops the
+    ``usage.cost`` OpenRouter reports in its final stream chunk (its non-streamed
+    path preserves it; streaming snapshots hidden params at stream start). Every
+    scan streams, so the OpenRouter streaming handler (see strix.config.models)
+    records the cost here keyed by response id, and the callback takes it back out
+    for the matching rebuilt response. Entries are removed on read; ``clear()``
+    runs per scan so nothing accumulates across runs.
+    """
+
+    def __init__(self) -> None:
+        self._costs: dict[str, float] = {}
+        self._lock = threading.Lock()
+
+    def remember(self, response_id: Any, usage: Any) -> None:
+        cost = openrouter_stream_cost(usage)
+        if cost is None or not (isinstance(response_id, str) and response_id):
+            return
+        with self._lock:
+            self._costs[response_id] = cost
+
+    def take(self, completion_response: Any) -> float | None:
+        response_id = _response_id(completion_response)
+        if response_id is None:
+            return None
+        with self._lock:
+            return self._costs.pop(response_id, None)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._costs.clear()
+
+
+streamed_openrouter_costs = StreamedOpenRouterCosts()
+
+
 def litellm_cost_callback(
     kwargs: Any,
     completion_response: Any,
@@ -540,6 +639,11 @@ def litellm_cost_callback(
 
     if cost is None:
         cost = _usage_reported_cost(completion_response)
+
+    # Recover the exact OpenRouter cost the streaming handler stashed for this
+    # response — LiteLLM drops it from streamed usage, so nothing above sees it.
+    if cost is None:
+        cost = streamed_openrouter_costs.take(completion_response)
 
     if cost is None:
         cost = _estimate_response_cost(kwargs, completion_response)
@@ -622,10 +726,13 @@ def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | No
         candidates.append(model.rsplit("/", 1)[-1])
 
     for candidate in candidates:
+        resolved = resolve_litellm_model(candidate)
+        if not resolved:
+            continue
         try:
             value = completion_cost(
-                completion_response={"model": candidate, "usage": usage_payload},
-                model=candidate,
+                completion_response={"model": resolved, "usage": usage_payload},
+                model=resolved,
             )
         except Exception:  # nosec B112  # noqa: BLE001, S112
             continue

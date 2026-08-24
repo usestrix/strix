@@ -113,10 +113,13 @@ Information leaks accelerate exploitation by revealing code, configuration, iden
 
 ## Triage Rubric
 
-- **Critical**: Credentials/keys; signed URL secrets; config dumps; unrestricted admin/observability panels
-- **High**: Versions with reachable CVEs; cross-tenant data; caches serving cross-user content
-- **Medium**: Internal paths/hosts enabling LFI/SSRF pivots; source maps revealing hidden endpoints
-- **Low**: Generic headers, marketing versions, intended documentation without exploit path
+- **Critical**: Direct disclosure of secrets that provide broad privileged control, with successful use validated where safe
+- **High**: Direct disclosure of highly sensitive data, cross-tenant data, or credentials with serious demonstrated access
+- **Medium**: Unauthorized access to a limited set of genuinely restricted data, or a fully validated chain from the disclosure to a concrete security consequence
+- **Low**: Limited unauthorized disclosure with modest sensitivity and no serious direct consequence
+- **Informational / no report**: Public or intended client data, generic headers, internal names or private addresses, versions without a reachable exploit, and source maps or diagnostics that expose no secrets or restricted source
+
+Do not assign Confidentiality Low merely because information helps reconnaissance. CVSS C:L requires actual access to restricted information. If a path, hostname, version, source map, schema, or debug value only suggests a possible second vulnerability, either validate that complete chain and score its demonstrated outcome or leave C:N and omit the vulnerability report.
 
 ## Exploitation Chains
 
@@ -152,6 +155,7 @@ Information leaks accelerate exploitation by revealing code, configuration, iden
 3. Attempt minimal, reversible exploitation or present a concrete step-by-step chain
 4. Show reproducibility and minimal request set
 5. Bound scope (user, tenant, environment) and data sensitivity classification
+6. Map each non-None CVSS impact metric to evidence of actual restricted disclosure, modification, or service interruption
 
 ## False Positives
 

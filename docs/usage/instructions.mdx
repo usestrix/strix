@@ -71,3 +71,43 @@ strix --target https://api.example.com \
 <Tip>
 Be specific. Good instructions help Strix prioritize the most valuable attack paths.
 </Tip>
+
+## Workspace files
+
+Instructions become part of the prompt. To give Strix a file to work with, such
+as a wordlist, an API specification, or notes, use `--workspace-file`. Strix
+places the file into the sandbox workspace before the scan starts.
+
+```bash
+strix --target https://app.com --workspace-file ./wordlist.txt
+```
+
+The file lands at `/workspace/<file name>`. To choose the destination, write
+`PATH:DEST`. `DEST` is a path inside `/workspace`.
+
+```bash
+strix --target https://app.com \
+  --workspace-file ./openapi.yaml:specs/openapi.yaml \
+  --workspace-file ./notes.md
+```
+
+Repeat the option for every file you want to place. Strix lists the files in the
+agent task, so the agent knows where to read them.
+
+Rules that apply to every workspace file:
+
+- The file is read-only inside the sandbox.
+- The destination must stay inside `/workspace`.
+- The destination must not fall inside a target directory, because target files
+  come from the target itself. Strix skips such a file and logs a warning.
+- Two files cannot claim the same destination.
+
+<Note>
+A workspace file is data for the agent to use. It is not a scan target, and its
+contents do not change the instructions.
+</Note>
+
+<Warning>
+Do not place secrets in a workspace file. The sandbox runs untrusted target
+code, so treat anything you place there as readable by the target.
+</Warning>

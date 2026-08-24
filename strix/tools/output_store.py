@@ -1,7 +1,7 @@
 """Bound oversized tool results before they enter agent history.
 
 Oversized results are spilled into the sandbox at
-``/workspace/.strix/tool-output/<id>.txt``; the agent sees a head + tail slice
+``/workspace/.tool-output/<id>.txt``; the agent sees a head + tail slice
 plus the path and reads the rest back with its own file tools. The spill writer
 is injected by the runner via :func:`configure_spill_writer`.
 """
@@ -25,7 +25,7 @@ _WORKSPACE_SPILL_NOTICE = (
     "in the sandbox; read it with exec_command (e.g. `sed -n`, `grep`, `cat`) ...]"
 )
 
-WORKSPACE_SPILL_DIR = "/workspace/.strix/tool-output"
+WORKSPACE_SPILL_DIR = "/workspace/.tool-output"
 
 # Longest possible workspace path, used only to reserve notice bytes.
 _SAMPLE_WORKSPACE_PATH = f"{WORKSPACE_SPILL_DIR}/{'0' * 32}.txt"

@@ -16,7 +16,8 @@ RUN mkdir -p /out/bin && \
     go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
     go install -v github.com/projectdiscovery/cvemap/cmd/vulnx@latest && \
     go install -v github.com/jaeles-project/gospider@latest && \
-    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest
+    go install -v github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest && \
+    go install -v golang.org/x/vuln/cmd/govulncheck@latest
 
 # ---------------------------------------------------------------------------
 # Runtime stage
@@ -53,6 +54,7 @@ RUN apt-get update && \
     nmap ncat ndiff \
     sqlmap nuclei subfinder naabu ffuf \
     nodejs npm pipx \
+    golang-go \
     libcap2-bin \
     gdb \
     libnss3-tools \
@@ -115,6 +117,21 @@ ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 ENV AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 ENV AGENT_BROWSER_ARGS="--disable-blink-features=AutomationControlled,--no-first-run,--no-default-browser-check,--lang=en-US"
 ENV AGENT_BROWSER_SCREENSHOT_DIR=/workspace/.agent-browser-screenshots
+ENV AGENT_BROWSER_IDLE_TIMEOUT_MS=180000
+USER root
+RUN set -eu; \
+    { \
+        for var in AGENT_BROWSER_EXECUTABLE_PATH AGENT_BROWSER_USER_AGENT \
+                   AGENT_BROWSER_ARGS AGENT_BROWSER_SCREENSHOT_DIR \
+                   AGENT_BROWSER_IDLE_TIMEOUT_MS; do \
+            eval "value=\${$var}"; \
+            printf 'export %s="${%s:-%s}"\n' "$var" "$var" "$value"; \
+        done; \
+    } > /tmp/agent-browser.sh; \
+    install -m 0644 /tmp/agent-browser.sh /etc/profile.d/agent-browser.sh; \
+    rm /tmp/agent-browser.sh; \
+    env -i bash -lc 'test "${AGENT_BROWSER_IDLE_TIMEOUT_MS}" = "180000"'
+USER pentester
 RUN /home/pentester/.npm-global/bin/agent-browser doctor --offline --quick
 
 RUN set -eux; \

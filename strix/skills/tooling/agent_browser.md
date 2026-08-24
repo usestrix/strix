@@ -58,6 +58,26 @@ agent-browser screenshot
 The browser stays running across commands so these feel like a single
 session. Use `agent-browser close` (or `close --all`) when you're done.
 
+The default session is **shared with every other agent in the sandbox** — if
+another agent navigates it, your page and your refs are gone from under you. So
+claim your own by passing `--session <your-agent-name>` on **every** command:
+
+```bash
+agent-browser --session recon-3 open https://example.com
+agent-browser --session recon-3 snapshot -i
+agent-browser --session recon-3 close        # when done with the target
+```
+
+The examples in the rest of this skill omit `--session` to keep them readable;
+keep passing yours. Each session is a separate Chromium (~340 MB) on a shared
+box, so hold one rather than several, and close it when you're finished.
+
+A browser left idle for 3 minutes is reclaimed automatically to free memory for
+the other agents; the next command relaunches it, but the page, tabs, refs and
+cookies are gone. If you're authenticated and about to go do something else for a
+while, save the state first (see
+[Persist session across runs](#persist-session-across-runs)).
+
 ## Reading a page
 
 ```bash
@@ -307,6 +327,16 @@ agent-browser --session b fill @e1 "bob@test.com"
 `AGENT_BROWSER_SESSION=myapp` sets the default session for the current
 shell.
 
+Use a session named after yourself for your own work — that's what keeps a
+concurrent agent from navigating the page out from under you. Every session is a
+separate Chromium though, so hold one at a time rather than a collection, and
+close each one when its flow is finished:
+
+```bash
+agent-browser --session a close
+agent-browser --session b close
+```
+
 ### Mock network requests
 
 ```bash
@@ -368,8 +398,11 @@ agent-browser dialog dismiss          # cancel
 ## Readiness & recovery
 
 The first `agent-browser open` in a session launches the headless-Chrome
-daemon; later commands reuse it. Distinguish the two failure modes and react
-differently — do **not** blindly re-run the same failing command in a loop:
+daemon; later commands reuse it. A daemon left idle for 3 minutes shuts itself
+down to free memory for the other agents, so an `open` after a long gap is a
+fresh browser rather than a resumed one — expect to re-navigate, and re-`state
+load` if you were logged in. Distinguish the failure modes and react differently
+— do **not** blindly re-run the same failing command in a loop:
 
 - **Daemon / connection failure** (`Failed to connect`, `connection refused`,
   socket missing, `browser not running`): the daemon isn't up or has died. Run

@@ -1,8 +1,10 @@
+from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 import strix.skills as skills_mod
+from strix.agents.prompt import render_system_prompt
 from strix.skills import (
     get_all_skill_names,
     get_available_skills,
@@ -12,10 +14,11 @@ from strix.skills import (
     skill_search_dirs,
     validate_requested_skills,
 )
+from strix.utils.resource_paths import get_strix_resource_path
 
 
 @pytest.fixture(autouse=True)
-def _clear_extra_dirs() -> None:
+def _clear_extra_dirs() -> Iterator[None]:
     original = list(skills_mod._EXTRA_SKILL_DIRS)
     skills_mod._EXTRA_SKILL_DIRS.clear()
     try:
@@ -37,9 +40,11 @@ def _write_root_skill(root: Path, name: str, body: str) -> None:
 
 def test_no_registration_leaves_builtin_only() -> None:
     assert registered_skill_dirs() == ()
-    builtin = skills_mod.get_strix_resource_path("skills")
+    builtin = get_strix_resource_path("skills")
     assert skill_search_dirs() == (builtin,)
-    assert {"nmap", "subfinder"}.issubset(get_available_skills()["tooling"])
+    assert {"nmap", "subfinder"}.issubset(
+        {skill["name"] for skill in get_available_skills()["tooling"]}
+    )
 
 
 def test_register_is_idempotent_and_ordered(tmp_path: Path) -> None:
@@ -61,8 +66,117 @@ def test_registered_dir_adds_new_skill(tmp_path: Path) -> None:
     register_skill_dir(tmp_path)
 
     assert "widget" in get_all_skill_names()
-    assert get_available_skills()["extra"] == ["widget"]
+    assert get_available_skills()["extra"] == [{"name": "widget", "description": ""}]
     assert load_skills(["widget"]) == {"widget": "widget body"}
+
+
+def test_available_skill_includes_frontmatter_description(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "extra",
+        "widget",
+        "---\nname: widget\ndescription: Useful widget guidance\n---\nwidget body",
+    )
+    register_skill_dir(tmp_path)
+
+    assert get_available_skills()["extra"] == [
+        {"name": "widget", "description": "Useful widget guidance"}
+    ]
+
+
+def test_available_skill_supports_colon_in_description(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "extra",
+        "widget",
+        '---\nname: widget\ndescription: "Useful widget: handles YAML"\n---\nwidget body',
+    )
+    register_skill_dir(tmp_path)
+
+    assert get_available_skills()["extra"] == [
+        {"name": "widget", "description": "Useful widget: handles YAML"}
+    ]
+
+
+def test_available_skill_normalizes_quoted_description(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "extra",
+        "widget",
+        '---\nname: widget\ndescription: "Useful: widget guidance"\n---\nwidget body',
+    )
+    register_skill_dir(tmp_path)
+
+    assert get_available_skills()["extra"] == [
+        {"name": "widget", "description": "Useful: widget guidance"}
+    ]
+
+
+def test_available_skill_normalizes_multiline_descriptions(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "extra",
+        "block",
+        "---\nname: block\n\ndescription: |\n"
+        "  First paragraph\n\n  Second paragraph\n\n---\nblock body",
+    )
+    _write_skill(
+        tmp_path,
+        "extra",
+        "plain",
+        "---\nname: plain\n\ndescription: First line\n  Second line\n\n---\nplain body",
+    )
+    register_skill_dir(tmp_path)
+
+    available = {skill["name"]: skill["description"] for skill in get_available_skills()["extra"]}
+    assert available == {
+        "block": "First paragraph Second paragraph",
+        "plain": "First line Second line",
+    }
+
+
+def test_available_skill_supports_block_scalar_trailing_comment(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "extra",
+        "commented",
+        "---\nname: commented\ndescription: | # paragraph\n"
+        "  First line\n  Second line\n---\ncommented body",
+    )
+    register_skill_dir(tmp_path)
+
+    assert get_available_skills()["extra"] == [
+        {"name": "commented", "description": "First line Second line"}
+    ]
+
+
+def test_malformed_frontmatter_keeps_skill_body(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "extra",
+        "broken",
+        "---\nname: [broken\ndescription: should be empty\n---\nbroken body",
+    )
+    register_skill_dir(tmp_path)
+
+    assert get_available_skills()["extra"] == [{"name": "broken", "description": ""}]
+    assert load_skills(["extra/broken"]) == {"broken": "broken body"}
+
+
+def test_system_prompt_renders_skill_descriptions() -> None:
+    prompt = render_system_prompt(scan_mode="quick", is_root=True)
+
+    assert "- technologies/firebase: Firebase security testing covering" in prompt
+
+
+def test_system_prompt_omits_empty_skill_description(tmp_path: Path) -> None:
+    _write_skill(tmp_path, "extra", "widget", "---\nname: widget\ndescription:\n---\nwidget body")
+    register_skill_dir(tmp_path)
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True)
+
+    assert "- extra/widget\n" in prompt
+    assert "- extra/widget: " not in prompt
 
 
 def test_registered_root_skill_is_discoverable_and_valid(tmp_path: Path) -> None:
@@ -70,7 +184,7 @@ def test_registered_root_skill_is_discoverable_and_valid(tmp_path: Path) -> None
     register_skill_dir(tmp_path)
 
     assert "widget" in get_all_skill_names()
-    assert get_available_skills()["root"] == ["widget"]
+    assert get_available_skills()["root"] == [{"name": "widget", "description": ""}]
     assert validate_requested_skills(["widget"]) is None
     assert validate_requested_skills(["root/widget"]) is None
     assert load_skills(["widget"]) == {"widget": "widget body"}
@@ -83,8 +197,8 @@ def test_ambiguous_bare_skill_requires_qualified_name(tmp_path: Path) -> None:
     register_skill_dir(tmp_path)
 
     assert "widget" in get_all_skill_names()
-    assert get_available_skills()["alpha"] == ["widget"]
-    assert get_available_skills()["beta"] == ["widget"]
+    assert get_available_skills()["alpha"] == [{"name": "widget", "description": ""}]
+    assert get_available_skills()["beta"] == [{"name": "widget", "description": ""}]
     assert validate_requested_skills(["alpha/widget"]) is None
     assert validate_requested_skills(["beta/widget"]) is None
 

@@ -1,4 +1,6 @@
-.PHONY: help install dev-install format lint type-check security check-all clean pre-commit setup-dev dev viewer
+.PHONY: help install dev-install format lint type-check security check-all clean pre-commit setup-dev dev viewer wheel tui-build tui-test tui-lint
+
+TUI_BINARY := build/sidecar/strix-tui$(if $(filter Windows_NT,$(OS)),.exe)
 
 help:
 	@echo "Available commands:"
@@ -16,7 +18,11 @@ help:
 	@echo "Development:"
 	@echo "  pre-commit    - Run pre-commit hooks on all files"
 	@echo "  viewer        - Rebuild the local-viewer SPA (commit the output)"
+	@echo "  wheel         - Build a platform wheel with the bundled Go sidecar"
 	@echo "  clean         - Clean up cache files and artifacts"
+	@echo "  tui-build     - Build the Bubble Tea TUI"
+	@echo "  tui-test      - Test the Bubble Tea TUI"
+	@echo "  tui-lint      - Vet and format-check the Bubble Tea TUI"
 
 install:
 	uv sync --no-dev
@@ -72,5 +78,18 @@ viewer:
 	cd strix/interface/viewer/frontend && npm ci && npm run build
 	@echo "✅ Viewer built to strix/interface/viewer/static/ (commit the changes)."
 
+wheel:
+	uv build --wheel
+
 dev: format lint type-check
 	@echo "✅ Development cycle complete!"
+
+tui-build:
+	mkdir -p build/sidecar
+	cd strix/interface/tui && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../../../$(TUI_BINARY) ./cmd/strix-tui
+
+tui-test:
+	cd strix/interface/tui && go test -race ./...
+
+tui-lint:
+	cd strix/interface/tui && test -z "$$(gofmt -l .)" && go vet ./...

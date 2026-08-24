@@ -5,7 +5,7 @@ description: Run Python through exec_command in the SDK sandbox. Use the image-b
 
 # Python In The Sandbox
 
-Use `exec_command` for Python. There is no separate Strix Python executor.
+Use `exec_command` for Python. There is no separate Python executor.
 
 Prefer writing reusable scripts to a `.py` file and running them with
 `python3 <name>.py`. For short one-off transformations, `python3 -c` or a

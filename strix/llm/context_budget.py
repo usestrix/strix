@@ -8,8 +8,6 @@ import logging
 from functools import lru_cache
 from typing import Any
 
-import litellm
-
 from strix.config import load_settings
 
 
@@ -17,7 +15,14 @@ logger = logging.getLogger(__name__)
 
 # LiteLLM keys models without the routing prefix users type (``openai/``,
 # ``litellm/``, ``ollama/`` ...). Strip a leading provider segment on lookup.
-_STRIPPABLE_PREFIXES = ("openai/", "litellm/", "any-llm/", "ollama/", "ollama_chat/")
+_STRIPPABLE_PREFIXES = (
+    "openai/",
+    "chatgpt/",
+    "litellm/",
+    "any-llm/",
+    "ollama/",
+    "ollama_chat/",
+)
 
 _DEFAULT_OUTPUT_TOKENS = 8_192
 
@@ -31,6 +36,8 @@ def _lookup_key(model: str) -> str:
 
 def _safe_get_model_info(model: str) -> dict[str, Any] | None:
     try:
+        import litellm
+
         return dict(litellm.get_model_info(model))
     except Exception:  # noqa: BLE001 - unmapped models raise; caller falls back.
         return None
@@ -38,7 +45,11 @@ def _safe_get_model_info(model: str) -> dict[str, Any] | None:
 
 @lru_cache(maxsize=128)
 def _model_info(model: str) -> dict[str, int]:
-    for candidate in (model, _lookup_key(model)):
+    lookup_key = _lookup_key(model)
+    # Provider-qualified ChatGPT lookups may start a synchronous device-login
+    # poll. LiteLLM keys the metadata by the underlying model slug.
+    candidates = (lookup_key,) if model.startswith("chatgpt/") else (model, lookup_key)
+    for candidate in candidates:
         info = _safe_get_model_info(candidate)
         if info is not None:
             return {
@@ -71,6 +82,8 @@ def count_tokens(model: str, text: str) -> int:
     if not text:
         return 0
     try:
+        import litellm
+
         return int(litellm.token_counter(model=_lookup_key(model), text=text))
     except Exception:  # noqa: BLE001 - tokenizer may be unavailable for some models.
         return len(text.encode("utf-8"))

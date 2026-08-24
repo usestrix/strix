@@ -80,7 +80,7 @@ Gadget availability depends on package versions — enumerate `node_modules` in 
 1. **Identify merge points** — Search for extend/merge/defaults/deep copy on user-controlled objects
 2. **Baseline probe** — Inject benign pollution marker:
    ```json
-   {"__proto__": {"strixPolluted": "yes"}}
+   {"__proto__": {"pollutionCanary": "yes"}}
    ```
    Verify via response behavior, error messages, or follow-up request reading shared state
 3. **Shape variants** — Test `__proto__`, `constructor.prototype`, nested bracket notation
@@ -121,7 +121,7 @@ Gadget availability depends on package versions — enumerate `node_modules` in 
 
 ## Pro Tips
 
-1. Always verify pollution with a unique canary key (`strixPolluted_<random>`) before attempting RCE gadgets
+1. Always verify pollution with a unique canary key (`pollutionCanary_<random>`) before attempting RCE gadgets
 2. In white-box scans, grep for `merge`, `extend`, `defaultsDeep`, `assign` with user input
 3. Check both request parsing and response template config merges (second-order)
 4. Node gadget chains are version-specific — confirm package version before claiming RCE

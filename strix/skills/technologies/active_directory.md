@@ -202,7 +202,7 @@ Confirm with a version/patch check before firing — these are destructive.
 
 ## Tooling
 
-**None of the AD tools below ship in the Strix sandbox by default** (the image is Kali-rolling but installs only web-focused tooling). Install what the task needs — the sandbox has `pipx`, `pip`, `go`, `git`, and Kali's apt repos. AD testing also requires **network reachability to the target DC/subnet**, which the default web-target sandbox usually lacks; confirm connectivity first.
+**None of the AD tools below ship in the sandbox by default** (the image is Kali-rolling but installs only web-focused tooling). Install what the task needs — the sandbox has `pipx`, `pip`, `go`, `git`, and Kali's apt repos. AD testing also requires **network reachability to the target DC/subnet**, which the default web-target sandbox usually lacks; confirm connectivity first.
 
 ```
 # Python identity toolkit (impacket = GetUserSPNs/GetNPUsers/secretsdump/ntlmrelayx/getST/addcomputer/rbcd)

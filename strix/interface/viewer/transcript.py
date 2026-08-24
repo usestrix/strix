@@ -7,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from strix.core.paths import run_record_path
+from strix.interface.tui.live_view import TuiLiveView
 
 
 if TYPE_CHECKING:
@@ -41,12 +42,9 @@ def severity_counts(vulns: list[Any]) -> dict[str, int]:
 def build_run_state(run_dir: Path) -> dict[str, Any]:
     """Agent graph + full per-agent event/message stream.
 
-    Reuses the Textual-free ``TuiLiveView`` projection so the viewer and the TUI
+    Reuses the shared ``TuiLiveView`` projection so the viewer and the TUI
     share one parser for ``agents.json`` + ``agents.db`` and never drift.
     """
-    # Imported lazily so importing strix.interface.viewer does not eagerly pull the TUI.
-    from strix.interface.tui.live_view import TuiLiveView
-
     view = TuiLiveView()
     view.hydrate_from_run_dir(run_dir)
     return {"agents": list(view.agents.values()), "events": view.events}
