@@ -67,7 +67,13 @@ def ensure_run_root(*, cwd: Path | None = None) -> Path:
     filesystem never crashes the run.
     """
     base = runs_base_dir(cwd=cwd)
-    base.mkdir(parents=True, exist_ok=True)
+    # Pass mode to mkdir so a freshly created dir is 0700 from the start (no
+    # world-readable window between mkdir and chmod). chmod still runs to fix an
+    # already-existing dir, where mkdir(mode=) is a no-op.
+    with contextlib.suppress(OSError):
+        base.mkdir(mode=_RUN_DIR_MODE, parents=True, exist_ok=True)
+    if not base.is_dir():
+        base.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
         base.chmod(_RUN_DIR_MODE)
     gitignore = base / _GITIGNORE_NAME

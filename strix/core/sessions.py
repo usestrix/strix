@@ -46,9 +46,19 @@ def open_agent_session(agent_id: str, path: Path) -> SQLiteSession:
     # include credentials/tokens captured from the target. Keep its directory
     # owner-only (chmod is best-effort — a no-op on Windows — so it never crashes).
     parent = path.parent
-    parent.mkdir(parents=True, exist_ok=True)
+    # Create at 0700 from the start (no world-readable window); chmod still runs
+    # to tighten an already-existing dir, where mkdir(mode=) is a no-op.
+    with contextlib.suppress(OSError):
+        parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not parent.is_dir():
+        parent.mkdir(parents=True, exist_ok=True)
     with contextlib.suppress(OSError):
         parent.chmod(0o700)
+    # The db file itself holds the transcript; create it 0600 before sqlite opens
+    # it so it is never briefly world-readable (best-effort; no-op on Windows).
+    if not path.exists():
+        with contextlib.suppress(OSError):
+            path.touch(mode=0o600)
     return _PooledConnectionSession(session_id=agent_id, db_path=path)
 
 

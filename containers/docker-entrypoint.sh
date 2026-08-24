@@ -166,6 +166,46 @@ sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
 
+# --- SECURITY: drop egress to cloud-metadata endpoints -----------------------
+# A prompt-injected agent can run exec_command("curl http://169.254.169.254/...")
+# (or the ECS 169.254.170.2 / IPv6 fd00:ec2::254 variants) to steal cloud
+# instance-metadata / IAM credentials, bypassing the per-tool scope guard
+# entirely. These link-local metadata addresses are never a legitimate pentest
+# target, so block egress to them here — after the network is up and BEFORE the
+# agent (exec "$@") can run. We deliberately do NOT blanket-block RFC1918: local
+# apps under test are commonly on private ranges, and dropping those would break
+# real scans.
+#
+# Best-effort: needs NET_ADMIN (added by strix/runtime/docker_client.py) plus an
+# iptables binary. A missing capability or binary logs a warning and continues
+# rather than failing container startup. Set STRIX_ALLOW_METADATA=1 to skip
+# (rare, e.g. deliberately testing a metadata service).
+if [ "${STRIX_ALLOW_METADATA:-0}" = "1" ]; then
+  echo "⚠️  STRIX_ALLOW_METADATA=1 — NOT blocking cloud-metadata egress"
+else
+  metadata_blocked=true
+  if command -v iptables >/dev/null 2>&1; then
+    for _ip in 169.254.169.254 169.254.170.2; do
+      sudo iptables -I OUTPUT -d "$_ip" -j REJECT 2>/dev/null \
+        || sudo iptables -I OUTPUT -d "$_ip" -j DROP 2>/dev/null \
+        || metadata_blocked=false
+    done
+  else
+    metadata_blocked=false
+  fi
+  # IPv6 metadata is best-effort only (host may have no IPv6 stack / ip6tables).
+  if command -v ip6tables >/dev/null 2>&1; then
+    sudo ip6tables -I OUTPUT -d fd00:ec2::254 -j REJECT 2>/dev/null \
+      || sudo ip6tables -I OUTPUT -d fd00:ec2::254 -j DROP 2>/dev/null \
+      || true
+  fi
+  if [ "$metadata_blocked" = true ]; then
+    echo "✅ Cloud-metadata egress blocked (169.254.169.254, 169.254.170.2, fd00:ec2::254)"
+  else
+    echo "⚠️  Could not block cloud-metadata egress (iptables/NET_ADMIN unavailable) — continuing"
+  fi
+fi
+
 mkdir -p /workspace/.agent-browser-screenshots
 
 echo "✅ Container ready"

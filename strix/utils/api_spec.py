@@ -32,9 +32,40 @@ SPEC_EXTENSIONS = frozenset({".json", ".yaml", ".yml"})
 #: Guard against pathological Postman folder nesting.
 _MAX_POSTMAN_DEPTH = 25
 
+#: A spec is often an untrusted target artifact; cap its size so it cannot be
+#: used to exhaust host memory. Real OpenAPI/Postman specs are comfortably below.
+_MAX_SPEC_BYTES = 16 * 1024 * 1024  # 16 MiB
+
 
 class SpecParseError(ValueError):
     """Raised when a spec cannot be read, recognized, or fetched."""
+
+
+class _NoAliasSafeLoader(yaml.SafeLoader):
+    """``SafeLoader`` (never constructs arbitrary Python objects) that also
+    refuses YAML anchors/aliases.
+
+    ``safe_load`` blocks ``!!python/object`` and friends but still *expands*
+    anchor/alias references, which is the "billion laughs" amplification bomb.
+    A spec is untrusted input and legitimate OpenAPI/Postman specs do not use
+    aliases, so we reject them at compose time rather than expanding them. This
+    subclass adds no constructors — it only narrows SafeLoader, so no arbitrary
+    types can be built.
+    """
+
+    def compose_node(self, parent: Any, index: Any) -> Any:
+        if self.check_event(yaml.events.AliasEvent):
+            raise yaml.YAMLError("YAML aliases are not allowed in API specs")
+        return super().compose_node(parent, index)
+
+
+def _safe_load_yaml_no_bomb(text: str) -> Any:
+    """Parse YAML with SafeLoader semantics and no alias expansion."""
+    loader = _NoAliasSafeLoader(text)
+    try:
+        return loader.get_single_data()
+    finally:
+        loader.dispose()
 
 
 def load_spec(path: str | Path) -> dict[str, Any]:
@@ -44,17 +75,25 @@ def load_spec(path: str | Path) -> dict[str, Any]:
     JSON/YAML mapping.
     """
     p = Path(path)
+    # A spec is frequently an untrusted target artifact. Cap the on-disk size
+    # before reading it into memory so a hostile file cannot exhaust host RAM,
+    # and (below) guard YAML alias expansion against the "billion laughs" bomb.
     try:
+        if p.stat().st_size > _MAX_SPEC_BYTES:
+            raise SpecParseError(
+                f"{p} is too large ({p.stat().st_size} bytes; limit {_MAX_SPEC_BYTES})"
+            )
         text = p.read_text(encoding="utf-8")
     except OSError as exc:
         raise SpecParseError(f"Cannot read spec {p}: {exc}") from exc
     # JSON is a subset of YAML, so safe_load parses both; try JSON first for a
-    # clearer error and to keep the fast path fast.
+    # clearer error and to keep the fast path fast. JSON has no aliases, so the
+    # alias bomb only concerns the YAML fallback.
     try:
         data: Any = json.loads(text)
     except json.JSONDecodeError:
         try:
-            data = yaml.safe_load(text)
+            data = _safe_load_yaml_no_bomb(text)
         except yaml.YAMLError as exc:
             raise SpecParseError(f"{p} is not valid JSON or YAML: {exc}") from exc
     if not isinstance(data, dict):

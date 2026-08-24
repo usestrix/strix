@@ -241,6 +241,20 @@ class StrixDockerSandboxClient(DockerSandboxClient):
             if cap not in cap_add:
                 cap_add.append(cap)
 
+        # SECURITY (egress scope enforcement): the agent's scope is only prompt-
+        # enforced for exec_command/browser, so a prompt-injected agent could
+        # otherwise `curl http://169.254.169.254/...` to reach cloud instance-
+        # metadata / IAM credentials, bypassing the per-tool repeat_request guard
+        # entirely. As a hard control, containers/docker-entrypoint.sh drops
+        # egress to the cloud-metadata endpoints (169.254.169.254, ECS
+        # 169.254.170.2, IPv6 fd00:ec2::254) via iptables at startup, before the
+        # agent runs. That drop depends on NET_ADMIN, which is added just above —
+        # do NOT remove NET_ADMIN or the metadata block silently becomes a no-op.
+        # This is defense-in-depth, not full scope enforcement: comprehensively
+        # constraining egress to only the in-scope targets would require running
+        # the sandbox on an isolated docker network behind an egress proxy that
+        # allowlists scope hosts. The repeat_request guard remains advisory.
+
         # host.docker.internal → host-gateway lets the agent reach host-served
         # apps; documented and intentional, so it stays on by default. Gate it
         # behind an opt-out for hosts that don't want a sandboxed, arbitrary-

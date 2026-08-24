@@ -126,13 +126,15 @@ async def _bound_result(result: Any) -> Any:
 
 
 # Tools whose results are derived from the target and are therefore untrusted:
-# HTTP responses / proxied traffic, crawled page text, external web content, and
-# shell/command output over target files. Their results are fenced in the
+# HTTP responses / proxied traffic, crawled page text, external web content,
+# shell/command output over target files, and file-content reads (``read_file``
+# over whitebox source or a planted README). Their results are fenced in the
 # provenance envelope (see ``strix.tools.output_store.wrap_untrusted``) so
 # injected instructions in target bytes read as data, not as system commands.
 # Deliberately excludes control/lifecycle tools (finish_scan, agent_finish,
-# respond_to_user, wait_for_agents) and internal bookkeeping tools whose JSON
-# results are parsed by the runner/tool-use behavior and must stay unwrapped.
+# respond_to_user, wait_for_agents), filesystem WRITE/patch tools (write_file,
+# apply_patch, ...), and internal bookkeeping tools whose JSON results are parsed
+# by the runner/tool-use behavior and must stay unwrapped.
 _UNTRUSTED_RESULT_TOOLS: frozenset[str] = frozenset(
     {
         "list_requests",
@@ -143,12 +145,18 @@ _UNTRUSTED_RESULT_TOOLS: frozenset[str] = frozenset(
         "web_search",
         "exec_command",
         "write_stdin",
+        "read_file",
     }
 )
 
 
-def _with_untrusted_provenance(tool: FunctionTool) -> FunctionTool:
-    """Fence a target-facing tool's string result as untrusted data (idempotent)."""
+def _with_untrusted_provenance(tool: FunctionTool | CustomTool) -> FunctionTool | CustomTool:
+    """Fence a target-facing tool's string result as untrusted data (idempotent).
+
+    Accepts a ``CustomTool`` as well as a ``FunctionTool`` because the Responses
+    filesystem ``read_file`` stays a native ``CustomTool`` (both types expose a
+    mutable ``on_invoke_tool``).
+    """
     if getattr(tool, "_strix_untrusted", False):
         return tool
     invoke_tool = tool.on_invoke_tool
@@ -162,7 +170,7 @@ def _with_untrusted_provenance(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
-def _maybe_provenance(tool: FunctionTool) -> FunctionTool:
+def _maybe_provenance(tool: FunctionTool | CustomTool) -> FunctionTool | CustomTool:
     """Apply the untrusted-output envelope when ``tool`` is target-facing."""
     if tool.name in _UNTRUSTED_RESULT_TOOLS:
         return _with_untrusted_provenance(tool)
@@ -346,27 +354,32 @@ def _configure_filesystem_tools(
     toolset: Any, *, chat_completions: bool, strict_schemas: bool = True
 ) -> None:
     for name, tool in vars(toolset).items():
+        configured: FunctionTool | CustomTool
         if chat_completions:
             if isinstance(tool, CustomTool):
-                setattr(toolset, name, _custom_tool_as_function_tool(tool))
+                configured = _custom_tool_as_function_tool(tool)
             elif isinstance(tool, FunctionTool):
-                setattr(
-                    toolset,
-                    name,
-                    _function_tool_with_error_result(
-                        _with_strictness(_with_coerced_arguments(tool), strict_schemas)
-                    ),
-                )
-        elif isinstance(tool, CustomTool):
-            setattr(toolset, name, _bound_custom_tool(tool))
-        elif isinstance(tool, FunctionTool):
-            setattr(
-                toolset,
-                name,
-                _with_bounded_result(
+                configured = _function_tool_with_error_result(
                     _with_strictness(_with_coerced_arguments(tool), strict_schemas)
-                ),
+                )
+            else:
+                continue
+        elif isinstance(tool, CustomTool):
+            configured = _bound_custom_tool(tool)
+        elif isinstance(tool, FunctionTool):
+            configured = _with_bounded_result(
+                _with_strictness(_with_coerced_arguments(tool), strict_schemas)
             )
+        else:
+            continue
+        # Security (prompt-injection provenance): file-content reads (``read_file``)
+        # return target-controlled bytes — whitebox source, a planted README —
+        # which are untrusted, exactly like shell/proxy output. Fence them in the
+        # provenance envelope as the OUTERMOST wrapper (so the envelope survives
+        # bounding). Only content-returning reads are in _UNTRUSTED_RESULT_TOOLS;
+        # write_file/apply_patch and other lifecycle-parsed tools pass through
+        # unwrapped so their JSON stays intact.
+        setattr(toolset, name, _maybe_provenance(configured))
 
 
 def _make_filesystem_configurator(*, chat_completions: bool, strict_schemas: bool) -> Any:

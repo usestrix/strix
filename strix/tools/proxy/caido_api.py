@@ -227,6 +227,7 @@ def build_raw_request(
     headers: dict[str, str],
     body: str,
     allow_crlf: bool = False,
+    pinned_host: str | None = None,
 ) -> tuple[ConnectionInfoInput, bytes]:
     """Assemble raw HTTP request bytes for replay.
 
@@ -235,6 +236,18 @@ def build_raw_request(
     ``False``: the normal structured path rejects CR/LF in the method, path, and
     every header name/value so model-supplied input cannot inject headers or
     desync framing silently.
+
+    Security (DNS-rebinding TOCTOU): ``pinned_host``, when set, is the IP literal
+    the egress guard already resolved and validated as external for this URL's
+    host. It becomes ``ConnectionInfoInput.host`` so Caido connects to *that* IP
+    instead of re-resolving the hostname at send time (a rebinding name could
+    answer with a public A record at check time and 169.254.169.254 at send).
+    The ``Host:`` header still carries the original hostname (from the URL's
+    netloc), so virtual-hosted targets route correctly. NOTE: ``ConnectionInfoInput``
+    exposes only ``host``/``port``/``is_tls`` (no separate SNI field), so for TLS
+    the SNI/handshake will use the pinned IP rather than the hostname — an
+    accepted trade-off: connecting to the exact validated IP is what closes the
+    rebinding window.
     """
     parsed = urlparse(url)
     if not parsed.scheme or not parsed.netloc:
@@ -277,7 +290,12 @@ def build_raw_request(
     lines = [f"{method.upper()} {path} HTTP/1.1"]
     lines.extend(f"{k}: {v}" for k, v in final_headers.items())
     raw = ("\r\n".join(lines) + "\r\n\r\n" + body).encode("utf-8")
-    return ConnectionInfoInput(host=host, port=port, is_tls=is_tls), raw
+    # Security (DNS-rebinding TOCTOU): connect to the guard-validated IP when one
+    # was pinned; otherwise fall back to the hostname (Caido resolves it). The
+    # Host header above is unchanged (original hostname), so pinning the IP does
+    # not break virtual hosting.
+    connect_host = pinned_host or host
+    return ConnectionInfoInput(host=connect_host, port=port, is_tls=is_tls), raw
 
 
 _RESPONSE_BODY_MAX_CHARS = 8192

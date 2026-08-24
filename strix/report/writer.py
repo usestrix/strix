@@ -157,7 +157,10 @@ def write_vulnerabilities(
         csv_writer.writerow(
             {
                 "id": report["id"],
-                "title": report["title"],
+                # A finding title is LLM-authored and can echo target-controlled
+                # text. Neutralize spreadsheet formula injection: a cell starting
+                # with = + - @ (or tab/CR) is a live formula in Excel/Sheets.
+                "title": _csv_safe(report["title"]),
                 "severity": report["severity"].upper(),
                 "timestamp": report["timestamp"],
                 "file": f"vulnerabilities/{report['id']}.md",
@@ -178,6 +181,19 @@ def write_vulnerabilities(
         )
     logger.info("Updated vulnerability index: %s", csv_path)
     return len(new_reports)
+
+
+def _csv_safe(value: Any) -> str:
+    """Neutralize spreadsheet formula injection in a CSV cell.
+
+    Excel/Sheets treat a cell beginning with ``= + - @`` (or a tab/CR) as a
+    formula. Finding text is LLM-authored and can echo target-controlled bytes,
+    so prefix a single quote to force the cell to be read as literal text.
+    """
+    text = "" if value is None else str(value)
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
 
 
 def _atomic_write_text(path: Path, payload: str) -> None:

@@ -148,21 +148,32 @@ check_version() {
 # present a valid cert for github.com would otherwise run arbitrary code as the
 # user. Verify a published SHA256 checksum before extracting.
 #
-# FAIL-CLOSED contract:
-#   * If a SHA256SUMS (or <filename>.sha256) is published for this release and it
-#     does NOT match the downloaded file, abort — do not extract or install.
-#   * If NO checksum file is published yet, we cannot verify integrity. We do NOT
-#     silently proceed as if verified: print a loud warning and continue only as
-#     an explicit "at your own risk" fallback.
+# FAIL-CLOSED contract (this function ABORTS the install on any of these):
+#   * A SHA256SUMS (or <filename>.sha256) is published but does NOT match the
+#     downloaded file  -> abort (tampered/corrupted download).
+#   * No checksum file can be fetched at all                 -> abort (cannot verify).
+#   * The manifest is fetched but has no entry for our file  -> abort (cannot verify).
+#   * No sha256sum/shasum tool is available on the machine   -> abort (cannot verify).
+# There is exactly ONE way to proceed without verification: the user explicitly
+# sets STRIX_INSTALL_SKIP_VERIFY=1. Everything else is fatal. The release
+# workflow (.github/workflows/build-release.yml) publishes SHA256SUMS for every
+# release, so in normal operation the manifest is always present and enforced.
 #
-# TODO(release-workflow): .github/workflows/build-release.yml must be updated to
-# publish a SHA256SUMS file (and/or per-asset <filename>.sha256) alongside the
-# release assets so this verification is actually enforced. That workflow is not
-# edited here. The real end-to-end fix is publisher signing (cosign / build
-# provenance attestation), since a same-origin checksum only detects corruption,
-# not a compromise of the release pipeline itself.
+# NOTE (threat model): this SHA256SUMS manifest is *same-origin* — it is served
+# from the same GitHub release as the binary. It reliably detects a corrupted
+# download or a swap of a single asset, but NOT a full compromise of the release
+# pipeline (an attacker who can rewrite the asset can rewrite the manifest too).
+# TODO(end-to-end): the real fix is publisher signing — cosign / GitHub build-
+# provenance attestation verified here. The workflow has no cosign step today, so
+# that is left as a TODO rather than implemented against a non-existent signature.
 verify_checksum() {
     local file=$1
+
+    # Escape hatch: the ONLY sanctioned way to install without verification.
+    if [ -n "${STRIX_INSTALL_SKIP_VERIFY:-}" ]; then
+        echo -e "${YELLOW}⚠ STRIX_INSTALL_SKIP_VERIFY set — skipping checksum verification (at your own risk).${NC}"
+        return 0
+    fi
 
     # Pick an available SHA-256 checker: coreutils sha256sum or BSD/macOS shasum.
     local sha_cmd=""
@@ -171,9 +182,10 @@ verify_checksum() {
     elif command -v shasum >/dev/null 2>&1; then
         sha_cmd="shasum -a 256"
     else
-        echo -e "${YELLOW}⚠ Neither 'sha256sum' nor 'shasum' is available; cannot verify integrity.${NC}"
-        echo -e "${YELLOW}⚠ Proceeding WITHOUT checksum verification — install at your own risk.${NC}"
-        return 0
+        echo -e "${RED}✗ Neither 'sha256sum' nor 'shasum' is available; cannot verify integrity.${NC}"
+        echo -e "${RED}Refusing to install an unverified binary. Install a SHA-256 tool, or${NC}"
+        echo -e "${RED}re-run with STRIX_INSTALL_SKIP_VERIFY=1 to override (at your own risk).${NC}"
+        exit 1
     fi
 
     local sums_url="https://github.com/$REPO/releases/download/v${specific_version}/SHA256SUMS"
@@ -182,7 +194,7 @@ verify_checksum() {
     # Prefer a combined SHA256SUMS manifest; fall back to a per-asset .sha256.
     if curl -sfL -o SHA256SUMS "$sums_url" 2>/dev/null && [ -s SHA256SUMS ]; then
         echo -e "${MUTED}Verifying checksum (SHA256SUMS)...${NC}"
-        # Check only our file's line; a mismatch or missing entry is fatal.
+        # Check only our file's line; a mismatch OR a missing entry is fatal.
         if grep -E "[[:space:]]\*?${file}\$" SHA256SUMS > SHA256SUMS.filtered 2>/dev/null \
             && [ -s SHA256SUMS.filtered ]; then
             if $sha_cmd -c SHA256SUMS.filtered >/dev/null 2>&1; then
@@ -193,9 +205,9 @@ verify_checksum() {
             echo -e "${RED}Refusing to install a binary whose checksum does not match.${NC}"
             exit 1
         fi
-        echo -e "${YELLOW}⚠ SHA256SUMS did not contain an entry for ${file}.${NC}"
-        echo -e "${YELLOW}⚠ Proceeding WITHOUT checksum verification — install at your own risk.${NC}"
-        return 0
+        echo -e "${RED}✗ SHA256SUMS did not contain an entry for ${file}.${NC}"
+        echo -e "${RED}Cannot verify integrity — refusing to install.${NC}"
+        exit 1
     fi
 
     if curl -sfL -o "${file}.sha256" "$asset_sum_url" 2>/dev/null && [ -s "${file}.sha256" ]; then
@@ -210,17 +222,18 @@ verify_checksum() {
                 echo -e "${GREEN}✓ Checksum verified${NC}"
                 return 0
             fi
-            echo -e "${RED}✗ Checksum verification FAILED for ${file}.${NC}"
-            echo -e "${RED}Refusing to install a binary whose checksum does not match.${NC}"
-            exit 1
         fi
+        echo -e "${RED}✗ Checksum verification FAILED for ${file}.${NC}"
+        echo -e "${RED}Refusing to install a binary whose checksum does not match.${NC}"
+        exit 1
     fi
 
-    # No checksum published yet: cannot verify. Warn loudly, do not pretend it's verified.
-    echo -e "${YELLOW}⚠ No published checksum (SHA256SUMS or ${file}.sha256) found for this release.${NC}"
-    echo -e "${YELLOW}⚠ Integrity could NOT be verified — the binary is run at your own risk.${NC}"
-    echo -e "${MUTED}  (Release integrity is only guaranteed once SHA256SUMS is published.)${NC}"
-    return 0
+    # Neither a SHA256SUMS manifest nor a per-asset .sha256 could be fetched:
+    # integrity cannot be established. FAIL CLOSED.
+    echo -e "${RED}✗ No published checksum (SHA256SUMS or ${file}.sha256) could be fetched for this release.${NC}"
+    echo -e "${RED}Cannot verify integrity — refusing to install.${NC}"
+    echo -e "${MUTED}  If you understand the risk, re-run with STRIX_INSTALL_SKIP_VERIFY=1.${NC}"
+    exit 1
 }
 
 download_and_install() {

@@ -1157,12 +1157,21 @@ def validate_repo_url(repo_url: str) -> str:
             f"Refusing repository URL containing '::' (git remote-helper transport, "
             f"e.g. ext::/fd:: → host command execution): {repo_url!r}"
         )
-    scheme = urlparse(candidate).scheme.lower()
+    parsed = urlparse(candidate)
+    scheme = parsed.scheme.lower()
     if scheme in ("ext", "fd"):
         raise ValueError(f"Refusing repository URL with '{scheme}::' transport: {repo_url!r}")
+    # A host beginning with '-' is read by ssh as an option (ProxyCommand /
+    # oProxyCommand injection, CVE-2017-1000117 class). Check the parsed host of
+    # both ssh:// URLs and the git@host:path scp-form.
     if candidate.startswith("git@"):  # scp-form git@host:path (no URL scheme)
+        host = candidate[len("git@") :].split(":", 1)[0].split("/", 1)[0]
+        if host.startswith("-"):
+            raise ValueError(f"Refusing repository host starting with '-': {repo_url!r}")
         return candidate
     if scheme in _ALLOWED_REPO_SCHEMES:
+        if (parsed.hostname or "").startswith("-"):
+            raise ValueError(f"Refusing repository host starting with '-': {repo_url!r}")
         return candidate
     raise ValueError(
         f"Unsupported repository URL scheme {scheme or '(none)'!r} in {repo_url!r}; "

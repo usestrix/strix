@@ -168,33 +168,41 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
         _MAX_BODY_BYTES = 1 << 20  # 1 MiB
 
         def _allowed_hosts(self) -> frozenset[str]:
+            # Exactly the address:port we bound. No bare-name / any-port union:
+            # a wrong-port or port-less Host must not slip through. Browsers
+            # always send the port for a non-default port, so this loses nothing.
             port = state.bound_port
-            names = {"127.0.0.1", "localhost", "[::1]", "::1"}
+            names = {"127.0.0.1", "localhost", "[::1]"}
             if state.bind_host:
                 names.add(state.bind_host)
-            hosts = {n if port is None else f"{n}:{port}" for n in names}
-            # A loopback client may omit the port in rare cases; accept bare too.
-            hosts |= names
-            return frozenset(hosts)
+                names.add(state.bind_host.strip("[]"))
+            if port is None:
+                return frozenset(names)
+            return frozenset(f"{n}:{port}" for n in names)
+
+        def _is_loopback_bind(self) -> bool:
+            return (state.bind_host or "127.0.0.1") in ("127.0.0.1", "localhost", "::1", "[::1]")
 
         def _origin_ok(self) -> bool:
-            """Reject DNS-rebinding and cross-origin requests.
+            """Reject DNS-rebinding and cross-origin requests, fail-closed.
 
-            The viewer is a same-machine tool. A request whose ``Host`` is not
-            the address we bound to (a rebound DNS name pointed at 127.0.0.1) or
-            whose ``Origin`` is a different site is refused before any handler
-            runs -- closing the rebinding class permanently rather than relying
-            on the cookie not travelling.
+            The viewer is a same-machine tool. On the default loopback bind a
+            request must carry a ``Host`` equal to the loopback address:port we
+            bound -- a missing Host or a rebound DNS name (which sends its own
+            Host) is refused. On an explicit non-loopback ``--host`` the operator
+            opted into exposure and the session cookie is the gate, so we do not
+            strict-match Host (we cannot enumerate every valid LAN name), but a
+            cross-site or ``null`` ``Origin`` is refused either way.
             """
             allowed = self._allowed_hosts()
             host = (self.headers.get("Host") or "").strip()
-            if host and host not in allowed:
-                logger.warning("viewer rejected host header: %s", host)
+            if self._is_loopback_bind() and host not in allowed:
+                # Fail closed: empty/missing Host lands here too.
+                logger.warning("viewer rejected host header: %r", host)
                 return False
             origin = (self.headers.get("Origin") or "").strip()
             if origin:
-                origin_host = urlsplit(origin).netloc
-                if origin_host and origin_host not in allowed:
+                if origin.lower() == "null" or urlsplit(origin).netloc not in allowed:
                     logger.warning("viewer rejected cross-origin request: %s", origin)
                     return False
             return True

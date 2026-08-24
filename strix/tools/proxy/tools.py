@@ -23,15 +23,23 @@ from strix.tools.proxy import caido_api
 logger = logging.getLogger(__name__)
 
 
-# --- Code-level scope / SSRF egress enforcement -----------------------------
+# --- Code-level scope / SSRF egress guard (DEFENSE-IN-DEPTH) -----------------
 #
-# ``repeat_request`` sends a fully model-controlled URL to a real HTTP client.
-# The scope the agent is supposed to stay within is otherwise expressed only as
-# prompt text, so a prompt-injected target ("test http://169.254.169.254/...")
-# flows straight to a request against cloud metadata / internal services. This
-# module keeps a code-level DENY-by-default guard for internal/link-local/
+# SCOPE OF THIS GUARD: it protects the ``repeat_request`` replay path ONLY. That
+# path sends a fully model-controlled URL to a real HTTP client, and the scope
+# the agent is supposed to stay within is otherwise expressed only as prompt
+# text, so a prompt-injected target ("test http://169.254.169.254/...") would
+# flow straight to a request against cloud metadata / internal services. This
+# module keeps a code-level DENY-by-default check for internal/link-local/
 # loopback destinations, with an allow-exception for hosts the platform
 # explicitly authorized as in-scope.
+#
+# THIS IS NOT COMPLETE EGRESS ENFORCEMENT. It is one per-tool check on one tool.
+# Other egress channels — ``exec_command`` (curl/nc/any binary the agent runs),
+# the agent browser, and DNS — are NOT covered by any per-tool check here and
+# MUST be enforced at the container network layer (egress firewall / blocked
+# route to 169.254.0.0/16 and RFC1918). Treat this guard as defense-in-depth for
+# the replay path, not as the security boundary.
 #
 # The authorized-target list is built in ``strix.core.inputs.build_scope_context``
 # (not importable here without a cycle, and not reachable from the tool's run
@@ -62,17 +70,32 @@ def register_authorized_hosts(targets: Any) -> None:
     """Register in-scope hosts so ``repeat_request`` can allow-except them.
 
     Called by the agent factory with ``system_prompt_context.authorized_targets``
-    (a list of ``{"type", "value", ...}`` dicts). Idempotent and additive: every
-    agent in a scan shares the same platform-verified scope, so unioning is safe.
+    (a list of ``{"type", "value", ...}`` dicts). Every agent in a scan is built
+    with the SAME full authorized-target list, so this REPLACES the allow-set
+    rather than accumulating into it.
+
+    Security (scope leak across scans): ``_AUTHORIZED_HOSTS`` is a process-global.
+    In a long-lived process that runs scan B after scan A, a union/accumulate
+    would leave scan A's hosts allow-excepted for scan B, silently widening scan
+    B's egress scope. Replace-semantics make each registration fully define the
+    allow-set for the current scan. A call that carries no usable target list is
+    a no-op (it must not wipe a scope that a sibling build just registered).
     """
     if not isinstance(targets, list):
         return
+    hosts: set[str] = set()
     for target in targets:
         if not isinstance(target, dict):
             continue
         host = _host_from_target_value(str(target.get("value", "")))
         if host:
-            _AUTHORIZED_HOSTS.add(host)
+            hosts.add(host)
+    if not hosts:
+        # Nothing usable (e.g. a repo-URL-only target list); don't clobber a
+        # scope another agent in this same scan already established.
+        return
+    global _AUTHORIZED_HOSTS  # noqa: PLW0603 - single authoritative process scope
+    _AUTHORIZED_HOSTS = hosts
 
 
 def _ip_is_internal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
@@ -84,56 +107,80 @@ def _ip_is_internal(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 _BLOCKED_HOSTNAMES = frozenset({"host.docker.internal", "localhost"})
 
 
-def _blocked_destination_reason(url: str) -> str | None:
-    """Return a deny reason if ``url``'s host is internal and not authorized, else None.
+def _screen_destination(url: str) -> tuple[str | None, str | None]:
+    """Screen ``url``'s host; return ``(deny_reason, pinned_ip)``.
+
+    ``deny_reason`` is a non-None string when the host is internal and not
+    authorized (the caller must refuse). ``pinned_ip`` is the exact IP literal
+    that was validated as external and MUST be the one connected to — the caller
+    threads it into ``ConnectionInfoInput.host`` so Caido does not re-resolve the
+    hostname at send time.
+
+    Security (DNS-rebinding TOCTOU): resolving here and connecting to the
+    hostname later is a check/use split. A rebinding name can answer with a
+    public A record now and 169.254.169.254 (or an RFC1918 host) at send time,
+    slipping past this check. Returning the resolved IP and pinning it collapses
+    the window: the IP that gets validated is the IP that gets connected.
 
     DENY-by-default for RFC1918, link-local (169.254/16 incl. cloud metadata),
     loopback (127/8, ::1), and ``host.docker.internal`` — UNLESS the host is on
-    the platform-verified authorized-target list. The hostname is resolved via
-    DNS so a name that points at an internal/metadata address is caught too
-    (a standard SSRF bypass); public hosts pass (scope for those is enforced by
-    the prompt, not this guard).
+    the platform-verified authorized-target list.
+
+    ``pinned_ip`` is None (connect by hostname, no pin) when the host is
+    explicitly authorized (scope is by name there), or unresolvable here (Caido
+    surfaces the DNS failure and it cannot reach an internal address anyway).
     """
     host = (urlparse(url).hostname or "").strip().rstrip(".").lower()
     if not host:
-        return f"could not determine destination host from URL: {url!r}"
+        return (f"could not determine destination host from URL: {url!r}", None)
 
     # Explicitly in-scope: the platform authorized this exact host (covers a
-    # legitimately-scoped internal IP or an internal hostname target).
+    # legitimately-scoped internal IP or an internal hostname target). Allowed
+    # regardless of resolved IP, so no pin (connect by hostname as before).
     if host in _AUTHORIZED_HOSTS:
-        return None
+        return (None, None)
 
     if host in _BLOCKED_HOSTNAMES:
         return (
             f"destination host {host!r} is a sandbox-internal endpoint and is not in the "
-            "authorized target scope"
+            "authorized target scope",
+            None,
         )
 
-    candidates: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    # (parsed-ip, literal-string) pairs; the literal is what we pin so the exact
+    # form Caido connects to is the exact form we screened.
+    candidates: list[tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, str]] = []
     try:
-        candidates.append(ipaddress.ip_address(host))
+        candidates.append((ipaddress.ip_address(host), host))
     except ValueError:
         # A hostname — resolve it and screen every address it points at.
         try:
             for info in socket.getaddrinfo(host, None):
+                addr = info[4][0]
                 try:
-                    candidates.append(ipaddress.ip_address(info[4][0]))
+                    candidates.append((ipaddress.ip_address(addr), addr))
                 except ValueError:
                     continue
         except OSError:
             # Unresolvable here: not our call to block (Caido will surface the
             # DNS failure), and it cannot reach an internal address anyway.
-            return None
+            return (None, None)
 
-    for ip in candidates:
+    for ip, _addr in candidates:
         if _ip_is_internal(ip):
             return (
                 f"destination {host!r} resolves to internal/link-local/loopback address "
                 f"{ip} (RFC1918 / 169.254 metadata / 127.0.0.0/8) and is not in the "
                 "authorized target scope; blocked to prevent SSRF against internal "
-                "services or the cloud metadata endpoint"
+                "services or the cloud metadata endpoint",
+                None,
             )
-    return None
+
+    # All resolved addresses are external. Pin the first so the connection uses
+    # exactly this validated IP (defeats a same-name re-resolution at send time).
+    if candidates:
+        return (None, candidates[0][1])
+    return (None, None)
 
 
 class _ScopeDeniedError(Exception):
@@ -521,12 +568,15 @@ async def repeat_request(
         components = caido_api.parse_raw_request(raw_str)
         full_url = caido_api.full_url_from_components(original, components, mods)
         modified = caido_api.apply_modifications(components, mods, full_url)
-        # Security (scope/SSRF egress): the destination URL here is
-        # model-controlled (``modifications["url"]``). Validate its host before
-        # any bytes go on the wire — deny internal/metadata/loopback targets
-        # that are not explicitly in the authorized scope. DNS resolution can
-        # block, so run the check off the event loop.
-        denied = await asyncio.to_thread(_blocked_destination_reason, modified["url"])
+        # Security (scope/SSRF egress + DNS-rebinding TOCTOU): the destination URL
+        # here is model-controlled (``modifications["url"]``). Validate its host
+        # before any bytes go on the wire — deny internal/metadata/loopback
+        # targets that are not explicitly in the authorized scope. DNS resolution
+        # can block, so run the check off the event loop. The guard returns the
+        # exact IP it validated; we pin that IP into the connection so Caido
+        # connects to it instead of re-resolving the (possibly rebinding)
+        # hostname at send time.
+        denied, pinned_ip = await asyncio.to_thread(_screen_destination, modified["url"])
         if denied is not None:
             raise _ScopeDeniedError(denied)
         connection, raw = caido_api.build_raw_request(
@@ -534,6 +584,7 @@ async def repeat_request(
             url=modified["url"],
             headers=modified["headers"],
             body=modified["body"],
+            pinned_host=pinned_ip,
         )
         return await caido_api.replay_send_raw(client, raw=raw, connection=connection)
 
