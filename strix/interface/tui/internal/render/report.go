@@ -50,20 +50,50 @@ func renderVulnerabilityReport(args map[string]any, result any) string {
 			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
 		}
 	}
+	if confidence := StringValue(args["confidence"]); confidence != "" {
+		b.WriteString("\n\n" + Bold(Field).Render("Confidence: ") +
+			lipgloss.NewStyle().Bold(true).Foreground(confidenceColor(confidence)).
+				Render(strings.ToUpper(confidence)))
+		if rationale := StringValue(args["confidence_rationale"]); rationale != "" {
+			b.WriteString("\n" + Dim().Render(rationale))
+		}
+	}
+
 	section("Description", StringValue(args["description"]))
 	section("Impact", StringValue(args["impact"]))
 	section("Technical Analysis", StringValue(args["technical_analysis"]))
+	// The case against the finding travels with the case for it: a reader
+	// triaging this needs both to judge whether to act.
+	section("Counterevidence", StringValue(args["counterevidence"]))
+	section("Severity Would Change If", StringValue(args["severity_change_conditions"]))
 	renderCodeLocations(&b, args["code_locations"])
 	section("PoC Description", StringValue(args["poc_description"]))
 	if poc := StringValue(args["poc_script_code"]); poc != "" {
 		b.WriteString("\n\n" + Bold(Field).Render("PoC Code") + "\n" + Col(Text).Render(poc))
 	}
 	section("Remediation", StringValue(args["remediation_steps"]))
+	// Any applyable fix above is one click from the user's codebase, so how it
+	// was verified belongs next to it rather than in the artifact alone.
+	section("Fix Verification", StringValue(args["fix_verification"]))
 
 	if title == "" {
 		b.WriteString("\n  " + Dim().Render("Creating report..."))
 	}
 	return "\n\n" + b.String() + "\n\n"
+}
+
+// confidenceColor grades how firm the agent's own call is. Anything below
+// high is a claim the reader has to check, and should not read as settled.
+func confidenceColor(confidence string) lipgloss.Color {
+	switch strings.ToLower(strings.TrimSpace(confidence)) {
+	case "high":
+		return Green
+	case "medium":
+		return SevMed
+	case "low":
+		return SevHigh
+	}
+	return Gray
 }
 
 var cvssKeys = [][2]string{

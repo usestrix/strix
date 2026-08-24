@@ -22,6 +22,7 @@ from strix.config import load_settings
 from strix.config.models import (
     StrixProvider,
     configure_sdk_model_defaults,
+    supports_strict_tool_schemas,
     uses_chat_completions_tool_schema,
 )
 from strix.config.settings import (
@@ -42,6 +43,7 @@ from strix.core.execution import (
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
     build_root_task,
+    build_scan_targets,
     build_scope_context,
     make_model_settings,
 )
@@ -162,6 +164,7 @@ def _compose_root_instructions_override(
     skills: list[str],
     scan_mode: str,
     is_whitebox: bool,
+    is_diff_scoped: bool,
     interactive: bool,
     system_prompt_context: dict[str, Any],
 ) -> str | None:
@@ -173,6 +176,7 @@ def _compose_root_instructions_override(
         scan_mode=scan_mode,
         is_whitebox=is_whitebox,
         is_root=True,
+        is_diff_scoped=is_diff_scoped,
         interactive=interactive,
         system_prompt_context=system_prompt_context,
     )
@@ -193,6 +197,7 @@ async def run_strix_scan(
     scan_id: str | None = None,
     image: str,
     local_sources: list[dict[str, Any]] | None = None,
+    extra_files: list[dict[str, Any]] | None = None,
     coordinator: AgentCoordinator | None = None,
     interactive: bool = False,
     max_turns: int = DEFAULT_MAX_TURNS,
@@ -210,6 +215,9 @@ async def run_strix_scan(
 
     ``root_instructions_override`` adds root scan instructions to the rendered
     root prompt without replacing the system-verified scope block.
+    ``extra_files`` entries (``{"workspace_path", "content"}``) are placed into
+    the sandbox workspace at session bring-up; see
+    :func:`strix.runtime.session_manager.create_or_reuse`.
     ``extra_system_prompt_context`` is merged into the root agent's scan
     context before prompt rendering. Child agents keep the standard scan prompt
     and context.
@@ -256,16 +264,21 @@ async def run_strix_scan(
         )
     logger.info("LLM model resolved: %s", resolved_model)
     chat_completions_tools = uses_chat_completions_tool_schema(resolved_model, settings)
+    strict_tool_schemas = supports_strict_tool_schemas(resolved_model)
+    if not strict_tool_schemas:
+        logger.info("Sending non-strict tool schemas: %s caps strict tools", resolved_model)
 
     if coordinator is None:
         coordinator = AgentCoordinator()
     coordinator.set_snapshot_path(agents_path)
 
+    from strix.tools.coverage.tools import hydrate_coverage_from_disk
     from strix.tools.notes.tools import hydrate_notes_from_disk
     from strix.tools.todo.tools import hydrate_todos_from_disk
 
     hydrate_todos_from_disk(state_dir)
     hydrate_notes_from_disk(state_dir)
+    hydrate_coverage_from_disk(state_dir)
 
     root_id: str | None = None
     if is_resume:
@@ -321,6 +334,7 @@ async def run_strix_scan(
         scan_id,
         image=image,
         local_sources=effective_local_sources,
+        extra_files=extra_files,
         status_sink=status_sink,
     )
     report("Waiting for the first model response")
@@ -346,6 +360,8 @@ async def run_strix_scan(
         targets = scan_config.get("targets") or []
         scan_mode = str(scan_config.get("scan_mode") or "deep")
         is_whitebox = any(t.get("type") == "local_code" for t in targets)
+        diff_scope = scan_config.get("diff_scope")
+        is_diff_scoped = bool(isinstance(diff_scope, dict) and diff_scope.get("active"))
         skills = list(scan_config.get("skills") or [])
         root_task = build_root_task(scan_config)
         model_settings = make_model_settings(
@@ -404,6 +420,7 @@ async def run_strix_scan(
             skills=skills,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             system_prompt_context=root_context,
         )
@@ -414,8 +431,10 @@ async def run_strix_scan(
             is_root=True,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
+            strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
         )
@@ -432,8 +451,10 @@ async def run_strix_scan(
         child_agent_builder = make_child_factory(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
+            strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=scope_context,
         )
 
@@ -459,6 +480,7 @@ async def run_strix_scan(
             "parent_id": None,
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
+            "scan_targets": build_scan_targets(scan_config),
             "max_context_images": settings.runtime.max_context_images,
         }
         if safety_runtime is not None:

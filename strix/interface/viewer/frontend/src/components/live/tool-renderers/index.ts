@@ -3,7 +3,7 @@ import type { ToolRendererProps } from "@/types/events";
 import {
   Terminal, Globe, FileText, ShieldAlert, ArrowUpRight, Brain,
   Bot, MessageCircle, Flag, Eye, Search, Code, StickyNote,
-  ListTodo, Crosshair, Wrench, Ban, Image,
+  ListTodo, Crosshair, Wrench, Ban, Image, ClipboardList,
 } from "lucide-react";
 
 import TerminalRenderer from "./TerminalRenderer";
@@ -25,6 +25,8 @@ import TodoRenderer from "./TodoRenderer";
 import FallbackRenderer from "./FallbackRenderer";
 import LoadSkillRenderer from "./LoadSkillRenderer";
 import RespondRenderer from "./RespondRenderer";
+import CoverageRenderer from "./CoverageRenderer";
+import ThreatModelRenderer from "./ThreatModelRenderer";
 
 /**
  * Tool-renderer mapping — data-driven, keyed by the engine's tool *family*.
@@ -53,6 +55,8 @@ export type ToolCategory =
   | "notes"
   | "skills"
   | "todos"
+  | "coverage"
+  | "threatModel"
   | "telemetry";
 
 export interface ToolIconMeta {
@@ -83,6 +87,8 @@ const CATEGORY_META: Record<ToolCategory, CategoryMeta> = {
   notes: { renderer: NotesRenderer, icon: StickyNote, color: "text-amber-400", match: /note/ },
   skills: { renderer: LoadSkillRenderer, icon: Wrench, color: "text-emerald-400" },
   todos: { renderer: TodoRenderer, icon: ListTodo, color: "text-purple-400", match: /todo/ },
+  coverage: { renderer: CoverageRenderer, icon: ClipboardList, color: "text-cyan-400", match: /coverage/ },
+  threatModel: { renderer: ThreatModelRenderer, icon: Crosshair, color: "text-blue-400", match: /threat_model/ },
   telemetry: { renderer: FallbackRenderer, icon: Wrench, color: "text-[#555]" },
 };
 
@@ -112,6 +118,10 @@ const CATEGORY_TOOLS: Record<ToolCategory, readonly string[]> = {
   notes: ["create_note", "delete_note", "update_note", "list_notes", "get_note"],
   skills: ["load_skill"],
   todos: ["create_todo", "list_todos", "update_todo", "mark_todo_done", "mark_todo_pending", "delete_todo"],
+  // Shared coverage ledger — one row per surface × risk area for the whole run
+  coverage: ["record_coverage", "update_coverage", "list_coverage"],
+  // Per-target threat model, shared across the agent tree
+  threatModel: ["get_threat_model", "save_threat_model", "amend_threat_model"],
   telemetry: ["sandbox_error_details", "llm_error_details"],
 };
 

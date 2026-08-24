@@ -22,6 +22,7 @@ from .utils import (
     build_live_stats_text,
     format_vulnerability_report,
     has_model_response,
+    read_workspace_files,
 )
 
 
@@ -94,6 +95,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "safety_mode": getattr(args, "safety_mode", DEFAULT_SAFETY_MODE),
         "non_interactive": bool(getattr(args, "non_interactive", False)),
         "local_sources": getattr(args, "local_sources", None) or [],
+        "workspace_files": getattr(args, "workspace_files", None) or [],
         "scope_mode": getattr(args, "scope_mode", "auto"),
         "diff_base": getattr(args, "diff_base", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
@@ -194,6 +196,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     scan_id=args.run_name,
                     image=_resolve_sandbox_image(),
                     local_sources=getattr(args, "local_sources", None) or [],
+                    extra_files=read_workspace_files(getattr(args, "workspace_files", None)),
                     interactive=bool(getattr(args, "interactive", False)),
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),

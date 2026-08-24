@@ -105,6 +105,7 @@ Test every input vector with every applicable technique.
 - CORS misconfiguration exploitation
 - WebSocket security testing
 - GraphQL-specific attacks (introspection, batching, nested queries)
+- LLM/RAG/agent features: load `llm_applications` for OWASP 2026 LLM01-LLM10 coverage and `llm_prompt_injection` for deep injection testing
 
 ## Phase 4: Vulnerability Chaining
 

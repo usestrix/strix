@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import logging
 import urllib.parse
-from datetime import datetime
 from typing import TYPE_CHECKING, Any
 
 import requests
@@ -114,19 +113,11 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
         if sev in vulnerabilities_counts:
             vulnerabilities_counts[sev] += 1
 
-    duration = 0.0
-    try:
-        scan_start = datetime.fromisoformat(report_state.start_time.replace("Z", "+00:00"))
-        end_iso = report_state.end_time or datetime.now(scan_start.tzinfo).isoformat()
-        duration = (
-            datetime.fromisoformat(end_iso.replace("Z", "+00:00")) - scan_start
-        ).total_seconds()
-    except (ValueError, TypeError, AttributeError):
-        pass
+    duration = report_state.get_process_duration_seconds()
 
     llm_props: dict[str, int | float] = {}
     try:
-        usage = report_state.get_total_llm_usage()
+        usage = report_state.get_process_llm_usage()
         if isinstance(usage, dict):
             llm_props = {
                 "llm_requests": int(usage.get("requests") or 0),

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import inspect
 import json
 import logging
@@ -26,6 +27,7 @@ from strix.tools.agents_graph.tools import (
     view_agent_graph,
     wait_for_agents,
 )
+from strix.tools.coverage.tools import list_coverage, record_coverage, update_coverage
 from strix.tools.finish.tool import finish_scan
 from strix.tools.load_skill.tool import load_skill
 from strix.tools.notes.tools import (
@@ -52,6 +54,11 @@ from strix.tools.reporting.tool import (
 )
 from strix.tools.respond.tool import respond_to_user
 from strix.tools.thinking.tool import think
+from strix.tools.threat_model.tools import (
+    amend_threat_model,
+    get_threat_model,
+    save_threat_model,
+)
 from strix.tools.todo.tools import (
     create_todo,
     delete_todo,
@@ -268,6 +275,17 @@ def _with_coerced_arguments(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
+def _with_strictness(tool: FunctionTool, strict_schemas: bool) -> FunctionTool:
+    """Drop strict JSON-schema mode when the route can't take it (see
+    ``supports_strict_tool_schemas``); the tool stays functionally identical.
+
+    Returns a copy so the shared tool singletons keep their declared mode.
+    """
+    if strict_schemas or not tool.strict_json_schema:
+        return tool
+    return dataclasses.replace(tool, strict_json_schema=False)
+
+
 def _function_tool_with_error_result(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
@@ -341,7 +359,9 @@ def _bound_custom_tool(tool: CustomTool) -> CustomTool:
     return tool
 
 
-def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None:
+def _configure_filesystem_tools(
+    toolset: Any, *, chat_completions: bool, strict_schemas: bool = True
+) -> None:
     for name, tool in vars(toolset).items():
         if chat_completions:
             if isinstance(tool, CustomTool):
@@ -351,7 +371,9 @@ def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None
                     toolset,
                     name,
                     _function_tool_with_error_result(
-                        _with_safety_guard(_with_coerced_arguments(tool))
+                        _with_safety_guard(
+                            _with_strictness(_with_coerced_arguments(tool), strict_schemas)
+                        )
                     ),
                 )
         elif isinstance(tool, CustomTool):
@@ -360,13 +382,19 @@ def _configure_filesystem_tools(toolset: Any, *, chat_completions: bool) -> None
             setattr(
                 toolset,
                 name,
-                _with_safety_guard(_with_bounded_result(_with_coerced_arguments(tool))),
+                _with_safety_guard(
+                    _with_bounded_result(
+                        _with_strictness(_with_coerced_arguments(tool), strict_schemas)
+                    )
+                ),
             )
 
 
-def _make_filesystem_configurator(*, chat_completions: bool) -> Any:
+def _make_filesystem_configurator(*, chat_completions: bool, strict_schemas: bool) -> Any:
     def configure(toolset: Any) -> None:
-        _configure_filesystem_tools(toolset, chat_completions=chat_completions)
+        _configure_filesystem_tools(
+            toolset, chat_completions=chat_completions, strict_schemas=strict_schemas
+        )
 
     return configure
 
@@ -492,11 +520,13 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
     return tool
 
 
-def _configure_shell_tools(toolset: Any, *, chat_completions: bool) -> None:
+def _configure_shell_tools(
+    toolset: Any, *, chat_completions: bool, strict_schemas: bool = True
+) -> None:
     for name, tool in vars(toolset).items():
         if not isinstance(tool, FunctionTool):
             continue
-        wrapped = _with_coerced_arguments(tool)
+        wrapped = _with_strictness(_with_coerced_arguments(tool), strict_schemas)
         if tool.name == "exec_command":
             wrapped = _wrap_exec_command(wrapped)
         elif tool.name == "write_stdin":
@@ -506,9 +536,11 @@ def _configure_shell_tools(toolset: Any, *, chat_completions: bool) -> None:
         setattr(toolset, name, wrapped)
 
 
-def _make_shell_configurator(*, chat_completions: bool) -> Any:
+def _make_shell_configurator(*, chat_completions: bool, strict_schemas: bool) -> Any:
     def configure(toolset: Any) -> None:
-        _configure_shell_tools(toolset, chat_completions=chat_completions)
+        _configure_shell_tools(
+            toolset, chat_completions=chat_completions, strict_schemas=strict_schemas
+        )
 
     return configure
 
@@ -584,6 +616,12 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     get_note,
     update_note,
     delete_note,
+    record_coverage,
+    update_coverage,
+    list_coverage,
+    get_threat_model,
+    save_threat_model,
+    amend_threat_model,
     web_search,
     create_vulnerability_report,
     create_dependency_report,
@@ -652,8 +690,10 @@ def build_strix_agent(
     is_root: bool,
     scan_mode: str = "deep",
     is_whitebox: bool = False,
+    is_diff_scoped: bool = False,
     interactive: bool = False,
     chat_completions_tools: bool = False,
+    strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
@@ -663,6 +703,8 @@ def build_strix_agent(
     Args:
         chat_completions_tools: Wrap SDK custom tools as function tools
             when the selected backend cannot accept Responses custom tools.
+        strict_tool_schemas: Send function tools as strict-schema tools. Off
+            for routes that reject a toolset this size as strict.
         extra_tools: Additional tools for this scan agent only, on top of any
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
@@ -676,6 +718,7 @@ def build_strix_agent(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_root=is_root,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             system_prompt_context=system_prompt_context,
         )
@@ -690,7 +733,11 @@ def build_strix_agent(
         tools = [*_BASE_TOOLS, *agent_tools, agent_finish]
     _ensure_unique_tool_names(tools)
     tools = [
-        _with_safety_guard(_with_bounded_result(_with_coerced_arguments(tool)))
+        _with_safety_guard(
+            _with_bounded_result(
+                _with_strictness(_with_coerced_arguments(tool), strict_tool_schemas)
+            )
+        )
         if isinstance(tool, FunctionTool)
         else tool
         for tool in tools
@@ -716,11 +763,13 @@ def build_strix_agent(
             Filesystem(
                 configure_tools=_make_filesystem_configurator(
                     chat_completions=chat_completions_tools,
+                    strict_schemas=strict_tool_schemas,
                 ),
             ),
             Shell(
                 configure_tools=_make_shell_configurator(
                     chat_completions=chat_completions_tools,
+                    strict_schemas=strict_tool_schemas,
                 ),
             ),
         ],
@@ -731,8 +780,10 @@ def make_child_factory(
     *,
     scan_mode: str = "deep",
     is_whitebox: bool = False,
+    is_diff_scoped: bool = False,
     interactive: bool = False,
     chat_completions_tools: bool = False,
+    strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
@@ -749,8 +800,10 @@ def make_child_factory(
             is_root=False,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
+            strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
         )
 

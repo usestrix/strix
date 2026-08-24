@@ -13,7 +13,7 @@ from agents.tool import ToolOutputImage
 
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController
-from strix.interface.tui.backend.projection import terminal_projection
+from strix.interface.tui.backend.projection import bounded_state_projection, terminal_projection
 from strix.interface.tui.backend.protocol import (
     MAX_COMMAND_BYTES,
     PROTOCOL_CAPABILITIES,
@@ -241,7 +241,11 @@ def test_unicode_heavy_setup_state_stays_within_control_frame_limit() -> None:
         "Any",
         SimpleNamespace(
             caido_url="https://例え.example/" + "道" * 10_000,
-            get_total_llm_usage=lambda: {f"model-{index}": "費" * 10_000 for index in range(20)},
+            get_total_llm_usage=lambda: {
+                "total_tokens": 720_400,
+                "cost": 20.0,
+                **{f"model-{index}": "🔒" * 10_000 for index in range(20)},
+            },
         ),
     )
     server = TuiBackendServer(controller)
@@ -252,6 +256,26 @@ def test_unicode_heavy_setup_state_stays_within_control_frame_limit() -> None:
     assert len(encoded) <= MAX_COMMAND_BYTES
     assert "🔒".encode() in encoded
     assert snapshot["projection_truncated"] is True
+    assert snapshot["usage"] == {"total_tokens": 720_400, "cost": 20.0}
+
+
+def test_defensive_state_projection_preserves_usage_summary() -> None:
+    controller = TuiController(args())
+    controller.report_state = cast(
+        "Any",
+        SimpleNamespace(
+            caido_url=None,
+            get_total_llm_usage=lambda: {"total_tokens": 720_400, "cost": 20.0},
+        ),
+    )
+    state = controller.snapshot()
+    state["provider"] = None
+    state["future_oversized_field"] = "x" * 100_000
+
+    snapshot = bounded_state_projection(state)
+
+    assert snapshot["projection_truncated"] is True
+    assert snapshot["usage"] == {"total_tokens": 720_400, "cost": 20.0}
 
 
 @pytest.mark.asyncio

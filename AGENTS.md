@@ -15,6 +15,14 @@ npx skills add usestrix/strix
 - `fix-security-vulnerabilities-with-strix` — remediate findings and re-run Strix to verify
 - `ci-security-scanning-with-strix` — add PR scanning to CI/CD (self-hosted CLI or managed app)
 
+Target-specific workflows built on the same engine:
+
+- `application-security-testing` — whole-product AppSec review: pick the right test per asset, then rank the results
+- `web-app-penetration-testing` — black-box pentest of a live web app or staging site
+- `api-security-testing` — REST/GraphQL APIs and the OWASP API Security Top 10 (BOLA/IDOR, authz)
+- `owasp-top-10-testing` — systematic OWASP Top 10 assessment with honest per-category coverage
+- `find-security-vulnerabilities-in-code` — white-box review of a repo or working tree
+
 **Two ways to run, same engine — pick per situation:**
 
 - **Open-source CLI (self-hosted):** free, fully local, BYO LLM key, needs Docker. Best for local dev loops, air-gapped/offline, and full control.

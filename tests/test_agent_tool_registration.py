@@ -112,3 +112,19 @@ def test_wait_for_agents_is_available_in_both_modes() -> None:
     for interactive in (True, False):
         agent = factory.build_strix_agent(is_root=True, interactive=interactive)
         assert "wait_for_agents" in [t.name for t in agent.tools]
+
+
+def test_strict_tool_schemas_can_be_disabled_per_route() -> None:
+    """Claude routes cap strict tools; the toolset must be sendable without strict."""
+    agent = factory.build_strix_agent(is_root=True, strict_tool_schemas=False)
+
+    function_tools = [t for t in agent.tools if isinstance(t, FunctionTool)]
+    assert function_tools
+    assert not any(t.strict_json_schema for t in function_tools)
+
+
+def test_disabling_strict_leaves_shared_tools_untouched() -> None:
+    factory.build_strix_agent(is_root=True, strict_tool_schemas=False)
+    agent = factory.build_strix_agent(is_root=True)
+
+    assert any(t.strict_json_schema for t in agent.tools if isinstance(t, FunctionTool))

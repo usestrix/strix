@@ -272,6 +272,10 @@ ignore = [
 "strix/tools/thinking/tool.py" = ["TC002"]
 "strix/tools/web_search/tool.py" = ["TC002"]
 "strix/tools/proxy/tools.py" = ["TC002", "PLR0911"]
+# The generated Caido GraphQL schema is slow to import, so the SDK is imported
+# on first proxy call instead of at module scope (keeps it off the launch path).
+"strix/tools/proxy/caido_api.py" = ["PLC0415"]
+"strix/runtime/caido_bootstrap.py" = ["PLC0415"]
 "strix/tools/agents_graph/tools.py" = ["TC002"]
 "strix/agents/factory.py" = ["TC002"]
 # Entry point: ``Path`` is used at runtime by the typing of the
@@ -282,6 +286,13 @@ ignore = [
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
 "strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401", "PLC0415"]
 "strix/report/usage.py" = ["PLC0415"]
+# LiteLLM and the Docker SDK are imported on first use, not at module scope:
+# both cost seconds to import and neither is needed until a model call is made
+# (or, for Docker, unless the Docker runtime backend is in use).
+"strix/core/execution.py" = ["PLC0415"]
+"strix/report/pricing.py" = ["PLC0415"]
+"strix/llm/compaction.py" = ["PLC0415"]
+"strix/llm/context_budget.py" = ["PLC0415"]
 # Lazy import of strix.config.models avoids a circular dependency between the
 # report pipeline and the config layer.
 "strix/report/dedupe.py" = ["PLC0415"]

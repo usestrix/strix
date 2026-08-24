@@ -10,7 +10,7 @@ from strix.agents.prompt import render_system_prompt
 # Phrased as prohibitions, so they misdescribe the tools an `off`-mode agent actually has.
 _SAFETY_ONLY_PHRASES = [
     "ACTION SAFETY POLICY",
-    "do not override",
+    "browser session is assigned for you; do not override",
     "blocked as stale",
     "must be split into a creation call",
 ]

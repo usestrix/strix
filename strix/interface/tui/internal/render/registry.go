@@ -84,6 +84,10 @@ func Tool(data map[string]any) string {
 		return renderNote(name, args, result)
 	case "create_todo", "list_todos", "update_todo", "mark_todo_done", "mark_todo_pending", "delete_todo":
 		return renderTodo(name, result)
+	case "record_coverage", "update_coverage", "list_coverage":
+		return renderCoverage(name, args, result)
+	case "get_threat_model", "save_threat_model", "amend_threat_model":
+		return renderThreatModel(name, args, result)
 	case "view_agent_graph", "create_agent", "send_message_to_agent", "agent_finish", "wait_for_agents", "stop_agent":
 		return renderAgentGraphTool(name, args, result)
 	case "list_requests", "view_request", "repeat_request", "list_sitemap", "view_sitemap_entry", "scope_rules":
@@ -105,7 +109,8 @@ const outputPreviewLines = 10
 func ToolPreviewLines(name string) int {
 	switch name {
 	case "exec_command", "write_stdin", "apply_patch",
-		"view_request", "repeat_request", "view_sitemap_entry":
+		"view_request", "repeat_request", "view_sitemap_entry",
+		"list_coverage", "get_threat_model":
 		return outputPreviewLines
 	}
 	return 0
