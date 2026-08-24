@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from strix.runtime.local_dir_staging import materialize_isolated_sources
 from strix.runtime.session_manager import build_bind_mounts
 
@@ -114,3 +116,79 @@ def test_restaging_without_a_completion_marker_recopies_the_source(tmp_path: Pat
 
     assert (Path(restaged["source_path"]) / "app.py").read_text(encoding="utf-8") == "code\n"
     assert restaged["original_source_path"] == str(source.resolve())
+
+
+@pytest.mark.parametrize("workspace_subdir", [".", "../victim", "../../../../victim"])
+def test_isolated_copy_rejects_workspace_traversal(tmp_path: Path, workspace_subdir: str) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    run_dir = tmp_path / "runs" / "scan"
+    workspace_root = run_dir / ".state" / "workspaces"
+    victim = (workspace_root / workspace_subdir).resolve()
+    victim.mkdir(parents=True, exist_ok=True)
+    sentinel = victim / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="workspace_subdir"):
+        materialize_isolated_sources(
+            [
+                {
+                    "source_path": str(source),
+                    "workspace_subdir": workspace_subdir,
+                    "protect_metadata": True,
+                }
+            ],
+            run_dir=run_dir,
+        )
+
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_isolated_copy_rejects_absolute_workspace_subdir(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    sentinel = victim / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="workspace_subdir"):
+        materialize_isolated_sources(
+            [
+                {
+                    "source_path": str(source),
+                    "workspace_subdir": str(victim),
+                    "protect_metadata": True,
+                }
+            ],
+            run_dir=tmp_path / "runs" / "scan",
+        )
+
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+
+
+def test_isolated_copy_rejects_workspace_symlink_escape(tmp_path: Path) -> None:
+    source = tmp_path / "source"
+    source.mkdir()
+    run_dir = tmp_path / "runs" / "scan"
+    workspace_root = run_dir / ".state" / "workspaces"
+    workspace_root.mkdir(parents=True)
+    victim = tmp_path / "victim"
+    victim.mkdir()
+    sentinel = victim / "sentinel.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    (workspace_root / "source").symlink_to(victim, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="workspace_subdir"):
+        materialize_isolated_sources(
+            [
+                {
+                    "source_path": str(source),
+                    "workspace_subdir": "source",
+                    "protect_metadata": True,
+                }
+            ],
+            run_dir=run_dir,
+        )
+
+    assert sentinel.read_text(encoding="utf-8") == "keep"

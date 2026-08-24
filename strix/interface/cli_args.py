@@ -21,6 +21,7 @@ from strix.interface.utils import (
     resolve_workspace_files,
     validate_config_file,
 )
+from strix.runtime.local_dir_staging import validate_workspace_subdir
 
 
 def get_version() -> str:
@@ -468,4 +469,9 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
             and Path(str(source.get("source_path") or "")).expanduser().is_dir()
             for source in persisted_sources
         ):
+            try:
+                for source in persisted_sources:
+                    validate_workspace_subdir(source.get("workspace_subdir"))
+            except ValueError as error:
+                parser.error(f"--resume {args.resume}: {error}")
             args.local_sources = persisted_sources

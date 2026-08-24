@@ -20,6 +20,15 @@ def _is_within(path: Path, root: Path) -> bool:
     return True
 
 
+def validate_workspace_subdir(value: Any) -> str:
+    """Return a workspace-relative subdirectory that cannot traverse upward."""
+    subdir = str(value or "workspace")
+    relative = Path(subdir)
+    if relative.is_absolute() or relative == Path() or ".." in relative.parts:
+        raise ValueError(f"invalid workspace_subdir {subdir!r}: must stay under /workspace")
+    return subdir
+
+
 def _copy_tree(
     source: Path,
     destination: Path,
@@ -67,7 +76,7 @@ def materialize_isolated_sources(
     run_dir: Path,
 ) -> list[dict[str, Any]]:
     """Replace user-owned live mounts with durable per-run writable copies."""
-    workspace_root = run_dir / ".state" / "workspaces"
+    workspace_root = (run_dir / ".state" / "workspaces").resolve()
     workspace_root.mkdir(parents=True, exist_ok=True)
     result: list[dict[str, Any]] = []
     for source in local_sources:
@@ -85,9 +94,19 @@ def materialize_isolated_sources(
             .expanduser()
             .resolve()
         )
-        subdir = str(item.get("workspace_subdir") or "workspace")
+        subdir = validate_workspace_subdir(item.get("workspace_subdir"))
         destination = (workspace_root / subdir).resolve()
+        if destination == workspace_root or not _is_within(destination, workspace_root):
+            raise ValueError(
+                f"invalid workspace_subdir {subdir!r}: destination escapes isolated workspace"
+            )
         complete_marker = workspace_root / f".{subdir}.complete"
+        if complete_marker.is_symlink() or not _is_within(
+            complete_marker.resolve(), workspace_root
+        ):
+            raise ValueError(
+                f"invalid workspace_subdir {subdir!r}: marker escapes isolated workspace"
+            )
         if destination.exists() and not complete_marker.is_file():
             shutil.rmtree(destination, ignore_errors=True)
         if not destination.exists():

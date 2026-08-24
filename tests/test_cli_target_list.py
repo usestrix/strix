@@ -162,6 +162,39 @@ def test_resume_revalidates_persisted_workspace_files(
     ]
 
 
+def test_resume_rejects_persisted_workspace_subdir_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    work = tmp_path / "project"
+    work.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "pentest_abcd",
+        {
+            "run_name": "pentest_abcd",
+            "targets_info": [],
+            "workspace_mount": str(work),
+            "safety_mode": "guarded",
+            "local_sources": [
+                {
+                    "source_path": str(work),
+                    "workspace_subdir": "../../../../victim",
+                    "protect_metadata": True,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_abcd"])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "invalid workspace_subdir" in capsys.readouterr().err
+
+
 def test_resume_rejects_an_edited_workspace_file_path(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
