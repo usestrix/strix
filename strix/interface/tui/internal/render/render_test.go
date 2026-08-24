@@ -249,3 +249,28 @@ func TestCollapseToolOnlyOutputHeavyTools(t *testing.T) {
 		t.Fatal("respond_to_user must never collapse")
 	}
 }
+
+func TestMCPToolRendersCanonicalTextAndCollapses(t *testing.T) {
+	result := `{"type":"text","text":"first\nsecond"}`
+	out := ansi.Strip(Tool(tool("mcp_echo__read", nil, result, "completed")))
+	if !strings.Contains(out, "first\nsecond") || strings.Contains(out, `\\nsecond`) {
+		t.Fatalf("MCP text envelope was not rendered as text: %q", out)
+	}
+	if ToolPreviewLines("mcp_echo__read") != outputPreviewLines {
+		t.Fatal("MCP tools must be output-heavy")
+	}
+	full := strings.Repeat("line\n", outputPreviewLines+2)
+	if collapsed, expandable := CollapseTool(full, "mcp_echo__read", false); !expandable ||
+		!strings.Contains(ansi.Strip(collapsed), "click to expand") {
+		t.Fatalf("long MCP output was not collapsed: %q", collapsed)
+	}
+}
+
+func TestMCPTextDisplayKeepsAdditionalData(t *testing.T) {
+	out := ansi.Strip(Tool(tool("mcp_echo__read", nil, map[string]any{
+		"type": "text", "text": "visible", "meta": map[string]any{"source": "MCP"},
+	}, "completed")))
+	if !strings.Contains(out, `"meta":{"source":"MCP"}`) {
+		t.Fatalf("MCP metadata was discarded: %q", out)
+	}
+}

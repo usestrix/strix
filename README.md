@@ -134,6 +134,25 @@ Strix agents come equipped with a comprehensive offensive security toolkit - the
 - **Static & Dynamic Code Analysis** - SAST + DAST capabilities for comprehensive application security testing
 - **Vulnerability Knowledge Base** - Structured findings with CVSS scoring and OWASP classification
 
+### MCP Tools
+
+Strix can make explicitly enabled MCP tools available to scan agents. MCP
+servers execute on your **host**, outside the Docker sandbox, so enable only
+the specific tools you trust:
+
+```bash
+# Definitions live in ~/.strix/.mcp.json or this project's .mcp.json
+strix mcp list
+strix mcp enable defect-dojo --allow search_findings --allow 'create_*'
+strix mcp test defect-dojo
+
+# Keep a scan hermetic, including when resuming one
+strix --no-mcp --target ./app
+```
+
+Definitions are disabled by default. A project definition that changes or
+shadows another definition must be enabled again before it can run.
+
 ### Comprehensive Vulnerability Scanner
 
 Strix identifies, validates, and exploits a wide range of security vulnerabilities across the OWASP Top 10 and beyond:

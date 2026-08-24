@@ -43,6 +43,7 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.mcp.runtime import McpBundle, setup_mcp_servers
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
@@ -262,6 +263,7 @@ async def run_strix_scan(
     configure_spill_writer(_spill_to_workspace)
 
     sessions_to_close: list[SQLiteSession] = []
+    mcp_bundle: McpBundle | None = None
 
     try:
         targets = scan_config.get("targets") or []
@@ -299,6 +301,15 @@ async def run_strix_scan(
             coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
+        mcp_settings = getattr(settings, "mcp", None)
+        if (
+            mcp_settings is not None
+            and mcp_settings.enabled
+            and not scan_config.get("no_mcp", False)
+        ):
+            mcp_bundle = await setup_mcp_servers(status_sink=status_sink)
+            if mcp_bundle.active_servers:
+                scope_context["mcp_servers"] = mcp_bundle.active_servers
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(
             root_instructions_override,
@@ -322,6 +333,9 @@ async def run_strix_scan(
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=root_context,
             instructions_override=root_instructions,
+            extra_tools=(
+                [*mcp_bundle.shared_tools, *mcp_bundle.root_only_tools] if mcp_bundle else None
+            ),
         )
 
         if not is_resume:
@@ -341,6 +355,7 @@ async def run_strix_scan(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=scope_context,
+            extra_tools=mcp_bundle.shared_tools if mcp_bundle else None,
         )
 
         async def spawn_child_agent(**kwargs: Any) -> dict[str, Any]:
@@ -486,6 +501,9 @@ async def run_strix_scan(
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.cancel_descendants(root_id)
+        if mcp_bundle is not None:
+            with contextlib.suppress(Exception):
+                await mcp_bundle.close()
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()

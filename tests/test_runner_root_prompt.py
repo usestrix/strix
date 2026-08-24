@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import pytest
 from agents import ModelSettings
+from agents.tool import FunctionTool
 from openai import RateLimitError
 
 import strix.tools.notes.tools as notes_tools
@@ -196,3 +197,72 @@ async def test_unknown_tool_calls_are_returned_to_the_model(
     )
 
     assert captured["run_config"].tool_not_found_behavior == "return_error_to_model"
+
+
+@pytest.mark.asyncio
+async def test_mcp_tools_are_scan_scoped_and_root_only_is_not_forwarded_to_children(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, {})
+    shared = _test_tool("mcp_shared__read")
+    root_only = _test_tool("mcp_root__admin")
+    bundle = types.SimpleNamespace(
+        shared_tools=[shared], root_only_tools=[root_only], active_servers=["shared"], closed=False
+    )
+
+    async def setup_mcp_servers(**_kwargs: Any) -> Any:
+        return bundle
+
+    async def close() -> None:
+        bundle.closed = True
+
+    bundle.close = close
+    runner.load_settings().mcp = types.SimpleNamespace(enabled=True)
+    monkeypatch.setattr(runner, "setup_mcp_servers", setup_mcp_servers)
+    child_kwargs: dict[str, Any] = {}
+    monkeypatch.setattr(
+        runner,
+        "make_child_factory",
+        lambda **kwargs: child_kwargs.update(kwargs) or (lambda **_k: object()),
+    )
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-mcp",
+        image="img",
+        coordinator=AgentCoordinator(),
+    )
+
+    assert captured["kwargs"]["extra_tools"] == [shared, root_only]
+    assert child_kwargs["extra_tools"] == [shared]
+    assert captured["kwargs"]["system_prompt_context"]["mcp_servers"] == ["shared"]
+    assert bundle.closed
+
+
+@pytest.mark.asyncio
+async def test_no_mcp_skips_enabled_host_servers(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    _patch_engine_scaffold(monkeypatch, tmp_path, {})
+    runner.load_settings().mcp = types.SimpleNamespace(enabled=True)
+
+    async def must_not_connect(**_kwargs: Any) -> None:
+        raise AssertionError("--no-mcp must prevent host MCP startup")
+
+    monkeypatch.setattr(runner, "setup_mcp_servers", must_not_connect)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep", "no_mcp": True},
+        scan_id="scan-no-mcp",
+        image="img",
+        coordinator=AgentCoordinator(),
+    )
+
+
+def _test_tool(name: str) -> FunctionTool:
+    async def invoke(_ctx: Any, _raw: str) -> str:
+        return "ok"
+
+    return FunctionTool(name, "test", {"type": "object", "properties": {}}, invoke)

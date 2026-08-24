@@ -68,6 +68,18 @@ def test_read_json_overrides_non_dict_env(tmp_path: Path) -> None:
     assert loader._read_json_overrides(path) == {}
 
 
+def test_read_json_overrides_keeps_mcp_when_env_is_not_an_object(tmp_path: Path) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text(
+        json.dumps({"env": ["not", "a", "dict"], "mcp": {"enabled": False}}),
+        encoding="utf-8",
+    )
+
+    loader.apply_config_override(path)
+
+    assert loader.load_settings().mcp.enabled is False
+
+
 def test_read_json_overrides_maps_to_nested_settings(tmp_path: Path) -> None:
     path = tmp_path / "cli-config.json"
     path.write_text(

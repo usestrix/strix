@@ -431,6 +431,11 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
+    if len(sys.argv) > 1 and sys.argv[1] == "mcp":
+        from strix.mcp.cli import run_mcp
+
+        sys.exit(run_mcp(sys.argv[2:]))
+
     from strix.llm.warmup import start_import_warmup
 
     start_import_warmup()

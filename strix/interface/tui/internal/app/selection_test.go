@@ -183,3 +183,52 @@ func TestClickTogglesToolExpansion(t *testing.T) {
 		t.Fatal("second click should collapse again")
 	}
 }
+
+func TestMCPWrappedOutputCollapsesAndToggles(t *testing.T) {
+	model := New(nil)
+	model.showSplash = false
+	model.ready = true
+	model.width, model.height = 50, 40
+	model.snapshot.Agents = []protocol.Agent{{ID: "root", Name: "Strix", Status: "running"}}
+	output := strings.Repeat("x", 500)
+	model.snapshot.Events = []protocol.Event{{
+		ID: "mcp-1", Type: "tool", AgentID: "root", Timestamp: "1",
+		Data: map[string]any{
+			"tool_name": "mcp_echo__read", "status": "completed",
+			"result": `{"text":"` + output + `"}`,
+		},
+	}}
+	model.resizeViewport()
+
+	if !strings.Contains(model.viewportContent, "click to expand") || len(model.eventSpans) != 1 {
+		t.Fatalf("wrapped MCP output should start collapsed:\n%s", model.viewportContent)
+	}
+	model.toggleEventAtLine(model.eventSpans[0].start)
+	if strings.Count(model.viewportContent, "x") != len(output) ||
+		!strings.Contains(model.viewportContent, "click to collapse") {
+		t.Fatalf("expanded MCP output was incomplete:\n%s", model.viewportContent)
+	}
+	model.toggleEventAtLine(model.eventSpans[0].start)
+	if !strings.Contains(model.viewportContent, "click to expand") {
+		t.Fatal("second click should collapse MCP output")
+	}
+}
+
+func TestShortMCPOutputStaysExpanded(t *testing.T) {
+	model := New(nil)
+	model.showSplash = false
+	model.ready = true
+	model.width, model.height = 80, 30
+	model.snapshot.Agents = []protocol.Agent{{ID: "root", Name: "Strix", Status: "running"}}
+	model.snapshot.Events = []protocol.Event{{
+		ID: "mcp-short", Type: "tool", AgentID: "root", Timestamp: "1",
+		Data: map[string]any{
+			"tool_name": "mcp_echo__read", "status": "completed", "result": "short output",
+		},
+	}}
+	model.resizeViewport()
+
+	if strings.Contains(model.viewportContent, "click to expand") || len(model.eventSpans) != 0 {
+		t.Fatalf("short MCP output should not be collapsed:\n%s", model.viewportContent)
+	}
+}

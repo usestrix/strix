@@ -218,6 +218,11 @@ Examples:
         type=str,
         help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
     )
+    parser.add_argument(
+        "--no-mcp",
+        action="store_true",
+        help="Disable user-enabled host-side MCP tools for this scan.",
+    )
 
     parser.add_argument(
         "--max-budget",

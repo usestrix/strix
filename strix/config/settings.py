@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -144,6 +144,26 @@ class ViewerSettings(BaseSettings):
     app_url: str = Field(default="https://app.strix.ai", alias="STRIX_APP_URL")
 
 
+class McpServerExtras(BaseModel):
+    """Strix-owned opt-in state for one discovered MCP server."""
+
+    enabled: bool = False
+    source: str = ""
+    definition_hash: str = ""
+    root_only: bool = False
+    allow_tools: list[str] = Field(default_factory=list)
+    deny_tools: list[str] = Field(default_factory=list)
+    call_timeout_s: int = Field(default=120, gt=0)
+
+
+class McpSettings(BaseSettings):
+    model_config = _BASE_CONFIG
+
+    enabled: bool = Field(default=True, alias="STRIX_MCP_ENABLED")
+    connect_timeout_s: int = Field(default=30, gt=0)
+    servers: dict[str, McpServerExtras] = Field(default_factory=dict)
+
+
 class Settings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -154,3 +174,4 @@ class Settings(BaseSettings):
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
     viewer: ViewerSettings = Field(default_factory=ViewerSettings)
+    mcp: McpSettings = Field(default_factory=McpSettings)

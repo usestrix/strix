@@ -47,6 +47,14 @@ Target-specific workflows built on the same engine:
 - CLI docs index for LLMs: https://docs.strix.ai/llms.txt (full: https://docs.strix.ai/llms-full.txt).
 - Only scan targets the user is authorized to test.
 
+## MCP tools
+
+Strix can expose explicitly enabled MCP tools to a scan. MCP servers run on the
+host with the user's permissions, outside the Docker sandbox. Define them in
+`~/.strix/.mcp.json` or the project `.mcp.json`, then enable only the tools you
+need with `strix mcp enable <server> --allow <tool>` (or `--all-tools`). Use
+`strix --no-mcp` for hermetic/CI runs.
+
 ## Contributing to this repo
 
 - Python 3.12+, managed with `uv`. Install dev deps: `make dev-install`.
