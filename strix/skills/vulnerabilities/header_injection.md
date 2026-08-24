@@ -5,7 +5,7 @@ description: HTTP header injection testing covering CRLF / response splitting, c
 
 # HTTP Header Injection
 
-Header injection turns user input into protocol-level control: response splitting, cache poisoning, session fixation, authentication bypass, and request smuggling all trace back to a server-controlled header value that wasn't normalized. The bug usually lives in middle layers — frameworks that copy a request value into a response header, proxies that trust forwarded headers, caches keyed on something the attacker influences. Treat any user-controlled value that reaches a header as code-execution-equivalent until proven otherwise.
+Header injection turns user input into protocol-level control: response splitting, cache poisoning, session fixation, authentication bypass, and downstream parser confusion can trace back to a server-controlled header value that was not normalized. The bug usually lives in middle layers — frameworks that copy a request value into a response header, proxies that trust forwarded headers, caches keyed on something the attacker influences. Impact depends on which downstream component consumes the injected field and how.
 
 ## Attack Surface
 
@@ -62,7 +62,7 @@ Header injection turns user input into protocol-level control: response splittin
 
 ## Key Vulnerabilities
 
-### CRLF Response Splitting and Smuggling
+### CRLF Response Splitting
 
 Inject `\r\n\r\n` to terminate the current response and prepend a second attacker-controlled response. Cache or downstream proxy may key on the first response and serve the second to other users.
 
@@ -70,7 +70,7 @@ Inject `\r\n\r\n` to terminate the current response and prepend a second attacke
 GET /redirect?to=foo%0d%0aSet-Cookie:%20admin=1%0d%0a%0d%0a<html>poisoned</html> HTTP/1.1
 ```
 
-Request smuggling is the same primitive at the request layer: inject a header that causes the proxy and backend to disagree on message framing — most commonly conflicting `Content-Length` and `Transfer-Encoding`, or two `Content-Length` headers with different values. Backend reads one request, frontend reads a different one; the leftover bytes become a smuggled request prepended to the next victim's connection.
+Request smuggling is a separate request-boundary vulnerability involving disagreement between two HTTP parsers, not simply response header injection at the request layer. Load `http_request_smuggling` when conflicting lengths, transfer coding, HTTP/2 downgrades, or connection desynchronization are in scope.
 
 ### Cache Poisoning
 
@@ -106,16 +106,23 @@ The `X-Forwarded-*` family is informational — there is no protocol guarantee a
 - `X-Forwarded-For: 127.0.0.1` to bypass IP allowlists or rate limits keyed on client IP
 - `X-Forwarded-Proto: https` to satisfy "HTTPS-only" checks while still using HTTP
 - `X-Forwarded-Host: attacker.tld` for the Host-confusion variants above
-- `X-Real-IP`, `Client-IP`, `True-Client-IP`, `CF-Connecting-IP`, `Forwarded` (RFC 7239) — same primitive, different header names; spray all of them
+- `X-Real-IP`, `Client-IP`, `True-Client-IP`, `CF-Connecting-IP`, `Forwarded` (RFC 7239) — same trust class under different conventions; select evidence-supported variants for the observed proxy/CDN stack
 - `X-Original-URL` / `X-Rewrite-URL` (IIS, ASP.NET) — server-side URL rewriting after auth check, classic admin-panel auth bypass
 
 ### Content-Type / Encoding Confusion
 
 - Inject `Content-Type: text/html` into an endpoint that returned JSON; browsers may sniff and render → XSS
-- Inject `charset=utf-7` in `Content-Type` for legacy XSS via UTF-7-encoded payloads
 - Inject `Content-Disposition: inline` to switch a download into in-page rendering
-- Inject `Content-Encoding: gzip` without actually compressing — clients decode-fail and may reveal raw response bytes in error paths
 - *Absence* of `X-Content-Type-Options: nosniff` is what enables the sniffing attacks above; the header is a hardening control, not an attack surface — but if a server sets it inconsistently across endpoints, target the ones that don't
+- Compare MIME validators with browser parsing of duplicate or comma-joined `Content-Type` values. Record first/last valid member behavior and invalid-parameter recovery for each consumer.
+
+### Internal Redirect and Handler Confusion
+
+- Determine whether CGI/FastCGI/WSGI-style response headers can trigger an internal redirect instead of an external response.
+- Trace which request fields survive the redirect: content type, handler, method, authorization result, path, and environment.
+- Test whether response metadata is reused as an internal handler, proxy target, template type, or interpreter selection.
+- Compare direct access controls with the internally dispatched resource. A protected URL may be unreachable directly while the same handler is invokable through a clean internal redirect.
+- Treat CRLF injection and response-controlling SSRF as possible inputs to this chain, then validate handler selection before using a privileged handler.
 
 ### XSS via Response Headers
 
@@ -165,8 +172,9 @@ The `X-Forwarded-*` family is informational — there is no protocol guarantee a
 4. **Probe forwarding headers** — spoof `X-Forwarded-For`, `X-Real-IP`, `True-Client-IP`, `CF-Connecting-IP` against IP-restricted endpoints (admin, rate-limited)
 5. **Test cache key / response content split** — find inputs that change the body but not the cache key; confirm a second request from a different session sees the poisoned response
 6. **Test method override** — `X-HTTP-Method-Override` paired with state-changing endpoints reachable via POST or GET
-7. **Test request smuggling pairs** — conflicting `Content-Length` and `Transfer-Encoding`, two `Content-Length` headers, malformed chunked encoding, against any frontend → backend pair
+7. **Route framing discrepancies** — if evidence indicates request-boundary disagreement, switch to `http_request_smuggling`
 8. **Cross-protocol** — replay payloads over HTTP/1.1 and HTTP/2; diff behavior
+9. **Trace internal reprocessing** — where response headers can cause subrequests/internal redirects, diff retained fields and final handler selection
 
 ## Validation
 
@@ -174,8 +182,8 @@ The `X-Forwarded-*` family is informational — there is no protocol guarantee a
 2. Capture a password-reset / OAuth link pointing at attacker-controlled host — proves Host injection
 3. Demonstrate the same endpoint returning different auth decisions with and without a forged forwarding header
 4. For response splitting: show a downstream cache or proxy serving the injected second response to an unrelated request
-5. For request smuggling: show one victim request seeing data from a different request appended (not just timing or single-shot anomaly)
-6. All findings should produce a durable artifact (cached response, sent email, log entry, session change) — transient anomalies are not validation
+5. All findings should produce a durable artifact (cached response, sent email, log entry, session change) — transient anomalies are not validation
+6. For internal redirects, capture both the injected response metadata and the final internally selected route/handler
 
 ## False Positives
 
@@ -183,7 +191,6 @@ The `X-Forwarded-*` family is informational — there is no protocol guarantee a
 - `X-Forwarded-*` reflected back but only used for logging — not a security boundary, may not be exploitable
 - Browsers blocking `Location: javascript:` or `Location: data:` — capability exists in the protocol but most modern browsers refuse to navigate
 - CRLF appearing in response headers but stripped by an outer proxy before reaching any client or cache
-- Request smuggling indicators that turn out to be normal pipelining or keep-alive behavior
 
 ## Impact
 
@@ -192,7 +199,6 @@ The `X-Forwarded-*` family is informational — there is no protocol guarantee a
 - Auth bypass on endpoints trusting forwarding headers
 - Session fixation and cookie tossing leading to account hijack
 - Open redirect for phishing / OAuth `redirect_uri` abuse
-- Request smuggling — one victim's request reads another victim's response, including auth headers and cookies
 - WAF / detection bypass via header-name and encoding tricks
 
 ## Pro Tips
@@ -200,7 +206,7 @@ The `X-Forwarded-*` family is informational — there is no protocol guarantee a
 1. The fastest win is usually Host / `X-Forwarded-Host` in a password-reset or OAuth flow — try first, costs one request
 2. For cache poisoning, find the *unkeyed* input first (header that influences body but not cache key); the rest follows
 3. `X-HTTP-Method-Override` is high-yield against backends that route on it before checking method-based auth — most useful from server-side / non-browser callers (it triggers CORS preflight in a browser, so not a CSRF primitive)
-4. Smuggling lives at the boundary — identify the proxy → backend pair (CDN → origin, ingress → service) and target the framing disagreement
+4. If a header test exposes message-boundary disagreement, switch to the dedicated request-smuggling workflow and identify the proxy → backend pair
 5. `X-Original-URL` / `X-Rewrite-URL` against IIS / ASP.NET admin endpoints is still a high-yield bypass
 6. Before claiming a CRLF win, verify the second line landed as a real header in the cache or downstream consumer — many servers strip CRLF silently
 7. Outbound email flows are a separate but related surface — user input flowing into SMTP headers (To, Cc, Subject, Reply-To) is its own injection class with the same root cause

@@ -45,7 +45,11 @@ def run_view(argv: list[str]) -> None:
         default=0,
         help="Port to serve on (default: an available ephemeral port).",
     )
-    parser.add_argument("--host", default="127.0.0.1", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1; use 0.0.0.0 for all IPv4 interfaces).",
+    )
     parser.add_argument(
         "--no-open",
         action="store_true",

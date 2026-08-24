@@ -75,12 +75,27 @@ _RISK_SKILL_CATEGORY = "vulnerabilities"
 #: own words, so a new skill is merely matched strictly, never crashed on —
 #: but add an entry, because a false gap asserts something untrue in a report.
 _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
+    "agentic_system_security": (
+        "agentic",
+        "agent tool",
+        "mcp",
+        "confused deputy",
+        "tool invocation",
+    ),
+    "argument_injection": ("argument injection", "option injection", "argv"),
     "authentication_jwt": ("authentication", "jwt", "session"),
     "broken_function_level_authorization": (
         "function level authorization",
         "authorization",
         "access control",
         "privilege escalation",
+    ),
+    "browser_security": (
+        "browser",
+        "postmessage",
+        "xs leak",
+        "service worker",
+        "cross origin state",
     ),
     "business_logic": ("business logic", "logic flaw"),
     "csrf": ("csrf", "cross site request forgery"),
@@ -109,6 +124,12 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
     "prototype_pollution": ("prototype pollution",),
     "race_conditions": ("race condition", "toctou"),
     "rce": ("rce", "remote code execution", "code execution", "command injection"),
+    "semantic_confusion": (
+        "semantic confusion",
+        "parser differential",
+        "normalization",
+        "validator sink mismatch",
+    ),
     "sql_injection": ("sql injection", "sqli"),
     "ssrf": ("ssrf", "server side request forgery"),
     "ssti": ("ssti", "template injection"),

@@ -35,6 +35,7 @@ from strix.interface.tui.sidecar import (
     tui_source_dir,
     wait_process,
 )
+from strix.interface.utils import read_workspace_files
 from strix.report.state import ReportState, set_global_report_state
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -81,6 +82,7 @@ class GoTuiRuntime:
             "scan_mode": self.args.scan_mode,
             "non_interactive": False,
             "local_sources": self.args.local_sources or [],
+            "workspace_files": getattr(self.args, "workspace_files", None) or [],
             "scope_mode": self.args.scope_mode,
             "diff_base": self.args.diff_base,
             "resume_instruction": self.args.user_explicit_instruction or "",
@@ -177,6 +179,7 @@ class GoTuiRuntime:
                 scan_id=self.scan_config["run_name"],
                 image=image,
                 local_sources=self.args.local_sources or [],
+                extra_files=read_workspace_files(getattr(self.args, "workspace_files", None)),
                 coordinator=self.coordinator,
                 interactive=True,
                 max_turns=self.args.max_turns,

@@ -37,6 +37,24 @@ _CVSS = {
 }
 
 
+_DEP_CONTEXT = {
+    "attack_vector": "N",
+    "attack_complexity": "L",
+    "privileges_required": "N",
+    "user_interaction": "N",
+    "scope": "U",
+    "confidentiality": "N",
+    "integrity": "N",
+    "availability": "H",
+}
+
+_DEP_CONTEXT_VECTOR = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H"
+
+_DEP_EVIDENCE = "src/render.ts:14 imports the package."
+
+_DEP_REASONING = "Only scripts/import.py reaches the sink, so the impact is availability only."
+
+
 @pytest.fixture
 def report_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReportState:
     monkeypatch.chdir(tmp_path)
@@ -233,22 +251,33 @@ async def test_dependency_report_sets_class_and_metadata(report_state: ReportSta
         advisory_cvss=7.2,
         technical_analysis=None,
         fix_effort="trivial",
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
     )
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
     assert report["finding_class"] == "dependency_cve"
     assert report["cve"] == "CVE-2021-23337"
     assert report["severity"] == "high"
-    assert report["evidence"] == (
+    assert report["evidence"].startswith(
         "**Advisory evidence:** `CVE-2021-23337` applies to `lodash` "
         "at installed version `4.17.20`. The advisory is fixed in `4.17.21`."
     )
     assert report["dependency_metadata"] == {
         "package_name": "lodash",
         "installed_version": "4.17.20",
+        "advisory_cvss": 7.2,
         "package_ecosystem": "npm",
         "manifest_path": "package-lock.json",
         "fixed_version": "4.17.21",
+        "reachability": "imported",
+        "reachability_evidence": _DEP_EVIDENCE,
+        "contextual_cvss_breakdown": _DEP_CONTEXT,
+        "contextual_cvss_score": pytest.approx(7.5, abs=0.05),
+        "contextual_cvss_vector": _DEP_CONTEXT_VECTOR,
+        "contextual_cvss_reasoning": _DEP_REASONING,
     }
 
 
@@ -272,6 +301,10 @@ async def test_dependency_report_records_transitive_chain(report_state: ReportSt
         fix_effort="trivial",
         introduced_by="express@4.18.1",
         dependency_path="express@4.18.1 > body-parser@1.20.0 > qs@6.10.2",
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
     )
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
@@ -310,6 +343,10 @@ async def test_dependency_report_omits_blank_chain_fields(report_state: ReportSt
         fix_effort="trivial",
         introduced_by="  ",
         dependency_path=None,
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
     )
     assert result["success"] is True
     report = report_state.vulnerability_reports[0]
@@ -317,7 +354,7 @@ async def test_dependency_report_omits_blank_chain_fields(report_state: ReportSt
     assert "dependency_path" not in report["dependency_metadata"]
 
 
-async def test_dependency_report_with_zero_cvss_remains_low_severity(
+async def test_dependency_report_with_no_contextual_impact_is_info(
     report_state: ReportState,
 ) -> None:
     result = await _do_create_dependency(
@@ -337,12 +374,16 @@ async def test_dependency_report_with_zero_cvss_remains_low_severity(
         advisory_cvss=0.0,
         technical_analysis=None,
         fix_effort="low",
+        reachability="not_imported",
+        reachability_evidence="No file imports the package.",
+        contextual_cvss_breakdown={**_DEP_CONTEXT, "availability": "N"},
+        contextual_cvss_reasoning="No application code imports the package.",
     )
 
     assert result["success"] is True
-    assert result["severity"] == "low"
+    assert result["severity"] == "info"
     report = report_state.vulnerability_reports[0]
-    assert report["severity"] == "low"
+    assert report["severity"] == "info"
     assert report["cvss"] == 0.0
 
 
@@ -366,6 +407,8 @@ async def test_dependency_report_records_reachability(report_state: ReportState)
         fix_effort="low",
         reachability="vulnerable_symbol_used",
         reachability_evidence="src/render.ts:14 calls `_.template()`.",
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
     )
 
     assert result["success"] is True
@@ -377,7 +420,8 @@ async def test_dependency_report_records_reachability(report_state: ReportState)
     )
     assert "**Usage analysis:**" in report["evidence"]
     assert "not a proof of exploitability or of safety" in report["evidence"]
-    # The level must never influence the rating — that stays advisory_cvss only.
+    # The level must never influence the rating — that comes from the contextual
+    # breakdown, or from advisory_cvss when no breakdown applies.
     assert report["severity"] == "high"
 
 
@@ -438,7 +482,7 @@ async def test_dependency_report_rejects_unknown_reachability_level(
     assert not report_state.vulnerability_reports
 
 
-async def test_dependency_report_omits_unknown_reachability(report_state: ReportState) -> None:
+async def test_dependency_report_records_unknown_reachability(report_state: ReportState) -> None:
     result = await _do_create_dependency(
         title="CVE-2024-0001 in sample 1.0.0",
         description="Published advisory affects the pinned version.",
@@ -456,12 +500,15 @@ async def test_dependency_report_omits_unknown_reachability(report_state: Report
         advisory_cvss=5.0,
         technical_analysis=None,
         fix_effort="low",
+        reachability_evidence="Grep for the package found no import.",
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
     )
 
-    assert result["success"] is True
+    assert result["success"] is True, result
     metadata = report_state.vulnerability_reports[0]["dependency_metadata"]
-    assert "reachability" not in metadata
-    assert "reachability_evidence" not in metadata
+    assert metadata["reachability"] == "unknown"
+    assert metadata["reachability_evidence"] == "Grep for the package found no import."
 
 
 async def test_dependency_report_requires_advisory_cvss(report_state: ReportState) -> None:
@@ -538,6 +585,10 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
         advisory_cvss=0.0,
         technical_analysis=None,
         fix_effort="low",
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+        contextual_cvss_breakdown=_DEP_CONTEXT,
+        contextual_cvss_reasoning=_DEP_REASONING,
     )
 
     assert result["success"] is True
@@ -549,9 +600,16 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
         "dependency_metadata": {
             "package_name": "sample",
             "installed_version": "1.0.0",
+            "advisory_cvss": 0.0,
             "package_ecosystem": "npm",
             "manifest_path": "package-lock.json",
             "fixed_version": "1.0.1",
+            "reachability": "imported",
+            "reachability_evidence": _DEP_EVIDENCE,
+            "contextual_cvss_breakdown": _DEP_CONTEXT,
+            "contextual_cvss_score": pytest.approx(7.5, abs=0.05),
+            "contextual_cvss_vector": _DEP_CONTEXT_VECTOR,
+            "contextual_cvss_reasoning": _DEP_REASONING,
         },
         "technical_analysis": None,
     }
@@ -1013,3 +1071,155 @@ async def test_informational_location_needs_no_verification(report_state: Report
 
 def test_vuln_tool_exposes_fix_verification() -> None:
     assert "fix_verification" in create_vulnerability_report.params_json_schema["properties"]
+
+
+def test_dep_tool_exposes_contextual_cvss_params() -> None:
+    dep_props = create_dependency_report.params_json_schema["properties"]
+    for field in (
+        "contextual_cvss_breakdown",
+        "contextual_cvss_reasoning",
+    ):
+        assert field in dep_props
+    assert "source-to-sink" in dep_props["contextual_cvss_breakdown"]["description"].lower()
+    assert "source-to-sink" in dep_props["reachability_evidence"]["description"].lower()
+    assert "file:line" in dep_props["contextual_cvss_reasoning"]["description"].lower()
+
+
+_CONTEXTUAL_BREAKDOWN = {
+    "attack_vector": "L",
+    "attack_complexity": "H",
+    "privileges_required": "H",
+    "user_interaction": "N",
+    "scope": "U",
+    "confidentiality": "L",
+    "integrity": "L",
+    "availability": "N",
+}
+
+
+@pytest.mark.asyncio
+async def test_dependency_report_computes_contextual_cvss(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Arbitrary command execution.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fixed_version="4.17.21",
+        cwe="CWE-94",
+        fix_effort="trivial",
+        manifest_path="package-lock.json",
+        reachability="vulnerable_symbol_used",
+        reachability_evidence="scripts/import.py:88 calls `_.template()`.",
+        contextual_cvss_breakdown=_CONTEXTUAL_BREAKDOWN,
+        contextual_cvss_reasoning="Only scripts/import.py reaches the sink.",
+    )
+    assert result["success"] is True, result
+    report = report_state.vulnerability_reports[0]
+    metadata = report["dependency_metadata"]
+    assert metadata["advisory_cvss"] == 7.2
+    assert metadata["contextual_cvss_breakdown"] == _CONTEXTUAL_BREAKDOWN
+    assert metadata["contextual_cvss_vector"] == ("CVSS:3.1/AV:L/AC:H/PR:H/UI:N/S:U/C:L/I:L/A:N")
+    assert metadata["contextual_cvss_score"] == pytest.approx(3.0, abs=0.05)
+    assert metadata["contextual_cvss_reasoning"] == "Only scripts/import.py reaches the sink."
+    # The contextual rating determines the finding's score/severity, exactly
+    # like a normal finding's cvss_breakdown.
+    assert report["cvss"] == metadata["contextual_cvss_score"]
+    assert report["severity"] == "low"
+
+
+@pytest.mark.asyncio
+async def test_dependency_report_requires_contextual_breakdown(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Arbitrary command execution.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fixed_version="4.17.21",
+        cwe="CWE-94",
+        fix_effort="trivial",
+        manifest_path="package-lock.json",
+        reachability="imported",
+        reachability_evidence=_DEP_EVIDENCE,
+    )
+    assert result["success"] is False
+    assert any("contextual_cvss_breakdown is required" in error for error in result["errors"])
+    assert report_state.vulnerability_reports == []
+
+
+@pytest.mark.asyncio
+async def test_dependency_report_rejects_incomplete_contextual_breakdown(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Arbitrary command execution.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fixed_version="4.17.21",
+        cwe="CWE-94",
+        fix_effort="trivial",
+        manifest_path="package-lock.json",
+        contextual_cvss_breakdown={"attack_vector": "L", "attack_complexity": "Z"},
+        contextual_cvss_reasoning="Only scripts/import.py reaches the sink.",
+    )
+    assert result["success"] is False
+    assert any("attack_complexity" in error for error in result["errors"])
+    assert any("privileges_required" in error for error in result["errors"])
+    assert report_state.vulnerability_reports == []
+
+
+@pytest.mark.asyncio
+async def test_dependency_report_rejects_contextual_breakdown_without_reasoning(
+    report_state: ReportState,
+) -> None:
+    result = await _do_create_dependency(
+        title="CVE-2021-23337 in lodash 4.17.20",
+        description="Command injection via template.",
+        target="repo/package.json",
+        cve="CVE-2021-23337",
+        package_name="lodash",
+        installed_version="4.17.20",
+        impact="Arbitrary command execution.",
+        remediation_steps="Upgrade to 4.17.21.",
+        assumptions="Assumes the template sink is reachable.",
+        package_ecosystem="npm",
+        advisory_cvss=7.2,
+        technical_analysis=None,
+        fixed_version="4.17.21",
+        cwe="CWE-94",
+        fix_effort="trivial",
+        manifest_path="package-lock.json",
+        contextual_cvss_breakdown=_CONTEXTUAL_BREAKDOWN,
+        contextual_cvss_reasoning="   ",
+    )
+    assert result["success"] is False
+    assert any("contextual_cvss_reasoning is required" in error for error in result["errors"])
+    assert report_state.vulnerability_reports == []

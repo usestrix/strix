@@ -932,6 +932,70 @@ def _validate_manifest_path(manifest_path: str | None) -> str | None:
     return None
 
 
+_MAX_CONTEXTUAL_REASONING_CHARS = 2000
+
+
+def _validate_contextual_cvss(
+    breakdown: dict[str, str] | None,
+    reasoning: str | None,
+) -> list[str]:
+    errors: list[str] = []
+    if not breakdown:
+        errors.append(
+            "contextual_cvss_breakdown is required: rate the CVE in this codebase with "
+            "all 8 CVSS v3.1 metrics (attack_vector, attack_complexity, "
+            "privileges_required, user_interaction, scope, confidentiality, integrity, "
+            "availability). When your trace does not change the published rating, repeat "
+            "the advisory's own metrics and adjust only what the usage level proves - a "
+            "package the code never imports is normally N on all three impact metrics."
+        )
+    else:
+        for name, valid in _CVSS_VALID.items():
+            value = breakdown.get(name)
+            if value not in valid:
+                errors.append(
+                    f"Invalid contextual_cvss_breakdown {name}: {value}. Must be one of: {valid}"
+                )
+    if not (reasoning or "").strip():
+        errors.append(
+            "contextual_cvss_reasoning is required: state what you observed in this "
+            "codebase that justifies the contextual rating. A contextual score with "
+            "no reasoning is not shown."
+        )
+    return errors
+
+
+def _validate_advisory_cvss(advisory_cvss: float | None) -> str | None:
+    if advisory_cvss is None:
+        return (
+            "advisory_cvss is required: read the published advisory base score "
+            "(0.0-10.0) off the advisory (trivy CVSS / NVD / GHSA). It is the "
+            "published reference the finding is rated against — do not omit it "
+            "or the finding cannot be rated."
+        )
+    if not 0.0 <= advisory_cvss <= 10.0:
+        return f"advisory_cvss must be between 0.0 and 10.0, got {advisory_cvss}"
+    return None
+
+
+def _resolve_dependency_rating(
+    advisory_cvss: float | None,
+    contextual_cvss_breakdown: dict[str, str] | None,
+) -> tuple[float | None, str, float | None, str | None]:
+    """Rate the finding.
+
+    A contextual breakdown works exactly like a normal finding's
+    ``cvss_breakdown``: the agent supplies the 8 metrics as observed in this
+    codebase and the score/vector are computed from them. When provided it
+    rates the finding; the advisory score stays as the published reference.
+    """
+    if contextual_cvss_breakdown:
+        score, severity, vector = _calculate_cvss(contextual_cvss_breakdown)
+        return score, severity, score, vector
+    score, severity = _dependency_severity(advisory_cvss)
+    return score, severity, None, None
+
+
 def _build_dependency_metadata(
     *,
     package_name: str,
@@ -943,11 +1007,18 @@ def _build_dependency_metadata(
     manifest_path: str | None = None,
     reachability: str | None = None,
     reachability_evidence: str | None = None,
-) -> dict[str, str]:
-    metadata = {
+    advisory_cvss: float | None = None,
+    contextual_cvss_breakdown: dict[str, str] | None = None,
+    contextual_cvss_score: float | None = None,
+    contextual_cvss_vector: str | None = None,
+    contextual_cvss_reasoning: str | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
         "package_name": package_name.strip(),
         "installed_version": installed_version.strip(),
     }
+    if advisory_cvss is not None:
+        metadata["advisory_cvss"] = advisory_cvss
     if package_ecosystem and package_ecosystem.strip():
         metadata["package_ecosystem"] = package_ecosystem.strip()
     if manifest_path and manifest_path.strip():
@@ -958,12 +1029,24 @@ def _build_dependency_metadata(
         metadata["introduced_by"] = introduced_by.strip()
     if dependency_path and dependency_path.strip():
         metadata["dependency_path"] = dependency_path.strip()
-    # "unknown" is the absent case — omitting it keeps the jsonb contract clean,
-    # and evidence without a level would have nothing to qualify.
-    if reachability and reachability.strip() and reachability.strip() != "unknown":
+    if reachability and reachability.strip():
         metadata["reachability"] = reachability.strip()
         if reachability_evidence and reachability_evidence.strip():
             metadata["reachability_evidence"] = reachability_evidence.strip()
+    # Contextual CVSS is only meaningful as the full breakdown, its computed
+    # score/vector, and the reasoning a reader can check — an incomplete set
+    # is dropped.
+    reasoning = str(contextual_cvss_reasoning or "").strip()
+    if (
+        contextual_cvss_breakdown
+        and contextual_cvss_score is not None
+        and contextual_cvss_vector
+        and reasoning
+    ):
+        metadata["contextual_cvss_breakdown"] = contextual_cvss_breakdown
+        metadata["contextual_cvss_score"] = contextual_cvss_score
+        metadata["contextual_cvss_vector"] = contextual_cvss_vector
+        metadata["contextual_cvss_reasoning"] = reasoning[:_MAX_CONTEXTUAL_REASONING_CHARS]
     return metadata
 
 
@@ -1035,6 +1118,8 @@ async def _do_create_dependency(  # noqa: PLR0912
     manifest_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    contextual_cvss_breakdown: dict[str, str] | None = None,
+    contextual_cvss_reasoning: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
@@ -1080,26 +1165,29 @@ async def _do_create_dependency(  # noqa: PLR0912
         errors.append(
             f"Invalid reachability: {reachability!r}. Must be one of: {sorted(_VALID_REACHABILITY)}"
         )
-    elif reachability != "unknown" and not (reachability_evidence or "").strip():
+    elif not (reachability_evidence or "").strip():
         errors.append(
-            "reachability_evidence is required when reachability is not 'unknown': "
-            "cite the concrete proof (import file:line, matched symbol usage, or "
-            "govulncheck call path). Never claim a reachability level without evidence."
+            "reachability_evidence is required: cite the concrete proof (import "
+            "file:line, matched symbol usage, or govulncheck call path), or, for "
+            "'unknown', say what you searched and why the result is inconclusive. "
+            "Never claim a reachability level without evidence."
         )
 
-    if advisory_cvss is None:
-        errors.append(
-            "advisory_cvss is required: read the published advisory base score "
-            "(0.0-10.0) off the advisory (trivy CVSS / NVD / GHSA). Severity is "
-            "derived solely from it — do not omit it or the finding cannot be rated."
-        )
-    elif not 0.0 <= advisory_cvss <= 10.0:
-        errors.append(f"advisory_cvss must be between 0.0 and 10.0, got {advisory_cvss}")
+    errors.extend(_validate_contextual_cvss(contextual_cvss_breakdown, contextual_cvss_reasoning))
+
+    advisory_err = _validate_advisory_cvss(advisory_cvss)
+    if advisory_err:
+        errors.append(advisory_err)
 
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
 
-    cvss_score, severity = _dependency_severity(advisory_cvss)
+    try:
+        cvss_score, severity, contextual_score, contextual_vector = _resolve_dependency_rating(
+            advisory_cvss, contextual_cvss_breakdown
+        )
+    except ValueError as exc:
+        return {"success": False, "error": "Validation failed", "errors": [str(exc)]}
     dependency_metadata = _build_dependency_metadata(
         package_name=package_name,
         installed_version=installed_version,
@@ -1110,6 +1198,11 @@ async def _do_create_dependency(  # noqa: PLR0912
         manifest_path=manifest_path,
         reachability=reachability,
         reachability_evidence=reachability_evidence,
+        advisory_cvss=advisory_cvss,
+        contextual_cvss_breakdown=contextual_cvss_breakdown,
+        contextual_cvss_score=contextual_score,
+        contextual_cvss_vector=contextual_vector,
+        contextual_cvss_reasoning=contextual_cvss_reasoning,
     )
     evidence = _build_dependency_evidence(
         cve=parsed_cve,
@@ -1221,6 +1314,8 @@ async def create_dependency_report(
     dependency_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    contextual_cvss_breakdown: dict[str, str] | None = None,
+    contextual_cvss_reasoning: str | None = None,
 ) -> str:
     """File a known-CVE dependency (SCA) finding — one report per CVE x package.
 
@@ -1263,8 +1358,10 @@ async def create_dependency_report(
       proved a path from application code to the vulnerable function.
     - ``unknown`` — usage analysis was not performed or was inconclusive.
 
-    Severity is still derived solely from ``advisory_cvss`` — the
-    reachability level never changes the rating, only prioritization.
+    Severity comes from ``contextual_cvss_breakdown`` when you provide one
+    (computed exactly like a normal finding's ``cvss_breakdown``), otherwise
+    from ``advisory_cvss``. The reachability level alone never changes the
+    rating, only prioritization.
 
     **Formatting**: use markdown in text fields (``**bold**``, ``inline
     code`` for package/version identifiers, fenced code blocks for
@@ -1285,8 +1382,9 @@ async def create_dependency_report(
         cwe: ``CWE-NNN`` (most specific) if certain, else omit.
         advisory_cvss: **Required.** Published advisory base score
             (0.0-10.0) — read it off the advisory (trivy CVSS / NVD / GHSA).
-            Severity is derived solely from this score, so it must be the
-            real published value; do not guess or omit it.
+            It is the published reference the finding is rated against and
+            rates the finding whenever you give no contextual breakdown, so
+            it must be the real published value; do not guess or omit it.
         technical_analysis: Optional deeper mechanism/root-cause detail.
         fix_effort: One of ``trivial`` / ``low`` / ``medium`` / ``high``
             (dependency upgrades are usually ``trivial``/``low``).
@@ -1310,10 +1408,58 @@ async def create_dependency_report(
             ``not_imported`` / ``imported`` / ``vulnerable_symbol_used`` /
             ``reachable_call_path`` / ``unknown``. Claim only what the
             evidence proves; when in doubt use ``unknown``.
-        reachability_evidence: The concrete proof for the claimed level
-            (required for any level other than ``unknown``): repo-relative
+        reachability_evidence: **Required.** The concrete proof for the
+            claimed level, or, for ``unknown``, what you searched and why
+            the result is inconclusive: repo-relative
             ``file:line`` of the import or symbol usage, the matched
             advisory symbols, or the govulncheck call-path excerpt.
+            Whenever you found the vulnerable symbol in use, also give the
+            **source-to-sink trace** here: start at the vulnerable package
+            call site and walk backwards hop by hop to the entry point
+            that carries untrusted input (HTTP route, CLI argument, queue
+            message, webhook, config file), going one step deeper whenever
+            a hop is a wrapper. Write it as ``entry point -> intermediate
+            call -> package call`` with a ``file:line`` per hop, name what
+            each hop enforces (auth, role check, validation, a flag that
+            is off in production), and say who controls the input. State
+            it plainly when no entry point reaches the sink — that is the
+            most useful result a reader can get.
+        contextual_cvss_breakdown: **Required.** Full CVSS v3.1 rating of this
+            CVE **in this codebase** — the same 8-metric object as
+            ``create_vulnerability_report``'s ``cvss_breakdown``:
+            ``attack_vector`` (N/A/L/P), ``attack_complexity`` (L/H),
+            ``privileges_required`` (N/L/H), ``user_interaction`` (N/R),
+            ``scope`` (U/C), ``confidentiality`` / ``integrity`` /
+            ``availability`` (N/L/H). All 8 metrics are required when the
+            field is set, and the contextual score/vector are computed
+            from them — you never supply a score. Start from the
+            advisory's published metrics and change only what the
+            **source-to-sink trace** you recorded in
+            ``reachability_evidence`` proves is different here: derive
+            ``attack_vector`` / ``privileges_required`` /
+            ``user_interaction`` from what the entry point actually
+            requires, ``attack_complexity`` from the preconditions the
+            hops enforce, and the impact metrics from the data and
+            privileges reachable at the sink. When provided, this rating
+            determines the finding's severity; ``advisory_cvss`` stays as
+            the published reference. Send it on every report: when the
+            trace does not change the published rating, or when you could
+            not complete the trace, repeat the advisory's own metrics and
+            adjust only what the usage level itself proves (a package the
+            code never imports is normally ``N`` on all three impact
+            metrics), then say so in the reasoning.
+        contextual_cvss_reasoning: **Required.** Two to four detailed
+            sentences that a reviewer can verify without opening the repo:
+            how the application uses the package, which call sites or
+            configuration you inspected (repo-relative ``file:line``),
+            which input reaches the vulnerable code and whether an
+            attacker controls it, and what the adjustment therefore
+            changes. State the source-to-sink chain explicitly, hop by
+            hop, as ``entry point -> intermediate call -> package call``
+            with a ``file:line`` for each hop. Cite concrete evidence,
+            never a generic statement such as "low risk". The user reads
+            this text next to the adjusted score, so an adjustment
+            without it is discarded.
     """
     agent_id, agent_name = _caller_identity(ctx)
 
@@ -1338,6 +1484,8 @@ async def create_dependency_report(
         manifest_path=manifest_path,
         reachability=reachability,
         reachability_evidence=reachability_evidence,
+        contextual_cvss_breakdown=contextual_cvss_breakdown,
+        contextual_cvss_reasoning=contextual_cvss_reasoning,
         agent_id=agent_id,
         agent_name=agent_name,
     )

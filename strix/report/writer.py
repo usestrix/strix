@@ -216,6 +216,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     cvss = report.get("cvss")
     if cvss is not None:
         metadata.append(("CVSS", cvss))
+    advisory_cvss = dep_meta.get("advisory_cvss")
+    if advisory_cvss is not None and advisory_cvss != cvss:
+        metadata.append(("Advisory CVSS", advisory_cvss))
+    if dep_meta.get("contextual_cvss_vector"):
+        metadata.append(("Contextual CVSS Vector", dep_meta["contextual_cvss_vector"]))
     if report.get("confidence"):
         metadata.append(("Confidence", str(report["confidence"]).title()))
     if report.get("fix_effort"):
@@ -257,6 +262,11 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     if report.get("technical_analysis"):
         lines.append("## Technical Analysis\n")
         lines.append(str(report["technical_analysis"]))
+        lines.append("")
+
+    if dep_meta.get("contextual_cvss_reasoning"):
+        lines.append("## Contextual CVSS\n")
+        lines.append(str(dep_meta["contextual_cvss_reasoning"]))
         lines.append("")
 
     if report.get("poc_description") or report.get("poc_script_code"):

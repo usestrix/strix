@@ -431,6 +431,10 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
+    from strix.llm.warmup import start_import_warmup
+
+    start_import_warmup()
+
     args = parse_arguments()
 
     start_background_check()

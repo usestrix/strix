@@ -13,9 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import docker
 import requests
-from docker.errors import DockerException, ImageNotFound
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -132,6 +130,27 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
         if cvss_parts:
             text.append("CVSS Vector: ", style=field_style)
             text.append("/".join(cvss_parts), style="dim")
+
+    dependency_metadata = report.get("dependency_metadata") or {}
+    if dependency_metadata:
+        contextual_vector = dependency_metadata.get("contextual_cvss_vector")
+        if contextual_vector:
+            text.append("\n\n")
+            text.append("Contextual CVSS Vector: ", style=field_style)
+            text.append(contextual_vector, style="dim")
+
+        advisory_cvss = dependency_metadata.get("advisory_cvss")
+        if advisory_cvss is not None and advisory_cvss != report.get("cvss"):
+            text.append("\n\n")
+            text.append("Advisory CVSS: ", style=field_style)
+            text.append(f"{float(advisory_cvss):.1f}", style="dim")
+
+        contextual_reasoning = dependency_metadata.get("contextual_cvss_reasoning")
+        if contextual_reasoning:
+            text.append("\n\n")
+            text.append("Contextual CVSS Reasoning", style=field_style)
+            text.append("\n")
+            text.append(contextual_reasoning)
 
     description = report.get("description")
     if description:
@@ -1578,6 +1597,9 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
 
 def check_docker_connection() -> Any:
+    import docker
+    from docker.errors import DockerException
+
     try:
         return docker.from_env()
     except DockerException:
@@ -1603,6 +1625,8 @@ def check_docker_connection() -> Any:
 
 
 def image_exists(client: Any, image_name: str) -> bool:
+    from docker.errors import ImageNotFound
+
     try:
         client.images.get(image_name)
     except ImageNotFound:
@@ -1680,3 +1704,83 @@ def validate_config_file(config_path: str) -> Path:
         sys.exit(1)
 
     return path
+
+
+# --- Workspace files -------------------------------------------------------
+#
+# ``--workspace-file`` places a single host file into the sandbox workspace,
+# outside every target tree. Content rides the same upload as the target
+# sources, so a large file makes session bring-up slower.
+
+
+def _workspace_file_dest(spec: str, source: Path) -> str:
+    """Return the workspace-relative destination declared by ``spec``."""
+    _, sep, dest = spec.rpartition(":")
+    candidate = dest.strip() if sep and dest.strip() else source.name
+    if candidate.startswith("/") or Path(candidate).is_absolute():
+        if not candidate.startswith("/workspace/"):
+            raise ValueError(
+                f"'{spec}' must land inside the workspace: use a relative "
+                "destination or a path under /workspace"
+            )
+        candidate = candidate.removeprefix("/workspace/")
+    candidate = candidate.strip("/")
+    if not candidate:
+        raise ValueError(f"'{spec}' has an empty destination path")
+    if any(part in ("", ".", "..") for part in candidate.split("/")):
+        raise ValueError(f"'{spec}' has an invalid destination path: {candidate}")
+    # A control character would let the path span more than the one line it is
+    # rendered on in the agent task, so the whole spec is rejected.
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in candidate):
+        raise ValueError(f"'{spec}' has a control character in its destination path")
+    return candidate
+
+
+def resolve_workspace_files(specs: list[str] | None) -> list[dict[str, str]]:
+    """Validate ``PATH[:DEST]`` specs into source/destination pairs.
+
+    Each spec names a readable host file. ``DEST`` is the path inside
+    ``/workspace``; it defaults to the file name. Raises ``ValueError`` with a
+    user-facing message when a spec is unusable.
+    """
+    resolved: list[dict[str, str]] = []
+    seen: dict[str, str] = {}
+    for spec in specs or []:
+        raw, sep, dest = spec.rpartition(":")
+        source_text = raw if sep and dest.strip() else spec
+        source = Path(source_text.strip()).expanduser()
+        if not source.is_file():
+            raise ValueError(f"'{source}' is not an existing file")
+        try:
+            with source.open("rb"):
+                pass
+        except OSError as error:
+            raise ValueError(f"Cannot read '{source}': {error}") from error
+        workspace_rel = _workspace_file_dest(spec, source)
+        if workspace_rel in seen:
+            raise ValueError(
+                f"Two workspace files target /workspace/{workspace_rel}: "
+                f"'{seen[workspace_rel]}' and '{source}'"
+            )
+        seen[workspace_rel] = str(source)
+        resolved.append(
+            {
+                "source_path": str(source.resolve()),
+                "workspace_path": f"/workspace/{workspace_rel}",
+            }
+        )
+    return resolved
+
+
+def read_workspace_files(workspace_files: list[dict[str, str]] | None) -> list[dict[str, Any]]:
+    """Read resolved workspace files into engine ``extra_files`` entries."""
+    entries: list[dict[str, Any]] = []
+    for workspace_file in workspace_files or []:
+        source = Path(workspace_file["source_path"])
+        entries.append(
+            {
+                "workspace_path": workspace_file["workspace_path"],
+                "content": source.read_bytes(),
+            }
+        )
+    return entries

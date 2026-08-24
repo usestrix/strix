@@ -749,6 +749,18 @@ def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bo
     return not model_supports_reasoning(model_name)
 
 
+def supports_strict_tool_schemas(model_name: str) -> bool:
+    """Return whether the route accepts strict tool schemas for Strix's toolset.
+
+    Claude caps a request at 20 strict tools and 16 union-typed parameters
+    across all strict schemas. Strix ships ~30 tools and the strict dialect
+    turns every optional parameter into a nullable union, so both caps are
+    exceeded and the request is rejected outright.
+    """
+    name = model_name.strip().lower()
+    return not any(marker in name for marker in _ANTHROPIC_MODEL_MARKERS)
+
+
 def model_supports_reasoning(model_name: str) -> bool:
     import litellm
 
@@ -843,6 +855,9 @@ def is_known_openai_bare_model(model_name: str) -> bool:
         return False
     entry = litellm.model_cost.get(name)
     return bool(entry and entry.get("litellm_provider") == "openai")
+
+
+_ANTHROPIC_MODEL_MARKERS = ("anthropic", "claude", "sonnet", "opus", "haiku")
 
 
 def is_claude_model(model_name: str) -> bool:
