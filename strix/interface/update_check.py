@@ -304,16 +304,32 @@ def _download_and_replace(version: str, target: str, console: Console) -> bool:
                 for chunk in response.iter_content(chunk_size=1 << 20):
                     f.write(chunk)
 
+        # Security: fail CLOSED. This self-update overwrites the *running*
+        # executable, so an unverified binary is the worst thing to install. If
+        # the release API gives us an expected digest, a mismatch aborts (kept
+        # below). If it gives us NO digest, we must not silently replace the
+        # binary with something we couldn't check — abort and tell the user to
+        # update manually instead.
+        #
+        # Note: this GitHub-provided digest is same-origin — it detects a
+        # corrupted/truncated download, not a compromise of the release pipeline
+        # (an attacker who can alter the asset can alter its digest too). The real
+        # fix is publisher signing (cosign / build-provenance attestation)
+        # verified here; that is a release-workflow change, not made in this file.
         expected_digest = _fetch_asset_digest(version, filename)
-        if expected_digest:
-            actual_digest = _sha256_file(archive_path)
-            if actual_digest != expected_digest:
-                raise RuntimeError(
-                    f"checksum mismatch for {filename}: "
-                    f"expected sha256 {expected_digest}, got {actual_digest}"
-                )
-        else:
-            console.print("[dim yellow]No published checksum available; skipping verification[/]")
+        if not expected_digest:
+            raise RuntimeError(
+                "no published checksum available for "
+                f"{filename}; refusing to replace the running binary with an "
+                "unverified download. Update manually with: "
+                "curl -sSL https://strix.ai/install | bash"
+            )
+        actual_digest = _sha256_file(archive_path)
+        if actual_digest != expected_digest:
+            raise RuntimeError(
+                f"checksum mismatch for {filename}: "
+                f"expected sha256 {expected_digest}, got {actual_digest}"
+            )
 
         if is_windows:
             with zipfile.ZipFile(archive_path) as zf:

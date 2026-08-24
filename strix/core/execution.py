@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
 import uuid
 from collections.abc import Callable
 from functools import cache
@@ -34,6 +35,7 @@ from strix.core.sessions import (
     strip_all_images_from_session,
 )
 from strix.llm.compaction import is_context_overflow, maybe_compact
+from strix.skills import validate_requested_skills
 
 
 if TYPE_CHECKING:
@@ -53,6 +55,61 @@ StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
 _MAX_COMPACTIONS_PER_CYCLE = 2
+
+
+def _int_env(name: str, default: int) -> int:
+    """Positive-int env override, falling back to ``default`` on anything invalid."""
+    try:
+        value = int(os.environ.get(name, ""))
+    except (TypeError, ValueError):
+        return default
+    return value if value > 0 else default
+
+
+# Security (unbounded sub-agent fan-out / resource exhaustion): create_agent and
+# spawn_child_agent had no ceiling on how many agents could be spawned or how
+# deep the tree could nest, and AgentCoordinator.register is an unbounded dict
+# insert. A prompt-injected or runaway agent could fork children without limit,
+# exhausting the shared sandbox and the LLM budget. Enforce hard caps at the
+# single spawn choke point. Overridable by env for legitimately large scans.
+_MAX_LIVE_AGENTS = _int_env("STRIX_MAX_LIVE_AGENTS", 32)
+_MAX_AGENT_TREE_DEPTH = _int_env("STRIX_MAX_AGENT_TREE_DEPTH", 5)
+_LIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting"})
+
+
+def _agent_depth_locked(coordinator: AgentCoordinator, agent_id: str) -> int:
+    """Depth of ``agent_id`` in the tree (root = 1). Call under the coordinator lock."""
+    depth = 1
+    seen: set[str] = set()
+    cur: str | None = agent_id
+    while cur is not None and cur not in seen:
+        seen.add(cur)
+        parent = coordinator.parent_of.get(cur)
+        if parent is None:
+            break
+        depth += 1
+        cur = parent
+    return depth
+
+
+async def _fan_out_cap_error(coordinator: AgentCoordinator, parent_id: str) -> str | None:
+    """Return a model-visible refusal if spawning another child would exceed caps."""
+    async with coordinator._lock:
+        live = sum(1 for status in coordinator.statuses.values() if status in _LIVE_STATUSES)
+        child_depth = _agent_depth_locked(coordinator, parent_id) + 1
+    if live >= _MAX_LIVE_AGENTS:
+        return (
+            f"Sub-agent fan-out limit reached: {live} live agents "
+            f"(cap {_MAX_LIVE_AGENTS}). Refusing to spawn another. Wait for existing "
+            "agents to finish, stop ones that are off-track, or do this work yourself."
+        )
+    if child_depth > _MAX_AGENT_TREE_DEPTH:
+        return (
+            f"Agent tree depth limit reached: a child here would be at depth {child_depth} "
+            f"(cap {_MAX_AGENT_TREE_DEPTH}). Refusing to nest deeper. Flatten the plan or "
+            "run this subtask yourself instead of spawning another level."
+        )
+    return None
 
 
 @cache
@@ -321,6 +378,13 @@ async def spawn_child_agent(
     if not isinstance(parent_id, str):
         raise TypeError("Parent agent_id missing from context")
 
+    # Security: hard-cap live-agent count and tree depth before creating anything,
+    # so a runaway/injected spawn loop cannot exhaust the sandbox or the budget.
+    cap_error = await _fan_out_cap_error(coordinator, parent_id)
+    if cap_error is not None:
+        logger.warning("spawn_child_agent refused (%s): %s", name, cap_error)
+        return {"success": False, "error": cap_error, "agent_id": None}
+
     child_id = uuid.uuid4().hex[:8]
     child_agent = factory(name=name, skills=skills)
     await coordinator.register(
@@ -413,6 +477,22 @@ async def respawn_subagents(
                 )
 
             child_skills = list(md.get("skills") or [])
+            # Security (path traversal via poisoned agents.json): skill names are
+            # rehydrated from on-disk snapshot state and flow into skill-file
+            # loading. Re-validate them through the same gate create_agent uses so
+            # a tampered snapshot cannot smuggle a traversal name (e.g.
+            # "../../etc/..."). On any invalid entry, drop skills entirely rather
+            # than load an unvetted path.
+            skill_error = validate_requested_skills(child_skills)
+            if skill_error:
+                logger.warning(
+                    "respawn %s (%s): rejecting unvalidated skills %r (%s); starting with none",
+                    child_id,
+                    name,
+                    child_skills,
+                    skill_error,
+                )
+                child_skills = []
             child_agent = factory(name=name, skills=child_skills)
             await _start_child_runner(
                 parent_ctx=parent_ctx,

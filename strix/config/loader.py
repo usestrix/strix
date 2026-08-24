@@ -53,11 +53,69 @@ def apply_config_override(path: Path) -> None:
     logger.info("config override applied: %s", path)
 
 
+# Security: substrings that mark an env alias as secret-bearing. Anything whose
+# name contains one of these (or a settings field flagged repr=False) is a
+# credential and must NOT be written to a plaintext JSON file by default —
+# especially not to a --config path that could live inside the user's repo.
+_SECRET_NAME_MARKERS = (
+    "_API_KEY",
+    "API_KEY",
+    "TOKEN",
+    "SECRET",
+    "PASSWORD",
+    "CREDENTIAL",
+    "EXTRA_HEADERS",
+)
+
+
+def _is_secret_alias(alias: str, finfo: FieldInfo) -> bool:
+    """True if this alias carries a credential and should not be persisted.
+
+    Keys off both the field's ``repr=False`` marker (settings.py flags secret
+    fields that way) and a name-pattern fallback, so a newly added secret alias
+    is excluded even if someone forgets ``repr=False``.
+    """
+    if getattr(finfo, "repr", True) is False:
+        return True
+    upper = alias.upper()
+    return any(marker in upper for marker in _SECRET_NAME_MARKERS)
+
+
+def _is_inside_git_worktree(path: Path) -> bool:
+    """Best-effort: True if ``path`` sits inside a git work tree (has a .git ancestor)."""
+    try:
+        current = path.expanduser().resolve().parent
+    except OSError:
+        return False
+    for directory in (current, *current.parents):
+        if (directory / ".git").exists():
+            return True
+    return False
+
+
 def persist_current() -> None:
-    """Write currently-set env vars to the active config file (0o600)."""
+    """Write currently-set env vars to the active config file (0o600).
+
+    Security: by default this persists only non-secret settings. Secret-bearing
+    aliases (API keys, tokens, extra headers, ...) are excluded so a routine
+    per-scan save never lands plaintext credentials on disk — the more so
+    because ``--config`` can point the destination inside the user's repo, where
+    a committed secret would leak. Set ``STRIX_PERSIST_SECRETS=1`` to opt in to
+    saving secrets; even then, refuse to write secrets to a config path inside a
+    git work tree, which is the classic accidental-commit trap.
+    """
     s = load_settings()
     target = _override or _DEFAULT_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
+
+    persist_secrets = os.environ.get("STRIX_PERSIST_SECRETS") == "1"
+    if persist_secrets and _override is not None and _is_inside_git_worktree(target):
+        persist_secrets = False
+        logger.warning(
+            "refusing to persist secrets to %s: it is inside a git work tree "
+            "(would risk committing credentials). Persisting non-secret settings only.",
+            target,
+        )
 
     env_block: dict[str, str] = {}
     for sub_name in s.model_fields:
@@ -66,6 +124,8 @@ def persist_current() -> None:
             continue
         for finfo in type(sub_model).model_fields.values():
             for alias in _aliases_for(finfo):
+                if not persist_secrets and _is_secret_alias(alias, finfo):
+                    continue  # never write credentials to plaintext JSON by default
                 value = os.environ.get(alias.upper())
                 if value:
                     env_block[alias.upper()] = value

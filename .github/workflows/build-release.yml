@@ -113,9 +113,29 @@ jobs:
           path: release
           merge-multiple: true
 
+      # Publish a same-origin integrity manifest for every release asset so the
+      # installer (scripts/install.sh) can fail CLOSED when it can't verify a
+      # download. Hashes are written with BARE basenames (no directory prefix) —
+      # the installer greps for "<space>*?<filename>$" and verifies against the
+      # file in its own temp dir, so a "release/foo.tar.gz" path would never match.
+      # NOTE: this is same-origin (detects corruption / single-asset swap), not a
+      # defense against a fully compromised release pipeline — cosign / build-
+      # provenance attestation is the end-to-end fix (tracked separately).
+      - name: Generate SHA256SUMS
+        working-directory: release
+        shell: bash
+        run: |
+          : > SHA256SUMS
+          while IFS= read -r -d '' f; do
+            ( cd "$(dirname "$f")" && sha256sum "$(basename "$f")" )
+          done < <(find . -type f ! -name SHA256SUMS -print0 | sort -z) >> SHA256SUMS
+          echo "=== SHA256SUMS ==="
+          cat SHA256SUMS
+
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
         with:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           generate_release_notes: true
+          # release/** already globs release/SHA256SUMS generated above.
           files: release/**

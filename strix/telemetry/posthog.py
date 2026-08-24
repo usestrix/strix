@@ -55,6 +55,11 @@ def start(
     has_instructions: bool,
     auth_mode: str | None = None,
 ) -> None:
+    # Security/privacy: build props (which calls is_first_run(), touching
+    # ~/.strix/.seen on disk) only when telemetry is enabled. A user who opted
+    # out must trigger no telemetry-purpose disk write, not just no network call.
+    if not _is_enabled():
+        return
     _send(
         "scan_started",
         {

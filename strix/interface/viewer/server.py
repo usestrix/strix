@@ -142,16 +142,75 @@ class _ViewerState:
         # Finalized in ``serve()`` once the port is known (the server binds
         # after this state is constructed); see SESSION_COOKIE_PREFIX.
         self.cookie_name = SESSION_COOKIE_PREFIX
+        # Finalized in ``serve()``. Used by the Host/Origin guard to reject
+        # requests whose Host header is not the address we actually bound to --
+        # this is what closes DNS-rebinding: a rebound name (evil.example) that
+        # resolves to 127.0.0.1 still sends ``Host: evil.example`` and is refused
+        # before it reaches any handler.
+        self.bind_host = "127.0.0.1"
+        self.bound_port: int | None = None
 
 
 def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
     class ViewerHandler(BaseHTTPRequestHandler):
         server_version = "StrixViewer/1.0"
+        # Bound per-request socket timeout: a client that opens a connection and
+        # never finishes a request line (slowloris) cannot pin a daemon worker
+        # thread forever. ThreadingHTTPServer spawns one thread per connection
+        # with no cap, so an unbounded read is a cheap DoS without this.
+        timeout = 30
 
         def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
             logger.debug("viewer %s - %s", self.address_string(), format % args)
 
+        # Maximum accepted request-body size. The only bodies the viewer reads
+        # are small JSON control messages; anything larger is abuse.
+        _MAX_BODY_BYTES = 1 << 20  # 1 MiB
+
+        def _allowed_hosts(self) -> frozenset[str]:
+            # Exactly the address:port we bound. No bare-name / any-port union:
+            # a wrong-port or port-less Host must not slip through. Browsers
+            # always send the port for a non-default port, so this loses nothing.
+            port = state.bound_port
+            names = {"127.0.0.1", "localhost", "[::1]"}
+            if state.bind_host:
+                names.add(state.bind_host)
+                names.add(state.bind_host.strip("[]"))
+            if port is None:
+                return frozenset(names)
+            return frozenset(f"{n}:{port}" for n in names)
+
+        def _is_loopback_bind(self) -> bool:
+            return (state.bind_host or "127.0.0.1") in ("127.0.0.1", "localhost", "::1", "[::1]")
+
+        def _origin_ok(self) -> bool:
+            """Reject DNS-rebinding and cross-origin requests, fail-closed.
+
+            The viewer is a same-machine tool. On the default loopback bind a
+            request must carry a ``Host`` equal to the loopback address:port we
+            bound -- a missing Host or a rebound DNS name (which sends its own
+            Host) is refused. On an explicit non-loopback ``--host`` the operator
+            opted into exposure and the session cookie is the gate, so we do not
+            strict-match Host (we cannot enumerate every valid LAN name), but a
+            cross-site or ``null`` ``Origin`` is refused either way.
+            """
+            allowed = self._allowed_hosts()
+            host = (self.headers.get("Host") or "").strip()
+            if self._is_loopback_bind() and host not in allowed:
+                # Fail closed: empty/missing Host lands here too.
+                logger.warning("viewer rejected host header: %r", host)
+                return False
+            origin = (self.headers.get("Origin") or "").strip()
+            if origin:
+                if origin.lower() == "null" or urlsplit(origin).netloc not in allowed:
+                    logger.warning("viewer rejected cross-origin request: %s", origin)
+                    return False
+            return True
+
         def do_GET(self) -> None:
+            if not self._origin_ok():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
             parts = urlsplit(self.path)
             path = parts.path
             try:
@@ -169,9 +228,20 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal error"})
 
         def do_POST(self) -> None:
+            if not self._origin_ok():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
             path = urlsplit(self.path).path
             try:
                 if path == "/api/event":
+                    # Telemetry forwarding is a state-changing, session-gated
+                    # action like every other POST -- an unauthenticated caller
+                    # (or a cross-origin page spraying loopback ports) must not
+                    # be able to poison the operator's analytics or spin a worker
+                    # thread on an oversized body.
+                    if not self._has_session():
+                        self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                        return
                     self._handle_event()
                 elif path == "/api/auth/otp/start":
                     self._handle_otp_start()
@@ -195,7 +265,15 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.INTERNAL_SERVER_ERROR, {"error": "internal error"})
 
         def _read_body(self) -> dict[str, Any]:
-            length = int(self.headers.get("Content-Length") or 0)
+            try:
+                length = int(self.headers.get("Content-Length") or 0)
+            except ValueError:
+                return {}
+            # Reject a negative length (which is truthy and makes rfile.read(-n)
+            # drain to EOF, pinning the worker) and an oversized body (a 4 GB
+            # Content-Length would allocate 4 GB). Only small JSON is expected.
+            if length < 0 or length > self._MAX_BODY_BYTES:
+                return {}
             raw = self.rfile.read(length) if length else b""
             try:
                 body = json.loads(raw or b"{}")
@@ -240,14 +318,25 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             # email verified, so merely reaching an exposed --host port never
             # leaks the run list (the payload still advertises the count as a
             # teaser).
+            # The run count and the steer capability are precondition signals an
+            # attacker uses to decide a host is worth hunting a token for. The
+            # SPA always holds the session by the time it renders, so gating
+            # these behind the capability loses nothing and denies the pre-auth
+            # surface (including a rebound page) any information.
             if path == "/api/runs":
-                unlocked = self._has_session() and auth.is_verified()
+                if not self._has_session():
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                    return
+                unlocked = auth.is_verified()
                 payload = build_runs_payload(state.base_dir, verified=unlocked)
                 self._send_json(HTTPStatus.OK, payload)
                 return
             if path == "/api/capabilities":
                 # Steering is only possible when the viewer shares a live scan's
                 # coordinator + event loop (the TUI launcher wires a handler).
+                if not self._has_session():
+                    self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                    return
                 self._send_json(HTTPStatus.OK, {"can_steer": state.steer_handler is not None})
                 return
             if path == "/api/auth/status":
@@ -512,6 +601,19 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", content_type or "application/octet-stream")
             self.send_header("Content-Length", str(len(content)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            if is_index:
+                # The page renders content that originated from the scan target.
+                # A CSP is defence-in-depth against markup that slips a renderer;
+                # Referrer-Policy keeps the bootstrap token in the URL from
+                # leaking to any outbound link the page later navigates to.
+                self.send_header(
+                    "Content-Security-Policy",
+                    "default-src 'self'; img-src 'self' data:; "
+                    "style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+                )
+                self.send_header("Referrer-Policy", "no-referrer")
+                self.send_header("X-Frame-Options", "DENY")
             if is_index and self._token_presented(query):
                 # Exchange the bootstrap token for the per-process session
                 # capability. Issued only when the correct token is presented,
@@ -542,6 +644,10 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            # JSON responses carry findings and transcript data sourced from the
+            # scan target. Forbid MIME sniffing and caching of that data.
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(body)
 
@@ -595,6 +701,8 @@ def serve(
     httpd.daemon_threads = True
     bound_port = int(httpd.server_address[1])
     state.cookie_name = f"{SESSION_COOKIE_PREFIX}_{bound_port}"
+    state.bind_host = host
+    state.bound_port = bound_port
     url = f"http://{host}:{bound_port}"
 
     thread = threading.Thread(target=httpd.serve_forever, name="strix-viewer", daemon=True)

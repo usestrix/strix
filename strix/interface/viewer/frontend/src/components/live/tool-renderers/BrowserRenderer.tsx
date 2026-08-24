@@ -25,20 +25,31 @@ const CLICK_ACTIONS: Record<string, string> = {
   hover: "hovering",
 };
 
+// The url comes from recorded browser-tool arguments in the transcript, which
+// originate from the scan target. Only render an anchor for http(s); a
+// `javascript:`/`data:` value would execute in the viewer's origin on click.
+function safeHref(url?: string): string | undefined {
+  return url && /^https?:\/\//i.test(url) ? url : undefined;
+}
+
 function UrlLabel({ prefix, url, suffix }: { prefix: string; url?: string; suffix?: string }) {
+  const href = safeHref(url);
   return (
     <span className="text-[#888] text-[13px]">
       {prefix}
-      {url && (
-        <a
-          href={url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-cyan-400/80 hover:underline"
-        >
-          {url}
-        </a>
-      )}
+      {url &&
+        (href ? (
+          <a
+            href={href}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-cyan-400/80 hover:underline"
+          >
+            {url}
+          </a>
+        ) : (
+          <span className="text-cyan-400/80">{url}</span>
+        ))}
       {suffix}
     </span>
   );

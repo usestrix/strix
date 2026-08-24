@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import io
 import json
 import logging
+import os
 import re
 import tempfile
 from datetime import UTC, datetime
@@ -115,10 +117,13 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
 
 def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
     path = run_dir / "penetration_test_report.md"
-    with path.open("w", encoding="utf-8") as f:
-        f.write("# Security Penetration Test Report\n\n")
-        f.write(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
-        f.write(f"{final_scan_result}\n")
+    generated = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
+    # Security: written via _atomic_write_text so the report (which can quote
+    # captured target details) lands 0600, not the default world-readable 0644.
+    _atomic_write_text(
+        path,
+        f"# Security Penetration Test Report\n\n**Generated:** {generated}\n\n{final_scan_result}\n",
+    )
     logger.info("Saved final penetration test report to: %s", path)
 
 
@@ -152,7 +157,10 @@ def write_vulnerabilities(
         csv_writer.writerow(
             {
                 "id": report["id"],
-                "title": report["title"],
+                # A finding title is LLM-authored and can echo target-controlled
+                # text. Neutralize spreadsheet formula injection: a cell starting
+                # with = + - @ (or tab/CR) is a live formula in Excel/Sheets.
+                "title": _csv_safe(report["title"]),
                 "severity": report["severity"].upper(),
                 "timestamp": report["timestamp"],
                 "file": f"vulnerabilities/{report['id']}.md",
@@ -175,6 +183,19 @@ def write_vulnerabilities(
     return len(new_reports)
 
 
+def _csv_safe(value: Any) -> str:
+    """Neutralize spreadsheet formula injection in a CSV cell.
+
+    Excel/Sheets treat a cell beginning with ``= + - @`` (or a tab/CR) as a
+    formula. Finding text is LLM-authored and can echo target-controlled bytes,
+    so prefix a single quote to force the cell to be read as literal text.
+    """
+    text = "" if value is None else str(value)
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
 def _atomic_write_text(path: Path, payload: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile(
@@ -187,6 +208,12 @@ def _atomic_write_text(path: Path, payload: str) -> None:
     ) as tmp:
         tmp.write(payload)
         tmp_path = Path(tmp.name)
+    # Security: report artifacts (run.json, vulnerabilities.json/.csv, the vuln
+    # MDs) can carry credentials/PoCs captured from the target, so keep them
+    # owner-only. mkstemp already creates 0600, but set it explicitly so intent
+    # survives refactors; best-effort (no-op on Windows).
+    with contextlib.suppress(OSError):
+        os.chmod(tmp_path, 0o600)
     tmp_path.replace(path)
 
 

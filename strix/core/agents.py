@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -21,6 +22,26 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+# Bracketed control markers the runtime itself emits (trusted): peer-message
+# headers `[Message from ...]`, terminal/stall notices `[Agent completed|crash|
+# crashed|failed|stopped|stalled]`, budget directives `[Budget ...]`, and
+# priority tags. An agent-authored body must not be able to forge these, so we
+# defang a leading `[` on any such token into `(` — enough to break the spoof
+# while leaving legitimate prose readable.
+_FORGED_CONTROL_MARKER_RE = re.compile(
+    r"\[\s*(?="
+    r"(?:Message from|Agent (?:completed|crash|crashed|failed|stopped|stalled)|Budget"
+    r"|System|NOTICE|URGENT|CRITICAL|HIGH PRIORITY)\b)",
+    re.IGNORECASE,
+)
+
+
+def _defang_control_markers(text: str) -> str:
+    """Neutralize forged runtime/control markers in untrusted message bodies."""
+    return _FORGED_CONTROL_MARKER_RE.sub("(", text)
+
 
 Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed", "budget_paused"]
 
@@ -440,6 +461,12 @@ class AgentCoordinator:
         content = str(message.get("content", ""))
         if sender == "user":
             return cast("TResponseInputItem", {"role": "user", "content": content})
+        # Security (prompt-injection provenance): the coordinator wraps this body
+        # in a trusted `[Message from ...]` control header below. A peer agent's
+        # body is attacker-influenceable (a finding body can carry target bytes),
+        # so neutralize any forged control markers in it — otherwise it could
+        # spoof another peer's header or a system NOTICE/URGENT/Budget directive.
+        content = _defang_control_markers(content)
         sender_name = self.names.get(sender, sender)
         msg_type = message.get("type", "information")
         priority = message.get("priority", "normal")

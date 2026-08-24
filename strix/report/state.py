@@ -13,7 +13,7 @@ from agents.usage import Usage
 
 from strix.config import codex
 from strix.config.loader import load_settings
-from strix.core.paths import run_dir_for
+from strix.core.paths import create_run_dir
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.usage import LLMUsageLedger
@@ -160,8 +160,10 @@ class ReportState:
     def get_run_dir(self) -> Path:
         if self._run_dir is None:
             run_dir_name = self.run_name if self.run_name else self.run_id
-            self._run_dir = run_dir_for(run_dir_name)
-            self._run_dir.mkdir(parents=True, exist_ok=True)
+            # Security: create_run_dir makes the run tree owner-only (0700) and
+            # drops a `*` .gitignore into strix_runs/ so harvested credentials and
+            # PoCs in the artifacts are neither world-readable nor committed.
+            self._run_dir = create_run_dir(run_dir_name)
 
         return self._run_dir
 

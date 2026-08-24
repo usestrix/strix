@@ -3,6 +3,11 @@
 # module/build caches never reach the runtime image. The resulting binaries are
 # statically linked and copied into the final stage.
 # ---------------------------------------------------------------------------
+# SECURITY / supply chain: base image is an unpinned rolling tag, so the same
+# Dockerfile can produce different (potentially compromised) images over time.
+# TODO: pin by digest — FROM kalilinux/kali-rolling@sha256:<digest> — using a
+# digest verified against Kali's published image list. Left unpinned here rather
+# than inventing a digest that cannot be verified offline.
 FROM kalilinux/kali-rolling:latest AS gobuilder
 
 RUN apt-get update && \
@@ -11,6 +16,11 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends golang-go git ca-certificates
 
 ENV GOBIN=/out/bin
+# TODO (supply chain): these `@latest` installs float to whatever HEAD/newest
+# tag each module publishes at build time, so the image is not reproducible and
+# a compromised upstream release is pulled automatically. Pin each to a reviewed
+# `@vX.Y.Z` tag once the intended versions are confirmed. Not pinned here to
+# avoid guessing versions that cannot be verified offline.
 RUN mkdir -p /out/bin && \
     go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest && \
     go install -v github.com/projectdiscovery/katana/cmd/katana@latest && \
@@ -22,6 +32,8 @@ RUN mkdir -p /out/bin && \
 # ---------------------------------------------------------------------------
 # Runtime stage
 # ---------------------------------------------------------------------------
+# TODO (supply chain): pin this runtime base by digest, matching the gobuilder
+# stage above. Do NOT invent a digest — verify against Kali's published list.
 FROM kalilinux/kali-rolling:latest
 
 LABEL description="AI Agent Penetration Testing Environment with Comprehensive Automated Tools"
@@ -31,6 +43,14 @@ RUN apt-get update && \
     apt-get update && \
     apt-get upgrade -y
 
+# SECURITY: passwordless full sudo lets a prompt-injected agent become root
+# inside the sandbox. It is retained deliberately — the entrypoint needs it
+# (uid remap, update-ca-certificates, proxy config) and several tools need raw
+# sockets/root — but the escalation is meant to be contained by the docker
+# `no-new-privileges` security-opt (see strix/runtime/docker_client.py), which
+# neuters setuid sudo. Note that flag is currently opt-in because enabling it
+# also disables the entrypoint's own sudo; removing that dependency is the
+# prerequisite to making NOPASSWD sudo safe to keep.
 RUN useradd -m -s /bin/bash pentester && \
     usermod -aG sudo pentester && \
     echo "pentester ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers && \
@@ -63,28 +83,18 @@ RUN apt-get update && \
 
 RUN setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
 
-USER pentester
-RUN openssl ecparam -name prime256v1 -genkey -noout -out /app/certs/ca.key && \
-    openssl req -x509 -new -key /app/certs/ca.key \
-    -out /app/certs/ca.crt \
-    -days 3650 \
-    -subj "/C=US/ST=CA/O=Security Testing/CN=Testing Root CA" \
-    -addext "basicConstraints=critical,CA:TRUE" \
-    -addext "keyUsage=critical,digitalSignature,keyEncipherment,keyCertSign" && \
-    openssl pkcs12 -export \
-    -out /app/certs/ca.p12 \
-    -inkey /app/certs/ca.key \
-    -in /app/certs/ca.crt \
-    -passout pass:"" \
-    -name "Testing Root CA" && \
-    chmod 644 /app/certs/ca.crt && \
-    chmod 600 /app/certs/ca.key && \
-    chmod 600 /app/certs/ca.p12
+# SECURITY: the MITM CA (ca.key/ca.crt/ca.p12) is deliberately NOT generated at
+# image build time. Baking it in would ship one shared CA private key inside the
+# published image (ghcr.io/usestrix/strix-sandbox); every container that pulls
+# the image would sign all intercepted TLS with the same key, so a single leaked
+# key lets anyone forge trusted certificates for every Strix user's traffic.
+# The CA is instead generated fresh, per container start, in
+# containers/docker-entrypoint.sh — before caido-cli imports it, and before the
+# system + nssdb trust steps. The empty PKCS#12 password is also dropped there in
+# favour of a random per-container password. The /app/certs dir is created (and
+# chown'd to pentester) higher up so the runtime entrypoint can write into it.
 
 USER root
-RUN cp /app/certs/ca.crt /usr/local/share/ca-certificates/ca.crt && \
-    update-ca-certificates
-
 RUN curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
 
 USER pentester
@@ -162,11 +172,18 @@ RUN set -eux; \
     mv "${TMP_CFG}" "${TS_CONFIG}"
 
 WORKDIR /home/pentester/tools
-RUN git clone https://github.com/aravind0x7/JS-Snooper.git && \
+# SECURITY / supply chain: these clone personal GitHub repos at HEAD of the
+# default branch, so whatever the owner (or an account takeover) pushes is
+# executed with the agent's privileges on the next build — no pin, no review.
+# `--depth 1` limits history fetched but does NOT pin the code. TODO: pin each
+# to a reviewed commit — `git clone <url> <dir> && git -C <dir> checkout <SHA>`
+# — with a SHA verified by reading the repo. Not filled in here because a SHA
+# must not be fabricated; the shallow clone keeps current behaviour meanwhile.
+RUN git clone --depth 1 https://github.com/aravind0x7/JS-Snooper.git && \
     chmod +x JS-Snooper/js_snooper.sh && \
-    git clone https://github.com/xchopath/jsniper.sh.git && \
+    git clone --depth 1 https://github.com/xchopath/jsniper.sh.git && \
     chmod +x jsniper.sh/jsniper.sh && \
-    git clone https://github.com/ticarpi/jwt_tool.git && \
+    git clone --depth 1 https://github.com/ticarpi/jwt_tool.git && \
     chmod +x jwt_tool/jwt_tool.py
 
 USER root
@@ -176,6 +193,11 @@ USER root
 # overwrite a root-owned binary under /usr/local/bin, which otherwise fails with
 # "cannot move binary" and aborts the scan. Pin the initial version for
 # reproducible builds; self-update then pulls fresh detectors at runtime.
+# SECURITY / supply chain: that runtime self-update replaces this pinned,
+# reviewed binary with whatever is newest upstream, at scan time and outside any
+# build review. If reproducibility/integrity is preferred over fresh detectors,
+# invoke trufflehog with `--no-update` at the call site (see the proxy/tool
+# runner, outside this Dockerfile) to keep the pinned binary below.
 ARG TRUFFLEHOG_VERSION=3.95.9
 RUN curl -sSfL https://raw.githubusercontent.com/trufflesecurity/trufflehog/main/scripts/install.sh | sh -s -- -b /home/pentester/.local/bin "v${TRUFFLEHOG_VERSION}" && \
     chown -R pentester:pentester /home/pentester/.local
