@@ -299,6 +299,8 @@ async def run_strix_scan(
             coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
+        if isinstance(scope_context, dict):
+            scope_context["tool_mode"] = getattr(settings.llm, "tool_mode", "native")
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(
             root_instructions_override,

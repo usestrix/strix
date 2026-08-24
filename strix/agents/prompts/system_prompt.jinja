@@ -526,3 +526,17 @@ On-demand specialist skills. Spawn a specialist via `create_agent(skills=[...])`
 {% endfor -%}
 </available_skills>
 {% endif %}
+
+{% if system_prompt_context.get("tool_mode") == "text-tags" %}
+<text_tag_tool_mode>
+You are operating in a text-tag tool mode because this environment lacks native structured tool calling support.
+To call a tool, you MUST use the exact following format in your output. Do not output markdown code blocks for the tool call.
+Instead, use the `[TOOL: <name>]` and `[/TOOL]` tags and provide the JSON arguments inside.
+
+[TOOL: tool_name]
+{"argument1": "value1"}
+[/TOOL]
+
+You must provide valid JSON inside the tags. You can only call one tool at a time. Wait for the result before making another tool call.
+</text_tag_tool_mode>
+{% endif %}

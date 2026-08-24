@@ -445,6 +445,137 @@ def _response_usage(usage: Usage | None) -> ResponseUsage | None:
     )
 
 
+class _TextTagDispatchModel(Model):
+    """Fallback dispatch mode for models that fail to emit structured tool_calls.
+    
+    Extracts [TOOL: name] ... [/TOOL] text tags from the response output and
+    synthesizes ResponseFunctionToolCall instances so the SDK can execute them.
+    """
+
+    def __init__(self, inner: Model) -> None:
+        self._inner = inner
+
+    async def close(self) -> None:
+        await self._inner.close()
+
+    def get_retry_advice(self, request: ModelRetryAdviceRequest) -> ModelRetryAdvice | None:
+        return self._inner.get_retry_advice(request)
+
+    async def get_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> ModelResponse:
+        import re
+        import uuid
+        import json
+        from agents.items import ResponseFunctionToolCall
+
+        # We need the inner get_response first
+        response = await self._inner.get_response(
+            system_instructions,
+            input,
+            model_settings,
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )
+
+        TEXT_TAG_PATTERN = re.compile(r"\[TOOL:\s*([^\]]+)\](.*?)\[/TOOL\]", re.DOTALL | re.IGNORECASE)
+        new_output = []
+
+        for item in response.output:
+            if getattr(item, "type", None) == "message":
+                raw_content = getattr(item, "content", "")
+                
+                if isinstance(raw_content, list):
+                    content = ""
+                    for part in raw_content:
+                        if isinstance(part, str):
+                            content += part
+                        elif isinstance(part, dict) and "text" in part:
+                            content += part["text"]
+                        elif hasattr(part, "text"):
+                            content += part.text
+                else:
+                    content = str(raw_content) if raw_content else ""
+                    
+                if content and "[TOOL:" in content:
+                    matches = list(TEXT_TAG_PATTERN.finditer(content))
+                    if matches:
+                        clean_content = TEXT_TAG_PATTERN.sub("", content).strip()
+                        if clean_content:
+                            try:
+                                item.content = clean_content
+                            except AttributeError:
+                                if hasattr(item, "raw_item") and hasattr(item.raw_item, "content"):
+                                    item.raw_item.content = clean_content
+                            new_output.append(item)
+                        for match in matches:
+                            tool_name = match.group(1).strip()
+                            tool_args = match.group(2).strip()
+                            # Check if the args are valid JSON, otherwise it will fail gracefully later
+                            try:
+                                json.loads(tool_args)
+                            except ValueError:
+                                pass
+
+                            tool_call = ResponseFunctionToolCall(
+                                id=uuid.uuid4().hex[:8],
+                                name=tool_name,
+                                arguments=tool_args,
+                                caller="agent",
+                            )
+                            new_output.append(tool_call)
+                        continue
+            new_output.append(item)
+
+        response.output = new_output
+        return response
+
+    async def stream_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> AsyncIterator[TResponseStreamEvent]:
+        # Text-tag parsing over a stream is complex; delegate to get_response like _NonStreamingModel
+        response = await self.get_response(
+            system_instructions,
+            input,
+            model_settings,
+            tools,
+            output_schema,
+            handoffs,
+            tracing,
+            previous_response_id=previous_response_id,
+            conversation_id=conversation_id,
+            prompt=prompt,
+        )
+        yield _completed_stream_event(response, getattr(self._inner, "model", None))
+
+
 class StrixProvider(MultiProvider):
     """Route any non-OpenAI prefix through LiteLLM with the prefix preserved,
     so users type ``deepseek/deepseek-chat`` rather than
@@ -483,7 +614,9 @@ class StrixProvider(MultiProvider):
             )
         else:
             model = super().get_model(model_name)
-            if llm.disable_streaming:
+            if getattr(llm, "tool_mode", "native") == "text-tags":
+                model = _TextTagDispatchModel(model)
+            if llm.disable_streaming or getattr(llm, "tool_mode", "native") == "text-tags":
                 model = _NonStreamingModel(model)
                 # The wrapper emits its single event only once the whole request
                 # is done, so an idle gap is meaningless here; the request
