@@ -320,6 +320,30 @@ strix auth status             # show the active sign-in
 strix auth logout             # forget the sign-in
 ```
 
+#### Connect your own MCP servers
+
+Strix can connect to Model Context Protocol (MCP) servers you list and expose their tools to the agent during a run. Create `~/.strix/mcp-servers.json` with a JSON list of servers. Each entry is either a local `stdio` server that Strix launches as a subprocess, or a remote `http` server:
+
+```json
+[
+  {
+    "name": "local_fs",
+    "transport": "stdio",
+    "command": "npx",
+    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
+  },
+  {
+    "name": "github",
+    "transport": "http",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "auth": { "kind": "bearer", "token": "your-token" },
+    "allowed_tools": ["list_issues"]
+  }
+]
+```
+
+Each server's tools are namespaced by `name` (for example `local_fs_read_file`). Omit `allowed_tools` to expose every tool the server offers, or set it to a list to restrict which tools the agent can call. The file is optional, and a server that fails to connect is skipped without failing the run. You can point Strix at a different file with `STRIX_MCP_CONFIG`.
+
 **Recommended models for best results:**
 
 - [OpenAI GPT-5.4](https://openai.com/api/) - `openai/gpt-5.4`

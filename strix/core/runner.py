@@ -62,11 +62,13 @@ from strix.tools.output_store import (
 
 
 if TYPE_CHECKING:
+    from agents.mcp import MCPServer
     from agents.memory import SQLiteSession
     from agents.result import RunResultBase
 
     from strix.runtime.status import StatusSink
     from strix.safety.types import SafetyApprovalCallback
+    from strix.tools.mcp import ConnectedMcpServer
 
 
 logger = logging.getLogger(__name__)
@@ -141,6 +143,48 @@ def _validate_resume_safety_mode(run_dir: Path, requested: SafetyMode) -> None:
             f"Cannot change safety mode while resuming: run uses {raw_persisted!r}, "
             f"request uses {requested!r}"
         )
+
+
+def _mcp_startup_summary(connections: list[ConnectedMcpServer]) -> str:
+    """One user-facing line summarizing the MCP servers that connected."""
+    server_count = len(connections)
+    tool_count = sum(c.tool_count for c in connections)
+    servers_word = "server" if server_count == 1 else "servers"
+    tools_word = "tool" if tool_count == 1 else "tools"
+    names = ", ".join(c.name for c in connections)
+    return f"MCP: connected {server_count} {servers_word} ({tool_count} {tools_word}): {names}"
+
+
+def _record_mcp_connections(connections: list[ConnectedMcpServer]) -> None:
+    """Record which MCP servers this run connected, for the interfaces.
+
+    A server's tools are offered to the model under a name built from the
+    connection name and the tool's own name, which cannot be split back apart, so
+    the TUI and the run viewer need the names to match a tool call against before
+    they can show which server it went out to. Kept on the run record because the
+    viewer reads a finished run from disk.
+    """
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    report_state.record_mcp_connections([connection.name for connection in connections])
+
+
+def _mcp_connection_notes(connections: list[ConnectedMcpServer]) -> str | None:
+    """A block describing the connections the user left notes on, for the agent.
+
+    Only connections with notes are listed, so the note describes the connection
+    once rather than being repeated onto every tool. Returns ``None`` when no
+    connection has notes.
+    """
+    noted = [(c.name, c.notes) for c in connections if c.notes]
+    if not noted:
+        return None
+    lines = "\n".join(f"- `{name}.*` tools: {notes}" for name, notes in noted)
+    return (
+        "The user connected these MCP servers for this run and left notes on how "
+        f"to use each:\n{lines}"
+    )
 
 
 def _merge_root_prompt_context(
@@ -355,6 +399,7 @@ async def run_strix_scan(
     configure_spill_writer(_spill_to_workspace)
 
     sessions_to_close: list[SQLiteSession] = []
+    mcp_servers: list[MCPServer] = []
 
     try:
         targets = scan_config.get("targets") or []
@@ -424,6 +469,27 @@ async def run_strix_scan(
             interactive=interactive,
             system_prompt_context=root_context,
         )
+
+        # Connect any MCP servers the user listed in ~/.strix/mcp-servers.json and
+        # register their tools before the agent is built. Fail-open: a missing
+        # config, or a server that will not connect, must never break a run.
+        from strix.tools.mcp import connect_mcp_servers, load_user_mcp_configs
+
+        try:
+            user_mcp_configs = load_user_mcp_configs()
+            if user_mcp_configs:
+                connections = await connect_mcp_servers(user_mcp_configs)
+                mcp_servers = [c.server for c in connections]
+                # Recorded even when nothing connected, so a resumed run does not
+                # keep attributing tool calls to servers it no longer has.
+                _record_mcp_connections(connections)
+                if connections:
+                    report(_mcp_startup_summary(connections))
+                    notes_block = _mcp_connection_notes(connections)
+                    if notes_block:
+                        root_task = f"{root_task}\n\n{notes_block}"
+        except Exception:
+            logger.exception("Failed to connect user MCP servers; continuing without them")
 
         root_agent = build_strix_agent(
             name="Root Agent",
@@ -606,6 +672,9 @@ async def run_strix_scan(
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()
+        for mcp_server in mcp_servers:
+            with contextlib.suppress(Exception):
+                await mcp_server.cleanup()  # type: ignore[no-untyped-call]
         with contextlib.suppress(Exception):
             await coordinator._maybe_snapshot()
         if cleanup_on_exit:

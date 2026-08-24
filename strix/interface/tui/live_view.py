@@ -8,12 +8,17 @@ from typing import TYPE_CHECKING, Any
 
 
 if TYPE_CHECKING:
+    from collections.abc import Iterable
     from pathlib import Path
 
 from agents.tool import ToolOutputImage
 
 from strix.core.paths import runtime_state_dir
 from strix.interface.tui.history import load_session_history
+
+# Imported from the naming module rather than the mcp package so a projection
+# never pulls in the MCP client and the agents SDK behind it.
+from strix.tools.mcp.naming import resolve_mcp_tool
 
 
 class TuiLiveView:
@@ -26,6 +31,27 @@ class TuiLiveView:
         self._user_instruction: str | None = None
         self._user_instruction_at: str | None = None
         self._user_instruction_shown = False
+        self._mcp_connections: tuple[str, ...] = ()
+
+    def set_mcp_connections(self, names: Iterable[str]) -> None:
+        """The MCP servers this run connected, so its tool calls can name theirs.
+
+        A server's tools are offered to the model under a name built from the
+        connection name and the tool's own name. That name cannot be split back
+        apart on its own, so tool calls are matched against these names instead.
+        """
+        self._mcp_connections = tuple(str(name) for name in names)
+
+    def _mcp_tool_fields(self, tool_name: str) -> dict[str, str]:
+        """Event fields naming the MCP server a tool call went out to, if any.
+
+        Empty for every built-in tool, which is what tells an interface to render
+        the call as one of its own rather than as a call to a user's server.
+        """
+        origin = resolve_mcp_tool(tool_name, self._mcp_connections)
+        if origin is None:
+            return {}
+        return {"mcp_connection": origin.connection, "mcp_tool": origin.tool}
 
     def set_user_instruction(self, text: str | None, *, timestamp: str | None = None) -> None:
         """Open the transcript with what the user asked for.
@@ -72,8 +98,9 @@ class TuiLiveView:
 
     def hydrate_from_run_dir(self, run_dir: Path) -> None:
         # Armed before the agents are added so the root agent's arrival puts the
-        # user's opening message ahead of the replayed history.
-        self._load_user_instruction(run_dir)
+        # user's opening message ahead of the replayed history, and before the
+        # history is replayed so its MCP tool calls are attributed too.
+        self._load_run_record(run_dir)
         state_dir = runtime_state_dir(run_dir)
         agents_path = state_dir / "agents.json"
         if not agents_path.exists():
@@ -100,14 +127,17 @@ class TuiLiveView:
         self.flush_user_instruction()
         self._hydrate_sdk_session_history(run_dir, statuses.keys())
 
-    def _load_user_instruction(self, run_dir: Path) -> None:
-        """Take the user's opening message from the run record, if it has one."""
+    def _load_run_record(self, run_dir: Path) -> None:
+        """Take the user's opening message and the run's MCP servers off the record."""
         try:
             record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             return
         if not isinstance(record, dict):
             return
+        connections = record.get("mcp_connections")
+        if isinstance(connections, list):
+            self.set_mcp_connections(name for name in connections if isinstance(name, str))
         instruction = record.get("user_instruction")
         if not isinstance(instruction, str):
             return
@@ -318,6 +348,7 @@ class TuiLiveView:
             "status": "running",
             "agent_id": agent_id,
             "call_id": call_id,
+            **self._mcp_tool_fields(call["tool_name"]),
         }
         if existing is None:
             event = self._append_event(agent_id, "tool", tool_data, timestamp=timestamp)
@@ -349,6 +380,7 @@ class TuiLiveView:
                     "status": "completed",
                     "agent_id": agent_id,
                     "call_id": call_id,
+                    **self._mcp_tool_fields(output["tool_name"]),
                 },
                 timestamp=timestamp,
             )

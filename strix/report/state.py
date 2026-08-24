@@ -405,6 +405,18 @@ class ReportState:
         posthog.end(self, exit_reason="finished_by_tool")
         scarf.end(self, exit_reason="finished_by_tool")
 
+    def record_mcp_connections(self, names: list[str]) -> None:
+        """Note the MCP servers this run connected, and persist it.
+
+        Saved as soon as the run connects rather than at the end, so an interface
+        reading the record mid-run can already attribute a tool call to the
+        server it went out to.
+        """
+        if self.run_record.get("mcp_connections") == names:
+            return
+        self.run_record["mcp_connections"] = names
+        self.save_run_data()
+
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config
         self.run_record["status"] = "running"

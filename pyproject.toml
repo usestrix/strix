@@ -243,6 +243,8 @@ ignore = [
 "tests/test_stream_idle_timeout.py" = ["N802", "SLF001"]
 "tests/test_unknown_tool_recovery.py" = ["N802"]
 "tests/test_report_pdf.py" = ["S105", "S106"]
+# Fake MCP server matches the SDK's MCPServer signature; its args are unused.
+"tests/test_mcp_client.py" = ["S105", "S106", "ARG002"]
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
 # circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.
 "strix/interface/viewer/server.py" = ["N802", "PLC0415"]
