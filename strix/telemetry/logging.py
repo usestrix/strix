@@ -116,6 +116,58 @@ def _silence_urllib3_finalizer_noise() -> None:
     sys.unraisablehook = hook
 
 
+_DEBUG_ENV_TRUTHY = frozenset({"1", "true", "yes", "on"})
+_PREFLIGHT_HANDLER_TAG = "_strix_preflight_handler"
+
+
+def debug_logging_enabled(*, debug: bool | None = None) -> bool:
+    """Resolve whether Strix debug logging is on.
+
+    ``None`` (default) reads ``STRIX_DEBUG``: ``1`` / ``true`` / ``yes`` /
+    ``on`` (case-insensitive) enables debug.
+    """
+    if debug is not None:
+        return debug
+    return (os.environ.get("STRIX_DEBUG") or "").strip().lower() in _DEBUG_ENV_TRUTHY
+
+
+def attach_preflight_logging(*, debug: bool | None = None) -> None:
+    """Attach a stderr-only handler so LLM preflight logs are visible early.
+
+    ``warm_up_llm`` runs before ``setup_scan_logging`` (which needs a run
+    directory). Without this, ``STRIX_DEBUG=1`` still produces no output for
+    preflight failures.
+    """
+    configure_dependency_logging()
+    enabled = debug_logging_enabled(debug=debug)
+    level = logging.DEBUG if enabled else logging.ERROR
+
+    formatter = logging.Formatter(_FORMAT, datefmt=_DATEFMT)
+    context_filter = _StrixContextFilter()
+
+    stream_handler = logging.StreamHandler()
+    stream_handler.setLevel(level)
+    stream_handler.setFormatter(formatter)
+    stream_handler.addFilter(context_filter)
+    stream_handler.addFilter(_StdoutQuietFilter())
+    setattr(stream_handler, _PREFLIGHT_HANDLER_TAG, True)
+
+    for name in _TRACKED_ROOTS:
+        tracked = logging.getLogger(name)
+        # Replace a previous preflight handler so repeated calls stay idempotent.
+        for handler in list(tracked.handlers):
+            if getattr(handler, _PREFLIGHT_HANDLER_TAG, False):
+                tracked.removeHandler(handler)
+                with contextlib.suppress(Exception):
+                    handler.close()
+        tracked.setLevel(logging.DEBUG)
+        tracked.addHandler(stream_handler)
+        tracked.propagate = False
+
+    for name in _NOISY_LIBS:
+        logging.getLogger(name).setLevel(logging.WARNING)
+
+
 def setup_scan_logging(run_dir: Path, *, debug: bool | None = None) -> Callable[[], None]:
     """Attach scan-scoped handlers; return a teardown callable.
 
@@ -134,13 +186,7 @@ def setup_scan_logging(run_dir: Path, *, debug: bool | None = None) -> Callable[
     """
     configure_dependency_logging()
 
-    if debug is None:
-        debug = (os.environ.get("STRIX_DEBUG") or "").strip().lower() in {
-            "1",
-            "true",
-            "yes",
-            "on",
-        }
+    debug = debug_logging_enabled(debug=debug)
 
     run_dir.mkdir(parents=True, exist_ok=True)
     log_path = run_dir / "strix.log"

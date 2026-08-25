@@ -6,6 +6,7 @@ Strix Agent Interface
 import argparse
 import asyncio
 import contextlib
+import logging
 import os
 import sys
 from pathlib import Path
@@ -42,7 +43,23 @@ from strix.interface.utils import (
     build_final_stats_text,
 )
 from strix.telemetry import posthog, scarf
-from strix.telemetry.logging import configure_dependency_logging
+from strix.telemetry.logging import (
+    attach_preflight_logging,
+    configure_dependency_logging,
+    debug_logging_enabled,
+)
+
+
+# Frozen (PyInstaller) binaries need the bundled certifi CA path exported so
+# httpx/requests verify TLS against a real cacert.pem inside the archive.
+# The PyInstaller runtime hook covers the official build; this is an extra
+# safety net for any frozen entry that loads this module.
+if getattr(sys, "frozen", False):
+    import certifi
+
+    _ca_bundle = certifi.where()
+    os.environ.setdefault("SSL_CERT_FILE", _ca_bundle)
+    os.environ.setdefault("REQUESTS_CA_BUNDLE", _ca_bundle)
 
 
 BEDROCK_MODEL_PREFIX = "bedrock/"
@@ -55,9 +72,6 @@ VERTEX_MISSING_MODULE_ERROR = "No module named 'google"
 VERTEX_EXTRA_HINT = (
     'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
 )
-
-
-import logging  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
@@ -353,16 +367,30 @@ def _print_error_panel(title: str, message: str) -> None:
     console.print()
 
 
+def _format_connection_error_detail(exc: BaseException) -> str:
+    """Return the user-facing error detail for a model connection failure.
+
+    With ``STRIX_DEBUG`` enabled, include the full ``__cause__`` /
+    ``__context__`` chain so wrapped TLS failures (e.g.
+    ``SSLCertVerificationError`` under litellm/httpx ``Connection error``)
+    are visible.
+    """
+    if debug_logging_enabled():
+        return " | ".join(_exception_messages(exc))
+    return str(exc)
+
+
 def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
     console = Console()
     error_text = Text()
+    detail = _format_connection_error_detail(exc)
     sub_hint = _subscription_error_hint(exc)
     if sub_hint is not None:
         border_style = "yellow"
         error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
         error_text.append("\n\n", style="white")
         error_text.append(f"{sub_hint}\n", style="white")
-        error_text.append(f"\nDetails: {exc}", style="dim white")
+        error_text.append(f"\nDetails: {detail}", style="dim white")
     else:
         border_style = "red"
         error_text.append("LLM CONNECTION FAILED", style="bold red")
@@ -372,7 +400,7 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
         hint = _provider_import_hint(exc, model_name)
         if hint is not None:
             error_text.append(f"\n{hint}\n", style="bold yellow")
-        error_text.append(f"\nError: {exc}", style="dim white")
+        error_text.append(f"\nError: {detail}", style="dim white")
 
     panel = Panel(
         error_text,
@@ -396,6 +424,9 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
     validate_environment()
     if not args.non_interactive:
         return
+    # Preflight runs before prepare_run()/setup_scan_logging(), so attach a
+    # stderr handler now or STRIX_DEBUG=1 never shows warm-up failures.
+    attach_preflight_logging()
     try:
         asyncio.run(warm_up_llm(show_model_warning=True))
     except ModelConnectionError as exc:

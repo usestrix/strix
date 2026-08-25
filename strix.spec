@@ -40,6 +40,9 @@ datas += collect_data_files('tiktoken')
 datas += collect_data_files('tiktoken_ext')
 
 datas += collect_data_files('litellm')
+# Frozen binaries need certifi's CA bundle on disk; without it TLS to LLM
+# providers fails with a generic httpx/litellm "Connection error".
+datas += collect_data_files('certifi')
 
 datas += collect_data_files('agents', includes=['**/*.md', '**/*.jinja', '**/*.json'])
 
@@ -251,7 +254,7 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
-    runtime_hooks=[],
+    runtime_hooks=[str(project_root / 'hooks' / 'rthooks' / 'pyi_rth_certifi.py')],
     excludes=excludes,
     noarchive=False,
     optimize=0,
