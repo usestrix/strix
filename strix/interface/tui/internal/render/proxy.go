@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ---------------------------------------------------------------------------
@@ -28,10 +29,7 @@ func proxyStatusStyle(code int) lipgloss.Style {
 }
 
 func ptrunc(s string, max int) string {
-	if len(s) > max {
-		return s[:max-3] + "..."
-	}
-	return s
+	return ansi.Truncate(s, max, "...")
 }
 
 func psanitize(s string, max int) string {
