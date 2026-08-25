@@ -658,6 +658,43 @@ async def test_send_queues_without_session_and_drains_on_consume(tmp_path: Any) 
 
 
 @pytest.mark.asyncio
+async def test_consume_pending_restores_mailbox_on_session_write_failure(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Regression test for https://github.com/usestrix/strix/issues/1107
+
+    If session.add_items fails, the drained message must not be lost: it should
+    be restored to the mailbox (so a retry can pick it up) rather than reported
+    as delivered via a positive count.
+    """
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
+
+    assert await coordinator.send("root", {"from": "user", "content": "hello"}) is True
+
+    async def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("db is locked")
+
+    monkeypatch.setattr(session, "add_items", _boom)
+
+    count, items = await coordinator.consume_pending("root", include_items=True)
+    assert (count, items) == (0, [])
+
+    runtime = coordinator.runtimes["root"]
+    assert runtime.mailbox == [{"from": "user", "content": "hello"}]
+    assert coordinator.pending_counts["root"] == 1
+
+    monkeypatch.undo()
+    count, items = await coordinator.consume_pending("root", include_items=True)
+    assert count == 1
+    assert items[0]["content"] == "hello"
+    session.close()
+
+
+@pytest.mark.asyncio
 async def test_error_parked_agent_only_released_by_user_message(tmp_path: Any) -> None:
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
