@@ -393,6 +393,15 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
     preflight and run preparation happen inside the TUI so the interface
     paints immediately instead of waiting on a model round trip.
     """
+    # Pre-import the heavy scan dependencies once, on the confirmed scan path.
+    # This is deliberately not done before argument parsing: warm-up is
+    # synchronous (see strix.llm.warmup), so running it earlier would make cold
+    # --help/--version/--update and interactive setup wait on the full scan
+    # import graph for no benefit.
+    from strix.llm.warmup import start_import_warmup
+
+    start_import_warmup()
+
     validate_environment()
     if not args.non_interactive:
         return
@@ -430,10 +439,6 @@ def main() -> None:
         from strix.interface.auth_cli import run_auth
 
         sys.exit(run_auth(sys.argv[2:]))
-
-    from strix.llm.warmup import start_import_warmup
-
-    start_import_warmup()
 
     args = parse_arguments()
 
