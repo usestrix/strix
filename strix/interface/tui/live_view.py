@@ -536,6 +536,8 @@ def _image_url_from_result(result: Any) -> str | None:
 
 
 def _tool_status_from_result(result: Any) -> str:
+    if isinstance(result, dict) and result.get("status") == "blocked":
+        return "blocked"
     if isinstance(result, dict) and result.get("success") is False:
         return "failed"
     return "completed"

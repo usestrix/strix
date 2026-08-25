@@ -149,6 +149,10 @@ func (m Model) selectedAgentCanStop() bool {
 	}
 }
 
+// pendingApprovalIcon overlays an agent's status glyph while it is blocked on a
+// safety approval, matching the yellow owner highlight used elsewhere.
+const pendingApprovalIcon = "🟡"
+
 func (m Model) agentsView(width, height int) string {
 	// The tree's root ("Agents") is hidden (show_root = False), so no header row
 	// is drawn — only the agent nodes.
@@ -160,6 +164,12 @@ func (m Model) agentsView(width, height int) string {
 	for _, entry := range entries[start:end] {
 		agent := m.snapshot.Agents[entry.index]
 		icon := statusIcons[agent.Status]
+		for _, pending := range m.snapshot.PendingApprovals {
+			if pending.RequestID != "" && pending.AgentID == agent.ID {
+				icon = pendingApprovalIcon
+				break
+			}
+		}
 		if icon == "" {
 			icon = "○"
 		}

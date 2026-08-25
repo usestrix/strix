@@ -9,6 +9,30 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+SafetyMode = Literal["off", "guarded"]
+SAFETY_MODES: tuple[SafetyMode, ...] = ("off", "guarded")
+# The mode a scan runs in unless the operator opts out with
+# --dangerously-disable-safety. Reads of a missing safety_mode key default here.
+DEFAULT_SAFETY_MODE: SafetyMode = "guarded"
+
+ResumeSafetyModeError = Literal["observe_removed", "invalid", "changed"]
+
+
+def resume_safety_mode_error(persisted: str, requested: SafetyMode) -> ResumeSafetyModeError | None:
+    """Why a persisted run's safety mode blocks resuming as ``requested``, or None.
+
+    One source of truth for the resume policy, shared by the CLI pre-check and the
+    runner's defense-in-depth check so the two cannot drift. Each caller formats its
+    own message (the CLI further splits "changed" by direction).
+    """
+    if persisted == "observe":
+        return "observe_removed"
+    if persisted not in SAFETY_MODES:
+        return "invalid"
+    if persisted != requested:
+        return "changed"
+    return None
+
 
 DEFAULT_MAX_TURNS = 500
 
@@ -114,6 +138,58 @@ class RuntimeSettings(BaseSettings):
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 
 
+class SafetySettings(BaseSettings):
+    """Pre-execution action review and isolated inspection settings."""
+
+    model_config = _BASE_CONFIG
+
+    model: str | None = Field(default=None, alias="STRIX_SAFETY_MODEL")
+    reasoning_effort: ReasoningEffort | None = Field(
+        default="low",
+        alias="STRIX_SAFETY_REASONING_EFFORT",
+    )
+    timeout: int = Field(default=60, gt=0, alias="STRIX_SAFETY_TIMEOUT")
+    max_output_tokens: int = Field(
+        default=8192,
+        ge=1024,
+        alias="STRIX_SAFETY_MAX_OUTPUT_TOKENS",
+    )
+    max_input_chars: int = Field(
+        default=240_000,
+        ge=16_384,
+        alias="STRIX_SAFETY_MAX_INPUT_CHARS",
+    )
+    max_artifact_bytes: int = Field(
+        default=256 * 1024,
+        ge=4096,
+        alias="STRIX_SAFETY_MAX_ARTIFACT_BYTES",
+    )
+    max_total_artifact_bytes: int = Field(
+        default=4 * 1024 * 1024,
+        ge=4096,
+        alias="STRIX_SAFETY_MAX_TOTAL_ARTIFACT_BYTES",
+    )
+    max_dependencies: int = Field(
+        default=32,
+        ge=1,
+        alias="STRIX_SAFETY_MAX_DEPENDENCIES",
+    )
+    inspection_timeout: int = Field(
+        default=5,
+        gt=0,
+        alias="STRIX_SAFETY_INSPECTION_TIMEOUT",
+    )
+    inspection_output_bytes: int = Field(
+        default=16 * 1024,
+        ge=1024,
+        alias="STRIX_SAFETY_INSPECTION_OUTPUT_BYTES",
+    )
+    inspection_image: str | None = Field(
+        default=None,
+        alias="STRIX_SAFETY_INSPECTION_IMAGE",
+    )
+
+
 class TelemetrySettings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -150,6 +226,7 @@ class Settings(BaseSettings):
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
+    safety: SafetySettings = Field(default_factory=SafetySettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)

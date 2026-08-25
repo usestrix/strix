@@ -128,13 +128,13 @@ func (c *Client) Read() (protocol.Envelope, error) {
 	if err != nil {
 		return protocol.Envelope{}, err
 	}
-	if envelope.Type != "collection_bootstrap" && envelope.Type != "collection_delta" && size > maxCommandBytes {
+	if envelope.Type != "collection_bootstrap" && envelope.Type != "collection_delta" && envelope.Type != "state" && size > maxCommandBytes {
 		return protocol.Envelope{}, fmt.Errorf("TUI control message exceeds %d bytes", maxCommandBytes)
 	}
 	return envelope, nil
 }
 
-// Handshake validates the exact v3 hello and acknowledges readiness. main calls
+// Handshake validates the exact protocol hello and acknowledges readiness. main calls
 // this before constructing Bubble Tea, so mismatch errors never enter alt screen.
 func (c *Client) Handshake() error {
 	if connection, ok := c.conn.(interface{ SetDeadline(time.Time) error }); ok {
@@ -186,6 +186,14 @@ func (c *Client) sendEnvelope(envelope protocol.Envelope, maximum int) error {
 }
 
 func pendingKey(command string, payload json.RawMessage) string {
+	if command == "safety.resolve" {
+		var request struct {
+			RequestID string `json:"request_id"`
+		}
+		if json.Unmarshal(payload, &request) == nil && request.RequestID != "" {
+			return command + ":" + request.RequestID
+		}
+	}
 	if command == "collection.resync" {
 		return command + ":" + string(payload)
 	}

@@ -195,6 +195,47 @@ func TestClientReadsCollectionFrameLargerThanOneMegabyte(t *testing.T) {
 	}
 }
 
+func TestClientReadsStateFrameLargerThanControlLimit(t *testing.T) {
+	server, connection := net.Pipe()
+	client := &Client{conn: connection}
+	payload, err := json.Marshal(map[string]string{"content": strings.Repeat("x", maxCommandBytes+1024)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(protocol.Envelope{
+		Version: protocol.Version,
+		Type:    "state",
+		Payload: payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writeErr := make(chan error, 1)
+	go func() {
+		defer server.Close()
+		var header [4]byte
+		binary.BigEndian.PutUint32(header[:], uint32(len(raw)))
+		if _, err := server.Write(header[:]); err != nil {
+			writeErr <- err
+			return
+		}
+		_, err := server.Write(raw)
+		writeErr <- err
+	}()
+
+	envelope, err := client.Read()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Type != "state" {
+		t.Fatalf("envelope type = %q", envelope.Type)
+	}
+	if err := <-writeErr; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestConnectFromEnvironmentAuthenticatesTCPTransport(t *testing.T) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

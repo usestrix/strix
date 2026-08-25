@@ -25,6 +25,7 @@
             "pages": [
               "usage/cli",
               "usage/scan-modes",
+              "usage/safety-modes",
               "usage/instructions"
             ]
           },

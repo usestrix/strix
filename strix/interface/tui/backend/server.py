@@ -71,7 +71,7 @@ class TuiBackendServer:
         controller.set_change_callback(self.notify_changed)
 
     async def start(self, connection: socket.socket) -> None:
-        """Negotiate protocol v3 before activating command or state traffic."""
+        """Negotiate the protocol before activating command or state traffic."""
         if self._socket is not None:
             raise RuntimeError("TUI backend is already started")
         connection.setblocking(False)  # noqa: FBT003
@@ -261,7 +261,7 @@ class TuiBackendServer:
         ).encode("utf-8")
         maximum = (
             MAX_COLLECTION_FRAME_BYTES
-            if message.get("type") in {"collection_bootstrap", "collection_delta"}
+            if message.get("type") in {"collection_bootstrap", "collection_delta", "state"}
             else MAX_COMMAND_BYTES
         )
         if len(raw) > maximum:

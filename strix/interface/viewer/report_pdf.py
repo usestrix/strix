@@ -88,7 +88,9 @@ class _NumberedCanvas(pdfcanvas.Canvas):  # type: ignore[misc]  # reportlab base
 
     def showPage(self) -> None:  # noqa: N802 - reportlab API
         self._saved_states.append(dict(self.__dict__))
-        self._startPage()
+        # ReportLab's public stubs omit this internal method used by its
+        # standard two-pass numbered-canvas pattern.
+        self._startPage()  # pyright: ignore[reportAttributeAccessIssue]
 
     def save(self) -> None:
         total = len(self._saved_states)

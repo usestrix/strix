@@ -6,7 +6,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from pydantic import AliasChoices, BaseModel
 
@@ -25,6 +25,27 @@ _DEFAULT_PATH: Path = Path.home() / ".strix" / "cli-config.json"
 _override: Path | None = None
 _cached: Settings | None = None
 
+_REMOVED_SAFETY_MODE = "STRIX_SAFETY_MODE"
+
+
+def _reject_removed_safety_mode(path: Path) -> None:
+    env_keys = {key.upper() for key in os.environ}
+    configured = _REMOVED_SAFETY_MODE in env_keys
+    if not configured and path.exists():
+        try:
+            raw_data: object = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            raw_data = {}
+        data = cast("dict[str, Any]", raw_data) if isinstance(raw_data, dict) else {}
+        raw_env_block: object = data.get("env", {})
+        env_block = cast("dict[str, Any]", raw_env_block) if isinstance(raw_env_block, dict) else {}
+        configured = any(str(key).upper() == _REMOVED_SAFETY_MODE for key in env_block)
+    if configured:
+        raise ValueError(
+            "STRIX_SAFETY_MODE was removed. Safety now defaults to guarded; remove the "
+            "setting and use --dangerously-disable-safety explicitly to opt out for one run."
+        )
+
 
 def load_settings() -> Settings:
     """Resolve settings from env + JSON file + defaults. Memoized.
@@ -34,6 +55,7 @@ def load_settings() -> Settings:
     global _cached  # noqa: PLW0603
     if _cached is None:
         source_path = _override or _DEFAULT_PATH
+        _reject_removed_safety_mode(source_path)
         init_kwargs: dict[str, Any] = _read_json_overrides(source_path)
         _cached = Settings(**init_kwargs)
         logger.debug(
@@ -60,7 +82,7 @@ def persist_current() -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
 
     env_block: dict[str, str] = {}
-    for sub_name in s.model_fields:
+    for sub_name in type(s).model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
             continue
@@ -96,12 +118,16 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
     if not path.exists():
         return {}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        raw_data: object = json.loads(path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, OSError):
         return {}
-    env_block = data.get("env", {}) if isinstance(data, dict) else {}
-    if not isinstance(env_block, dict):
+    if not isinstance(raw_data, dict):
         return {}
+    data = cast("dict[str, Any]", raw_data)
+    raw_env_block: object = data.get("env", {})
+    if not isinstance(raw_env_block, dict):
+        return {}
+    env_block = cast("dict[str, Any]", raw_env_block)
 
     env_block_upper = {str(k).upper(): v for k, v in env_block.items()}
     env_present = {k.upper() for k in os.environ}

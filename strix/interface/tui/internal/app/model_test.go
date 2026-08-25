@@ -1008,6 +1008,43 @@ func TestCrashedAndBudgetPausedAgentStatusParity(t *testing.T) {
 	}
 }
 
+func TestStatusRowShowsPausedWhileAwaitingApproval(t *testing.T) {
+	model := New(nil)
+	model.width = 100
+	model.snapshot.Agents = []protocol.Agent{{ID: "agent-1", Name: "Agent", Status: "running"}}
+	model.snapshot.Events = []protocol.Event{{ID: "e1", AgentID: "agent-1", Type: "reasoning"}}
+
+	running := ansi.Strip(model.statusView(100))
+	if !strings.Contains(running, "stop") {
+		t.Fatalf("a working agent should offer the stop hint: %s", running)
+	}
+
+	model.snapshot.PendingApprovals = approvalSet(approval("approval-1", "Action", "Reason"))
+	paused := ansi.Strip(model.statusView(100))
+	if !strings.Contains(paused, "paused") || !strings.Contains(paused, "awaiting your approval") {
+		t.Fatalf("status should show the agent is paused for approval: %s", paused)
+	}
+	// The stop hint is wrong while a prompt is open (esc denies, not stops).
+	if strings.Contains(paused, "esc") && strings.Contains(paused, "stop") {
+		t.Fatalf("paused status must not keep the misleading esc-stop hint: %s", paused)
+	}
+}
+
+func TestStatusRowShowsHazardFlagWhenSafetyDisabled(t *testing.T) {
+	model := New(nil)
+	model.width = 100
+	model.snapshot.Agents = []protocol.Agent{{ID: "a", Name: "Agent", Status: "running"}}
+
+	if before := ansi.Strip(model.statusView(100)); strings.Contains(before, "review off") {
+		t.Fatalf("hazard flag shown before review was disabled: %s", before)
+	}
+	model.snapshot.SafetyDisabled = true
+	after := ansi.Strip(model.statusView(100))
+	if !strings.Contains(after, "review off") {
+		t.Fatalf("status row lacks the disabled-review hazard flag: %s", after)
+	}
+}
+
 func TestStopDialogAndCommandAreLimitedToActiveAgents(t *testing.T) {
 	tests := []struct {
 		status string

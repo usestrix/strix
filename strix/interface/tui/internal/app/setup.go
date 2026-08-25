@@ -9,6 +9,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/usestrix/strix/tui/internal/protocol"
 	"github.com/usestrix/strix/tui/internal/render"
 )
 
@@ -72,6 +73,47 @@ func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 func (m *Model) answerMountConfirmation(approved bool) tea.Cmd {
 	m.pendingPrompt = ""
 	return send(m.client, "setup.confirm_mount", map[string]any{"approved": approved})
+}
+
+// answerSafetyApproval replies with the exact ID currently projected by the
+// backend. The snapshot, rather than the local click, closes or advances it.
+func (m *Model) answerSafetyApproval(approved bool) tea.Cmd {
+	pending := m.pendingApprovalForSelectedAgent()
+	if pending == nil {
+		return nil
+	}
+	return send(m.client, "safety.resolve", map[string]any{
+		"request_id": pending.RequestID,
+		"approved":   approved,
+	})
+}
+
+// approveAllSafety approves the current request and asks the backend to skip
+// review for the rest of the run, so no further approval prompts appear.
+func (m *Model) approveAllSafety() tea.Cmd {
+	pending := m.pendingApprovalForSelectedAgent()
+	if pending == nil {
+		return nil
+	}
+	return send(m.client, "safety.resolve", map[string]any{
+		"request_id":  pending.RequestID,
+		"approved":    true,
+		"approve_all": true,
+	})
+}
+
+func (m Model) pendingApprovalForSelectedAgent() *protocol.SafetyApproval {
+	selected := m.selectedAgentID()
+	if selected == "" {
+		return nil
+	}
+	for index := range m.snapshot.PendingApprovals {
+		pending := &m.snapshot.PendingApprovals[index]
+		if pending.RequestID != "" && pending.AgentID == selected {
+			return pending
+		}
+	}
+	return nil
 }
 
 func (m Model) hasTarget(candidate string) bool {
@@ -518,5 +560,66 @@ func (m *Model) syncMountPrompt() {
 		m.openModal(modalConfirmMount)
 	case m.snapshot.PendingMount == "" && m.modal == modalConfirmMount:
 		m.closeModal()
+	}
+}
+
+// syncSafetyApprovalPrompt follows backend state so each selected agent exposes
+// its own first request and starts from the fail-closed Deny choice.
+func (m *Model) syncSafetyApprovalPrompt() {
+	for _, approval := range m.snapshot.PendingApprovals {
+		if approval.RequestID != "" && approval.AgentID != "" {
+			m.revealApprovalOwner(approval.AgentID)
+		}
+	}
+	if m.width < 120 && m.pendingApprovalForSelectedAgent() == nil {
+		for _, approval := range m.snapshot.PendingApprovals {
+			for index, agent := range m.snapshot.Agents {
+				if approval.RequestID != "" && agent.ID == approval.AgentID {
+					m.selectedAgent = index
+					m.ensureAgentVisible()
+					m.refreshViewport()
+					break
+				}
+			}
+			if m.pendingApprovalForSelectedAgent() != nil {
+				break
+			}
+		}
+	}
+	pending := m.pendingApprovalForSelectedAgent()
+	if m.snapshot.PendingMount != "" {
+		return
+	}
+	switch {
+	case pending != nil &&
+		(m.modal == modalNone || m.modal == modalSafetyApproval) &&
+		(m.modal != modalSafetyApproval || m.safetyApprovalID != pending.RequestID):
+		m.safetyApprovalID = pending.RequestID
+		// A different action starts collapsed and scrolled to the top.
+		m.safetyApprovalExpanded = false
+		m.safetyApprovalScroll = 0
+		m.openModal(modalSafetyApproval)
+	case pending == nil && m.modal == modalSafetyApproval:
+		m.safetyApprovalID = ""
+		m.safetyApprovalExpanded = false
+		m.safetyApprovalScroll = 0
+		m.closeModal()
+	}
+}
+
+func (m *Model) revealApprovalOwner(agentID string) {
+	if m.collapsedAgents == nil {
+		m.collapsedAgents = map[string]bool{}
+	}
+	parents := make(map[string]string, len(m.snapshot.Agents))
+	for _, agent := range m.snapshot.Agents {
+		if agent.ParentID != nil {
+			parents[agent.ID] = *agent.ParentID
+		}
+	}
+	seen := map[string]bool{}
+	for current := agentID; parents[current] != "" && !seen[current]; current = parents[current] {
+		seen[current] = true
+		m.collapsedAgents[parents[current]] = false
 	}
 }

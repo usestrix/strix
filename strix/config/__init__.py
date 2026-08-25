@@ -22,6 +22,8 @@ from strix.config.settings import (
     IntegrationSettings,
     LlmSettings,
     RuntimeSettings,
+    SafetyMode,
+    SafetySettings,
     Settings,
     TelemetrySettings,
 )
@@ -33,6 +35,8 @@ __all__ = [
     "IntegrationSettings",
     "LlmSettings",
     "RuntimeSettings",
+    "SafetyMode",
+    "SafetySettings",
     "Settings",
     "TelemetrySettings",
     "apply_config_override",

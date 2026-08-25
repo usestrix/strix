@@ -80,8 +80,9 @@ def _to_tool_json(value: Any) -> Any:
         return value.isoformat()
     if is_dataclass(value) and not isinstance(value, type):
         return {k: _to_tool_json(v) for k, v in dataclasses.asdict(value).items()}
-    if hasattr(value, "model_dump"):
-        return _to_tool_json(value.model_dump())
+    model_dump = getattr(value, "model_dump", None)
+    if callable(model_dump):
+        return _to_tool_json(model_dump())
     if isinstance(value, dict):
         return {str(k): _to_tool_json(v) for k, v in value.items()}
     if isinstance(value, list | tuple | set):
@@ -361,6 +362,43 @@ def _format_text_page(content: str, *, page: int, page_size: int) -> dict[str, A
     }
 
 
+async def resolve_effective_request(
+    client: Client, request_id: str, modifications: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Resolve a captured request plus modifications into the exact effective
+    request (``{method, url, headers, body}``) that ``repeat_request`` will send.
+
+    Shared by the tool and the safety layer so the request the reviewer sees is
+    byte-for-byte the request that runs. The caller holds ``_CAIDO_CALL_LOCK``.
+    Returns ``None`` when the captured request cannot be retrieved.
+    """
+    result = await caido_api.get_request_with_client(client, request_id, part="request")
+    if result is None or result.request is None or result.request.raw is None:
+        return None
+    original = result.request
+    raw_str = result.request.raw.decode("utf-8", errors="replace")
+    components = caido_api.parse_raw_request(raw_str)
+    full_url = caido_api.full_url_from_components(original, components, modifications)
+    return caido_api.apply_modifications(components, modifications, full_url)
+
+
+async def resolve_effective_request_for_ctx(
+    ctx: RunContextWrapper, request_id: str, modifications: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Client-managed ``resolve_effective_request`` for callers that hold only the
+    run context (the safety reviewer). Serializes on the shared Caido lock and
+    returns ``None`` when the proxy client is unavailable or the request is gone.
+    """
+    client = await _ctx_client(ctx)
+    if client is None:
+        return None
+
+    async def _resolve(inner: Client) -> dict[str, Any] | None:
+        return await resolve_effective_request(inner, request_id, modifications)
+
+    return await _call(client, _resolve)
+
+
 @function_tool(timeout=120, strict_mode=False)
 async def repeat_request(
     ctx: RunContextWrapper,
@@ -398,14 +436,9 @@ async def repeat_request(
     mods = modifications or {}
 
     async def _do(client: Client) -> dict[str, Any] | None:
-        result = await caido_api.get_request_with_client(client, request_id, part="request")
-        if result is None or result.request.raw is None:
+        modified = await resolve_effective_request(client, request_id, mods)
+        if modified is None:
             return None
-        original = result.request
-        raw_str = result.request.raw.decode("utf-8", errors="replace")
-        components = caido_api.parse_raw_request(raw_str)
-        full_url = caido_api.full_url_from_components(original, components, mods)
-        modified = caido_api.apply_modifications(components, mods, full_url)
         connection, raw = caido_api.build_raw_request(
             method=modified["method"],
             url=modified["url"],

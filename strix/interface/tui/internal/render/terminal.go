@@ -154,6 +154,10 @@ func renderTerminal(prompt string, promptColor lipgloss.Color, command string, r
 	if meta != "" {
 		b.WriteString(Dim().Render("  " + meta))
 	}
+	if status == "blocked" {
+		b.WriteString("\n" + safetyBlockLine(result))
+		return b.String()
+	}
 	if result != nil {
 		appendShellOutput(&b, parseShellResult(result), status)
 	}

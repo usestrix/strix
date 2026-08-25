@@ -33,6 +33,10 @@ _LLM_ENV_KEYS = [
     # RuntimeSettings
     "STRIX_IMAGE",
     "STRIX_RUNTIME_BACKEND",
+    # SafetySettings
+    "STRIX_SAFETY_MODE",
+    "STRIX_SAFETY_MODEL",
+    "STRIX_SAFETY_TIMEOUT",
     # TelemetrySettings
     "STRIX_TELEMETRY",
 ]
@@ -164,7 +168,16 @@ def test_aliases_for_no_alias() -> None:
 def test_apply_override_and_load_settings_round_trip(tmp_path: Path) -> None:
     path = tmp_path / "cli-config.json"
     path.write_text(
-        json.dumps({"env": {"STRIX_LLM": "round-trip-model", "PERPLEXITY_API_KEY": "pk"}}),
+        json.dumps(
+            {
+                "env": {
+                    "STRIX_LLM": "round-trip-model",
+                    "PERPLEXITY_API_KEY": "pk",
+                    "STRIX_SAFETY_MODEL": "openai/safety-model",
+                    "STRIX_SAFETY_TIMEOUT": "12",
+                }
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -173,8 +186,26 @@ def test_apply_override_and_load_settings_round_trip(tmp_path: Path) -> None:
 
     assert settings.llm.model == "round-trip-model"
     assert settings.integrations.perplexity_api_key == "pk"
+    assert settings.safety.model == "openai/safety-model"
+    assert settings.safety.timeout == 12
     # Second call is memoized -> same object.
     assert loader.load_settings() is settings
+
+
+def test_removed_safety_mode_environment_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_SAFETY_MODE", "observe")
+
+    with pytest.raises(ValueError, match="--dangerously-disable-safety"):
+        loader.load_settings()
+
+
+def test_removed_safety_mode_config_is_rejected(tmp_path: Path) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text(json.dumps({"env": {"STRIX_SAFETY_MODE": "off"}}), encoding="utf-8")
+    loader.apply_config_override(path)
+
+    with pytest.raises(ValueError, match="STRIX_SAFETY_MODE was removed"):
+        loader.load_settings()
 
 
 def test_apply_config_override_invalidates_cache(tmp_path: Path) -> None:

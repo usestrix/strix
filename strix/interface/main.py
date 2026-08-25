@@ -433,7 +433,7 @@ def main() -> None:
 
     from strix.llm.warmup import start_import_warmup
 
-    start_import_warmup()
+    import_warmup = start_import_warmup()
 
     args = parse_arguments()
 
@@ -445,6 +445,10 @@ def main() -> None:
 
     check_docker_installed()
     pull_docker_image()
+
+    # Avoid importing SDK submodules while the warm-up thread is still
+    # initializing their parent packages.
+    import_warmup.join()
 
     # In setup mode the TUI collects the target, then runs prepare_run(),
     # warm-up, and telemetry itself once the user starts the scan.

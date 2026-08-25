@@ -7,6 +7,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/usestrix/strix/tui/internal/protocol"
 	"github.com/usestrix/strix/tui/internal/render"
 )
 
@@ -207,6 +208,8 @@ func (m Model) modalView() string {
 		return m.confirmView("🛑 Stop '"+name+"'?", 30, mid, mid)
 	case modalConfirmMount:
 		return m.mountConfirmView()
+	case modalSafetyApproval:
+		return m.safetyApprovalView()
 	case modalVulnerability:
 		if len(m.snapshot.Vulnerabilities) == 0 {
 			return ""
@@ -240,7 +243,163 @@ func (m Model) mountConfirmView() string {
 	title := render.Bold(amber).Render("△ Mount working directory?")
 	body := render.Col(white).Render(truncatePath(dir, width-4)) + "\n" +
 		render.Dim().Render("writable in the sandbox · skip to run without it")
-	return m.cornerPrompt(title, body, width, mountConfirmLabel, mountCancelLabel)
+	return m.cornerPrompt(title, body, width,
+		cornerButton{mountConfirmLabel, amber}, cornerButton{mountCancelLabel, dim})
+}
+
+// safetyApprovalPanel keeps the blocking choice visible without obscuring the
+// live trace. Collapsed it previews the command and reason; "e" expands it to
+// the full, scrollable command and reason. Internal identifiers (the call
+// digest, the agent id, the request id) are deliberately omitted — they are
+// noise to the person deciding. Both untrusted display fields are already
+// sanitized by the backend and are re-clipped here.
+func (m Model) safetyApprovalPanel() string {
+	pending := m.pendingApprovalForSelectedAgent()
+	if pending == nil {
+		return ""
+	}
+	width := min(64, max(28, m.width-4))
+	contentWidth := max(1, width-4)
+	title := render.Bold(amber).Render("△ Safety approval required")
+	body := approvalHeader(pending)
+
+	if !m.safetyApprovalExpanded {
+		body += "\n" + render.Bold(white).Render(truncate(firstLine(pending.Action), contentWidth))
+		if reason := truncate(firstLine(pending.Reason), contentWidth); reason != "" {
+			body += "\n" + render.Dim().Render(reason)
+		}
+		body += "\n" + approvalHint("e", "expand", false, false)
+		return m.cornerPrompt(title, body, width, approvalButtons()...)
+	}
+
+	detail := approvalDetailLines(pending, contentWidth)
+	window, above, below := scrollWindow(detail, m.safetyApprovalScroll, m.approvalViewportHeight())
+	body += "\n" + strings.Join(window, "\n")
+	body += "\n" + approvalHint("e", "collapse", above, below)
+	return m.cornerPrompt(title, body, width, approvalButtons()...)
+}
+
+// approvalButtons are shared by the live panel and the resize fallback.
+// "Approve All" drops the run into dangerous mode — it approves this call and
+// waves through every later one without review — so it is tinted as a hazard.
+func approvalButtons() []cornerButton {
+	return []cornerButton{{"Approve", amber}, {"Deny", dim}, {"Approve All", red}}
+}
+
+// approvalHeader is the one-line risk + tool summary; the risk is colored by
+// severity so a critical action reads as one at a glance.
+func approvalHeader(pending *protocol.SafetyApproval) string {
+	var parts []string
+	if risk := strings.TrimSpace(pending.Risk); risk != "" {
+		parts = append(parts, lipgloss.NewStyle().Bold(true).
+			Foreground(render.SeverityColor(risk)).Render(strings.ToUpper(risk)))
+	}
+	if tool := strings.TrimSpace(pending.ToolName); tool != "" {
+		parts = append(parts, render.Dim().Render(tool))
+	}
+	return strings.Join(parts, render.Dim().Render(" · "))
+}
+
+// approvalDetailLines is the fully wrapped command and reason, one styled line
+// per row so the scroll window can slice it without breaking styling.
+func approvalDetailLines(pending *protocol.SafetyApproval, width int) []string {
+	label := func(s string) string { return render.Bold(mid).Render(s) }
+	command := strings.TrimSpace(pending.Action)
+	if command == "" {
+		command = "(no command)"
+	}
+	lines := []string{label("Command")}
+	for _, line := range strings.Split(wrapBlock(command, width), "\n") {
+		lines = append(lines, render.Bold(white).Render(line))
+	}
+	if reason := strings.TrimSpace(pending.Reason); reason != "" {
+		lines = append(lines, "", label("Why"))
+		for _, line := range strings.Split(wrapBlock(reason, width), "\n") {
+			lines = append(lines, render.Dim().Render(line))
+		}
+	}
+	return lines
+}
+
+// approvalHint renders the key legend under the detail, adding scroll arrows
+// only when there is off-screen content in that direction.
+func approvalHint(key, action string, above, below bool) string {
+	hint := render.Col(dim).Render(key) + render.Dim().Render(" "+action)
+	if above || below {
+		arrows := ""
+		if above {
+			arrows += "↑"
+		}
+		if below {
+			arrows += "↓"
+		}
+		hint = render.Col(dim).Render(arrows) + render.Dim().Render(" scroll · ") + hint
+	}
+	return hint
+}
+
+// approvalViewportHeight is how many detail rows the expanded panel can show
+// while still fitting in the space above the composer.
+func (m Model) approvalViewportHeight() int {
+	statusH := 0
+	if m.statusVisible() {
+		statusH = 1
+	}
+	// Panel chrome around the detail: border (2) + title + header + hint (3) + 1.
+	return max(1, max(6, m.inputTop()-statusH)-6)
+}
+
+// clampApprovalScroll bounds a proposed scroll offset to the detail content.
+func (m Model) clampApprovalScroll(offset int) int {
+	pending := m.pendingApprovalForSelectedAgent()
+	if pending == nil {
+		return 0
+	}
+	contentWidth := max(1, min(64, max(28, m.width-4))-4)
+	maxOffset := max(0, len(approvalDetailLines(pending, contentWidth))-m.approvalViewportHeight())
+	return max(0, min(offset, maxOffset))
+}
+
+func (m Model) safetyApprovalFits() bool {
+	panel := m.safetyApprovalPanel()
+	if panel == "" || m.width <= 0 || m.height <= 0 {
+		return false
+	}
+	_, top, width, height := m.cornerViewBounds(panel)
+	return width <= m.width && top+height <= m.inputTop()
+}
+
+func (m Model) safetyApprovalView() string {
+	panel := m.safetyApprovalPanel()
+	if panel == "" || m.safetyApprovalFits() {
+		return panel
+	}
+	width := min(64, max(28, m.width-4))
+	title := render.Bold(amber).Render("△ Safety approval required")
+	body := render.Dim().Render("Resize the terminal to inspect the complete action.\nApproval is disabled; denial remains available.")
+	return m.cornerPrompt(title, body, width, cornerButton{"Approve", amber}, cornerButton{"Deny", dim})
+}
+
+// firstLine is the text up to the first newline, for the collapsed preview.
+func firstLine(value string) string {
+	if index := strings.IndexByte(value, '\n'); index >= 0 {
+		return value[:index]
+	}
+	return value
+}
+
+// scrollWindow slices lines to a height-bounded window at offset, reporting
+// whether content is hidden above or below it.
+func scrollWindow(lines []string, offset, height int) (window []string, above, below bool) {
+	if height < 1 {
+		height = 1
+	}
+	if len(lines) <= height {
+		return lines, false, false
+	}
+	maxOffset := len(lines) - height
+	offset = max(0, min(offset, maxOffset))
+	return lines[offset : offset+height], offset > 0, offset < maxOffset
 }
 
 // truncatePath keeps the tail of a path visible, which is the part that
@@ -252,26 +411,39 @@ func truncatePath(path string, width int) string {
 	return "…" + ansi.TruncateLeft(path, lipgloss.Width(path)-width+1, "")
 }
 
-// cornerPrompt renders a compact two-button prompt for the corner of the live
-// view, sized to its content rather than centered like the modal dialogs.
-func (m Model) cornerPrompt(title, body string, width int, confirmLabel, cancelLabel string) string {
+// cornerButton is one choice in a cornerPrompt. tint is the label's foreground
+// when unfocused and, unless it is too dim to read as a background, its fill
+// when focused.
+type cornerButton struct {
+	label string
+	tint  lipgloss.Color
+}
+
+// cornerPrompt renders a compact prompt for the corner of the live view, sized
+// to its content rather than centered like the modal dialogs. The button whose
+// index matches m.modalChoice is focused.
+func (m Model) cornerPrompt(title, body string, width int, buttons ...cornerButton) string {
 	// Each label keeps its padding whether or not it is focused, so moving the
-	// choice repaints a background instead of shifting the pair sideways.
-	button := func(label string, focused bool, fill lipgloss.Color) string {
+	// choice repaints a background instead of shifting the row sideways.
+	render := func(b cornerButton, focused bool) string {
 		style := lipgloss.NewStyle().Bold(true)
 		if focused {
-			return style.Background(fill).Foreground(brightWhite).Render(" " + label + " ")
+			// A dim tint vanishes as a background, so focus fills it gray.
+			fill := b.tint
+			if b.tint == dim {
+				fill = lipgloss.Color("#3e3e3e")
+			}
+			return style.Background(fill).Foreground(brightWhite).Render(" " + b.label + " ")
 		}
-		return style.Foreground(fill).Render(" " + label + " ")
+		return style.Foreground(b.tint).Render(" " + b.label + " ")
 	}
-	yes := button(confirmLabel, m.modalChoice == 0, amber)
-	no := button(cancelLabel, m.modalChoice != 0, dim)
-	if m.modalChoice != 0 {
-		no = button(cancelLabel, true, lipgloss.Color("#3e3e3e"))
+	rendered := make([]string, len(buttons))
+	for i, b := range buttons {
+		rendered[i] = render(b, m.modalChoice == i)
 	}
 	inner := lipgloss.NewStyle().Width(width - 4)
 	content := inner.Render(title) + "\n" + inner.Render(body) + "\n" +
-		inner.Align(lipgloss.Right).Render(yes+" "+no)
+		inner.Align(lipgloss.Right).Render(strings.Join(rendered, " "))
 	return lipgloss.NewStyle().Width(width-2).Border(lipgloss.RoundedBorder()).
 		BorderForeground(amber).Background(black).Padding(0, 1).Render(content)
 }

@@ -45,6 +45,16 @@ func TestExecCommandHighlightsCommand(t *testing.T) {
 	}
 }
 
+func TestExecCommandRendersSafetyBlock(t *testing.T) {
+	out := Tool(tool(
+		"exec_command",
+		map[string]any{"cmd": "agent-browser click @e3"},
+		map[string]any{"safety": map[string]any{"reason": "form submission is disabled"}},
+		"blocked",
+	))
+	requireContains(t, out, "Blocked", "form submission is disabled")
+}
+
 func TestApplyPatchHighlightsCode(t *testing.T) {
 	out := Tool(tool("apply_patch", map[string]any{
 		"patch": "*** Update File: src/app.py\n-import os\n+import sys\n+def main():\n+    return sys.argv",
@@ -285,4 +295,38 @@ func TestCollapseToolOnlyOutputHeavyTools(t *testing.T) {
 	if out, expandable := CollapseTool(full, "respond_to_user", false); expandable || out != full {
 		t.Fatal("respond_to_user must never collapse")
 	}
+}
+
+func TestBlockedApplyPatchIsDistinguishableFromApplied(t *testing.T) {
+	blocked := map[string]any{
+		"success": false,
+		"status":  "blocked",
+		"error":   "Action blocked by safety policy",
+		"safety": map[string]any{
+			"reason": "action blocked by safety policy.",
+		},
+	}
+	args := map[string]any{"patch": "*** Update File: src/app.py\n-import os\n+import sys"}
+
+	out := Tool(tool("apply_patch", args, blocked, "blocked"))
+	applied := Tool(tool("apply_patch", args, map[string]any{"success": true}, "completed"))
+
+	if out == applied {
+		t.Fatal("a blocked patch renders identically to one that was applied")
+	}
+	requireContains(t, out, "Blocked", "blocked by safety policy")
+}
+
+func TestBlockedRepeatRequestShowsTheReason(t *testing.T) {
+	blocked := map[string]any{
+		"success": false,
+		"status":  "blocked",
+		"safety": map[string]any{
+			"reason": "repeat_request is blocked in guarded mode until the final effective method",
+		},
+	}
+
+	out := Tool(tool("repeat_request", map[string]any{"request_id": "7"}, blocked, "blocked"))
+
+	requireContains(t, out, "Blocked", "guarded mode")
 }

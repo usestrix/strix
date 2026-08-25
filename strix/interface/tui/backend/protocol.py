@@ -5,12 +5,13 @@ from __future__ import annotations
 from typing import Any
 
 
-PROTOCOL_VERSION = 3
+PROTOCOL_VERSION = 5
 PROTOCOL_CAPABILITIES = (
     "state-revisions",
     "collection-deltas",
     "structured-command-errors",
     "agents-collection",
+    "safety-approvals",
 )
 
 # Commands and control messages are intentionally small. Event and finding
@@ -21,7 +22,7 @@ MAX_COLLECTION_FRAME_BYTES = 4 * 1024 * 1024
 
 
 class ProtocolHandshakeError(RuntimeError):
-    """Raised before the Go TUI is activated when v3 negotiation fails."""
+    """Raised before the Go TUI is activated when protocol negotiation fails."""
 
 
 def envelope(

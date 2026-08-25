@@ -48,6 +48,7 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.selectedAgent = entries[row].index
 			m.ensureAgentVisible()
 			m.refreshViewport()
+			m.syncSafetyApprovalPrompt()
 			return m, nil
 		}
 		if m.focus == focusVulnerabilities && len(m.snapshot.Vulnerabilities) > 0 {
@@ -75,6 +76,7 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 					}
 					m.collapsedAgents[agentID] = !m.collapsedAgents[agentID]
 					m.ensureAgentVisible()
+					m.syncSafetyApprovalPrompt()
 				}
 			}
 			return m, nil
@@ -139,7 +141,20 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 // updateMouse routes wheel and click events to the pane under the pointer.
 func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if m.modal != modalNone {
+	if m.modal != modalNone && m.modal != modalSafetyApproval {
+		return m.updateModalMouse(msg)
+	}
+	approvalOpen := m.modal == modalSafetyApproval
+	if approvalOpen && msg.Action == tea.MouseActionRelease {
+		if m.selection.dragging {
+			return m, m.finishSelection()
+		}
+		if m.draggingScrollbar != scrollbarNone {
+			m.draggingScrollbar = scrollbarNone
+			return m, nil
+		}
+	}
+	if approvalOpen && m.safetyApprovalContainsMouse(msg) {
 		return m.updateModalMouse(msg)
 	}
 	if m.snapshot.SetupMode {
@@ -149,6 +164,9 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	viewerHeight := m.viewerHeight()
 	_, vulnHeight, agentHeight := m.sidebarHeights()
 	x, y := msg.X, msg.Y
+	if approvalOpen && (!showSidebar || x < chatWidth+1 || y < viewerHeight || y >= viewerHeight+agentHeight) {
+		return m, nil
+	}
 	if m.updateMainScrollbarMouse(
 		msg, showSidebar, chatWidth, chatHeight, viewerHeight, agentHeight, vulnHeight,
 	) {
@@ -191,6 +209,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.agentOffset = max(0, m.agentOffset-3)
 				m.keepAgentSelectionInWindow()
 				m.refreshViewport()
+				m.syncSafetyApprovalPrompt()
 			case vulnHeight > 0 && y < viewerHeight+agentHeight+vulnHeight:
 				m.focus = focusVulnerabilities
 				m.input.Blur()
@@ -216,6 +235,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.agentOffset = min(max(0, len(agentTreeEntries(m.snapshot.Agents, m.collapsedAgents))-rows), m.agentOffset+3)
 				m.keepAgentSelectionInWindow()
 				m.refreshViewport()
+				m.syncSafetyApprovalPrompt()
 			case vulnHeight > 0 && y < viewerHeight+agentHeight+vulnHeight:
 				m.focus = focusVulnerabilities
 				m.input.Blur()
@@ -286,6 +306,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				m.ensureAgentVisible()
 			}
 			m.refreshViewport()
+			m.syncSafetyApprovalPrompt()
 		}
 	case vulnHeight > 0 && y < viewerHeight+agentHeight+vulnHeight:
 		m.focus = focusVulnerabilities
@@ -382,6 +403,7 @@ func (m *Model) scrollFromMouse(
 		m.agentOffset = scrollbarOffset(y-viewerHeight-2, height, total, height)
 		m.keepAgentSelectionInWindow()
 		m.refreshViewport()
+		m.syncSafetyApprovalPrompt()
 	case scrollbarFindings:
 		height := m.vulnerabilityPageSize()
 		totalRows, _ := m.vulnerabilityScrollRows()
@@ -391,6 +413,15 @@ func (m *Model) scrollFromMouse(
 		m.vulnOffset = scrollbarOffset(y-viewerHeight-agentHeight-1, height, totalRows, height)
 		m.keepVulnerabilitySelectionInWindow()
 	}
+}
+
+func (m Model) safetyApprovalContainsMouse(msg tea.MouseMsg) bool {
+	view := m.modalView()
+	if view == "" {
+		return false
+	}
+	left, top, width, height := m.cornerViewBounds(view)
+	return msg.X >= left && msg.X < left+width && msg.Y >= top && msg.Y < top+height
 }
 
 func scrollbarOffset(row, height, total, visible int) int {
@@ -435,6 +466,7 @@ func (m Model) pressReportButton(button string) (tea.Model, tea.Cmd) {
 		return m, m.startVulnerabilityCopy()
 	default:
 		m.closeModal()
+		m.syncSafetyApprovalPrompt()
 	}
 	return m, nil
 }
@@ -460,6 +492,16 @@ func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	if m.approvalScrollActive() {
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			m.safetyApprovalScroll = m.clampApprovalScroll(m.safetyApprovalScroll - 3)
+			return m, nil
+		case tea.MouseButtonWheelDown:
+			m.safetyApprovalScroll = m.clampApprovalScroll(m.safetyApprovalScroll + 3)
+			return m, nil
+		}
+	}
 	if msg.Action != tea.MouseActionPress || msg.Button != tea.MouseButtonLeft {
 		return m, nil
 	}
@@ -471,6 +513,30 @@ func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
 		}
 		if m.centeredLabelHit(view, "No", msg.X, msg.Y) {
+			m.modalChoice = 1
+			return m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
+		}
+	case modalSafetyApproval:
+		toggle := "expand"
+		if m.safetyApprovalExpanded {
+			toggle = "collapse"
+		}
+		if m.cornerLabelHit(view, toggle, msg.X, msg.Y) {
+			m.safetyApprovalExpanded = !m.safetyApprovalExpanded
+			m.safetyApprovalScroll = 0
+			return m, nil
+		}
+		// "Approve All" contains "Approve", so test it first; the x-range
+		// keeps a click on either button from matching the other regardless.
+		if m.cornerLabelHit(view, "Approve All", msg.X, msg.Y) {
+			m.modalChoice = 2
+			return m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
+		}
+		if m.cornerLabelHit(view, "Approve", msg.X, msg.Y) {
+			m.modalChoice = 0
+			return m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
+		}
+		if m.cornerLabelHit(view, "Deny", msg.X, msg.Y) {
 			m.modalChoice = 1
 			return m.updateModal(tea.KeyMsg{Type: tea.KeyEnter})
 		}
@@ -504,6 +570,7 @@ func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if m.centeredLabelHit(view, "Done", msg.X, msg.Y) {
 			m.reportFocus = reportDone
 			m.closeModal()
+			m.syncSafetyApprovalPrompt()
 		}
 	}
 	return m, nil
@@ -527,6 +594,20 @@ func (m Model) centeredLabelHit(view, label string, x, y int) bool {
 // rather than centered, so it cannot use the centered bounds.
 func labelHitAt(panel, label string, left, top, x, y int) bool {
 	for row, line := range strings.Split(panel, "\n") {
+		plain := ansi.Strip(line)
+		index := strings.Index(plain, label)
+		if index < 0 || y != top+row {
+			continue
+		}
+		start := left + ansi.StringWidth(plain[:index])
+		return x >= start-1 && x < start+ansi.StringWidth(label)+1
+	}
+	return false
+}
+
+func (m Model) cornerLabelHit(view, label string, x, y int) bool {
+	left, top, _, _ := m.cornerViewBounds(view)
+	for row, line := range strings.Split(view, "\n") {
 		plain := ansi.Strip(line)
 		index := strings.Index(plain, label)
 		if index < 0 || y != top+row {
@@ -567,10 +648,30 @@ func clampCycle(value, length int) int {
 	return (value%length + length) % length
 }
 
+// modalChoiceCount is how many buttons the focused prompt cycles through. The
+// safety prompt adds "Approve All" only when the full action is on screen; every
+// other prompt, and the compact resize fallback, is a two-button consent.
+func (m Model) modalChoiceCount() int {
+	if m.modal == modalSafetyApproval && m.safetyApprovalFits() {
+		return 3
+	}
+	return 2
+}
+
+// approvalScrollActive reports whether the vertical keys should scroll the
+// expanded approval detail rather than move between its buttons — only when the
+// detail is expanded AND actually overflows its viewport, so a prompt that fits
+// keeps up/down on the buttons.
+func (m Model) approvalScrollActive() bool {
+	return m.modal == modalSafetyApproval && m.safetyApprovalExpanded &&
+		m.clampApprovalScroll(1<<20) > 0
+}
+
 func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.modal == modalHelp {
 		if key.String() != "" {
 			m.closeModal()
+			m.syncSafetyApprovalPrompt()
 		}
 		return m, nil
 	}
@@ -578,6 +679,7 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch key.String() {
 		case "esc":
 			m.closeModal()
+			m.syncSafetyApprovalPrompt()
 		// The arrows step between reports directly; tab walks the button row.
 		case "left":
 			m.showVulnerability(m.selectedVuln - 1)
@@ -609,17 +711,92 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch key.String() {
+	case "ctrl+c", "ctrl+q":
+		if m.modal == modalSafetyApproval {
+			m.modalChoice = 1
+			m.openModal(modalQuit)
+			return m, nil
+		}
 	case "esc":
 		if m.modal == modalConfirmMount {
 			// The backend is waiting on an answer; escape declines it.
 			cmd := m.answerMountConfirmation(false)
 			return m, cmd
 		}
+		if m.modal == modalSafetyApproval {
+			return m, m.answerSafetyApproval(false)
+		}
 		m.closeModal()
+		m.syncSafetyApprovalPrompt()
 		return m, nil
-	case "left", "right", "up", "down", "tab":
-		m.modalChoice = 1 - m.modalChoice
+	case "a", "y":
+		if m.modal == modalSafetyApproval {
+			if !m.safetyApprovalFits() {
+				m.errorText = "Resize the terminal to inspect the complete action before approving"
+				return m, nil
+			}
+			return m, m.answerSafetyApproval(true)
+		}
+	case "A":
+		if m.modal == modalSafetyApproval {
+			if !m.safetyApprovalFits() {
+				m.errorText = "Resize the terminal to inspect the complete action before approving"
+				return m, nil
+			}
+			return m, m.approveAllSafety()
+		}
+	case "d", "n":
+		if m.modal == modalSafetyApproval {
+			return m, m.answerSafetyApproval(false)
+		}
+	case "e":
+		if m.modal == modalSafetyApproval {
+			m.safetyApprovalExpanded = !m.safetyApprovalExpanded
+			m.safetyApprovalScroll = 0
+			return m, nil
+		}
+	case "left":
+		m.modalChoice = clampCycle(m.modalChoice-1, m.modalChoiceCount())
 		return m, nil
+	case "right", "tab":
+		m.modalChoice = clampCycle(m.modalChoice+1, m.modalChoiceCount())
+		return m, nil
+	case "up":
+		// While the detail is expanded, the vertical keys scroll it; horizontal
+		// keys still move between the buttons.
+		if m.approvalScrollActive() {
+			m.safetyApprovalScroll = m.clampApprovalScroll(m.safetyApprovalScroll - 1)
+			return m, nil
+		}
+		m.modalChoice = clampCycle(m.modalChoice-1, m.modalChoiceCount())
+		return m, nil
+	case "down":
+		if m.approvalScrollActive() {
+			m.safetyApprovalScroll = m.clampApprovalScroll(m.safetyApprovalScroll + 1)
+			return m, nil
+		}
+		m.modalChoice = clampCycle(m.modalChoice+1, m.modalChoiceCount())
+		return m, nil
+	case "pgup":
+		if m.approvalScrollActive() {
+			m.safetyApprovalScroll = m.clampApprovalScroll(m.safetyApprovalScroll - m.approvalViewportHeight())
+			return m, nil
+		}
+	case "pgdown":
+		if m.approvalScrollActive() {
+			m.safetyApprovalScroll = m.clampApprovalScroll(m.safetyApprovalScroll + m.approvalViewportHeight())
+			return m, nil
+		}
+	case "home":
+		if m.approvalScrollActive() {
+			m.safetyApprovalScroll = 0
+			return m, nil
+		}
+	case "end":
+		if m.approvalScrollActive() {
+			m.safetyApprovalScroll = m.clampApprovalScroll(1 << 20)
+			return m, nil
+		}
 	case "enter":
 		modal, choice := m.modal, m.modalChoice
 		if modal == modalConfirmMount {
@@ -629,8 +806,25 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			cmd := m.answerMountConfirmation(choice == 0)
 			return m, cmd
 		}
+		if modal == modalSafetyApproval {
+			// choice: 0 = Approve, 1 = Deny, 2 = Approve All. Both approvals need
+			// the exact action on screen first.
+			if choice != 1 && !m.safetyApprovalFits() {
+				m.errorText = "Resize the terminal to inspect the complete action before approving"
+				return m, nil
+			}
+			switch choice {
+			case 0:
+				return m, m.answerSafetyApproval(true)
+			case 2:
+				return m, m.approveAllSafety()
+			default:
+				return m, m.answerSafetyApproval(false)
+			}
+		}
 		m.closeModal()
 		if choice == 1 {
+			m.syncSafetyApprovalPrompt()
 			return m, nil
 		}
 		if modal == modalQuit {
@@ -648,7 +842,7 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *Model) openModal(mode modalMode) {
 	m.modal = mode
 	m.input.Blur()
-	if mode == modalConfirmMount {
+	if mode == modalConfirmMount || mode == modalSafetyApproval {
 		// A consent prompt defaults to declining.
 		m.modalChoice = 1
 	}

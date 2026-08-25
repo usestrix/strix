@@ -2,6 +2,7 @@
 
 import type { ToolRendererProps } from "@/types/events";
 import { CodeBlock } from "./ToolCard";
+import SafetyBlock from "./SafetyBlock";
 
 const MAX_LINE_LENGTH = 200;
 
@@ -161,7 +162,7 @@ function SendRequest({ args, result }: ToolRendererProps) {
   );
 }
 
-function RepeatRequest({ args, result }: ToolRendererProps) {
+function RepeatRequest({ args, result, status }: ToolRendererProps) {
   const requestId = args.request_id as number | undefined;
   const modifications = args.modifications as Record<string, unknown> | undefined;
   const res = result as Record<string, unknown> | null;
@@ -193,6 +194,7 @@ function RepeatRequest({ args, result }: ToolRendererProps) {
       {resBody && (
         <CodeBlock className="text-[#666]">{limitBody(resBody, 5)}</CodeBlock>
       )}
+      <SafetyBlock status={status} result={result} />
     </div>
   );
 }

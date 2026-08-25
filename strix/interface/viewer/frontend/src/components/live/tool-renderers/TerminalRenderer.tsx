@@ -111,6 +111,11 @@ export default function TerminalRenderer({ toolName, args, result }: ToolRendere
     exitCode = typeof res.exit_code === "number" ? res.exit_code : null;
     const s = typeof res.status === "string" ? res.status : "";
     if (s === "running" || s === "command still running") content = null;
+    // `error` is a fixed string for a safety block; the reason lives under `safety`.
+    const safety = res.safety as Record<string, unknown> | undefined;
+    if (safety && typeof safety.reason === "string" && safety.reason.trim()) {
+      error = safety.reason.trim();
+    }
   } else if (typeof res === "string") {
     content = res;
   }

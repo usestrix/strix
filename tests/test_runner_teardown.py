@@ -82,7 +82,7 @@ async def test_a_live_child_is_settled_before_sessions_close(
     monkeypatch.setattr(runner, "run_agent_loop", _root_finishes)
 
     await runner.run_strix_scan(
-        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_config={"targets": [], "scan_mode": "deep", "safety_mode": "off"},
         scan_id="scan-test",
         image="img",
         coordinator=coordinator,

@@ -286,6 +286,10 @@ func renderRepeatRequest(args map[string]any, result any, status string) string 
 	} else if mods, ok := args["modifications"].(string); ok && mods != "" {
 		b.WriteString(Dim().Italic(true).Render("\n  " + ptrunc(mods, 200)))
 	}
+	if status == "blocked" {
+		b.WriteString("\n  " + safetyBlockLine(result))
+		return b.String()
+	}
 	if status == "completed" {
 		if m, ok := resultMapOf(result); ok {
 			success, hasSuccess := m["success"].(bool)

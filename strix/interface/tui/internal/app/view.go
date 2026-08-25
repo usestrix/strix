@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -159,9 +160,35 @@ func wrapBlock(value string, width int) string {
 			out = append(out, line)
 			continue
 		}
-		out = append(out, strings.Split(ansi.Wrap(line, width, " -"), "\n")...)
+		out = append(out, carryStyle(strings.Split(ansi.Wrap(line, width, " -"), "\n"))...)
 	}
 	return strings.Join(out, "\n")
+}
+
+var sgrPattern = regexp.MustCompile(`\x1b\[[0-9;]*m`)
+
+// carryStyle re-opens the active foreground/attribute style on each continuation
+// line of a wrapped logical line. ansi.Wrap emits the opening SGR only on the first
+// line and the reset only on the last, so a wrapped colored line (a blocked-safety
+// reason, a long error) would otherwise show color on its first row alone.
+func carryStyle(lines []string) []string {
+	active := ""
+	for i, line := range lines {
+		if active != "" {
+			lines[i] = active + line
+		}
+		for _, seq := range sgrPattern.FindAllString(line, -1) {
+			if seq == "\x1b[0m" || seq == "\x1b[m" {
+				active = ""
+			} else {
+				active = seq
+			}
+		}
+		if active != "" && i < len(lines)-1 {
+			lines[i] += "\x1b[0m"
+		}
+	}
+	return lines
 }
 
 // scrollbarThumb brightens the bar being dragged so the grab reads as taking
@@ -259,7 +286,7 @@ func (m Model) viewInner() string {
 	if m.snapshot.SetupMode {
 		main = m.setupView()
 	}
-	if m.modal == modalConfirmMount {
+	if m.modal == modalConfirmMount || m.modal == modalSafetyApproval {
 		// A corner prompt, not a dialog: it sits out of the way in the live view
 		// while the scan waits on the answer.
 		main = m.cornerOverlay(main, m.modalView())
@@ -296,18 +323,7 @@ func (m Model) cornerOverlay(view, panel string) string {
 	}
 	fg := strings.Split(panel, "\n")
 	bg := strings.Split(view, "\n")
-	panelWidth := lipgloss.Width(panel)
-	// Right edge of the chat column, so it lines up with the composer rather
-	// than covering the sidebar.
-	_, _, chatWidth, _ := m.layout()
-	left := max(0, min(chatWidth, m.width)-panelWidth)
-	// Bottom row sits just above the composer, clearing the status line so the
-	// scan state and quit hint stay readable.
-	statusH := 0
-	if m.statusVisible() {
-		statusH = 1
-	}
-	top := max(0, m.inputTop()-statusH-len(fg))
+	left, top, _, _ := m.cornerViewBounds(panel)
 	for row := top; row < min(len(bg), top+len(fg)); row++ {
 		fgLine := ansi.Truncate(fg[row-top], max(0, m.width-left), "")
 		rightStart := left + lipgloss.Width(fgLine)
@@ -319,6 +335,25 @@ func (m Model) cornerOverlay(view, panel string) string {
 		bg[row] = leftPart + fgLine + rightPart
 	}
 	return strings.Join(bg, "\n")
+}
+
+// cornerViewBounds is shared by rendering and mouse hit testing for compact
+// mount and safety prompts.
+func (m Model) cornerViewBounds(panel string) (left, top, width, height int) {
+	width = lipgloss.Width(panel)
+	height = strings.Count(panel, "\n") + 1
+	// Right edge of the chat column, so it lines up with the composer rather
+	// than covering the sidebar.
+	_, _, chatWidth, _ := m.layout()
+	left = max(0, min(chatWidth, m.width)-width)
+	// Bottom row sits just above the composer, clearing the status line so the
+	// scan state and quit hint stay readable.
+	statusH := 0
+	if m.statusVisible() {
+		statusH = 1
+	}
+	top = max(0, m.inputTop()-statusH-height)
+	return
 }
 
 // toastOverlay splices a transient notification into the bottom-right corner,
@@ -666,9 +701,17 @@ func (m Model) statusView(width int) string {
 		quitHint := lipgloss.NewStyle().Foreground(white).Render("ctrl-q") + lipgloss.NewStyle().Foreground(dim).Render(" ") + lipgloss.NewStyle().Foreground(dim).Render("quit")
 		switch agent.Status {
 		case "running":
-			if m.agentHasEvents(agent.ID) {
+			switch {
+			case m.pendingApprovalForSelectedAgent() != nil:
+				// The agent is blocked on its own tool call until the prompt is
+				// answered; esc denies rather than stops here, so the "esc stop"
+				// hint would be wrong. Show that it is paused for the decision.
+				left = m.sweepView() +
+					lipgloss.NewStyle().Foreground(amber).Render("⏸ paused") +
+					lipgloss.NewStyle().Foreground(dim).Render(" · awaiting your approval")
+			case m.agentHasEvents(agent.ID):
 				left = m.sweepView() + lipgloss.NewStyle().Foreground(white).Render("esc") + lipgloss.NewStyle().Foreground(dim).Render(" ") + lipgloss.NewStyle().Foreground(dim).Render("stop")
-			} else {
+			default:
 				left = m.sweepView() + lipgloss.NewStyle().Foreground(white).Render("Initializing")
 			}
 			right = quitHint
@@ -695,6 +738,16 @@ func (m Model) statusView(width int) string {
 	}
 	if m.errorText != "" {
 		left = statusMessage(m.errorText, red, "", width-lipgloss.Width(right))
+	}
+	// Once "approve all" turns review off, keep a standing hazard flag on the row
+	// so it is never a surprise that actions are no longer being checked.
+	if m.snapshot.SafetyDisabled {
+		badge := lipgloss.NewStyle().Bold(true).Foreground(red).Render("⚠ review off")
+		if right != "" {
+			right = badge + lipgloss.NewStyle().Foreground(dim).Render(" · ") + right
+		} else {
+			right = badge
+		}
 	}
 	return composeStatusRow(left, right, width)
 }

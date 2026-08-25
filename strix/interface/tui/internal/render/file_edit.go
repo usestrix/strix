@@ -134,6 +134,9 @@ func renderApplyPatch(args map[string]any, result any, status string) string {
 		}
 		renderPatchOperation(&b, op)
 	}
+	if status == "blocked" {
+		b.WriteString("\n  " + safetyBlockLine(result))
+	}
 	if status == "failed" {
 		if s, ok := result.(string); ok && strings.TrimSpace(s) != "" {
 			b.WriteString("\n  " + Col(Red).Render(strings.TrimSpace(s)))

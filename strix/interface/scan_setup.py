@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
+from strix.config.settings import DEFAULT_SAFETY_MODE
 from strix.core.paths import run_dir_for
 from strix.interface.utils import (
     assign_workspace_subdirs,
@@ -31,6 +32,7 @@ from strix.interface.utils import (
     stage_api_specs,
     write_fetched_collection,
 )
+from strix.runtime.local_dir_staging import materialize_isolated_sources
 from strix.telemetry import posthog, scarf
 from strix.utils.api_spec import (
     SpecParseError,
@@ -196,6 +198,11 @@ def prepare_run(args: argparse.Namespace) -> None:
             args.instruction = diff_scope.instruction_block
 
     attach_workspace_mount(args)
+    if getattr(args, "safety_mode", DEFAULT_SAFETY_MODE) != "off":
+        args.local_sources = materialize_isolated_sources(
+            args.local_sources,
+            run_dir=run_dir_for(args.run_name),
+        )
     _persist_run_record(args)
 
 
@@ -250,6 +257,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         "auth_mode": codex.auth_mode(load_settings().llm.model),
         "targets_info": args.targets_info,
         "scan_mode": args.scan_mode,
+        "safety_mode": getattr(args, "safety_mode", DEFAULT_SAFETY_MODE),
         "instruction": args.instruction,
         # Kept apart from instruction, which carries the diff-scope preamble: the
         # transcript replays this as the user's opening message.

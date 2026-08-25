@@ -18,6 +18,7 @@ import pytest
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui import runtime as go_tui
 from strix.interface.tui import sidecar
+from strix.interface.tui.backend.protocol import PROTOCOL_CAPABILITIES, PROTOCOL_VERSION
 from strix.interface.tui.runtime import GoTuiRuntime
 
 
@@ -244,16 +245,9 @@ async def test_runtime_does_not_initialize_or_scan_before_ready(
         await _send_message(
             child,
             {
-                "version": 3,
+                "version": PROTOCOL_VERSION,
                 "type": "ready",
-                "payload": {
-                    "capabilities": [
-                        "state-revisions",
-                        "collection-deltas",
-                        "structured-command-errors",
-                        "agents-collection",
-                    ]
-                },
+                "payload": {"capabilities": list(PROTOCOL_CAPABILITIES)},
             },
         )
         await asyncio.wait_for(run_task, timeout=2)
@@ -780,6 +774,7 @@ async def test_scan_passes_max_turns_and_budget(monkeypatch: pytest.MonkeyPatch)
 
     assert captured["max_turns"] == 37
     assert captured["max_budget_usd"] == 4.25
+    assert captured["safety_approval_callback"] == runtime.controller.safety_approval_callback
     assert runtime.controller.scan_state == "stopped"
 
 

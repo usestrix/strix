@@ -48,6 +48,7 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 			m.closeModal()
 		}
 		m.syncMountPrompt()
+		m.syncSafetyApprovalPrompt()
 		m.ensureAgentVisible()
 		m.ensureVulnerabilityVisible()
 		m.ready = true
@@ -430,6 +431,7 @@ func (m *Model) refreshAfterCollection(name string) tea.Cmd {
 	if name == "agents" {
 		m.ensureAgentVisible()
 		m.refreshViewport()
+		m.syncSafetyApprovalPrompt()
 		return m.notifyBudgetPause()
 	}
 	if name == "events" {

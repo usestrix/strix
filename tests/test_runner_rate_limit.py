@@ -79,7 +79,7 @@ async def test_persistent_rate_limit_stops_gracefully(
 
     with caplog.at_level(logging.WARNING):
         result = await runner.run_strix_scan(
-            scan_config={"targets": [], "scan_mode": "deep"},
+            scan_config={"targets": [], "scan_mode": "deep", "safety_mode": "off"},
             scan_id="scan-test",
             image="img",
             coordinator=coordinator,

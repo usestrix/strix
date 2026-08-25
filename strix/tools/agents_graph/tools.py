@@ -8,7 +8,7 @@ import logging
 import uuid
 from collections import Counter
 from datetime import UTC, datetime
-from typing import Any, Literal, get_args
+from typing import TYPE_CHECKING, Any, Literal, cast, get_args
 
 from agents import RunContextWrapper, function_tool
 
@@ -16,6 +16,10 @@ from strix.core.agents import Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
 from strix.skills import validate_requested_skills
+
+
+if TYPE_CHECKING:
+    from collections.abc import Awaitable, Callable
 
 
 _ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting"})
@@ -484,6 +488,7 @@ async def create_agent(
             ensure_ascii=False,
             default=str,
         )
+    spawn = cast("Callable[..., Awaitable[dict[str, Any]]]", spawner)
 
     skill_list = list(skills or [])
     skill_error = validate_requested_skills(skill_list)
@@ -496,7 +501,7 @@ async def create_agent(
 
     parent_history = list(ctx.turn_input) if inherit_context and ctx.turn_input else []
     try:
-        result = await spawner(
+        result = await spawn(
             parent_ctx=inner,
             name=name,
             task=task,
@@ -589,16 +594,17 @@ async def agent_finish(
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
-    me = inner.get("agent_id")
-    if coordinator is None or me is None:
+    raw_me = inner.get("agent_id")
+    if coordinator is None or raw_me is None:
         return json.dumps(
             {"success": False, "error": "Agent coordinator or agent_id missing in context"},
             ensure_ascii=False,
             default=str,
         )
+    me = cast("str", raw_me)
 
-    parent_id = inner.get("parent_id")
-    if parent_id is None:
+    raw_parent_id = inner.get("parent_id")
+    if raw_parent_id is None:
         return json.dumps(
             {
                 "success": False,
@@ -609,6 +615,7 @@ async def agent_finish(
             ensure_ascii=False,
             default=str,
         )
+    parent_id = cast("str", raw_parent_id)
 
     parent_notified = False
     if report_to_parent and await coordinator.claim_parent_notice(me):

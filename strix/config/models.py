@@ -34,7 +34,12 @@ from openai.types.responses import (
     ResponseOutputItemDoneEvent,
 )
 from openai.types.responses.response_usage import ResponseUsage
-from openai.types.shared import Reasoning
+from openai.types.shared import (
+    Reasoning,
+)
+from openai.types.shared import (
+    ReasoningEffort as OpenAIReasoningEffort,
+)
 
 from strix.config import codex
 from strix.config.loader import load_settings
@@ -96,14 +101,19 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         effort = self._reasoning_effort
         if effort and effort != "none":
             # Clamp to efforts the backend accepts.
+            backend_effort: OpenAIReasoningEffort
             match effort:
                 case "minimal":
-                    effort = "low"
+                    backend_effort = "low"
                 case "xhigh" | "max":
-                    effort = "high"
-                case _:
-                    pass
-            overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=effort)))
+                    backend_effort = "high"
+                case "low":
+                    backend_effort = "low"
+                case "medium":
+                    backend_effort = "medium"
+                case "high":
+                    backend_effort = "high"
+            overrides = overrides.resolve(ModelSettings(reasoning=Reasoning(effort=backend_effort)))
         return model_settings.resolve(overrides)
 
     async def _fetch_response(self, *args: Any, stream: bool = False, **kwargs: Any) -> Any:
@@ -153,7 +163,9 @@ class _CodexResponsesModel(OpenAIResponsesModel):
         aclose = getattr(events, "aclose", None)
         if callable(aclose):
             with contextlib.suppress(Exception):
-                await aclose()
+                result = aclose()
+                if inspect.isawaitable(result):
+                    await result
             return
         close = getattr(events, "close", None)
         if callable(close):

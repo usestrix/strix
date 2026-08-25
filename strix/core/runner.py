@@ -25,7 +25,13 @@ from strix.config.models import (
     supports_strict_tool_schemas,
     uses_chat_completions_tool_schema,
 )
-from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.config.settings import (
+    DEFAULT_MAX_TURNS,
+    DEFAULT_SAFETY_MODE,
+    SAFETY_MODES,
+    SafetyMode,
+    resume_safety_mode_error,
+)
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
     respawn_subagents,
@@ -44,7 +50,10 @@ from strix.core.inputs import (
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
 from strix.report.state import get_global_report_state
+from strix.report.writer import read_run_record
 from strix.runtime import session_manager
+from strix.runtime.local_dir_staging import materialize_isolated_sources
+from strix.safety.runtime import SafetyRuntime
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
@@ -58,12 +67,82 @@ if TYPE_CHECKING:
     from agents.result import RunResultBase
 
     from strix.runtime.status import StatusSink
+    from strix.safety.types import SafetyApprovalCallback
     from strix.tools.mcp import ConnectedMcpServer
 
 
 logger = logging.getLogger(__name__)
 
 StreamEventSink = Callable[[str, Any], None]
+# Hands the live SafetyRuntime (or None when review is off) back to the caller so
+# an interactive front-end can, for example, disable review after a human approval.
+SafetyRuntimeSink = Callable[["SafetyRuntime | None"], None]
+
+# A scan runs many agents at once, each holding a sandbox session, a browser
+# session, a model client, and a SQLite handle. At the common 1024 soft limit
+# that closes the file-descriptor budget at a few dozen agents, surfacing as
+# "unable to open database file" once SQLite can no longer open agents.db.
+_MIN_OPEN_FILE_SOFT_LIMIT = 65536
+
+
+def raise_open_file_limit(minimum: int = _MIN_OPEN_FILE_SOFT_LIMIT) -> None:
+    """Raise the process open-file soft limit toward its hard cap.
+
+    Idempotent and best-effort: does nothing on non-POSIX platforms, when the
+    soft limit already suffices, or when the hard cap forbids the raise (which
+    needs a privileged operator to lift). Never fails a scan.
+    """
+    try:
+        import resource
+    except ImportError:
+        return  # non-POSIX (e.g. Windows) has no RLIMIT_NOFILE
+    try:
+        soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+        target = minimum if hard == resource.RLIM_INFINITY else min(minimum, hard)
+        if soft >= target:
+            return
+        resource.setrlimit(resource.RLIMIT_NOFILE, (target, hard))
+        logger.info("raised open-file soft limit %d -> %d (hard=%s)", soft, target, hard)
+        if hard != resource.RLIM_INFINITY and hard < minimum:
+            logger.warning(
+                "open-file hard limit is %d, below the %d a large scan may need; "
+                "raise it (ulimit -Hn) to avoid file-descriptor exhaustion",
+                hard,
+                minimum,
+            )
+    except (ValueError, OSError):
+        logger.debug("could not raise open-file limit", exc_info=True)
+
+
+def _safety_mode(scan_config: dict[str, Any]) -> SafetyMode:
+    raw = str(scan_config.get("safety_mode") or DEFAULT_SAFETY_MODE)
+    # Returning the matched element narrows to SafetyMode on every mypy version; a
+    # membership test against the tuple does not.
+    for mode in SAFETY_MODES:
+        if raw == mode:
+            return mode
+    raise ValueError(f"Unsupported safety mode: {raw!r}")
+
+
+def _validate_resume_safety_mode(run_dir: Path, requested: SafetyMode) -> None:
+    record = read_run_record(run_dir)
+    # A run record predating this feature has no safety_mode; default it to "off" so a
+    # legacy run resumes unreviewed only when the caller explicitly requests "off",
+    # rather than silently switching an old scan into guarded review mid-run. (New
+    # records are always written with an explicit mode — see DEFAULT_SAFETY_MODE.)
+    raw_persisted: object = record.get("safety_mode", "off")
+    if not isinstance(raw_persisted, str) or not raw_persisted:
+        raise ValueError(f"Cannot resume run with invalid safety mode: {raw_persisted!r}")
+    reason = resume_safety_mode_error(raw_persisted, requested)
+    if reason == "observe_removed":
+        raise ValueError("Cannot resume an observe-mode run because observe mode was removed")
+    if reason == "invalid":
+        raise ValueError(f"Cannot resume run with invalid safety mode: {raw_persisted!r}")
+    if reason == "changed":
+        raise ValueError(
+            f"Cannot change safety mode while resuming: run uses {raw_persisted!r}, "
+            f"request uses {requested!r}"
+        )
 
 
 def _mcp_startup_summary(connections: list[ConnectedMcpServer]) -> str:
@@ -173,6 +252,8 @@ async def run_strix_scan(
     root_instructions_override: str | None = None,
     extra_system_prompt_context: dict[str, Any] | None = None,
     status_sink: StatusSink | None = None,
+    safety_approval_callback: SafetyApprovalCallback | None = None,
+    safety_runtime_sink: SafetyRuntimeSink | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -199,6 +280,7 @@ async def run_strix_scan(
     state_dir.mkdir(parents=True, exist_ok=True)
     teardown_logging = setup_scan_logging(run_dir)
     set_scan_id(scan_id)
+    raise_open_file_limit()
 
     agents_path = state_dir / "agents.json"
     agents_db = state_dir / "agents.db"
@@ -215,6 +297,9 @@ async def run_strix_scan(
     )
 
     settings = load_settings()
+    safety_mode = _safety_mode(scan_config)
+    if is_resume:
+        _validate_resume_safety_mode(run_dir, safety_mode)
     configure_sdk_model_defaults(settings)
     resolved_model = (model or settings.llm.model or "").strip()
     if not resolved_model:
@@ -280,11 +365,19 @@ async def run_strix_scan(
     else:
         root_id = uuid.uuid4().hex[:8]
 
+    effective_local_sources = list(local_sources or scan_config.get("local_sources") or [])
+    if safety_mode != "off":
+        effective_local_sources = materialize_isolated_sources(
+            effective_local_sources,
+            run_dir=run_dir,
+        )
+        scan_config["local_sources"] = effective_local_sources
+
     logger.info("Bringing up sandbox session for scan %s", scan_id)
     bundle = await session_manager.create_or_reuse(
         scan_id,
         image=image,
-        local_sources=local_sources or [],
+        local_sources=effective_local_sources,
         extra_files=extra_files,
         status_sink=status_sink,
     )
@@ -344,6 +437,28 @@ async def run_strix_scan(
             coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)
+        if safety_mode != "off":
+            scope_context["safety_mode"] = safety_mode
+            scope_context["workspace_isolation"] = True
+            scope_context["human_approval_available"] = bool(
+                interactive and safety_approval_callback is not None
+            )
+        safety_runtime = (
+            SafetyRuntime(
+                scan_id=scan_id,
+                mode=safety_mode,
+                scope=scope_context,
+                user_instruction=str(scan_config.get("user_instructions") or ""),
+                settings=settings.safety,
+                run_dir=run_dir,
+                sandbox_image=image,
+                approval_callback=safety_approval_callback if interactive else None,
+            )
+            if safety_mode != "off"
+            else None
+        )
+        if safety_runtime_sink is not None:
+            safety_runtime_sink(safety_runtime)
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(
             root_instructions_override,
@@ -434,6 +549,8 @@ async def run_strix_scan(
             "scan_targets": build_scan_targets(scan_config),
             "max_context_images": settings.runtime.max_context_images,
         }
+        if safety_runtime is not None:
+            context["safety_runtime"] = safety_runtime
 
         root_session = open_agent_session(root_id, agents_db)
         sessions_to_close.append(root_session)

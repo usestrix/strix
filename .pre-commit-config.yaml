@@ -28,6 +28,7 @@ repos:
   # Built-in hooks for basic file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v5.0.0
+    exclude: ^strix/interface/viewer/static/
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer

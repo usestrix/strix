@@ -113,6 +113,7 @@ def test_resume_restores_a_target_less_workspace_mount(
             "workspace_mount": str(work),
             "instruction": "audit the auth flow",
             "scan_mode": "deep",
+            "safety_mode": "guarded",
         },
     )
     monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_abcd"])
@@ -145,6 +146,7 @@ def test_resume_revalidates_persisted_workspace_files(
             "targets_info": [],
             "local_sources": [],
             "workspace_mount": str(work),
+            "safety_mode": "guarded",
             "workspace_files": [
                 {"source_path": str(kept), "workspace_path": "/workspace/lists/words.txt"},
                 {"source_path": str(tmp_path / "gone.txt"), "workspace_path": "/workspace/g.txt"},
@@ -158,6 +160,39 @@ def test_resume_revalidates_persisted_workspace_files(
     assert args.workspace_files == [
         {"source_path": str(kept), "workspace_path": "/workspace/lists/words.txt"}
     ]
+
+
+def test_resume_rejects_persisted_workspace_subdir_escape(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    work = tmp_path / "project"
+    work.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "pentest_abcd",
+        {
+            "run_name": "pentest_abcd",
+            "targets_info": [],
+            "workspace_mount": str(work),
+            "safety_mode": "guarded",
+            "local_sources": [
+                {
+                    "source_path": str(work),
+                    "workspace_subdir": "../../../../victim",
+                    "protect_metadata": True,
+                }
+            ],
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_abcd"])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "invalid workspace_subdir" in capsys.readouterr().err
 
 
 def test_resume_rejects_an_edited_workspace_file_path(
@@ -228,7 +263,12 @@ def test_resume_still_requires_targets_or_a_workspace(
 
     assert "has no targets_info" in capsys.readouterr().err
 
-def test_resume_non_object_run_json_exits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+
+def test_resume_non_object_run_json_exits(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
     monkeypatch.chdir(tmp_path)
     run_dir = tmp_path / "strix_runs" / "pentest_abcd"
     run_dir.mkdir(parents=True)

@@ -19,6 +19,7 @@ from strix.config.models import (
     model_supports_reasoning,
     request_timeout_extra_args,
 )
+from strix.config.settings import DEFAULT_SAFETY_MODE
 from strix.core.sessions import scrub_images_from_items
 
 
@@ -108,6 +109,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     targets = scan_config.get("targets", []) or []
     diff_scope = scan_config.get("diff_scope") or {}
     user_instructions = scan_config.get("user_instructions", "") or ""
+    isolated_workspace = scan_config.get("safety_mode", DEFAULT_SAFETY_MODE) != "off"
 
     sections: dict[str, list[str]] = {
         "Repositories": [],
@@ -131,10 +133,19 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
+            workspace_note = (
+                (
+                    "this is an isolated writable copy; changes do not modify the "
+                    "user's source — .git/.agents/.codex are read-only"
+                )
+                if isolated_workspace
+                else (
+                    "this is the user's real directory, mounted live and writable — "
+                    ".git/.agents/.codex are read-only"
+                )
+            )
             sections["Local Codebases"].append(
-                f"- {path} (available at: {workspace_path}; "
-                "this is the user's real directory, mounted live and writable — "
-                ".git/.agents/.codex are read-only)"
+                f"- {path} (available at: {workspace_path}; {workspace_note})"
             )
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
@@ -155,11 +166,18 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         subdir = scan_config.get("workspace_subdir") or ""
         workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
         parts.append("\n\nWorking Directory:")
-        parts.append(
-            f"- {workspace_mount} (available at: {workspace_path}; "
-            "this is the user's real directory, mounted live and writable — "
-            ".git/.agents/.codex are read-only)"
+        workspace_note = (
+            (
+                "this is an isolated writable copy; changes do not modify the user's "
+                "directory — .git/.agents/.codex are read-only"
+            )
+            if isolated_workspace
+            else (
+                "this is the user's real directory, mounted live and writable — "
+                ".git/.agents/.codex are read-only"
+            )
         )
+        parts.append(f"- {workspace_mount} (available at: {workspace_path}; {workspace_note})")
         parts.append(
             "- No scan target was set. This directory is where you work, not a "
             "target to assess: the instructions below are the only source of "

@@ -273,6 +273,8 @@ export function AgentTranscript({
                     className={`w-[30px] h-[30px] rounded-full bg-black border flex items-center justify-center shrink-0 ${
                       isTool && status === "running"
                         ? "border-blue-500/40 animate-pulse"
+                        : isTool && status === "blocked"
+                          ? "border-amber-500/40"
                         : isTool && status === "failed"
                           ? "border-red-500/30"
                           : "border-[#222]"

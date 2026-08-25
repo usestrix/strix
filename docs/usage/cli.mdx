@@ -17,7 +17,7 @@ strix (--target <target> | --target-list <path>) [options]
   When the target is an API spec, Strix copies it into the agent's workspace and authorizes the base URLs it declares (including those resolved from a Postman environment) as in-scope hosts - so the agent reads the contract and tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
 
   <Note>
-    A local directory is mounted into the sandbox live and **writable**, so the agent edits your real files (`.git` excepted). Commit or stash first.
+    By default, local directories are copied into a writable isolated workspace, so agent changes do not modify your source. With `--dangerously-disable-safety`, the directory is instead mounted live and **writable**, so the agent can edit your real files (`.git` excepted).
   </Note>
 
   <Note>
@@ -46,6 +46,13 @@ strix (--target <target> | --target-list <path>) [options]
 
 <ParamField path="--scan-mode, -m" type="string" default="deep">
   Scan depth: `quick`, `standard`, or `deep`.
+</ParamField>
+
+<ParamField path="--dangerously-disable-safety" type="boolean" default="false">
+  Disables contextual action review and workspace isolation for this run. This
+  can permit destructive actions and mounts local directories live and writable.
+  Safety is guarded by default in both TUI and non-interactive runs. See
+  [Action Safety](/usage/safety-modes).
 </ParamField>
 
 <ParamField path="--scope-mode" type="string" default="auto">

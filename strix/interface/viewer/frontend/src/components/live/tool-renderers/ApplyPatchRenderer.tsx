@@ -2,6 +2,7 @@
 
 import type { ToolRendererProps } from "@/types/events";
 import { shortPath } from "./utils";
+import SafetyBlock from "./SafetyBlock";
 
 const DIFF_PREVIEW_LINES = 30;
 
@@ -107,6 +108,7 @@ export default function ApplyPatchRenderer({ args, result, status }: ToolRendere
         {status === "failed" && typeof result === "string" && result.trim() && (
           <div className="text-red-400/70 text-[13px] mt-1">{result.trim()}</div>
         )}
+        <SafetyBlock status={status} result={result} />
       </div>
     );
   }
@@ -119,6 +121,7 @@ export default function ApplyPatchRenderer({ args, result, status }: ToolRendere
       {status === "failed" && typeof result === "string" && result.trim() && (
         <div className="text-red-400/70 text-[13px]">{result.trim()}</div>
       )}
+      <SafetyBlock status={status} result={result} />
     </div>
   );
 }

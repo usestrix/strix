@@ -76,7 +76,7 @@ async def test_user_interrupt_leaves_the_root_running_for_resume(
 
     with pytest.raises(interrupt):
         await runner.run_strix_scan(
-            scan_config={"targets": [], "scan_mode": "deep"},
+            scan_config={"targets": [], "scan_mode": "deep", "safety_mode": "off"},
             scan_id="scan-test",
             image="img",
             coordinator=coordinator,
@@ -99,7 +99,7 @@ async def test_a_real_crash_still_marks_root_failed(
 
     with pytest.raises(RuntimeError, match="boom"):
         await runner.run_strix_scan(
-            scan_config={"targets": [], "scan_mode": "deep"},
+            scan_config={"targets": [], "scan_mode": "deep", "safety_mode": "off"},
             scan_id="scan-test",
             image="img",
             coordinator=coordinator,

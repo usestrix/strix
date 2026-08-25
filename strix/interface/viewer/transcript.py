@@ -29,7 +29,7 @@ def severity_counts(vulns: list[Any]) -> dict[str, int]:
     ``informational``, ``unknown``, missing, ...) folds into ``low`` so the
     shared UI renders cleanly.
     """
-    counts = dict.fromkeys(_KNOWN_SEVERITIES, 0)
+    counts: dict[str, int] = dict.fromkeys(_KNOWN_SEVERITIES, 0)
     for vuln in vulns:
         raw = vuln.get("severity") if isinstance(vuln, dict) else None
         severity = str(raw or "").lower().strip()

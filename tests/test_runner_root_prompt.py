@@ -16,6 +16,7 @@ from openai import RateLimitError
 
 import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
+from strix.config.settings import SafetySettings
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
 from strix.runtime import session_manager
@@ -52,6 +53,7 @@ def _patch_engine_scaffold(
             extra_headers=None,
         ),
         runtime=types.SimpleNamespace(max_context_images=3),
+        safety=SafetySettings(),
     )
     monkeypatch.setattr(runner, "load_settings", lambda: settings)
     monkeypatch.setattr(runner, "configure_sdk_model_defaults", lambda _settings: None)
@@ -177,7 +179,34 @@ async def test_root_prompt_options_default_to_none(
 
     kwargs = captured["kwargs"]
     assert kwargs["instructions_override"] is None
-    assert kwargs["system_prompt_context"] == {"scope": "built-in"}
+    assert kwargs["system_prompt_context"] == {
+        "scope": "built-in",
+        "safety_mode": "guarded",
+        "workspace_isolation": True,
+        "human_approval_available": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_root_prompt_only_advertises_human_approval_when_callback_is_installed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, {})
+
+    async def approval(_request: object) -> bool:
+        return False
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-approval",
+        image="img",
+        coordinator=AgentCoordinator(),
+        interactive=True,
+        safety_approval_callback=approval,
+    )
+
+    assert captured["kwargs"]["system_prompt_context"]["human_approval_available"] is True
 
 
 @pytest.mark.asyncio

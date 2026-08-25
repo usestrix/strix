@@ -1,0 +1,222 @@
+---
+title: "Action Safety"
+description: "Review potentially dangerous actions before they execute"
+---
+
+Action safety is enabled by default and is independent of scan depth. `quick`,
+`standard`, and `deep` control coverage; guarded review controls which effects
+may be executed.
+
+```bash
+strix --target https://example.test
+```
+
+Guarded review permits non-destructive interaction after contextual review,
+including injection probes, reconnaissance, enumeration, and fuzzing. Actions
+judged destructive or persistent are blocked.
+
+## Disabling Safety
+
+Use the explicit dangerous opt-out only when external containment makes it
+necessary:
+
+```bash
+strix --target https://example.test --dangerously-disable-safety
+```
+
+This disables both action review and workspace isolation. Local directories are
+mounted live and writable. A run created with safety disabled requires the flag
+again when resumed; a guarded run cannot be downgraded while resuming.
+
+## Contextual Review
+
+Before an ambiguous shell or browser action executes, Strix compiles a frozen
+evidence packet containing the effective command, target scope, relevant script
+source and imports, prior tool-call evidence, browser snapshot context, and
+workspace persistence details.
+
+The safety model may decide immediately or make exactly one `run_inspection`
+tool call. That call runs a Python standard-library analysis script in a
+separate networkless, read-only container over the frozen evidence. For an
+incomplete packet in the interactive TUI, the reviewer must use that call to
+pinpoint the missing evidence and determine what the available artifacts still
+establish. If the tool is used, the model's next response must be the final
+decision.
+
+That single call can request explicit files or trailing-slash directories under
+`/workspace`. Strix uses fixed read/list primitives to freeze bounded regular
+files, directory listings, bytes, and digests into the evidence bundle, skipping
+symlinks and special files, and returns bounded previews to the reviewer. The same call may
+run a networkless analysis script over the augmented read-only bundle. The
+reviewer never executes model-authored commands in the live workspace, and the
+collected files become part of final fingerprint revalidation.
+
+Evidence acquisition gaps and reviewable uncertainty are distinct. Missing,
+unreadable, truncated, or unfrozen bytes are hard gaps and cannot support an
+automatic allow. When all relevant code and inputs are frozen but values such as
+a request destination or subprocess argument require correlation, the packet is
+`reviewable`; one successful inspection may resolve and allow it without asking
+the user. Only unresolved ambiguity is deferred.
+
+The review is bounded to at most two model turns and one inspection call.
+Timeouts, malformed decisions, a second tool call, and reviewer failures fail
+closed.
+
+In the interactive TUI, the reviewer can defer when the evidence still leaves
+genuine ambiguity about whether an exact action is dangerous. This includes an
+incomplete packet after the one inspection call has identified its unresolved
+gaps. Strix then pauses that tool call and asks the user to approve or deny it.
+The prompt shows the risk, the tool, and a preview of the command and reason;
+press `e` to expand the full command and reason and scroll them with the arrow
+keys. Denial is selected by default, Escape denies, and the request waits until
+it is answered, the agent is stopped, or Strix exits. Approval applies only to
+the frozen call shown in the prompt; actions too large to display exactly must
+be split into smaller tool calls. Deterministic blocks, review errors, and
+actions confidently judged dangerous cannot be overridden.
+
+The prompt also offers **Approve All**, which approves the pending call and then
+turns review off for the rest of the run — every later action runs unreviewed,
+exactly as if the scan had started with `--dangerously-disable-safety`. A
+standing "review off" flag on the status row marks that the run is no longer
+being checked. Use it only when external containment already bounds the blast
+radius.
+
+Approval prompts are scoped to their owning agent. The agent list marks the
+waiting owners with yellow indicators; select each agent to see and resolve its
+own prompt. Multiple agents can wait for independent approvals at the same time,
+and resolving one does not hide or block the others. You can continue navigating
+the agent list with the keyboard or mouse while approvals are pending, and
+returning to an owner reopens its prompt with Deny selected.
+
+Non-interactive runs have no human approval channel. Ambiguity, incomplete
+evidence, and low-confidence decisions continue to block, preserving
+fail-closed autonomous behavior.
+
+The reviewer judges an action by its effect, not by the technique it uses or by
+whether a hostname appears in target scope. A read-only injection probe (a boolean,
+`UNION SELECT`, or time-based payload), a reflected-input test, or recon passes;
+a payload that writes or destroys (`DROP`, `DELETE`, `INSERT`, `INTO OUTFILE`,
+stacked statements, command execution), a mutating request, or any persistent
+change is blocked or, in the TUI, deferred when its effect is genuinely ambiguous.
+
+Scope still controls what Strix actively tests, but the safety reviewer is not a
+scope enforcement layer. Ordinary passive requests to research services such as
+`crt.sh`, DNS and WHOIS, package registries, search, and public documentation are
+allowed when they support an authorized target. Those services do not become
+targets for scanning or exploitation.
+
+## Deterministic Rules
+
+Some outcomes never reach the model. Destructive commands, environment
+overrides that change which code an interpreter loads (`PYTHONPATH`,
+`LD_PRELOAD`, `AGENT_BROWSER_SESSION`, and similar), and blocked browser actions
+are refused outright. A small set of
+read-only commands is allowed outright, but only when its options are also
+read-only: `rg --pre` and anything else that hands the command another program
+to run goes to review instead.
+
+Browser observation commands are allowed outright only in the form that just
+reads: `tab` lists tabs, but `tab new <url>` navigates and `tab close` discards
+page state, so a grouped verb with a subcommand goes to review.
+
+Commands that wrap another program (`sudo`, `timeout`, `xargs`, `nohup`, and
+similar) cannot be resolved to a single effective action before dispatch. They
+fail closed in non-interactive runs; where the TUI can present a human decision,
+the reviewer first inspects and explains the unresolved action. Prefer issuing
+the underlying command as its own `exec_command` call. Interactive `write_stdin`
+payloads remain blocked because their effect depends on live process state and
+buffered input.
+
+## Scripts
+
+When a command executes a script, Strix reads the current entrypoint and local
+Python imports without importing or running them. Inline `python -c` source is
+analyzed the same way. Absolute imports resolve against the entrypoint's
+directory and relative imports against the importing module's package, and an
+imported name is followed as a submodule as well as an attribute, so the whole
+local closure is inspected. Decisions bind to content hashes. Dynamic code
+execution, import-path mutation, unresolved generated commands, oversized
+dependency closures, entrypoints outside `/workspace`, and unsupported evidence
+make the packet incomplete. Headless runs block; interactive runs use the one
+inspection call before any human deferral.
+
+Literal files read by Python through `open()`, `Path.read_text()`,
+`Path.read_bytes()`, or read-mode `Path.open()` are frozen as input artifacts,
+including simple string and `Path` assignments. Relative workdirs resolve below
+`/workspace`, matching actual sandbox execution. A resolvable script in a later
+compound-command segment is frozen too; create-and-execute chains remain
+blocked.
+
+A command that runs code Strix cannot resolve to an inspectable script — an
+unrecognized interpreter, or an interpreter given no script — is never allowed
+automatically. It is blocked headlessly or inspected and presented for an
+explicit TUI decision.
+
+When a command reads a workspace data file — through input redirection
+(`while read … done < hosts.txt`) or a target-list flag (`ffuf -w words.txt`,
+`httpx -l hosts.txt`) — that file's contents are attached to the packet so the
+reviewer can assess the exact entries, queried hosts, or fuzz inputs instead of
+blocking because it cannot see them. Redirect parsing respects shell quoting,
+escaping, comments, heredocs, and process substitutions. Referenced files under
+`/workspace` are read. Missing, unreadable, outside-workspace, over-limit, or
+truncated inputs make the packet incomplete and follow the headless-block or
+interactive-review behavior above.
+
+Evidence collection is serialized briefly to produce a consistent snapshot;
+model review and human waiting remain concurrent. If another agent changes the
+workspace during review, Strix refreshes and compares the actual evidence
+fingerprint. Unchanged evidence executes without interruption. Changed scripts,
+dependencies, inputs, or missing-file observations are automatically reviewed
+again, with a new approval only when the refreshed review still needs one.
+
+Browser automation inside scripts is blocked in safety modes. Issue browser
+operations as individual raw `agent-browser` commands so each action can be
+reviewed against the current snapshot and element references.
+
+Commands that create and execute code in one shell expression should be split
+into separate creation and execution calls.
+
+## Browser Commands
+
+Strix continues to use the raw `agent-browser` CLI. In safety modes it assigns
+an isolated browser session per agent and rejects model-supplied session,
+profile, or CDP overrides.
+
+Interactions with element references require a prior recorded snapshot. A
+snapshot taken before a navigation or any other page-changing action is stale:
+the action is blocked and the agent must snapshot again.
+
+Composite operations such as `auth login`, arbitrary `eval`, browser state
+persistence, and uploads are blocked. Guarded login should use explicit fill
+and submit steps with credentials supplied in the initial user instruction.
+
+## Workspace Isolation
+
+By default, user-owned local directories are copied into:
+
+```text
+strix_runs/<run>/.state/workspaces/<name>
+```
+
+The copy is mounted writable, while the original source remains unchanged.
+`.git`, `.agents`, and `.codex` inside the copy stay read-only: they carry
+repository and agent-instruction state that survives `--resume`. Copies are
+retained for resume. Repository targets are already cloned into a disposable
+location and do not need another copy.
+
+In-tree symlinks are materialized. Dangling, cyclic, device, and out-of-tree
+symlinks are omitted. Files are copied rather than hard-linked.
+
+## Limitations
+
+Contextual review reduces accidental harmful actions; it is not a complete
+network containment boundary. Arbitrary dynamic programs, raw sockets, or
+processes that ignore proxy settings cannot always be predicted statically.
+Unresolvable behavior blocks in safety modes.
+
+Deterministic rules cover the cases listed above. Every other command is judged
+by the safety model against compiled evidence, so a tool whose effects are not
+statically recognizable — a scanner or exploit framework that mutates the
+target through its own protocol, for example — rests on that judgment rather
+than on a rule. Strong containment additionally requires externally enforced
+egress policy and reduced sandbox privileges.

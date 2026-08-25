@@ -74,6 +74,55 @@ affecting the agents that do the actual testing.
   baseline when unset.
 </ParamField>
 
+## Safety Review
+
+Action review and isolated workspaces are enabled by default. There is no
+persistent configuration switch for disabling them. Use
+`--dangerously-disable-safety` explicitly for each run that must bypass safety.
+
+<ParamField path="STRIX_SAFETY_MODEL" type="string">
+  Optional model used for contextual action review. Falls back to `STRIX_LLM`.
+</ParamField>
+
+<ParamField path="STRIX_SAFETY_REASONING_EFFORT" default="low" type="string">
+  Reasoning effort for the safety reviewer.
+</ParamField>
+
+<ParamField path="STRIX_SAFETY_TIMEOUT" default="60" type="integer">
+  Timeout for one model request in a safety review. A review makes at most two
+  requests, so the wall-clock budget is twice this value plus the inspection
+  timeout.
+</ParamField>
+
+<ParamField path="STRIX_SAFETY_MAX_OUTPUT_TOKENS" default="8192" type="integer">
+  Output-token budget for one safety review turn. On a reasoning model this
+  covers reasoning tokens as well as the verdict; too small a value truncates
+  the decision and fails closed.
+</ParamField>
+
+<ParamField path="STRIX_SAFETY_MAX_ARTIFACT_BYTES" default="262144" type="integer">
+  Per-file limit for inspected script and dependency source.
+</ParamField>
+
+<ParamField path="STRIX_SAFETY_MAX_TOTAL_ARTIFACT_BYTES" default="4194304" type="integer">
+  Combined limit for one script's whole inspected dependency closure.
+</ParamField>
+
+<ParamField path="STRIX_SAFETY_MAX_DEPENDENCIES" default="32" type="integer">
+  Maximum local modules collected for one script entrypoint.
+</ParamField>
+
+<ParamField path="STRIX_SAFETY_INSPECTION_TIMEOUT" default="5" type="integer">
+  Wall-clock limit for the reviewer's optional isolated inspection script.
+</ParamField>
+
+<ParamField path="STRIX_SAFETY_INSPECTION_IMAGE" type="string">
+  Optional Docker image for isolated inspection scripts. Defaults to the scan
+  sandbox image. The image must provide Python 3 and a `pentester` user.
+</ParamField>
+
+See [Safety Modes](/usage/safety-modes) for behavior and limitations.
+
 ## Optional Features
 
 <ParamField path="PERPLEXITY_API_KEY" type="string">

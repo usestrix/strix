@@ -208,8 +208,8 @@ def _try_start_callback_server() -> _CallbackServer | None:
     holder: dict[str, Any] = {}
 
     class Handler(BaseHTTPRequestHandler):
-        def log_message(self, *args: Any) -> None:  # silence default stderr logging
-            pass
+        def log_message(self, format: str, *args: Any) -> None:  # noqa: A002
+            """Silence the stdlib handler's default stderr logging."""
 
         def do_GET(self) -> None:
             parsed = urlparse(self.path)

@@ -67,7 +67,7 @@ export interface ToolExecution {
   toolName: string;
   args: Record<string, unknown>;
   result: unknown;
-  status: "running" | "completed" | "failed" | "error";
+  status: "running" | "completed" | "failed" | "blocked" | "error";
   startedAt: string;
   completedAt: string | null;
 }
@@ -98,7 +98,7 @@ export interface ToolRendererProps {
   toolName: string;
   args: Record<string, unknown>;
   result: unknown;
-  status: "running" | "completed" | "failed" | "error";
+  status: "running" | "completed" | "failed" | "blocked" | "error";
   /**
    * Set only on a call to a tool from an MCP server the user connected: the name
    * they gave that connection, and the server's own name for the tool. The
