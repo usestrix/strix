@@ -13,9 +13,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import docker
 import requests
-from docker.errors import DockerException, ImageNotFound
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -1599,6 +1597,9 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
 
 
 def check_docker_connection() -> Any:
+    import docker
+    from docker.errors import DockerException
+
     try:
         return docker.from_env()
     except DockerException:
@@ -1624,6 +1625,8 @@ def check_docker_connection() -> Any:
 
 
 def image_exists(client: Any, image_name: str) -> bool:
+    from docker.errors import ImageNotFound
+
     try:
         client.images.get(image_name)
     except ImageNotFound:

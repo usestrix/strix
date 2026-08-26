@@ -207,8 +207,22 @@ class GoTuiRuntime:
             self.controller.notify_changed()
 
     def capture_event(self, agent_id: str, event: Any) -> None:
+        self._refresh_mcp_connections()
         self.live_view.ingest_sdk_event(agent_id, event)
         self.controller.notify_changed()
+
+    def _refresh_mcp_connections(self) -> None:
+        """Hand the projection the MCP servers the scan connected.
+
+        The scan records them as it connects, which is before the agent can call
+        anything, and the projection needs them to say which server a tool call
+        went out to. Read on the way in rather than pushed, so no tool call can
+        be projected before they arrive.
+        """
+        if self.report_state is None:
+            return
+        connections = self.report_state.run_record.get("mcp_connections") or []
+        self.live_view.set_mcp_connections(connections)
 
     async def _sync_agent_state(self) -> bool:
         parent_of, statuses, names, errors = await self.coordinator.graph_snapshot()

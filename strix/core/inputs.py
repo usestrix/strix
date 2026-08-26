@@ -226,6 +226,23 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_scan_targets(scan_config: dict[str, Any]) -> list[str]:
+    """One canonical string per authorized target.
+
+    Agents refer to the target in whatever words they were handed, so anything
+    keyed on a target the model types drifts apart across a run. This is the
+    scan's own spelling, which target-keyed tools resolve against. A checkout is
+    named by its workspace path rather than its remote URL, so the local tree —
+    and its revision — is what gets inspected.
+    """
+    targets: list[str] = []
+    for target in build_scope_context(scan_config)["authorized_targets"]:
+        value = target["workspace_path"] or target["value"]
+        if value and value not in targets:
+            targets.append(value)
+    return targets
+
+
 def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,

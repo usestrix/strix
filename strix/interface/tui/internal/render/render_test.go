@@ -203,7 +203,7 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 		{
 			"unknown tool falls back to generic",
 			tool("brand_new_tool", map[string]any{"alpha": "1"}, "done", "completed"),
-			[]string{"brand_new_tool", "alpha", "Result:", "done"},
+			[]string{"brand_new_tool", "alpha", "Done"},
 		},
 	}
 
@@ -212,6 +212,43 @@ func TestToolDispatchCoversKnownTools(t *testing.T) {
 			requireContains(t, Tool(tc.data), tc.wants...)
 		})
 	}
+}
+
+func TestGenericToolOmitsRawResult(t *testing.T) {
+	// The generic renderer shows tool name, args, and a status line only, never
+	// the raw result payload.
+	long := strings.Repeat("x", 5000)
+	out := ansi.Strip(Tool(tool("db_query", map[string]any{"query": "select 1"}, long, "completed")))
+
+	requireContains(t, out, "db_query", "query", "Done")
+	if strings.Contains(out, "Result:") || strings.Contains(out, strings.Repeat("x", 20)) {
+		t.Fatalf("generic result body must not be rendered:\n%s", out)
+	}
+}
+
+func TestMcpToolLeadsWithActionAndNamesTheServer(t *testing.T) {
+	data := tool("local_fs_read_file", map[string]any{"path": "/etc/hosts"}, "file body", "completed")
+	data["mcp_connection"] = "local_fs"
+	data["mcp_tool"] = "read_file"
+
+	out := ansi.Strip(Tool(data))
+
+	// The action leads; the server is context that trails it.
+	if !strings.HasPrefix(out, mcpIcon+"read_file") {
+		t.Fatalf("MCP render must lead with the tool's own name:\n%s", out)
+	}
+	requireContains(t, out, "local_fs", "path", "/etc/hosts", "Done")
+	// Untrusted server output stays off the terminal, as for the generic render.
+	if strings.Contains(out, "file body") {
+		t.Fatalf("MCP result body must not be rendered:\n%s", out)
+	}
+}
+
+func TestMcpToolWithoutTaggedNameFallsBackToFullName(t *testing.T) {
+	data := tool("local_fs_read_file", nil, nil, "running")
+	data["mcp_connection"] = "local_fs"
+
+	requireContains(t, ansi.Strip(Tool(data)), "local_fs_read_file", "In progress")
 }
 
 func TestCollapseToolShellPreviewAndExpand(t *testing.T) {

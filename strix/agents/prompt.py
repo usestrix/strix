@@ -23,30 +23,44 @@ def _resolve_skills(
     scan_mode: str = "deep",
     is_whitebox: bool = False,
     is_root: bool = False,
+    is_diff_scoped: bool = False,
 ) -> list[str]:
     """Build the deduped, ordered skills list for the prompt render.
 
     Order:
 
     1. Whatever the caller asked for, in order.
-    2. ``scan_modes/<mode>`` (always).
+    2. ``scan_modes/<mode>`` (always), plus ``scan_modes/diff`` when the
+       run is scoped to a change set — diff scope overlays the depth
+       mode rather than replacing it.
     3. ``tooling/agent_browser`` (always — every agent has shell + the
        agent-browser CLI).
     4. ``tooling/python`` (always — Python runs through ``exec_command``;
        sandbox scripts can import ``caido_api`` for Caido automation).
-    5. ``coordination/root_agent`` for the root agent only — orchestration
+    5. ``analysis/counterevidence`` and ``analysis/severity_calibration``
+       (always — closure discipline and severity rubric apply to every
+       agent that can open or close a candidate, or file a report).
+    6. ``coordination/root_agent`` for the root agent only — orchestration
        guidance for delegating to specialist subagents.
-    6. Whitebox-specific skills if applicable.
+    7. Whitebox-specific skills if applicable, including
+       ``analysis/fix_verification`` (only whitebox agents can attach an
+       applyable ``fix_after``) and ``analysis/source_aware_discovery``.
     """
     ordered: list[str] = list(requested or [])
     ordered.append(f"scan_modes/{scan_mode}")
+    if is_diff_scoped:
+        ordered.append("scan_modes/diff")
     ordered.append("tooling/agent_browser")
     ordered.append("tooling/python")
+    ordered.append("analysis/counterevidence")
+    ordered.append("analysis/severity_calibration")
     if is_root:
         ordered.append("coordination/root_agent")
     if is_whitebox:
         ordered.append("coordination/source_aware_whitebox")
         ordered.append("custom/source_aware_sast")
+        ordered.append("analysis/source_aware_discovery")
+        ordered.append("analysis/fix_verification")
 
     deduped: list[str] = []
     seen: set[str] = set()
@@ -63,6 +77,7 @@ def render_system_prompt(
     scan_mode: str = "deep",
     is_whitebox: bool = False,
     is_root: bool = False,
+    is_diff_scoped: bool = False,
     interactive: bool = False,
     system_prompt_context: dict[str, Any] | None = None,
 ) -> str:
@@ -83,6 +98,7 @@ def render_system_prompt(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_root=is_root,
+            is_diff_scoped=is_diff_scoped,
         )
         skill_content = load_skills(skills_to_load)
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")

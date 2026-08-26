@@ -13,7 +13,8 @@ from agents.usage import Usage
 
 from strix.config import codex
 from strix.config.loader import load_settings
-from strix.core.paths import run_dir_for
+from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.report.coverage import write_coverage
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.usage import LLMUsageLedger
@@ -237,6 +238,10 @@ class ReportState:
         remediation_steps: str | None = None,
         evidence: str | None = None,
         assumptions: str | None = None,
+        counterevidence: str | None = None,
+        confidence: str | None = None,
+        confidence_rationale: str | None = None,
+        severity_change_conditions: str | None = None,
         fix_effort: str | None = None,
         cvss: float | None = None,
         cvss_breakdown: dict[str, str] | None = None,
@@ -245,6 +250,7 @@ class ReportState:
         cve: str | None = None,
         cwe: str | None = None,
         code_locations: list[dict[str, Any]] | None = None,
+        fix_verification: str | None = None,
         fix_pr_body: str | None = None,
         finding_class: str | None = None,
         dependency_metadata: dict[str, str] | None = None,
@@ -278,6 +284,14 @@ class ReportState:
             report["evidence"] = evidence.strip()
         if assumptions:
             report["assumptions"] = assumptions.strip()
+        if counterevidence:
+            report["counterevidence"] = counterevidence.strip()
+        if confidence:
+            report["confidence"] = confidence.strip().lower()
+        if confidence_rationale:
+            report["confidence_rationale"] = confidence_rationale.strip()
+        if severity_change_conditions:
+            report["severity_change_conditions"] = severity_change_conditions.strip()
         if fix_effort:
             report["fix_effort"] = fix_effort.strip().lower()
         if cvss is not None:
@@ -294,6 +308,8 @@ class ReportState:
             report["cwe"] = cwe.strip()
         if code_locations:
             report["code_locations"] = code_locations
+        if fix_verification:
+            report["fix_verification"] = fix_verification.strip()
         if fix_pr_body:
             report["fix_pr_body"] = fix_pr_body.strip()
         report["finding_class"] = (finding_class or "dynamic").strip().lower()
@@ -388,6 +404,18 @@ class ReportState:
         posthog.end(self, exit_reason="finished_by_tool")
         scarf.end(self, exit_reason="finished_by_tool")
 
+    def record_mcp_connections(self, names: list[str]) -> None:
+        """Note the MCP servers this run connected, and persist it.
+
+        Saved as soon as the run connects rather than at the end, so an interface
+        reading the record mid-run can already attribute a tool call to the
+        server it went out to.
+        """
+        if self.run_record.get("mcp_connections") == names:
+            return
+        self.run_record["mcp_connections"] = names
+        self.save_run_data()
+
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config
         self.run_record["status"] = "running"
@@ -447,11 +475,40 @@ class ReportState:
 {str(scan_results.get("recommendations", "")).strip()}
 """
 
+    def _coverage_document(self) -> dict[str, Any] | None:
+        """Assemble the coverage record, or None when it can't be built.
+
+        Coverage is a secondary artifact: a failure here must not cost the
+        caller its findings, so this swallows and logs rather than raising
+        into :meth:`_save_artifacts`.
+        """
+        try:
+            from strix.report.coverage import build_coverage_document, read_agent_graph
+            from strix.tools.coverage.tools import get_coverage_entries
+
+            return build_coverage_document(
+                run_record=self.run_record,
+                entries=get_coverage_entries(),
+                agent_graph=read_agent_graph(runtime_state_dir(self.get_run_dir())),
+                vulnerability_reports=self.vulnerability_reports,
+                exit_reason=self.scan_ended_exit_reason,
+            )
+        except Exception:
+            logger.exception("coverage document build failed (non-fatal)")
+            return None
+
     def _save_artifacts(self) -> None:
         """Write scan artifacts under ``run_dir``."""
         run_dir = self.get_run_dir()
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
+
+            coverage = self._coverage_document()
+            if coverage is not None:
+                try:
+                    write_coverage(run_dir, coverage)
+                except OSError:
+                    logger.exception("coverage.json write failed (non-fatal)")
 
             if self.final_scan_result:
                 write_executive_report(run_dir, self.final_scan_result)
@@ -471,6 +528,7 @@ class ReportState:
                     self.vulnerability_reports,
                     tool_version=_strix_version(),
                     repository_context=self._sarif_repository_context(),
+                    coverage=coverage,
                 )
             except Exception:
                 logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")

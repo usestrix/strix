@@ -99,4 +99,12 @@ export interface ToolRendererProps {
   args: Record<string, unknown>;
   result: unknown;
   status: "running" | "completed" | "failed" | "error";
+  /**
+   * Set only on a call to a tool from an MCP server the user connected: the name
+   * they gave that connection, and the server's own name for the tool. The
+   * engine resolves both, because `toolName` is the two glued together and
+   * cannot be split back apart here.
+   */
+  mcpConnection?: string | null;
+  mcpTool?: string | null;
 }

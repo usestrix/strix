@@ -16,6 +16,8 @@ from typing import Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.tools.nullish import clean_optional
+
 
 logger = logging.getLogger(__name__)
 
@@ -161,9 +163,101 @@ _REQUIRED_FIELDS = {
 }
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
+_VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
 
 
-async def _do_create(  # noqa: PLR0912
+def _validate_required_text(fields: dict[str, str]) -> list[str]:
+    """Report every ``_REQUIRED_FIELDS`` entry that arrived blank."""
+    return [
+        msg for name, msg in _REQUIRED_FIELDS.items() if not str(fields.get(name) or "").strip()
+    ]
+
+
+def _validate_cvss_breakdown(breakdown: Any) -> list[str]:
+    """Check the 8 CVSS metrics are all present with legal values."""
+    if not isinstance(breakdown, dict) or not breakdown:
+        return ["cvss_breakdown: must be an object with the 8 CVSS metrics"]
+    return [
+        f"Invalid {name}: {breakdown.get(name)}. Must be one of: {valid}"
+        for name, valid in _CVSS_VALID.items()
+        if breakdown.get(name) not in valid
+    ]
+
+
+def _validate_identifiers(
+    cve: str | None, cwe: str | None
+) -> tuple[str | None, str | None, list[str]]:
+    """Normalize and validate the optional CVE / CWE identifiers."""
+    errors: list[str] = []
+    if cve:
+        cve = _extract_cve(cve)
+        cve_err = _validate_cve(cve)
+        if cve_err:
+            errors.append(cve_err)
+    if cwe:
+        cwe = _extract_cwe(cwe)
+        cwe_err = _validate_cwe(cwe)
+        if cwe_err:
+            errors.append(cwe_err)
+    return cve, cwe, errors
+
+
+def _validate_analysis_fields(
+    *,
+    counterevidence: str,
+    confidence: str,
+    confidence_rationale: str | None,
+    severity_change_conditions: str,
+) -> list[str]:
+    """Validate the counterevidence / confidence closure metadata."""
+    errors: list[str] = []
+    if not str(counterevidence or "").strip():
+        errors.append(
+            "Counterevidence cannot be empty - state the strongest evidence against "
+            "this finding, or what you checked and found none (e.g. 'no input "
+            "validation, WAF, or authorization check found on this path')"
+        )
+    if not str(severity_change_conditions or "").strip():
+        errors.append(
+            "severity_change_conditions cannot be empty - state the one concrete piece "
+            "of evidence that would raise or lower the severity"
+        )
+    if confidence not in _VALID_CONFIDENCE:
+        errors.append(
+            f"Invalid confidence: {confidence!r}. Must be one of: {sorted(_VALID_CONFIDENCE)}"
+        )
+    elif confidence != "high" and not str(confidence_rationale or "").strip():
+        errors.append(
+            "confidence_rationale is required when confidence is not 'high' - name the "
+            "gap (e.g. static-only trace, unconfirmed reachability, no runtime access)"
+        )
+    return errors
+
+
+def _validate_fix_verification(
+    locations: list[dict[str, Any]] | None,
+    fix_verification: str | None,
+) -> list[str]:
+    """Require a verification statement whenever an applyable fix is proposed."""
+    if not locations or not any(loc.get("fix_after") for loc in locations):
+        return []
+    if str(fix_verification or "").strip():
+        return []
+    return [
+        "fix_verification is REQUIRED when any code_location carries a 'fix_after' - "
+        "a suggestion a reviewer can click to apply must be verified first. State, in "
+        "order: (1) security closure - re-trace the source->sink path through the "
+        "PATCHED code and say why it is now blocked; (2) bypass review - re-read the "
+        "diff without your original rationale and name the equivalent sinks, sibling "
+        "call sites, and alternate malicious input classes you checked; (3) preserved "
+        "behavior - the legitimate inputs, APIs, and error semantics that still work; "
+        "(4) how each was checked (executed vs. reasoned), naming any unrun check as "
+        "an explicit gap. If you cannot make these statements, drop 'fix_after' and "
+        "leave the location informational."
+    ]
+
+
+async def _do_create(
     *,
     title: str,
     description: str,
@@ -175,6 +269,9 @@ async def _do_create(  # noqa: PLR0912
     remediation_steps: str,
     evidence: str,
     assumptions: str,
+    counterevidence: str,
+    confidence: str,
+    severity_change_conditions: str,
     fix_effort: str,
     cvss_breakdown: dict[str, str],
     endpoint: str | None,
@@ -182,26 +279,36 @@ async def _do_create(  # noqa: PLR0912
     cve: str | None,
     cwe: str | None,
     code_locations: list[dict[str, Any]] | None,
+    confidence_rationale: str | None = None,
+    fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
 ) -> dict[str, Any]:
-    errors: list[str] = []
-    fields = {
-        "title": title,
-        "description": description,
-        "impact": impact,
-        "target": target,
-        "technical_analysis": technical_analysis,
-        "poc_description": poc_description,
-        "poc_script_code": poc_script_code,
-        "remediation_steps": remediation_steps,
-        "evidence": evidence,
-        "assumptions": assumptions,
-    }
-    for name, msg in _REQUIRED_FIELDS.items():
-        if not str(fields.get(name) or "").strip():
-            errors.append(msg)
+    errors: list[str] = _validate_required_text(
+        {
+            "title": title,
+            "description": description,
+            "impact": impact,
+            "target": target,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "remediation_steps": remediation_steps,
+            "evidence": evidence,
+            "assumptions": assumptions,
+        }
+    )
+
+    confidence = (confidence or "").strip().lower()
+    errors.extend(
+        _validate_analysis_fields(
+            counterevidence=counterevidence,
+            confidence=confidence,
+            confidence_rationale=confidence_rationale,
+            severity_change_conditions=severity_change_conditions,
+        )
+    )
 
     fix_effort = (fix_effort or "").strip().lower()
     if fix_effort not in _VALID_FIX_EFFORT:
@@ -209,28 +316,14 @@ async def _do_create(  # noqa: PLR0912
             f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
         )
 
-    if not isinstance(cvss_breakdown, dict) or not cvss_breakdown:
-        errors.append("cvss_breakdown: must be an object with the 8 CVSS metrics")
-        cvss_breakdown = {}
-    else:
-        for name, valid in _CVSS_VALID.items():
-            value = cvss_breakdown.get(name)
-            if value not in valid:
-                errors.append(f"Invalid {name}: {value}. Must be one of: {valid}")
+    errors.extend(_validate_cvss_breakdown(cvss_breakdown))
 
     parsed_locations = _normalize_code_locations(code_locations)
     if parsed_locations:
         errors.extend(_validate_code_locations(parsed_locations))
-    if cve:
-        cve = _extract_cve(cve)
-        cve_err = _validate_cve(cve)
-        if cve_err:
-            errors.append(cve_err)
-    if cwe:
-        cwe = _extract_cwe(cwe)
-        cwe_err = _validate_cwe(cwe)
-        if cwe_err:
-            errors.append(cwe_err)
+    errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
+    cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
+    errors.extend(identifier_errors)
 
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
@@ -297,6 +390,10 @@ async def _do_create(  # noqa: PLR0912
             remediation_steps=remediation_steps,
             evidence=evidence,
             assumptions=assumptions,
+            counterevidence=counterevidence,
+            confidence=confidence,
+            confidence_rationale=confidence_rationale,
+            severity_change_conditions=severity_change_conditions,
             fix_effort=fix_effort,
             cvss=cvss_score,
             cvss_breakdown=cvss_breakdown,
@@ -305,6 +402,7 @@ async def _do_create(  # noqa: PLR0912
             cve=cve,
             cwe=cwe,
             code_locations=parsed_locations,
+            fix_verification=fix_verification,
             fix_pr_body=fix_pr_body,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
@@ -357,6 +455,9 @@ async def create_vulnerability_report(
     remediation_steps: str,
     evidence: str,
     assumptions: str,
+    counterevidence: str,
+    confidence: str,
+    severity_change_conditions: str,
     fix_effort: str,
     cvss_breakdown: dict[str, str],
     endpoint: str | None = None,
@@ -364,6 +465,8 @@ async def create_vulnerability_report(
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    confidence_rationale: str | None = None,
+    fix_verification: str | None = None,
     fix_pr_body: str | None = None,
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
@@ -410,6 +513,15 @@ async def create_vulnerability_report(
     the same root cause on the same asset as an existing report. If you
     get a ``duplicate_of`` response, do NOT retry — move on to other
     areas.
+
+    **Counterevidence pass (required before filing)**: actively build the
+    strongest case that this finding is NOT exploitable, or less severe
+    than you think — then record the result in ``counterevidence``, set
+    ``confidence`` honestly, and state what would move the severity in
+    ``severity_change_conditions``. These three fields are mandatory and
+    validated. A finding you could not execute is at best
+    ``confidence: medium``, with the gap named in
+    ``confidence_rationale``.
 
     **Report output rules** (this content may be rendered into generated
     reports):
@@ -563,6 +675,31 @@ async def create_vulnerability_report(
         assumptions: Short note on the assumptions/prerequisites that
             make this finding impactful or exploitable (e.g. "assumes an
             authenticated low-privilege user").
+        counterevidence: REQUIRED. The strongest case *against* this
+            finding, after actively looking for it — the guard you might
+            have missed, the deployment constraint, the precondition. If
+            you genuinely found nothing, say what you checked (e.g. "no
+            input validation, WAF, or authorization check found on this
+            path; tested authenticated and unauthenticated"), not just
+            "none". A generic trust claim ("the framework escapes this")
+            is not counterevidence unless you confirmed that specific
+            call in this context.
+        confidence: REQUIRED. Your calibrated confidence that this is a
+            real, exploitable issue: ``high`` (working PoC against the
+            live target, or a complete reachable source→sink trace),
+            ``medium`` (strong static evidence you could not fully
+            execute), or ``low`` (plausible with a material unresolved
+            gap). Do not inflate — an accurate ``medium`` is more useful
+            than a ``high`` that fails triage.
+        confidence_rationale: Required when ``confidence`` is not
+            ``high``. Name the specific gap (e.g. "static-only trace,
+            could not stand up the service to reproduce"; "reachability
+            of this route from unauthenticated traffic unconfirmed").
+        severity_change_conditions: REQUIRED. One concrete sentence on
+            what single piece of additional evidence would raise or
+            lower the severity (e.g. "confirmation this route is exposed
+            to unauthenticated internet traffic would raise this to
+            critical").
         fix_effort: One of ``trivial`` / ``low`` / ``medium`` / ``high``.
         cvss_breakdown: 8-metric object per the format above.
         endpoint: API path / Git path (e.g. ``/api/login``).
@@ -632,6 +769,40 @@ async def create_vulnerability_report(
             - Padding ``fix_before`` with surrounding context lines
               that aren't part of the fix.
             - Duplicating the same change across multiple locations.
+        fix_verification: REQUIRED whenever any ``code_locations`` entry
+            carries a ``fix_after``. A reviewer can apply that
+            suggestion with one click, so an unverified fix ships
+            straight into the codebase. Before writing this field, work
+            the gates **in order** and never trade an earlier one for a
+            later one:
+
+            1. **Security closure** — re-trace the source → sink path
+               through the *patched* code and state why it is now
+               blocked. Re-run the PoC against the fix if you can.
+            2. **Bypass review** — re-read the diff *without* leaning on
+               the rationale that produced it. Name the sibling call
+               sites, equivalent sinks, and alternate malicious input
+               classes you checked, and try at least one.
+            3. **Preserved behavior** — name the legitimate inputs,
+               public APIs, and error semantics that must keep working,
+               and confirm the patch leaves them intact. A fix that
+               breaks the feature is not a fix.
+            4. **Repository checks** — run the narrowest relevant
+               syntax / type / lint / test check that covers the
+               changed lines.
+
+            Then write what you did: the commands you ran and their
+            results, and every gate you could only reason about rather
+            than execute, marked explicitly as a gap. Do not claim a
+            gate passed because it looks right. If a gate fails, revise
+            the patch or drop ``fix_after`` and leave the location
+            informational — never compensate for a failed security
+            closure with a smaller diff or extra prose.
+
+            Also use this field to record the narrowest-complete-change
+            judgement: prefer the smallest repository-native fix that
+            fully enforces the invariant, using existing helpers, with
+            no unrelated refactors folded in.
         fix_pr_body: Optional. When source is available and you have a
             concrete fix, a markdown PR-description body proposing the
             fix (summary + rationale). Prose/markdown only — the code
@@ -672,6 +843,15 @@ async def create_vulnerability_report(
         remediation_steps:
             Context-encode all user input rendered into HTML; prefer the
             template engine's auto-escaping over string interpolation.
+        counterevidence:
+            No output encoding, CSP, or WAF observed on this response;
+            payload executed in a current browser. The parameter is
+            reflected on an unauthenticated route, so no privileged
+            position is required.
+        confidence: "high"
+        severity_change_conditions:
+            A restrictive CSP that blocks inline script execution would
+            reduce impact and lower the severity.
         fix_effort: "low"
     """
     agent_id, agent_name = _caller_identity(ctx)
@@ -687,6 +867,10 @@ async def create_vulnerability_report(
         remediation_steps=remediation_steps,
         evidence=evidence,
         assumptions=assumptions,
+        counterevidence=counterevidence,
+        confidence=confidence,
+        confidence_rationale=confidence_rationale,
+        severity_change_conditions=severity_change_conditions,
         fix_effort=fix_effort,
         cvss_breakdown=cvss_breakdown,
         endpoint=endpoint,
@@ -694,6 +878,7 @@ async def create_vulnerability_report(
         cve=cve,
         cwe=cwe,
         code_locations=code_locations,
+        fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
         agent_id=agent_id,
         agent_name=agent_name,
@@ -1327,6 +1512,7 @@ _REPORT_SUMMARY_FIELDS = (
     "title",
     "severity",
     "cvss",
+    "confidence",
     "finding_class",
     "cve",
     "cwe",
@@ -1421,12 +1607,12 @@ def _do_list_reports(
     caller_agent_id: str | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
-    severity = (severity or "").strip().lower() or None
+    severity = (clean_optional(severity) or "").lower() or None
     if severity and severity not in _VALID_SEVERITIES:
         errors.append(
             f"Invalid severity: {severity!r}. Must be one of: {sorted(_VALID_SEVERITIES)}"
         )
-    finding_class = (finding_class or "").strip().lower() or None
+    finding_class = (clean_optional(finding_class) or "").lower() or None
     if finding_class and finding_class not in _VALID_FINDING_CLASSES:
         errors.append(
             f"Invalid finding_class: {finding_class!r}. "
@@ -1456,8 +1642,8 @@ def _do_list_reports(
             r,
             severity=severity,
             finding_class=finding_class,
-            target=(target or "").strip() or None,
-            search=(search or "").strip() or None,
+            target=clean_optional(target),
+            search=clean_optional(search),
         )
     ]
     matched.sort(key=lambda r: (_report_severity_rank(r), str(r.get("id", ""))))
@@ -1528,8 +1714,8 @@ async def list_reports(
     findings, and build the ``finish_scan`` executive summary.
 
     By default each entry is compact: ``id``, ``title``, ``severity``,
-    ``cvss``, ``finding_class``, ``cve`` / ``cwe``, ``target`` /
-    ``endpoint``, ``fix_effort``, ``agent_name`` (who filed it), ``timestamp``,
+    ``cvss``, ``confidence``, ``finding_class``, ``cve`` / ``cwe``,
+    ``target`` / ``endpoint``, ``fix_effort``, ``agent_name`` (who filed it), ``timestamp``,
     plus a 280-char ``description_preview``. Entries you filed yourself are
     flagged ``by_you: true``. The response also carries
     ``total_count`` and ``severity_counts`` (counts per severity across all

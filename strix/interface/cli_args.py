@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -223,6 +224,30 @@ Examples:
     )
 
     parser.add_argument(
+        "--mcp-config",
+        type=str,
+        metavar="PATH",
+        help="Path to an MCP servers JSON file to use instead of ~/.strix/mcp-servers.json.",
+    )
+
+    parser.add_argument(
+        "--mcp-server",
+        dest="mcp_server",
+        action="append",
+        metavar="NAME",
+        help="Use only this MCP connection for the run, by its config name "
+        "(repeatable). Every other configured connection is skipped.",
+    )
+
+    parser.add_argument(
+        "--mcp-exclude",
+        dest="mcp_exclude",
+        action="append",
+        metavar="NAME",
+        help="Skip this MCP connection for the run, by its config name (repeatable).",
+    )
+
+    parser.add_argument(
         "--max-budget",
         "--max-budget-usd",
         dest="max_budget_usd",
@@ -269,6 +294,20 @@ Examples:
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
+
+    if args.mcp_config:
+        mcp_config_path = Path(args.mcp_config).expanduser()
+        if not mcp_config_path.is_file():
+            parser.error(f"--mcp-config file not found: {args.mcp_config}")
+        # The MCP loader reads this env var as its config-path override, so
+        # setting it here makes the flag win over the default location.
+        os.environ["STRIX_MCP_CONFIG"] = str(mcp_config_path)
+
+    # The MCP loader reads these as its per-run include/exclude selection.
+    if args.mcp_server:
+        os.environ["STRIX_MCP_ONLY"] = ",".join(args.mcp_server)
+    if args.mcp_exclude:
+        os.environ["STRIX_MCP_EXCLUDE"] = ",".join(args.mcp_exclude)
 
     if args.update:
         sys.exit(0 if self_update() else 1)

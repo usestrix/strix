@@ -37,6 +37,7 @@ from strix.core.execution import (
 from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
 from strix.core.inputs import (
     build_root_task,
+    build_scan_targets,
     build_scope_context,
     make_model_settings,
 )
@@ -52,15 +53,59 @@ from strix.tools.output_store import (
 
 
 if TYPE_CHECKING:
+    from agents.mcp import MCPServer
     from agents.memory import SQLiteSession
     from agents.result import RunResultBase
 
     from strix.runtime.status import StatusSink
+    from strix.tools.mcp import ConnectedMcpServer
 
 
 logger = logging.getLogger(__name__)
 
 StreamEventSink = Callable[[str, Any], None]
+
+
+def _mcp_startup_summary(connections: list[ConnectedMcpServer]) -> str:
+    """One user-facing line summarizing the MCP servers that connected."""
+    server_count = len(connections)
+    tool_count = sum(c.tool_count for c in connections)
+    servers_word = "server" if server_count == 1 else "servers"
+    tools_word = "tool" if tool_count == 1 else "tools"
+    names = ", ".join(c.name for c in connections)
+    return f"MCP: connected {server_count} {servers_word} ({tool_count} {tools_word}): {names}"
+
+
+def _record_mcp_connections(connections: list[ConnectedMcpServer]) -> None:
+    """Record which MCP servers this run connected, for the interfaces.
+
+    A server's tools are offered to the model under a name built from the
+    connection name and the tool's own name, which cannot be split back apart, so
+    the TUI and the run viewer need the names to match a tool call against before
+    they can show which server it went out to. Kept on the run record because the
+    viewer reads a finished run from disk.
+    """
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    report_state.record_mcp_connections([connection.name for connection in connections])
+
+
+def _mcp_connection_notes(connections: list[ConnectedMcpServer]) -> str | None:
+    """A block describing the connections the user left notes on, for the agent.
+
+    Only connections with notes are listed, so the note describes the connection
+    once rather than being repeated onto every tool. Returns ``None`` when no
+    connection has notes.
+    """
+    noted = [(c.name, c.notes) for c in connections if c.notes]
+    if not noted:
+        return None
+    lines = "\n".join(f"- `{name}.*` tools: {notes}" for name, notes in noted)
+    return (
+        "The user connected these MCP servers for this run and left notes on how "
+        f"to use each:\n{lines}"
+    )
 
 
 def _merge_root_prompt_context(
@@ -84,6 +129,7 @@ def _compose_root_instructions_override(
     skills: list[str],
     scan_mode: str,
     is_whitebox: bool,
+    is_diff_scoped: bool,
     interactive: bool,
     system_prompt_context: dict[str, Any],
 ) -> str | None:
@@ -95,6 +141,7 @@ def _compose_root_instructions_override(
         scan_mode=scan_mode,
         is_whitebox=is_whitebox,
         is_root=True,
+        is_diff_scoped=is_diff_scoped,
         interactive=interactive,
         system_prompt_context=system_prompt_context,
     )
@@ -184,11 +231,13 @@ async def run_strix_scan(
         coordinator = AgentCoordinator()
     coordinator.set_snapshot_path(agents_path)
 
+    from strix.tools.coverage.tools import hydrate_coverage_from_disk
     from strix.tools.notes.tools import hydrate_notes_from_disk
     from strix.tools.todo.tools import hydrate_todos_from_disk
 
     hydrate_todos_from_disk(state_dir)
     hydrate_notes_from_disk(state_dir)
+    hydrate_coverage_from_disk(state_dir)
 
     root_id: str | None = None
     if is_resume:
@@ -257,11 +306,14 @@ async def run_strix_scan(
     configure_spill_writer(_spill_to_workspace)
 
     sessions_to_close: list[SQLiteSession] = []
+    mcp_servers: list[MCPServer] = []
 
     try:
         targets = scan_config.get("targets") or []
         scan_mode = str(scan_config.get("scan_mode") or "deep")
         is_whitebox = any(t.get("type") == "local_code" for t in targets)
+        diff_scope = scan_config.get("diff_scope")
+        is_diff_scoped = bool(isinstance(diff_scope, dict) and diff_scope.get("active"))
         skills = list(scan_config.get("skills") or [])
         root_task = build_root_task(scan_config)
         model_settings = make_model_settings(
@@ -298,9 +350,31 @@ async def run_strix_scan(
             skills=skills,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             system_prompt_context=root_context,
         )
+
+        # Connect any MCP servers the user listed in ~/.strix/mcp-servers.json and
+        # register their tools before the agent is built. Fail-open: a missing
+        # config, or a server that will not connect, must never break a run.
+        from strix.tools.mcp import connect_mcp_servers, load_user_mcp_configs
+
+        try:
+            user_mcp_configs = load_user_mcp_configs()
+            if user_mcp_configs:
+                connections = await connect_mcp_servers(user_mcp_configs)
+                mcp_servers = [c.server for c in connections]
+                # Recorded even when nothing connected, so a resumed run does not
+                # keep attributing tool calls to servers it no longer has.
+                _record_mcp_connections(connections)
+                if connections:
+                    report(_mcp_startup_summary(connections))
+                    notes_block = _mcp_connection_notes(connections)
+                    if notes_block:
+                        root_task = f"{root_task}\n\n{notes_block}"
+        except Exception:
+            logger.exception("Failed to connect user MCP servers; continuing without them")
 
         root_agent = build_strix_agent(
             name="Root Agent",
@@ -308,6 +382,7 @@ async def run_strix_scan(
             is_root=True,
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
@@ -327,6 +402,7 @@ async def run_strix_scan(
         child_agent_builder = make_child_factory(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
+            is_diff_scoped=is_diff_scoped,
             interactive=interactive,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
@@ -355,6 +431,7 @@ async def run_strix_scan(
             "parent_id": None,
             "interactive": interactive,
             "spawn_child_agent": spawn_child_agent,
+            "scan_targets": build_scan_targets(scan_config),
             "max_context_images": settings.runtime.max_context_images,
         }
 
@@ -478,6 +555,9 @@ async def run_strix_scan(
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()
+        for mcp_server in mcp_servers:
+            with contextlib.suppress(Exception):
+                await mcp_server.cleanup()  # type: ignore[no-untyped-call]
         with contextlib.suppress(Exception):
             await coordinator._maybe_snapshot()
         if cleanup_on_exit:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -75,6 +75,9 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         remediation_steps="Context-encode output.",
         evidence="Response echoes the payload verbatim.",
         assumptions="Assumes a victim opens a crafted link.",
+        counterevidence="No output encoding or CSP observed on this response.",
+        confidence="HIGH",
+        severity_change_conditions="A strict CSP would lower the severity.",
         fix_effort="LOW",
         cvss_breakdown=_CVSS,
         endpoint="/search",
@@ -91,6 +94,9 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["fix_effort"] == "low"
     assert report["fix_pr_body"] == "## Fix\nEncode output."
     assert report["finding_class"] == "dynamic"
+    assert report["counterevidence"] == "No output encoding or CSP observed on this response."
+    assert report["confidence"] == "high"
+    assert report["severity_change_conditions"] == "A strict CSP would lower the severity."
 
 
 async def test_create_report_requires_evidence_and_assumptions(
@@ -107,6 +113,9 @@ async def test_create_report_requires_evidence_and_assumptions(
         remediation_steps="r",
         evidence="   ",
         assumptions="",
+        counterevidence="none found",
+        confidence="high",
+        severity_change_conditions="n/a",
         fix_effort="low",
         cvss_breakdown=_CVSS,
         endpoint=None,
@@ -134,6 +143,9 @@ async def test_create_report_rejects_invalid_fix_effort(report_state: ReportStat
         remediation_steps="r",
         evidence="e",
         assumptions="a",
+        counterevidence="none found",
+        confidence="high",
+        severity_change_conditions="n/a",
         fix_effort="enormous",
         cvss_breakdown=_CVSS,
         endpoint=None,
@@ -145,6 +157,80 @@ async def test_create_report_rejects_invalid_fix_effort(report_state: ReportStat
     assert result["success"] is False
     assert any("fix_effort" in e for e in result["errors"])
     assert not report_state.vulnerability_reports
+
+
+async def _create_with(report_state: ReportState, **overrides: object) -> dict[str, Any]:
+    kwargs: dict[str, object] = {
+        "title": "X",
+        "description": "d",
+        "impact": "i",
+        "target": "t",
+        "technical_analysis": "ta",
+        "poc_description": "p",
+        "poc_script_code": "c",
+        "remediation_steps": "r",
+        "evidence": "e",
+        "assumptions": "a",
+        "counterevidence": "No guard found on this path.",
+        "confidence": "high",
+        "severity_change_conditions": "Proof of internet exposure would raise it.",
+        "fix_effort": "low",
+        "cvss_breakdown": _CVSS,
+        "endpoint": None,
+        "method": None,
+        "cve": None,
+        "cwe": None,
+        "code_locations": None,
+    }
+    kwargs.update(overrides)
+    assert report_state is not None
+    return await _do_create(**kwargs)  # type: ignore[arg-type]
+
+
+async def test_create_report_requires_counterevidence(report_state: ReportState) -> None:
+    result = await _create_with(report_state, counterevidence="   ")
+    assert result["success"] is False
+    assert any("Counterevidence" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_create_report_requires_severity_change_conditions(
+    report_state: ReportState,
+) -> None:
+    result = await _create_with(report_state, severity_change_conditions="")
+    assert result["success"] is False
+    assert any("severity_change_conditions" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_create_report_rejects_invalid_confidence(report_state: ReportState) -> None:
+    result = await _create_with(report_state, confidence="pretty sure")
+    assert result["success"] is False
+    assert any("confidence" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_create_report_requires_rationale_when_confidence_not_high(
+    report_state: ReportState,
+) -> None:
+    result = await _create_with(report_state, confidence="medium")
+    assert result["success"] is False
+    assert any("confidence_rationale" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_create_report_accepts_medium_confidence_with_rationale(
+    report_state: ReportState,
+) -> None:
+    result = await _create_with(
+        report_state,
+        confidence="medium",
+        confidence_rationale="Static-only trace; could not stand up the service.",
+    )
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    assert report["confidence"] == "medium"
+    assert report["confidence_rationale"] == "Static-only trace; could not stand up the service."
 
 
 async def test_dependency_report_sets_class_and_metadata(report_state: ReportState) -> None:
@@ -935,6 +1021,56 @@ def test_vuln_tool_exposes_new_params() -> None:
     dep_required = create_dependency_report.params_json_schema["required"]
     assert "package_ecosystem" in dep_required
     assert "advisory_cvss" in dep_required
+
+
+_FIX_LOCATION = {
+    "file": "app/views.py",
+    "start_line": 10,
+    "end_line": 12,
+    "fix_before": 'query = f"SELECT * FROM t WHERE id={uid}"',
+    "fix_after": 'query = "SELECT * FROM t WHERE id=%s"',
+}
+
+_INFO_LOCATION = {
+    "file": "app/views.py",
+    "start_line": 10,
+    "end_line": 12,
+    "snippet": 'query = f"SELECT * FROM t WHERE id={uid}"',
+}
+
+
+async def test_fix_after_requires_verification(report_state: ReportState) -> None:
+    result = await _create_with(report_state, code_locations=[_FIX_LOCATION])
+    assert result["success"] is False
+    assert any("fix_verification" in e for e in result["errors"])
+    assert not report_state.vulnerability_reports
+
+
+async def test_fix_after_with_verification_persists(report_state: ReportState) -> None:
+    verification = (
+        "Re-ran the PoC against the patched handler: the payload is now bound as a "
+        "parameter and returns no extra rows. Checked the two sibling call sites of "
+        "the same helper and the admin export path; both already parameterized. "
+        "Legitimate numeric ids still resolve and the 404 path is unchanged. "
+        "Ran the focused view tests and ruff."
+    )
+    result = await _create_with(
+        report_state,
+        code_locations=[_FIX_LOCATION],
+        fix_verification=verification,
+    )
+    assert result["success"] is True
+    assert report_state.vulnerability_reports[0]["fix_verification"] == verification
+
+
+async def test_informational_location_needs_no_verification(report_state: ReportState) -> None:
+    result = await _create_with(report_state, code_locations=[_INFO_LOCATION])
+    assert result["success"] is True
+    assert "fix_verification" not in report_state.vulnerability_reports[0]
+
+
+def test_vuln_tool_exposes_fix_verification() -> None:
+    assert "fix_verification" in create_vulnerability_report.params_json_schema["properties"]
 
 
 def test_dep_tool_exposes_contextual_cvss_params() -> None:
