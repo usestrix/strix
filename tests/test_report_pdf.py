@@ -156,3 +156,9 @@ def test_generate_report_pdf_with_masked_secret_in_summary(tmp_path: Path) -> No
 def test_para_falls_back_to_plain_text_on_crossed_markup() -> None:
     para = _para("<b><i>x</b></i> &amp; y", ParagraphStyle("t"))
     assert para.getPlainText() == "x & y"
+
+
+def test_inline_md_keeps_balanced_nested_emphasis() -> None:
+    assert _inline_md("**bold with *italic* inside**") == "<b>bold with <i>italic</i> inside</b>"
+    assert _inline_md("*outer **bold** inner*") == "<i>outer <b>bold</b> inner</i>"
+    assert "******" in _inline_md("(observed as '******')")  # a masked secret stays literal

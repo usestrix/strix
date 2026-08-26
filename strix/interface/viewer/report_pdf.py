@@ -417,14 +417,15 @@ def _inline_md(text: str) -> str:
         codes.append(match.group(1))
         return f"\x00{len(codes) - 1}\x00"
 
-    # Emphasis content may not contain its own delimiter or a tag, so the three passes can
-    # never interleave into crossed markup (``<b><i>..</b></i>``), which reportlab rejects.
-    # A run of asterisks such as a masked secret (``******``) therefore stays literal.
+    # Bold spans must start and end with a non-delimiter, so a run of asterisks such as a masked
+    # secret (``******``) stays literal. Italic content is plain text or complete ``<b>..</b>``
+    # spans, so the passes can nest (``**a *b* c**``, ``*a **b** c*``) but can never interleave
+    # into crossed markup (``<b><i>..</b></i>``), which reportlab rejects.
     seg = html.escape(re.sub(r"`([^`]+)`", _stash, text))
-    seg = re.sub(r"\*\*\*([^*<>\n]+?)\*\*\*", r"<b><i>\1</i></b>", seg)
-    seg = re.sub(r"\*\*([^*<>\n]+?)\*\*", r"<b>\1</b>", seg)
-    seg = re.sub(r"__([^_<>\n]+?)__", r"<b>\1</b>", seg)
-    seg = re.sub(r"\*([^*<>\n]+?)\*", r"<i>\1</i>", seg)
+    seg = re.sub(r"\*\*\*(?=[^*])(.+?)(?<=[^*])\*\*\*", r"<b><i>\1</i></b>", seg)
+    seg = re.sub(r"\*\*(?=[^*])(.+?)(?<=[^*])\*\*", r"<b>\1</b>", seg)
+    seg = re.sub(r"__(?=[^_])(.+?)(?<=[^_])__", r"<b>\1</b>", seg)
+    seg = re.sub(r"\*((?:[^*<>\n]|<b>[^<>*\n]*</b>)+?)\*", r"<i>\1</i>", seg)
 
     def _restore(match: re.Match[str]) -> str:
         inner = html.escape(codes[int(match.group(1))])
