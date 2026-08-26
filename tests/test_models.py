@@ -2,15 +2,23 @@
 
 from __future__ import annotations
 
+import importlib
+import os
+
 import pytest
 from agents.model_settings import ModelSettings
 
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
+    StrixProvider,
+    _mirror_api_key_to_provider_env,
     is_recommended_or_frontier_model,
     request_timeout_extra_args,
     supports_strict_tool_schemas,
 )
+
+
+NVIDIA_MODEL = "nvidia_nim/openai/gpt-oss-120b"
 
 
 @pytest.mark.parametrize("model_name", RECOMMENDED_MODEL_NAMES)
@@ -33,6 +41,55 @@ def test_request_timeout_extra_args_survives_model_settings_json_dump() -> None:
 @pytest.mark.parametrize("value", [None, 0, -1])
 def test_request_timeout_extra_args_disabled(value: float | None) -> None:
     assert request_timeout_extra_args(value) is None
+
+
+def test_nvidia_nim_route_preserves_namespaced_model_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+
+    model = StrixProvider().get_model(NVIDIA_MODEL)
+
+    assert type(model).__name__ == "LitellmModel"
+    assert vars(model)["model"] == NVIDIA_MODEL
+
+    litellm = importlib.import_module("litellm")
+
+    resolved_model, provider, _, api_base = litellm.get_llm_provider(NVIDIA_MODEL)
+    assert resolved_model == "openai/gpt-oss-120b"
+    assert provider == "nvidia_nim"
+    assert api_base == "https://integrate.api.nvidia.com/v1"
+
+
+def test_nvidia_nim_route_mirrors_generic_api_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LITELLM_LOCAL_MODEL_COST_MAP", "True")
+    monkeypatch.delenv("NVIDIA_NIM_API_KEY", raising=False)
+
+    _mirror_api_key_to_provider_env(NVIDIA_MODEL, "test-key")
+
+    assert os.environ["NVIDIA_NIM_API_KEY"] == "test-key"
+
+
+@pytest.mark.parametrize(
+    ("configured_model", "outbound_model"),
+    [
+        ("openai/gpt-5.4", "gpt-5.4"),
+        ("openai/moonshotai/kimi-k2.5", "moonshotai/kimi-k2.5"),
+        ("openai/openai/gpt-oss-120b", "openai/gpt-oss-120b"),
+    ],
+)
+def test_openai_route_strips_only_its_routing_prefix(
+    monkeypatch: pytest.MonkeyPatch,
+    configured_model: str,
+    outbound_model: str,
+) -> None:
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+
+    model = StrixProvider().get_model(configured_model)
+
+    assert vars(model)["model"] == outbound_model
 
 
 def test_recommended_models_are_matched_case_insensitively() -> None:

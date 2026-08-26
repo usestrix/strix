@@ -1,0 +1,49 @@
+---
+title: "NVIDIA Build"
+description: "Configure Strix with NVIDIA-hosted NIM models"
+---
+
+[NVIDIA Build](https://build.nvidia.com) exposes hosted NIM models through an
+OpenAI-compatible chat completions API.
+
+## Setup
+
+```bash
+export STRIX_LLM="nvidia_nim/openai/gpt-oss-120b"
+export LLM_API_KEY="nvapi-..."
+```
+
+LiteLLM supplies the hosted NVIDIA endpoint by default. You can also set it
+explicitly:
+
+```bash
+export LLM_API_BASE="https://integrate.api.nvidia.com/v1"
+```
+
+## Model format
+
+Use `nvidia_nim/<NVIDIA-model-id>`. NVIDIA model IDs can contain another slash,
+and the entire model ID after `nvidia_nim/` is preserved when Strix sends the
+request.
+
+For example, NVIDIA's GPT-OSS 120B model ID is `openai/gpt-oss-120b`, so the
+complete Strix value is:
+
+```bash
+export STRIX_LLM="nvidia_nim/openai/gpt-oss-120b"
+```
+
+<Warning>
+Do not omit `nvidia_nim/` for this model. In `openai/gpt-oss-120b`, the first
+`openai/` is interpreted as Strix's OpenAI routing prefix and is not sent as
+part of the model ID. NVIDIA requires the literal `openai/gpt-oss-120b` ID.
+</Warning>
+
+See the [NVIDIA API reference](https://docs.api.nvidia.com/nim/reference/openai-gpt-oss-120b-infer)
+for the model's request schema.
+
+## API key
+
+Create an API key from the model page on [NVIDIA Build](https://build.nvidia.com).
+Strix accepts it through the provider-neutral `LLM_API_KEY` variable and passes
+it to NVIDIA NIM automatically.
