@@ -176,11 +176,9 @@ def _create_router_handler(router_instance: ModelRouterServer) -> type[BaseHTTPR
                 target_key = cfg["subagent_api_key"]
                 role_label = "Subagent (执行打手)"
 
-            # 2. Rewrite model in payload and prune bloated historical context
+            # 2. Rewrite model in payload (preserving raw messages and reasoning context 100% intact)
             if isinstance(payload, dict):
                 payload["model"] = target_model
-                if "messages" in payload and isinstance(payload["messages"], list):
-                    payload["messages"] = _prune_messages_for_local_model(payload["messages"])
                 forward_body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
             else:
                 forward_body = raw_body
@@ -317,41 +315,3 @@ def _parse_qwen_tool_calls(content: str) -> list[dict[str, Any]]:
             pass
 
     return tool_calls
-
-
-def _prune_messages_for_local_model(
-    messages: list[dict[str, Any]], max_tool_output_chars: int = 1500
-) -> list[dict[str, Any]]:
-    """Prune bloated older tool outputs to prevent context explosion on local models."""
-    if not isinstance(messages, list) or len(messages) <= 6:
-        return messages
-
-    pruned: list[dict[str, Any]] = []
-    # Keep the first 2 messages (system prompt + user task description) untouched
-    # Keep the latest 4 messages (recent turns) untouched
-    # For intermediate messages, trim excessively long tool outputs (nmap logs, HTML blobs)
-    cutoff = len(messages) - 4
-    for idx, msg in enumerate(messages):
-        if idx <= 1 or idx >= cutoff:
-            pruned.append(msg)
-            continue
-
-        if not isinstance(msg, dict):
-            pruned.append(msg)
-            continue
-
-        role = msg.get("role")
-        content = msg.get("content")
-
-        if role == "tool" and isinstance(content, str) and len(content) > max_tool_output_chars:
-            trimmed = (
-                content[:max_tool_output_chars]
-                + f"\n\n[... Strix Hub: Output trimmed to {max_tool_output_chars} chars to accelerate local inference ...]"
-            )
-            new_msg = dict(msg)
-            new_msg["content"] = trimmed
-            pruned.append(new_msg)
-        else:
-            pruned.append(msg)
-
-    return pruned
