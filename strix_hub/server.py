@@ -459,8 +459,7 @@ def serve(host: str = "0.0.0.0", port: int = 8888) -> None:
     print(f"\n=======================================================")
     print(f"🚀 Strix Hub Dual-Channel Platform running at:")
     print(f"👉 http://{host}:{port}")
-    print(f"   Default Admin: admin / admin123")
-    print(f"   Local Qwen 3.6 Cluster: {LOCAL_QWEN_URL}")
+    print(f"   Local LLM Provider: {LOCAL_LLM_URL}")
     print(f"=======================================================\n")
     try:
         server.serve_forever()
