@@ -181,9 +181,9 @@ def make_hub_handler() -> type[BaseHTTPRequestHandler]:
                 self._send_json(HTTPStatus.OK, {
                     "presets": MODEL_PRESETS,
                     "local_defaults": {
-                        "model": LOCAL_QWEN38_MODEL,
-                        "url": LOCAL_QWEN38_URL,
-                        "key": LOCAL_QWEN38_KEY,
+                        "model": LOCAL_LLM_MODEL,
+                        "url": LOCAL_LLM_URL,
+                        "key": LOCAL_LLM_KEY,
                     }
                 })
                 return

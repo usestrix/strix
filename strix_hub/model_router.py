@@ -57,7 +57,11 @@ class ModelRouterServer:
                         self.config[k] = v.rstrip("/")
                     else:
                         self.config[k] = v
-            logger.info("ModelRouter config hot-updated: %s", self.config)
+            logger.info(
+                "ModelRouter config hot-updated (root_model=%s, subagent_model=%s)",
+                self.config.get("root_model"),
+                self.config.get("subagent_model"),
+            )
 
     def start(self) -> None:
         handler = _create_router_handler(self)

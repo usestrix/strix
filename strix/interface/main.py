@@ -435,7 +435,7 @@ def main() -> None:
     if len(sys.argv) > 1 and sys.argv[1] == "hub":
         from strix_hub.main import main as run_hub
 
-        run_hub()
+        run_hub(sys.argv[2:])
         return
 
     args = parse_arguments()

@@ -118,12 +118,18 @@ def ensure_admin_user() -> None:
         cursor.execute("SELECT id FROM users WHERE role = 'admin' LIMIT 1")
         if cursor.fetchone() is None:
             admin_id = f"user_{secrets.token_hex(6)}"
-            p_hash, salt = hash_password("admin123")
+            initial_password = os.environ.get("STRIX_HUB_ADMIN_PASSWORD", "admin123")
+            p_hash, salt = hash_password(initial_password)
             cursor.execute(
                 "INSERT INTO users (id, username, password_hash, salt, role, created_at) VALUES (?, ?, ?, ?, ?, ?)",
                 (admin_id, "admin", p_hash, salt, "admin", int(time.time())),
             )
             conn.commit()
+            if initial_password == "admin123":
+                logger.warning(
+                    "Default administrator account initialized (username: admin, password: admin123). "
+                    "Please change your password immediately in user settings or set STRIX_HUB_ADMIN_PASSWORD."
+                )
 
 
 # --- User Operations ---
