@@ -97,6 +97,9 @@ Examples:
   # Extra files placed in the sandbox workspace
   strix --target ./my-project --workspace-file ./wordlist.txt
   strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
+
+  # Launch Strix Hub web management & dual-channel model routing console
+  strix hub --port 8888
         """,
     )
 

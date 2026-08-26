@@ -431,6 +431,13 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
+    # `strix hub …` launches the multi-tenant task orchestration and dual-channel router console.
+    if len(sys.argv) > 1 and sys.argv[1] == "hub":
+        from strix_hub.main import main as run_hub
+
+        run_hub()
+        return
+
     args = parse_arguments()
 
     start_background_check()
