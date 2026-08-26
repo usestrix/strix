@@ -417,16 +417,28 @@ def _inline_md(text: str) -> str:
         codes.append(match.group(1))
         return f"\x00{len(codes) - 1}\x00"
 
+    # Emphasis content may not contain its own delimiter or a tag, so the three passes can
+    # never interleave into crossed markup (``<b><i>..</b></i>``), which reportlab rejects.
+    # A run of asterisks such as a masked secret (``******``) therefore stays literal.
     seg = html.escape(re.sub(r"`([^`]+)`", _stash, text))
-    seg = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", seg)
-    seg = re.sub(r"__(.+?)__", r"<b>\1</b>", seg)
-    seg = re.sub(r"\*(.+?)\*", r"<i>\1</i>", seg)
+    seg = re.sub(r"\*\*\*([^*<>\n]+?)\*\*\*", r"<b><i>\1</i></b>", seg)
+    seg = re.sub(r"\*\*([^*<>\n]+?)\*\*", r"<b>\1</b>", seg)
+    seg = re.sub(r"__([^_<>\n]+?)__", r"<b>\1</b>", seg)
+    seg = re.sub(r"\*([^*<>\n]+?)\*", r"<i>\1</i>", seg)
 
     def _restore(match: re.Match[str]) -> str:
         inner = html.escape(codes[int(match.group(1))])
         return f'<font face="{_MONO}" color="#b31d28">{inner}</font>'
 
     return re.sub(r"\x00(\d+)\x00", _restore, seg)
+
+
+def _para(markup: str, style: ParagraphStyle) -> Paragraph:
+    """Build a Paragraph; if reportlab rejects the markup, drop our tags and keep the text."""
+    try:
+        return Paragraph(markup, style)
+    except ValueError:
+        return Paragraph(re.sub(r"</?(?:b|i|font)\b[^>]*>", "", markup), style)
 
 
 def _strip_leading_heading(md: str) -> str:
@@ -447,12 +459,12 @@ def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hur
 
     def flush_para() -> None:
         if para:
-            flow.append(Paragraph(_inline_md(" ".join(para)), styles["body"]))
+            flow.append(_para(_inline_md(" ".join(para)), styles["body"]))
             para.clear()
 
     def flush_bullets() -> None:
         for marker, item in bullets:
-            flow.append(Paragraph(f"{marker}&nbsp;{_inline_md(item)}", styles["bullet"]))
+            flow.append(_para(f"{marker}&nbsp;{_inline_md(item)}", styles["bullet"]))
         bullets.clear()
 
     lines = md.replace("\r\n", "\n").split("\n")
@@ -479,7 +491,7 @@ def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hur
         if heading:
             flush_para()
             flush_bullets()
-            flow.append(Paragraph(_inline_md(heading.group(2)), styles["md_heading"]))
+            flow.append(_para(_inline_md(heading.group(2)), styles["md_heading"]))
             i += 1
             continue
         ordered = re.match(r"^(\d+)\.\s+(.*)$", stripped)
