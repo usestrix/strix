@@ -100,7 +100,7 @@ def start_task(task_id: str) -> dict[str, Any]:
         instruction = task["instruction"]
 
         strix_bin = get_strix_bin_path()
-        cmd: list[str] = [strix_bin, "-n", "--target", target, "--scan-mode", scan_mode, "--run-name", task_id]
+        cmd: list[str] = [strix_bin, "-n", "--target", target, "--scan-mode", scan_mode]
         if instruction:
             cmd.extend(["--instruction", instruction])
 
