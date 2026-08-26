@@ -23,68 +23,95 @@ logger = logging.getLogger("strix_hub.server")
 
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
-# Configurable Local LLM environment (reads from env vars or defaults to generic placeholders)
-LOCAL_LLM_MODEL = os.environ.get("LOCAL_LLM_MODEL", "openai/Qwen3.8-27B-abliterated")
-LOCAL_LLM_URL = os.environ.get("LOCAL_LLM_URL", os.environ.get("OPENAI_BASE_URL", "http://127.0.0.1:8000/v1"))
-LOCAL_LLM_KEY = os.environ.get("LOCAL_LLM_KEY", os.environ.get("OPENAI_API_KEY", ""))
+# Automatically load .env file from working directory or /opt/strix/.env if available
+def _load_env_file() -> None:
+    for env_path in [Path.cwd() / ".env", Path("/opt/strix/.env")]:
+        if env_path.is_file():
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, v = line.split("=", 1)
+                        k, v = k.strip(), v.strip().strip("'\"")
+                        if k and k not in os.environ:
+                            os.environ[k] = v
+            except Exception:
+                pass
 
-MODEL_PRESETS = [
-    {
-        "id": "hybrid-gemini-qwen",
-        "name": "🚀 顶配混合动力 (Gemini 3.1 Pro 大脑 + 本地 Qwen 3.8 打手)",
-        "root_model": "openai/gemini-3.1-pro-preview",
-        "root_api_base": "",
-        "root_api_key": "",
-        "subagent_model": LOCAL_LLM_MODEL,
-        "subagent_api_base": LOCAL_LLM_URL,
-        "subagent_api_key": LOCAL_LLM_KEY,
-        "description": "【最佳推荐】主控用云端 Gemini 3.1 Pro 百万上下文做复杂漏洞挖掘；海量并发子智能体全部走本地私有化模型，零成本无外网限流！",
-    },
-    {
-        "id": "local-pure-cluster",
-        "name": "🛡️ 本地全离线集群 (主子全跑本地私有化模型)",
-        "root_model": LOCAL_LLM_MODEL,
-        "root_api_base": LOCAL_LLM_URL,
-        "root_api_key": LOCAL_LLM_KEY,
-        "subagent_model": LOCAL_LLM_MODEL,
-        "subagent_api_base": LOCAL_LLM_URL,
-        "subagent_api_key": LOCAL_LLM_KEY,
-        "description": "完全在企业局域网内运行，数据绝不出网，适合离线环境与内网安全合规审计。",
-    },
-    {
-        "id": "gemini-optimal",
-        "name": "⚡ Gemini 纯云端组合 (3.1 Pro + 3.5 Flash)",
-        "root_model": "openai/gemini-3.1-pro-preview",
-        "root_api_base": "",
-        "root_api_key": "",
-        "subagent_model": "openai/gemini-3.5-flash",
-        "subagent_api_base": "",
-        "subagent_api_key": "",
-        "description": "主控用 3.1 Pro 推理，子任务用 3.5 Flash 极速响应，全云端中转组合。",
-    },
-    {
-        "id": "claude-hybrid",
-        "name": "💎 Claude 3.7 安全审计 + 本地模型混合调度",
-        "root_model": "openai/claude-3-7-sonnet",
-        "root_api_base": "",
-        "root_api_key": "",
-        "subagent_model": LOCAL_LLM_MODEL,
-        "subagent_api_base": LOCAL_LLM_URL,
-        "subagent_api_key": LOCAL_LLM_KEY,
-        "description": "主控使用顶级安全审计模型 Claude 3.7，子任务由本地私有化集群并发执行。",
-    },
-    {
-        "id": "custom",
-        "name": "⚙️ 自定义独立双渠道 (Custom Dual Channels)",
-        "root_model": "",
-        "root_api_base": "",
-        "root_api_key": "",
-        "subagent_model": "",
-        "subagent_api_base": "",
-        "subagent_api_key": "",
-        "description": "自由为两个模型分别配置不同的 Base URL 与 API Key 渠道。",
-    },
-]
+_load_env_file()
+
+def get_local_llm_config() -> tuple[str, str, str]:
+    """Resolve local LLM model name, API URL, and key with rich fallbacks."""
+    model = os.environ.get("LOCAL_LLM_MODEL", os.environ.get("STRIX_LLM", "openai/Qwen3.8-27B-abliterated"))
+    url = os.environ.get("LOCAL_LLM_URL", os.environ.get("LLM_API_BASE", os.environ.get("OPENAI_BASE_URL", "http://127.0.0.1:8000/v1")))
+    key = os.environ.get("LOCAL_LLM_KEY", os.environ.get("LLM_API_KEY", os.environ.get("OPENAI_API_KEY", "")))
+    return model, url, key
+
+LOCAL_LLM_MODEL, LOCAL_LLM_URL, LOCAL_LLM_KEY = get_local_llm_config()
+
+def get_model_presets() -> list[dict[str, Any]]:
+    m, u, k = get_local_llm_config()
+    return [
+        {
+            "id": "hybrid-gemini-qwen",
+            "name": "🚀 顶配混合动力 (Gemini 3.1 Pro 大脑 + 本地 Qwen 3.8 打手)",
+            "root_model": "openai/gemini-3.1-pro-preview",
+            "root_api_base": "",
+            "root_api_key": "",
+            "subagent_model": m,
+            "subagent_api_base": u,
+            "subagent_api_key": k,
+            "description": "【最佳推荐】主控用云端 Gemini 3.1 Pro 百万上下文做复杂漏洞挖掘；海量并发子智能体全部走本地私有化模型，零成本无外网限流！",
+        },
+        {
+            "id": "local-pure-cluster",
+            "name": "🛡️ 本地全离线集群 (主子全跑本地私有化模型)",
+            "root_model": m,
+            "root_api_base": u,
+            "root_api_key": k,
+            "subagent_model": m,
+            "subagent_api_base": u,
+            "subagent_api_key": k,
+            "description": "完全在企业局域网内运行，数据绝不出网，适合离线环境与内网安全合规审计。",
+        },
+        {
+            "id": "gemini-optimal",
+            "name": "⚡ Gemini 纯云端组合 (3.1 Pro + 3.5 Flash)",
+            "root_model": "openai/gemini-3.1-pro-preview",
+            "root_api_base": "",
+            "root_api_key": "",
+            "subagent_model": "openai/gemini-3.5-flash",
+            "subagent_api_base": "",
+            "subagent_api_key": "",
+            "description": "主控用 3.1 Pro 推理，子任务用 3.5 Flash 极速响应，全云端中转组合。",
+        },
+        {
+            "id": "claude-hybrid",
+            "name": "💎 Claude 3.7 安全审计 + 本地模型混合调度",
+            "root_model": "openai/claude-3-7-sonnet",
+            "root_api_base": "",
+            "root_api_key": "",
+            "subagent_model": m,
+            "subagent_api_base": u,
+            "subagent_api_key": k,
+            "description": "主控使用顶级安全审计模型 Claude 3.7，子任务由本地私有化集群并发执行。",
+        },
+        {
+            "id": "custom",
+            "name": "⚙️ 自定义独立双渠道 (Custom Dual Channels)",
+            "root_model": "",
+            "root_api_base": "",
+            "root_api_key": "",
+            "subagent_model": "",
+            "subagent_api_base": "",
+            "subagent_api_key": "",
+            "description": "自由为两个模型分别配置不同的 Base URL 与 API Key 渠道。",
+        },
+    ]
+
+MODEL_PRESETS = get_model_presets()
 
 
 def make_hub_handler() -> type[BaseHTTPRequestHandler]:

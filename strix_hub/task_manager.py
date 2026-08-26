@@ -60,15 +60,35 @@ def start_task(task_id: str) -> dict[str, Any]:
         # 1. Start dedicated Dual-Channel ModelRouter on a free port for this task
         port = 18800 + (abs(hash(task_id)) % 1000)
         
-        # Fallback to server env if task channel is left blank
-        default_base = os.environ.get("OPENAI_BASE_URL") or os.environ.get("LLM_API_BASE", "https://api.openai.com/v1")
-        default_key = os.environ.get("OPENAI_API_KEY") or os.environ.get("LLM_API_KEY", "")
+        # Fallback to server env if task channel is left blank or has unreachable placeholder 8000
+        env_base = (
+            os.environ.get("LOCAL_LLM_URL")
+            or os.environ.get("OPENAI_BASE_URL")
+            or os.environ.get("LLM_API_BASE", "")
+        )
+        env_key = (
+            os.environ.get("LOCAL_LLM_KEY")
+            or os.environ.get("OPENAI_API_KEY")
+            or os.environ.get("LLM_API_KEY", "")
+        )
 
-        root_base = task.get("root_api_base") or task.get("api_base") or default_base
-        root_key = task.get("root_api_key_raw") or task.get("api_key_raw") or default_key
+        def _resolve_channel(base: str | None, key: str | None) -> tuple[str, str]:
+            b = (base or "").strip()
+            k = (key or "").strip()
+            if (not b or "127.0.0.1:8000" in b) and env_base:
+                b = env_base
+            if not k and env_key:
+                k = env_key
+            return b, k
 
-        sub_base = task.get("subagent_api_base") or task.get("api_base") or default_base
-        sub_key = task.get("subagent_api_key_raw") or task.get("api_key_raw") or default_key
+        root_base, root_key = _resolve_channel(
+            task.get("root_api_base") or task.get("api_base"),
+            task.get("root_api_key_raw") or task.get("api_key_raw"),
+        )
+        sub_base, sub_key = _resolve_channel(
+            task.get("subagent_api_base") or task.get("api_base"),
+            task.get("subagent_api_key_raw") or task.get("api_key_raw"),
+        )
 
         router = ModelRouterServer(
             host="127.0.0.1",
