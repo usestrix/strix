@@ -5,9 +5,10 @@ Caido SDK, the Docker SDK) costs seconds to import cold, but none of it is
 needed until a scan actually starts. Importing it on a daemon thread at CLI
 entry overlaps that cost with the I/O-bound startup work that always precedes
 a scan (argument parsing, Docker checks, image pull, TUI setup), so by the
-time the scan begins the modules are already in ``sys.modules``. Any thread
-that needs one of them before the warm-up finishes just blocks on the normal
-import lock, so behaviour is unchanged either way.
+time the scan begins the modules are already in ``sys.modules``. Startup joins
+the thread before importing scan dependencies on the main thread: Python locks
+individual modules, not an entire package import graph, so that boundary keeps
+concurrent imports from observing partially initialized packages.
 """
 
 from __future__ import annotations
@@ -53,3 +54,11 @@ def start_import_warmup(modules: tuple[str, ...] = WARMUP_MODULES) -> threading.
         )
         _thread.start()
         return _thread
+
+
+def wait_for_import_warmup() -> None:
+    """Wait until the background import graph has settled, if it was started."""
+    with _lock:
+        thread = _thread
+    if thread is not None and thread is not threading.current_thread():
+        thread.join()
