@@ -3,7 +3,7 @@
     <img src="https://github.com/usestrix/.github/raw/main/imgs/cover.png" alt="Strix Banner" width="100%">
   </a>
 </p>
-
+ # mycool project
 <div align="center">
 
 # Strix
