@@ -507,7 +507,7 @@ func (m Model) mainView() string {
 func (m Model) sidebarView(width, height int) string {
 	// Stats box height fits its content (auto, max 15); vulns panel max-height 12.
 	statsBody := m.statsView()
-	statsHeight, vulnHeight, agentHeight := m.sidebarHeights()
+	statsHeight, vulnHeight, mcpHeight, agentHeight := m.sidebarHeights()
 	agentBorder := dark
 	if m.focus == focusAgents {
 		agentBorder = green
@@ -546,11 +546,19 @@ func (m Model) sidebarView(width, height int) string {
 		)
 		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(vulnRows).Border(lipgloss.RoundedBorder()).BorderForeground(vulnBorder).Padding(0, 1).Render(findings))
 	}
+	if mcpHeight > 0 {
+		mcpBorder := dark
+		if m.focus == focusMcp {
+			mcpBorder = green
+		}
+		mcpRows := max(1, mcpHeight-2)
+		parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(mcpRows).Border(lipgloss.RoundedBorder()).BorderForeground(mcpBorder).Padding(0, 1).Render(m.mcpConnectionsView(width-4, mcpRows)))
+	}
 	parts = append(parts, lipgloss.NewStyle().Width(width-2).Height(statsHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(statsBody))
 	return strings.Join(parts, "\n")
 }
 
-func (m Model) sidebarHeights() (statsHeight, vulnHeight, agentHeight int) {
+func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight int) {
 	// Measure the stats panel the way its box will render it: a long model name
 	// wraps inside the sidebar, and counting only its newlines would size the
 	// box short and push the whole frame past the bottom of the terminal.
@@ -559,7 +567,13 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, agentHeight int) {
 	if len(m.snapshot.Vulnerabilities) > 0 {
 		vulnHeight = min(12, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+2)
 	}
-	agentHeight = max(3, m.height-m.viewerHeight()-statsHeight-vulnHeight)
+	// One header line + one line per connection + the box border (2). Capped so a
+	// long roster cannot crowd out the agent tree; a roster past the cap scrolls
+	// inside the panel. Absent entirely when the run has no MCP connections.
+	if len(m.snapshot.Connections) > 0 {
+		mcpHeight = min(9, len(m.snapshot.Connections)+3)
+	}
+	agentHeight = max(3, m.height-m.viewerHeight()-statsHeight-vulnHeight-mcpHeight)
 	return
 }
 
@@ -626,6 +640,111 @@ func (m Model) statsView() string {
 	}
 	b.WriteString(w.Render("v" + appVersion))
 	return b.String()
+}
+
+// mcpConnectionsView renders the sidebar MCP panel: a header carrying the total
+// connection count, then one row per connection with a status glyph and its tool
+// count (or "offline").
+//   - a solid green dot marks an attached, idle connection;
+//   - a green cycling quarter-circle (◐ ◓ ◑ ◒) marks a call running against it;
+//   - a red dot plus "offline" marks a connection whose live session has died.
+//
+// The header stays fixed while the roster below it scrolls: when there are more
+// connections than the panel can show, the visible window is chosen by
+// m.mcpOffset and withVerticalScrollbar draws a thumb in the reserved last
+// column, exactly as the agent tree and findings list scroll.
+//
+// "In use" is derived from the connection-tagged tool-call events in the stream,
+// not carried on the connection roster, so a call in flight shows motion without
+// any extra backend signal. The quarter-circle rides the shared sweepFrame tick.
+func (m Model) mcpConnectionsView(width, rows int) string {
+	conns := m.snapshot.Connections
+	header := truncate(lipgloss.NewStyle().Foreground(dim).Render(
+		fmt.Sprintf("MCP Connections (%d)", len(conns))), width)
+	bodyRows := max(0, rows-1)
+	if bodyRows == 0 {
+		return header
+	}
+	inUse := m.mcpInUse()
+	frames := []rune{'◐', '◓', '◑', '◒'}
+	// Reserve the scrollbar column whether or not the bar is showing, so the
+	// roster does not shift sideways as it grows past the panel.
+	rosterWidth := max(1, width-1)
+	start := windowStart(m.mcpOffset, len(conns), bodyRows)
+	end := min(len(conns), start+bodyRows)
+	lines := make([]string, 0, max(0, end-start))
+	for i := start; i < end; i++ {
+		conn := conns[i]
+		var glyph, right string
+		switch {
+		case conn.Dead:
+			glyph = lipgloss.NewStyle().Foreground(red).Render("●")
+			right = lipgloss.NewStyle().Foreground(red).Render("offline")
+		case inUse[conn.Name]:
+			glyph = lipgloss.NewStyle().Foreground(green).Render(string(frames[m.sweepFrame%len(frames)]))
+			right = lipgloss.NewStyle().Foreground(dim).Render(toolsLabel(conn.ToolCount))
+		default:
+			glyph = lipgloss.NewStyle().Foreground(green).Render("●")
+			right = lipgloss.NewStyle().Foreground(dim).Render(toolsLabel(conn.ToolCount))
+		}
+		rightWidth := lipgloss.Width(right)
+		name := truncate(lipgloss.NewStyle().Foreground(textColor).Render(conn.Name), max(1, rosterWidth-2-rightWidth-1))
+		gap := max(1, rosterWidth-2-lipgloss.Width(name)-rightWidth)
+		lines = append(lines, glyph+" "+name+strings.Repeat(" ", gap)+right)
+	}
+	roster := withVerticalScrollbar(
+		strings.Join(lines, "\n"),
+		width,
+		bodyRows,
+		len(conns),
+		bodyRows,
+		m.mcpOffset,
+		m.scrollbarThumb(scrollbarMcp),
+	)
+	return header + "\n" + roster
+}
+
+// mcpPageSize is how many connection rows the roster shows at once, below its
+// fixed header line.
+func (m Model) mcpPageSize() int {
+	_, _, mcpHeight, _ := m.sidebarHeights()
+	// mcpHeight = 2 (border) + header (1) + roster rows.
+	return max(1, mcpHeight-3)
+}
+
+// clampMcpOffset keeps the roster offset within the range that still shows a
+// full page of connections at the bottom.
+func (m Model) clampMcpOffset(offset int) int {
+	return min(max(0, offset), max(0, len(m.snapshot.Connections)-m.mcpPageSize()))
+}
+
+// mcpInUse is the set of MCP connections with a tool call currently running,
+// read off the connection-tagged tool events the model already holds. Each MCP
+// dispatch event carries the connection name (mcp_connection) and a status that
+// moves running -> completed as its own event is upserted, so a connection is
+// "in use" exactly while one of its events is still running.
+func (m Model) mcpInUse() map[string]bool {
+	inUse := map[string]bool{}
+	for _, event := range m.snapshot.Events {
+		if event.Type != "tool" {
+			continue
+		}
+		connection := render.StringValue(event.Data["mcp_connection"])
+		if connection == "" {
+			continue
+		}
+		if render.StringValue(event.Data["status"]) == "running" {
+			inUse[connection] = true
+		}
+	}
+	return inUse
+}
+
+func toolsLabel(count int) string {
+	if count == 1 {
+		return "1 tool"
+	}
+	return fmt.Sprintf("%d tools", count)
 }
 
 func numberValue(value any) int64 {

@@ -23,10 +23,12 @@ from strix.tools.mcp.registry import (
     McpCallInfo,
     McpConnectionEntry,
     McpConnectionRequest,
+    McpConnectionStatus,
     McpConnectionSummary,
     McpRegistry,
     resolve_mcp_call,
 )
+from strix.tools.mcp.session import McpConnectionUnavailableError, SupervisedMcpSession
 
 
 __all__ = [
@@ -41,8 +43,11 @@ __all__ = [
     "McpConnectionConfig",
     "McpConnectionEntry",
     "McpConnectionRequest",
+    "McpConnectionStatus",
     "McpConnectionSummary",
+    "McpConnectionUnavailableError",
     "McpRegistry",
+    "SupervisedMcpSession",
     "attach_mcp_requests",
     "call_mcp",
     "connect_mcp_servers",

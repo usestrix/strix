@@ -255,6 +255,11 @@ ignore = [
 "strix/tools/notes/tools.py" = ["PLC0415", "TC002"]
 "strix/tools/finish/tool.py" = ["PLC0415", "TC002"]
 "strix/tools/reporting/tool.py" = ["PLC0415", "TC002"]
+# Lazy imports of strix.tools.mcp.client avoid a circular import (client imports
+# the session module at module load).
+"strix/tools/mcp/session.py" = ["PLC0415"]
+# call_mcp is a chain of guard clauses that each return an error string.
+"strix/tools/mcp/agent_tools.py" = ["PLR0911"]
 "strix/tools/**/*.py" = [
     "ARG001", # Unused function argument (tools may have unused args for interface consistency)
 ]

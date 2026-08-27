@@ -268,6 +268,24 @@ func TestMcpDescribeInspectsConnection(t *testing.T) {
 	}
 }
 
+func TestMcpListMarksDeadConnectionsOffline(t *testing.T) {
+	// list_mcps carries a per-connection dead flag; a dead connection reads as
+	// offline in the inventory while a live one shows normally.
+	result := map[string]any{
+		"connections": []any{
+			map[string]any{"name": "supabase", "tool_count": float64(3), "dead": false},
+			map[string]any{"name": "vercel", "tool_count": float64(1), "dead": true},
+		},
+	}
+	data := tool("list_mcps", nil, result, "completed")
+
+	out := ansi.Strip(Tool(data))
+	requireContains(t, out, "Listing MCP servers", "supabase", "vercel", "offline")
+	if strings.Count(out, "offline") != 1 {
+		t.Fatalf("only the dead connection should read offline:\n%s", out)
+	}
+}
+
 func TestCollapseToolShellPreviewAndExpand(t *testing.T) {
 	lines := make([]string, 16)
 	for i := range lines {

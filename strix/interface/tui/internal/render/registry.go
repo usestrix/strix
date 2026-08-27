@@ -70,6 +70,10 @@ func Tool(data map[string]any) string {
 	}
 
 	switch name {
+	// list_mcps inventories every connection rather than touching one, so it is
+	// the one MCP tool with no connection tag and routes by name like a built-in.
+	case "list_mcps":
+		return renderMcpList(result, status)
 	case "exec_command":
 		return renderExecCommand(args, result, status)
 	case "write_stdin":

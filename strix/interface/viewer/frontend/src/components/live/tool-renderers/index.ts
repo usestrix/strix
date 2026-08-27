@@ -93,7 +93,9 @@ const CATEGORY_META: Record<ToolCategory, CategoryMeta> = {
   threatModel: { renderer: ThreatModelRenderer, icon: Crosshair, color: "text-blue-400", match: /threat_model/ },
   telemetry: { renderer: FallbackRenderer, icon: Wrench, color: "text-[#555]" },
   // Tools from the user's own MCP servers. Resolved from the connection on the
-  // event rather than from a tool name, so this family has no names below.
+  // event rather than from a tool name — except list_mcps, the engine's
+  // inventory of every connection, which touches none and so carries no
+  // connection to resolve from; it is the family's one name below.
   mcp: { renderer: McpRenderer, icon: Plug, color: "text-teal-400" },
 };
 
@@ -128,7 +130,7 @@ const CATEGORY_TOOLS: Record<ToolCategory, readonly string[]> = {
   // Per-target threat model, shared across the agent tree
   threatModel: ["get_threat_model", "save_threat_model", "amend_threat_model"],
   telemetry: ["sandbox_error_details", "llm_error_details"],
-  mcp: [],
+  mcp: ["list_mcps"],
 };
 
 /** Reverse index (tool name → family), built once from CATEGORY_TOOLS. */

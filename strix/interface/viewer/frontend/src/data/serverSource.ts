@@ -39,6 +39,39 @@ export interface Transcript {
   events: TranscriptEvent[];
 }
 
+/**
+ * One MCP connection's non-secret status, as persisted to run.json by the
+ * engine under `mcp_connection_status` and surfaced verbatim by GET /api/run.
+ * Only name / provider / tool_count / dead ride here; never config, url, or
+ * token. `dead` means the connection's live session gave up reconnecting.
+ */
+export interface McpConnectionStatus {
+  name: string;
+  provider: string | null;
+  toolCount: number;
+  dead: boolean;
+}
+
+/**
+ * Read the MCP connection roster out of a raw run record. Tolerates the field
+ * being absent (older runs, or a run with no MCP) and any malformed entry,
+ * yielding an empty list rather than throwing.
+ */
+export function parseMcpConnectionStatus(raw: Record<string, unknown>): McpConnectionStatus[] {
+  const list = raw?.mcp_connection_status;
+  if (!Array.isArray(list)) return [];
+  return list.flatMap((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return [];
+    const record = entry as Record<string, unknown>;
+    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!name) return [];
+    const provider = typeof record.provider === "string" && record.provider.trim() ? record.provider.trim() : null;
+    const toolCount = typeof record.tool_count === "number" ? record.tool_count : 0;
+    const dead = record.dead === true;
+    return [{ name, provider, toolCount, dead }];
+  });
+}
+
 export interface LoadedRun {
   summary: ParsedRunSummary;
   /** Whole raw run record (for llm_usage, targets_info details, etc.). */

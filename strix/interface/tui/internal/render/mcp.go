@@ -45,3 +45,51 @@ func renderMcpInspect(connection, status string) string {
 	b.WriteString(style.Render(icon))
 	return b.String()
 }
+
+// renderMcpList renders list_mcps: the inventory of connections the run may
+// reach, not a call to any of them, so no connection leads and the event
+// carries no connection tag. Unlike the other MCP results, the names are worth
+// showing: Strix assembled them itself from the run's registered connections,
+// so they are short and never an outside server's payload.
+func renderMcpList(result any, status string) string {
+	var b strings.Builder
+	b.WriteString(mcpIcon + Dim().Render("Listing MCP servers") + "\n")
+	for _, conn := range mcpConnectionEntries(result) {
+		b.WriteString("  " + Col(Slate).Render(conn.name))
+		if conn.dead {
+			b.WriteString(Dim().Render(" · ") + Col(Red).Render("offline"))
+		}
+		b.WriteString("\n")
+	}
+	icon, style := statusIcon(status)
+	b.WriteString(style.Render(icon))
+	return b.String()
+}
+
+// mcpListEntry is one connection read out of a list_mcps result: its display
+// name and whether its live session has died.
+type mcpListEntry struct {
+	name string
+	dead bool
+}
+
+// mcpConnectionEntries reads the connections out of a list_mcps result, which is
+// {"connections": [{"name": ..., "dead": ...}, ...]}. Anything else (still
+// running, or a result bounded down to a string) yields no entries, and the
+// header plus status stand alone.
+func mcpConnectionEntries(result any) []mcpListEntry {
+	resultMap, _ := result.(map[string]any)
+	connections, _ := resultMap["connections"].([]any)
+	var entries []mcpListEntry
+	for _, raw := range connections {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if name := strings.TrimSpace(StringValue(entry["name"])); name != "" {
+			dead, _ := entry["dead"].(bool)
+			entries = append(entries, mcpListEntry{name: name, dead: dead})
+		}
+	}
+	return entries
+}

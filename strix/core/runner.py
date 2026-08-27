@@ -53,17 +53,42 @@ from strix.tools.output_store import (
 
 
 if TYPE_CHECKING:
-    from agents.mcp import MCPServer
     from agents.memory import SQLiteSession
     from agents.result import RunResultBase
 
     from strix.runtime.status import StatusSink
-    from strix.tools.mcp import ConnectedMcpServer, McpConnectionRequest
+    from strix.tools.mcp import (
+        ConnectedMcpServer,
+        McpConnectionRequest,
+        McpRegistry,
+        SupervisedMcpSession,
+    )
 
 
 logger = logging.getLogger(__name__)
 
 StreamEventSink = Callable[[str, Any], None]
+
+# Receives the run's MCP connection roster as a list of non-secret status dicts
+# ({"name", "provider", "tool_count", "dead"}), once when the connections are
+# established and again each time a connection transitions to dead. An interface
+# can persist it, render it, or forward it on as connection status. Kept as a
+# snapshot of the whole roster (not a per-
+# connection delta) so every call carries a consistent, current picture.
+McpStatusSink = Callable[[list[dict[str, Any]]], None]
+
+
+def _mcp_roster_payload(registry: McpRegistry) -> list[dict[str, Any]]:
+    """The run's MCP roster as non-secret status dicts (name/provider/tool_count/dead)."""
+    return [
+        {
+            "name": status.name,
+            "provider": status.provider,
+            "tool_count": status.tool_count,
+            "dead": status.dead,
+        }
+        for status in registry.statuses()
+    ]
 
 
 def _mcp_startup_summary(connections: list[ConnectedMcpServer]) -> str:
@@ -89,6 +114,21 @@ def _record_mcp_connections(connections: list[ConnectedMcpServer]) -> None:
     if report_state is None:
         return
     report_state.record_mcp_connections([connection.name for connection in connections])
+
+
+def _persist_mcp_status(roster: list[dict[str, Any]]) -> None:
+    """Write the run's non-secret MCP connection status roster to run.json.
+
+    The viewer rebuilds its display by re-reading the run's files from disk, so
+    it cannot see the in-memory ``mcp_status_sink`` the TUI consumes. Persisting
+    the same non-secret roster (name / provider / tool_count / dead) gives the
+    viewer a source it can poll. Runs regardless of whether an interface sink is
+    attached, so the standalone / non-TUI CLI path records health too.
+    """
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    report_state.record_mcp_connection_status(roster)
 
 
 def _merge_root_prompt_context(
@@ -157,6 +197,7 @@ async def run_strix_scan(
     extra_system_prompt_context: dict[str, Any] | None = None,
     status_sink: StatusSink | None = None,
     mcp_connection_requests: list[McpConnectionRequest] | None = None,
+    mcp_status_sink: McpStatusSink | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -297,7 +338,7 @@ async def run_strix_scan(
     configure_spill_writer(_spill_to_workspace)
 
     sessions_to_close: list[SQLiteSession] = []
-    mcp_servers: list[MCPServer] = []
+    mcp_sessions: list[SupervisedMcpSession] = []
 
     try:
         targets = scan_config.get("targets") or []
@@ -366,7 +407,7 @@ async def run_strix_scan(
                 mcp_requests = mcp_connection_requests
             if mcp_requests:
                 connections = await attach_mcp_requests(mcp_requests, mcp_registry)
-                mcp_servers = [c.server for c in connections]
+                mcp_sessions = [c.session for c in connections]
                 # Recorded even when nothing connected, so a resumed run does not
                 # keep attributing tool calls to servers it no longer has.
                 _record_mcp_connections(connections)
@@ -387,6 +428,31 @@ async def run_strix_scan(
                         }
                         for summary in mcp_registry.summaries()
                     ]
+                    # Feed a non-secret connection roster (name / provider /
+                    # tool_count / dead) to two consumers: once now (all
+                    # currently healthy) and again whenever a connection later
+                    # dies. It is always persisted to run.json so the viewer,
+                    # which re-reads the run's files from disk, can render the
+                    # MCP connections panel and health without an in-memory
+                    # sink. When an interface sink is attached (the TUI backend,
+                    # or pro forwarding into the app's event stream) it also
+                    # receives the same snapshot. In-use is derived separately by
+                    # each interface from the connection-tagged tool-call events,
+                    # so it is not carried here.
+                    def _emit_mcp_status() -> None:
+                        roster = _mcp_roster_payload(mcp_registry)
+                        _persist_mcp_status(roster)
+                        if mcp_status_sink is not None:
+                            try:
+                                mcp_status_sink(roster)
+                            except Exception:
+                                logger.exception("MCP status sink failed")
+
+                    for connection_name in mcp_registry.names():
+                        entry = mcp_registry.get(connection_name)
+                        if entry is not None:
+                            entry.session.set_on_dead(_emit_mcp_status)
+                    _emit_mcp_status()
         except Exception:
             logger.exception("Failed to connect user MCP servers; continuing without them")
 
@@ -581,9 +647,9 @@ async def run_strix_scan(
         for s in sessions_to_close:
             with contextlib.suppress(Exception):
                 s.close()
-        for mcp_server in mcp_servers:
+        for mcp_session in mcp_sessions:
             with contextlib.suppress(Exception):
-                await mcp_server.cleanup()  # type: ignore[no-untyped-call]
+                await mcp_session.aclose()
         with contextlib.suppress(Exception):
             await coordinator._maybe_snapshot()
         if cleanup_on_exit:

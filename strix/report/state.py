@@ -416,6 +416,22 @@ class ReportState:
         self.run_record["mcp_connections"] = names
         self.save_run_data()
 
+    def record_mcp_connection_status(self, status: list[dict[str, Any]]) -> None:
+        """Persist the run's non-secret MCP connection status roster.
+
+        ``status`` is one entry per connection carrying only ``name``,
+        ``provider``, ``tool_count``, and ``dead`` (no config, url, token, or
+        auth). Saved as soon as the run connects and rewritten each time a
+        connection dies, so the viewer, which rebuilds its display by re-reading
+        the run's files from disk, can show a live connections panel and health
+        without any in-memory event sink. Kept separate from the
+        ``mcp_connections`` name list so neither field repurposes the other.
+        """
+        if self.run_record.get("mcp_connection_status") == status:
+            return
+        self.run_record["mcp_connection_status"] = status
+        self.save_run_data()
+
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config
         self.run_record["status"] = "running"

@@ -103,6 +103,11 @@ class TuiController:
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
         self.error: str | None = None
+        # The run's MCP connection roster (name / tool_count / dead), pushed by
+        # the engine via the mcp_status_sink once the connections are established
+        # and again each time one dies. Empty for a run with no MCP connections,
+        # so the Go sidebar simply omits the panel. Non-secret by construction.
+        self.mcp_connections: list[dict[str, Any]] = []
         self.viewer_status = "idle"
         self.viewer_url: str | None = None
         self._viewer_httpd: Any = None
@@ -127,6 +132,24 @@ class TuiController:
             self.report_state = report_state
         if scan_loop is not None:
             self.scan_loop = scan_loop
+
+    def set_mcp_connections(self, roster: list[dict[str, Any]]) -> None:
+        """Store the run's MCP connection roster and repaint.
+
+        ``roster`` is the engine's non-secret status snapshot: one entry per
+        connection carrying ``name``, ``tool_count``, and ``dead``. Called once
+        when the connections are established (all healthy) and again whenever a
+        connection dies (the same whole-roster snapshot, with that one now dead)."""
+        self.mcp_connections = [
+            {
+                "name": str(entry.get("name", "")),
+                "tool_count": int(entry.get("tool_count", 0) or 0),
+                "dead": bool(entry.get("dead", False)),
+            }
+            for entry in roster
+            if isinstance(entry, dict) and entry.get("name")
+        ]
+        self.notify_changed()
 
     def begin_preparation(self) -> None:
         """Mark a directly-launched run as preparing behind the live TUI."""
@@ -200,6 +223,14 @@ class TuiController:
             ],
             "usage": terminal_projection(usage, max_string=256, max_items=20),
             "subscription": subscription,
+            "connections": [
+                {
+                    "name": terminal_projection(entry["name"], max_string=64),
+                    "tool_count": entry["tool_count"],
+                    "dead": entry["dead"],
+                }
+                for entry in self.mcp_connections[:32]
+            ],
             "viewer_status": self.viewer_status,
             "viewer_url": terminal_projection(self.viewer_url, max_string=1024),
             "error": terminal_projection(self.error, max_string=2 * 1024),

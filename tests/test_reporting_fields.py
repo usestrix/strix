@@ -63,6 +63,34 @@ def report_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReportState
     return state
 
 
+def test_record_mcp_connection_status_persists_and_dedupes(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The roster lands on the run record so run.json carries it for the viewer,
+    and an unchanged re-write is a no-op (it does not re-save)."""
+    roster = [{"name": "local_fs", "provider": None, "tool_count": 3, "dead": False}]
+    report_state.record_mcp_connection_status(roster)
+    assert report_state.run_record["mcp_connection_status"] == roster
+
+    saves = 0
+    original_save = report_state.save_run_data
+
+    def _counting_save(*args: Any, **kwargs: Any) -> None:
+        nonlocal saves
+        saves += 1
+        original_save(*args, **kwargs)
+
+    monkeypatch.setattr(report_state, "save_run_data", _counting_save)
+    report_state.record_mcp_connection_status(roster)
+    assert saves == 0, "an identical roster must not trigger another save"
+
+    report_state.record_mcp_connection_status(
+        [{"name": "local_fs", "provider": None, "tool_count": 3, "dead": True}]
+    )
+    assert saves == 1
+    assert report_state.run_record["mcp_connection_status"][0]["dead"] is True
+
+
 async def test_create_report_persists_new_fields(report_state: ReportState) -> None:
     result = await _do_create(
         title="Reflected XSS in search",

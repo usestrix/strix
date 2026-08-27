@@ -62,6 +62,25 @@ async def test_setup_state_is_serializable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_connections_snapshot_reflects_the_pushed_mcp_roster() -> None:
+    controller = TuiController(args())
+    # A run with no MCP connections carries an empty roster, so the sidebar
+    # omits the panel entirely.
+    assert controller.snapshot()["connections"] == []
+
+    controller.set_mcp_connections(
+        [
+            {"name": "supabase", "tool_count": 3, "dead": False},
+            {"name": "vercel", "tool_count": 1, "dead": True},
+        ]
+    )
+    assert controller.snapshot()["connections"] == [
+        {"name": "supabase", "tool_count": 3, "dead": False},
+        {"name": "vercel", "tool_count": 1, "dead": True},
+    ]
+
+
+@pytest.mark.asyncio
 async def test_setup_instruction_starts_from_cli_and_can_be_cleared() -> None:
     setup_args = args()
     setup_args.instruction = "  CLI instruction  "

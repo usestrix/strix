@@ -25,6 +25,8 @@ from __future__ import annotations
 import dataclasses
 from typing import TYPE_CHECKING, Any, NamedTuple
 
+from strix.tools.mcp.session import SupervisedMcpSession
+
 
 if TYPE_CHECKING:
     from agents.mcp import MCPServer
@@ -54,23 +56,44 @@ MCP_DISPATCH_TOOLS = frozenset({CALL_MCP_TOOL, DESCRIBE_MCP_TOOL})
 class McpConnectionEntry:
     """One live MCP connection a scan may reach, keyed by ``name``.
 
-    ``server`` is the connected SDK session the dispatch tools list tools on and
-    call tools through. ``purpose`` is the human label ``list_mcps`` reports as the
-    connection's description (the user's connection notes, or whatever the caller
-    supplies). ``tool_count`` is how many tools the connection offers, also
-    reported by ``list_mcps``. ``result_transform``, when set, runs on each call's structured result
-    at the single dispatch point (strix-pro's sanitizer uses it). ``provider`` is
-    an optional source label (e.g. ``"supabase"``) the caller tags the connection
-    with; the command-line path leaves it ``None``, and event tagging surfaces it
-    when set.
+    ``session`` is the :class:`~strix.tools.mcp.session.SupervisedMcpSession` that
+    owns the connection on its own task; the dispatch tools list tools and call
+    tools through it (``session.list_tools`` / ``session.dispatch``) so a session
+    failure is contained and can reconnect. ``purpose`` is the human label
+    ``list_mcps`` reports as the connection's description (the user's connection
+    notes, or whatever the caller supplies). ``tool_count`` is how many tools the
+    connection offers, also reported by ``list_mcps``. ``result_transform``, when
+    set, runs on each call's structured result at the single dispatch point
+    (strix-pro's sanitizer uses it). ``provider`` is an optional source label
+    (e.g. ``"supabase"``) the caller tags the connection with; the command-line
+    path leaves it ``None``, and event tagging surfaces it when set.
+
+    The connection config the session reconnects with (and its bearer token) lives
+    on ``session`` in memory only. It is reached via :attr:`config` for the
+    reconnect path and is never logged, serialized into the event stream, or
+    written to disk.
     """
 
-    server: MCPServer
+    session: SupervisedMcpSession
     name: str
     purpose: str | None = None
     tool_count: int = 0
     result_transform: ResultTransform | None = None
     provider: str | None = None
+
+    @property
+    def server(self) -> MCPServer | None:
+        """The current live server behind the session (swapped on reconnect).
+
+        Kept so existing callers that read ``entry.server`` keep working; new code
+        should call through ``entry.session`` so reconnect and containment apply.
+        """
+        return self.session.server
+
+    @property
+    def config(self) -> McpConnectionConfig | None:
+        """The session's reconnect config. Carries the bearer token; never log it."""
+        return self.session.config
 
 
 @dataclasses.dataclass(frozen=True)
@@ -82,6 +105,24 @@ class McpConnectionSummary:
     purpose: str | None
     tool_count: int
     provider: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
+class McpConnectionStatus:
+    """One connection's live status for the interfaces (the TUI panel, the app
+    strip, and the roster signal the app consumes).
+
+    Non-secret by construction: only the connection ``name``, its ``provider``
+    label, its ``tool_count``, and whether its live session is currently ``dead``
+    (its reconnect-retry gave up). No config, token, url, or purpose rides here.
+    ``dead`` is read live off the connection's session at the moment this is
+    built, so a fresh :meth:`McpRegistry.statuses` reflects the current health.
+    """
+
+    name: str
+    provider: str | None
+    tool_count: int
+    dead: bool
 
 
 @dataclasses.dataclass(frozen=True)
@@ -129,15 +170,28 @@ class McpRegistry:
         self,
         *,
         name: str,
-        server: MCPServer,
+        session: SupervisedMcpSession | None = None,
+        server: MCPServer | None = None,
+        config: McpConnectionConfig | None = None,
         purpose: str | None = None,
         tool_count: int = 0,
         result_transform: ResultTransform | None = None,
         provider: str | None = None,
     ) -> McpConnectionEntry:
-        """Register one connection under ``name`` (last write wins)."""
+        """Register one connection under ``name`` (last write wins).
+
+        Pass ``session`` for a session the engine already supervises (the attach
+        path does this). Pass ``server`` for an already-connected server the caller
+        owns (strix-pro's cloud sessions): it is adopted into a session that runs
+        calls inline against it, and reconnects only when a ``config`` is also
+        given. Exactly one of ``session`` or ``server`` is required.
+        """
+        if session is None:
+            if server is None:
+                raise ValueError("McpRegistry.add requires either 'session' or 'server'")
+            session = SupervisedMcpSession.adopt(server, name=name, config=config)
         entry = McpConnectionEntry(
-            server=server,
+            session=session,
             name=name,
             purpose=purpose,
             tool_count=tool_count,
@@ -163,6 +217,23 @@ class McpRegistry:
                 purpose=entry.purpose,
                 tool_count=entry.tool_count,
                 provider=entry.provider,
+            )
+            for entry in self._entries.values()
+        ]
+
+    def statuses(self) -> list[McpConnectionStatus]:
+        """One live status per connection, in insertion order.
+
+        Reads each connection's ``dead`` flag off its session at call time, so the
+        interfaces (the TUI panel via the Python backend projection, and the
+        roster signal the app consumes) get the current health each time they
+        rebuild. Non-secret: name, provider, tool_count, dead only."""
+        return [
+            McpConnectionStatus(
+                name=entry.name,
+                provider=entry.provider,
+                tool_count=entry.tool_count,
+                dead=entry.session.is_dead,
             )
             for entry in self._entries.values()
         ]

@@ -140,3 +140,51 @@ async def test_supplied_requests_are_attached_and_the_user_file_is_not_read(
     )
 
     assert captured == [supplied]
+
+
+@pytest.mark.asyncio
+async def test_roster_is_persisted_even_without_a_status_sink(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any
+) -> None:
+    """The viewer reads the roster off disk, so persistence must not depend on the
+    interface status sink: with ``mcp_status_sink=None`` the connect-time roster is
+    still written, carrying only the non-secret name/provider/tool_count/dead."""
+    _wire_runner(monkeypatch, tmp_path)
+    monkeypatch.setattr(
+        mcp_pkg,
+        "load_user_mcp_configs",
+        lambda: [McpConnectionConfig(name="local_fs", transport="stdio", command="npx")],
+    )
+
+    class _FakeSession:
+        is_dead = False
+
+        def set_on_dead(self, _callback: Any) -> None:
+            return None
+
+    async def _attach(_requests: list[McpConnectionRequest], registry: Any) -> list[Any]:
+        registry.add(name="local_fs", session=_FakeSession(), tool_count=3, provider=None)
+        entry = registry.get("local_fs")
+        return [types.SimpleNamespace(name="local_fs", tool_count=3, session=entry.session)]
+
+    monkeypatch.setattr(mcp_pkg, "attach_mcp_requests", _attach)
+
+    persisted: list[list[dict[str, Any]]] = []
+
+    def _capture_persist(roster: list[dict[str, Any]]) -> None:
+        persisted.append(roster)
+
+    monkeypatch.setattr(runner, "_persist_mcp_status", _capture_persist)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-persist",
+        image="img",
+        coordinator=AgentCoordinator(),
+        mcp_status_sink=None,
+    )
+
+    assert persisted, "roster must persist even when no status sink is attached"
+    assert persisted[-1] == [
+        {"name": "local_fs", "provider": None, "tool_count": 3, "dead": False}
+    ]

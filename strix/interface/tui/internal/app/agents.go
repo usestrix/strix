@@ -209,7 +209,7 @@ func (m *Model) ensureAgentVisible() {
 		m.agentOffset = 0
 		return
 	}
-	_, _, agentHeight := m.sidebarHeights()
+	_, _, _, agentHeight := m.sidebarHeights()
 	rows := max(1, agentHeight-4)
 	row := selectedAgentRow(entries, m.selectedAgent)
 	if row < m.agentOffset {
@@ -221,7 +221,7 @@ func (m *Model) ensureAgentVisible() {
 }
 
 func (m Model) agentPageSize() int {
-	_, _, agentHeight := m.sidebarHeights()
+	_, _, _, agentHeight := m.sidebarHeights()
 	return max(1, agentHeight-4)
 }
 

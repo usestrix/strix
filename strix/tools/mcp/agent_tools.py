@@ -26,9 +26,10 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
-from strix.tools.mcp.client import dispatch_mcp_call
+from strix.tools.mcp.client import _errored_tool_output
 from strix.tools.mcp.naming import namespaced_tool_name
 from strix.tools.mcp.registry import MCP_REGISTRY_CONTEXT_KEY, McpRegistry
+from strix.tools.mcp.session import McpConnectionUnavailableError
 
 
 if TYPE_CHECKING:
@@ -47,6 +48,13 @@ _NO_CONNECTIONS = "No MCP connections are configured for this run."
 def _unknown_connection(connection: str, registry: McpRegistry) -> str:
     available = ", ".join(registry.names()) or "(none)"
     return f"Unknown MCP connection {connection!r}. Available connections: {available}."
+
+
+def _unavailable_connection(connection: str) -> str:
+    return (
+        f"MCP connection {connection!r} is unavailable: its live session failed and "
+        "could not be reconnected, so it is unavailable for the rest of this run."
+    )
 
 
 def _format_tool(tool: MCPTool) -> str:
@@ -70,6 +78,7 @@ async def list_mcps(ctx: RunContextWrapper) -> dict[str, Any]:
     registry = _registry_from_ctx(ctx)
     if registry is None or not registry:
         return {"connections": []}
+    dead_by_name = {status.name: status.dead for status in registry.statuses()}
     return {
         "connections": [
             {
@@ -77,6 +86,7 @@ async def list_mcps(ctx: RunContextWrapper) -> dict[str, Any]:
                 "name": summary.name,
                 "description": summary.purpose,
                 "tool_count": summary.tool_count,
+                "dead": dead_by_name.get(summary.name, False),
             }
             for summary in registry.summaries()
         ]
@@ -102,7 +112,10 @@ async def describe_mcp(ctx: RunContextWrapper, connection: str) -> str:
     entry = registry.get(connection)
     if entry is None:
         return _unknown_connection(connection, registry)
-    tools = await entry.server.list_tools()
+    try:
+        tools = await entry.session.list_tools()
+    except McpConnectionUnavailableError:
+        return _unavailable_connection(connection)
     if not tools:
         return f"MCP connection {connection!r} offers no tools."
     header = f"MCP connection {connection!r} offers {len(tools)} tool(s):"
@@ -155,7 +168,10 @@ async def call_mcp(
             return invalid_arguments
     if arguments is not None and not isinstance(arguments, dict):
         return invalid_arguments
-    available = await entry.server.list_tools()
+    try:
+        available = await entry.session.list_tools()
+    except McpConnectionUnavailableError:
+        return _errored_tool_output(_unavailable_connection(connection))
     valid_names = {mcp_tool.name for mcp_tool in available}
     if tool not in valid_names:
         offered = ", ".join(sorted(valid_names)) or "(none)"
@@ -164,8 +180,7 @@ async def call_mcp(
             f"Tools this connection offers: {offered}. "
             "Call describe_mcp for their input schemas."
         )
-    return await dispatch_mcp_call(
-        entry.server,
+    return await entry.session.dispatch(
         tool,
         arguments or {},
         label=namespaced_tool_name(connection, tool),

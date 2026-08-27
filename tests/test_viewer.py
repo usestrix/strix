@@ -96,6 +96,25 @@ def test_read_run_summary_finished_flag(tmp_path: Path) -> None:
     assert read_run_summary(partial)["finished"] is False
 
 
+def test_read_run_summary_surfaces_mcp_connection_status(tmp_path: Path) -> None:
+    """The engine persists the non-secret MCP roster under mcp_connection_status;
+    read_run_summary spreads the whole record, so /api/run carries it to the
+    viewer verbatim."""
+    run_dir = _make_run(tmp_path, "mcp", status="running", end_time=None)
+    roster = [
+        {"name": "local_fs", "provider": None, "tool_count": 3, "dead": False},
+        {"name": "db", "provider": "supabase", "tool_count": 7, "dead": True},
+    ]
+    record = {
+        "run_name": "mcp",
+        "status": "running",
+        "end_time": None,
+        "mcp_connection_status": roster,
+    }
+    (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    assert read_run_summary(run_dir)["mcp_connection_status"] == roster
+
+
 def test_read_missing_artifacts_return_defaults(tmp_path: Path) -> None:
     run_dir = _make_run(tmp_path, "empty", status="running", end_time=None)
     assert read_vulnerabilities(run_dir) == []

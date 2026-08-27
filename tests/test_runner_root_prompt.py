@@ -194,9 +194,13 @@ async def test_mcp_available_flag_set_when_a_connection_attaches(
     scope_context: dict[str, Any] = {"scope": "built-in"}
     captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
 
+    async def _aclose() -> None:
+        return None
+
     async def _attach(_requests: Any, registry: Any) -> list[Any]:
         registry.add(name="fs", server=object(), purpose="local files", tool_count=2)
-        return [types.SimpleNamespace(name="fs", tool_count=2, server=object())]
+        session = types.SimpleNamespace(aclose=_aclose)
+        return [types.SimpleNamespace(name="fs", tool_count=2, session=session)]
 
     monkeypatch.setattr(mcp_pkg, "attach_mcp_requests", _attach)
 
