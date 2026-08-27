@@ -66,6 +66,11 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# How long a graceful (sentinel) shutdown waits for the serve loop to drain
+# before the supervising task is cancelled instead. Bounds teardown so a slow or
+# hung in-flight call cannot stall it forever.
+_SHUTDOWN_TIMEOUT = 10.0
+
 
 class McpConnectionUnavailableError(RuntimeError):
     """A dead MCP connection could not be reached and did not come back.
@@ -229,27 +234,42 @@ class SupervisedMcpSession:
     async def aclose(self) -> None:
         """Shut the connection down and clean up its session on its owning task.
 
-        For a supervised session this signals the supervising task with a sentinel
-        so ``cleanup()`` runs on the same task that ran ``connect()``. It never
-        cancels the task, so the supervisor can tell an orderly shutdown from a
-        session death.
+        For a connected supervised session this signals the supervising task with a
+        sentinel so ``cleanup()`` runs on the same task that ran ``connect()``,
+        giving an orderly shutdown the supervisor tells apart from a session death.
+        Teardown is always bounded: if the serve loop cannot drain the sentinel in
+        time (a slow or hung in-flight call), or the session never finished
+        connecting (including a connect cancelled mid-await), the task is cancelled
+        instead. ``_closing`` is set first, so the supervisor treats that
+        cancellation as shutdown and still cleans up on its own task.
         """
         self._closing = True
         if self._supervised and self._task is not None:
             if not self._task.done():
+                # A cancelled readiness future (the connect was cancelled mid-await)
+                # counts as "not connected": never call ``.result()`` on it, which
+                # would raise here and skip the cleanup below.
                 connected = (
-                    self._ready is not None and self._ready.done() and self._ready.result()
+                    self._ready is not None
+                    and self._ready.done()
+                    and not self._ready.cancelled()
+                    and self._ready.result()
                 )
                 if connected and self._queue is not None:
                     # Reached the serve loop: a sentinel gives a clean, cancel-free
-                    # teardown, with cleanup() running on the supervising task.
+                    # teardown, with cleanup() running on the supervising task. Bound
+                    # it, though: a hung in-flight call would otherwise leave the
+                    # sentinel queued behind it forever, so cancel the task if the
+                    # drain does not finish in time (wait_for cancels it on timeout).
                     with contextlib.suppress(Exception):
                         await self._queue.put(None)
+                    with contextlib.suppress(
+                        asyncio.TimeoutError, asyncio.CancelledError, Exception
+                    ):
+                        await asyncio.wait_for(self._task, _SHUTDOWN_TIMEOUT)
                 else:
-                    # Still stuck in connect() (or never connected): cancel to
-                    # unstick it. ``_closing`` is already set, so the supervisor
-                    # treats the cancellation as shutdown and still cleans up on
-                    # its own task.
+                    # Still stuck in connect(), never connected, or connect
+                    # cancelled: cancel to unstick it.
                     self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError, Exception):
                 await self._task

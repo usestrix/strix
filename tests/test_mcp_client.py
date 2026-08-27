@@ -8,6 +8,7 @@ two dispatch tools ``describe_mcp`` and ``call_mcp``.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 from typing import TYPE_CHECKING, Any
@@ -39,6 +40,7 @@ from strix.tools.mcp import (
     resolve_mcp_call,
 )
 from strix.tools.mcp import client as mcp_client
+from strix.tools.mcp import session as mcp_session_mod
 
 
 if TYPE_CHECKING:
@@ -1372,6 +1374,88 @@ async def test_flapping_idle_session_is_marked_dead_without_looping(
     assert "unavailable" in out["content"]
 
     await session.aclose()
+
+
+class _HangingCallServer(FakeMCPServer):
+    """A connected server whose ``call_tool`` never returns, modeling a hung
+    in-flight call so teardown can be tested for boundedness."""
+
+    def __init__(self, name: str, tools: list[MCPTool]) -> None:
+        super().__init__(name, tools)
+        self.cleaned = False
+
+    async def call_tool(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any] | None,
+        meta: dict[str, Any] | None = None,
+    ) -> CallToolResult:
+        await asyncio.Event().wait()
+        raise AssertionError("unreachable")
+
+    async def cleanup(self) -> None:
+        self.cleaned = True
+
+
+class _HangingConnectServer(FakeMCPServer):
+    """A server whose ``connect`` never finishes, so ``start`` blocks on readiness
+    and can be cancelled mid-connect."""
+
+    def __init__(self, name: str, tools: list[MCPTool]) -> None:
+        super().__init__(name, tools)
+        self.cleaned = False
+
+    async def connect(self) -> None:
+        await asyncio.Event().wait()
+
+    async def cleanup(self) -> None:
+        self.cleaned = True
+
+
+@pytest.mark.asyncio
+async def test_aclose_is_bounded_when_an_in_flight_call_hangs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A hung call must not queue the shutdown sentinel behind itself forever:
+    # aclose falls back to cancelling the supervising task, and cleanup still runs.
+    monkeypatch.setattr(mcp_session_mod, "_SHUTDOWN_TIMEOUT", 0.2)
+    server = _HangingCallServer("fs", [_mcp_tool("read_file")])
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+
+    session = await _started_session(_secret_config("fs"))
+    call = asyncio.create_task(session.dispatch("read_file", {}, label="fs_read_file"))
+    await asyncio.sleep(0.05)  # let the serve loop pick up the request and hang
+
+    # Must return promptly rather than block on the hung call.
+    await asyncio.wait_for(session.aclose(), timeout=3.0)
+    assert session._task is not None and session._task.done()
+    assert server.cleaned is True
+
+    # The abandoned caller gets a value (dead), not a hang.
+    out = await asyncio.wait_for(call, timeout=3.0)
+    assert isinstance(out, dict) and out["success"] is False
+
+
+@pytest.mark.asyncio
+async def test_aclose_cleans_up_when_connect_is_cancelled_mid_await(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # If the scan is cancelled while start() awaits readiness, the readiness future
+    # is cancelled; aclose must not raise on it and must still cancel + clean up the
+    # partially connected supervisor.
+    server = _HangingConnectServer("fs", [_mcp_tool("read_file")])
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+
+    session = SupervisedMcpSession(_secret_config("fs"))
+    start = asyncio.create_task(session.start())
+    await asyncio.sleep(0.05)  # let the supervisor reach the hanging connect()
+    start.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await start
+
+    await asyncio.wait_for(session.aclose(), timeout=3.0)
+    assert session._task is not None and session._task.done()
+    assert server.cleaned is True
 
 
 @pytest.mark.asyncio
