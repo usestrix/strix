@@ -89,7 +89,7 @@ function formatOutput(output: string): string {
   const hiddenCount = lines.length - HEAD - TAIL;
   return [
     ...lines.slice(0, HEAD).map(truncateLine),
-    `... ${hiddenCount} lines truncated ...`,
+    `... 省略 ${hiddenCount} 行终端输出 ...`,
     ...lines.slice(-TAIL).map(truncateLine),
   ].join("\n");
 }

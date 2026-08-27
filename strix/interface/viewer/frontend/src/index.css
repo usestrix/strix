@@ -324,3 +324,148 @@ body {
   color: #ccc;
   font-weight: 600;
 }
+
+/* ==========================================================================
+   Print Styles for Professional Enterprise PDF Generation
+   ========================================================================== */
+@media print {
+  @page {
+    size: A4 portrait;
+    margin: 1.6cm 1.4cm;
+  }
+
+  html,
+  body {
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 11pt !important;
+    line-height: 1.5 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+
+  /* Hide navigation, sidebars, alerts, buttons */
+  aside,
+  nav,
+  header,
+  .no-print,
+  .top-bar,
+  button,
+  [role="dialog"] {
+    display: none !important;
+  }
+
+  /* Ensure the report container takes full width without scrollbars */
+  .report-print-container {
+    width: 100% !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #ffffff !important;
+    border: none !important;
+    box-shadow: none !important;
+  }
+
+  .report-print-body {
+    max-height: none !important;
+    overflow: visible !important;
+    border: none !important;
+    background: #ffffff !important;
+    padding: 0 !important;
+    color: #0f172a !important;
+  }
+
+  /* Light-theme overrides for print elements */
+  .report-print-body h1,
+  .report-print-body h2,
+  .report-print-body h3,
+  .report-print-body h4 {
+    color: #0f172a !important;
+    page-break-after: avoid;
+    break-after: avoid;
+  }
+
+  .report-print-body h1 {
+    font-size: 20pt !important;
+    border-bottom: 2px solid #0f172a !important;
+    padding-bottom: 6pt !important;
+    margin-top: 18pt !important;
+  }
+
+  .report-print-body h2 {
+    font-size: 14pt !important;
+    border-left: 4px solid #10b981 !important;
+    padding-left: 8pt !important;
+    margin-top: 16pt !important;
+  }
+
+  .report-print-body h3 {
+    font-size: 12pt !important;
+    margin-top: 12pt !important;
+  }
+
+  .report-print-body p,
+  .report-print-body li {
+    color: #334155 !important;
+  }
+
+  .report-print-body table {
+    width: 100% !important;
+    border-collapse: collapse !important;
+    margin: 12pt 0 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .report-print-body th,
+  .report-print-body td {
+    border: 1px solid #cbd5e1 !important;
+    padding: 6pt 8pt !important;
+    color: #1e293b !important;
+    font-size: 9.5pt !important;
+  }
+
+  .report-print-body th {
+    background-color: #f1f5f9 !important;
+    font-weight: 600 !important;
+  }
+
+  .report-print-body tr:nth-child(even) td {
+    background-color: #f8fafc !important;
+  }
+
+  .report-print-body blockquote {
+    border-left: 3px solid #64748b !important;
+    background-color: #f8fafc !important;
+    color: #475569 !important;
+    padding: 6pt 10pt !important;
+    margin: 8pt 0 !important;
+    page-break-inside: avoid;
+  }
+
+  .report-print-body pre,
+  .report-print-body code {
+    background-color: #f8fafc !important;
+    color: #0f172a !important;
+    border: 1px solid #e2e8f0 !important;
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  .report-print-header {
+    display: block !important;
+    border-bottom: 2px solid #0f172a !important;
+    padding-bottom: 12pt !important;
+    margin-bottom: 18pt !important;
+  }
+
+  .report-print-footer {
+    display: block !important;
+    border-top: 1px solid #e2e8f0 !important;
+    padding-top: 8pt !important;
+    margin-top: 20pt !important;
+    text-align: center !important;
+    font-size: 8.5pt !important;
+    color: #64748b !important;
+  }
+}

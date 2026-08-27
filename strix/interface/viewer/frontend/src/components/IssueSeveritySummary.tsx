@@ -1,77 +1,104 @@
-import React from "react";
+"use client";
 
-import { cn } from "@/lib/utils";
-
-export interface IssueSeveritySummaryFindings {
-  total: number;
-  critical: number;
-  high: number;
-  medium: number;
-  low: number;
-}
+import type { VulnerabilitySeverity } from "@/types/issues";
 
 interface IssueSeveritySummaryProps {
-  findings: IssueSeveritySummaryFindings;
-  className?: string;
-  /** Noun for the total count (e.g. "issues", "CVEs"). Defaults to "issues". */
-  unit?: string;
-  /** Optional content rendered at the end of the count row (e.g. a KEV badge). */
-  trailing?: React.ReactNode;
+  findings: {
+    total: number;
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
 }
 
-const SEVERITIES = [
-  { key: "critical", label: "critical", dotClass: "bg-red-500", textClass: "text-red-500" },
-  { key: "high", label: "high", dotClass: "bg-orange-500", textClass: "text-orange-500" },
-  { key: "medium", label: "medium", dotClass: "bg-yellow-500", textClass: "text-yellow-500" },
-  { key: "low", label: "low", dotClass: "bg-blue-500", textClass: "text-blue-500" },
-] as const;
+const SEVERITY_CONFIG: Record<
+  VulnerabilitySeverity,
+  { label: string; bg: string; text: string; bar: string }
+> = {
+  critical: {
+    label: "严重 (Critical)",
+    bg: "bg-red-500/10 border-red-500/30",
+    text: "text-red-400",
+    bar: "bg-red-500",
+  },
+  high: {
+    label: "高危 (High)",
+    bg: "bg-orange-500/10 border-orange-500/30",
+    text: "text-orange-400",
+    bar: "bg-orange-500",
+  },
+  medium: {
+    label: "中危 (Medium)",
+    bg: "bg-yellow-500/10 border-yellow-500/30",
+    text: "text-yellow-400",
+    bar: "bg-yellow-500",
+  },
+  low: {
+    label: "低危 (Low)",
+    bg: "bg-blue-500/10 border-blue-500/30",
+    text: "text-blue-400",
+    bar: "bg-blue-500",
+  },
+};
 
-export function IssueSeveritySummary({
-  findings,
-  className,
-  unit = "issues",
-  trailing,
-}: IssueSeveritySummaryProps) {
-  if (findings.total <= 0) return null;
+export function IssueSeveritySummary({ findings }: IssueSeveritySummaryProps) {
+  const { total, critical, high, medium, low } = findings;
+
+  const items: { key: VulnerabilitySeverity; count: number }[] = [
+    { key: "critical", count: critical },
+    { key: "high", count: high },
+    { key: "medium", count: medium },
+    { key: "low", count: low },
+  ];
 
   return (
-    <div className={cn("space-y-3", className)}>
-      <div className="flex flex-wrap items-center gap-x-8 gap-y-3">
-        <div className="flex items-center gap-2">
-          <span className="text-2xl font-semibold text-white tabular-nums">{findings.total}</span>
-          <span className="text-sm text-[#666]">{unit}</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
-          {SEVERITIES.map(({ key, label, dotClass, textClass }) => {
-            const count = findings[key];
-            if (count <= 0) return null;
-
-            return (
-              <div key={key} className="flex items-center gap-1.5">
-                <div className={cn("w-2 h-2 rounded-full", dotClass)} aria-hidden="true" />
-                <span className={cn("text-sm tabular-nums", textClass)}>{count}</span>
-                <span className="text-xs text-[#555]">{label}</span>
-              </div>
-            );
-          })}
-        </div>
-        {trailing ? <div className="flex items-center gap-2">{trailing}</div> : null}
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-white">漏洞风险等级分布</h3>
+        <span className="text-xs text-[#888]">
+          共计 <strong className="text-white font-semibold">{total}</strong> 项安全漏洞
+        </span>
       </div>
 
-      <div className="h-1.5 rounded-full bg-[#222] overflow-hidden flex">
-        {SEVERITIES.map(({ key, dotClass }) => {
-          const count = findings[key];
-          if (count <= 0) return null;
+      {/* Distribution bar */}
+      {total > 0 && (
+        <div className="flex h-2.5 w-full overflow-hidden rounded-full bg-[#222]">
+          {items.map(
+            (item) =>
+              item.count > 0 && (
+                <div
+                  key={item.key}
+                  style={{ width: `${(item.count / total) * 100}%` }}
+                  className={`h-full ${SEVERITY_CONFIG[item.key].bar} transition-all duration-500`}
+                  title={`${SEVERITY_CONFIG[item.key].label}: ${item.count}`}
+                />
+              )
+          )}
+        </div>
+      )}
 
+      {/* Badges Grid */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {items.map((item) => {
+          const config = SEVERITY_CONFIG[item.key];
           return (
             <div
-              key={key}
-              className={cn("h-full", dotClass)}
-              style={{ width: `${(count / findings.total) * 100}%` }}
-            />
+              key={item.key}
+              className={`rounded-lg border p-3 flex flex-col justify-between ${
+                item.count > 0 ? config.bg : "border-[#222] bg-black/20 opacity-60"
+              }`}
+            >
+              <span className="text-xs text-[#888]">{config.label}</span>
+              <span className={`text-xl font-bold font-mono mt-1 ${config.text}`}>
+                {item.count}
+              </span>
+            </div>
           );
         })}
       </div>
     </div>
   );
 }
+
+export default IssueSeveritySummary;

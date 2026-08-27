@@ -24,7 +24,7 @@ export function TruncatedText({ text, maxLines = 20 }: { text: string; maxLines?
       </div>
       {needsTruncation && (
         <button onClick={() => setExpanded(!expanded)} className="text-xs text-[#555] hover:text-[#888] mt-1">
-          {expanded ? "Show less" : "Show more"}
+          {expanded ? "收起" : "展开全部"}
         </button>
       )}
     </div>
@@ -54,7 +54,7 @@ export function CodeBlock({ children, className = "" }: { children: React.ReactN
           onClick={() => setExpanded(!expanded)}
           className="text-xs text-[#555] hover:text-[#888] mt-0.5"
         >
-          {expanded ? "Show less" : "Show more"}
+          {expanded ? "收起" : "展开全部"}
         </button>
       )}
     </div>
@@ -92,7 +92,7 @@ export function SyntaxBlock({ code, language, className = "", collapsible = fals
       </pre>
       {needsTruncation && (
         <button onClick={() => setExpanded(!expanded)} className="text-xs text-[#555] hover:text-[#888] mt-0.5">
-          {expanded ? "Show less" : "Show more"}
+          {expanded ? "收起" : "展开全部"}
         </button>
       )}
     </div>

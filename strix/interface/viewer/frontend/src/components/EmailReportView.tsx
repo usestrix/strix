@@ -1,210 +1,251 @@
-import { useEffect, useRef, useState } from "react";
-import { Mail, ShieldCheck, Lock, Copy, Check, Loader2, AlertCircle, ArrowLeft } from "lucide-react";
+import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import {
-  otpStart,
-  otpVerify,
-  sendReport,
-  type AuthStatus,
-} from "@/data/serverSource";
-import { track } from "@/lib/cta";
-
-/**
- * The email-report / email-verification flow rendered as its own page (not a
- * modal, so it never floats over another surface). Report mode ends in the
- * one-time password panel; verify mode just confirms the email and returns to
- * the caller. The page unmounts when you navigate away, so state resets each
- * time it is opened.
- */
-
-type Step = "disclosure" | "email" | "code" | "sending" | "password";
+  FileText,
+  Download,
+  Copy,
+  Check,
+  Loader2,
+  AlertCircle,
+  ArrowLeft,
+  Printer,
+  ShieldCheck,
+  Eye,
+  Code,
+  Globe,
+  Lock,
+} from "lucide-react";
+import { fetchReportMarkdown, type AuthStatus } from "@/data/serverSource";
+import { rehypeCodeMeta, mdComponents } from "@/components/vulnerability/MdCodeBlock";
 
 interface EmailReportViewProps {
   activeRun: string | null;
   auth: AuthStatus | null;
   purpose: "report" | "verify";
-  /**
-   * Skip the report disclosure and start the flow directly (used by the
-   * Overview CTA, which already states the tradeoff). Unverified users land on
-   * the email step; already-verified users send immediately.
-   */
   skipDisclosure?: boolean;
-  /** Refresh auth + runs after a successful verify (lifts state to App). */
   onAuthChanged: () => void;
-  /** Leave this page (report "Done" -> overview; verify success -> history). */
   onExit: (dest: "overview" | "history") => void;
 }
 
-const OTP_START_ERRORS: Record<string, string> = {
-  work_email_required: "Please use your work email, not a personal one.",
-  rate_limited: "Too many requests. Wait a minute and try again.",
-  invalid_email: "That email does not look right. Check it and try again.",
-  unavailable: "The email service is unavailable right now. Try again shortly.",
-};
-
-const SEND_ERRORS: Record<string, string> = {
-  forbidden: "This email was unsubscribed from Strix, so we cannot send to it.",
-  too_large: "This report is too large to email. Try a smaller run.",
-  unavailable: "The email service is unavailable right now. Try again shortly.",
-};
-
-// A small set of common personal providers for instant client-side feedback.
-// The relay is authoritative (it checks the full free-email-domains list).
-const COMMON_FREE_DOMAINS = new Set([
-  "gmail.com", "googlemail.com", "yahoo.com", "ymail.com", "outlook.com",
-  "hotmail.com", "live.com", "icloud.com", "me.com", "aol.com", "proton.me",
-  "protonmail.com", "gmx.com", "mail.com",
-]);
-
 export default function EmailReportView({
   activeRun,
-  auth,
-  purpose,
-  skipDisclosure = false,
-  onAuthChanged,
   onExit,
 }: EmailReportViewProps) {
-  const verified = auth?.verified === true;
-  const verifyOnly = purpose === "verify";
-  // Verify mode (and the Overview CTA, which skips the disclosure) start on the
-  // email step; a verified user who skips the disclosure sends immediately.
-  const [step, setStep] = useState<Step>(() => {
-    if (verifyOnly) return "email";
-    if (skipDisclosure) return verified ? "sending" : "email";
-    return "disclosure";
-  });
-  const [email, setEmail] = useState(auth?.email ?? "");
-  const [code, setCode] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [reportMarkdown, setReportMarkdown] = useState<string>("");
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [password, setPassword] = useState("");
-  const [filename, setFilename] = useState("");
   const [copied, setCopied] = useState(false);
-  const [sentTo, setSentTo] = useState("");
-  const autoSentRef = useRef(false);
+  const [viewMode, setViewMode] = useState<"rendered" | "raw">("rendered");
 
-  const doSend = async () => {
-    setStep("sending");
-    setError(null);
-    const result = await sendReport(activeRun);
-    if (result.ok) {
-      track("report_sent");
-      setPassword(result.password);
-      setFilename(result.filename);
-      setStep("password");
-      return;
-    }
-    if (result.error === "reverify" || result.error === "unverified") {
-      setNotice("Your verification expired. Enter your email to verify again.");
-      setStep("email");
-      return;
-    }
-    setError(SEND_ERRORS[result.error] ?? "Could not send the report. Try again.");
-    setStep("disclosure");
-  };
-
-  const startFlow = () => {
-    setError(null);
-    setNotice(null);
-    if (verified) void doSend();
-    else setStep("email");
-  };
-
-  // A verified user who skipped the disclosure (Overview CTA) sends on arrival.
   useEffect(() => {
-    if (!verifyOnly && skipDisclosure && verified && !autoSentRef.current) {
-      autoSentRef.current = true;
-      void doSend();
-    }
-    // Run once on mount; the page remounts fresh each time it is opened.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const submitEmail = async () => {
-    const value = email.trim();
-    if (!value) {
-      setError("Enter your email to continue.");
-      return;
-    }
-    const domain = value.slice(value.lastIndexOf("@") + 1).toLowerCase();
-    if (COMMON_FREE_DOMAINS.has(domain)) {
-      track("work_email_required");
-      setError(OTP_START_ERRORS.work_email_required);
-      return;
-    }
-    setBusy(true);
+    let mounted = true;
+    setLoading(true);
     setError(null);
-    const result = await otpStart(value);
-    setBusy(false);
-    if (result.ok) {
-      track("email_submitted", { purpose });
-      setNotice(`We sent a 6-digit code to ${value}.`);
-      setStep("code");
-    } else {
-      if (result.error === "work_email_required") track("work_email_required");
-      setError(OTP_START_ERRORS[result.error] ?? "Could not send a code. Try again.");
-    }
+
+    fetchReportMarkdown(activeRun)
+      .then((md) => {
+        if (!mounted) return;
+        if (md) {
+          setReportMarkdown(md);
+        } else {
+          setReportMarkdown("# 渗透测试报告\n\n当前任务暂未生成总结报告。");
+        }
+        setLoading(false);
+      })
+      .catch((err) => {
+        if (!mounted) return;
+        setError(String(err));
+        setLoading(false);
+      });
+
+    return () => {
+      mounted = false;
+    };
+  }, [activeRun]);
+
+  const downloadMarkdown = () => {
+    if (!reportMarkdown) return;
+    const blob = new Blob([reportMarkdown], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${activeRun || "strix"}_渗透测试报告.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
   };
 
-  const submitCode = async () => {
-    const value = code.trim();
-    if (value.length < 4) {
-      setError("Enter the 6-digit code from your email.");
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const result = await otpVerify(email.trim(), value);
-    setBusy(false);
-    if (!result.verified) {
-      setError("That code did not match. Check it and try again.");
-      return;
-    }
-    track("email_verified", { purpose });
-    setSentTo(result.email);
-    onAuthChanged();
-    if (verifyOnly) onExit("history");
-    else void doSend();
-  };
-
-  const copyPassword = async () => {
+  const copyMarkdown = async () => {
     try {
-      await navigator.clipboard.writeText(password);
+      await navigator.clipboard.writeText(reportMarkdown);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
+      setTimeout(() => setCopied(false), 2000);
     } catch {
-      /* clipboard may be unavailable; the password is visible to copy manually */
+      /* clipboard fallback */
     }
   };
 
-  const confirmationEmail = sentTo || auth?.email || email.trim();
+  const downloadStandaloneHtml = () => {
+    if (!reportMarkdown) return;
+    const reportElem = document.getElementById("strix-rendered-report");
+    const reportHtml = reportElem ? reportElem.innerHTML : reportMarkdown;
+
+    const fullHtml = `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <title>安全渗透测试评估报告 - ${activeRun || "Strix"}</title>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      line-height: 1.6;
+      color: #1e293b;
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #ffffff;
+    }
+    h1, h2, h3 { color: #0f172a; margin-top: 1.5em; }
+    h1 { border-bottom: 2px solid #0f172a; padding-bottom: 10px; }
+    h2 { border-left: 4px solid #10b981; padding-left: 12px; }
+    table { width: 100%; border-collapse: collapse; margin: 20px 0; }
+    th, td { border: 1px solid #cbd5e1; padding: 10px 12px; text-align: left; }
+    th { background: #f8fafc; font-weight: 600; }
+    tr:nth-child(even) td { background: #f8fafc; }
+    blockquote { border-left: 4px solid #64748b; background: #f8fafc; padding: 10px 16px; margin: 16px 0; color: #475569; }
+    pre { background: #f1f5f9; padding: 14px; border-radius: 6px; overflow-x: auto; font-size: 13px; }
+    code { font-family: monospace; background: #f1f5f9; padding: 2px 6px; border-radius: 4px; }
+    .header-badge { display: inline-block; padding: 4px 10px; background: #fee2e2; color: #991b1b; border-radius: 4px; font-weight: bold; font-size: 12px; margin-bottom: 12px; }
+  </style>
+</head>
+<body>
+  <div class="header-badge">内部机密 · CONFIDENTIAL</div>
+  ${reportHtml}
+</body>
+</html>`;
+
+    const blob = new Blob([fullHtml], { type: "text/html;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${activeRun || "strix"}_渗透测试报告.html`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const printReport = () => {
+    setViewMode("rendered");
+    setTimeout(() => {
+      window.print();
+    }, 150);
+  };
 
   return (
-    <div className="mx-auto max-w-xl space-y-4">
+    <div className="mx-auto max-w-4xl space-y-5 report-print-container">
+      {/* Back button (hidden when printing) */}
       <button
-        onClick={() => onExit(verifyOnly ? "history" : "overview")}
-        className="cursor-pointer inline-flex items-center gap-1.5 text-sm text-[#888] transition-colors hover:text-white"
+        onClick={() => onExit("overview")}
+        className="no-print cursor-pointer inline-flex items-center gap-1.5 text-sm text-[#888] transition-colors hover:text-white"
       >
         <ArrowLeft className="h-4 w-4" />
-        {verifyOnly ? "Back to past runs" : "Back to results"}
+        返回渗透概览
       </button>
 
-      <div className="flex items-center gap-2">
-        <Mail className="h-5 w-5 text-[#888]" aria-hidden="true" />
-        <h1 className="text-2xl font-semibold text-white">
-          {verifyOnly ? "Verify your email" : "Export report to PDF"}
-        </h1>
+      {/* Top Action Bar (hidden when printing) */}
+      <div className="no-print flex flex-wrap items-center justify-between gap-4 border-b border-[#222] pb-4">
+        <div className="flex items-center gap-2.5">
+          <FileText className="h-6 w-6 text-emerald-400" aria-hidden="true" />
+          <div>
+            <h1 className="text-xl font-semibold text-white">安全渗透评估报告</h1>
+            <p className="text-xs text-[#888]">专业排版 · 支持一键导出为完整 PDF 或独立 HTML 报告</p>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          {/* View mode toggle */}
+          <div className="flex items-center rounded-lg border border-[#333] bg-[#111] p-0.5">
+            <button
+              onClick={() => setViewMode("rendered")}
+              className={`cursor-pointer inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                viewMode === "rendered"
+                  ? "bg-emerald-500 text-black font-semibold"
+                  : "text-[#888] hover:text-white"
+              }`}
+            >
+              <Eye className="h-3.5 w-3.5" />
+              精美排版
+            </button>
+            <button
+              onClick={() => setViewMode("raw")}
+              className={`cursor-pointer inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                viewMode === "raw"
+                  ? "bg-emerald-500 text-black font-semibold"
+                  : "text-[#888] hover:text-white"
+              }`}
+            >
+              <Code className="h-3.5 w-3.5" />
+              Markdown 源码
+            </button>
+          </div>
+
+          <button
+            onClick={copyMarkdown}
+            disabled={loading || !reportMarkdown}
+            className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-[#333] bg-[#111] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#222] disabled:opacity-50"
+            title="复制 Markdown 原文到剪贴板"
+          >
+            {copied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+            {copied ? "已复制" : "复制"}
+          </button>
+
+          <button
+            onClick={downloadMarkdown}
+            disabled={loading || !reportMarkdown}
+            className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-[#333] bg-[#111] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#222] disabled:opacity-50"
+            title="下载 .md 文件"
+          >
+            <Download className="h-3.5 w-3.5 text-blue-400" />
+            .MD
+          </button>
+
+          <button
+            onClick={downloadStandaloneHtml}
+            disabled={loading || !reportMarkdown}
+            className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg border border-[#333] bg-[#111] px-3 py-1.5 text-xs font-medium text-white transition-colors hover:bg-[#222] disabled:opacity-50"
+            title="下载独立离线 HTML 报告"
+          >
+            <Globe className="h-3.5 w-3.5 text-purple-400" />
+            .HTML
+          </button>
+
+          <button
+            onClick={printReport}
+            disabled={loading}
+            className="cursor-pointer inline-flex items-center gap-1.5 rounded-lg bg-emerald-500 px-4 py-1.5 text-xs font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-50 shadow-md shadow-emerald-500/10"
+            title="通过浏览器将已排版页面另存为 PDF"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            存为 PDF / 打印
+          </button>
+        </div>
       </div>
 
+      {/* Main Report Container */}
       <div
-        className="w-full rounded-2xl bg-[rgba(255,255,255,0.02)] p-6"
-        style={{ border: "1px solid #2a2a2a" }}
+        className="w-full rounded-2xl bg-[#0a0a0a] p-6 sm:p-8 report-print-container"
+        style={{ border: "1px solid #222" }}
       >
-        <p className="mb-4 text-xs text-[#666]">
-          {verifyOnly
-            ? "We send a one-time code to confirm it is you."
-            : "Verified by a one-time code sent to your email"}
-        </p>
+        {/* Safe notice banner (hidden in print) */}
+        <div className="no-print mb-6 flex items-start gap-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3.5 py-2.5">
+          <ShieldCheck className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" aria-hidden="true" />
+          <p className="text-xs text-emerald-200">
+            <strong>本地私有化报告导出</strong>：数据完全保留在本机服务器，直接由前端渲染排版为专业文档。打印或另存为 PDF 时将自动应用高对比度 A4 商务报告规范。
+          </p>
+        </div>
 
         {error && (
           <div className="mb-4 flex items-start gap-2 rounded-lg border border-red-500/30 bg-red-500/5 px-3 py-2">
@@ -212,157 +253,130 @@ export default function EmailReportView({
             <p className="text-xs text-red-300">{error}</p>
           </div>
         )}
-        {notice && !error && step !== "password" && (
-          <p className="mb-4 text-xs text-[#888]">{notice}</p>
-        )}
 
-        {step === "disclosure" && (
-          <div className="space-y-4">
-            <div
-              className="space-y-2.5 rounded-lg p-3.5"
-              style={{ border: "1px solid #222", background: "rgba(255,255,255,0.02)" }}
-            >
-              <div className="flex items-start gap-2.5">
-                <ShieldCheck className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" aria-hidden="true" />
-                <p className="text-xs leading-relaxed text-[#aaa]">
-                  We email an <span className="text-white">encrypted PDF</span>. Nothing else leaves your machine.
-                </p>
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-20 text-center">
+            <Loader2 className="h-8 w-8 animate-spin text-emerald-400" />
+            <p className="mt-3 text-sm text-[#888]">正在读取并渲染安全评估报告...</p>
+          </div>
+        ) : (
+          <div>
+            {/* Formal Report Cover Card (Header for both screen and print) */}
+            <div className="mb-8 rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5 print:p-0 print:border-none print:mb-6">
+              <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#222] pb-3 print:border-slate-300">
+                <div className="flex items-center gap-2">
+                  <div className="flex h-7 w-7 items-center justify-center rounded-md bg-emerald-500/20 text-emerald-400 print:bg-slate-100 print:text-slate-900">
+                    <ShieldCheck className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <span className="text-sm font-semibold text-white print:text-slate-900">
+                      STRIX AUTONOMOUS PENTEST REPORT
+                    </span>
+                    <span className="block text-[11px] text-[#666] print:text-slate-500">
+                      企业级自主渗透测试与安全合规审计评估报告
+                    </span>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <span className="inline-flex items-center gap-1 rounded bg-red-500/10 px-2 py-0.5 text-[11px] font-semibold text-red-400 border border-red-500/20 print:bg-slate-100 print:text-red-700 print:border-slate-300">
+                    <Lock className="h-3 w-3" />
+                    内部机密 · CONFIDENTIAL
+                  </span>
+                </div>
               </div>
-              <div className="flex items-start gap-2.5">
-                <Lock className="mt-0.5 h-4 w-4 flex-shrink-0 text-[#888]" aria-hidden="true" />
-                <p className="text-xs leading-relaxed text-[#aaa]">
-                  Only you hold the password; Strix can&apos;t read it.
-                </p>
+
+              <div className="mt-3 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div>
+                  <span className="block text-[#666] print:text-slate-500">评估目标 (Target)</span>
+                  <span className="font-mono font-medium text-white print:text-slate-800 break-all">
+                    {activeRun?.split("_")[0] || "Target Asset"}
+                  </span>
+                </div>
+                <div>
+                  <span className="block text-[#666] print:text-slate-500">报告批次 (Run ID)</span>
+                  <span className="font-mono text-[#aaa] print:text-slate-700">{activeRun || "--"}</span>
+                </div>
+                <div>
+                  <span className="block text-[#666] print:text-slate-500">评估引擎 (Engine)</span>
+                  <span className="font-medium text-emerald-400 print:text-emerald-700">Strix Autonomous v1.3</span>
+                </div>
+                <div>
+                  <span className="block text-[#666] print:text-slate-500">审计范围 (Scope)</span>
+                  <span className="font-medium text-white print:text-slate-800">授权网络与应用渗透</span>
+                </div>
               </div>
             </div>
-            <button
-              onClick={startFlow}
-              className="w-full cursor-pointer rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
-            >
-              Export report
-            </button>
-            {verified && auth?.email && (
-              <p className="text-center text-xs text-[#666]">Sending to {auth.email}</p>
-            )}
-          </div>
-        )}
 
-        {step === "email" && (
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitEmail();
-            }}
-          >
-            <label className="block">
-              <span className="mb-1.5 block text-xs text-[#888]">Your work email</span>
-              <input
-                type="email"
-                autoFocus
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@company.com"
-                className="w-full rounded-lg bg-black px-3 py-2.5 text-sm text-white outline-none transition-colors focus:border-[#444]"
-                style={{ border: "1px solid #2a2a2a" }}
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={busy}
-              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              Send me a code
-            </button>
-          </form>
-        )}
-
-        {step === "code" && (
-          <form
-            className="space-y-4"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void submitCode();
-            }}
-          >
-            <label className="block">
-              <span className="mb-1.5 block text-xs text-[#888]">6-digit code</span>
-              <input
-                inputMode="numeric"
-                autoFocus
-                value={code}
-                onChange={(e) => setCode(e.target.value.replace(/\D/g, "").slice(0, 6))}
-                placeholder="123456"
-                className="w-full rounded-lg bg-black px-3 py-2.5 text-center text-lg font-mono tracking-[0.4em] text-white outline-none transition-colors focus:border-[#444]"
-                style={{ border: "1px solid #2a2a2a" }}
-              />
-            </label>
-            <button
-              type="submit"
-              disabled={busy}
-              className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90 disabled:opacity-60"
-            >
-              {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
-              {verifyOnly ? "Verify" : "Verify and send"}
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setStep("email");
-                setError(null);
-                setNotice(null);
-              }}
-              className="w-full cursor-pointer text-center text-xs text-[#666] transition-colors hover:text-[#aaa]"
-            >
-              Use a different email
-            </button>
-          </form>
-        )}
-
-        {step === "sending" && (
-          <div className="flex flex-col items-center gap-3 py-8">
-            <Loader2 className="h-6 w-6 animate-spin text-white" aria-hidden="true" />
-            <p className="text-sm text-[#aaa]">Generating and encrypting locally...</p>
-          </div>
-        )}
-
-        {step === "password" && (
-          <div className="space-y-4">
-            <div className="flex items-start gap-2.5 rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-3 py-2.5">
-              <Check className="mt-0.5 h-4 w-4 flex-shrink-0 text-emerald-400" aria-hidden="true" />
-              <p className="text-xs text-emerald-200">
-                Sent to {confirmationEmail}. Open the attached PDF with this password.
-              </p>
-            </div>
-            <div>
-              <span className="mb-1.5 block text-xs text-[#888]">Your one-time password</span>
-              <div
-                className="flex items-center gap-2 rounded-lg bg-black p-3"
-                style={{ border: "1px solid #2a2a2a" }}
-              >
-                <code className="flex-1 break-all font-mono text-base text-white">{password}</code>
-                <button
-                  onClick={copyPassword}
-                  className="flex cursor-pointer items-center gap-1 rounded-md px-2 py-1 text-xs text-[#aaa] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-white"
-                  style={{ border: "1px solid #2a2a2a" }}
+            {/* Document Body */}
+            {viewMode === "rendered" ? (
+              <div id="strix-rendered-report" className="prose-markdown report-print-body leading-relaxed text-[#ddd] text-sm">
+                <ReactMarkdown
+                  remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeCodeMeta]}
+                  components={{
+                    ...mdComponents,
+                    h1: ({ children }) => (
+                      <h1 className="text-2xl font-bold text-white mt-8 mb-4 pb-2 border-b border-[#222] flex items-center gap-2 print:text-slate-900 print:border-slate-300">
+                        {children}
+                      </h1>
+                    ),
+                    h2: ({ children }) => (
+                      <h2 className="text-lg font-semibold text-white mt-6 mb-3 pl-3 border-l-4 border-emerald-500 print:text-slate-900 print:border-emerald-600">
+                        {children}
+                      </h2>
+                    ),
+                    h3: ({ children }) => (
+                      <h3 className="text-base font-medium text-emerald-300 mt-5 mb-2 print:text-slate-800">
+                        {children}
+                      </h3>
+                    ),
+                    table: ({ children }) => (
+                      <div className="my-5 overflow-x-auto rounded-lg border border-[#222] print:border-slate-300 print:overflow-visible">
+                        <table className="w-full border-collapse text-left text-xs">{children}</table>
+                      </div>
+                    ),
+                    th: ({ children }) => (
+                      <th className="border-b border-[#222] bg-[rgba(255,255,255,0.04)] px-3.5 py-2.5 font-semibold text-[#ccc] print:bg-slate-100 print:text-slate-900 print:border-slate-300">
+                        {children}
+                      </th>
+                    ),
+                    td: ({ children }) => (
+                      <td className="border-b border-[#1a1a1a] px-3.5 py-2 text-[#aaa] print:text-slate-700 print:border-slate-200">
+                        {children}
+                      </td>
+                    ),
+                    blockquote: ({ children }) => (
+                      <blockquote className="my-4 rounded-r-lg border-l-4 border-emerald-500/80 bg-[rgba(16,185,129,0.05)] px-4 py-2.5 text-xs text-[#aaa] print:bg-slate-50 print:text-slate-700 print:border-slate-400">
+                        {children}
+                      </blockquote>
+                    ),
+                    p: ({ children }) => <p className="my-3 leading-relaxed text-[#ccc] print:text-slate-700">{children}</p>,
+                    ul: ({ children }) => <ul className="my-3 pl-5 list-disc space-y-1 text-[#bbb] print:text-slate-700">{children}</ul>,
+                    ol: ({ children }) => <ol className="my-3 pl-5 list-decimal space-y-1 text-[#bbb] print:text-slate-700">{children}</ol>,
+                    li: ({ children }) => <li className="leading-relaxed">{children}</li>,
+                    hr: () => <hr className="my-6 border-[#222] print:border-slate-300" />,
+                  }}
                 >
-                  {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-                  {copied ? "Copied" : "Copy"}
-                </button>
+                  {reportMarkdown}
+                </ReactMarkdown>
               </div>
-              <p className="mt-2 text-xs text-[#666]">
-                Save this now. Strix never stores it, so we cannot show it again. File:{" "}
-                <span className="font-mono text-[#888]">{filename}</span>
-              </p>
+            ) : (
+              <div className="space-y-2">
+                <div className="flex items-center justify-between text-xs text-[#888]">
+                  <span>原始 Markdown 代码（适合复制到文档中心或 Issue）</span>
+                  <span className="font-mono text-[#555]">{reportMarkdown.length} 字符</span>
+                </div>
+                <pre className="max-h-[650px] overflow-y-auto rounded-lg border border-[#222] bg-[#0c0c0c] p-4 font-mono text-xs leading-relaxed text-[#ddd] whitespace-pre-wrap">
+                  {reportMarkdown}
+                </pre>
+              </div>
+            )}
+
+            {/* Print Footer */}
+            <div className="report-print-footer print:block hidden text-center text-xs text-slate-400 pt-8 mt-8 border-t border-slate-200">
+              <p>本报告由 Strix 自主安全渗透测试平台自动化生成 · 仅供授权安全合规团队评估与加固使用 · 严禁未授权传播</p>
             </div>
-            <button
-              onClick={() => onExit("overview")}
-              className="w-full cursor-pointer rounded-lg px-4 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-[rgba(255,255,255,0.06)]"
-              style={{ border: "1px solid #2a2a2a" }}
-            >
-              Done
-            </button>
           </div>
         )}
       </div>

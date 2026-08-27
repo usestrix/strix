@@ -61,13 +61,13 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
       {description && <TruncatedText text={description} maxLines={20} />}
       {impact && (
         <div>
-          <span className="text-emerald-400/60 text-sm font-semibold">Impact</span>
+          <span className="text-emerald-400/60 text-sm font-semibold">危害与影响评估 (Impact)</span>
           <div className="mt-1"><TruncatedText text={impact} maxLines={15} /></div>
         </div>
       )}
       {technicalAnalysis && (
         <div>
-          <span className="text-emerald-400/60 text-sm font-semibold">Technical Analysis</span>
+          <span className="text-emerald-400/60 text-sm font-semibold">技术深度分析 (Technical Analysis)</span>
           <div className="mt-1"><TruncatedText text={technicalAnalysis} maxLines={20} /></div>
         </div>
       )}
@@ -90,14 +90,14 @@ export default function VulnReportRenderer({ args, result }: ToolRendererProps) 
       )}
       {(pocDescription || pocCode) && (
         <div>
-          <span className="text-emerald-400/60 text-sm font-semibold">Proof of Concept</span>
+          <span className="text-emerald-400/60 text-sm font-semibold">漏洞验证与复现 (Proof of Concept)</span>
           {pocDescription && <div className="mt-1"><Markdown text={pocDescription} /></div>}
           {pocCode && <MdCodeBlock className={pocLang ? `language-${pocLang}` : undefined}>{pocCode}</MdCodeBlock>}
         </div>
       )}
       {remediation && (
         <div>
-          <span className="text-emerald-400/60 text-sm font-semibold">Remediation</span>
+          <span className="text-emerald-400/60 text-sm font-semibold">安全修复建议 (Remediation)</span>
           <div className="mt-1"><TruncatedText text={remediation} maxLines={15} /></div>
         </div>
       )}

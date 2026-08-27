@@ -228,19 +228,18 @@ export function AgentTranscript({
                 STATUS_STYLE[agent.status] ?? "text-[#aaa] border-[#333] bg-[#1a1a1a]"
               }`}
             >
-              {agent.status}
+              {agent.status === "completed" ? "已完成" : agent.status === "running" ? "执行中" : agent.status === "failed" ? "失败" : agent.status === "waiting" ? "等待中" : agent.status}
             </span>
             <span className="font-mono text-xs text-[#555]">{agent.id}</span>
           </div>
           <p className="text-xs text-[#666] mb-4">
-            {msgCount} message{msgCount === 1 ? "" : "s"} · {toolCount} tool call
-            {toolCount === 1 ? "" : "s"}
+            {msgCount} 条对话推理 · {toolCount} 次工具调用
           </p>
         </>
       )}
 
       {mine.length === 0 ? (
-        <p className="text-sm text-[#666]">No recorded activity for this agent.</p>
+        <p className="text-sm text-[#666]">该智能体暂无执行记录。</p>
       ) : (
         <div className="py-1">
           {mine.map((event, i) => {

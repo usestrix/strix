@@ -226,13 +226,13 @@ export default function Sidebar({
           <div className="relative flex flex-col gap-px px-2">
             <NavItem
               icon={<ProjectsIcon />}
-              label="Pentest Overview"
+              label="渗透概览"
               active={view === "overview"}
               onClick={() => onSelectView("overview")}
             />
             <NavItem
               icon={<AlertTriangle className="h-4 w-4" />}
-              label="Issues"
+              label="漏洞与风险"
               count={issuesCount > 0 ? issuesCount : undefined}
               active={view === "issues"}
               onClick={() => onSelectView("issues")}
@@ -240,7 +240,7 @@ export default function Sidebar({
             {agentCount > 0 && (
               <NavItem
                 icon={<Bot className="h-4 w-4" />}
-                label="Agents"
+                label="智能体拓扑"
                 count={agentCount}
                 active={view === "agents"}
                 onClick={() => onSelectView("agents")}
@@ -248,7 +248,7 @@ export default function Sidebar({
             )}
             <NavItem
               icon={<History className="h-4 w-4" />}
-              label="Past runs"
+              label="历史扫描记录"
               count={runCount > 0 ? runCount : undefined}
               active={view === "history"}
               onClick={onOpenHistory}
@@ -256,14 +256,14 @@ export default function Sidebar({
             {finished && (
               <NavItem
                 icon={<Mail className="h-4 w-4" />}
-                label="Export report"
+                label="导出测试报告"
                 active={view === "email"}
                 onClick={onOpenEmail}
               />
             )}
             <NavItem
               icon={<IoChatbubblesOutline className="h-4 w-4" />}
-              label="Feedback & support"
+              label="意见反馈"
               active={view === "feedback"}
               onClick={() => onSelectView("feedback")}
             />
@@ -272,34 +272,34 @@ export default function Sidebar({
 
             <NavItem
               icon={<LuGitPullRequestArrow className="h-4 w-4" />}
-              label="PR Security Reviews"
+              label="PR 安全代码审查"
               active={false}
               onClick={() =>
                 openUpgrade(
                   "pr_reviews",
-                  "Strix reviews every pull request and flags exploitable changes before they merge."
+                  "Strix 可以在代码合并前自动审查每个 Pull Request，拦截可利用的安全漏洞。"
                 )
               }
             />
             <NavItem
               icon={<VscExtensions className="h-4 w-4" />}
-              label="Integrations"
+              label="第三方工具集成"
               active={false}
               onClick={() =>
                 openUpgrade(
                   "integrations",
-                  "Sync findings to Jira, Linear, and Slack so fixes happen where your team already works."
+                  "将漏洞同步至 Jira、Linear、钉钉、企业微信和飞书，加速安全闭环。"
                 )
               }
             />
             <NavItem
               icon={<Users className="h-4 w-4" />}
-              label="Members"
+              label="团队与权限"
               active={false}
               onClick={() =>
                 openUpgrade(
                   "members",
-                  "Invite your team, set roles, and share findings and run history across your org."
+                  "邀请团队成员、划分角色权限，跨团队共享渗透测试报告与历史记录。"
                 )
               }
             />
@@ -324,7 +324,7 @@ export default function Sidebar({
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col text-left">
                   <span className="truncate text-[13px] font-medium text-[#ededed]">{email}</span>
-                  <span className="truncate text-[11px] text-[#555]">Linked to this machine</span>
+                  <span className="truncate text-[11px] text-[#555]">已连接至本机服务</span>
                 </span>
               </button>
             ) : (
@@ -336,7 +336,7 @@ export default function Sidebar({
                   <span className="text-[9px] font-semibold text-white">S</span>
                 </span>
                 <span className="flex min-w-0 flex-1 flex-col text-left">
-                  <span className="truncate text-[13px] font-medium text-[#ededed]">Local viewer</span>
+                  <span className="truncate text-[13px] font-medium text-[#ededed]">本地控制台</span>
                 </span>
               </div>
             )}
@@ -344,7 +344,7 @@ export default function Sidebar({
             {showUserMenu && verified && email && (
               <div className="absolute bottom-full left-2 right-2 z-50 mb-1 overflow-hidden rounded-lg border border-[#333] bg-black shadow-xl">
                 <div className="border-b border-[#333] px-3 py-2">
-                  <p className="truncate text-[13px] font-medium text-white">Linked email</p>
+                  <p className="truncate text-[13px] font-medium text-white">关联账号</p>
                   <p className="truncate text-[11px] text-[#666]">{email}</p>
                 </div>
                 <button
@@ -355,7 +355,7 @@ export default function Sidebar({
                   className="flex w-full items-center gap-2 px-3 py-2 text-[13px] text-[#888] transition-colors hover:bg-[rgba(255,255,255,0.06)] hover:text-red-400"
                 >
                   <LogOut className="h-4 w-4" />
-                  Forget this email
+                  退出关联
                 </button>
               </div>
             )}

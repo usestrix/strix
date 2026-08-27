@@ -5,6 +5,9 @@ import {
   Bot,
   Mail,
   ChevronDown,
+  ChevronRight,
+  ShieldCheck,
+  FileText,
   Radar,
   Rocket,
   ArrowUpRight,
@@ -43,11 +46,62 @@ import { RunDetails } from "@/components/RunDetails";
 import { TrustToast } from "@/components/TrustToast";
 import FeedbackView from "@/components/FeedbackView";
 import { ProInlineCta } from "@/components/ProCta";
+import { LiveActivityFeed } from "@/components/live/LiveActivityFeed";
+import type { Transcript } from "@/data/serverSource";
+import React, { Component, type ReactNode } from "react";
+
+interface ErrorBoundaryProps {
+  children: ReactNode;
+}
+
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error: Error | null;
+}
+
+class AppErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
+  constructor(props: ErrorBoundaryProps) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: React.ErrorInfo) {
+    console.error("ErrorBoundary caught an error:", error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="rounded-xl border border-red-500/30 bg-red-500/5 p-8 text-center space-y-3">
+          <AlertCircle className="w-8 h-8 mx-auto text-red-400" />
+          <p className="text-base font-semibold text-white">视图渲染遇到异常</p>
+          <p className="text-xs text-red-300 font-mono">
+            {this.state.error?.message || "未知组件错误"}
+          </p>
+          <button
+            onClick={() => {
+              this.setState({ hasError: false, error: null });
+              window.location.reload();
+            }}
+            className="px-4 py-2 text-xs font-semibold rounded-lg bg-white text-black hover:bg-neutral-200 transition-colors"
+          >
+            重新加载页面
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 export type View = "overview" | "issues" | "agents" | "history" | "email" | "feedback";
 
 const TRUST_BANNER =
-  "Your findings stay on your machine. They're rendered here locally in your browser and never uploaded or stored by Strix.";
+  "所有渗透测试结果与漏洞数据均保存在本地服务器中，完全通过本地浏览器渲染呈现，绝不会上传或外泄。";
 
 const SEVERITY_ORDER: VulnerabilitySeverity[] = ["critical", "high", "medium", "low"];
 const POLL_MS = 500;
@@ -62,15 +116,13 @@ export default function App() {
   const [runs, setRuns] = useState<RunsPayload | null>(null);
   const [emailPurpose, setEmailPurpose] = useState<"report" | "verify">("report");
   const [emailSkipDisclosure, setEmailSkipDisclosure] = useState(false);
-  // Whether this viewer can steer a live scan (true only inside the in-TUI
-  // launcher that shares the running scan's coordinator + event loop).
   const [canSteer, setCanSteer] = useState(false);
 
   const refreshAuth = useCallback(async () => {
     try {
       setAuth(await fetchAuthStatus());
     } catch {
-      /* auth status is best-effort; the launched run stays viewable */
+      /* auth status is best-effort */
     }
   }, []);
 
@@ -85,17 +137,11 @@ export default function App() {
   useEffect(() => {
     void refreshAuth();
     void refreshRuns();
-    // Capabilities never change over a session, so fetch once on mount.
     fetchCapabilities()
       .then((caps) => setCanSteer(caps.can_steer))
-      .catch(() => {
-        /* absence of steering is the safe default */
-      });
+      .catch(() => {});
   }, [refreshAuth, refreshRuns]);
 
-  // Live polling, scoped to the active run. Re-runs when the active run changes
-  // so switching to a past run (?run=<name>) reloads its data; a finished run
-  // does a single full fetch and stops.
   const finishedRef = useRef(false);
   useEffect(() => {
     let cancelled = false;
@@ -115,7 +161,7 @@ export default function App() {
           finishedRef.current = true;
           const full = await fetchAll(activeRun);
           if (!cancelled) setRun(full);
-          return; // stop polling
+          return;
         }
         const [transcript, vulnerabilities] = await Promise.all([
           fetchTranscript(activeRun).catch(() => ({ agents: [], events: [] })),
@@ -133,7 +179,7 @@ export default function App() {
         schedule();
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Could not load run data.");
+        setError(e instanceof Error ? e.message : "无法加载扫描数据。");
         schedule();
       }
     };
@@ -150,7 +196,7 @@ export default function App() {
         }
       } catch (e) {
         if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Could not load run data.");
+        setError(e instanceof Error ? e.message : "无法加载扫描数据。");
         schedule();
       }
     })();
@@ -169,13 +215,8 @@ export default function App() {
   const agentCount = run?.transcript.agents.length ?? 0;
   const verified = auth?.verified === true;
 
-  // Per-run guard for the default view: land on Agents while a scan is live,
-  // Overview once it finishes. Applied at most once per run and never once the
-  // user has navigated manually (userSetView flips the guard).
   const initialViewAppliedRef = useRef(false);
 
-  // Reset the guard whenever the active run changes so the newly selected run
-  // gets its own default.
   useEffect(() => {
     initialViewAppliedRef.current = false;
   }, [activeRun]);
@@ -186,15 +227,11 @@ export default function App() {
       initialViewAppliedRef.current = true;
       setView("overview");
     } else if (agentCount > 0) {
-      // Live and agents have appeared: default to the agent graph. If it is
-      // live but no agents exist yet, wait (do not apply, do not set the flag).
       initialViewAppliedRef.current = true;
       setView("agents");
     }
   }, [run, agentCount]);
 
-  // User-initiated navigation: mark the default guard applied so the per-run
-  // default effect never yanks the user off the view they chose.
   const userSetView = useCallback((v: View) => {
     initialViewAppliedRef.current = true;
     setView(v);
@@ -205,7 +242,6 @@ export default function App() {
     setSelectedId(null);
     setRun(null);
     setError(null);
-    // Reset the guard so the per-run default applies to the newly selected run.
     initialViewAppliedRef.current = false;
   }, []);
 
@@ -216,9 +252,7 @@ export default function App() {
     userSetView("email");
   }, [userSetView]);
 
-  // Sidebar entry keeps the disclosure (first place those users see it);
   const openEmail = useCallback(() => goEmail(false, "sidebar"), [goEmail]);
-  // the Overview CTA already states the tradeoff, so it starts the flow directly.
   const openEmailFromOverview = useCallback(() => goEmail(true, "overview"), [goEmail]);
 
   const openHistory = useCallback(() => {
@@ -242,9 +276,6 @@ export default function App() {
       <Sidebar
         view={view}
         onSelectView={(v) => {
-          // Clicking a sidebar view always lands on that section's top level,
-          // so leaving a specific issue's detail view and clicking "Issues"
-          // returns to the full findings list.
           setSelectedId(null);
           if (v === "history") openHistory();
           else userSetView(v);
@@ -277,24 +308,17 @@ export default function App() {
             </a>
             {run && <LiveIndicator finished={run.finished} />}
             <div className="ml-auto flex items-center gap-3">
-              {verified && runs && !runs.locked && runs.runs.length > 0 && (
+              {runs && runs.runs.length > 0 && (
                 <RunSwitcher
                   runs={runs}
                   activeRun={activeRun}
-                  launchedName={runTitle(run?.summary.targets[0] ?? null, run?.summary.runName ?? run?.summary.runId ?? "Current run")}
+                  launchedName={runTitle(run?.summary.targets[0] ?? null, run?.summary.runName ?? run?.summary.runId ?? "当前任务")}
                   onSelect={selectRun}
                 />
               )}
-              <a
-                href={ctaUrl(SIGNUP_URL, "run_in_cloud")}
-                target="_blank"
-                rel="noopener noreferrer"
-                onClick={() => trackCta("run_in_cloud", "topbar")}
-                className="inline-flex items-center gap-1 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black transition-opacity hover:opacity-90"
-              >
-                Run in the cloud
-                <ArrowUpRight className="w-3 h-3" aria-hidden="true" />
-              </a>
+              <span className="inline-flex items-center rounded-lg border border-emerald-500/30 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-400">
+                本地私有化版
+              </span>
             </div>
           </div>
         </div>
@@ -307,98 +331,104 @@ export default function App() {
             </div>
           )}
 
-          {/* Keyed wrapper: re-mounts on every view / finding / run change so the
-              page-in transition replays. */}
-          <div
-            key={`${activeRun ?? "launched"}:${view}:${selectedId ?? ""}`}
-            className="animate-page-in space-y-6"
-          >
-          {view === "email" ? (
-            <EmailReportView
-              activeRun={activeRun}
-              auth={auth}
-              purpose={emailPurpose}
-              skipDisclosure={emailSkipDisclosure}
-              onAuthChanged={() => {
-                void refreshAuth();
-                void refreshRuns();
-              }}
-              onExit={(dest) => setView(dest === "history" ? "history" : "overview")}
-            />
-          ) : view === "feedback" ? (
-            <FeedbackView
-              defaultEmail={auth?.email ?? null}
-              onExit={(dest) => setView(dest)}
-            />
-          ) : view === "history" ? (
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <History className="w-5 h-5 text-[#888]" aria-hidden="true" />
-                <h1 className="text-2xl font-semibold text-white">Past runs</h1>
-              </div>
-              <PastRunsView
-                runs={runs}
+          <AppErrorBoundary>
+            <div
+              key={`${activeRun ?? "launched"}:${view}:${selectedId ?? ""}`}
+              className="animate-page-in space-y-6"
+            >
+            {view === "email" ? (
+              <EmailReportView
                 activeRun={activeRun}
-                onSelectRun={selectRun}
-                onVerified={() => void onPastRunsVerified()}
+                auth={auth}
+                purpose={emailPurpose}
+                skipDisclosure={emailSkipDisclosure}
+                onAuthChanged={() => {
+                  void refreshAuth();
+                  void refreshRuns();
+                }}
+                onExit={(dest) => setView(dest === "history" ? "history" : "overview")}
               />
-            </div>
-          ) : !run && !error ? (
-            <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-10 text-center">
-              <div className="w-6 h-6 mx-auto mb-3 rounded-full border-2 border-[#333] border-t-white animate-spin" />
-              <p className="text-sm text-[#888]">Loading run data…</p>
-            </div>
-          ) : run && counts ? (
-            <>
-              <SummaryHeader summary={run.summary} />
-
-              {/* Tab strip: shown on small screens where the sidebar is hidden. */}
-              <div className="flex gap-5 border-b border-[#2a2a2a] lg:hidden">
-                <TabButton active={view === "overview"} onClick={() => userSetView("overview")}>
-                  Pentest Overview
-                </TabButton>
-                <TabButton active={view === "issues"} onClick={() => userSetView("issues")}>
-                  Issues{run.vulnerabilities.length > 0 ? ` (${run.vulnerabilities.length})` : ""}
-                </TabButton>
-                {agentCount > 0 && (
-                  <TabButton active={view === "agents"} onClick={() => userSetView("agents")}>
-                    Agents ({agentCount})
-                  </TabButton>
-                )}
-              </div>
-
-              {view === "overview" ? (
-                <OverviewTab
-                  summary={run.summary}
-                  counts={counts}
-                  total={run.vulnerabilities.length}
-                  reportMarkdown={run.reportMarkdown}
-                  raw={run.raw}
-                  finished={run.finished}
-                  onOpenEmail={openEmailFromOverview}
-                />
-              ) : view === "agents" && agentCount > 0 ? (
-                <AgentsTab run={run} canSteer={canSteer} />
-              ) : selected ? (
-                <div className="space-y-4">
-                  <button
-                    onClick={() => setSelectedId(null)}
-                    className="cursor-pointer inline-flex items-center gap-1.5 text-sm text-[#888] hover:text-white transition-colors"
-                  >
-                    <ArrowLeft className="w-4 h-4" /> Back to all findings
-                  </button>
-                  <VulnerabilityDetail vulnerability={selected} />
+            ) : view === "feedback" ? (
+              <FeedbackView
+                defaultEmail={auth?.email ?? null}
+                onExit={(dest) => setView(dest)}
+              />
+            ) : view === "history" ? (
+              <div className="space-y-4">
+                <div className="flex items-center gap-2">
+                  <History className="w-5 h-5 text-[#888]" aria-hidden="true" />
+                  <h1 className="text-2xl font-semibold text-white">历史扫描记录</h1>
                 </div>
-              ) : (
-                <FindingsList
-                  vulnerabilities={run.vulnerabilities}
-                  finished={run.finished}
-                  onSelect={(id) => setSelectedId(id)}
+                <PastRunsView
+                  runs={runs}
+                  activeRun={activeRun}
+                  onSelectRun={selectRun}
+                  onVerified={() => void onPastRunsVerified()}
                 />
-              )}
-            </>
-          ) : null}
-          </div>
+              </div>
+            ) : !run && !error ? (
+              <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-10 text-center">
+                <div className="w-6 h-6 mx-auto mb-3 rounded-full border-2 border-[#333] border-t-white animate-spin" />
+                <p className="text-sm text-[#888]">正在加载扫描数据...</p>
+              </div>
+            ) : run && counts ? (
+              <>
+                <SummaryHeader summary={run.summary} />
+
+                {/* Tab strip: shown on small screens where the sidebar is hidden. */}
+                <div className="flex gap-5 border-b border-[#2a2a2a] lg:hidden">
+                  <TabButton active={view === "overview"} onClick={() => userSetView("overview")}>
+                    渗透概览
+                  </TabButton>
+                  <TabButton active={view === "issues"} onClick={() => userSetView("issues")}>
+                    漏洞与风险{run.vulnerabilities.length > 0 ? ` (${run.vulnerabilities.length})` : ""}
+                  </TabButton>
+                  {agentCount > 0 && (
+                    <TabButton active={view === "agents"} onClick={() => userSetView("agents")}>
+                      智能体拓扑 ({agentCount})
+                    </TabButton>
+                  )}
+                </div>
+
+                {view === "overview" ? (
+                  <OverviewTab
+                    summary={run.summary}
+                    counts={counts}
+                    total={run.vulnerabilities.length}
+                    reportMarkdown={run.reportMarkdown}
+                    raw={run.raw}
+                    finished={run.finished}
+                    transcript={run.transcript}
+                    onOpenEmail={openEmailFromOverview}
+                    onSelectAgent={() => userSetView("agents")}
+                  />
+                ) : view === "agents" && agentCount > 0 ? (
+                  <AgentsTab run={run} canSteer={canSteer} />
+                ) : selected ? (
+                  <div className="space-y-4">
+                    <button
+                      onClick={() => setSelectedId(null)}
+                      className="cursor-pointer inline-flex items-center gap-1.5 text-sm text-[#888] hover:text-white transition-colors"
+                    >
+                      <ArrowLeft className="w-4 h-4" /> 返回所有漏洞列表
+                    </button>
+                    <VulnerabilityDetail vulnerability={selected} />
+                  </div>
+                ) : (
+                  <FindingsList
+                    vulnerabilities={run.vulnerabilities}
+                    finished={run.finished}
+                    reportMarkdown={run.reportMarkdown}
+                    summary={run.summary}
+                    transcript={run.transcript}
+                    onSelect={(id) => setSelectedId(id)}
+                    onSelectAgent={() => userSetView("agents")}
+                  />
+                )}
+              </>
+            ) : null}
+            </div>
+          </AppErrorBoundary>
         </div>
       </div>
       <TrustToast message={TRUST_BANNER} />
@@ -425,11 +455,11 @@ function RunSwitcher({
       <button
         onClick={() => setOpen((o) => !o)}
         onBlur={() => setTimeout(() => setOpen(false), 150)}
-        aria-label="Switch pentest"
+        aria-label="切换渗透任务"
         className="flex items-center gap-2 rounded-lg border border-[#3a3a3a] bg-[rgba(255,255,255,0.05)] px-3 py-2 text-sm text-white transition-colors hover:border-[#555] hover:bg-[rgba(255,255,255,0.09)]"
       >
         <History className="h-4 w-4 flex-shrink-0 text-[#888]" aria-hidden="true" />
-        <span className="flex-shrink-0 text-[#888]">Pentest</span>
+        <span className="flex-shrink-0 text-[#888]">任务</span>
         <span className="max-w-[260px] truncate font-medium">{current}</span>
         <ChevronDown className="h-4 w-4 flex-shrink-0 text-[#aaa]" aria-hidden="true" />
       </button>
@@ -439,7 +469,7 @@ function RunSwitcher({
           style={{ border: "1px solid #3a3a3a", background: "#0a0a0a" }}
         >
           <div className="border-b border-[#222] px-3 py-2 text-[11px] font-semibold uppercase tracking-wide text-[#666]">
-            Switch pentest
+            切换扫描任务
           </div>
           {runs.runs.map((r) => {
             const active = r.name === activeRun;
@@ -470,7 +500,7 @@ function LiveIndicator({ finished }: { finished: boolean }) {
     return (
       <span className="ml-3 inline-flex items-center gap-1.5 text-xs text-[#888]">
         <span className="w-1.5 h-1.5 rounded-full bg-[#555]" />
-        Complete
+        扫描已完成
       </span>
     );
   }
@@ -480,34 +510,36 @@ function LiveIndicator({ finished }: { finished: boolean }) {
         <span className="absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75 animate-ping" />
         <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
       </span>
-      Live
+      扫描执行中
     </span>
   );
 }
 
 function formatDuration(seconds: number | null): string | null {
   if (seconds == null) return null;
-  if (seconds < 60) return `${seconds}s`;
+  if (seconds < 60) return `${seconds} 秒`;
   const m = Math.floor(seconds / 60);
-  if (m < 60) return `${m}m`;
+  if (m < 60) return `${m} 分钟`;
   const h = Math.floor(m / 60);
-  return `${h}h ${m % 60}m`;
+  return `${h} 小时 ${m % 60} 分钟`;
 }
 
 function SummaryHeader({ summary }: { summary: ParsedRunSummary }) {
   const duration = formatDuration(summary.durationSeconds);
+  const modeName = summary.scanMode === "deep" ? "深度扫描 (Deep)" : summary.scanMode === "standard" ? "标准扫描 (Standard)" : "快速扫描 (Quick)";
+  const statusName = summary.status === "completed" ? "已完成" : summary.status === "running" ? "进行中" : "异常/已停止";
   return (
     <div>
       <h1 className="text-2xl font-semibold text-white">
-        {runTitle(summary.targets[0] ?? null, summary.runName ?? summary.runId ?? "Pentest results")}
+        {runTitle(summary.targets[0] ?? null, summary.runName ?? summary.runId ?? "渗透测试结果")}
       </h1>
       <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-[#888]">
         {summary.targets.length > 0 && (
           <span className="font-mono text-[#aaa]">{summary.targets.join(", ")}</span>
         )}
-        {summary.scanMode && <Meta label={summary.scanMode} />}
+        {summary.scanMode && <Meta label={modeName} />}
         {duration && <Meta label={duration} />}
-        {summary.status && <Meta label={summary.status} />}
+        {summary.status && <Meta label={statusName} />}
       </div>
     </div>
   );
@@ -525,66 +557,203 @@ function Meta({ label }: { label: string }) {
 function FindingsList({
   vulnerabilities,
   finished,
+  reportMarkdown,
+  summary,
+  transcript,
   onSelect,
+  onSelectAgent,
 }: {
   vulnerabilities: Vulnerability[];
   finished: boolean;
+  reportMarkdown?: string | null;
+  summary?: ParsedRunSummary;
+  transcript?: Transcript | null;
   onSelect: (id: string) => void;
+  onSelectAgent?: () => void;
 }) {
   const sorted = [...vulnerabilities].sort(
     (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
   );
-  if (sorted.length === 0) {
-    return (
-      <div className="space-y-4">
-        <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-8 text-center text-sm text-[#888]">
-          {finished ? "No findings in this run." : "No findings yet. The pentest is still running…"}
-        </div>
-        {finished && (
-          <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
-            <p className="text-sm font-medium text-white">Stay ahead of new exposures</p>
-            <p className="mt-0.5 mb-3 text-xs text-[#666]">
-              Attack surface monitoring catches new exposures for your org over time.
-            </p>
-            <ProInlineCta
-              label="Attack surface monitoring"
-              desc="Continuous coverage for your whole org."
-              slug="asm"
-              surface="empty_state"
-              icon={Radar}
-            />
-          </div>
-        )}
-      </div>
-    );
-  }
+
+  const sections = summary
+    ? (
+        [
+          ["管理层执行摘要 (Executive Summary)", summary.executiveSummary],
+          ["技术深度分析 (Technical Analysis)", summary.technicalAnalysis],
+          ["渗透测试方法与策略 (Methodology)", summary.methodology],
+          ["安全整改建议 (Recommendations)", summary.recommendations],
+        ] as const
+      )
+        .filter(([, content]) => !!content)
+        .map(([title, content]) => ({ title, content: stripLeadingHeading(content as string) }))
+    : [];
+
   return (
-    <div className="space-y-2">
-      {sorted.map((v) => (
-        <button
-          key={v.id}
-          onClick={() => onSelect(v.id)}
-          className="animate-card-in cursor-pointer w-full text-left rounded-lg border border-[#222] hover:border-[#444] bg-[rgba(255,255,255,0.02)] px-4 py-3 transition-colors flex items-center gap-3"
-        >
-          <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${getSeverityDot(v.severity)}`} aria-hidden="true" />
-          <span className="flex-1 min-w-0">
-            <span className="block text-sm font-medium text-white truncate">{v.title}</span>
-            {v.target && (
-              <span className="block text-xs text-[#666] font-mono truncate">{v.target}</span>
-            )}
-          </span>
-          <span
-            className={`text-xs font-semibold px-2 py-0.5 rounded-full border capitalize ${SEVERITY_COLORS[v.severity]}`}
-          >
-            {v.severity}
-          </span>
-        </button>
-      ))}
+    <div className="space-y-6">
+      {sorted.length > 0 ? (
+        <div className="space-y-3">
+          <div className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold text-white">
+              已发现漏洞与安全风险 ({sorted.length})
+            </h2>
+            <span className="text-xs text-[#888]">点击卡片查看详细验证 PoC 与修复建议</span>
+          </div>
+
+          <div className="grid gap-3">
+            {sorted.map((v) => (
+              <div
+                key={v.id}
+                onClick={() => onSelect(v.id)}
+                className="animate-card-in group cursor-pointer w-full text-left rounded-xl border border-[#222] hover:border-emerald-500/40 bg-[rgba(255,255,255,0.02)] hover:bg-[rgba(255,255,255,0.04)] p-5 transition-all space-y-3"
+              >
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className={`w-2.5 h-2.5 rounded-full flex-shrink-0 ${getSeverityDot(v.severity)}`} aria-hidden="true" />
+                      <span className="text-base font-semibold text-white group-hover:text-emerald-400 transition-colors">
+                        {v.title}
+                      </span>
+                    </div>
+
+                    {(v.target || v.endpoint) && (
+                      <div className="text-xs text-[#888] font-mono">
+                        {v.method ? <span className="text-emerald-400/80 mr-1.5 font-bold">{v.method}</span> : null}
+                        {v.target}{v.endpoint ? ` ${v.endpoint}` : ""}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {v.cvss != null && (
+                      <span className="text-xs font-mono text-[#aaa] border border-[#333] bg-[#111] px-2 py-0.5 rounded">
+                        CVSS {v.cvss}
+                      </span>
+                    )}
+                    {v.cve && (
+                      <span className="text-xs font-mono text-purple-400 border border-purple-500/30 bg-purple-500/10 px-2 py-0.5 rounded">
+                        {v.cve}
+                      </span>
+                    )}
+                    <span
+                      className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border uppercase ${SEVERITY_COLORS[v.severity]}`}
+                    >
+                      {v.severity}
+                    </span>
+                  </div>
+                </div>
+
+                {v.description && (
+                  <p className="text-sm text-[#aaa] line-clamp-2 leading-relaxed">
+                    {v.description}
+                  </p>
+                )}
+
+                <div className="flex items-center justify-between pt-1 border-t border-[#1a1a1a] text-xs text-[#666]">
+                  <span>{v.cwe ? `CWE: ${Array.isArray(v.cwe) ? v.cwe.join(", ") : v.cwe}` : "已验证漏洞"}</span>
+                  <span className="text-emerald-400/80 group-hover:text-emerald-400 flex items-center gap-1 font-medium">
+                    查看完整细节与 PoC <ChevronRight className="w-3.5 h-3.5 inline" />
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-6 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-lg border border-emerald-500/30 bg-emerald-500/10 flex items-center justify-center flex-shrink-0">
+                <ShieldCheck className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-semibold text-white">
+                  {finished ? "本次渗透测试未发现可直接利用的高危漏洞" : "当前扫描任务执行中，正在深度排查漏洞与安全风险…"}
+                </h3>
+                <p className="text-xs text-[#888] mt-0.5">
+                  {finished
+                    ? "已针对目标资产完成端口探测、服务指纹识别、已知 CVE 匹配与安全基线合规检查。"
+                    : "多个专职安全智能体正在并行对目标主机的端口暴露面、管理控制台与已知服务漏洞进行持续探测。"}
+                </p>
+              </div>
+            </div>
+
+            {/* Audit Scope & Live Status */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-3 border-t border-[#1a1a1a]">
+              <div className="rounded-lg border border-[#222] bg-black/40 p-3 space-y-1.5">
+                <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                  边界端口与服务指纹探测
+                </span>
+                <p className="text-xs text-[#888]">
+                  排查 SSH、Web 管理控制台、VPN、SNMP 等常见开放端口及服务版本信息。
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[#222] bg-black/40 p-3 space-y-1.5">
+                <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-blue-400" />
+                  管理面与认证机制审计
+                </span>
+                <p className="text-xs text-[#888]">
+                  核验未授权访问接口、弱认证配置、默认凭据与越权安全风险。
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[#222] bg-black/40 p-3 space-y-1.5">
+                <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-purple-400" />
+                  已知组件公开 CVE 检索验证
+                </span>
+                <p className="text-xs text-[#888]">
+                  自动比对服务指纹与公开漏洞库，针对性执行非破坏性验证 PoC。
+                </p>
+              </div>
+
+              <div className="rounded-lg border border-[#222] bg-black/40 p-3 space-y-1.5">
+                <span className="text-xs font-semibold text-white flex items-center gap-1.5">
+                  <span className="w-2 h-2 rounded-full bg-amber-400" />
+                  非破坏性安全基线合规检查
+                </span>
+                <p className="text-xs text-[#888]">
+                  严禁高并发拒绝服务操作，确保网络服务可用性与设备正常运转。
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Real-time Probe Results and Activity Stream */}
+      <LiveActivityFeed
+        transcript={transcript ?? null}
+        finished={finished}
+        onSelectAgent={onSelectAgent}
+      />
+
+      {/* Audit Report & Technical Findings Details Section */}
+      {sections.length > 0 ? (
+        <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-6 space-y-8">
+          <div className="flex items-center gap-2 border-b border-[#222] pb-3">
+            <FileText className="w-4 h-4 text-emerald-400" />
+            <h3 className="text-base font-semibold text-white">本次渗透测试审计与侦察发现详情</h3>
+          </div>
+          {sections.map((s) => (
+            <ContentSection key={s.title} title={s.title} content={s.content} />
+          ))}
+        </div>
+      ) : reportMarkdown ? (
+        <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-6 space-y-4">
+          <div className="flex items-center gap-2 border-b border-[#222] pb-3">
+            <FileText className="w-4 h-4 text-emerald-400" />
+            <h3 className="text-base font-semibold text-white">本次渗透测试审计与侦察发现详情</h3>
+          </div>
+          <ContentSection content={dedupeHeadings(reportMarkdown)} />
+        </div>
+      ) : null}
     </div>
   );
 }
 
-/** Strip a single leading markdown heading (report sections embed their own). */
 function stripLeadingHeading(md: string): string {
   return md.replace(/^\s*#{1,6}[ \t]+.*(?:\r?\n)+/, "").trimStart();
 }
@@ -606,7 +775,6 @@ function dedupeHeadings(md: string): string {
   return out.join("\n");
 }
 
-/** Primary local CTA: email an encrypted PDF. Verify-email affordance, no lock. */
 function EmailReportCta({ onOpenEmail }: { onOpenEmail: () => void }) {
   return (
     <button
@@ -621,13 +789,13 @@ function EmailReportCta({ onOpenEmail }: { onOpenEmail: () => void }) {
           <Mail className="h-4 w-4 text-emerald-400" aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white">Email an encrypted PDF report of this run</p>
+          <p className="text-sm font-semibold text-white">一键导出本次渗透测试评估报告</p>
           <p className="mt-0.5 text-xs text-[#888]">
-            Encrypted with a key only you can see, email verified with a one-time code before sending.
+            支持本地直接下载 Markdown / PDF 报告，数据完全私有化，无需经过外部中继。
           </p>
         </div>
         <span className="flex-shrink-0 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black transition-opacity group-hover:opacity-90">
-          Export report to PDF
+          导出测试报告
         </span>
       </div>
     </button>
@@ -641,7 +809,9 @@ function OverviewTab({
   reportMarkdown,
   raw,
   finished,
+  transcript,
   onOpenEmail,
+  onSelectAgent,
 }: {
   summary: ParsedRunSummary;
   counts: Record<VulnerabilitySeverity, number>;
@@ -649,14 +819,16 @@ function OverviewTab({
   reportMarkdown: string | null;
   raw: Record<string, unknown>;
   finished: boolean;
+  transcript: Transcript | null;
   onOpenEmail: () => void;
+  onSelectAgent?: () => void;
 }) {
   const sections = (
     [
-      ["Executive Summary", summary.executiveSummary],
-      ["Technical Analysis", summary.technicalAnalysis],
-      ["Methodology", summary.methodology],
-      ["Recommendations", summary.recommendations],
+      ["管理层摘要 (Executive Summary)", summary.executiveSummary],
+      ["技术深度分析 (Technical Analysis)", summary.technicalAnalysis],
+      ["渗透方法与策略 (Methodology)", summary.methodology],
+      ["安全整改建议 (Recommendations)", summary.recommendations],
     ] as const
   )
     .filter(([, content]) => !!content)
@@ -668,14 +840,19 @@ function OverviewTab({
         <RunDetails raw={raw} durationSeconds={summary.durationSeconds} />
       </div>
 
+      {/* Live Probe and Activity Stream */}
+      <LiveActivityFeed
+        transcript={transcript}
+        finished={finished}
+        onSelectAgent={onSelectAgent}
+      />
+
       {total > 0 && (
         <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
           <IssueSeveritySummary findings={{ total, ...counts }} />
         </div>
       )}
 
-      {/* Primary CTA: the one primary on Overview. Hidden until the run is
-          finished, since a live scan would only email a partial report. */}
       {finished && (
         <div className="animate-card-in">
           <EmailReportCta onOpenEmail={onOpenEmail} />
@@ -692,12 +869,7 @@ function OverviewTab({
         <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
           <ContentSection content={dedupeHeadings(reportMarkdown)} />
         </div>
-      ) : (
-        total === 0 && (
-          <p className="text-sm text-[#888]">No summary available for this run yet.</p>
-        )
-      )}
-
+      ) : null}
     </div>
   );
 }
@@ -727,11 +899,9 @@ function TabButton({
 function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
   const { agents, events } = run.transcript;
   const graphAgents = useMemo(() => buildGraphAgents(agents, events), [agents, events]);
-  // Clicking a graph node opens the agent's transcript in a modal; no node selected means no modal.
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const selectedAgent = selectedId ? (agents.find((a) => a.id === selectedId) ?? null) : null;
 
-  // Live steering is only possible in-process (canSteer) while the scan runs.
   const steerable = canSteer && !run.finished;
 
   return (
@@ -739,13 +909,13 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
       <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
         <div className="flex items-center gap-2">
           <Bot className="w-4 h-4 text-[#888]" aria-hidden="true" />
-          <h2 className="text-sm font-semibold text-white">Agent graph</h2>
+          <h2 className="text-sm font-semibold text-white">智能体协同拓扑图 (Agent Graph)</h2>
           <span className="text-xs text-[#666]">
-            {agents.length} agent{agents.length === 1 ? "" : "s"}
+            {agents.length} 个智能体协同执行中
           </span>
         </div>
         <p className="mt-1 mb-4 text-xs text-[#666]">
-          Click an agent to open its full transcript.
+          点击任意智能体节点，可展开查看其完整的思考过程、工具调用与交互轨迹。
         </p>
         <div className="h-[480px] rounded-lg border border-[#1a1a1a] overflow-hidden">
           <AgentGraph
@@ -759,23 +929,14 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
         </div>
       </div>
 
-      {/* Live steering: only in-process while the scan runs. Otherwise omitted. */}
       {steerable && <ScanPromptComposer agents={agents} />}
 
-      {/* Re-run always routes to Strix Cloud. */}
-      <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
-        <p className="text-sm font-semibold text-white">Run this pentest with more depth</p>
-        <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra in the cloud.</p>
-        <div className="mt-3 flex flex-wrap gap-2.5">
-          <ProInlineCta
-            label="Re-run in Strix Pro with more depth"
-            desc="Run this pentest on managed infra with more depth."
-            slug="live_scan"
-            surface="agents"
-            icon={Rocket}
-          />
-        </div>
-      </div>
+      {/* Live Probe and Activity Stream */}
+      <LiveActivityFeed
+        transcript={run.transcript}
+        finished={run.finished}
+        onSelectAgent={(id) => setSelectedId(id)}
+      />
 
       <AgentDetailModal
         open={selectedAgent !== null}

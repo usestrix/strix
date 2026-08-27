@@ -29,42 +29,42 @@ export interface StatusMeta {
 
 export const STATUS_META: Record<VulnerabilityStatus, StatusMeta> = {
   open: {
-    label: "Open",
+    label: "待处置 (Open)",
     color: "bg-red-500/10 text-red-400 border-red-500/20",
     dotColor: "bg-red-500",
-    description: "Newly discovered, awaiting triage",
+    description: "新发现漏洞，待排查验证",
   },
   in_progress: {
-    label: "In Progress",
+    label: "处置中 (In Progress)",
     color: "bg-blue-500/10 text-blue-400 border-blue-500/20",
     dotColor: "bg-blue-500",
-    description: "Someone is working on this",
+    description: "开发/安全人员正在修复",
   },
   snoozed: {
-    label: "Snoozed",
+    label: "已搁置 (Snoozed)",
     color: "bg-purple-500/10 text-purple-400 border-purple-500/20",
     dotColor: "bg-purple-500",
-    description: "Temporarily hidden until a follow-up date",
+    description: "已临时搁置，后续跟踪",
   },
   fixed: {
-    label: "Fixed",
+    label: "已修复 (Fixed)",
     color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20",
     dotColor: "bg-emerald-500",
-    description: "This vulnerability has been fixed",
+    description: "该漏洞已成功修复",
   },
   ignored: {
-    label: "Ignored",
+    label: "已忽略 (Ignored)",
     color: "bg-gray-500/10 text-gray-400 border-gray-500/20",
     dotColor: "bg-gray-500",
-    description: "Acknowledged but accepted",
+    description: "已知晓并接受该风险",
   },
 };
 
 export const FIX_EFFORT_META: Record<FixEffort, { label: string; color: string }> = {
-  trivial: { label: "Trivial", color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
-  low: { label: "Low", color: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
-  medium: { label: "Medium", color: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20" },
-  high: { label: "High", color: "bg-orange-500/10 text-orange-400 border-orange-500/20" },
+  trivial: { label: "极低 (Trivial)", color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/20" },
+  low: { label: "低 (Low)", color: "bg-blue-500/10 text-blue-400 border-blue-500/20" },
+  medium: { label: "中等 (Medium)", color: "bg-yellow-500/10 text-yellow-400 border-yellow-500/20" },
+  high: { label: "复杂 (High)", color: "bg-orange-500/10 text-orange-400 border-orange-500/20" },
 };
 
 export interface CodeLocation {

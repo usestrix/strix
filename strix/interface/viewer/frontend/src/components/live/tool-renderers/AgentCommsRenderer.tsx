@@ -10,7 +10,7 @@ export default function AgentCommsRenderer({ toolName, args }: ToolRendererProps
     return (
       <div>
         <div className="flex items-center gap-2">
-          <span className="text-cyan-400/80 font-semibold text-sm">spawning</span>
+          <span className="text-cyan-400/80 font-semibold text-sm">创建子智能体</span>
           {name && <span className="text-cyan-400 font-semibold text-sm">{name}</span>}
         </div>
         {task && <div className="mt-1.5"><TruncatedText text={task} maxLines={15} /></div>}
@@ -26,7 +26,7 @@ export default function AgentCommsRenderer({ toolName, args }: ToolRendererProps
     return (
       <div>
         <span className={`font-semibold text-sm ${success === false ? "text-red-400/80" : "text-emerald-400/80"}`}>
-          {success === false ? "Agent failed" : "Agent completed"}
+          {success === false ? "智能体执行失败" : "智能体任务已完成"}
         </span>
         {summary && <div className="mt-1.5"><TruncatedText text={summary} maxLines={20} /></div>}
         {findings && findings.length > 0 && (
@@ -46,8 +46,8 @@ export default function AgentCommsRenderer({ toolName, args }: ToolRendererProps
     return (
       <div>
         <div className="flex items-center gap-2">
-          <span className="text-cyan-400/80 font-semibold text-sm">message</span>
-          {agentId && <span className="text-[#888] text-[13px]">to {agentId.slice(0, 16)}</span>}
+          <span className="text-cyan-400/80 font-semibold text-sm">跨智能体通信</span>
+          {agentId && <span className="text-[#888] text-[13px]">发给 {agentId.slice(0, 16)}</span>}
         </div>
         {message && <div className="mt-1.5"><TruncatedText text={message} maxLines={20} /></div>}
       </div>
@@ -58,7 +58,7 @@ export default function AgentCommsRenderer({ toolName, args }: ToolRendererProps
     const reason = (args.reason as string) ?? "";
     return (
       <div className="flex items-center gap-2">
-        <span className="text-cyan-400/80 font-semibold text-sm">waiting</span>
+        <span className="text-cyan-400/80 font-semibold text-sm">等待子智能体</span>
         {reason && <span className="text-[#888] text-[13px] truncate">{reason}</span>}
       </div>
     );
@@ -71,9 +71,9 @@ export default function AgentCommsRenderer({ toolName, args }: ToolRendererProps
     return (
       <div>
         <div className="flex items-center gap-2 flex-wrap">
-          <span className="text-red-400/80 font-semibold text-sm">stopping</span>
+          <span className="text-red-400/80 font-semibold text-sm">终止智能体</span>
           {targetAgentId && <span className="text-[#888] text-[13px]">{targetAgentId.slice(0, 16)}</span>}
-          {cascade && <span className="text-[#555] text-[13px] italic">+ descendants</span>}
+          {cascade && <span className="text-[#555] text-[13px] italic">+ 关联子节点</span>}
         </div>
         {reason && <div className="mt-1.5 text-[#888] text-[13px]">{reason}</div>}
       </div>
@@ -82,7 +82,7 @@ export default function AgentCommsRenderer({ toolName, args }: ToolRendererProps
 
   if (toolName === "view_agent_graph") {
     return (
-      <span className="text-cyan-400/80 font-semibold text-sm">viewing agents graph</span>
+      <span className="text-cyan-400/80 font-semibold text-sm">查看全局智能体拓扑</span>
     );
   }
 
