@@ -35,13 +35,12 @@ export interface ParsedRunSummary {
   recommendations: string | null;
 }
 
-const KNOWN_SEVERITIES: VulnerabilitySeverity[] = ["critical", "high", "medium", "low"];
+const KNOWN_SEVERITIES: VulnerabilitySeverity[] = ["critical", "high", "medium", "low", "info"];
 
 function coerceSeverity(raw: unknown): VulnerabilitySeverity {
   const s = String(raw ?? "").toLowerCase().trim();
   if ((KNOWN_SEVERITIES as string[]).includes(s)) return s as VulnerabilitySeverity;
-  // The app's severity type has no "info"/"informational" bucket; fold those
-  // (and anything unrecognized) into "low" so the shared UI renders cleanly.
+  if (s === "informational") return "info";
   return "low";
 }
 
@@ -226,6 +225,11 @@ function parseOneVulnerability(
     assumptions: asStringOrNull(raw.assumptions),
     fix_effort: (asStringOrNull(raw.fix_effort) as Vulnerability["fix_effort"]) ?? null,
     cvss_breakdown: (raw.cvss_breakdown as Vulnerability["cvss_breakdown"]) ?? null,
+    counterevidence: asStringOrNull(raw.counterevidence),
+    confidence: (asStringOrNull(raw.confidence) as Vulnerability["confidence"]) ?? null,
+    confidence_rationale: asStringOrNull(raw.confidence_rationale),
+    severity_change_conditions: asStringOrNull(raw.severity_change_conditions),
+    verification: (raw.verification as Vulnerability["verification"]) ?? null,
   };
 }
 
@@ -319,6 +323,7 @@ export function severityCounts(
     high: 0,
     medium: 0,
     low: 0,
+    info: 0,
   };
   for (const v of vulns) counts[v.severity] += 1;
   return counts;

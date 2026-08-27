@@ -445,6 +445,24 @@ def _response_usage(usage: Usage | None) -> ResponseUsage | None:
     )
 
 
+def apply_runtime_model_guards(
+    model: Model,
+    llm: LlmSettings,
+    *,
+    allow_disable_streaming: bool = True,
+) -> Model:
+    """Apply Strix's per-turn and streaming guards to a route-local model."""
+    idle_timeout = float(llm.stream_idle_timeout)
+    if allow_disable_streaming and llm.disable_streaming:
+        model = _NonStreamingModel(model)
+        idle_timeout = 0.0
+    return _TurnGuardModel(
+        model,
+        max_tool_calls_per_turn=llm.max_tool_calls_per_turn,
+        stream_idle_timeout=idle_timeout,
+    )
+
+
 class StrixProvider(MultiProvider):
     """Route any non-OpenAI prefix through LiteLLM with the prefix preserved,
     so users type ``deepseek/deepseek-chat`` rather than
@@ -471,7 +489,6 @@ class StrixProvider(MultiProvider):
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
         slug = codex.subscription_model(model_name)
-        idle_timeout = float(llm.stream_idle_timeout)
         if slug:
             # The ChatGPT subscription backend is always streamed; it has no
             # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
@@ -483,16 +500,12 @@ class StrixProvider(MultiProvider):
             )
         else:
             model = super().get_model(model_name)
-            if llm.disable_streaming:
-                model = _NonStreamingModel(model)
-                # The wrapper emits its single event only once the whole request
-                # is done, so an idle gap is meaningless here; the request
-                # timeout bounds it instead.
-                idle_timeout = 0.0
-        return _TurnGuardModel(
+        return apply_runtime_model_guards(
             model,
-            max_tool_calls_per_turn=llm.max_tool_calls_per_turn,
-            stream_idle_timeout=idle_timeout,
+            llm,
+            # The ChatGPT subscription backend is always streamed and has no
+            # non-streaming fallback.
+            allow_disable_streaming=not bool(slug),
         )
 
 

@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from strix.config import apply_config_override
+from strix.config import apply_config_override, load_settings
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
@@ -270,6 +270,15 @@ Examples:
     )
 
     parser.add_argument(
+        "--verify-findings",
+        action="store_true",
+        help=(
+            "Independently reproduce each candidate finding in the scan sandbox before "
+            "reporting it. Unreproduced findings receive an evidence-based CVSS review."
+        ),
+    )
+
+    parser.add_argument(
         "--resume",
         type=str,
         metavar="RUN_NAME",
@@ -291,6 +300,11 @@ Examples:
 
     if args.config:
         apply_config_override(validate_config_file(args.config))
+
+    if args.verify_findings:
+        # Process-local CLI override: unlike STRIX_VERIFY_FINDINGS in the config,
+        # this must not become sticky when startup persists environment settings.
+        load_settings().verification.enabled = True
 
     if args.mcp_config:
         mcp_config_path = Path(args.mcp_config).expanduser()

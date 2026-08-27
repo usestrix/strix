@@ -257,7 +257,75 @@ def _validate_fix_verification(
     ]
 
 
-async def _do_create(
+def _append_verification_evidence(original: str, independent: str) -> str:
+    independent = independent.strip()
+    if not independent:
+        return original
+    return f"{original.rstrip()}\n\n**Independent verification:** {independent}"
+
+
+def _apply_verification_score(
+    result: dict[str, Any],
+    original_breakdown: dict[str, str],
+    original_score: float,
+    original_severity: str,
+) -> tuple[dict[str, str], float, str, str | None]:
+    if result.get("status") not in {"confirmed", "unverified"}:
+        return original_breakdown, original_score, original_severity, None
+    revised = result.get("revised_cvss_breakdown")
+    if not isinstance(revised, dict):
+        return original_breakdown, original_score, original_severity, None
+    errors = _validate_cvss_breakdown(revised)
+    if errors:
+        return original_breakdown, original_score, original_severity, "; ".join(errors)
+    try:
+        score, severity, _vector = _calculate_cvss(revised)
+    except ValueError as exc:
+        return original_breakdown, original_score, original_severity, str(exc)
+    return revised, score, severity, None
+
+
+def _verification_metadata(
+    result: dict[str, Any],
+    *,
+    original_breakdown: dict[str, str],
+    original_score: float,
+    original_severity: str,
+    final_breakdown: dict[str, str],
+    final_score: float,
+    final_severity: str,
+    score_error: str | None = None,
+) -> dict[str, Any] | None:
+    if result.get("status") == "not_requested":
+        return None
+    metadata = {
+        key: result[key]
+        for key in (
+            "status",
+            "method",
+            "model",
+            "confidence",
+            "reason",
+            "evidence",
+            "cvss_reasoning",
+            "attempts",
+            "verified_at",
+        )
+        if result.get(key) not in (None, "", [])
+    }
+    metadata["original_cvss"] = original_score
+    metadata["original_severity"] = original_severity
+    metadata["original_cvss_breakdown"] = original_breakdown
+    metadata["final_cvss"] = final_score
+    metadata["final_severity"] = final_severity
+    metadata["final_cvss_breakdown"] = final_breakdown
+    metadata["rescored"] = final_breakdown != original_breakdown
+    if score_error:
+        metadata["score_review_error"] = score_error
+    return metadata
+
+
+async def _do_create(  # noqa: PLR0911, PLR0912, PLR0915
     *,
     title: str,
     description: str,
@@ -284,6 +352,7 @@ async def _do_create(
     fix_pr_body: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
+    verification_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = _validate_required_text(
         {
@@ -356,8 +425,21 @@ async def _do_create(
             "technical_analysis": technical_analysis,
             "poc_description": poc_description,
             "poc_script_code": poc_script_code,
+            "evidence": evidence,
+            "assumptions": assumptions,
+            "counterevidence": counterevidence,
+            "confidence": confidence,
+            "confidence_rationale": confidence_rationale,
+            "severity_change_conditions": severity_change_conditions,
+            "cvss": cvss_score,
+            "severity": severity,
+            "cvss_breakdown": cvss_breakdown,
             "endpoint": endpoint,
             "method": method,
+            "cve": cve,
+            "cwe": cwe,
+            "code_locations": parsed_locations,
+            "finding_class": "dynamic",
         }
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
@@ -378,35 +460,101 @@ async def _do_create(
                 "reason": dedupe.get("reason", ""),
             }
 
-        report_id = report_state.add_vulnerability_report(
-            title=title,
-            description=description,
-            severity=severity,
-            impact=impact,
-            target=target,
-            technical_analysis=technical_analysis,
-            poc_description=poc_description,
-            poc_script_code=poc_script_code,
-            remediation_steps=remediation_steps,
-            evidence=evidence,
-            assumptions=assumptions,
-            counterevidence=counterevidence,
-            confidence=confidence,
-            confidence_rationale=confidence_rationale,
-            severity_change_conditions=severity_change_conditions,
-            fix_effort=fix_effort,
-            cvss=cvss_score,
-            cvss_breakdown=cvss_breakdown,
-            endpoint=endpoint,
-            method=method,
-            cve=cve,
-            cwe=cwe,
-            code_locations=parsed_locations,
-            fix_verification=fix_verification,
-            fix_pr_body=fix_pr_body,
-            agent_id=agent_id if isinstance(agent_id, str) else None,
-            agent_name=agent_name if isinstance(agent_name, str) else None,
+        from strix.report.verification import verify_finding
+
+        verification_result = await verify_finding(candidate, verification_context)
+        original_breakdown = dict(cvss_breakdown)
+        original_score = cvss_score
+        original_severity = severity
+        cvss_breakdown, cvss_score, severity, score_error = _apply_verification_score(
+            verification_result,
+            original_breakdown,
+            original_score,
+            original_severity,
         )
+        verification_status = verification_result.get("status")
+        if verification_status == "confirmed":
+            poc_description = str(verification_result.get("poc_description") or poc_description)
+            poc_script_code = str(verification_result.get("poc_script_code") or poc_script_code)
+            evidence = _append_verification_evidence(
+                evidence,
+                str(verification_result.get("evidence") or ""),
+            )
+            confidence = str(verification_result.get("confidence") or confidence)
+            if confidence != "high":
+                confidence_rationale = str(verification_result.get("reason") or "")
+            else:
+                confidence_rationale = None
+            revised_impact = str(verification_result.get("revised_impact") or "").strip()
+            if revised_impact:
+                impact = revised_impact
+        elif verification_status == "unverified":
+            revised_impact = str(verification_result.get("revised_impact") or "").strip()
+            if revised_impact:
+                impact = revised_impact
+            confidence = str(verification_result.get("confidence") or "low")
+            confidence_rationale = (
+                "Independent verification did not reproduce the claimed impact; "
+                "see the local verification record for details."
+            )
+            counterevidence = _append_verification_evidence(
+                counterevidence,
+                "The independent verifier did not reproduce the claimed impact.",
+            )
+        verification = _verification_metadata(
+            verification_result,
+            original_breakdown=original_breakdown,
+            original_score=original_score,
+            original_severity=original_severity,
+            final_breakdown=cvss_breakdown,
+            final_score=cvss_score,
+            final_severity=severity,
+            score_error=score_error,
+        )
+
+        async with report_state.vulnerability_lock:
+            current = report_state.get_existing_vulnerabilities()
+            if {r.get("id") for r in current} != {r.get("id") for r in existing}:
+                final_dedupe = await check_duplicate(candidate, current)
+                if final_dedupe.get("is_duplicate"):
+                    duplicate_id = str(final_dedupe.get("duplicate_id") or "")
+                    return {
+                        "success": False,
+                        "error": "A duplicate finding was filed while verification was running",
+                        "duplicate_of": duplicate_id,
+                        "confidence": final_dedupe.get("confidence", 0.0),
+                        "reason": final_dedupe.get("reason", ""),
+                    }
+            report_id = report_state.add_vulnerability_report(
+                title=title,
+                description=description,
+                severity=severity,
+                impact=impact,
+                target=target,
+                technical_analysis=technical_analysis,
+                poc_description=poc_description,
+                poc_script_code=poc_script_code,
+                remediation_steps=remediation_steps,
+                evidence=evidence,
+                assumptions=assumptions,
+                counterevidence=counterevidence,
+                confidence=confidence,
+                confidence_rationale=confidence_rationale,
+                severity_change_conditions=severity_change_conditions,
+                fix_effort=fix_effort,
+                cvss=cvss_score,
+                cvss_breakdown=cvss_breakdown,
+                endpoint=endpoint,
+                method=method,
+                cve=cve,
+                cwe=cwe,
+                code_locations=parsed_locations,
+                fix_verification=fix_verification,
+                fix_pr_body=fix_pr_body,
+                verification=verification,
+                agent_id=agent_id if isinstance(agent_id, str) else None,
+                agent_name=agent_name if isinstance(agent_name, str) else None,
+            )
     except (ImportError, AttributeError) as e:
         logger.exception("create_vulnerability_report persistence failed")
         return {"success": False, "error": f"Failed to create vulnerability report: {e!s}"}
@@ -424,6 +572,7 @@ async def _do_create(
             "report_id": report_id,
             "severity": severity,
             "cvss_score": cvss_score,
+            "verification_status": verification_result.get("status"),
         }
 
 
@@ -442,7 +591,7 @@ def _caller_identity(ctx: RunContextWrapper) -> tuple[str | None, str | None]:
     return agent_id, agent_name
 
 
-@function_tool(timeout=180, strict_mode=False)
+@function_tool(timeout=3600, strict_mode=False)
 async def create_vulnerability_report(
     ctx: RunContextWrapper,
     title: str,
@@ -882,6 +1031,7 @@ async def create_vulnerability_report(
         fix_pr_body=fix_pr_body,
         agent_id=agent_id,
         agent_name=agent_name,
+        verification_context=ctx.context if isinstance(ctx.context, dict) else None,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -1098,7 +1248,7 @@ def _build_dependency_evidence(
     return evidence
 
 
-async def _do_create_dependency(  # noqa: PLR0912
+async def _do_create_dependency(  # noqa: PLR0911, PLR0912, PLR0915
     *,
     title: str,
     description: str,
@@ -1124,6 +1274,7 @@ async def _do_create_dependency(  # noqa: PLR0912
     contextual_cvss_reasoning: str | None = None,
     agent_id: str | None = None,
     agent_name: str | None = None,
+    verification_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     errors: list[str] = []
     required = {
@@ -1240,6 +1391,16 @@ async def _do_create_dependency(  # noqa: PLR0912
             "dependency_metadata": dependency_metadata,
             "technical_analysis": technical_analysis,
         }
+        verification_candidate = {
+            **candidate,
+            "impact": impact,
+            "evidence": evidence,
+            "assumptions": assumptions,
+            "cvss": cvss_score,
+            "severity": severity,
+            "cvss_breakdown": contextual_cvss_breakdown,
+            "finding_class": "dependency_cve",
+        }
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
             duplicate_id = dedupe.get("duplicate_id", "")
@@ -1254,25 +1415,111 @@ async def _do_create_dependency(  # noqa: PLR0912
                 "reason": dedupe.get("reason", ""),
             }
 
-        report_id = report_state.add_vulnerability_report(
-            title=title,
-            description=description,
-            severity=severity,
-            impact=impact,
-            target=target,
-            technical_analysis=technical_analysis,
-            remediation_steps=remediation_steps,
-            evidence=evidence,
-            assumptions=assumptions,
-            fix_effort=fix_effort,
-            cvss=cvss_score if advisory_cvss is not None else None,
-            cve=parsed_cve,
-            cwe=cwe,
-            finding_class="dependency_cve",
-            dependency_metadata=dependency_metadata,
-            agent_id=agent_id if isinstance(agent_id, str) else None,
-            agent_name=agent_name if isinstance(agent_name, str) else None,
+        from strix.report.verification import verify_finding
+
+        verification_result = await verify_finding(verification_candidate, verification_context)
+        original_breakdown = dict(contextual_cvss_breakdown or {})
+        original_score = float(cvss_score or 0.0)
+        original_severity = severity
+        final_breakdown, final_score, severity, score_error = _apply_verification_score(
+            verification_result,
+            original_breakdown,
+            original_score,
+            original_severity,
         )
+        verification_status = verification_result.get("status")
+        poc_description: str | None = None
+        poc_script_code: str | None = None
+        confidence: str | None = None
+        confidence_rationale: str | None = None
+        counterevidence: str | None = None
+        if verification_status == "confirmed":
+            poc_description = str(verification_result.get("poc_description") or "").strip() or None
+            poc_script_code = str(verification_result.get("poc_script_code") or "").strip() or None
+            evidence = _append_verification_evidence(
+                evidence,
+                str(verification_result.get("evidence") or ""),
+            )
+            confidence = str(verification_result.get("confidence") or "high")
+            if confidence != "high":
+                confidence_rationale = str(verification_result.get("reason") or "")
+            revised_impact = str(verification_result.get("revised_impact") or "").strip()
+            if revised_impact:
+                impact = revised_impact
+        elif verification_status == "unverified":
+            revised_impact = str(verification_result.get("revised_impact") or "").strip()
+            if revised_impact:
+                impact = revised_impact
+            confidence = str(verification_result.get("confidence") or "low")
+            confidence_rationale = (
+                "Independent verification did not reproduce the claimed impact; "
+                "see the local verification record for details."
+            )
+            counterevidence = "The independent verifier did not reproduce the claimed impact."
+
+        if final_breakdown != original_breakdown:
+            _, _, contextual_vector = _calculate_cvss(final_breakdown)
+            dependency_metadata["contextual_cvss_breakdown"] = final_breakdown
+            dependency_metadata["contextual_cvss_score"] = final_score
+            dependency_metadata["contextual_cvss_vector"] = contextual_vector
+            dependency_metadata["contextual_cvss_reasoning"] = str(
+                verification_result.get("cvss_reasoning")
+                or dependency_metadata.get("contextual_cvss_reasoning")
+                or ""
+            )[:_MAX_CONTEXTUAL_REASONING_CHARS]
+        verification = _verification_metadata(
+            verification_result,
+            original_breakdown=original_breakdown,
+            original_score=original_score,
+            original_severity=original_severity,
+            final_breakdown=final_breakdown,
+            final_score=final_score,
+            final_severity=severity,
+            score_error=score_error,
+        )
+
+        async with report_state.vulnerability_lock:
+            current = report_state.get_existing_vulnerabilities()
+            if {r.get("id") for r in current} != {r.get("id") for r in existing}:
+                final_dedupe = await check_duplicate(candidate, current)
+                if final_dedupe.get("is_duplicate"):
+                    duplicate_id = str(final_dedupe.get("duplicate_id") or "")
+                    return {
+                        "success": False,
+                        "error": (
+                            "A duplicate dependency finding was filed while verification "
+                            "was running"
+                        ),
+                        "duplicate_of": duplicate_id,
+                        "confidence": final_dedupe.get("confidence", 0.0),
+                        "reason": final_dedupe.get("reason", ""),
+                    }
+            report_id = report_state.add_vulnerability_report(
+                title=title,
+                description=description,
+                severity=severity,
+                impact=impact,
+                target=target,
+                technical_analysis=technical_analysis,
+                poc_description=poc_description,
+                poc_script_code=poc_script_code,
+                remediation_steps=remediation_steps,
+                evidence=evidence,
+                assumptions=assumptions,
+                counterevidence=counterevidence,
+                confidence=confidence,
+                confidence_rationale=confidence_rationale,
+                fix_effort=fix_effort,
+                cvss=final_score if advisory_cvss is not None else None,
+                cvss_breakdown=final_breakdown,
+                cve=parsed_cve,
+                cwe=cwe,
+                finding_class="dependency_cve",
+                dependency_metadata=dependency_metadata,
+                verification=verification,
+                agent_id=agent_id if isinstance(agent_id, str) else None,
+                agent_name=agent_name if isinstance(agent_name, str) else None,
+            )
     except (ImportError, AttributeError) as e:
         logger.exception("create_dependency_report persistence failed")
         return {"success": False, "error": f"Failed to create dependency report: {e!s}"}
@@ -1289,11 +1536,13 @@ async def _do_create_dependency(  # noqa: PLR0912
             "message": f"Dependency finding '{title}' created successfully",
             "report_id": report_id,
             "severity": severity,
+            "cvss_score": final_score,
+            "verification_status": verification_result.get("status"),
             "cve": parsed_cve,
         }
 
 
-@function_tool(timeout=180, strict_mode=False)
+@function_tool(timeout=3600, strict_mode=False)
 async def create_dependency_report(
     ctx: RunContextWrapper,
     title: str,
@@ -1490,6 +1739,7 @@ async def create_dependency_report(
         contextual_cvss_reasoning=contextual_cvss_reasoning,
         agent_id=agent_id,
         agent_name=agent_name,
+        verification_context=ctx.context if isinstance(ctx.context, dict) else None,
     )
     return json.dumps(result, ensure_ascii=False, default=str)
 
@@ -1578,6 +1828,9 @@ def _to_report_summary_entry(
             )
         else:
             entry["description_preview"] = description
+    verification = report.get("verification")
+    if isinstance(verification, dict) and verification.get("status"):
+        entry["verification_status"] = verification["status"]
     return _mark_authorship(entry, report, caller_agent_id)
 
 

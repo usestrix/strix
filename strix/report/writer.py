@@ -200,6 +200,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     ]
 
     dep_meta = report.get("dependency_metadata") or {}
+    verification = report.get("verification") or {}
     metadata: list[tuple[str, Any]] = [
         ("Target", report.get("target")),
         ("Package", dep_meta.get("package_name")),
@@ -212,6 +213,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         ("Method", report.get("method")),
         ("CVE", report.get("cve")),
         ("CWE", report.get("cwe")),
+        ("Verification", str(verification.get("status") or "").replace("_", " ").title()),
     ]
     cvss = report.get("cvss")
     if cvss is not None:
@@ -230,6 +232,32 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append(f"**{label}:** {value}")
 
     lines.append("")
+
+    if verification:
+        lines.append("## Independent Verification\n")
+        if verification.get("reason"):
+            lines.append(str(verification["reason"]))
+            lines.append("")
+        if verification.get("evidence"):
+            lines.append("**Verifier evidence:**\n")
+            lines.append(str(verification["evidence"]))
+            lines.append("")
+        attempts = verification.get("attempts")
+        if isinstance(attempts, list):
+            lines.append(f"**Attempts:** {len(attempts)}")
+        if verification.get("rescored"):
+            lines.append(
+                "**Score change:** "
+                f"{verification.get('original_cvss')} "
+                f"({str(verification.get('original_severity', '')).upper()}) -> "
+                f"{verification.get('final_cvss')} "
+                f"({str(verification.get('final_severity', '')).upper()})"
+            )
+        if verification.get("cvss_reasoning"):
+            lines.append("\n**CVSS review:**\n")
+            lines.append(str(verification["cvss_reasoning"]))
+        lines.append("")
+
     lines.append("## Description\n")
     lines.append(report.get("description") or "No description provided.")
     lines.append("")

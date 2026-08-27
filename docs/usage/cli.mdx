@@ -117,6 +117,14 @@ strix (--target <target> | --target-list <path>) [options]
   Must be greater than `0`.
 </ParamField>
 
+<ParamField path="--verify-findings" type="boolean" default="false">
+  Run an independent sandbox-backed verification loop before each candidate is
+  persisted. The verifier creates and executes its own PoC. If it cannot
+  reproduce the claimed impact, it reviews the complete CVSS vector using the
+  evidence that remains. This enables verification for the current invocation;
+  use `STRIX_VERIFY_FINDINGS=true` to make it the configured default.
+</ParamField>
+
 ## Examples
 
 ```bash
@@ -131,6 +139,9 @@ strix --target api.example.com --instruction "Focus on IDOR and auth bypass"
 
 # CI/CD mode
 strix -n --target ./ --scan-mode quick
+
+# Independently reproduce and rescore candidate findings
+strix --target https://example.com --verify-findings
 
 # Cap cost and per-agent turns
 strix --target https://example.com --max-budget 25 --max-turns 300

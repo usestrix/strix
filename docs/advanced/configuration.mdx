@@ -74,6 +74,51 @@ affecting the agents that do the actual testing.
   baseline when unset.
 </ParamField>
 
+### Independent finding verification
+
+Finding verification runs a fresh, restricted agent against every candidate before
+the finding is persisted. The verifier independently creates and executes a PoC in
+the scan sandbox. If reproduction fails, it reviews the full CVSS vector using the
+remaining evidence instead of automatically discarding or downgrading the finding.
+Dependency CVEs without a safely exercisable affected path are retained as advisory
+findings with a `not_applicable` verification result.
+
+<ParamField path="STRIX_VERIFY_FINDINGS" default="false" type="boolean">
+  Enable independent, sandbox-backed verification for dynamic and dependency findings.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_MODEL" type="string">
+  Optional model used by the verifier. Falls back to `STRIX_LLM` when unset.
+</ParamField>
+
+<ParamField path="VERIFICATION_LLM_API_KEY" type="string">
+  Optional provider key sent only to the verification model.
+</ParamField>
+
+<ParamField path="VERIFICATION_LLM_API_BASE" type="string">
+  Optional custom API base URL for the verification model.
+</ParamField>
+
+<ParamField path="VERIFICATION_LLM_EXTRA_HEADERS" type="string">
+  Optional JSON object of extra HTTP headers for verification-model requests.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_REASONING_EFFORT" default="high" type="string">
+  Reasoning effort used by the verification model.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_MAX_ATTEMPTS" default="3" type="integer">
+  Maximum number of fresh PoC attempts made for each candidate finding.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_MAX_TURNS" default="40" type="integer">
+  Maximum model turns available to each verification attempt.
+</ParamField>
+
+<ParamField path="STRIX_VERIFICATION_TIMEOUT" default="600" type="integer">
+  Wall-clock timeout in seconds for each verification attempt.
+</ParamField>
+
 ## Optional Features
 
 <ParamField path="PERPLEXITY_API_KEY" type="string">

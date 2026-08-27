@@ -246,6 +246,12 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             )
             logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
 
+        if settings.verification.enabled:
+            from strix.report.verification import preflight_verification_model
+
+            raw_model = str(settings.verification.model or llm.model or "").strip()
+            await preflight_verification_model(settings)
+
     except ModelConnectionError:
         logger.debug("Model route warm-up failed", exc_info=True)
         raise
@@ -431,7 +437,7 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
-    from strix.llm.warmup import start_import_warmup
+    from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
 
     start_import_warmup()
 
@@ -445,6 +451,10 @@ def main() -> None:
 
     check_docker_installed()
     pull_docker_image()
+
+    # Importing the SDK graph concurrently with the report package can expose
+    # partially initialized ``agents`` modules. Settle the warm-up first.
+    wait_for_import_warmup()
 
     # In setup mode the TUI collects the target, then runs prepare_run(),
     # warm-up, and telemetry itself once the user starts the scan.

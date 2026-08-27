@@ -68,6 +68,7 @@ from strix.tools.todo.tools import (
     mark_todo_pending,
     update_todo,
 )
+from strix.tools.verification.tool import submit_verification_verdict
 from strix.tools.web_search.tool import web_search
 
 
@@ -424,6 +425,21 @@ def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
     )
 
 
+def _record_verification_action(ctx: Any, tool_name: str) -> None:
+    inner = getattr(ctx, "context", None)
+    if not isinstance(inner, dict):
+        return
+    actions = inner.get("verification_actions")
+    if isinstance(actions, list):
+        actions.append(tool_name)
+
+
+def _shell_action_succeeded(result: Any) -> bool:
+    if not isinstance(result, str):
+        return False
+    return "Process exited with code 0" in result or "Process running with session ID" in result
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
@@ -438,7 +454,7 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:
-            return await invoke_tool(ctx, raw_input)
+            result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
         except InvalidManifestPathError as exc:
@@ -448,6 +464,10 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        else:
+            if _shell_action_succeeded(result):
+                _record_verification_action(ctx, tool.name)
+            return result
 
     tool.on_invoke_tool = invoke
     return tool
@@ -467,9 +487,11 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
             _apply_shell_output_cap(parsed)
             raw_input = json.dumps(parsed)
         try:
-            return await invoke_tool(ctx, raw_input)
+            result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
+        else:
+            return result
 
     tool.on_invoke_tool = invoke
     return tool
@@ -509,6 +531,8 @@ def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
         completion_key = "agent_completed"
     elif tool_name == "finish_scan":
         completion_key = "scan_completed"
+    elif tool_name == "submit_verification_verdict":
+        completion_key = "verification_completed"
     else:
         return False
 
@@ -519,6 +543,25 @@ def _lifecycle_tool_completed(tool_name: str, output: Any) -> bool:
     except (TypeError, ValueError):
         return False
     return bool(isinstance(parsed, dict) and parsed.get("success") and parsed.get(completion_key))
+
+
+def _with_verification_action(tool: FunctionTool) -> FunctionTool:
+    """Record a meaningful verifier action without changing shared tool singletons."""
+    tracked = dataclasses.replace(tool)
+    invoke_tool = tracked.on_invoke_tool
+
+    async def invoke(ctx: Any, raw_input: str) -> Any:
+        result = await invoke_tool(ctx, raw_input)
+        try:
+            parsed = json.loads(result) if isinstance(result, str) else None
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, dict) and parsed.get("success"):
+            _record_verification_action(ctx, tracked.name)
+        return result
+
+    tracked.on_invoke_tool = invoke
+    return tracked
 
 
 def _wait_tool_parked(tool_name: str, output: Any) -> bool:
@@ -720,6 +763,53 @@ def build_strix_agent(
                     strict_schemas=strict_tool_schemas,
                 ),
             ),
+            Shell(
+                configure_tools=_make_shell_configurator(
+                    chat_completions=chat_completions_tools,
+                    strict_schemas=strict_tool_schemas,
+                ),
+            ),
+        ],
+    )
+
+
+def build_verifier_agent(
+    *,
+    instructions: str,
+    chat_completions_tools: bool = False,
+    strict_tool_schemas: bool = True,
+) -> SandboxAgent[Any]:
+    """Build a verifier with execution tools but no report or graph mutation tools."""
+    base_tools: tuple[FunctionTool, ...] = (
+        think,
+        load_skill,
+        web_search,
+        list_requests,
+        view_request,
+        repeat_request,
+        list_sitemap,
+        view_sitemap_entry,
+        submit_verification_verdict,
+    )
+    tools: list[Tool] = []
+    for tool in base_tools:
+        wrapped = _with_bounded_result(
+            _with_strictness(
+                _with_coerced_arguments(dataclasses.replace(tool)),
+                strict_tool_schemas,
+            )
+        )
+        if wrapped.name == "repeat_request":
+            wrapped = _with_verification_action(wrapped)
+        tools.append(wrapped)
+
+    return SandboxAgent(
+        name="Finding Verifier",
+        instructions=instructions,
+        tools=tools,
+        tool_use_behavior=_finish_tool_use_behavior,
+        model=None,
+        capabilities=[
             Shell(
                 configure_tools=_make_shell_configurator(
                     chat_completions=chat_completions_tools,

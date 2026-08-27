@@ -20,9 +20,11 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage: dict[str, Usage] = {}
         self._agent_metadata: dict[str, dict[str, str]] = {}
+        self._agent_estimated_cost: dict[str, float] = {}
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
+        self._has_metered_usage = False
         # When True, tokens are still tracked but cost stays $0 — the run is on a
         # model subscription, so there is no metered per-token charge to report.
         self.zero_cost = False
@@ -34,6 +36,7 @@ class LLMUsageLedger:
         usage: Usage | None,
         agent_name: str | None = None,
         model: str | None = None,
+        zero_cost: bool | None = None,
     ) -> bool:
         if usage is None or not _usage_has_activity(usage):
             return False
@@ -48,10 +51,15 @@ class LLMUsageLedger:
         if model:
             metadata["model"] = model
 
-        if not self.zero_cost:
+        request_is_zero_cost = self.zero_cost if zero_cost is None else zero_cost
+        if not request_is_zero_cost:
+            self._has_metered_usage = True
             estimated = _estimate_litellm_cost(usage, model)
             if estimated:
                 self._estimated_cost += estimated
+                self._agent_estimated_cost[normalized_agent_id] = (
+                    self._agent_estimated_cost.get(normalized_agent_id, 0.0) + estimated
+                )
 
         return True
 
@@ -64,8 +72,10 @@ class LLMUsageLedger:
 
     @property
     def total_cost(self) -> float:
-        if self.zero_cost:
+        if self.zero_cost and not self._has_metered_usage:
             return 0.0
+        if self.zero_cost and self._has_metered_usage:
+            return _round_cost(self._estimated_cost)
         return _round_cost(self._observed_cost if self._has_observed_cost else self._estimated_cost)
 
     def to_record(self) -> dict[str, Any]:
@@ -78,9 +88,14 @@ class LLMUsageLedger:
         for agent_id in sorted(self._agent_usage):
             usage = self._agent_usage[agent_id]
             metadata = self._agent_metadata.get(agent_id, {})
-            agent_cost = (
-                self.total_cost * (agent_tokens[agent_id] / total_tokens) if total_tokens else 0.0
-            )
+            if self.zero_cost and self._has_metered_usage:
+                agent_cost = self._agent_estimated_cost.get(agent_id, 0.0)
+            else:
+                agent_cost = (
+                    self.total_cost * (agent_tokens[agent_id] / total_tokens)
+                    if total_tokens
+                    else 0.0
+                )
 
             agent_record = serialize_usage(usage)
             agent_record.update(
@@ -99,9 +114,11 @@ class LLMUsageLedger:
         self._total_usage = Usage()
         self._agent_usage.clear()
         self._agent_metadata.clear()
+        self._agent_estimated_cost.clear()
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
+        self._has_metered_usage = False
 
         if not isinstance(raw_usage, dict):
             return
@@ -115,6 +132,7 @@ class LLMUsageLedger:
         persisted_cost = _float_or_zero(raw_usage.get("cost"))
         self._observed_cost = persisted_cost
         self._estimated_cost = persisted_cost
+        self._has_metered_usage = persisted_cost > 0
 
         for raw_agent in raw_usage.get("agents") or []:
             if not isinstance(raw_agent, dict):
@@ -136,6 +154,7 @@ class LLMUsageLedger:
             if isinstance(model, str) and model:
                 metadata["model"] = model
             self._agent_metadata[agent_id] = metadata
+            self._agent_estimated_cost[agent_id] = _float_or_zero(raw_agent.get("cost"))
 
 
 def _resolve_total_tokens(usage: Usage) -> int:

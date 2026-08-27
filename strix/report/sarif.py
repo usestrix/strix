@@ -560,6 +560,28 @@ def _result_properties(
     if isinstance(dependency_metadata, dict) and dependency_metadata:
         strix["dependency_metadata"] = dependency_metadata
 
+    verification = report.get("verification")
+    if isinstance(verification, dict) and verification:
+        # Verification evidence can contain raw exploit output. Keep only the
+        # disposition and score audit in externally uploaded SARIF.
+        safe_verification = {
+            key: verification[key]
+            for key in (
+                "status",
+                "method",
+                "confidence",
+                "verified_at",
+                "rescored",
+                "original_cvss",
+                "original_severity",
+                "final_cvss",
+                "final_severity",
+            )
+            if verification.get(key) not in (None, "")
+        }
+        if safe_verification:
+            strix["verification"] = safe_verification
+
     # SARIF is written for external upload (code-scanning / ASPM), so it must
     # NOT carry the weaponized exploit payload — that stays a local run
     # artifact (vulnerabilities.json / the finding MD). We surface the PoC

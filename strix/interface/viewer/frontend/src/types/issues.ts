@@ -1,4 +1,4 @@
-export type VulnerabilitySeverity = "critical" | "high" | "medium" | "low";
+export type VulnerabilitySeverity = "critical" | "high" | "medium" | "low" | "info";
 export type VulnerabilityStatus = "open" | "in_progress" | "snoozed" | "fixed" | "ignored";
 export type FixEffort = "trivial" | "low" | "medium" | "high";
 
@@ -88,6 +88,21 @@ export interface CVSSBreakdown {
   availability: string | null;
 }
 
+export interface FindingVerification {
+  status: "confirmed" | "unverified" | "not_applicable" | "error";
+  confidence?: "high" | "medium" | "low";
+  reason?: string;
+  evidence?: string;
+  verified_at?: string;
+  rescored?: boolean;
+  original_cvss?: number;
+  original_severity?: string;
+  final_cvss?: number;
+  final_severity?: string;
+  cvss_reasoning?: string;
+  attempts?: Array<{ attempt?: number; status?: string; reason?: string; actions?: string[] }>;
+}
+
 export interface Vulnerability {
   id: string;
   scan_id: string | null;
@@ -120,6 +135,11 @@ export interface Vulnerability {
   assumptions: string | null;
   fix_effort: FixEffort | null;
   cvss_breakdown: CVSSBreakdown | null;
+  counterevidence?: string | null;
+  confidence?: "high" | "medium" | "low" | null;
+  confidence_rationale?: string | null;
+  severity_change_conditions?: string | null;
+  verification?: FindingVerification | null;
   status_changed_at: string | null;
   status_changed_by: string | null;
   status_note: string | null;
@@ -172,6 +192,7 @@ export const SEVERITY_COLORS: Record<VulnerabilitySeverity, string> = {
   high: "bg-orange-500/20 text-orange-500 border-orange-500/30",
   medium: "bg-yellow-500/20 text-yellow-500 border-yellow-500/30",
   low: "bg-blue-500/20 text-blue-500 border-blue-500/30",
+  info: "bg-slate-500/20 text-slate-400 border-slate-500/30",
 };
 
 export const STATUS_COLORS: Record<VulnerabilityStatus, string> = {

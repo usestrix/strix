@@ -58,12 +58,13 @@ _FAINT = colors.HexColor("#999999")
 _BORDER = colors.HexColor("#e5e5e5")
 _LIGHT_BG = colors.HexColor("#f7f7f7")
 
-_SEVERITY_ORDER = ("critical", "high", "medium", "low")
+_SEVERITY_ORDER = ("critical", "high", "medium", "low", "info")
 _SEVERITY_COLORS = {
     "critical": colors.HexColor("#dc2626"),
     "high": colors.HexColor("#ea580c"),
     "medium": colors.HexColor("#ca8a04"),
     "low": colors.HexColor("#2563eb"),
+    "info": colors.HexColor("#64748b"),
 }
 
 # Helvetica stands in for Geist: a clean sans with no font file to ship.
@@ -287,7 +288,7 @@ def _severity_badge(styles: dict[str, ParagraphStyle], severity: str) -> Table:
 
 
 def _severity_grid(styles: dict[str, ParagraphStyle], counts: dict[str, int]) -> Table:
-    """The four-card severity grid from the executive summary."""
+    """Severity grid from the executive summary."""
     cells: list[list[Flowable]] = []
     for name in _SEVERITY_ORDER:
         color = _SEVERITY_COLORS[name]
@@ -298,8 +299,8 @@ def _severity_grid(styles: dict[str, ParagraphStyle], counts: dict[str, int]) ->
                 Paragraph(name.upper(), styles["count_label"]),
             ]
         )
-    col = (_PAGE_W - 40 * mm) / 4
-    table = Table([cells], colWidths=[col] * 4)
+    col = (_PAGE_W - 40 * mm) / len(_SEVERITY_ORDER)
+    table = Table([cells], colWidths=[col] * len(_SEVERITY_ORDER))
     style = [
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("TOPPADDING", (0, 0), (-1, -1), 16),
@@ -552,6 +553,21 @@ def _finding_flowables(
         header.append(Paragraph("&nbsp;&nbsp;".join(meta_bits), styles["meta_inline"]))
 
     story: list[Flowable] = [KeepTogether(header)]
+    verification = vuln.get("verification")
+    if isinstance(verification, dict) and verification:
+        status = str(verification.get("status") or "unknown").replace("_", " ").title()
+        story.extend(_field_block(styles, "Independent verification", status))
+        story.extend(_field_block(styles, "Verification rationale", verification.get("reason")))
+        story.extend(_field_block(styles, "Verifier evidence", verification.get("evidence")))
+        if verification.get("rescored"):
+            score_change = (
+                f"{verification.get('original_cvss')} "
+                f"({str(verification.get('original_severity') or '').upper()}) to "
+                f"{verification.get('final_cvss')} "
+                f"({str(verification.get('final_severity') or '').upper()})"
+            )
+            story.extend(_field_block(styles, "Verification score change", score_change))
+        story.extend(_field_block(styles, "CVSS review", verification.get("cvss_reasoning")))
     story.extend(_field_block(styles, "Description", vuln.get("description")))
     story.extend(_field_block(styles, "Impact", vuln.get("impact")))
     story.extend(_field_block(styles, "Technical analysis", vuln.get("technical_analysis")))
@@ -559,6 +575,8 @@ def _finding_flowables(
     poc_script = _strip_code_fence(vuln.get("poc_script_code"))
     story.extend(_field_block(styles, "PoC script", poc_script, code=True))
     story.extend(_field_block(styles, "Evidence", vuln.get("evidence"), code=True))
+    story.extend(_field_block(styles, "Counterevidence", vuln.get("counterevidence")))
+    story.extend(_field_block(styles, "Confidence rationale", vuln.get("confidence_rationale")))
 
     remediation = vuln.get("remediation_steps")
     if isinstance(remediation, list):

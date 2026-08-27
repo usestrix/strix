@@ -19,6 +19,7 @@ from strix.config.loader import (
 from strix.config.settings import (
     ContextSettings,
     DedupeSettings,
+    FindingVerificationSettings,
     IntegrationSettings,
     LlmSettings,
     RuntimeSettings,
@@ -30,6 +31,7 @@ from strix.config.settings import (
 __all__ = [
     "ContextSettings",
     "DedupeSettings",
+    "FindingVerificationSettings",
     "IntegrationSettings",
     "LlmSettings",
     "RuntimeSettings",

@@ -16,7 +16,7 @@ from agents import RunConfig
 from agents.sandbox import SandboxRunConfig
 from openai import RateLimitError
 
-from strix.agents.factory import build_strix_agent, make_child_factory
+from strix.agents.factory import build_strix_agent, build_verifier_agent, make_child_factory
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
 from strix.config.models import (
@@ -450,14 +450,23 @@ async def run_strix_scan(
 
         context: dict[str, Any] = {
             "coordinator": coordinator,
+            "sandbox_client": bundle["client"],
             "sandbox_session": bundle["session"],
             "caido_client": bundle["caido_client"],
             "mcp_registry": mcp_registry,
             "agent_id": root_id,
             "parent_id": None,
             "interactive": interactive,
+            "max_budget_usd": max_budget_usd,
+            "resolved_model": resolved_model,
+            "build_verifier_agent": build_verifier_agent,
             "spawn_child_agent": spawn_child_agent,
             "scan_targets": build_scan_targets(scan_config),
+            "authorized_targets": (
+                scope_context.get("authorized_targets", [])
+                if isinstance(scope_context, dict)
+                else []
+            ),
             "max_context_images": settings.runtime.max_context_images,
         }
 
