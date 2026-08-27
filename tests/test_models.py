@@ -2,11 +2,18 @@
 
 from __future__ import annotations
 
+from typing import cast
+
+import litellm
 import pytest
 from agents.model_settings import ModelSettings
 
 from strix.config.models import (
+    LLMTR_API_BASE,
     RECOMMENDED_MODEL_NAMES,
+    StrixProvider,
+    _configure_llmtr_routing,
+    is_llmtr_model,
     is_recommended_or_frontier_model,
     request_timeout_extra_args,
     supports_strict_tool_schemas,
@@ -112,3 +119,99 @@ def test_claude_routes_reject_strict_tool_schemas(model_name: str) -> None:
 )
 def test_other_routes_keep_strict_tool_schemas(model_name: str) -> None:
     assert supports_strict_tool_schemas(model_name)
+
+
+@pytest.mark.parametrize(
+    ("model_name", "expected"),
+    [
+        ("llmtr/anthropic/claude-sonnet-5", True),
+        ("llmtr/openai/gpt-5.5", True),
+        ("llmtr/llmtr/gemma-4", True),
+        ("LLMTR/openai/gpt-5.5", True),
+        ("  llmtr/openai/gpt-5.5  ", True),
+        ("openrouter/anthropic/claude-sonnet-5", False),
+        ("openai/gpt-5.4", False),
+        ("anthropic/claude-sonnet-5", False),
+        ("", False),
+        (None, False),
+    ],
+)
+def test_is_llmtr_model(model_name: str | None, expected: bool) -> None:
+    assert bool(is_llmtr_model(model_name)) is expected
+
+
+def test_llmtr_prefix_routes_through_openai_compatible_litellm() -> None:
+    provider = StrixProvider()
+
+    resolved_provider, resolved_model = provider._resolve_prefixed_model(
+        original_model_name="llmtr/anthropic/claude-sonnet-5",
+        prefix="llmtr",
+        stripped_model_name="anthropic/claude-sonnet-5",
+    )
+
+    assert resolved_model == "openai/anthropic/claude-sonnet-5"
+    assert type(resolved_provider).__name__ == "LitellmProvider"
+
+
+def test_llmtr_prefix_preserves_nested_gateway_namespace() -> None:
+    provider = StrixProvider()
+
+    _resolved_provider, resolved_model = provider._resolve_prefixed_model(
+        original_model_name="llmtr/llmtr/gemma-4",
+        prefix="llmtr",
+        stripped_model_name="llmtr/gemma-4",
+    )
+
+    assert resolved_model == "openai/llmtr/gemma-4"
+
+
+def test_configure_llmtr_routing_sets_base_url_and_attribution() -> None:
+    saved_base, saved_headers = litellm.api_base, litellm.headers
+    try:
+        litellm.api_base = None
+        litellm.headers = None
+        _configure_llmtr_routing("llmtr/anthropic/claude-sonnet-5", None)
+        assert litellm.api_base == LLMTR_API_BASE
+        headers = cast("dict[str, str]", litellm.headers)
+        assert headers["HTTP-Referer"] == "https://strix.ai"
+        assert headers["X-Title"] == "Strix"
+    finally:
+        litellm.api_base, litellm.headers = saved_base, saved_headers
+
+
+def test_configure_llmtr_routing_respects_explicit_api_base() -> None:
+    saved_base, saved_headers = litellm.api_base, litellm.headers
+    try:
+        litellm.api_base = None
+        litellm.headers = None
+        _configure_llmtr_routing("llmtr/anthropic/claude-sonnet-5", "https://proxy/v1")
+        # An explicit LLM_API_BASE wins; the LLMTR default must not override it.
+        assert litellm.api_base is None
+        headers = cast("dict[str, str]", litellm.headers)
+        assert headers["X-Title"] == "Strix"
+    finally:
+        litellm.api_base, litellm.headers = saved_base, saved_headers
+
+
+def test_configure_llmtr_routing_is_noop_for_other_providers() -> None:
+    saved_base, saved_headers = litellm.api_base, litellm.headers
+    try:
+        litellm.api_base = None
+        litellm.headers = None
+        _configure_llmtr_routing("openrouter/anthropic/claude-sonnet-5", None)
+        assert litellm.api_base is None
+        assert litellm.headers is None
+    finally:
+        litellm.api_base, litellm.headers = saved_base, saved_headers
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "llmtr/anthropic/claude-opus-5",
+        "llmtr/anthropic/claude-sonnet-5",
+        "llmtr/openai/gpt-5.5",
+    ],
+)
+def test_llmtr_frontier_models_are_accepted(model_name: str) -> None:
+    assert is_recommended_or_frontier_model(model_name)

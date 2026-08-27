@@ -466,6 +466,11 @@ class StrixProvider(MultiProvider):
             )
         if prefix == "ollama" and stripped_model_name:
             return self._get_fallback_provider("litellm"), f"ollama_chat/{stripped_model_name}"
+        if prefix == "llmtr" and stripped_model_name:
+            # LLMTR is an OpenAI-compatible gateway, so route llmtr/<model>
+            # through LiteLLM's openai/ provider. The gateway base URL and
+            # attribution headers are configured in _configure_llmtr_routing.
+            return self._get_fallback_provider("litellm"), f"openai/{stripped_model_name}"
         return self._get_fallback_provider("litellm"), original_model_name
 
     def get_model(self, model_name: str | None) -> Model:
@@ -560,6 +565,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
         return
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
+    _configure_llmtr_routing(llm.model, llm.api_base)
     if llm.api_key:
         set_default_openai_key(llm.api_key, use_for_tracing=False)
         _configure_litellm_default("api_key", llm.api_key)
@@ -677,6 +683,39 @@ def _configure_openrouter_attribution(model_name: str | None) -> None:
         return
 
     litellm.headers = {**existing, **OPENROUTER_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
+
+
+LLMTR_API_BASE = "https://llmtr.com/v1"
+
+LLMTR_ATTRIBUTION_HEADERS = {
+    "HTTP-Referer": "https://strix.ai",
+    "X-Title": "Strix",
+}
+
+
+def is_llmtr_model(model_name: str | None) -> bool:
+    return bool(model_name) and (model_name or "").strip().lower().startswith("llmtr/")
+
+
+def _configure_llmtr_routing(model_name: str | None, api_base: str | None) -> None:
+    """Make ``llmtr/`` a first-class prefix for the LLMTR gateway.
+
+    LLMTR (https://llmtr.com) is a Turkey-hosted OpenAI-compatible gateway, so
+    ``StrixProvider`` resolves ``llmtr/<model>`` to LiteLLM's ``openai/<model>``
+    route. That route needs the gateway base URL, which is supplied here (an
+    explicit ``LLM_API_BASE`` still wins, for a proxy in front of LLMTR), along
+    with Strix attribution headers so scans are identifiable in the LLMTR
+    dashboard. Users set only ``STRIX_LLM`` and ``LLM_API_KEY``.
+    """
+    if not is_llmtr_model(model_name):
+        return
+    import litellm
+
+    if not api_base:
+        _configure_litellm_default("api_base", LLMTR_API_BASE)
+    current: object = litellm.headers
+    existing: dict[str, str] = current if isinstance(current, dict) else {}
+    litellm.headers = {**existing, **LLMTR_ATTRIBUTION_HEADERS}  # type: ignore[assignment]
 
 
 def _configure_extra_headers(llm: LlmSettings) -> None:

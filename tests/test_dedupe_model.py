@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from strix.config import loader
 from strix.config.settings import DedupeSettings
-from strix.report.dedupe import _dedupe_model_settings
+from strix.report.dedupe import _dedupe_extra_args, _dedupe_model_settings
 
 
 if TYPE_CHECKING:
@@ -42,6 +42,35 @@ def test_dedupe_endpoint_sent_per_call() -> None:
     # process-wide base URL, so it can't clobber the main model's endpoint.
     assert (settings.extra_args or {})["api_base"] == "https://dedupe.example/v1"
     assert (settings.extra_args or {})["api_key"] == "dedupe-key"
+
+
+def test_llmtr_dedupe_model_pins_gateway_endpoint_per_call() -> None:
+    # A dedicated llmtr/ dedupe model reaches the gateway only via its endpoint.
+    # The global default is keyed to the main model, which may be a different
+    # provider, so the endpoint must ride on the dedupe request itself.
+    dedupe = DedupeSettings(
+        STRIX_DEDUPE_MODEL="llmtr/openai/gpt-5.5",
+        DEDUPE_LLM_API_KEY="llmtr-key",
+    )
+    extra = _dedupe_extra_args(dedupe)
+    assert extra["api_base"] == "https://llmtr.com/v1"
+    assert extra["api_key"] == "llmtr-key"
+
+
+def test_llmtr_dedupe_model_respects_explicit_endpoint() -> None:
+    # An explicit DEDUPE_LLM_API_BASE (e.g. a proxy in front of LLMTR) wins over
+    # the gateway default.
+    dedupe = DedupeSettings(
+        STRIX_DEDUPE_MODEL="llmtr/openai/gpt-5.5",
+        DEDUPE_LLM_API_KEY="llmtr-key",
+        DEDUPE_LLM_API_BASE="https://proxy.example/v1",
+    )
+    assert _dedupe_extra_args(dedupe)["api_base"] == "https://proxy.example/v1"
+
+
+def test_non_llmtr_dedupe_model_gets_no_injected_endpoint() -> None:
+    dedupe = DedupeSettings(STRIX_DEDUPE_MODEL="openai/gpt-5.5", DEDUPE_LLM_API_KEY="k")
+    assert "api_base" not in _dedupe_extra_args(dedupe)
 
 
 def test_dedicated_dedupe_model_uses_own_headers_not_main() -> None:

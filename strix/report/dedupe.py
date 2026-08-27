@@ -13,8 +13,10 @@ from openai.types.responses import ResponseOutputMessage
 
 from strix.config import load_settings
 from strix.config.models import (
+    LLMTR_API_BASE,
     StrixProvider,
     configure_sdk_model_defaults,
+    is_llmtr_model,
 )
 from strix.core.inputs import make_model_settings
 from strix.report.state import get_global_report_state
@@ -45,6 +47,12 @@ def _dedupe_extra_args(dedupe: DedupeSettings) -> dict[str, str]:
         extra["api_key"] = dedupe.api_key.strip()
     if dedupe.api_base and dedupe.api_base.strip():
         extra["api_base"] = dedupe.api_base.strip()
+    elif is_llmtr_model(dedupe.model):
+        # A dedicated llmtr/ dedupe model reaches the LLMTR gateway only through
+        # its endpoint. The global default is derived from the main model, which
+        # may be a different provider, so pin the gateway per call here rather
+        # than relying on the shared litellm.api_base.
+        extra["api_base"] = LLMTR_API_BASE
     return extra
 
 
