@@ -18,21 +18,22 @@ logger = logging.getLogger(__name__)
 
 _TERMINAL_STATUSES = {"completed", "stopped", "failed", "interrupted"}
 
-_KNOWN_SEVERITIES = ("critical", "high", "medium", "low")
+_KNOWN_SEVERITIES = ("critical", "high", "medium", "low", "info")
 
 
 def severity_counts(vulns: list[Any]) -> dict[str, int]:
-    """Bucket vulnerabilities into critical/high/medium/low counts.
+    """Bucket vulnerabilities into critical/high/medium/low/info counts.
 
     Mirrors the SPA's ``severityCounts``: severities are lowercased and
-    trimmed, and anything outside the four known buckets (``info``,
-    ``informational``, ``unknown``, missing, ...) folds into ``low`` so the
-    shared UI renders cleanly.
+    trimmed. ``informational`` is normalized to ``info``; unknown or missing
+    values fold into ``low`` so the shared UI renders cleanly.
     """
     counts = dict.fromkeys(_KNOWN_SEVERITIES, 0)
     for vuln in vulns:
         raw = vuln.get("severity") if isinstance(vuln, dict) else None
         severity = str(raw or "").lower().strip()
+        if severity == "informational":
+            severity = "info"
         if severity not in counts:
             severity = "low"
         counts[severity] += 1

@@ -53,9 +53,9 @@ def test_runs_payload_lists_when_verified(tmp_path: Path) -> None:
     entry = next(r for r in payload["runs"] if r["name"] == "alpha")
     assert entry["target"] == "https://alpha.example.com"
     assert entry["severity_counts"]["critical"] == 1
-    # "info" folds into low, matching the SPA's bucketing.
+    # Informational findings retain their own bucket in the viewer.
     beta = next(r for r in payload["runs"] if r["name"] == "beta")
-    assert beta["severity_counts"]["low"] == 1
+    assert beta["severity_counts"]["info"] == 1
 
 
 def test_runs_payload_empty_base(tmp_path: Path) -> None:

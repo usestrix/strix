@@ -37,6 +37,7 @@ from strix.interface.tui.sidecar import (
 )
 from strix.interface.utils import read_workspace_files
 from strix.report.state import ReportState, set_global_report_state
+from strix.report.verification import preflight_verification_model
 from strix.utils.resource_paths import get_strix_resource_path
 
 
@@ -128,6 +129,7 @@ class GoTuiRuntime:
         if verify:
             try:
                 await preflight_model_connection(model)
+                await preflight_verification_model(load_settings())
             except Exception as exc:
                 logger.exception("Go TUI setup model preflight failed")
                 raise RuntimeError(f"Model connection failed: {exc}") from exc
@@ -156,6 +158,7 @@ class GoTuiRuntime:
         model = (load_settings().llm.model or "").strip()
         try:
             await preflight_model_connection(model)
+            await preflight_verification_model(load_settings())
             persist_current()
             prepare_run(self.args)
             telemetry_start(self.args)

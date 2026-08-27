@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import subprocess
@@ -127,6 +128,7 @@ class ReportState:
         self.end_time: str | None = None
 
         self.vulnerability_reports: list[dict[str, Any]] = []
+        self.vulnerability_lock = asyncio.Lock()
         self.final_scan_result: str | None = None
 
         self.scan_results: dict[str, Any] | None = None
@@ -253,7 +255,8 @@ class ReportState:
         fix_verification: str | None = None,
         fix_pr_body: str | None = None,
         finding_class: str | None = None,
-        dependency_metadata: dict[str, str] | None = None,
+        dependency_metadata: dict[str, Any] | None = None,
+        verification: dict[str, Any] | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
     ) -> str:
@@ -315,6 +318,8 @@ class ReportState:
         report["finding_class"] = (finding_class or "dynamic").strip().lower()
         if dependency_metadata:
             report["dependency_metadata"] = dependency_metadata
+        if verification:
+            report["verification"] = verification
         if agent_id:
             report["agent_id"] = agent_id
         if agent_name:
@@ -348,6 +353,7 @@ class ReportState:
             agent_name=agent_name,
             model=model,
             usage=usage,
+            zero_cost=codex.auth_mode(model) == "subscription" if model else None,
         ):
             self.save_run_data()
 

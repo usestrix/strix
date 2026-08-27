@@ -246,6 +246,12 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             )
             logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
 
+        if settings.verification.enabled:
+            from strix.report.verification import preflight_verification_model
+
+            raw_model = str(settings.verification.model or llm.model or "").strip()
+            await preflight_verification_model(settings)
+
     except ModelConnectionError:
         logger.debug("Model route warm-up failed", exc_info=True)
         raise

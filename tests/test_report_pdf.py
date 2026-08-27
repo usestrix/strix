@@ -49,6 +49,19 @@ def _make_run(base: Path, name: str = "sample") -> Path:
             "poc_description": "Send a crafted parameter.",
             "poc_script_code": "print('exploit')",
             "evidence": "HTTP 500 with SQL error.",
+            "counterevidence": "The control request returned one public row.",
+            "confidence_rationale": "Independent reproduction was limited to one account.",
+            "verification": {
+                "status": "unverified",
+                "reason": "Database-wide read access was not reproduced.",
+                "evidence": "The independent payload returned one account.",
+                "rescored": True,
+                "original_cvss": 9.8,
+                "original_severity": "critical",
+                "final_cvss": 5.3,
+                "final_severity": "medium",
+                "cvss_reasoning": "Only limited confidentiality impact remains supported.",
+            },
             "remediation_steps": ["Use parameterized queries", "Validate input"],
             "target": "https://example.com",
             "endpoint": "/login",
@@ -65,6 +78,15 @@ def test_generate_report_pdf_has_pdf_header(tmp_path: Path) -> None:
     pdf = generate_report_pdf(run_dir)
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
+
+
+def test_generate_report_pdf_includes_verification_status(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    reader = PdfReader(BytesIO(generate_report_pdf(run_dir)))
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    assert "INDEPENDENT VERIFICATION" in text
+    assert "Database-wide read access was not reproduced" in text
+    assert "9.8 (CRITICAL) to 5.3 (MEDIUM)" in text
 
 
 def test_generate_password_is_long_and_random() -> None:

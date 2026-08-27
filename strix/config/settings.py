@@ -82,6 +82,39 @@ class DedupeSettings(BaseSettings):
     )
 
 
+class FindingVerificationSettings(BaseSettings):
+    """Independent, sandbox-backed verification of candidate findings."""
+
+    model_config = _BASE_CONFIG
+
+    enabled: bool = Field(default=False, alias="STRIX_VERIFY_FINDINGS")
+    model: str | None = Field(default=None, alias="STRIX_VERIFICATION_MODEL")
+    reasoning_effort: ReasoningEffort = Field(
+        default="high",
+        alias="STRIX_VERIFICATION_REASONING_EFFORT",
+    )
+    api_key: str | None = Field(default=None, alias="VERIFICATION_LLM_API_KEY", repr=False)
+    api_base: str | None = Field(default=None, alias="VERIFICATION_LLM_API_BASE")
+    extra_headers: dict[str, str] | None = Field(
+        default=None,
+        alias="VERIFICATION_LLM_EXTRA_HEADERS",
+        repr=False,
+    )
+    max_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=5,
+        alias="STRIX_VERIFICATION_MAX_ATTEMPTS",
+    )
+    max_turns: int = Field(
+        default=40,
+        ge=1,
+        le=100,
+        alias="STRIX_VERIFICATION_MAX_TURNS",
+    )
+    timeout: int = Field(default=600, ge=1, le=600, alias="STRIX_VERIFICATION_TIMEOUT")
+
+
 class ContextSettings(BaseSettings):
     """Context-window management: per-tool-output caps and history compaction."""
 
@@ -149,6 +182,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
+    verification: FindingVerificationSettings = Field(default_factory=FindingVerificationSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)

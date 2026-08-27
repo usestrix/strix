@@ -49,7 +49,7 @@ export type View = "overview" | "issues" | "agents" | "history" | "email" | "fee
 const TRUST_BANNER =
   "Your findings stay on your machine. They're rendered here locally in your browser and never uploaded or stored by Strix.";
 
-const SEVERITY_ORDER: VulnerabilitySeverity[] = ["critical", "high", "medium", "low"];
+const SEVERITY_ORDER: VulnerabilitySeverity[] = ["critical", "high", "medium", "low", "info"];
 const POLL_MS = 500;
 
 export default function App() {

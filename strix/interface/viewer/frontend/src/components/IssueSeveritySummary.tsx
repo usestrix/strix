@@ -8,6 +8,7 @@ export interface IssueSeveritySummaryFindings {
   high: number;
   medium: number;
   low: number;
+  info?: number;
 }
 
 interface IssueSeveritySummaryProps {
@@ -24,6 +25,7 @@ const SEVERITIES = [
   { key: "high", label: "high", dotClass: "bg-orange-500", textClass: "text-orange-500" },
   { key: "medium", label: "medium", dotClass: "bg-yellow-500", textClass: "text-yellow-500" },
   { key: "low", label: "low", dotClass: "bg-blue-500", textClass: "text-blue-500" },
+  { key: "info", label: "info", dotClass: "bg-slate-500", textClass: "text-slate-400" },
 ] as const;
 
 export function IssueSeveritySummary({
@@ -43,7 +45,7 @@ export function IssueSeveritySummary({
         </div>
         <div className="flex flex-wrap items-center gap-x-6 gap-y-2">
           {SEVERITIES.map(({ key, label, dotClass, textClass }) => {
-            const count = findings[key];
+            const count = findings[key] ?? 0;
             if (count <= 0) return null;
 
             return (
@@ -60,7 +62,7 @@ export function IssueSeveritySummary({
 
       <div className="h-1.5 rounded-full bg-[#222] overflow-hidden flex">
         {SEVERITIES.map(({ key, dotClass }) => {
-          const count = findings[key];
+          const count = findings[key] ?? 0;
           if (count <= 0) return null;
 
           return (
