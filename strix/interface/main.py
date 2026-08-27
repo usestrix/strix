@@ -6,7 +6,6 @@ Strix Agent Interface
 import argparse
 import asyncio
 import contextlib
-import os
 import sys
 from pathlib import Path
 
@@ -36,6 +35,7 @@ from strix.interface.update_check import (
     is_binary_install,
     notify_update,
     prompt_update_if_available,
+    restart_after_update,
     start_background_check,
 )
 from strix.interface.utils import (
@@ -423,12 +423,16 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
+    from strix.llm.warmup import start_import_warmup
+
+    start_import_warmup()
+
     args = parse_arguments()
 
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
         if is_binary_install() and sys.platform != "win32":
-            os.execv(sys.executable, sys.argv)  # noqa: S606  # nosec B606
+            restart_after_update()
         sys.exit(0)
 
     check_docker_installed()

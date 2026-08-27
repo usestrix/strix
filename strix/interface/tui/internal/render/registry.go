@@ -22,19 +22,20 @@ func statusIcon(status string) (string, lipgloss.Style) {
 	return "○ Unknown", Dim()
 }
 
-// renderGenericTool ports registry._render_default_tool_widget.
-func renderGenericTool(name string, args map[string]any, result any, status string) string {
+// renderGenericTool ports registry._render_default_tool_widget. It shows the
+// tool name, its arguments, and a status line only. The raw result is
+// deliberately not rendered: a generic result (e.g. a multi-kilobyte JSON
+// payload from a database query tool) is noise on screen, and the agent narrates
+// what it got in its next message. The full result still lives in the event
+// data, the run log, and the `strix view` viewer.
+func renderGenericTool(name string, args map[string]any, status string) string {
 	var b strings.Builder
 	b.WriteString(Dim().Render("→ Using tool ") + Bold(Blue).Render(name) + "\n")
 	for _, k := range SortedKeys(args) {
 		b.WriteString("  " + Dim().Render(k) + ": " + StringValue(args[k]) + "\n")
 	}
-	if (status == "completed" || status == "failed" || status == "error") && result != nil {
-		b.WriteString(lipgloss.NewStyle().Bold(true).Render("Result: ") + StringValue(result))
-	} else {
-		icon, style := statusIcon(status)
-		b.WriteString(style.Render(icon))
-	}
+	icon, style := statusIcon(status)
+	b.WriteString(style.Render(icon))
 	return b.String()
 }
 
@@ -51,7 +52,28 @@ func Tool(data map[string]any) string {
 	}
 	result := data["result"]
 
+	// A call to a tool from one of the user's MCP servers is tagged with the
+	// connection it came from, because its name is the server's own and means
+	// nothing here. The tag is only ever set from the connections the run made,
+	// so it is the one thing that can tell such a call apart from a built-in.
+	if connection := StringValue(data["mcp_connection"]); connection != "" {
+		// describe_mcp inspects a connection's catalog rather than calling a tool
+		// on it, so there is no underlying tool and the connection is the subject.
+		if name == "describe_mcp" {
+			return renderMcpInspect(connection, status)
+		}
+		toolName := StringValue(data["mcp_tool"])
+		if toolName == "" {
+			toolName = name
+		}
+		return renderMcpTool(connection, toolName, args, status)
+	}
+
 	switch name {
+	// list_mcps inventories every connection rather than touching one, so it is
+	// the one MCP tool with no connection tag and routes by name like a built-in.
+	case "list_mcps":
+		return renderMcpList(result, status)
 	case "exec_command":
 		return renderExecCommand(args, result, status)
 	case "write_stdin":
@@ -82,12 +104,16 @@ func Tool(data map[string]any) string {
 		return renderNote(name, args, result)
 	case "create_todo", "list_todos", "update_todo", "mark_todo_done", "mark_todo_pending", "delete_todo":
 		return renderTodo(name, result)
+	case "record_coverage", "update_coverage", "list_coverage":
+		return renderCoverage(name, args, result)
+	case "get_threat_model", "save_threat_model", "amend_threat_model":
+		return renderThreatModel(name, args, result)
 	case "view_agent_graph", "create_agent", "send_message_to_agent", "agent_finish", "wait_for_agents", "stop_agent":
 		return renderAgentGraphTool(name, args, result)
 	case "list_requests", "view_request", "repeat_request", "list_sitemap", "view_sitemap_entry", "scope_rules":
 		return renderProxyTool(name, args, result, status)
 	}
-	return renderGenericTool(name, args, result, status)
+	return renderGenericTool(name, args, status)
 }
 
 // ---------------------------------------------------------------------------
@@ -103,7 +129,8 @@ const outputPreviewLines = 10
 func ToolPreviewLines(name string) int {
 	switch name {
 	case "exec_command", "write_stdin", "apply_patch",
-		"view_request", "repeat_request", "view_sitemap_entry":
+		"view_request", "repeat_request", "view_sitemap_entry",
+		"list_coverage", "get_threat_model":
 		return outputPreviewLines
 	}
 	return 0

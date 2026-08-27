@@ -73,6 +73,7 @@ const (
 	focusChat
 	focusAgents
 	focusVulnerabilities
+	focusMcp
 )
 
 type scrollbarTarget int
@@ -82,6 +83,7 @@ const (
 	scrollbarTrace
 	scrollbarAgents
 	scrollbarFindings
+	scrollbarMcp
 )
 
 type Model struct {
@@ -109,6 +111,7 @@ type Model struct {
 	selectedVuln           int
 	agentOffset            int
 	vulnOffset             int
+	mcpOffset              int
 	modalChoice            int
 	reportFocus            string
 	ready                  bool

@@ -179,3 +179,30 @@ def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
     assert "# Security Penetration Test Report" in content
     assert "Scan complete. No critical issues." in content
+
+
+def test_render_vulnerability_md_surfaces_calibration_metadata() -> None:
+    """Confidence, the case against the finding, and retest status are part of
+    the deliverable — storing them without rendering hides the reasoning."""
+    md = render_vulnerability_md(
+        {
+            "id": "vuln-0009",
+            "title": "SSRF in URL preview",
+            "severity": "high",
+            "timestamp": "2026-07-02 10:00:00 UTC",
+            "description": "Fetches user-supplied URLs.",
+            "confidence": "medium",
+            "counterevidence": "Egress appears filtered at the network layer.",
+            "confidence_rationale": "Reproduced once out of three attempts.",
+            "severity_change_conditions": "Critical if egress filtering is removed.",
+            "remediation_steps": "Allowlist destinations.",
+            "fix_verification": "Not retested.",
+        }
+    )
+
+    assert "**Confidence:** Medium" in md
+    assert "## Counterevidence" in md
+    assert "Egress appears filtered at the network layer." in md
+    assert "## Confidence Rationale" in md
+    assert "## What Would Change This Severity" in md
+    assert "## Fix Verification" in md

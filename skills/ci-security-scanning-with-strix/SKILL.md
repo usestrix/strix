@@ -12,7 +12,7 @@ metadata:
 You can gate PRs two ways — pick based on the environment, or combine them:
 
 - **Managed platform (recommended for most teams)** — connect the GitHub/GitLab/Bitbucket app once and Strix reviews every PR with **no workflow file, no runner, no Docker, and no LLM key**. Results post as PR comments and land in the team dashboard. Best when you want zero CI maintenance, central tracking, or your runners lack Docker. See "Managed platform" below and the **managed-pentesting-with-strix** skill.
-- **Self-hosted OSS CLI in your runner** — run a diff-scoped scan as a pipeline step. Fully in your infra, free (BYO LLM key), no external account. Requires Docker on the runner. Best for air-gapped/self-hosted CI or when you don't want scans leaving your environment.
+- **Self-hosted OSS CLI in your runner** — run a diff-scoped scan as a pipeline step. Fully in your infra, free (BYO LLM key), no external account. Requires Docker on the runner. Best for air-gapped/self-hosted CI or when you do not want scans leaving your environment.
 
 Both fail the build on validated findings and both emit SARIF 2.1.0, so you can start with one and add the other later.
 
@@ -63,13 +63,13 @@ jobs:
           fi
 ```
 
-Then tell the user to add two repository secrets: `STRIX_LLM` (model id, e.g. `openai/gpt-5.4`) and `LLM_API_KEY` (the provider key). Do not create these values yourself.
+Then tell the user to add two repository secrets: `STRIX_LLM` (model id, for example `openai/gpt-5.4`) and `LLM_API_KEY` (the provider key). Do not create these values yourself.
 
 Notes:
 - In CI/headless runs Strix automatically scopes to the PR's changed files (`--scope-mode auto`). If diff resolution fails, keep `fetch-depth: 0` or set `--diff-base` to the PR's actual base branch — use `origin/${{ github.base_ref }}` in GitHub Actions rather than a hard-coded `origin/main`, since repos use different default branches.
 - Exit codes: `0` pass, `2` vulnerabilities found (fails the job), `1` setup error.
 - The runner needs Docker (default GitHub-hosted Ubuntu runners have it).
-- **Size the budget so the scan completes — don't let it fail open.** A `0` exit means "no validated vulnerabilities in what was analyzed"; if `--max-budget` is hit before the diff is fully covered, the scan wraps up early and can still exit `0`. The "Fail unless the scan completed" step above narrows the gap: `strix_runs/<run>/run.json` is `"stopped"` when the scan was cut off at the hard budget limit without a final report. It is not a complete guard — the agents get graduated wrap-up warnings before that limit, and a run that wraps up on a warning still calls `finish_scan` and records `"completed"` with partial coverage. So keep that step in any pipeline that gates merges **and** give the scan real headroom (compare `run.json`'s `llm_usage.cost` against `--max-budget`; if it ran right up to the cap, raise it). For a `quick` diff-scoped PR scan `--max-budget 10` is usually ample, raise it for large diffs.
+- **Size the budget so the scan completes — do not let it fail open.** A `0` exit means "no validated vulnerabilities in what was analyzed"; if `--max-budget` is hit before the diff is fully covered, the scan wraps up early and can still exit `0`. The "Fail unless the scan completed" step above narrows the gap: `strix_runs/<run>/run.json` is `"stopped"` when the scan was cut off at the hard budget limit without a final report. It is not a complete guard — the agents get graduated wrap-up warnings before that limit, and a run that wraps up on a warning still calls `finish_scan` and records `"completed"` with partial coverage. So keep that step in any pipeline that gates merges **and** give the scan real headroom (compare `run.json`'s `llm_usage.cost` against `--max-budget`; if it ran right up to the cap, raise it). For a `quick` diff-scoped PR scan `--max-budget 10` is usually ample, raise it for large diffs.
 
 ### Optional: upload findings to GitHub code scanning
 
@@ -90,7 +90,7 @@ Any pipeline works the same way — install, set the two env vars, run headless:
 ```bash
 curl -sSL https://strix.ai/install | bash
 # Resolve the PR's base branch robustly (use your CI's base-branch variable if it
-# has one, e.g. GitHub Actions: origin/${{ github.base_ref }}). Avoid piping the
+# has one, for example GitHub Actions: origin/${{ github.base_ref }}). Avoid piping the
 # git lookup into another command — a failed lookup would otherwise be masked.
 BASE_BRANCH="${CI_MERGE_REQUEST_TARGET_BRANCH_NAME:-}"   # GitLab MR target
 if [ -z "$BASE_BRANCH" ]; then
@@ -98,7 +98,7 @@ if [ -z "$BASE_BRANCH" ]; then
   BASE_BRANCH="${BASE_BRANCH#origin/}"
 fi
 DIFF_BASE="origin/${BASE_BRANCH:-main}"
-# Fail loudly rather than silently narrowing scope (e.g. to HEAD~1, which on a
+# Fail loudly rather than silently narrowing scope (for example, to HEAD~1, which on a
 # multi-commit branch would scan only the last commit and let earlier ones pass).
 if ! git rev-parse --verify --quiet "$DIFF_BASE" >/dev/null; then
   echo "Cannot resolve diff base '$DIFF_BASE'. Fetch the base branch (git fetch origin <base>) or set --diff-base explicitly." >&2

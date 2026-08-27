@@ -146,7 +146,9 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         }
         for message in state["messages"][-5:]
     ]
-    state["usage"] = {}
+    state["usage"] = {
+        key: state["usage"][key] for key in ("total_tokens", "cost") if key in state["usage"]
+    }
     state["error"] = terminal_projection(state["error"], max_string=512)
     state["model_warning"] = terminal_projection(state["model_warning"], max_string=256)
     state["caido_url"] = terminal_projection(state["caido_url"], max_string=256)
@@ -173,8 +175,9 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "model_warning": "",
         "caido_url": None,
         "messages": [],
-        "usage": {},
+        "usage": state["usage"],
         "subscription": state["subscription"],
+        "connections": state.get("connections", [])[:32],
         "viewer_status": state["viewer_status"],
         "viewer_url": None,
         "error": terminal_projection(state["error"], max_string=256),

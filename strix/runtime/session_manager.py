@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -15,6 +16,7 @@ from strix.config import load_settings
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.runtime.backends import backend_supports_bind_mounts, get_backend
 from strix.runtime.caido_bootstrap import bootstrap_caido
+from strix.runtime.caido_handle import CaidoBootstrapHandle
 
 
 if TYPE_CHECKING:
@@ -333,10 +335,19 @@ async def create_or_reuse(
     host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
     logger.debug("Caido host endpoint resolved: %s", host_caido_url)
 
-    caido_client = await bootstrap_caido(
-        session,
-        host_url=host_caido_url,
-        container_url=container_caido_url,
+    # The Caido login + project setup polls the guest for a couple of seconds
+    # and nothing needs the client before the first proxy tool call, so it
+    # runs concurrently with the rest of scan start; consumers resolve the
+    # handle at first use (see CaidoBootstrapHandle).
+    caido_client = CaidoBootstrapHandle(
+        asyncio.create_task(
+            bootstrap_caido(
+                session,
+                host_url=host_caido_url,
+                container_url=container_caido_url,
+            ),
+            name=f"caido-bootstrap-{scan_id}",
+        )
     )
 
     bundle = {

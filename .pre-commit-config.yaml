@@ -30,7 +30,9 @@ repos:
     rev: v5.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^strix/interface/viewer/static/assets/
       - id: end-of-file-fixer
+        exclude: ^strix/interface/viewer/static/assets/
       - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
