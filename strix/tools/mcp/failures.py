@@ -129,7 +129,7 @@ class HttpStatusRecorder:
     def __init__(self) -> None:
         self._failure: FailureInfo | None = None
 
-    def __call__(self, response: httpx.Response) -> None:
+    async def __call__(self, response: httpx.Response) -> None:
         if not 200 <= response.status_code < 300:
             request = response.request
             self._failure = _from_status(

@@ -12,6 +12,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+DEFAULT_MAX_CONCURRENT_CALLS = 4
+
+
 class BearerAuth(BaseModel):
     """Header-token auth, sent as ``Authorization: Bearer <token>``."""
 
@@ -74,7 +77,7 @@ class McpConnectionConfig(BaseModel):
     session_timeout_seconds: float = Field(default=60.0, gt=0)
     """MCP operation timeout for SQL queries and cloud describe fan-outs."""
 
-    max_concurrent_calls: int = Field(default=4, ge=1)
+    max_concurrent_calls: int = Field(default=DEFAULT_MAX_CONCURRENT_CALLS, ge=1)
     """Maximum concurrent calls for this connection name across sessions."""
 
     @model_validator(mode="after")

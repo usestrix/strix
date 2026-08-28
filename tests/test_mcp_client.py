@@ -11,6 +11,8 @@ import asyncio
 import contextlib
 import json
 import re
+import time
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -160,7 +162,7 @@ def _config(name: str, allowed_tools: list[str] | None) -> McpConnectionConfig:
     return McpConnectionConfig(
         name=name,
         url="https://mcp.example.com",
-        auth=BearerAuth(token="run-token"),
+        auth=BearerAuth(token="run-token"),  # nosec B106
         allowed_tools=allowed_tools,
     )
 
@@ -204,7 +206,7 @@ def test_bearer_config_parses_from_dict() -> None:
     )
 
     assert isinstance(config.auth, BearerAuth)
-    assert config.auth.token == "abc"
+    assert config.auth.token == "abc"  # nosec B105
     assert config.allowed_tools == ["list_files"]
 
 
@@ -356,7 +358,7 @@ def test_build_server_stdio_branch() -> None:
         env={"TOKEN": "x"},
     )
 
-    server = mcp_client._build_server(config)
+    server = mcp_client._build_server(config).server
 
     assert isinstance(server, MCPServerStdio)
     assert server.name == "local_fs"
@@ -366,7 +368,7 @@ def test_build_server_stdio_branch() -> None:
 
 
 def test_build_server_http_branch() -> None:
-    server = mcp_client._build_server(_config("files_main", ["list_files"]))
+    server = mcp_client._build_server(_config("files_main", ["list_files"])).server
 
     assert isinstance(server, MCPServerStreamableHttp)
     assert server.name == "files_main"
@@ -1213,7 +1215,7 @@ def _secret_config(name: str) -> McpConnectionConfig:
     return McpConnectionConfig(
         name=name,
         url="https://mcp.example.com",
-        auth=BearerAuth(token="super-secret-bearer-token-42"),
+        auth=BearerAuth(token="super-secret-bearer-token-42"),  # nosec B106
         allowed_tools=["read_file"],
     )
 
@@ -1257,8 +1259,8 @@ async def test_call_mcp_reconnects_and_retries_after_a_session_death(
 async def test_call_mcp_marks_connection_dead_when_reconnect_keeps_failing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The session dies and the reconnect attempt also fails: the connection is
-    # marked dead and the call returns the standard failed-tool output.
+    # Reconnect failures are retried and then quarantine the connection rather
+    # than permanently retiring it on the first failed reconnect.
     first = _DyingHttpServer("fs", [_mcp_tool("read_file")], death=ConnectionError("403"))
     built = {"n": 0}
 
@@ -1282,9 +1284,12 @@ async def test_call_mcp_marks_connection_dead_when_reconnect_keeps_failing(
     assert isinstance(out, dict)
     assert out["success"] is False
     assert "unavailable" in out["content"]
-    assert session.is_dead is True
+    assert session.is_dead is False
+    assert session.is_unavailable is True
+    assert session.server is None
+    assert session._task is not None and not session._task.done()
 
-    # A later call short-circuits to the same failed output without a new attempt.
+    # A later call during cooldown short-circuits to the same failed output.
     again = await call_mcp.on_invoke_tool(
         _ctx(registry), json.dumps({"connection": "fs", "tool": "read_file"})
     )
@@ -1309,14 +1314,17 @@ async def _pump_until(predicate: Callable[[], bool], *, limit: int = 100) -> Non
     raise AssertionError("condition not reached")
 
 
+def _quarantine_reached(session: SupervisedMcpSession, count: int) -> bool:
+    return session.is_dead or session._quarantine_count >= count
+
+
 @pytest.mark.asyncio
 async def test_idle_session_death_self_heals_on_reconnect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A session that dies while idle (its supervising task cancelled between calls,
-    # modeling the transport scope dying with no call in flight) reconnects once on
-    # its own and keeps serving, rather than staying dead until a later call would
-    # have triggered a reconnect.
+    # modeling the transport scope dying with no call in flight) is quarantined and
+    # keeps serving, rather than ending its supervising task.
     first = FakeMCPServer("fs", [_mcp_tool("read_file")])
     second = FakeMCPServer("fs", [_mcp_tool("read_file")])
     built = iter([first, second])
@@ -1328,15 +1336,16 @@ async def test_idle_session_death_self_heals_on_reconnect(
 
     assert session._task is not None
     session._task.cancel()  # idle transport death: no call in flight
-    await _pump_until(lambda: session.server is second)
+    await _pump_until(lambda: session.is_unavailable)
     assert session.is_dead is False
+    assert session.server is None
 
-    # The reconnected session serves calls normally.
+    # Once the cooldown expires, the next call reconnects onto a fresh session.
+    session._unavailable_until = time.monotonic() - 1
     out = await call_mcp.on_invoke_tool(
         _ctx(registry), json.dumps({"connection": "fs", "tool": "read_file"})
     )
     assert out == {"type": "text", "text": "routed:read_file"}
-
     await session.aclose()
 
 
@@ -1344,9 +1353,8 @@ async def test_idle_session_death_self_heals_on_reconnect(
 async def test_flapping_idle_session_is_marked_dead_without_looping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # If a session reconnects after an idle death but dies again before serving any
-    # call, the supervisor stops reconnecting and marks the connection dead, so a
-    # server that instantly drops on connect cannot spin in a reconnect loop.
+    # Repeated idle deaths consume quarantine slots; the supervisor stays alive
+    # until the configured permanent-death threshold is reached.
     first = FakeMCPServer("fs", [_mcp_tool("read_file")])
     second = FakeMCPServer("fs", [_mcp_tool("read_file")])
     built = iter([first, second])
@@ -1357,13 +1365,12 @@ async def test_flapping_idle_session_is_marked_dead_without_looping(
     registry.add(name="fs", session=session, tool_count=1)
 
     assert session._task is not None
-    # First idle death heals onto the second server (only two builds ever happen).
-    session._task.cancel()
-    await _pump_until(lambda: session.server is second)
-    assert session.is_dead is False
-
-    # Second idle death before any call is served: give up rather than reconnect.
-    session._task.cancel()
+    # Three idle deaths exhaust the quarantine budget.
+    for count in range(1, 4):
+        session._task.cancel()
+        await _pump_until(partial(_quarantine_reached, session, count))
+        if session.is_dead:
+            break
     await _pump_until(lambda: session._task is not None and session._task.done())
     assert session.is_dead is True
 
@@ -1566,23 +1573,37 @@ class _RaisingMCPServer(FakeMCPServer):
 
 
 @pytest.mark.asyncio
-async def test_session_on_dead_fires_once_on_the_death_transition() -> None:
-    # An adopted session with no config cannot reconnect, so the first failed
-    # call marks it dead; the on-dead callback fires exactly once, on the edge.
+async def test_session_on_dead_fires_once_on_the_death_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An adopted session with no config cannot reconnect, so repeated transient
+    # exhaustion eventually marks it dead; the callback fires once on that edge.
     server = _RaisingMCPServer("db", [_mcp_tool("read")])
     session = SupervisedMcpSession.adopt(server, name="db")
     fires: list[int] = []
     session.set_on_dead(lambda: fires.append(1))
 
+    clock = [100.0]
+    monkeypatch.setattr("strix.tools.mcp.session.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(mcp_session_mod, "_retry_delay", lambda _attempt, _retry_after: 0)
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
     out = await session.dispatch("read", {}, label="db_read")
 
-    assert session.is_dead is True
+    assert session.is_dead is False
     assert isinstance(out, dict) and out.get("success") is False
-    assert fires == [1]
+    assert fires == []
 
-    # A later call to the already-dead session must not fire the callback again.
+    clock[0] += 31
+    await session.dispatch("read", {}, label="db_read")
+    assert session.is_dead is False
+    clock[0] += 61
     await session.dispatch("read", {}, label="db_read")
     assert fires == [1]
+    assert session.is_dead is True
 
 
 def test_registry_statuses_report_the_live_dead_flag_and_provider() -> None:

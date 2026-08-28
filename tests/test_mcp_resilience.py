@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 
 import httpx
 import pytest
@@ -67,15 +67,16 @@ def test_classifies_nested_exception_groups_by_specificity() -> None:
     assert info.retryable is False
 
 
-def test_retry_after_parses_seconds_and_http_date() -> None:
+@pytest.mark.asyncio
+async def test_retry_after_parses_seconds_and_http_date() -> None:
     seconds = HttpStatusRecorder()
-    seconds(_http_error(429, retry_after="12").response)
+    await seconds(_http_error(429, retry_after="12").response)
     assert seconds.take() is not None
     assert seconds.take() is None
 
     date = (datetime.now(UTC) + timedelta(seconds=20)).strftime("%a, %d %b %Y %H:%M:%S GMT")
     recorder = HttpStatusRecorder()
-    recorder(_http_error(429, retry_after=date).response)
+    await recorder(_http_error(429, retry_after=date).response)
     info = recorder.take()
     assert info is not None
     retry_after = info.retry_after
@@ -83,10 +84,11 @@ def test_retry_after_parses_seconds_and_http_date() -> None:
     assert 0 <= retry_after <= 20
 
 
-def test_recorder_only_keeps_non_sensitive_request_metadata() -> None:
+@pytest.mark.asyncio
+async def test_recorder_only_keeps_non_sensitive_request_metadata() -> None:
     recorder = HttpStatusRecorder()
     response = _http_error(500, retry_after="3").response
-    recorder(response)
+    await recorder(response)
     info = recorder.take()
     assert info == FailureInfo(
         "server",
@@ -174,6 +176,7 @@ async def test_server_exhaustion_quarantines_then_revives(
     assert result["success"] is False
     assert session.is_dead is False
     assert session.is_unavailable is True
+    assert session.server is None
     clock[0] += 31
     result = await session.dispatch("read", {}, label="quarantine_read")
     assert result == {"type": "text", "text": "routed:read"}
@@ -199,16 +202,20 @@ async def test_cancelled_call_uses_recorded_status(
 ) -> None:
     recorder = HttpStatusRecorder()
     first = _sequence_server("cancelled", asyncio.CancelledError())
-    first._strix_http_status_recorder = recorder
     second = _sequence_server("cancelled")
-    builds = iter([first, second])
+    builds = iter(
+        [
+            mcp_client.BuiltMcpServer(first, recorder),
+            mcp_client.BuiltMcpServer(second, None),
+        ]
+    )
     monkeypatch.setattr(mcp_client, "_build_server", lambda _config: next(builds))
     monkeypatch.setattr(mcp_session, "_retry_delay", _zero_delay)
     monkeypatch.setattr(asyncio, "sleep", _no_sleep)
 
     session = mcp_session.SupervisedMcpSession(_config("cancelled"))
     assert await session.start()
-    recorder(_http_error(503).response)
+    await recorder(_http_error(503).response)
     result = await session.dispatch("read", {}, label="cancelled_read")
     assert result == {"type": "text", "text": "routed:read"}
     await session.aclose()
@@ -238,6 +245,29 @@ async def test_build_server_passes_explicit_http_values(
     factory = captured["params"]["httpx_client_factory"]
     client = factory(headers={}, timeout=httpx.Timeout(1), auth=None)
     assert client.event_hooks["response"]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_http_factory_awaits_response_recorder() -> None:
+    built = mcp_client._build_server(_config("hook"))
+    assert built.recorder is not None
+    factory = cast("Any", built.server).params["httpx_client_factory"]
+    client = factory(headers={}, timeout=httpx.Timeout(1), auth=None)
+
+    def response(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, headers={"Retry-After": "7"}, request=request)
+
+    client._transport = httpx.MockTransport(response)
+    result = await client.get("https://provider.example/mcp?token=secret-query")
+    assert result.status_code == 429
+    info = built.recorder.take()
+    assert info is not None
+    assert info.kind == "rate_limit"
+    assert info.status == 429
+    assert info.retry_after == 7
+    assert info.request_method == "GET"
+    assert info.request_path == "/mcp"
     await client.aclose()
 
 
@@ -275,6 +305,24 @@ async def test_same_name_sessions_share_concurrency_cap() -> None:
     assert peak == 1
     await left.aclose()
     await right.aclose()
+
+
+def test_same_name_semaphore_works_across_event_loops() -> None:
+    async def run_once() -> None:
+        server = FakeMCPServer("loop-cap", [_mcp_tool("read")])
+        session = mcp_session.SupervisedMcpSession.adopt(
+            server,
+            name="loop-cap",
+            config=_config("loop-cap", max_concurrent_calls=1),
+        )
+        assert await session.dispatch("read", {}, label="loop_cap_read") == {
+            "type": "text",
+            "text": "routed:read",
+        }
+        await session.aclose()
+
+    asyncio.run(run_once())
+    asyncio.run(run_once())
 
 
 @pytest.mark.asyncio
