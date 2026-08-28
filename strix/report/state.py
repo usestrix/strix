@@ -6,10 +6,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 from uuid import uuid4
-
-from agents.usage import Usage
 
 from strix.config import codex
 from strix.config.loader import load_settings
@@ -17,7 +15,6 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.report.coverage import write_coverage
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
-from strix.report.usage import LLMUsageLedger
 from strix.report.writer import (
     read_run_record,
     write_executive_report,
@@ -25,6 +22,10 @@ from strix.report.writer import (
     write_vulnerabilities,
 )
 from strix.telemetry import posthog, scarf
+
+
+if TYPE_CHECKING:
+    from agents.usage import Usage
 
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,10 @@ class ReportState:
 
         self.scan_results: dict[str, Any] | None = None
         self.scan_config: dict[str, Any] | None = None
+        # Imported here so importing this module never enters the agents SDK
+        # package (which the warm-up thread may be initializing concurrently).
+        from strix.report.usage import LLMUsageLedger
+
         self._llm_usage = LLMUsageLedger()
         self._telemetry_llm_usage_baseline: dict[str, Any] = {}
         auth_mode = codex.auth_mode(load_settings().llm.model)
@@ -338,7 +343,7 @@ class ReportState:
         self,
         *,
         agent_id: str,
-        usage: Usage | None,
+        usage: "Usage | None",
         agent_name: str | None = None,
         model: str | None = None,
     ) -> None:
