@@ -754,6 +754,36 @@ def test_loader_skips_bad_entry_but_keeps_good_ones(tmp_path: Path) -> None:
     assert [c.name for c in configs] == ["local_fs"]
 
 
+def test_loader_parses_parallel_search_http_config(tmp_path: Path) -> None:
+    config_file = tmp_path / "mcp-servers.json"
+    config_file.write_text(
+        json.dumps(
+            [
+                {
+                    "name": "parallel_search",
+                    "transport": "http",
+                    "url": "https://search.parallel.ai/mcp",
+                    "notes": (
+                        "Web search for CVEs, advisories, and documentation via Parallel Search"
+                    ),
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    configs = load_user_mcp_configs(config_file)
+
+    assert len(configs) == 1
+    assert configs[0].name == "parallel_search"
+    assert configs[0].transport == "http"
+    assert configs[0].url == "https://search.parallel.ai/mcp"
+    assert configs[0].auth is None
+    assert configs[0].notes == (
+        "Web search for CVEs, advisories, and documentation via Parallel Search"
+    )
+
+
 def test_loader_returns_empty_when_file_absent(tmp_path: Path) -> None:
     assert load_user_mcp_configs(tmp_path / "does-not-exist.json") == []
 
@@ -1599,3 +1629,49 @@ def test_registry_statuses_report_the_live_dead_flag_and_provider() -> None:
     assert statuses["a"].provider == "supabase"
     assert statuses["b"].dead is True
     assert statuses["b"].provider is None
+
+
+@pytest.mark.asyncio
+async def test_parallel_search_mcp_discovery_and_invocation() -> None:
+    search_tool = MCPTool(
+        name="search",
+        description="Search the web for cybersecurity advisories, CVEs, and documentation",
+        inputSchema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+        },
+    )
+    server = FakeMCPServer("parallel_search", [search_tool])
+    session = SupervisedMcpSession.adopt(server, name="parallel_search")
+    registry = McpRegistry()
+    registry.add(
+        name="parallel_search",
+        session=session,
+        tool_count=1,
+        purpose="Web search for CVEs, advisories, and documentation via Parallel Search",
+    )
+
+    listed = await list_mcps.on_invoke_tool(_ctx(registry), "{}")
+    assert any(conn["name"] == "parallel_search" for conn in listed["connections"])
+
+    described = await describe_mcp.on_invoke_tool(
+        _ctx(registry), json.dumps({"connection": "parallel_search"})
+    )
+    assert "MCP connection 'parallel_search' offers 1 tool(s):" in described
+    assert "search: Search the web" in described
+
+    out = await call_mcp.on_invoke_tool(
+        _ctx(registry),
+        json.dumps(
+            {
+                "connection": "parallel_search",
+                "tool": "search",
+                "arguments": {"query": "CVE-2024-1234 exploit PoC"},
+            }
+        ),
+    )
+    assert out == {"type": "text", "text": "routed:search"}
+    assert server.calls == [("search", {"query": "CVE-2024-1234 exploit PoC"})]
+
+    await session.aclose()
