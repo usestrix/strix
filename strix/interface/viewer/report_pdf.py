@@ -20,6 +20,7 @@ from datetime import datetime
 from io import BytesIO
 from typing import TYPE_CHECKING, Any
 
+from markdown_it import MarkdownIt
 from pypdf import PdfReader, PdfWriter
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER
@@ -49,6 +50,8 @@ from strix.interface.viewer.transcript import (
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from markdown_it.token import Token
+
 
 # Palette lifted from the cloud report theme (styles/base.ts, docx/theme.ts).
 _INK = colors.HexColor("#000000")
@@ -72,11 +75,21 @@ _SANS_BOLD = "Helvetica-Bold"
 _MONO = "Courier"
 
 _PAGE_W, _PAGE_H = A4
+_INLINE_MD = MarkdownIt("commonmark", {"html": False, "linkify": False}).disable(
+    ["autolink", "image", "link"]
+)
+_UNSAFE_TEXT_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ud800-\udfff\ufffe\uffff]")
+
+
+def _normalize_text(value: Any) -> str:
+    """Normalize characters that ReportLab cannot safely serialize."""
+    text = str(value).replace("\r\n", "\n").replace("\r", "\n")
+    return _UNSAFE_TEXT_RE.sub("\ufffd", text)
 
 
 def _esc(value: Any) -> str:
     """Escape a value for reportlab's Paragraph markup."""
-    return html.escape(str(value)).replace("\n", "<br/>")
+    return html.escape(_normalize_text(value)).replace("\n", "<br/>")
 
 
 class _NumberedCanvas(pdfcanvas.Canvas):  # type: ignore[misc]  # reportlab base is untyped
@@ -253,7 +266,10 @@ def _duration(start: Any, end: Any) -> str:
     end_dt = _parse_time(end)
     if not start_dt or not end_dt:
         return "n/a"
-    seconds = int((end_dt - start_dt).total_seconds())
+    try:
+        seconds = int((end_dt - start_dt).total_seconds())
+    except (OverflowError, TypeError):
+        return "n/a"
     if seconds < 0:
         return "n/a"
     hours, remainder = divmod(seconds, 3600)
@@ -265,10 +281,18 @@ def _duration(start: Any, end: Any) -> str:
     return f"{secs}s"
 
 
-def _severity_badge(styles: dict[str, ParagraphStyle], severity: str) -> Table:
+def _normalize_severity(value: Any) -> str:
+    severity = str(value or "").lower().strip()
+    if severity == "informational":
+        return "info"
+    return severity if severity in {*_SEVERITY_COLORS, "info"} else "low"
+
+
+def _severity_badge(styles: dict[str, ParagraphStyle], severity: Any) -> Table:
     """A colored pill matching .severity-badge in the cloud report."""
+    severity = _normalize_severity(severity)
     color = _SEVERITY_COLORS.get(severity, _MUTED)
-    cell = Paragraph(severity.upper(), styles["badge"])
+    cell = Paragraph(_esc(severity.upper()), styles["badge"])
     table = Table([[cell]], colWidths=[len(severity) * 6.5 + 20])
     table.setStyle(
         TableStyle(
@@ -406,27 +430,36 @@ def _cover(
 
 
 def _inline_md(text: str) -> str:
-    """Convert inline markdown (bold, italic, `code`) to reportlab markup.
+    """Render a safe subset of inline Markdown as ReportLab markup."""
+    tokens = _INLINE_MD.parseInline(_normalize_text(text))[0].children or []
+    return "".join(_inline_token_markup(token) for token in tokens)
 
-    Code spans are stashed as placeholders before bold/italic run, so bold that
-    wraps a code span (``**`x`**``) works and code contents are never mangled.
-    """
-    codes: list[str] = []
 
-    def _stash(match: re.Match[str]) -> str:
-        codes.append(match.group(1))
-        return f"\x00{len(codes) - 1}\x00"
+def _inline_token_markup(token: Token) -> str:
+    fixed_markup = {
+        "strong_open": "<b>",
+        "strong_close": "</b>",
+        "em_open": "<i>",
+        "em_close": "</i>",
+        "hardbreak": "<br/>",
+        "softbreak": " ",
+    }.get(token.type)
+    if fixed_markup is not None:
+        return fixed_markup
+    if token.type == "code_inline":
+        return f'<font face="{_MONO}" color="#b31d28">{html.escape(token.content)}</font>'
+    # Unsupported token content remains escaped so parser extensions cannot
+    # expose ReportLab tags.
+    return html.escape(token.content)
 
-    seg = html.escape(re.sub(r"`([^`]+)`", _stash, text))
-    seg = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", seg)
-    seg = re.sub(r"__(.+?)__", r"<b>\1</b>", seg)
-    seg = re.sub(r"\*(.+?)\*", r"<i>\1</i>", seg)
 
-    def _restore(match: re.Match[str]) -> str:
-        inner = html.escape(codes[int(match.group(1))])
-        return f'<font face="{_MONO}" color="#b31d28">{inner}</font>'
-
-    return re.sub(r"\x00(\d+)\x00", _restore, seg)
+def _markdown_paragraph(text: str, style: ParagraphStyle) -> Paragraph:
+    """Build a Markdown paragraph, falling back to escaped source text."""
+    source = _normalize_text(text)
+    try:
+        return Paragraph(_inline_md(source), style)
+    except ValueError:
+        return Paragraph(_esc(source), style)
 
 
 def _strip_leading_heading(md: str) -> str:
@@ -447,12 +480,12 @@ def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hur
 
     def flush_para() -> None:
         if para:
-            flow.append(Paragraph(_inline_md(" ".join(para)), styles["body"]))
+            flow.append(_markdown_paragraph(" ".join(para), styles["body"]))
             para.clear()
 
     def flush_bullets() -> None:
         for marker, item in bullets:
-            flow.append(Paragraph(f"{marker}&nbsp;{_inline_md(item)}", styles["bullet"]))
+            flow.append(_markdown_paragraph(f"{marker}\u00a0{item}", styles["bullet"]))
         bullets.clear()
 
     lines = md.replace("\r\n", "\n").split("\n")
@@ -479,7 +512,7 @@ def _markdown_flowables(  # noqa: PLR0915 - cohesive block parser, splitting hur
         if heading:
             flush_para()
             flush_bullets()
-            flow.append(Paragraph(_inline_md(heading.group(2)), styles["md_heading"]))
+            flow.append(_markdown_paragraph(heading.group(2), styles["md_heading"]))
             i += 1
             continue
         ordered = re.match(r"^(\d+)\.\s+(.*)$", stripped)
@@ -532,7 +565,7 @@ def _finding_flowables(
     styles: dict[str, ParagraphStyle], index: int, vuln: dict[str, Any]
 ) -> list[Flowable]:
     title = vuln.get("title") or "Untitled finding"
-    severity = str(vuln.get("severity") or "").lower().strip() or "low"
+    severity = _normalize_severity(vuln.get("severity"))
 
     meta_bits = []
     if vuln.get("cvss") is not None:

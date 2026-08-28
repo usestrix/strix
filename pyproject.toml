@@ -43,6 +43,7 @@ dependencies = [
   "requests>=2.32.0",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
+  "markdown-it-py>=3.0.0",
   "reportlab>=4.0",
   "pypdf>=5.0",
   # Cap <49: 49.x drops the universal2 macOS wheel (arm64-only), which breaks
