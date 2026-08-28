@@ -127,12 +127,10 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
 
 
 async def warm_up_llm(show_model_warning: bool = True) -> None:
-    from agents.model_settings import ModelSettings
     from agents.models.interface import ModelTracing
 
     from strix.config.models import (
         RECOMMENDED_MODEL_NAMES,
-        StrixProvider,
         configure_sdk_model_defaults,
         is_known_openai_bare_model,
         is_recommended_or_frontier_model,
@@ -209,15 +207,14 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
         if settings.dedupe.model:
-            from strix.report.dedupe import _dedupe_extra_args
+            from strix.report.dedupe import dedupe_model_provider
 
             dedupe_model = settings.dedupe.model.strip()
             raw_model = dedupe_model
-            deduper = StrixProvider().get_model(dedupe_model)
-            deduper_extra = _dedupe_extra_args(settings.dedupe)
             # A dedicated dedupe model may route to another provider, which must
-            # never receive the main endpoint's headers; it has its own
-            # DEDUPE_LLM_EXTRA_HEADERS.
+            # never receive the main endpoint's credentials or headers; it has
+            # its own DEDUPE_LLM_* settings, bound to the model by the provider.
+            deduper = dedupe_model_provider(settings.dedupe).get_model(dedupe_model)
             deduper_settings = make_model_settings(
                 None,
                 model_name=dedupe_model,
@@ -226,9 +223,6 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
                 extra_headers=settings.dedupe.extra_headers,
                 has_tools=False,
             )
-            if deduper_extra:
-                merged = {**(deduper_settings.extra_args or {}), **deduper_extra}
-                deduper_settings = deduper_settings.resolve(ModelSettings(extra_args=merged))
             await asyncio.wait_for(
                 deduper.get_response(
                     system_instructions="You are a helpful assistant.",

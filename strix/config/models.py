@@ -445,11 +445,42 @@ def _response_usage(usage: Usage | None) -> ResponseUsage | None:
     )
 
 
+def _bind_route_credentials(model: Model, api_key: str | None, api_base: str | None) -> Model:
+    """Bind a route's own credential and endpoint to a LiteLLM model instance.
+
+    ``LitellmModel`` reads both off itself and forwards them to
+    ``litellm.acompletion`` as explicit keyword arguments, so the same values
+    passed through ``ModelSettings.extra_args`` would reach that call twice and
+    raise ``got multiple values for keyword argument 'api_key'``. The OpenAI
+    route is covered by ``MultiProvider``'s own client settings instead.
+    """
+    if api_key is None and api_base is None:
+        return model
+
+    from agents.extensions.models.litellm_model import LitellmModel
+
+    if isinstance(model, LitellmModel):
+        if api_key is not None:
+            model.api_key = api_key
+        if api_base is not None:
+            model.base_url = api_base
+    return model
+
+
 class StrixProvider(MultiProvider):
     """Route any non-OpenAI prefix through LiteLLM with the prefix preserved,
     so users type ``deepseek/deepseek-chat`` rather than
     ``litellm/deepseek/deepseek-chat``.
+
+    ``api_key``/``api_base`` scope a credential and endpoint to the models this
+    provider hands out, for routes that must not inherit the process-wide LLM
+    config. Omit them to keep using the global configuration.
     """
+
+    def __init__(self, *, api_key: str | None = None, api_base: str | None = None) -> None:
+        super().__init__(openai_api_key=api_key, openai_base_url=api_base)
+        self._api_key = api_key
+        self._api_base = api_base
 
     def _resolve_prefixed_model(
         self,
@@ -482,7 +513,9 @@ class StrixProvider(MultiProvider):
                 reasoning_effort=llm.reasoning_effort,
             )
         else:
-            model = super().get_model(model_name)
+            model = _bind_route_credentials(
+                super().get_model(model_name), self._api_key, self._api_base
+            )
             if llm.disable_streaming:
                 model = _NonStreamingModel(model)
                 # The wrapper emits its single event only once the whole request
