@@ -39,8 +39,6 @@ serialized into the run's event stream, or written to disk; :meth:`__repr__`
 omits it and the token field's own ``repr`` is already suppressed.
 """
 
-# ruff: noqa: BLE001
-
 from __future__ import annotations
 
 import asyncio
@@ -83,6 +81,12 @@ _SEMAPHORES: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyn
     weakref.WeakKeyDictionary()
 )
 _JITTER = secrets.SystemRandom()
+
+# Everything the SDK can surface for a failed call: ordinary errors plus the
+# transport's task-group ``BaseExceptionGroup``. Caught wholesale and handed to
+# ``classify``; ``asyncio.CancelledError`` is always handled separately first,
+# so shutdown and genuine cancellation still propagate.
+_CLASSIFIABLE: tuple[type[BaseException], ...] = (BaseExceptionGroup, Exception)
 
 
 def _retry_delay(attempt: int, retry_after: float | None) -> float:
@@ -413,7 +417,7 @@ class SupervisedMcpSession:
             await self._safe_cleanup()
             self._fail_pending()
             return
-        except (BaseExceptionGroup, Exception) as exc:
+        except _CLASSIFIABLE as exc:
             failure = classify(exc)
             logger.warning(
                 "Skipping MCP connection %r kind=%s status=%s attempt=1 delay=0",
@@ -517,7 +521,7 @@ class SupervisedMcpSession:
                 failure = (
                     self._recorder.take() if self._recorder is not None else None
                 ) or FailureInfo("transport", reason="session cancelled")
-            except (BaseExceptionGroup, Exception) as exc:
+            except _CLASSIFIABLE as exc:
                 failure = classify(exc)
                 if failure.kind == "unknown" and self._recorder is not None:
                     failure = self._recorder.take() or failure
@@ -586,7 +590,7 @@ class SupervisedMcpSession:
                     raise
                 self._server = None
                 return False, FailureInfo("transport", reason="reconnect cancelled")
-            except (BaseExceptionGroup, Exception) as exc:
+            except _CLASSIFIABLE as exc:
                 self._server = None
                 failure = classify(exc)
                 if failure.kind == "unknown" and self._recorder is not None:
@@ -625,7 +629,7 @@ class SupervisedMcpSession:
             with contextlib.suppress(Exception):
                 await server.cleanup()  # type: ignore[no-untyped-call]
             raise
-        except (BaseExceptionGroup, Exception):
+        except _CLASSIFIABLE:
             with contextlib.suppress(Exception):
                 await server.cleanup()  # type: ignore[no-untyped-call]
             raise
