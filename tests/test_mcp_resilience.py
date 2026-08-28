@@ -202,6 +202,44 @@ async def test_server_exhaustion_quarantines_then_revives(
 
 
 @pytest.mark.asyncio
+async def test_success_resets_quarantine_strikes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A quarantine strike must be cleared by a successful revival, so transient
+    # failure bursts separated by successes do not accumulate toward permanent
+    # retirement. Without the reset, three such bursts would mark the connection
+    # dead even though it recovered between each one.
+    monkeypatch.setattr(mcp_session, "_retry_delay", _zero_delay)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    clock = [100.0]
+    monkeypatch.setattr("strix.tools.mcp.session.time.monotonic", lambda: clock[0])
+    builds = iter(
+        [
+            _sequence_server("strikes", _http_error(500)),
+            _sequence_server("strikes", _http_error(500)),
+            _sequence_server("strikes", _http_error(500)),
+            _sequence_server("strikes"),
+        ]
+    )
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(next(builds)))
+    session = mcp_session.SupervisedMcpSession(_config("strikes"))
+    assert await session.start()
+
+    # First burst exhausts three attempts and quarantines: one strike.
+    result = await session.dispatch("read", {}, label="strikes_read")
+    assert result["success"] is False
+    assert session._quarantine_count == 1
+
+    # The revive succeeds, which must clear the strike back to zero.
+    clock[0] += 31
+    result = await session.dispatch("read", {}, label="strikes_read")
+    assert result == {"type": "text", "text": "routed:read"}
+    assert session._quarantine_count == 0
+    assert session.is_dead is False
+    await session.aclose()
+
+
+@pytest.mark.asyncio
 async def test_auth_failure_dies_without_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     builds = [_sequence_server("auth", _http_error(401))]
     monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(builds.pop()))

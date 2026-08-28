@@ -28,9 +28,13 @@ lifetime, and ``cleanup()``. Three consequences:
   "connection unavailable" value instead of a cancellation propagating into the
   agent loop.
 
-When a call fails the supervisor classifies it, retries boundedly, and temporarily
-quarantines transient failures before lazily reviving the session. Authentication
-failures and repeated transient exhaustion permanently retire a connection.
+Failure handling follows connection-pool discipline: discard on error, rebuild on
+next use. The instant a call errors, the supervisor disposes that session on its own
+task and never awaits on it again; the next call lazily builds a fresh one. A
+classified transient failure is retried once on the rebuilt session and then, if it
+keeps failing, temporarily quarantines the connection so the circuit breaker plus the
+next call can recover it. Authentication failures and repeated transient exhaustion
+permanently retire a connection.
 
 Security: the connection's :class:`~strix.tools.mcp.config.McpConnectionConfig`
 holds a live bearer credential and is kept here in memory only, on the same
@@ -472,8 +476,33 @@ class SupervisedMcpSession:
 
     # -- run one job with bounded classified retries --------------------------
 
-    async def _execute(self, job: Job) -> _Outcome:  # noqa: PLR0911, PLR0912
-        """Run one job with classified retries and temporary quarantine."""
+    async def _execute(self, job: Job) -> _Outcome:  # noqa: PLR0912
+        """Run one job on a healthy session, disposing it the instant it errors.
+
+        Discard-on-error, rebuild-on-next-use is the whole discipline here, and it
+        rests on one invariant: **a session object is only ever awaited while
+        healthy.** The moment a call fails, the very next thing this method does,
+        before any other ``await`` including the backoff sleep inside
+        :meth:`_handle_failure`, is dispose that session on this task
+        (:meth:`_safe_cleanup` runs the transport teardown and clears ``_server``).
+
+        Why the ordering is the crux, not a nicety: when a provider returns a non-2xx
+        status mid-call, the streamable-HTTP transport's task group cancels its scope,
+        which cancels this supervising task; the failure surfaces as a
+        ``CancelledError`` and the scope keeps firing (re-raising on every subsequent
+        ``await``) until the session is torn down. Disposing closes the transport's
+        AsyncExitStack, which exits that firing scope. If instead we slept for backoff
+        first, the sleep would re-raise the firing ``CancelledError``, escape this
+        method, and kill the supervising task, leaving the slot wedged with
+        ``is_dead`` False forever. Disposing first is what turns a failure into a
+        returned value and keeps the task alive to rebuild on the next attempt.
+
+        The rebuild itself happens lazily at the top of the loop: once a failure has
+        set ``_server`` to None, the next iteration builds a fresh session (guarded by
+        :meth:`_reconnect`) and retries the call on it. A genuine shutdown
+        (``_closing``) and a real external cancellation still propagate; only the
+        transport's teardown cancellation is contained.
+        """
         if self._dead:
             return _Outcome(dead=True)
         if self._unavailable_until is not None:
@@ -499,6 +528,10 @@ class SupervisedMcpSession:
             )
         failure: FailureInfo | None = None
         for attempt in range(1, _MAX_ATTEMPTS + 1):
+            # Lazy, atomic rebuild: a prior failure disposed the session, so build a
+            # fresh one here. The rebuild lock lets concurrent callers (adopted
+            # sessions dispatched from several agent tasks) share one rebuild rather
+            # than each building their own.
             if self._server is None:
                 reconnected, reconnect_failure = await self._reconnect()
                 if not reconnected:
@@ -514,27 +547,38 @@ class SupervisedMcpSession:
             assert call_semaphore is not None
             try:
                 async with call_semaphore:
-                    return _Outcome(value=await job(self._server))
+                    result = await job(self._server)
+                # A success clears the quarantine strikes. A connection that
+                # recovered and served a call is healthy again, so transient
+                # failure bursts separated by successful revivals must not
+                # accumulate toward permanent retirement; only sustained failure
+                # with no success in between should retire the connection.
+                self._quarantine_count = 0
+                return _Outcome(value=result)
             except asyncio.CancelledError:
                 if not self._supervised or self._closing:
                     raise
                 failure = (
                     self._recorder.take() if self._recorder is not None else None
                 ) or FailureInfo("transport", reason="session cancelled")
+                # Dispose BEFORE any other await. The transport's cancel scope may be
+                # firing right now; _safe_cleanup exits it so the backoff sleep below
+                # cannot re-raise the cancellation and kill this task. See the
+                # method docstring for why this ordering is load-bearing.
+                await self._safe_cleanup()
             except _CLASSIFIABLE as exc:
                 failure = classify(exc)
                 if failure.kind == "unknown" and self._recorder is not None:
                     failure = self._recorder.take() or failure
+                # Dispose BEFORE any other await, same reason as the branch above:
+                # never await on a session that has already errored.
+                await self._safe_cleanup()
 
+            # Session is disposed and _server is None; _handle_failure may sleep for
+            # backoff safely, and the next loop iteration rebuilds and retries.
             outcome = await self._handle_failure(failure, attempt)
             if outcome is not None:
                 return outcome
-            reconnected, reconnect_failure = await self._reconnect()
-            if not reconnected:
-                failure = reconnect_failure or FailureInfo("transport", reason="reconnect failed")
-                outcome = await self._handle_failure(failure, attempt)
-                if outcome is not None:
-                    return outcome
         return _Outcome(dead=True)
 
     async def _handle_failure(self, failure: FailureInfo, attempt: int) -> _Outcome | None:
@@ -578,9 +622,19 @@ class SupervisedMcpSession:
         )
 
     async def _reconnect(self) -> tuple[bool, FailureInfo | None]:
-        """Rebuild and reconnect, reusing the stored config and settling briefly."""
+        """Build a fresh session under the rebuild lock, so concurrent callers share one.
+
+        Called only when ``_server`` is None (a prior failure already disposed the old
+        session). The lock serializes rebuilds; a caller that finds the session already
+        rebuilt by whoever held the lock first reuses it instead of building a second
+        one. There is deliberately no cleanup of an existing ``_server`` here: this
+        method never runs against a live session, because the failure path disposes
+        before it ever reaches a rebuild.
+        """
         async with self._reconnect_lock:
-            await self._safe_cleanup()
+            if self._server is not None:
+                # Another caller rebuilt while we waited for the lock; share it.
+                return True, None
             if self._config is None:
                 return False, FailureInfo("transport", reason="no reconnect config")
             try:
@@ -601,9 +655,9 @@ class SupervisedMcpSession:
             try:
                 await asyncio.sleep(_SETTLE_DELAY)
             except asyncio.CancelledError:
-                self._server = None
-                with contextlib.suppress(Exception):
-                    await server.cleanup()  # type: ignore[no-untyped-call]
+                # Dispose the just-built session before returning; _safe_cleanup
+                # re-raises when we are shutting down and absorbs otherwise.
+                await self._safe_cleanup()
                 if self._closing:
                     raise
                 return False, FailureInfo("transport", reason="reconnect cancelled")
@@ -638,12 +692,48 @@ class SupervisedMcpSession:
     # -- helpers --------------------------------------------------------------
 
     async def _safe_cleanup(self) -> None:
+        """Dispose the live session on this task, completing teardown even under a
+        firing cancel scope.
+
+        Why this is delicate: the streamable-HTTP transport holds an anyio task group
+        whose cancel scope was entered on this supervising task. When a background POST
+        got a non-2xx status the SDK cancelled that scope, and until the scope is
+        exited every ``await`` on this task re-raises ``CancelledError``.
+        ``server.cleanup()`` closes the AsyncExitStack that runs the task group's
+        ``__aexit__``, and that ``__aexit__`` is exactly what exits the scope and stops
+        the firing; it also absorbs the scope's own cancellation internally, so the
+        common case returns cleanly. A stray ``CancelledError`` can still surface,
+        though, and ``contextlib.suppress(Exception)`` would let it through because
+        ``CancelledError`` is a ``BaseException``, not an ``Exception``.
+
+        So we catch ``CancelledError`` explicitly. During a real shutdown
+        (``_closing``) that cancellation is the run going down and must propagate, so
+        we re-raise it. Otherwise we absorb it and retry the close a bounded number of
+        times: if a cleanup was interrupted before the exit stack finished unwinding,
+        closing again continues from where it left off (the stack pops one callback at
+        a time), so the scope still ends up exited and this task stays runnable for the
+        next rebuild.
+        """
         server = self._server
         self._server = None
         if server is None:
             return
-        with contextlib.suppress(Exception):
-            await server.cleanup()  # type: ignore[no-untyped-call]
+        for _ in range(_MAX_ATTEMPTS):
+            try:
+                # suppress(Exception) absorbs an ordinary cleanup error but lets a
+                # CancelledError through, because it is a BaseException; the outer
+                # handler below is what decides whether to propagate or retry it.
+                with contextlib.suppress(Exception):
+                    await server.cleanup()  # type: ignore[no-untyped-call]
+            except asyncio.CancelledError:
+                if self._closing:
+                    raise
+                # Firing scope hit the cleanup await before the stack finished
+                # unwinding; swallow this cancellation and close again to complete
+                # the teardown. A fully-closed stack makes the retry a clean no-op.
+                continue
+            else:
+                return
 
     def _report_ready(self, value: bool) -> None:
         if self._ready is not None and not self._ready.done():
