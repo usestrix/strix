@@ -24,6 +24,10 @@ FakeMCPServer: Any = _test_mcp_client.FakeMCPServer
 _mcp_tool: Any = _test_mcp_client._mcp_tool
 
 
+def _built_server(server: Any) -> Any:
+    return mcp_client.BuiltMcpServer(server, None)
+
+
 def _http_error(status: int, *, retry_after: str | None = None) -> httpx.HTTPStatusError:
     request = httpx.Request(
         "POST",
@@ -65,6 +69,20 @@ def test_classifies_nested_exception_groups_by_specificity() -> None:
     assert info.kind == "auth"
     assert info.status == 401
     assert info.retryable is False
+
+
+@pytest.mark.parametrize("control_flow", [SystemExit, KeyboardInterrupt])
+@pytest.mark.asyncio
+async def test_control_flow_exceptions_propagate(
+    control_flow: type[BaseException],
+) -> None:
+    server = _sequence_server("control-flow", control_flow("stop"))
+    session = mcp_session.SupervisedMcpSession.adopt(server, name="control-flow")
+
+    with pytest.raises(control_flow):
+        await session.dispatch("read", {}, label="control_flow")
+
+    await session.aclose()
 
 
 @pytest.mark.asyncio
@@ -144,7 +162,7 @@ async def test_rate_limit_retries_and_succeeds(
             _sequence_server("rate"),
         ]
     )
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: next(builds))
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(next(builds)))
     session = mcp_session.SupervisedMcpSession(_config("rate"))
     assert await session.start()
     result = await session.dispatch("read", {}, label="rate_read")
@@ -169,7 +187,7 @@ async def test_server_exhaustion_quarantines_then_revives(
             _sequence_server("quarantine"),
         ]
     )
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: next(builds))
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(next(builds)))
     session = mcp_session.SupervisedMcpSession(_config("quarantine"))
     assert await session.start()
     result = await session.dispatch("read", {}, label="quarantine_read")
@@ -186,7 +204,7 @@ async def test_server_exhaustion_quarantines_then_revives(
 @pytest.mark.asyncio
 async def test_auth_failure_dies_without_retry(monkeypatch: pytest.MonkeyPatch) -> None:
     builds = [_sequence_server("auth", _http_error(401))]
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: builds.pop())
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(builds.pop()))
     session = mcp_session.SupervisedMcpSession(_config("auth"))
     assert await session.start()
     result = await session.dispatch("read", {}, label="auth_read")
@@ -333,7 +351,7 @@ async def test_resilience_logs_do_not_include_request_secrets(
     monkeypatch.setattr(mcp_session, "_retry_delay", _zero_delay)
     monkeypatch.setattr(asyncio, "sleep", _no_sleep)
     server = _sequence_server("redaction", _http_error(401))
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(server))
     session = mcp_session.SupervisedMcpSession(_config("redaction"))
     assert await session.start()
     with caplog.at_level("WARNING"):

@@ -39,6 +39,8 @@ serialized into the run's event stream, or written to disk; :meth:`__repr__`
 omits it and the token field's own ``repr`` is already suppressed.
 """
 
+# ruff: noqa: BLE001
+
 from __future__ import annotations
 
 import asyncio
@@ -411,20 +413,7 @@ class SupervisedMcpSession:
             await self._safe_cleanup()
             self._fail_pending()
             return
-        except BaseExceptionGroup as exc:
-            failure = classify(exc)
-            logger.warning(
-                "Skipping MCP connection %r kind=%s status=%s attempt=1 delay=0",
-                self._name,
-                failure.kind,
-                failure.status,
-                exc_info=True,
-            )
-            self._report_ready(value=False)
-            await self._safe_cleanup()
-            self._fail_pending()
-            return
-        except Exception as exc:  # noqa: BLE001 - classify ordinary connect failures
+        except (BaseExceptionGroup, Exception) as exc:
             failure = classify(exc)
             logger.warning(
                 "Skipping MCP connection %r kind=%s status=%s attempt=1 delay=0",
@@ -479,7 +468,7 @@ class SupervisedMcpSession:
 
     # -- run one job with bounded classified retries --------------------------
 
-    async def _execute(self, job: Job) -> _Outcome:  # noqa: PLR0911, PLR0912, PLR0915
+    async def _execute(self, job: Job) -> _Outcome:  # noqa: PLR0911, PLR0912
         """Run one job with classified retries and temporary quarantine."""
         if self._dead:
             return _Outcome(dead=True)
@@ -489,40 +478,32 @@ class SupervisedMcpSession:
                 return _Outcome(dead=True)
             self._unavailable_until = None
             logger.info(
-                "MCP connection %r revive started kind=%s status=%s attempt=1 delay=%.2f",
+                "MCP connection %r revive started kind=%s status=%s attempt=1",
                 self._name,
                 self._last_failure.kind,
                 self._last_failure.status,
-                0.0,
             )
 
+        if self._call_semaphore is None:
+            self._call_semaphore = _call_semaphore(
+                self._name,
+                (
+                    self._config.max_concurrent_calls
+                    if self._config is not None
+                    else DEFAULT_MAX_CONCURRENT_CALLS
+                ),
+            )
         failure: FailureInfo | None = None
         for attempt in range(1, _MAX_ATTEMPTS + 1):
-            if self._call_semaphore is None:
-                self._call_semaphore = _call_semaphore(
-                    self._name,
-                    (
-                        self._config.max_concurrent_calls
-                        if self._config is not None
-                        else DEFAULT_MAX_CONCURRENT_CALLS
-                    ),
-                )
             if self._server is None:
                 reconnected, reconnect_failure = await self._reconnect()
                 if not reconnected:
                     failure = reconnect_failure or FailureInfo(
                         "transport", reason="reconnect failed"
                     )
-                    self._last_failure = failure
-                    if failure.kind == "auth":
-                        self._mark_dead(failure, attempt=attempt)
-                        return _Outcome(dead=True)
-                    if attempt == _MAX_ATTEMPTS:
-                        await self._quarantine(failure, attempt=attempt)
-                        return _Outcome(dead=True)
-                    delay = _retry_delay(attempt, failure.retry_after)
-                    self._log_retry(failure, attempt, delay)
-                    await asyncio.sleep(delay)
+                    outcome = await self._handle_failure(failure, attempt)
+                    if outcome is not None:
+                        return outcome
                     continue
             assert self._server is not None
             call_semaphore = self._call_semaphore
@@ -536,39 +517,34 @@ class SupervisedMcpSession:
                 failure = (
                     self._recorder.take() if self._recorder is not None else None
                 ) or FailureInfo("transport", reason="session cancelled")
-            except BaseExceptionGroup as exc:
-                failure = classify(exc)
-                if failure.kind == "unknown" and self._recorder is not None:
-                    failure = self._recorder.take() or failure
-            except Exception as exc:  # noqa: BLE001 - classify ordinary call failures
+            except (BaseExceptionGroup, Exception) as exc:
                 failure = classify(exc)
                 if failure.kind == "unknown" and self._recorder is not None:
                     failure = self._recorder.take() or failure
 
-            self._last_failure = failure
-            if failure.kind == "auth":
-                self._mark_dead(failure, attempt=attempt)
-                return _Outcome(dead=True)
-            if attempt == _MAX_ATTEMPTS:
-                await self._quarantine(failure, attempt=attempt)
-                return _Outcome(dead=True)
-            delay = _retry_delay(attempt, failure.retry_after)
-            self._log_retry(failure, attempt, delay)
-            await asyncio.sleep(delay)
+            outcome = await self._handle_failure(failure, attempt)
+            if outcome is not None:
+                return outcome
             reconnected, reconnect_failure = await self._reconnect()
             if not reconnected:
                 failure = reconnect_failure or FailureInfo("transport", reason="reconnect failed")
-                self._last_failure = failure
-                if failure.kind == "auth":
-                    self._mark_dead(failure, attempt=attempt)
-                    return _Outcome(dead=True)
-                if attempt == _MAX_ATTEMPTS:
-                    await self._quarantine(failure, attempt=attempt)
-                    return _Outcome(dead=True)
-                delay = _retry_delay(attempt, failure.retry_after)
-                self._log_retry(failure, attempt, delay)
-                await asyncio.sleep(delay)
+                outcome = await self._handle_failure(failure, attempt)
+                if outcome is not None:
+                    return outcome
         return _Outcome(dead=True)
+
+    async def _handle_failure(self, failure: FailureInfo, attempt: int) -> _Outcome | None:
+        self._last_failure = failure
+        if failure.kind == "auth":
+            self._mark_dead(failure, attempt=attempt)
+            return _Outcome(dead=True)
+        if attempt == _MAX_ATTEMPTS:
+            await self._quarantine(failure, attempt=attempt)
+            return _Outcome(dead=True)
+        delay = _retry_delay(attempt, failure.retry_after)
+        self._log_retry(failure, attempt, delay)
+        await asyncio.sleep(delay)
+        return None
 
     def _log_retry(self, failure: FailureInfo, attempt: int, delay: float) -> None:
         logger.warning(
@@ -610,13 +586,7 @@ class SupervisedMcpSession:
                     raise
                 self._server = None
                 return False, FailureInfo("transport", reason="reconnect cancelled")
-            except BaseExceptionGroup as exc:
-                self._server = None
-                failure = classify(exc)
-                if failure.kind == "unknown" and self._recorder is not None:
-                    failure = self._recorder.take() or failure
-                return False, failure
-            except Exception as exc:  # noqa: BLE001 - classify ordinary reconnect failures
+            except (BaseExceptionGroup, Exception) as exc:
                 self._server = None
                 failure = classify(exc)
                 if failure.kind == "unknown" and self._recorder is not None:
@@ -642,30 +612,20 @@ class SupervisedMcpSession:
         same task before the error propagates, so a failed connect never orphans
         an MCP subprocess or half-open HTTP session.
         """
-        from strix.tools.mcp.client import BuiltMcpServer, _build_server
+        from strix.tools.mcp.client import _build_server
 
         if self._config is None:
             raise RuntimeError(f"MCP connection {self._name!r} has no config to connect")
         built = _build_server(self._config)
-        if isinstance(built, BuiltMcpServer):
-            server = built.server
-            self._recorder = built.recorder
-        else:
-            # Test and private consumers may still provide a connected server
-            # directly when replacing the private builder.
-            server = cast("MCPServer", built)  # type: ignore[unreachable]
-            self._recorder = None
+        server = built.server
+        self._recorder = built.recorder
         try:
             await server.connect()  # type: ignore[no-untyped-call]
         except asyncio.CancelledError:
             with contextlib.suppress(Exception):
                 await server.cleanup()  # type: ignore[no-untyped-call]
             raise
-        except BaseExceptionGroup:
-            with contextlib.suppress(Exception):
-                await server.cleanup()  # type: ignore[no-untyped-call]
-            raise
-        except Exception:
+        except (BaseExceptionGroup, Exception):
             with contextlib.suppress(Exception):
                 await server.cleanup()  # type: ignore[no-untyped-call]
             raise
