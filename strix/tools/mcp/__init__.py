@@ -13,6 +13,7 @@ from strix.tools.mcp.config import (
     McpAuth,
     McpConnectionConfig,
 )
+from strix.tools.mcp.failures import FailureInfo, HttpStatusRecorder, classify
 from strix.tools.mcp.loader import load_user_mcp_configs
 from strix.tools.mcp.naming import namespaced_tool_name
 from strix.tools.mcp.registry import (
@@ -38,6 +39,8 @@ __all__ = [
     "MCP_REGISTRY_CONTEXT_KEY",
     "BearerAuth",
     "ConnectedMcpServer",
+    "FailureInfo",
+    "HttpStatusRecorder",
     "McpAuth",
     "McpCallInfo",
     "McpConnectionConfig",
@@ -50,6 +53,7 @@ __all__ = [
     "SupervisedMcpSession",
     "attach_mcp_requests",
     "call_mcp",
+    "classify",
     "connect_mcp_servers",
     "describe_mcp",
     "list_mcps",

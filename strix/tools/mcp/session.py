@@ -28,10 +28,9 @@ lifetime, and ``cleanup()``. Three consequences:
   "connection unavailable" value instead of a cancellation propagating into the
   agent loop.
 
-When a call fails the supervisor rebuilds and reconnects the session once (reusing
-the same config, so the same bearer token, never re-fetching credentials) and
-re-runs the one failed call once. If that still fails, the connection is marked
-dead: every later call returns the standard failed-tool output.
+When a call fails the supervisor classifies it, retries boundedly, and temporarily
+quarantines transient failures before lazily reviving the session. Authentication
+failures and repeated transient exhaustion permanently retire a connection.
 
 Security: the connection's :class:`~strix.tools.mcp.config.McpConnectionConfig`
 holds a live bearer credential and is kept here in memory only, on the same
@@ -46,7 +45,11 @@ import asyncio
 import contextlib
 import dataclasses
 import logging
+import secrets
+import time
 from typing import TYPE_CHECKING, Any, cast
+
+from strix.tools.mcp.failures import FailureInfo, HttpStatusRecorder, classify
 
 
 if TYPE_CHECKING:
@@ -70,6 +73,17 @@ logger = logging.getLogger(__name__)
 # before the supervising task is cancelled instead. Bounds teardown so a slow or
 # hung in-flight call cannot stall it forever.
 _SHUTDOWN_TIMEOUT = 10.0
+_MAX_ATTEMPTS = 3
+_SETTLE_DELAY = 0.05
+_SEMAPHORES: dict[str, asyncio.Semaphore] = {}
+_JITTER = secrets.SystemRandom()
+
+
+def _retry_delay(attempt: int, retry_after: float | None) -> float:
+    if retry_after is not None:
+        return retry_after
+    base = min(8.0, 0.5 * (2 ** (attempt - 1)))
+    return base + _JITTER.uniform(0.0, base * 0.1)  # type: ignore[no-any-return]
 
 
 class McpConnectionUnavailableError(RuntimeError):
@@ -129,6 +143,14 @@ class SupervisedMcpSession:
         self._dead = False
         self._closing = False
         self._on_dead: Callable[[], None] | None = None
+        self._recorder: HttpStatusRecorder | None = None
+        self._unavailable_until: float | None = None
+        self._quarantine_count = 0
+        self._last_failure = FailureInfo("unknown", reason="connection unavailable")
+        self._reconnect_lock = asyncio.Lock()
+        self._call_semaphore = _SEMAPHORES.setdefault(
+            self._name, asyncio.Semaphore(config.max_concurrent_calls)
+        )
         # Guards the idle-death self-heal against a flapping server: set after an
         # idle reconnect, cleared once a real call runs. If the session dies idle
         # again before serving anything, we give up instead of reconnecting in a
@@ -161,6 +183,14 @@ class SupervisedMcpSession:
         self._dead = False
         self._closing = False
         self._on_dead = None
+        self._recorder = None
+        self._unavailable_until = None
+        self._quarantine_count = 0
+        self._last_failure = FailureInfo("unknown", reason="connection unavailable")
+        self._reconnect_lock = asyncio.Lock()
+        self._call_semaphore = _SEMAPHORES.setdefault(
+            name, asyncio.Semaphore(config.max_concurrent_calls if config else 4)
+        )
         self._healed_without_progress = False
         return self
 
@@ -185,6 +215,15 @@ class SupervisedMcpSession:
     def is_dead(self) -> bool:
         return self._dead
 
+    @property
+    def is_unavailable(self) -> bool:
+        """Whether the connection is temporarily quarantined."""
+        return (
+            not self._dead
+            and self._unavailable_until is not None
+            and time.monotonic() < self._unavailable_until
+        )
+
     def set_on_dead(self, callback: Callable[[], None] | None) -> None:
         """Register a one-shot callback fired when the connection transitions to dead.
 
@@ -198,11 +237,22 @@ class SupervisedMcpSession:
         """
         self._on_dead = callback
 
-    def _mark_dead(self) -> None:
+    def _mark_dead(self, failure: FailureInfo | None = None, *, attempt: int = 1) -> None:
         """Flip the connection to dead and fire ``on_dead`` once on the transition."""
         if self._dead:
             return
+        failure = failure or self._last_failure
         self._dead = True
+        self._unavailable_until = None
+        logger.error(
+            "MCP connection %r permanently unavailable kind=%s status=%s reason=%s "
+            "attempt=%d delay=0",
+            self._name,
+            failure.kind,
+            failure.status,
+            failure.reason,
+            attempt,
+        )
         callback = self._on_dead
         if callback is None:
             return
@@ -280,7 +330,7 @@ class SupervisedMcpSession:
     # -- caller-facing operations --------------------------------------------
 
     async def list_tools(self) -> list[MCPTool]:
-        """List the connection's tools, reconnecting once if the session died.
+        """List the connection's tools, retrying transient session failures.
 
         Raises :class:`McpConnectionUnavailableError` when the connection is dead.
         """
@@ -297,7 +347,7 @@ class SupervisedMcpSession:
         label: str,
         result_transform: ResultTransform | None = None,
     ) -> Any:
-        """Run one tool call, reconnecting once and retrying once on session death.
+        """Run one tool call with bounded retries for transient session failures.
 
         Returns the tool output on success, or the standard failed-tool output
         (``success: False``) with a "connection unavailable" message when the
@@ -361,8 +411,14 @@ class SupervisedMcpSession:
             await self._safe_cleanup()
             self._fail_pending()
             return
-        except Exception:
-            logger.exception("Skipping MCP connection %r", self._name)
+        except BaseException as exc:  # noqa: BLE001 - classify cancellation groups
+            failure = classify(exc)
+            logger.warning(
+                "Skipping MCP connection %r kind=%s status=%s attempt=1 delay=0",
+                self._name,
+                failure.kind,
+                failure.status,
+            )
             self._report_ready(value=False)
             await self._safe_cleanup()
             self._fail_pending()
@@ -391,24 +447,40 @@ class SupervisedMcpSession:
                 # calls then short-circuit to the dead output without this task.
                 if self._closing:
                     raise
+                failure = self._recorder.take() if self._recorder is not None else None
+                failure = failure or FailureInfo("transport", reason="session cancelled")
+                self._last_failure = failure
                 if not self._healed_without_progress:
                     logger.warning(
-                        "MCP connection %r session died while idle; reconnecting once",
+                        "MCP connection %r session died while idle kind=%s status=%s "
+                        "attempt=1 delay=0; reconnecting",
                         self._name,
+                        failure.kind,
+                        failure.status,
                     )
-                    if await self._reconnect():
+                    self._healed_without_progress = True
+                    reconnected, reconnect_failure = await self._reconnect()
+                    if reconnected:
                         logger.info(
-                            "MCP connection %r reconnected after an idle death", self._name
+                            "MCP connection %r revived kind=%s status=%s attempt=1 delay=%.2f",
+                            self._name,
+                            failure.kind,
+                            failure.status,
+                            _SETTLE_DELAY,
                         )
-                        self._healed_without_progress = True
                         continue
+                    if reconnect_failure is not None:
+                        failure = reconnect_failure
                 else:
                     logger.warning(
                         "MCP connection %r died again before serving a call; "
-                        "marking it unavailable",
+                        "marking it permanently unavailable kind=%s status=%s "
+                        "attempt=1 delay=0",
                         self._name,
+                        failure.kind,
+                        failure.status,
                     )
-                self._mark_dead()
+                self._mark_dead(failure)
                 await self._safe_cleanup()
                 return
             if request is None:  # shutdown sentinel
@@ -420,73 +492,138 @@ class SupervisedMcpSession:
             if not request.future.done():
                 request.future.set_result(outcome)
             self._pending.discard(request.future)
+            if self._dead:
+                return
 
-    # -- run one job with reconnect-once + retry-once -------------------------
+    # -- run one job with bounded classified retries --------------------------
 
-    async def _execute(self, job: Job) -> _Outcome:
-        """Run one job; on a session failure reconnect once and retry it once."""
-        if self._dead or self._server is None:
+    async def _execute(self, job: Job) -> _Outcome:  # noqa: PLR0911, PLR0912
+        """Run one job with classified retries and temporary quarantine."""
+        if self._dead:
             return _Outcome(dead=True)
-        try:
-            return _Outcome(value=await job(self._server))
-        except asyncio.CancelledError:
-            # For a supervised session a cancellation here is the transport scope
-            # dying under an in-flight call: a session death, not a real cancel
-            # (shutdown never cancels the task, it uses the sentinel). For an
-            # adopted session there is no such scope, so a cancel is real.
-            if not self._supervised or self._closing:
-                raise
-            logger.warning(
-                "MCP connection %r was cancelled mid-call (session died); reconnecting once",
+        if self._unavailable_until is not None:
+            remaining = self._unavailable_until - time.monotonic()
+            if remaining > 0:
+                return _Outcome(dead=True)
+            self._unavailable_until = None
+            logger.info(
+                "MCP connection %r revive started kind=%s status=%s attempt=1 delay=%.2f",
                 self._name,
-            )
-        except Exception:  # noqa: BLE001 - any call failure is treated as a session death
-            logger.warning(
-                "MCP connection %r failed mid-call; reconnecting once", self._name
+                self._last_failure.kind,
+                self._last_failure.status,
+                remaining,
             )
 
-        if not await self._reconnect():
-            self._mark_dead()
-            return _Outcome(dead=True)
+        failure: FailureInfo | None = None
+        for attempt in range(1, _MAX_ATTEMPTS + 1):
+            if self._server is None:
+                reconnected, reconnect_failure = await self._reconnect()
+                if not reconnected:
+                    failure = reconnect_failure or FailureInfo(
+                        "transport", reason="reconnect failed"
+                    )
+                    self._last_failure = failure
+                    if failure.kind == "auth":
+                        self._mark_dead(failure, attempt=attempt)
+                        return _Outcome(dead=True)
+                    if attempt == _MAX_ATTEMPTS:
+                        self._quarantine(failure, attempt=attempt)
+                        return _Outcome(dead=True)
+                    delay = _retry_delay(attempt, failure.retry_after)
+                    self._log_retry(failure, attempt, delay)
+                    await asyncio.sleep(delay)
+                    continue
+            assert self._server is not None
+            try:
+                async with self._call_semaphore:
+                    return _Outcome(value=await self._run_job_call(job))
+            except asyncio.CancelledError:
+                if not self._supervised or self._closing:
+                    raise
+                failure = (
+                    self._recorder.take() if self._recorder is not None else None
+                ) or FailureInfo("transport", reason="session cancelled")
+            except BaseException as exc:  # noqa: BLE001 - classify SDK groups
+                failure = classify(exc)
+                if failure.kind == "unknown" and self._recorder is not None:
+                    failure = self._recorder.take() or failure
 
-        try:
-            return _Outcome(value=await job(self._server))
-        except asyncio.CancelledError:
-            if not self._supervised or self._closing:
-                raise
-            logger.warning(
-                "MCP connection %r was cancelled again after reconnect; marking it unavailable",
-                self._name,
-            )
-            self._mark_dead()
-            return _Outcome(dead=True)
-        except Exception:  # noqa: BLE001 - any retry failure means the connection is dead
-            logger.warning(
-                "MCP connection %r failed again after reconnect; marking it unavailable",
-                self._name,
-            )
-            self._mark_dead()
-            return _Outcome(dead=True)
+            self._last_failure = failure
+            if failure.kind == "auth":
+                self._mark_dead(failure, attempt=attempt)
+                return _Outcome(dead=True)
+            if attempt == _MAX_ATTEMPTS:
+                self._quarantine(failure, attempt=attempt)
+                return _Outcome(dead=True)
+            delay = _retry_delay(attempt, failure.retry_after)
+            self._log_retry(failure, attempt, delay)
+            await asyncio.sleep(delay)
+            reconnected, reconnect_failure = await self._reconnect()
+            if not reconnected and reconnect_failure is not None:
+                self._mark_dead(reconnect_failure, attempt=attempt)
+                return _Outcome(dead=True)
+        return _Outcome(dead=True)
 
-    async def _reconnect(self) -> bool:
-        """Rebuild and reconnect the session once, reusing the stored config/token."""
-        await self._safe_cleanup()
-        if self._config is None:
-            return False
-        try:
-            self._server = await self._open()
-        except asyncio.CancelledError:
-            if self._closing:
-                raise
-            logger.warning("MCP reconnect for %r was cancelled; giving up", self._name)
-            self._server = None
-            return False
-        except Exception:
-            logger.exception("MCP reconnect for %r failed", self._name)
-            self._server = None
-            return False
-        logger.info("MCP connection %r reconnected", self._name)
-        return True
+    async def _run_job_call(self, job: Job) -> Any:
+        return await job(self._server)  # type: ignore[arg-type]
+
+    def _log_retry(self, failure: FailureInfo, attempt: int, delay: float) -> None:
+        logger.warning(
+            "MCP connection %r retryable failure kind=%s status=%s attempt=%d delay=%.2f",
+            self._name,
+            failure.kind,
+            failure.status,
+            attempt,
+            delay,
+        )
+
+    def _quarantine(self, failure: FailureInfo, *, attempt: int) -> None:
+        self._quarantine_count += 1
+        if self._quarantine_count >= 3:
+            self._mark_dead(failure, attempt=attempt)
+            return
+        cooldown = 30.0 * (2 ** (self._quarantine_count - 1))
+        self._unavailable_until = time.monotonic() + cooldown
+        logger.warning(
+            "MCP connection %r quarantined kind=%s status=%s attempt=%d delay=%.2f",
+            self._name,
+            failure.kind,
+            failure.status,
+            attempt,
+            cooldown,
+        )
+
+    async def _reconnect(self) -> tuple[bool, FailureInfo | None]:
+        """Rebuild and reconnect, reusing the stored config and settling briefly."""
+        async with self._reconnect_lock:
+            await self._safe_cleanup()
+            if self._config is None:
+                return False, FailureInfo("transport", reason="no reconnect config")
+            try:
+                server = await self._open()
+            except asyncio.CancelledError:
+                if self._closing:
+                    raise
+                self._server = None
+                return False, FailureInfo("transport", reason="reconnect cancelled")
+            except BaseException as exc:  # noqa: BLE001 - classify SDK groups
+                self._server = None
+                failure = classify(exc)
+                if failure.kind == "unknown" and self._recorder is not None:
+                    failure = self._recorder.take() or failure
+                return False, failure
+            # connect() is the only readiness surface exposed by the SDK.
+            self._server = server
+            try:
+                await asyncio.sleep(_SETTLE_DELAY)
+            except asyncio.CancelledError:
+                self._server = None
+                with contextlib.suppress(BaseException):
+                    await server.cleanup()  # type: ignore[no-untyped-call]
+                if self._closing:
+                    raise
+                return False, FailureInfo("transport", reason="reconnect cancelled")
+            return True, None
 
     async def _open(self) -> MCPServer:
         """Build and connect the SDK server, reusing the existing setup steps.
@@ -500,6 +637,7 @@ class SupervisedMcpSession:
         if self._config is None:
             raise RuntimeError(f"MCP connection {self._name!r} has no config to connect")
         server = _build_server(self._config)
+        self._recorder = getattr(server, "_strix_http_status_recorder", None)
         try:
             await server.connect()  # type: ignore[no-untyped-call]
         except BaseException:
@@ -529,8 +667,15 @@ class SupervisedMcpSession:
         self._pending.clear()
 
     def _unavailable_message(self) -> str:
+        if self._unavailable_until is not None:
+            remaining = max(0.0, self._unavailable_until - time.monotonic())
+            return (
+                f"MCP connection {self._name!r} is temporarily unavailable "
+                f"(kind={self._last_failure.kind}, status={self._last_failure.status}); "
+                f"retrying in about {remaining:.0f} seconds."
+            )
         return (
-            f"MCP connection {self._name!r} is unavailable: its live session could "
-            "not be reached and a reconnect attempt failed. It is marked unavailable "
-            "for the rest of this run."
+            f"MCP connection {self._name!r} is unavailable "
+            f"(kind={self._last_failure.kind}, status={self._last_failure.status}); "
+            "it will not be retried."
         )
