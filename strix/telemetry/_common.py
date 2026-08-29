@@ -3,10 +3,15 @@ from __future__ import annotations
 import logging
 import platform
 import sys
+import threading
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -20,6 +25,22 @@ SESSION_ID: str = uuid4().hex[:16]
 SEND_TIMEOUT: tuple[float, float] = (2.0, 3.0)
 
 _FIRST_RUN_CACHED: bool | None = None
+
+
+def dispatch(func: Callable[[], None]) -> None:
+    """Run a best-effort telemetry send off the caller's thread.
+
+    Telemetry is a beacon: operator-facing paths (``strix view``, scan start,
+    the viewer's ``/api/event`` handler) must never block on it. A daemon
+    thread keeps a slow or MITM-intercepted TLS handshake from stalling the UI,
+    and won't hold the process open at exit -- the beacon is simply dropped if
+    the process exits first, which is acceptable for telemetry. The per-send
+    ``SEND_TIMEOUT`` still bounds each request.
+    """
+    try:
+        threading.Thread(target=func, daemon=True).start()
+    except Exception:  # noqa: BLE001
+        logger.debug("telemetry dispatch failed", exc_info=True)
 
 
 def get_version() -> str:
