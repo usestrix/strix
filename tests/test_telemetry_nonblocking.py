@@ -53,6 +53,27 @@ def test_send_does_not_block_caller(telemetry, monkeypatch: pytest.MonkeyPatch) 
     assert done.wait(2.0)
 
 
+def test_burst_does_not_spawn_unbounded_threads(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(posthog, "_is_enabled", lambda: True)
+
+    def _slow_post(*_args: object, **_kwargs: object) -> _Resp:
+        time.sleep(0.5)  # keep the shared worker busy so the queue backs up
+        return _Resp()
+
+    monkeypatch.setattr(posthog.requests, "post", _slow_post)
+
+    start = time.perf_counter()
+    for i in range(200):
+        posthog._send("viewer_cta_clicked", {"i": i})
+    elapsed = time.perf_counter() - start
+
+    # Enqueuing a large burst stays fast and non-blocking...
+    assert elapsed < 1.0
+    # ...and telemetry runs on exactly one shared worker thread, not one per event.
+    sender_threads = [t for t in threading.enumerate() if t.name == "telemetry-sender"]
+    assert len(sender_threads) == 1
+
+
 @pytest.mark.parametrize("telemetry", [posthog, scarf])
 def test_send_disabled_returns_false_without_dispatch(
     telemetry, monkeypatch: pytest.MonkeyPatch
