@@ -89,21 +89,26 @@ def _structured_provider_refusal(result: Any) -> str | None:
 # ``refusal`` content type) instead of calling a lifecycle tool. Without
 # detection this is treated as ordinary output and retried up to 1000 times,
 # creating false confidence in scan completeness and wasting budget (#1155).
-_TEXT_REFUSAL_PHRASES: frozenset[str] = frozenset(
+#
+# Greptile review: unanchored single-phrase matching (e.g. "i cannot" or
+# "as an ai") falsely flagged ordinary tool-less turns like
+# "I cannot reproduce the issue" or quoted page content. Tighten to
+# multi-word, action-anchored markers and require co-occurrence for
+# ambiguous phrases.
+_STRONG_REFUSAL_PHRASES: frozenset[str] = frozenset(
     {
-        "i cannot",
-        "i can't",
-        "i am unable",
-        "i'm unable",
-        "i will not",
+        "i cannot help",
+        "i cannot assist",
+        "i can't help",
+        "i can't assist",
+        "cannot help with",
         "cannot assist",
+        "unable to help",
         "unable to assist",
-        "i apologize",
-        "as an ai",
-        "my safety",
-        "safety guidelines",
-        "refuse to",
-        "not able to help",
+        "i will not help",
+        "i will not assist",
+        "refuse to help",
+        "refuse to assist",
         "i must decline",
         "i have to decline",
         "can't help with",
@@ -121,9 +126,25 @@ def _extract_final_output_text(result: Any) -> str | None:
 
 
 def _is_text_refusal(text: str) -> bool:
-    """Heuristic: does plain-text output look like a model safety refusal?"""
+    """Heuristic: does plain-text output look like a model safety refusal?
+
+    Uses action-anchored strong phrases plus guarded co-occurrence checks
+    for ambiguous markers to avoid false positives on ordinary turns
+    (e.g. quoted page content or 'I cannot reproduce the issue').
+    """
     lower = text.lower()
-    return any(phrase in lower for phrase in _TEXT_REFUSAL_PHRASES)
+    if any(phrase in lower for phrase in _STRONG_REFUSAL_PHRASES):
+        return True
+    # Ambiguous markers only count when paired with an inability signal.
+    if "i apologize" in lower and any(k in lower for k in ("cannot", "unable", "won't", "can't")):
+        return True
+    if "as an ai" in lower and any(k in lower for k in ("cannot", "unable", "not able", "won't")):
+        return True
+    if ("safety guidelines" in lower or "my safety" in lower) and any(
+        k in lower for k in ("cannot", "unable", "refuse", "not able", "won't")
+    ):
+        return True
+    return False
 
 
 def _run_config_model(run_config: RunConfig) -> str | None:
