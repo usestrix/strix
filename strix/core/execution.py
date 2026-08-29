@@ -85,6 +85,47 @@ def _structured_provider_refusal(result: Any) -> str | None:
     return None
 
 
+# Plain-text refusals: the model returns a normal text turn (no structured
+# ``refusal`` content type) instead of calling a lifecycle tool. Without
+# detection this is treated as ordinary output and retried up to 1000 times,
+# creating false confidence in scan completeness and wasting budget (#1155).
+_TEXT_REFUSAL_PHRASES: frozenset[str] = frozenset(
+    {
+        "i cannot",
+        "i can't",
+        "i am unable",
+        "i'm unable",
+        "i will not",
+        "cannot assist",
+        "unable to assist",
+        "i apologize",
+        "as an ai",
+        "my safety",
+        "safety guidelines",
+        "refuse to",
+        "not able to help",
+        "i must decline",
+        "i have to decline",
+        "can't help with",
+        "won't help with",
+    }
+)
+
+
+def _extract_final_output_text(result: Any) -> str | None:
+    """Return the final output as stripped text if it is a non-empty string."""
+    final = getattr(result, "final_output", None)
+    if isinstance(final, str) and final.strip():
+        return final.strip()
+    return None
+
+
+def _is_text_refusal(text: str) -> bool:
+    """Heuristic: does plain-text output look like a model safety refusal?"""
+    lower = text.lower()
+    return any(phrase in lower for phrase in _TEXT_REFUSAL_PHRASES)
+
+
 def _run_config_model(run_config: RunConfig) -> str | None:
     return run_config.model if isinstance(run_config.model, str) else None
 
@@ -513,6 +554,22 @@ async def _run_until_lifecycle(
         status = await _agent_status(coordinator, agent_id)
         if status != "running":
             await coordinator.reset_recovery(agent_id)
+            return result
+
+        # Plain-text refusal: the model returned refusal text instead of a tool
+        # call. Treat as a coverage gap and fail fast rather than nudging up to
+        # 1000 times and reporting the scan as comprehensive (#1155).
+        refusal_text = _extract_final_output_text(result)
+        if refusal_text is not None and _is_text_refusal(refusal_text):
+            preview = _final_output_preview(result)
+            logger.error(
+                "agent %s refused task (plain-text refusal); failing fast instead of "
+                "retrying without tool call: %s",
+                agent_id,
+                preview,
+            )
+            await coordinator.set_status(agent_id, "failed", error=f"model refusal: {preview}")
+            await notify_parent_on_terminal(coordinator, agent_id, "failed")
             return result
 
         recoveries = await coordinator.record_recovery(agent_id)
