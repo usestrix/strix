@@ -336,11 +336,15 @@ strix auth status            # show the active sign-in
 strix auth logout claude     # sign out of Claude Code (global to the CLI)
 ```
 
-The `claude` CLI must be installed and signed in **on the host running Strix**. This is
-the subscription, not an API key, so usage shows real token counts at $0 cost. Because
+Claude Code CLI 2.1.220 or newer must be installed and signed in **on the host running
+Strix**. On a Pro/Max sign-in, usage shows real token counts at $0 cost; if Claude Code is
+on an API key instead (an `ANTHROPIC_API_KEY` in your environment overrides a Pro/Max
+login), Strix warns you and meters the run normally rather than reporting $0. Because
 Anthropic controls the subscription billing terms, behaviour can change without a Strix
 release. Multi-agent scans burst hard against subscription rate limits — Max 20x is
-realistically needed; on Pro, prefer a quick scan with fewer agents.
+realistically needed; on Pro, prefer a quick scan with fewer agents. See the
+[Claude Code provider docs](https://docs.strix.ai/llm-providers/claude-code) for cost,
+concurrency, and troubleshooting details.
 
 #### Connect your own MCP servers
 
