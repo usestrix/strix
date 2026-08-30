@@ -1,0 +1,3 @@
+[claude-code:unrecognized_model] {"model":"claude-not-a-real-model-xyz","query_source":"sdk"}
+{"type":"system","subtype":"init","session_id":"s5","model":"claude-not-a-real-model-xyz"}
+{"type":"result","subtype":"success","is_error":true,"api_error_status":404,"result":"There's an issue with the selected model (claude-not-a-real-model-xyz). It may not exist or you may not have access to it. Run --model to pick a different model.","usage":{"input_tokens":0,"output_tokens":0},"session_id":"s5"}

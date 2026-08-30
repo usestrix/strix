@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import shutil
 import subprocess
 import threading
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from types import SimpleNamespace
+from typing import TYPE_CHECKING, Any, ClassVar, cast
 
 import pytest
 from agents.model_settings import ModelSettings
@@ -25,17 +28,28 @@ from strix.config.models import (
     StrixProvider,
     _ClaudeCodeModel,
     _NonStreamingModel,
+    _request_timeout,
     _TurnGuardModel,
     uses_chat_completions_tool_schema,
 )
+from strix.report import dedupe
 from strix.report import state as report_state
 
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from agents.tool import Tool
+
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code"
+
+
+def _message_text(message: dict[str, Any]) -> str:
+    """The prose of a built turn, for assertions about what the model was told."""
+    return "".join(
+        block["text"] for block in message["message"]["content"] if block["type"] == "text"
+    )
 
 
 @pytest.fixture
@@ -78,9 +92,9 @@ def _result_event(fixture: str) -> dict[str, Any]:
 def test_stream_response_yields_one_completed_event(monkeypatch: pytest.MonkeyPatch) -> None:
     event = _result_event("simple_text.jsonl")
 
-    async def _fake_run_turn(slug: str, prompt: str, **_: Any) -> dict[str, Any]:
+    async def _fake_run_turn(slug: str, message: dict[str, Any], **_: Any) -> dict[str, Any]:
         assert slug == "claude-opus-4-8"
-        assert "go" in prompt
+        assert "go" in _message_text(message)
         return event
 
     monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
@@ -109,7 +123,9 @@ def _costs_recorded_for(monkeypatch: pytest.MonkeyPatch, fixture: str) -> list[f
         def record_observed_llm_cost(self, cost: float) -> None:
             recorded.append(cost)
 
-    async def _fake_run_turn(_slug: str, _prompt: str, **_kwargs: Any) -> dict[str, Any]:
+    async def _fake_run_turn(
+        _slug: str, _message: dict[str, Any], **_kwargs: Any
+    ) -> dict[str, Any]:
         return event
 
     monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
@@ -135,7 +151,7 @@ def test_turn_records_nothing_when_the_cli_reports_no_cost(
 def test_get_response_returns_model_response(monkeypatch: pytest.MonkeyPatch) -> None:
     event = _result_event("tool_request.jsonl")
 
-    async def _fake_run_turn(_slug: str, _prompt: str, **_: Any) -> dict[str, Any]:
+    async def _fake_run_turn(_slug: str, _message: dict[str, Any], **_: Any) -> dict[str, Any]:
         return event
 
     monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
@@ -225,6 +241,14 @@ def test_claude_code_takes_priority_over_codex(
 # --------------------------------------------------------------------------- #
 
 
+# One built turn, reused by the transport tests: they exercise process handling,
+# not encoding, and only need something run_turn can serialise.
+_TURN: dict[str, Any] = {
+    "type": "user",
+    "message": {"role": "user", "content": [{"type": "text", "text": "prompt"}]},
+}
+
+
 def _completed(stdout: str, returncode: int, stderr: str = "") -> subprocess.CompletedProcess[str]:
     return subprocess.CompletedProcess(
         args=["claude"], returncode=returncode, stdout=stdout, stderr=stderr
@@ -238,8 +262,9 @@ class _FakeProcess:
     communicate() has returned, so the cleanup kill is a no-op on the happy path.
     """
 
-    def __init__(self, *, running: bool = False) -> None:
+    def __init__(self, *, running: bool = False, pid: int = 4321) -> None:
         self.killed = False
+        self.pid = pid
         self._running = running
 
     def poll(self) -> int | None:
@@ -288,7 +313,7 @@ def test_run_turn_returns_result_event(monkeypatch: pytest.MonkeyPatch) -> None:
         '{"type": "result", "subtype": "success", "is_error": false, "result": "{}"}\n'
     )
     _patch_run(monkeypatch, _completed(stdout, 0))
-    result = asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+    result = asyncio.run(claude_process.run_turn("claude-opus-4-8", _TURN))
     assert result["type"] == "result"
     assert result["is_error"] is False
 
@@ -301,20 +326,20 @@ def test_run_turn_returns_error_result_even_on_nonzero_exit(
     # retryable, rather than raising an unclassified generic error.
     stdout = '{"type": "result", "is_error": true, "api_error_status": 429, "result": "429"}\n'
     _patch_run(monkeypatch, _completed(stdout, 1, "rate limited"))
-    result = asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+    result = asyncio.run(claude_process.run_turn("claude-opus-4-8", _TURN))
     assert result["api_error_status"] == 429
 
 
 def test_run_turn_nonzero_exit_with_no_result_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_run(monkeypatch, _completed("", 1, "boom on stderr"))
     with pytest.raises(claude_code.ClaudeCodeError, match="exited with code 1"):
-        asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+        asyncio.run(claude_process.run_turn("claude-opus-4-8", _TURN))
 
 
 def test_run_turn_no_result_event_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     _patch_run(monkeypatch, _completed('{"type": "system"}\n', 0))
     with pytest.raises(claude_code.ClaudeCodeError, match="no result event"):
-        asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+        asyncio.run(claude_process.run_turn("claude-opus-4-8", _TURN))
 
 
 def test_semaphore_reused_across_separate_event_loops(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -325,7 +350,7 @@ def test_semaphore_reused_across_separate_event_loops(monkeypatch: pytest.Monkey
     _patch_run(monkeypatch, _completed(stdout, 0))
 
     async def _one() -> dict[str, Any]:
-        return await claude_process.run_turn("claude-opus-4-8", "prompt")
+        return await claude_process.run_turn("claude-opus-4-8", _TURN)
 
     first = asyncio.run(_one())
     second = asyncio.run(_one())  # separate loop; must not raise
@@ -342,7 +367,7 @@ def test_run_turn_timeout_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(claude_process, "_spawn", lambda *_a, **_k: _FakeProcess())
     monkeypatch.setattr(claude_process, "_communicate", _boom)
     with pytest.raises(claude_code.ClaudeCodeError, match="timed out"):
-        asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+        asyncio.run(claude_process.run_turn("claude-opus-4-8", _TURN))
 
 
 def test_cancelled_turn_kills_the_subprocess(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -367,7 +392,7 @@ def test_cancelled_turn_kills_the_subprocess(monkeypatch: pytest.MonkeyPatch) ->
     monkeypatch.setattr(claude_process, "_communicate", _blocks_until_killed)
 
     async def _cancel_mid_turn() -> None:
-        task = asyncio.create_task(claude_process.run_turn("claude-opus-4-8", "prompt"))
+        task = asyncio.create_task(claude_process.run_turn("claude-opus-4-8", _TURN))
         assert await asyncio.to_thread(started.wait, 5.0)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -380,7 +405,7 @@ def test_cancelled_turn_kills_the_subprocess(monkeypatch: pytest.MonkeyPatch) ->
 def test_missing_binary_raises(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(claude_code, "binary_path", lambda: None)
     with pytest.raises(claude_code.ClaudeCodeError, match="on PATH"):
-        asyncio.run(claude_process.run_turn("claude-opus-4-8", "prompt"))
+        asyncio.run(claude_process.run_turn("claude-opus-4-8", _TURN))
 
 
 def test_run_turn_works_under_selector_loop(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,7 +415,7 @@ def test_run_turn_works_under_selector_loop(monkeypatch: pytest.MonkeyPatch) -> 
     _patch_run(monkeypatch, _completed(stdout, 0))
 
     async def _drive_once() -> dict[str, Any]:
-        return await claude_process.run_turn("claude-opus-4-8", "prompt")
+        return await claude_process.run_turn("claude-opus-4-8", _TURN)
 
     loop = asyncio.SelectorEventLoop()
     try:
@@ -422,7 +447,262 @@ def test_semaphore_bounds_concurrency(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(claude_process, "_communicate", _slow)
 
     async def _run_all() -> None:
-        await asyncio.gather(*[claude_process.run_turn("claude-opus-4-8", "p") for _ in range(8)])
+        await asyncio.gather(*[claude_process.run_turn("claude-opus-4-8", _TURN) for _ in range(8)])
 
     asyncio.run(_run_all())
     assert peak <= 2
+
+
+def test_turn_is_bounded_by_the_callers_request_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Every other route honours LLM_TIMEOUT. Without it a wedged turn burns the
+    # transport's own generous default and is then retried, so one stuck turn
+    # could hold a run for over an hour.
+    event = _result_event("simple_text.jsonl")
+    seen: dict[str, Any] = {}
+
+    async def _fake_run_turn(_slug: str, _message: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        seen.update(kwargs)
+        return event
+
+    monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
+    asyncio.run(
+        _ClaudeCodeModel("claude-opus-4-8").get_response(
+            "sys",
+            [{"role": "user", "content": "go"}],
+            ModelSettings(extra_args={"timeout": 42.0}),
+            [],
+            None,
+            [],
+            ModelTracing.DISABLED,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        )
+    )
+    assert seen["timeout"] == 42.0
+
+
+def test_turn_relays_parallel_tool_calls(monkeypatch: pytest.MonkeyPatch) -> None:
+    event = _result_event("simple_text.jsonl")
+    prompts: list[str] = []
+
+    async def _fake_run_turn(_slug: str, message: dict[str, Any], **_: Any) -> dict[str, Any]:
+        prompts.append(_message_text(message))
+        return event
+
+    monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
+
+    class _Tool:
+        name = "shell"
+        description = "run a command"
+        params_json_schema: ClassVar[dict[str, Any]] = {"type": "object", "properties": {}}
+
+    async def _call(settings: ModelSettings) -> None:
+        await _ClaudeCodeModel("claude-opus-4-8").get_response(
+            "sys",
+            [{"role": "user", "content": "go"}],
+            settings,
+            [cast("Tool", _Tool())],
+            None,
+            [],
+            ModelTracing.DISABLED,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        )
+
+    asyncio.run(_call(ModelSettings(parallel_tool_calls=False)))
+    asyncio.run(_call(ModelSettings(parallel_tool_calls=True)))
+    assert "Request at most one tool" in prompts[0]
+    assert "Request only tools you need" in prompts[1]
+
+
+def test_turn_timeout_rejects_non_finite_values(monkeypatch: pytest.MonkeyPatch) -> None:
+    # float("inf") passes a bare `> 0` test but reaches Popen.communicate() as an
+    # OverflowError, which kills every turn with an error classified as nothing.
+    monkeypatch.delenv("STRIX_CLAUDE_CODE_TIMEOUT", raising=False)
+    assert claude_process._turn_timeout() == claude_process._DEFAULT_TURN_TIMEOUT_S
+    assert claude_process._turn_timeout(42.0) == 42.0
+    for bad in (float("inf"), float("nan"), 0.0, -5.0):
+        assert claude_process._turn_timeout(bad) == claude_process._DEFAULT_TURN_TIMEOUT_S
+
+    # The backend's own knob outranks the caller's request timeout; an unusable
+    # value falls back to it rather than to the broken number.
+    for raw, expected in (
+        ("60", 60.0),
+        ("inf", 120.0),
+        ("nan", 120.0),
+        ("1e999", 120.0),
+        ("-1", 120.0),
+        ("0", 120.0),
+        ("banana", 120.0),
+    ):
+        monkeypatch.setenv("STRIX_CLAUDE_CODE_TIMEOUT", raw)
+        assert claude_process._turn_timeout(120.0) == expected
+
+
+def test_argv_asks_for_stream_json_input(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Images ride as content blocks, which only stream-json input can carry.
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    argv = claude_process._build_argv("claude-opus-4-8", [])
+    assert argv[argv.index("--input-format") + 1] == "stream-json"
+    assert argv[argv.index("--output-format") + 1] == "stream-json"
+
+
+def test_stdin_carries_one_json_line() -> None:
+    message = claude_bridge.build_message(None, "hello", [])
+    encoded = claude_process._encode_message(message)
+    assert encoded.endswith("\n")
+    assert encoded.count("\n") == 1
+    assert json.loads(encoded)["message"]["role"] == "user"
+
+
+def test_result_line_survives_unicode_line_separators(monkeypatch: pytest.MonkeyPatch) -> None:
+    # str.splitlines() also breaks on U+2028/U+2029/U+0085, which a model's own
+    # prose puts inside the JSON result line, cutting it in two so nothing parses
+    # and a turn that actually succeeded is reported as having no result event.
+    text = "line one\u2028line two\u2029three\u0085four"
+    event = {"type": "result", "is_error": False, "structured_output": {"text": text}}
+    stdout = json.dumps(event, ensure_ascii=False) + "\n"
+    assert len(stdout.splitlines()) > 1  # the bug this guards
+    _patch_run(monkeypatch, _completed(stdout, 0))
+    result = asyncio.run(claude_process.run_turn("claude-opus-4-8", _TURN))
+    assert result["structured_output"]["text"] == text
+
+
+def test_windows_kill_takes_the_whole_process_tree(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An npm install puts a claude.cmd shim on PATH, so the handle is cmd.exe and
+    # killing it alone leaves the node grandchild holding the pipes.
+    killed: list[list[str]] = []
+    taskkill = "C:\\taskkill.exe"
+
+    def _run(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        killed.append(argv)
+        return subprocess.CompletedProcess(args=argv, returncode=0)
+
+    monkeypatch.setattr(claude_process, "sys", SimpleNamespace(platform="win32"))
+    monkeypatch.setattr(shutil, "which", lambda _name: taskkill)
+    monkeypatch.setattr(subprocess, "run", _run)
+
+    process = _FakeProcess(running=True, pid=4321)
+    claude_process._kill_if_running(cast("subprocess.Popen[str]", process))
+    assert killed == [[taskkill, "/F", "/T", "/PID", "4321"]]
+    assert process.killed is True
+
+
+def test_posix_kill_does_not_shell_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def _run(argv: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[bytes]:
+        calls.append(argv)
+        return subprocess.CompletedProcess(args=argv, returncode=0)
+
+    monkeypatch.setattr(claude_process, "sys", SimpleNamespace(platform="linux"))
+    monkeypatch.setattr(subprocess, "run", _run)
+    process = _FakeProcess(running=True)
+    claude_process._kill_if_running(cast("subprocess.Popen[str]", process))
+    assert calls == []
+    assert process.killed is True
+
+
+def test_stdin_payload_is_one_line_whatever_the_prompt_contains() -> None:
+    # The CLI reads stdin a line at a time. U+2028/U+2029/U+0085 passed through
+    # as literals would split one message into four unparseable fragments, the
+    # same hazard the transcript decoder guards on the way back.
+    text = "one\u2028two\u2029three\u0085four \u00e9"
+    encoded = claude_process._encode_message(claude_bridge.build_message(None, text, []))
+    assert len(encoded.splitlines()) == 1
+    assert encoded.endswith("\n")
+    assert encoded.isascii()
+    rendered = json.loads(encoded)["message"]["content"][0]["text"]
+    assert text in rendered
+
+
+def test_request_timeout_ignores_a_non_numeric_or_boolean_value() -> None:
+    # bool is an int subclass, so a True would otherwise become a 1 second turn.
+    for value in (True, False, "300", None, {"seconds": 300}):
+        assert _request_timeout(ModelSettings(extra_args={"timeout": value})) is None
+    assert _request_timeout(ModelSettings(extra_args={"timeout": 300})) == 300.0
+    assert _request_timeout(ModelSettings()) is None
+
+
+def test_deduplication_runs_on_this_backend_and_gets_its_json_back(
+    monkeypatch: pytest.MonkeyPatch, _reset_settings: None
+) -> None:
+    # report/dedupe.py picks `(dedupe.model or "").strip() or settings.llm.model`, so with
+    # STRIX_DEDUPE_MODEL unset -- the default -- deduplication runs on the main model, which
+    # on a claude-code/ scan is this backend. It used to fail every check: the turn carried
+    # the agent framing and the schema, so the model narrated a step and the caller's own
+    # JSON was never found.
+    monkeypatch.setenv("STRIX_LLM", "claude-code/claude-opus-4-8")
+    monkeypatch.delenv("STRIX_DEDUPE_MODEL", raising=False)
+    load_settings()
+
+    answer = (
+        '{"is_duplicate": true, "duplicate_id": "vuln-0001", '
+        '"confidence": 0.93, "reason": "same endpoint"}'
+    )
+    seen: dict[str, Any] = {}
+
+    async def _fake_run_turn(_slug: str, message: dict[str, Any], **kwargs: Any) -> dict[str, Any]:
+        seen["prompt"] = _message_text(message)
+        seen["structured"] = kwargs.get("structured")
+        return {"type": "result", "is_error": False, "result": answer}
+
+    monkeypatch.setattr(claude_process, "run_turn", _fake_run_turn)
+    monkeypatch.setattr(dedupe, "get_global_report_state", lambda: None)
+
+    result = asyncio.run(
+        dedupe.check_duplicate(
+            {"id": "vuln-0002", "title": "SQLi in /admin", "endpoint": "/admin"},
+            [{"id": "vuln-0001", "title": "SQL injection in /admin", "endpoint": "/admin"}],
+        )
+    )
+
+    assert "error" not in result
+    assert result["is_duplicate"] is True
+    assert result["duplicate_id"] == "vuln-0001"
+    assert result["confidence"] == pytest.approx(0.93)
+    # A tool-less turn must not be forced into the agent envelope, on the argv or in the prompt.
+    assert seen["structured"] is False
+    assert "Answer the request above directly" in seen["prompt"]
+    assert "tool_calls" not in seen["prompt"]
+
+
+def test_turns_run_on_their_own_thread_pool(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A turn blocks a whole thread for its duration. asyncio's default executor is
+    # sized min(32, cpu_count + 4), which on a 2-core host is six workers against a
+    # default of eight concurrent turns, so sharing it would stall every other
+    # asyncio.to_thread in Strix behind a model call.
+    monkeypatch.setenv("STRIX_CLAUDE_CODE_MAX_PROCS", "3")
+    names: list[str] = []
+
+    def _record(*_args: Any, **_kwargs: Any) -> subprocess.CompletedProcess[str]:
+        names.append(threading.current_thread().name)
+        return _completed('{"type":"result","is_error":false,"result":"ok"}', 0)
+
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(claude_process, "_spawn", lambda *_a, **_k: _FakeProcess())
+    monkeypatch.setattr(claude_process, "_communicate", _record)
+
+    async def _drive_many() -> None:
+        loop = asyncio.get_running_loop()
+        executor = claude_process._get_executor(loop)
+        assert executor._max_workers == 3
+        assert executor is not None
+        await asyncio.gather(*[claude_process.run_turn("claude-opus-4-8", _TURN) for _ in range(4)])
+
+    asyncio.run(_drive_many())
+    assert names, "the turn never reached a worker thread"
+    assert all(name.startswith("strix-claude-code") for name in names), names
+
+
+def test_the_executor_is_resized_with_the_bound(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def _sizes() -> tuple[int, int]:
+        loop = asyncio.get_running_loop()
+        monkeypatch.setenv("STRIX_CLAUDE_CODE_MAX_PROCS", "2")
+        first = claude_process._get_executor(loop)._max_workers
+        monkeypatch.setenv("STRIX_CLAUDE_CODE_MAX_PROCS", "5")
+        return first, claude_process._get_executor(loop)._max_workers
+
+    assert asyncio.run(_sizes()) == (2, 5)

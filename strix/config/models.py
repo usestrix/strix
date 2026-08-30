@@ -75,6 +75,8 @@ def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
         return False
     if codex.is_content_guardrail_error(context.error):
         return False
+    if claude_code.is_transport_error(context.error):
+        return False
     return normalized.status_code is None
 
 
@@ -242,6 +244,16 @@ class _NonStreamingModel(Model):
         yield _completed_stream_event(response, getattr(self._inner, "model", None))
 
 
+def _request_timeout(model_settings: ModelSettings) -> float | None:
+    """The caller's per-request timeout, as ``request_timeout_extra_args`` encodes it."""
+    extra_args = model_settings.extra_args or {}
+    timeout = extra_args.get("timeout")
+    # bool is an int subclass, and a True here would silently become a 1s turn.
+    if isinstance(timeout, bool) or not isinstance(timeout, int | float):
+        return None
+    return float(timeout)
+
+
 def _record_claude_code_cost(result: dict[str, Any]) -> None:
     """Hand Claude Code's own per-turn cost to the run ledger.
 
@@ -297,13 +309,24 @@ class _ClaudeCodeModel(Model):
         system_instructions: str | None,
         input: str | list[TResponseInputItem],  # noqa: A002
         tools: list[Tool],
+        model_settings: ModelSettings,
     ) -> ModelResponse:
-        prompt = claude_bridge.build_prompt(system_instructions, input, tools)
+        # Most of ModelSettings is a Responses-API concern this transport has no
+        # wire for, but two fields are real instructions from the rest of Strix
+        # and are honoured: the request timeout (LLM_TIMEOUT) bounds the turn,
+        # and parallel_tool_calls=False asks for one call per step.
+        message = claude_bridge.build_message(
+            system_instructions,
+            input,
+            tools,
+            parallel_tool_calls=model_settings.parallel_tool_calls is not False,
+        )
         result = await claude_process.run_turn(
             self._slug,
-            prompt,
+            message,
             extra_args=self._extra_args(),
             structured=bool(tools),
+            timeout=_request_timeout(model_settings),
         )
         response = claude_bridge.decode_result(result)
         _record_claude_code_cost(result)
@@ -323,11 +346,11 @@ class _ClaudeCodeModel(Model):
         conversation_id: str | None,
         prompt: ResponsePromptParam | None,
     ) -> ModelResponse:
-        # The Model interface fixes this signature; this backend only needs the
-        # instructions, input, and tools — the rest are Responses-API concerns.
-        del model_settings, output_schema, handoffs, tracing
+        # The Model interface fixes this signature; the rest are Responses-API
+        # concerns this transport has no wire for.
+        del output_schema, handoffs, tracing
         del previous_response_id, conversation_id, prompt
-        return await self._run(system_instructions, input, tools)
+        return await self._run(system_instructions, input, tools, model_settings)
 
     async def stream_response(
         self,
@@ -343,9 +366,9 @@ class _ClaudeCodeModel(Model):
         conversation_id: str | None,
         prompt: ResponsePromptParam | None,
     ) -> AsyncIterator[TResponseStreamEvent]:
-        del model_settings, output_schema, handoffs, tracing
+        del output_schema, handoffs, tracing
         del previous_response_id, conversation_id, prompt
-        response = await self._run(system_instructions, input, tools)
+        response = await self._run(system_instructions, input, tools, model_settings)
         yield _completed_stream_event(response, self.model)
 
 

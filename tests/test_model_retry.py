@@ -14,7 +14,7 @@ import asyncio
 from agents.retry import ModelRetryNormalizedError, RetryPolicyContext
 from agents.run_internal.model_retry import _normalize_retry_error
 
-from strix.config import claude_bridge, codex
+from strix.config import claude_bridge, claude_code, codex
 from strix.config.models import DEFAULT_MODEL_RETRY, _retry_statusless_provider_errors
 
 
@@ -84,6 +84,25 @@ def test_claude_code_entitlement_error_is_not_retried() -> None:
         status_code=403,
     )
     assert _retries(_normalize_retry_error(denied, None), denied) is False
+
+
+def test_claude_code_transport_failure_is_not_retried() -> None:
+    # A missing binary, a failed spawn, a turn timeout, or a stream with no
+    # result event all arrive with no status code, so without an explicit rule
+    # they land in the statusless fallback and burn five attempts plus roughly
+    # three minutes of backoff on something an identical retry hits again.
+    for message in (
+        "STRIX_LLM=claude-code/... needs the Claude Code CLI on PATH.",
+        "could not launch claude -p: [Errno 2] No such file or directory",
+        "claude -p timed out after 300s",
+        "claude -p produced no result event (stderr: (no stderr))",
+    ):
+        failure = claude_code.ClaudeCodeError(message)
+        assert _retries(_normalize_retry_error(failure, None), failure) is False
+
+    # A genuine provider transient still carries a status and still retries.
+    overloaded = claude_bridge.ClaudeStreamError("API Error: Overloaded", status_code=529)
+    assert _retries(_normalize_retry_error(overloaded, None), overloaded) is True
 
 
 def test_timeout_error_is_retried() -> None:

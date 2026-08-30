@@ -37,9 +37,13 @@ def _tool_output(blocks: list[dict[str, Any]]) -> TResponseInputItem:
     )
 
 
+def _fixture(name: str) -> dict[str, Any]:
+    lines = (FIXTURES / name).read_text(encoding="utf-8").split("\n")
+    return claude_bridge.parse_transcript(lines)
+
+
 def _decode(name: str) -> ModelResponse:
-    lines = (FIXTURES / name).read_text(encoding="utf-8").splitlines()
-    return claude_bridge.decode_result(claude_bridge.parse_transcript(lines))
+    return claude_bridge.decode_result(_fixture(name))
 
 
 def _assistant_text(response: ModelResponse) -> str:
@@ -234,21 +238,49 @@ class _FakeTool:
 
 
 def _fake_tools() -> list[Tool]:
-    """``_FakeTool`` as the SDK's Tool union; build_prompt only duck-types it."""
+    """``_FakeTool`` as the SDK's Tool union; build_content only duck-types it."""
     return [cast("Tool", _FakeTool())]
 
 
+def _prompt_text(
+    system: str | None,
+    items: Any,
+    tools: list[Tool],
+    *,
+    parallel_tool_calls: bool = True,
+) -> str:
+    """Only the prose of a built turn, for assertions about wording."""
+    return "".join(
+        block["text"]
+        for block in claude_bridge.build_content(
+            system,
+            cast("list[TResponseInputItem]", items),
+            tools,
+            parallel_tool_calls=parallel_tool_calls,
+        )
+        if block["type"] == "text"
+    )
+
+
+def _image_blocks(system: str | None, items: Any, tools: list[Tool]) -> list[dict[str, Any]]:
+    """Only the image blocks of a built turn, in order."""
+    return [
+        block
+        for block in claude_bridge.build_content(
+            system, cast("list[TResponseInputItem]", items), tools
+        )
+        if block["type"] == "image"
+    ]
+
+
 def test_build_prompt_includes_history_tools_and_task() -> None:
-    prompt = claude_bridge.build_prompt(
+    prompt = _prompt_text(
         "You are a pentester.",
-        cast(
-            "list[TResponseInputItem]",
-            [
-                {"role": "user", "content": "scan the target"},
-                {"type": "function_call", "name": "shell", "arguments": '{"command": "nmap x"}'},
-                {"type": "function_call_output", "call_id": "c1", "output": "22/tcp open"},
-            ],
-        ),
+        [
+            {"role": "user", "content": "scan the target"},
+            {"type": "function_call", "name": "shell", "arguments": '{"command": "nmap x"}'},
+            {"type": "function_call_output", "call_id": "c1", "output": "22/tcp open"},
+        ],
         _fake_tools(),
     )
     assert "You are a pentester." in prompt
@@ -265,10 +297,10 @@ def test_toolless_prompt_asks_for_the_answer_not_an_agent_step() -> None:
     # one-shot completion (dedupe, preflight) whose caller parses the reply. Give
     # the second kind the agent framing and the model narrates a step instead of
     # answering -- which is why dedupe never found the JSON object it asked for.
-    agent_turn = claude_bridge.build_prompt("sys", "do the thing", _fake_tools())
+    agent_turn = _prompt_text("sys", "do the thing", _fake_tools())
     assert "tool_calls" in agent_turn
 
-    completion = claude_bridge.build_prompt("Reply with JSON.", "compare these", [])
+    completion = _prompt_text("Reply with JSON.", "compare these", [])
     assert "tool_calls" not in completion
     assert "Answer the request above directly" in completion
 
@@ -289,40 +321,111 @@ def test_toolless_reply_keeps_the_callers_own_json() -> None:
 
 
 def test_build_prompt_string_input() -> None:
-    prompt = claude_bridge.build_prompt(None, "just a string", [])
-    assert "just a string" in prompt
+    assert "just a string" in _prompt_text(None, "just a string", [])
 
 
-def test_image_tool_result_is_marked_not_dropped() -> None:
-    # A browser/visual tool result carrying an image must not vanish silently:
-    # the model should see a marker so it doesn't claim to have inspected a
-    # screenshot the text bridge could not deliver.
-    prompt = claude_bridge.build_prompt(
-        None,
-        [
-            _tool_output(
-                [
-                    {"type": "output_text", "text": "page loaded"},
-                    {"type": "output_image", "image_url": "data:image/png;base64,AAAA"},
-                ]
-            ),
-        ],
-        [],
+def test_message_wraps_the_content_as_a_stream_json_user_turn() -> None:
+    message = claude_bridge.build_message(None, "hello", [])
+    assert message["type"] == "user"
+    assert message["message"]["role"] == "user"
+    assert message["message"]["content"][0]["type"] == "text"
+
+
+def test_non_parallel_turn_asks_for_a_single_tool_call() -> None:
+    # parallel_tool_calls=False is what every other Strix route sends its provider.
+    assert "Request at most one tool" in _prompt_text(
+        "sys", "go", _fake_tools(), parallel_tool_calls=False
     )
-    assert "page loaded" in prompt
-    assert "image returned by tool" in prompt
-    assert "AAAA" not in prompt  # the base64 payload is not dumped into the prompt
+    assert "Request only tools you need" in _prompt_text("sys", "go", _fake_tools())
+
+
+def test_image_tool_result_is_carried_as_an_image_block() -> None:
+    # The transport sends stream-json, so a browser/visual tool result travels as
+    # a real image block beside its text rather than as a placeholder.
+    items = [
+        _tool_output(
+            [
+                {"type": "output_text", "text": "page loaded"},
+                {"type": "output_image", "image_url": "data:image/png;base64,AAAA"},
+            ]
+        ),
+    ]
+    assert "page loaded" in _prompt_text(None, items, [])
+    assert _image_blocks(None, items, []) == [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "AAAA"}}
+    ]
+    # The base64 payload rides in the image block, never dumped into the prose.
+    assert "AAAA" not in _prompt_text(None, items, [])
+
+
+def test_anthropic_shaped_image_block_is_carried_verbatim() -> None:
+    items = [
+        _tool_output(
+            [
+                {
+                    "type": "image",
+                    "source": {"type": "base64", "media_type": "image/webp", "data": "BBBB"},
+                }
+            ]
+        )
+    ]
+    assert _image_blocks(None, items, []) == [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/webp", "data": "BBBB"}}
+    ]
+
+
+def test_images_keep_their_place_in_the_conversation() -> None:
+    items = [
+        {"role": "user", "content": "look"},
+        _tool_output([{"type": "input_image", "image_url": "data:image/png;base64,AAAA"}]),
+        {"role": "assistant", "content": "done"},
+    ]
+    kinds = [
+        block["type"]
+        for block in claude_bridge.build_content(None, cast("list[TResponseInputItem]", items), [])
+    ]
+    # text (history up to the image), image, then text (the rest and the task).
+    assert kinds == ["text", "image", "text"]
+
+
+@pytest.mark.parametrize(
+    "block",
+    [
+        # A remote URL is refused on purpose: forwarding it would have Anthropic's
+        # servers fetch it, which on a pentest run reaches into the target network.
+        {"type": "input_image", "image_url": "https://target.internal/shot.png"},
+        {"type": "input_image", "image_url": {"url": "https://target.internal/shot.png"}},
+        {"type": "image", "source": {"type": "url", "url": "https://target.internal/shot.png"}},
+        # Not an image format the API accepts inline.
+        {"type": "input_image", "image_url": "data:image/tiff;base64,AAAA"},
+        # Malformed data URL.
+        {"type": "input_image", "image_url": "data:image/png,AAAA"},
+        {"type": "input_image", "image_url": "not-a-url"},
+        {"type": "input_image"},
+    ],
+)
+def test_uncarriable_image_is_marked_not_dropped(block: dict[str, Any]) -> None:
+    # Whatever cannot travel must still be announced, so the model does not
+    # narrate having inspected a screenshot it never received.
+    items = [_tool_output([block])]
+    assert _image_blocks(None, items, []) == []
+    assert "not readable by this backend" in _prompt_text(None, items, [])
+
+
+def test_oversized_image_is_marked_not_carried() -> None:
+    huge = "A" * (5 * 1024 * 1024 + 1)
+    items = [_tool_output([{"type": "input_image", "image_url": f"data:image/png;base64,{huge}"}])]
+    assert _image_blocks(None, items, []) == []
+    assert "not readable by this backend" in _prompt_text(None, items, [])
 
 
 def test_non_image_block_with_a_source_key_keeps_its_text() -> None:
     # The marker *replaces* the block it fires on, so a detector keyed on the mere
     # presence of `source` or `image_url` silently deletes real tool output. Match
     # the block type, the way compaction.py / sessions.py / live_view.py already do.
-    prompt = claude_bridge.build_prompt(
+    prompt = _prompt_text(
         None,
-        [
-            _tool_output([{"type": "output_text", "text": "see app.py:5", "source": "app.py"}]),
-        ],
+        [_tool_output([{"type": "output_text", "text": "see app.py:5", "source": "app.py"}])],
         [],
     )
     assert "see app.py:5" in prompt
@@ -334,3 +437,14 @@ def test_image_blocks_are_detected_by_type() -> None:
         assert claude_bridge._is_image_block({"type": block_type}) is True
     assert claude_bridge._is_image_block({"type": "output_text", "source": "app.py"}) is False
     assert claude_bridge._is_image_block({"type": "input_text", "text": "hi"}) is False
+
+
+def test_invalid_model_transcript_is_classified_and_surfaced() -> None:
+    # Recorded from claude 2.1.251 with a bogus slug: the CLI prints a bracketed
+    # diagnostic to stdout before the JSON stream, and reports the failure as a
+    # 404 whose wording says neither "not found" nor "invalid".
+    result = _fixture("error_invalid_model.jsonl")
+    with pytest.raises(claude_bridge.ClaudeStreamError) as exc:
+        claude_bridge.decode_result(result)
+    assert exc.value.status_code == 404
+    assert "issue with the selected model" in str(exc.value)

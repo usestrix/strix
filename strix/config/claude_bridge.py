@@ -3,9 +3,11 @@
 No subprocess, no network, this module is a function of bytes to objects, so it
 tests against recorded ``claude -p`` transcripts with no live calls.
 
-The contract with Claude Code (driven via ``--json-schema`` + ``--tools ""``):
-Strix renders one turn's worth of history and tool descriptions into a single
-text prompt; Claude Code replies with exactly
+The contract with Claude Code (driven via ``--input-format stream-json``,
+``--json-schema`` and ``--tools ""``): Strix renders one turn's worth of history
+and tool descriptions into a single ``user`` message whose ``content`` is an
+ordered list of blocks, prose interleaved with the images tools returned. Claude
+Code replies with exactly
 
     {"text": "<assistant prose>", "tool_calls": [{"name": ..., "arguments": {...}}, ...]}
 
@@ -77,28 +79,50 @@ class ClaudeStreamError(RuntimeError):
 
 
 # --------------------------------------------------------------------------- #
-# Request encoding: Strix history + tools -> one text prompt
+# Request encoding: Strix history + tools -> one stream-json user message
 # --------------------------------------------------------------------------- #
 
 
-def build_prompt(
+def build_message(
     system_instructions: str | None,
     input: str | list[TResponseInputItem],  # noqa: A002
     tools: list[Tool],
-) -> str:
-    """Render one turn into the single text blob fed to ``claude -p`` on stdin."""
-    sections: list[str] = []
+    *,
+    parallel_tool_calls: bool = True,
+) -> dict[str, Any]:
+    """The ``stream-json`` user message carrying one turn to ``claude -p`` on stdin."""
+    content = build_content(
+        system_instructions, input, tools, parallel_tool_calls=parallel_tool_calls
+    )
+    return {"type": "user", "message": {"role": "user", "content": content}}
+
+
+def build_content(
+    system_instructions: str | None,
+    input: str | list[TResponseInputItem],  # noqa: A002
+    tools: list[Tool],
+    *,
+    parallel_tool_calls: bool = True,
+) -> list[dict[str, Any]]:
+    """Render one turn as ordered content blocks: prose, with tool images in place."""
+    sections: list[list[Any]] = []
     if system_instructions:
-        sections.append("# System instructions\n\n" + system_instructions.strip())
+        sections.append(["# System instructions\n\n" + system_instructions.strip()])
     tool_block = _render_tools(tools)
     if tool_block:
-        sections.append(tool_block)
-    sections.append("# Conversation\n\n" + _render_input(input))
-    sections.append(_task_section(tools=bool(tool_block)))
-    return "\n\n".join(sections)
+        sections.append([tool_block])
+    sections.append(["# Conversation\n\n", *_render_input(input)])
+    sections.append([_task_section(tools=bool(tool_block), parallel=parallel_tool_calls)])
+
+    segments: list[Any] = []
+    for index, section in enumerate(sections):
+        if index:
+            segments.append("\n\n")
+        segments.extend(section)
+    return _coalesce(segments)
 
 
-def _task_section(*, tools: bool) -> str:
+def _task_section(*, tools: bool, parallel: bool = True) -> str:
     """Closing instruction. A tool-less turn is a plain completion, not an agent step.
 
     Strix calls this backend two ways: agent turns, which carry tools and must
@@ -114,11 +138,18 @@ def _task_section(*, tools: bool) -> str:
             "Answer the request above directly. Reply with the answer itself and "
             "nothing else, in exactly the format the instructions ask for."
         )
+    # parallel_tool_calls=False is what every other Strix route sends its
+    # provider, so say the same thing here rather than diverging by omission.
+    how_many = (
+        "Request only tools you need this step"
+        if parallel
+        else "Request at most one tool this step"
+    )
     return (
         "# Your task\n\n"
         "Produce the next single assistant step. Put your narration in `text`. "
         "To act, list the tools to run in `tool_calls` using the exact names and "
-        "argument shapes above. Request only tools you need this step; leave "
+        f"argument shapes above. {how_many}; leave "
         "`tool_calls` empty when no action is needed or the task is done."
     )
 
@@ -140,11 +171,44 @@ def _render_tools(tools: list[Tool]) -> str:
     return "# Available tools\n\n" + "\n\n".join(lines)
 
 
-def _render_input(input: str | list[TResponseInputItem]) -> str:  # noqa: A002
+def _coalesce(segments: list[Any]) -> list[dict[str, Any]]:
+    """Fold a segment stream (text runs and image blocks) into API content blocks.
+
+    Consecutive text merges, so a turn sends a handful of blocks rather than one
+    per history item, and a whitespace-only run is dropped: the API rejects an
+    empty text block.
+    """
+    content: list[dict[str, Any]] = []
+    buffer: list[str] = []
+
+    def flush() -> None:
+        text = "".join(buffer)
+        buffer.clear()
+        if text.strip():
+            content.append({"type": "text", "text": text})
+
+    for segment in segments:
+        if isinstance(segment, str):
+            buffer.append(segment)
+            continue
+        flush()
+        content.append(cast("dict[str, Any]", segment))
+    flush()
+    return content or [{"type": "text", "text": "(no content)"}]
+
+
+def _render_input(input: str | list[TResponseInputItem]) -> list[Any]:  # noqa: A002
     if isinstance(input, str):
-        return input
-    rendered = [line for item in input if (line := _render_item(_as_dict(item)))]
-    return "\n\n".join(rendered) if rendered else "(no prior messages)"
+        return [input]
+    segments: list[Any] = []
+    for item in input:
+        rendered = _render_item(_as_dict(item))
+        if not rendered:
+            continue
+        if segments:
+            segments.append("\n\n")
+        segments.extend(rendered)
+    return segments or ["(no prior messages)"]
 
 
 def _as_dict(item: Any) -> dict[str, Any]:
@@ -158,26 +222,34 @@ def _as_dict(item: Any) -> dict[str, Any]:
     return {}
 
 
-def _render_item(item: dict[str, Any]) -> str:
+def _render_item(item: dict[str, Any]) -> list[Any]:
+    """One history item as segments, or an empty list when there is nothing to replay."""
     itype = item.get("type")
     role = item.get("role")
 
     if itype in {"function_call", None} and item.get("name") and "arguments" in item:
         args = item.get("arguments")
         args_str = args if isinstance(args, str) else json.dumps(args)
-        return f"[assistant tool call] {item['name']}({args_str})"
+        return [f"[assistant tool call] {item['name']}({args_str})"]
 
     if itype == "function_call_output" or ("call_id" in item and "output" in item):
-        return f"[tool result] {_stringify(item.get('output'))}"
+        return _prefixed("[tool result] ", _content_segments(item.get("output")))
 
     if itype == "reasoning":
-        return ""  # opaque; nothing useful to replay as text
+        return []  # opaque; nothing useful to replay
 
     if role or itype == "message":
         speaker = str(role or "message").capitalize()
-        return f"{speaker}: {_stringify(item.get('content'))}"
+        return _prefixed(f"{speaker}: ", _content_segments(item.get("content")))
 
-    return ""
+    return []
+
+
+def _prefixed(prefix: str, segments: list[Any]) -> list[Any]:
+    """``segments`` behind a label, merged into the first run when that run is text."""
+    if segments and isinstance(segments[0], str):
+        return [prefix + segments[0], *segments[1:]]
+    return [prefix, *segments]
 
 
 # The block types the rest of Strix already treats as images: llm/compaction.py
@@ -186,41 +258,108 @@ def _render_item(item: dict[str, Any]) -> str:
 # ``source`` key instead swallows any text block that happens to carry one.
 _IMAGE_BLOCK_TYPES = frozenset({"image", "image_url", "input_image", "output_image"})
 
-_IMAGE_MARKER = "[image returned by tool, not visible to this backend]"
+_IMAGE_LABEL = "[image returned by tool]"
+_IMAGE_MARKER = "[image returned by tool, not readable by this backend]"
+
+# What the Anthropic content-block API accepts inline.
+_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/gif", "image/webp"})
+# A single image is rejected above roughly 5MB encoded. Strix keeps only
+# STRIX_MAX_CONTEXT_IMAGES (default 3) live per context, which bounds a turn.
+_MAX_IMAGE_B64_CHARS = 5 * 1024 * 1024
 
 
-def _stringify(content: Any) -> str:
+def _content_segments(content: Any) -> list[Any]:
     if content is None:
-        return ""
+        return []
     if isinstance(content, str):
-        return content
+        return [content]
     if isinstance(content, list):
-        return _stringify_blocks(content)
-    return json.dumps(content)
+        return _block_segments(content)
+    return [json.dumps(content)]
 
 
-def _stringify_blocks(blocks: Any) -> str:
-    """Render a content-block list, marking the images this bridge cannot carry."""
-    parts: list[str] = []
+def _block_segments(blocks: Any) -> list[Any]:
+    """A content-block list as segments, carrying its images through in place."""
+    segments: list[Any] = []
     for block in blocks:
-        block_dict = _as_dict(block)
-        if _is_image_block(block_dict):
-            # This text bridge cannot carry an image to claude -p. Emit an
-            # explicit marker rather than dropping it silently, so the model
-            # knows a screenshot was produced and does not narrate having
-            # inspected one it never received.
-            parts.append(_IMAGE_MARKER)
+        rendered = _one_block(_as_dict(block))
+        if not rendered:
             continue
-        text = block_dict.get("text") or block_dict.get("output") or block_dict.get("content")
-        if isinstance(text, str):
-            parts.append(text)
-        elif text is not None:
-            parts.append(json.dumps(text))
-    return "\n".join(parts)
+        if segments:
+            segments.append("\n")
+        segments.extend(rendered)
+    return segments
+
+
+def _one_block(block: dict[str, Any]) -> list[Any]:
+    if _is_image_block(block):
+        image = _image_block(block)
+        if image is None:
+            # Carrying it is not possible (remote URL, unsupported media type,
+            # oversized). Say so rather than dropping it silently, so the model
+            # does not narrate having inspected a screenshot it never received.
+            return [_IMAGE_MARKER]
+        return [_IMAGE_LABEL, image]
+    text = block.get("text") or block.get("output") or block.get("content")
+    if isinstance(text, str):
+        return [text]
+    if text is not None:
+        return [json.dumps(text)]
+    return []
 
 
 def _is_image_block(block: dict[str, Any]) -> bool:
     return str(block.get("type") or "").lower() in _IMAGE_BLOCK_TYPES
+
+
+def _image_block(block: dict[str, Any]) -> dict[str, Any] | None:
+    """The block as an Anthropic inline image, or None when it cannot be carried.
+
+    Only inline bytes travel. A remote-URL image is deliberately refused: handing
+    Anthropic a URL makes their servers fetch it, which on a pentest run would
+    mean reaching into the target's network from outside. Every image Strix
+    itself produces (the browser tool, the MCP client) is already a ``data:`` URL.
+    """
+    source = block.get("source")
+    if isinstance(source, dict):
+        return _inline_image(cast("dict[str, Any]", source))
+    url = block.get("image_url")
+    if isinstance(url, dict):
+        url = cast("dict[str, Any]", url).get("url")
+    if isinstance(url, str) and url.startswith("data:"):
+        return _inline_image(_parse_data_url(url))
+    return None
+
+
+def _parse_data_url(url: str) -> dict[str, Any]:
+    """``data:image/png;base64,AAA`` as a base64 source (empty dict when malformed)."""
+    header, separator, data = url.partition(",")
+    if not separator or ";base64" not in header.lower():
+        return {}
+    media_type = header[len("data:") :].split(";", 1)[0].strip().lower()
+    return {"type": "base64", "media_type": media_type, "data": data}
+
+
+def _inline_image(source: dict[str, Any]) -> dict[str, Any] | None:
+    if str(source.get("type") or "").lower() != "base64":
+        return None
+    media_type = str(source.get("media_type") or "").lower()
+    data = source.get("data")
+    if media_type not in _IMAGE_MEDIA_TYPES or not isinstance(data, str) or not data:
+        logger.debug("image block dropped: media_type %r", media_type)
+        return None
+    if len(data) > _MAX_IMAGE_B64_CHARS:
+        logger.debug("image block dropped: %d encoded bytes", len(data))
+        return None
+    return {"type": "image", "source": {"type": "base64", "media_type": media_type, "data": data}}
+
+
+def _flatten_text(content: Any) -> str:
+    """Just the prose in ``content``; an image contributes its marker instead."""
+    return "".join(
+        segment if isinstance(segment, str) else _IMAGE_MARKER
+        for segment in _content_segments(content)
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -261,7 +400,7 @@ def decode_result(result: dict[str, Any]) -> ModelResponse:
     """
     if result.get("is_error"):
         status = _error_status(result)
-        message = _stringify(result.get("result")) or result.get("subtype") or "claude -p error"
+        message = _flatten_text(result.get("result")) or result.get("subtype") or "claude -p error"
         raise ClaudeStreamError(str(message), status_code=status)
 
     payload = _structured_payload(result)
