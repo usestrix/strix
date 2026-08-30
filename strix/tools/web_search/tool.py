@@ -1,4 +1,4 @@
-"""``web_search`` — Perplexity-backed security-focused web search."""
+"""``web_search`` — configurable search backends (Perplexity / DuckDuckGo)."""
 
 from __future__ import annotations
 
@@ -41,21 +41,16 @@ Structure your response to be comprehensive yet concise, emphasizing the most cr
 security implications and details."""
 
 
-def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error class needs its own sanitized return
-    if not query or not query.strip():
-        return {"success": False, "error": "Query cannot be empty"}
-
+def _perplexity_search(query: str) -> dict[str, Any]:  # noqa: PLR0911
+    """Search using the Perplexity API (sonar-reasoning-pro model)."""
     api_key = load_settings().integrations.perplexity_api_key
     if not api_key:
-        logger.warning("web_search invoked without PERPLEXITY_API_KEY configured")
         return {
             "success": False,
-            "error": (
-                "Web search is not configured for this scan "
-                "(operator needs to set PERPLEXITY_API_KEY). Proceed without it"
-            ),
+            "error": "PERPLEXITY_API_KEY not configured",
         }
-    logger.info("web_search query (len=%d): %s", len(query), query[:120])
+
+    logger.info("web_search perplexity query (len=%d): %s", len(query), query[:120])
 
     url = "https://api.perplexity.ai/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
@@ -72,55 +67,132 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]
     except requests.exceptions.Timeout:
-        logger.warning("web_search timed out")
+        logger.warning("web_search perplexity timed out")
         return {
             "success": False,
-            "error": "Web search timed out. Try again or shorten the query",
+            "error": "Perplexity timed out",
         }
     except requests.exceptions.HTTPError as exc:
         status = exc.response.status_code if exc.response is not None else None
-        logger.exception("web_search HTTP error status=%s", status)
+        logger.exception("web_search perplexity HTTP error status=%s", status)
         if status is not None and 400 <= status < 500:
             return {
                 "success": False,
-                "error": (
-                    "Web search rejected the query. Refine it "
-                    "(more specific, shorter, no unusual characters) and retry"
-                ),
+                "error": f"Perplexity rejected the query (HTTP {status})",
             }
         return {
             "success": False,
-            "error": "Web search service is unavailable. Try again later",
+            "error": f"Perplexity service unavailable (HTTP {status})",
         }
     except requests.exceptions.RequestException:
-        logger.exception("web_search network error")
+        logger.exception("web_search perplexity network error")
         return {
             "success": False,
-            "error": "Web search network error. Try again later",
+            "error": "Perplexity network error",
         }
     except (KeyError, IndexError, ValueError):
-        logger.exception("web_search response shape unexpected")
+        logger.exception("web_search perplexity response shape unexpected")
         return {
             "success": False,
-            "error": "Web search returned an unexpected response. Try again",
+            "error": "Perplexity returned an unexpected response",
         }
     except Exception:
-        logger.exception("web_search failed")
+        logger.exception("web_search perplexity failed")
         return {
             "success": False,
-            "error": "Web search failed unexpectedly",
+            "error": "Perplexity search failed unexpectedly",
         }
     else:
         return {
             "success": True,
             "query": query,
             "content": content,
+            "provider": "perplexity",
         }
+
+
+def _ddg_search(query: str) -> dict[str, Any]:
+    """Search using DuckDuckGo (opt-in, no API key required, scraping-based)."""
+    try:
+        from ddgs import DDGS  # noqa: PLC0415 - lazy import
+    except ImportError:
+        logger.exception("ddgs package not installed")
+        return {
+            "success": False,
+            "error": "ddgs package not installed (pip install ddgs)",
+        }
+
+    logger.info("web_search ddg query (len=%d): %s", len(query), query[:120])
+
+    try:
+        results = DDGS().text(query, max_results=5)
+    except Exception:
+        logger.exception("web_search ddg failed")
+        return {
+            "success": False,
+            "error": "DuckDuckGo search failed. Try again later",
+        }
+
+    if not results:
+        return {
+            "success": False,
+            "error": "No results found. Refine the query and retry",
+        }
+
+    parts: list[str] = []
+    for r in results:
+        title = r.get("title", "")
+        body = r.get("body", "")
+        href = r.get("href", "")
+        parts.append(f"### {title}\n{body}\nSource: {href}")
+
+    return {
+        "success": True,
+        "query": query,
+        "content": "\n\n".join(parts),
+        "provider": "duckduckgo",
+    }
+
+
+def _do_search(query: str) -> dict[str, Any]:
+    if not query or not query.strip():
+        return {"success": False, "error": "Query cannot be empty"}
+
+    settings = load_settings()
+    backend = settings.integrations.web_search_backend
+
+    if backend == "duckduckgo":
+        return _ddg_search(query)
+
+    if backend == "perplexity" or backend is None:
+        api_key = settings.integrations.perplexity_api_key
+        if not api_key:
+            return {
+                "success": False,
+                "error": (
+                    "Web search is not configured for this scan "
+                    "(operator needs to set PERPLEXITY_API_KEY). Proceed without it"
+                ),
+            }
+        return _perplexity_search(query)
+
+    return {
+        "success": False,
+        "error": (
+            f"Unknown STRIX_WEB_SEARCH_BACKEND={backend!r}. "
+            "Valid options: 'perplexity', 'duckduckgo'"
+        ),
+    }
 
 
 @function_tool(timeout=330)
 async def web_search(ctx: RunContextWrapper, query: str) -> str:
-    """Real-time web search via Perplexity — your primary research tool.
+    """Real-time web search — your primary research tool.
+
+    Configure the search provider with STRIX_WEB_SEARCH_BACKEND:
+      - "perplexity" (default) — requires PERPLEXITY_API_KEY
+      - "duckduckgo" — free, opt-in, no API key needed
+        (may be unreliable from datacenter IPs)
 
     Use it liberally for anything that's not in your training data:
 
