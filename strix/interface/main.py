@@ -129,42 +129,58 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
     return None
 
 
+# Ordered most specific first: the generic auth test below matches the word
+# "authentication", which several of the more specific errors also contain, so
+# checking it first would hand every one of them the wrong advice.
+_CLAUDE_CODE_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("not on path", "claude code cli"),
+        "The Claude Code CLI isn't installed on this host. Install it, then:\n  claude /login",
+    ),
+    (
+        (
+            "subscription access for claude code",
+            "disabled claude subscription access",
+            "use an anthropic api key instead",
+        ),
+        "Your Anthropic organization has disabled Claude Code subscription access.\n"
+        "Ask an admin to enable it, or switch to the metered path:\n"
+        "  export STRIX_LLM=anthropic/claude-opus-5\n"
+        "  export LLM_API_KEY=<key>",
+    ),
+    (
+        # Verbatim from the CLI: "There's an issue with the selected model (X).
+        # It may not exist or you may not have access to it." A typo'd slug says
+        # neither "not found" nor "invalid", which is why this used to fall
+        # through to the generic connection-failed panel.
+        (
+            "issue with the selected model",
+            "unrecognized_model",
+            "may not exist or you may not have access",
+            "model not found",
+            "invalid model",
+        ),
+        "That model isn't available on your plan, or the slug is wrong. Use a model your "
+        "subscription includes, e.g. STRIX_LLM=claude-code/claude-sonnet-4-6.",
+    ),
+    (
+        ("429", "rate limit", "rate_limit", "overloaded"),
+        "Your Claude subscription is rate-limited. Multi-agent scans burst hard, "
+        "Max 20x is realistically needed; on Pro, use a quick scan with fewer agents.",
+    ),
+    (
+        ("401", "unauthorized", "not signed in", "invalid_grant", "authentication"),
+        "Your Claude Code session has expired. Sign in again:\n  claude /login",
+    ),
+)
+
+
 def _claude_code_error_hint(exc: BaseException) -> str | None:
     """Return an actionable hint for a known Claude Code subprocess error, or None."""
     joined = " ".join(_exception_messages(exc)).lower()
-    if "not on path" in joined or "claude code cli" in joined:
-        return (
-            "The Claude Code CLI isn't installed on this host. Install it, then:\n  claude /login"
-        )
-    if (
-        "401" in joined
-        or "unauthorized" in joined
-        or "not signed in" in joined
-        or "invalid_grant" in joined
-        or "authentication" in joined
-    ):
-        return "Your Claude Code session has expired. Sign in again:\n  claude /login"
-    if (
-        "subscription access for claude code" in joined
-        or "disabled claude subscription access" in joined
-        or "use an anthropic api key instead" in joined
-    ):
-        return (
-            "Your Anthropic organization has disabled Claude Code subscription access.\n"
-            "Ask an admin to enable it, or switch to the metered path:\n"
-            "  export STRIX_LLM=anthropic/claude-opus-5\n"
-            "  export LLM_API_KEY=<key>"
-        )
-    if "429" in joined or "rate limit" in joined or "overloaded" in joined:
-        return (
-            "Your Claude subscription is rate-limited. Multi-agent scans burst hard — "
-            "Max 20x is realistically needed; on Pro, use a quick scan with fewer agents."
-        )
-    if "model" in joined and ("not found" in joined or "invalid" in joined):
-        return (
-            "That model isn't available on your plan. Try a model your subscription "
-            "includes, e.g. STRIX_LLM=claude-code/claude-sonnet-4-6."
-        )
+    for markers, hint in _CLAUDE_CODE_HINTS:
+        if any(marker in joined for marker in markers):
+            return hint
     return None
 
 
