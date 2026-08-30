@@ -53,6 +53,26 @@ class ClaudeCodeError(Exception):
     """A Claude Code subprocess failed in a way Strix must surface to the user."""
 
 
+def is_transport_error(exc: BaseException) -> bool:
+    """Whether ``exc`` is a local Claude Code transport failure, cause chain included.
+
+    These are raised by the subprocess layer: the binary is missing, it would not
+    launch, the turn timed out, or the stream carried no result event. None of
+    them carry a status code, so without this they land in the statusless-retry
+    fallback and burn five attempts and roughly three minutes of backoff on a
+    condition an identical retry hits again. A genuine provider transient
+    arrives instead as a ``ClaudeStreamError`` with a status.
+    """
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ClaudeCodeError):
+            return True
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def claude_code_model(model_name: str | None) -> str | None:
     """The model slug behind a ``claude-code/<model>`` STRIX_LLM, or None.
 
@@ -83,6 +103,12 @@ def _run_claude(args: list[str]) -> subprocess.CompletedProcess[str]:
         [binary, *args],
         capture_output=True,
         text=True,
+        # Pinned, because text=True otherwise decodes with the host locale codec:
+        # the CLI emits UTF-8, and a console on a non-UTF-8 code page (cp1252,
+        # cp932) would raise UnicodeDecodeError straight out of a probe that is
+        # only supposed to answer a question.
+        encoding="utf-8",
+        errors="replace",
         timeout=_PROBE_TIMEOUT_S,
         check=False,
     )
@@ -117,10 +143,22 @@ def _parse_version(raw: str | None) -> tuple[int, int, int] | None:
     return (padded[0], padded[1], padded[2])
 
 
+def version_state() -> str:
+    """``"ok"``, ``"too_old"``, or ``"unknown"`` when the probe itself failed.
+
+    Preflight needs the three apart: "update your CLI" is the wrong thing to
+    tell someone whose binary did not run, or whose version string this cannot
+    read, and both of those reach here as a missing version.
+    """
+    parsed = _parse_version(version())
+    if parsed is None:
+        return "unknown"
+    return "ok" if parsed >= MIN_CLAUDE_VERSION else "too_old"
+
+
 def meets_min_version() -> bool:
     """True if the installed ``claude`` is at least :data:`MIN_CLAUDE_VERSION`."""
-    parsed = _parse_version(version())
-    return parsed is not None and parsed >= MIN_CLAUDE_VERSION
+    return version_state() == "ok"
 
 
 def is_available() -> bool:
@@ -129,25 +167,51 @@ def is_available() -> bool:
 
 
 @lru_cache(maxsize=1)
-def session_state() -> str:
-    """One of ``"subscription"``, ``"api_key"``, ``"signed_out"``, ``"unknown"``.
-
-    Parses ``claude auth status`` JSON. ``"unknown"`` means the probe itself
-    failed (binary missing, timeout, unparseable output), the caller decides
-    whether that is fatal.
+def _status_payload() -> dict[str, Any] | None:
+    """``claude auth status --json``, or None when the probe failed.
 
     Cached: the CLI's sign-in state does not change within a scan process, and
-    several call sites (preflight, the cost resolver) ask for it per run.
+    several call sites (preflight, the auth CLI, the cost resolver) ask about it
+    per run.
     """
     try:
         result = _run_claude(["auth", "status", "--json"])
     except (ClaudeCodeError, OSError, subprocess.SubprocessError):
-        return "unknown"
-    payload = _parse_status_json(result.stdout)
+        return None
+    return _parse_status_json(result.stdout)
+
+
+def api_key_source() -> str | None:
+    """Where Claude Code took an API key from, when one is overriding the sign-in.
+
+    ``"ANTHROPIC_API_KEY"`` for the environment variable, or the name of another
+    source the CLI reports. None when the session is not on a key.
+    """
+    payload = _status_payload()
+    source = payload.get("apiKeySource") if payload else None
+    return str(source) if source else None
+
+
+def session_state() -> str:
+    """One of ``"subscription"``, ``"api_key"``, ``"signed_out"``, ``"unknown"``.
+
+    Derived from ``claude auth status --json``. ``"unknown"`` means the probe
+    itself failed (binary missing, timeout, unparseable output); the caller
+    decides whether that is fatal.
+    """
+    payload = _status_payload()
     if payload is None:
         return "unknown"
     if not payload.get("loggedIn"):
         return "signed_out"
+    if payload.get("apiKeySource"):
+        # An ANTHROPIC_API_KEY in the environment (or an apiKeyHelper) takes
+        # over inference while ``authMethod`` still reads "claude.ai" and only
+        # ``apiKeySource`` gives it away. Strix inherits its own environment
+        # into the child, so this is the common case of someone who has ever
+        # used the Anthropic API. Calling it a subscription would zero a real
+        # bill and leave the budget guard nothing to stop.
+        return "api_key"
     method = str(payload.get("authMethod") or "").lower()
     provider = str(payload.get("apiProvider") or "").lower()
     if method == "claude.ai" or (provider == "firstparty" and payload.get("subscriptionType")):

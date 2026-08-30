@@ -10,6 +10,7 @@ from rich.console import Console
 
 from strix.config import claude_code, loader
 from strix.config.loader import load_settings
+from strix.core.hooks import recomputed_budget_flags
 from strix.interface import environment
 from strix.report.usage import LLMUsageLedger
 
@@ -36,8 +37,9 @@ def _preflight(monkeypatch: pytest.MonkeyPatch, *, model: str, state: str, prese
     loader._cached = None
     loader._override = None
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude" if present else None)
-    monkeypatch.setattr(claude_code, "meets_min_version", lambda: True)
+    monkeypatch.setattr(claude_code, "version_state", lambda: "ok")
     monkeypatch.setattr(claude_code, "session_state", lambda: state)
+    monkeypatch.setattr(claude_code, "api_key_source", lambda: None)
     environment._validate_claude_code(Console(), load_settings().llm.model)
 
 
@@ -66,11 +68,47 @@ def test_preflight_old_version_exits(
     loader._cached = None
     loader._override = None
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
-    monkeypatch.setattr(claude_code, "meets_min_version", lambda: False)
+    monkeypatch.setattr(claude_code, "version_state", lambda: "too_old")
     monkeypatch.setattr(claude_code, "version", lambda: "1.0.0")
     with pytest.raises(SystemExit) as exc:
         environment._validate_claude_code(Console(), "claude-code/claude-opus-4-8")
     assert exc.value.code == 1
+
+
+def test_preflight_unreadable_version_says_so(
+    monkeypatch: pytest.MonkeyPatch, _reset_settings: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A binary that will not run is not the same as an old one, and "update your
+    # CLI" sends the user somewhere that cannot fix it.
+    monkeypatch.setenv("STRIX_LLM", "claude-code/claude-opus-4-8")
+    loader._cached = None
+    loader._override = None
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(claude_code, "version_state", lambda: "unknown")
+    monkeypatch.setattr(claude_code, "version", lambda: None)
+    with pytest.raises(SystemExit) as exc:
+        environment._validate_claude_code(Console(), "claude-code/claude-opus-4-8")
+    assert exc.value.code == 1
+    out = capsys.readouterr().out
+    assert "Couldn't read a version" in out
+    assert "too old" not in out
+
+
+def test_preflight_api_key_warning_names_the_env_override(
+    monkeypatch: pytest.MonkeyPatch, _reset_settings: None, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # An ANTHROPIC_API_KEY left in the environment silently takes over inference
+    # while `claude auth status` still shows the claude.ai account, so the
+    # warning has to name the cause to be actionable.
+    monkeypatch.setenv("STRIX_LLM", "claude-code/claude-opus-4-8")
+    loader._cached = None
+    loader._override = None
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(claude_code, "version_state", lambda: "ok")
+    monkeypatch.setattr(claude_code, "session_state", lambda: "api_key")
+    monkeypatch.setattr(claude_code, "api_key_source", lambda: "ANTHROPIC_API_KEY")
+    environment._validate_claude_code(Console(), "claude-code/claude-opus-4-8")
+    assert "ANTHROPIC_API_KEY" in capsys.readouterr().out
 
 
 def test_preflight_subscription_passes(
@@ -111,3 +149,33 @@ def test_claude_code_run_records_tokens_at_zero_cost() -> None:
     assert record["cost"] == 0.0
     assert record["total_tokens"] == 1245
     assert record["input_tokens"] == 1200
+
+
+def test_metered_claude_code_run_feeds_the_budget_guard() -> None:
+    # An API-key session meters normally. The CLI's own per-turn cost is the only
+    # cost signal this backend has (it never reaches litellm_cost_callback), so
+    # the guard sees nothing at all unless the ledger takes it.
+    ledger = LLMUsageLedger()
+    ledger.zero_cost = False
+    ledger.record(
+        agent_id="recon",
+        usage=_usage(1200, 45),
+        agent_name="strix",
+        model="claude-code/claude-opus-4-8",
+    )
+    ledger.record_observed_cost(4.10)
+    ledger.record_observed_cost(1.05)
+
+    cost = ledger.to_record()["cost"]
+    assert cost == pytest.approx(5.15)
+    # recomputed_budget_flags is what stops a headless scan.
+    assert recomputed_budget_flags(cost, 5.0, interactive=False) == (True, True)
+    assert recomputed_budget_flags(cost, 100.0, interactive=False) == (False, False)
+
+
+def test_subscription_run_never_reaches_the_budget_guard() -> None:
+    ledger = LLMUsageLedger()
+    ledger.zero_cost = True
+    ledger.record_observed_cost(4.10)
+    assert ledger.to_record()["cost"] == 0.0
+    assert recomputed_budget_flags(0.0, 5.0, interactive=False) == (False, False)

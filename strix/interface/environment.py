@@ -32,11 +32,19 @@ def _validate_claude_code(console: Console, model: str | None) -> None:
             "Install it on this host, then run [cyan]claude /login[/] on your Pro/Max plan."
         )
         sys.exit(1)
-    if not claude_code.meets_min_version():
-        major, minor, patch = claude_code.MIN_CLAUDE_VERSION
+    floor = ".".join(str(part) for part in claude_code.MIN_CLAUDE_VERSION)
+    version_state = claude_code.version_state()
+    if version_state == "too_old":
         console.print(
-            f"[red]Your Claude Code CLI ({claude_code.version() or 'unknown'}) is too old.[/] "
-            f"Strix needs at least [cyan]{major}.{minor}.{patch}[/]. Update it and retry."
+            f"[red]Your Claude Code CLI ({claude_code.version()}) is too old.[/] "
+            f"Strix needs at least [cyan]{floor}[/]. Update it and retry."
+        )
+        sys.exit(1)
+    if version_state == "unknown":
+        console.print(
+            "[red]Couldn't read a version from the Claude Code CLI on PATH.[/] "
+            f"Strix needs [cyan]{floor}[/] or newer. Check that "
+            "[cyan]claude --version[/] runs on this host."
         )
         sys.exit(1)
 
@@ -48,10 +56,19 @@ def _validate_claude_code(console: Console, model: str | None) -> None:
         )
         sys.exit(1)
     if state == "api_key":
+        source = claude_code.api_key_source()
+        # Naming the source matters: an ANTHROPIC_API_KEY left in the environment
+        # overrides a perfectly good Pro/Max login, and `claude auth status`
+        # still shows the claude.ai account, so the cause is not obvious.
+        cause = (
+            f"[cyan]{source}[/] is overriding your sign-in, so the"
+            if source
+            else "The Claude Code CLI is on an API key, not a subscription, so the"
+        )
         console.print(
-            "[yellow]Warning:[/] the Claude Code CLI is running on an API key, not a "
-            "subscription. This scan will meter against that key rather than run at $0. "
-            "Run [cyan]claude /login[/] with your Pro/Max account to use the subscription."
+            f"[yellow]Warning:[/] {cause} scan will meter against that key rather "
+            "than run at $0. Unset it, or run [cyan]claude /login[/] with your "
+            "Pro/Max account, to use the subscription."
         )
     elif state == "unknown":
         console.print(

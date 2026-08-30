@@ -21,7 +21,7 @@ def _clear_probe_caches() -> None:
     A test may swap ``session_state`` for a plain stub, and fixture teardown can
     run before ``monkeypatch`` undoes that, so the stub has no ``cache_clear``.
     """
-    for probe in (claude_code._raw_version, claude_code.session_state):
+    for probe in (claude_code._raw_version, claude_code._status_payload, claude_code.session_state):
         cache_clear = getattr(probe, "cache_clear", None)
         if cache_clear is not None:
             cache_clear()
@@ -152,6 +152,19 @@ def _fake_status(payload: dict[str, object]) -> subprocess.CompletedProcess[str]
             "subscription",
         ),
         ({"loggedIn": True, "authMethod": "apiKey"}, "api_key"),
+        # An ANTHROPIC_API_KEY overrides a perfectly good claude.ai login while
+        # authMethod still reads "claude.ai"; only apiKeySource gives it away.
+        # Reading this as a subscription would zero a real bill.
+        (
+            {
+                "loggedIn": True,
+                "authMethod": "claude.ai",
+                "apiProvider": "firstParty",
+                "subscriptionType": None,
+                "apiKeySource": "ANTHROPIC_API_KEY",
+            },
+            "api_key",
+        ),
         ({"loggedIn": False}, "signed_out"),
     ],
 )
@@ -188,3 +201,77 @@ def test_is_authenticated(monkeypatch: pytest.MonkeyPatch) -> None:
     assert claude_code.is_authenticated() is True
     monkeypatch.setattr(claude_code, "session_state", lambda: "signed_out")
     assert claude_code.is_authenticated() is False
+
+
+def test_api_key_source_names_the_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(
+        claude_code,
+        "_run_claude",
+        lambda _args: _fake_status(
+            {"loggedIn": True, "authMethod": "claude.ai", "apiKeySource": "ANTHROPIC_API_KEY"}
+        ),
+    )
+    assert claude_code.api_key_source() == "ANTHROPIC_API_KEY"
+
+
+def test_api_key_source_is_none_on_a_subscription(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(
+        claude_code,
+        "_run_claude",
+        lambda _args: _fake_status(
+            {"loggedIn": True, "authMethod": "claude.ai", "subscriptionType": "max"}
+        ),
+    )
+    assert claude_code.api_key_source() is None
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("2.1.220 (Claude Code)", "ok"),
+        ("2.1.251 (Claude Code)", "ok"),
+        ("2.1.219 (Claude Code)", "too_old"),
+        ("2.0.0", "too_old"),
+        (None, "unknown"),
+        ("not-a-version", "unknown"),
+    ],
+)
+def test_version_state(monkeypatch: pytest.MonkeyPatch, raw: str | None, expected: str) -> None:
+    # "update your CLI" is the wrong advice for a binary that would not run at
+    # all, so a failed probe has to stay distinguishable from an old version.
+    monkeypatch.setattr(claude_code, "version", lambda: raw)
+    assert claude_code.version_state() == expected
+    assert claude_code.meets_min_version() is (expected == "ok")
+
+
+def test_probes_decode_as_utf8_whatever_the_host_locale(monkeypatch: pytest.MonkeyPatch) -> None:
+    # text=True alone decodes with the locale codec, so a console on cp1252/cp932
+    # would raise UnicodeDecodeError out of a probe that only answers a question.
+    recorded: dict[str, object] = {}
+
+    def _run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        recorded.update(kwargs)
+        return subprocess.CompletedProcess(args=argv, returncode=0, stdout="{}", stderr="")
+
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(subprocess, "run", _run)
+    claude_code._run_claude(["--version"])
+    assert recorded["encoding"] == "utf-8"
+    assert recorded["errors"] == "replace"
+
+
+def test_transport_errors_are_recognised_through_the_cause_chain() -> None:
+    # The retry policy asks this to keep a missing binary or a turn timeout out
+    # of the statusless-retry fallback, which would spend five attempts on it.
+    error = claude_code.ClaudeCodeError("the `claude` CLI is not on PATH")
+    assert claude_code.is_transport_error(error) is True
+    try:
+        try:
+            raise error
+        except claude_code.ClaudeCodeError as exc:
+            raise RuntimeError("wrapped") from exc
+    except RuntimeError as wrapped:
+        assert claude_code.is_transport_error(wrapped) is True
+    assert claude_code.is_transport_error(RuntimeError("unrelated")) is False
