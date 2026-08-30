@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from strix.config import claude_code, codex
+from strix.config import claude_code, codex, loader
 from strix.interface import auth_cli
 
 
@@ -114,3 +114,90 @@ def test_status_none_signed_in(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(codex, "read_record", lambda: None)
     monkeypatch.setattr(claude_code, "session_state", lambda: "signed_out")
     assert auth_cli.run_auth(["status"]) == 1
+
+
+def _status_output(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    *,
+    model: str,
+    chatgpt_record: dict[str, str] | None,
+    claude_state: str,
+) -> str:
+    monkeypatch.setenv("STRIX_LLM", model)
+    loader._cached = None
+    loader._override = None
+    monkeypatch.setattr(codex, "read_record", lambda: chatgpt_record)
+    monkeypatch.setattr(claude_code, "session_state", lambda: claude_state)
+    auth_cli.run_auth(["status"])
+    loader._cached = None
+    loader._override = None
+    return capsys.readouterr().out
+
+
+def test_status_does_not_let_claude_vouch_for_chatgpt(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # A Claude sign-in must not make a chatgpt/ model look ready: the status line
+    # used to key on the model prefix alone, so being signed in to *either*
+    # backend claimed the configured model "uses the subscription".
+    out = _status_output(
+        monkeypatch,
+        capsys,
+        model="chatgpt/gpt-5.4",
+        chatgpt_record=None,
+        claude_state="subscription",
+    )
+    assert "needs a ChatGPT sign-in" in out
+    assert "Runs use the" not in out
+
+
+def test_status_does_not_let_chatgpt_vouch_for_claude(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    out = _status_output(
+        monkeypatch,
+        capsys,
+        model="claude-code/claude-opus-5",
+        chatgpt_record={"account_id": "acct"},
+        claude_state="signed_out",
+    )
+    assert "needs a Claude Code sign-in" in out
+
+
+def test_status_does_not_promise_a_subscription_on_an_api_key(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The line above already warned the session is metering; claiming the run
+    # "uses the subscription" two lines later contradicts it.
+    out = _status_output(
+        monkeypatch,
+        capsys,
+        model="claude-code/claude-opus-5",
+        chatgpt_record=None,
+        claude_state="api_key",
+    )
+    assert "would meter against that API key" in out
+    assert "Runs use the" not in out
+
+
+def test_status_confirms_each_backend_on_its_own_sign_in(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    claude = _status_output(
+        monkeypatch,
+        capsys,
+        model="claude-code/claude-opus-5",
+        chatgpt_record=None,
+        claude_state="subscription",
+    )
+    assert "Runs use the Claude subscription" in claude
+
+    chatgpt = _status_output(
+        monkeypatch,
+        capsys,
+        model="chatgpt/gpt-5.4",
+        chatgpt_record={"account_id": "acct"},
+        claude_state="signed_out",
+    )
+    assert "Runs use the ChatGPT subscription" in chatgpt

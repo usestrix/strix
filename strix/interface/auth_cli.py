@@ -285,6 +285,11 @@ def _login_claude(console: Console) -> int:
     except (claude_code.ClaudeCodeError, OSError, subprocess.SubprocessError) as exc:
         console.print(f"[red]Sign-in failed:[/] {exc}")
         return 1
+    except KeyboardInterrupt:
+        # The child shares this terminal, so Ctrl-C reaches both; report the
+        # cancellation rather than unwinding a traceback over the CLI's own output.
+        console.print("\n[yellow]Sign-in cancelled.[/]")
+        return 130
     if result.returncode != 0:
         console.print("[red]Sign-in failed.[/] Try running [cyan]claude /login[/] directly.")
         return result.returncode
@@ -323,15 +328,47 @@ def _status(console: Console) -> int:
         )
         return 1
 
-    model = load_settings().llm.model
-    if codex.subscription_model(model) or claude_code.claude_code_model(model):
-        console.print(f"  Runs use the subscription (STRIX_LLM=[bold]{model}[/]).")
-    else:
-        console.print(
-            "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to a [cyan]chatgpt/[/] or "
-            "[cyan]claude-code/[/] model to run on a subscription."
-        )
+    _print_model_line(console, chatgpt_signed_in=record is not None, claude_state=state)
     return 0
+
+
+def _print_model_line(console: Console, *, chatgpt_signed_in: bool, claude_state: str) -> None:
+    """Say what the configured STRIX_LLM will actually do.
+
+    Each backend is judged on its own sign-in. Asking only whether the model
+    carries a subscription prefix would tell someone signed in to Claude that a
+    ``chatgpt/`` run "uses the subscription" while ChatGPT is not signed in at
+    all, and would promise a subscription for a ``claude-code/`` run that the
+    line above just warned is metering against an API key.
+    """
+    model = load_settings().llm.model
+    if codex.subscription_model(model):
+        if chatgpt_signed_in:
+            console.print(f"  Runs use the ChatGPT subscription (STRIX_LLM=[bold]{model}[/]).")
+        else:
+            console.print(
+                f"  [yellow]STRIX_LLM=[bold]{model}[/] needs a ChatGPT sign-in.[/] "
+                "Run [cyan]strix auth login chatgpt[/]."
+            )
+        return
+    if claude_code.claude_code_model(model):
+        if claude_state == "subscription":
+            console.print(f"  Runs use the Claude subscription (STRIX_LLM=[bold]{model}[/]).")
+        elif claude_state == "api_key":
+            console.print(
+                f"  [yellow]STRIX_LLM=[bold]{model}[/] would meter against that API key,[/] "
+                "not the subscription."
+            )
+        else:
+            console.print(
+                f"  [yellow]STRIX_LLM=[bold]{model}[/] needs a Claude Code sign-in.[/] "
+                "Run [cyan]strix auth login claude[/]."
+            )
+        return
+    console.print(
+        "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to a [cyan]chatgpt/[/] or "
+        "[cyan]claude-code/[/] model to run on a subscription."
+    )
 
 
 def _logout(console: Console, argv: list[str]) -> int:
@@ -342,6 +379,9 @@ def _logout(console: Console, argv: list[str]) -> int:
         except (claude_code.ClaudeCodeError, OSError, subprocess.SubprocessError) as exc:
             console.print(f"[red]Logout failed:[/] {exc}")
             return 1
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Logout cancelled.[/]")
+            return 130
         if result.returncode != 0:
             return result.returncode
         console.print(
