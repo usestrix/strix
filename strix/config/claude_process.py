@@ -169,7 +169,8 @@ def _build_argv(slug: str, extra_args: list[str], *, structured: bool = True) ->
     if binary is None:
         raise claude_code.ClaudeCodeError(
             "STRIX_LLM=claude-code/... needs the Claude Code CLI on PATH. "
-            "Install it, then run `claude /login`."
+            "Install it, then run `claude /login`.",
+            retryable=False,
         )
     argv = [binary, *_BASE_ARGS, "--model", slug]
     if structured:

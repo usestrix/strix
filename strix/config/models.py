@@ -75,7 +75,7 @@ def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
         return False
     if codex.is_content_guardrail_error(context.error):
         return False
-    if claude_code.is_transport_error(context.error):
+    if claude_code.is_permanent_error(context.error):
         return False
     return normalized.status_code is None
 

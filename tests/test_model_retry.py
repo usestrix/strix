@@ -86,23 +86,49 @@ def test_claude_code_entitlement_error_is_not_retried() -> None:
     assert _retries(_normalize_retry_error(denied, None), denied) is False
 
 
-def test_claude_code_transport_failure_is_not_retried() -> None:
-    # A missing binary, a failed spawn, a turn timeout, or a stream with no
-    # result event all arrive with no status code, so without an explicit rule
-    # they land in the statusless fallback and burn five attempts plus roughly
-    # three minutes of backoff on something an identical retry hits again.
+def test_claude_code_missing_binary_is_not_retried() -> None:
+    # It carries no status code, so without an explicit rule it lands in the
+    # statusless fallback and burns five attempts plus roughly three minutes of
+    # backoff, per turn and per agent, on a binary that is not installed.
+    missing = claude_code.ClaudeCodeError(
+        "STRIX_LLM=claude-code/... needs the Claude Code CLI on PATH.", retryable=False
+    )
+    assert _retries(_normalize_retry_error(missing, None), missing) is False
+
+    # Wrapped by the SDK, it is still recognised.
+    try:
+        try:
+            raise missing
+        except claude_code.ClaudeCodeError as exc:
+            raise RuntimeError("model call failed") from exc
+    except RuntimeError as wrapped:
+        assert _retries(_normalize_retry_error(wrapped, None), wrapped) is False
+
+
+def test_claude_code_transient_transport_failures_still_retry() -> None:
+    # A turn that timed out, crashed, or produced no result event may well clear
+    # on the next attempt; vetoing those too would kill an agent outright the
+    # first time one heavy turn ran past LLM_TIMEOUT.
     for message in (
-        "STRIX_LLM=claude-code/... needs the Claude Code CLI on PATH.",
-        "could not launch claude -p: [Errno 2] No such file or directory",
         "claude -p timed out after 300s",
+        "claude -p exited with code 1: (no stderr)",
         "claude -p produced no result event (stderr: (no stderr))",
+        "could not launch claude -p: [Errno 24] Too many open files",
     ):
         failure = claude_code.ClaudeCodeError(message)
-        assert _retries(_normalize_retry_error(failure, None), failure) is False
+        assert _retries(_normalize_retry_error(failure, None), failure) is True
 
     # A genuine provider transient still carries a status and still retries.
     overloaded = claude_bridge.ClaudeStreamError("API Error: Overloaded", status_code=529)
     assert _retries(_normalize_retry_error(overloaded, None), overloaded) is True
+
+
+def test_claude_code_context_overflow_skips_the_retry_ladder() -> None:
+    # Retrying an overflow cannot clear it; only compacting can. Untagged it would
+    # hit the statusless fallback and spend five full-context turns first, which
+    # no other route does because they all see a typed 400 here.
+    tagged = claude_bridge.ClaudeStreamError("prompt is too long", status_code=400)
+    assert _retries(_normalize_retry_error(tagged, None), tagged) is False
 
 
 def test_timeout_error_is_retried() -> None:

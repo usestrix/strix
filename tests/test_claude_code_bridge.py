@@ -448,3 +448,27 @@ def test_invalid_model_transcript_is_classified_and_surfaced() -> None:
         claude_bridge.decode_result(result)
     assert exc.value.status_code == 404
     assert "issue with the selected model" in str(exc.value)
+
+
+@pytest.mark.parametrize(
+    ("result", "expected"),
+    [
+        # An untagged overflow becomes a 400: no retry policy lists it and
+        # compaction recognises it, so the turn goes straight to compact-and-retry
+        # instead of spending five full-context turns first.
+        ({"result": "API Error: prompt is too long: 1050000 > 1000000"}, 400),
+        ({"result": "input is too long for the context window"}, 400),
+        ({"result": "API Error: 429 rate_limit_error"}, 429),
+        ({"result": "API Error: Overloaded"}, 529),
+        (
+            {"result": "Your organization has disabled Claude subscription access for Claude Code"},
+            403,
+        ),
+        ({"result": "something else entirely"}, None),
+        # bool is an int subclass, and True is not a status code.
+        ({"api_error_status": True, "result": "API Error: Overloaded"}, 529),
+        ({"api_error_status": 404, "result": "bad model"}, 404),
+    ],
+)
+def test_error_status_classification(result: dict[str, Any], expected: int | None) -> None:
+    assert claude_bridge._error_status(result) == expected

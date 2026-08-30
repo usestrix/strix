@@ -482,8 +482,26 @@ _ENTITLEMENT_MARKERS = (
 )
 
 
+# A context overflow the CLI reports without a status. Left untagged it reaches
+# the statusless-retry fallback, which spends five full-context turns on it
+# before the runner ever gets to compact and retry, which is the only thing that
+# can actually clear it. Every other route sees a typed 400 here and skips
+# straight to that recovery. ``llm/compaction.py`` holds the authoritative
+# marker list; these are the phrasings this transport can surface untagged.
+_OVERFLOW_MARKERS = (
+    "prompt is too long",
+    "input is too long",
+    "context length",
+    "context window",
+    "too many tokens",
+)
+
+
 def _error_status(result: dict[str, Any]) -> int | None:
     explicit = result.get("api_error_status")
+    if isinstance(explicit, bool):
+        # bool is an int subclass; a True here is not a status code.
+        explicit = None
     if isinstance(explicit, int):
         return explicit
     haystack = f"{result.get('result', '')} {result.get('subtype', '')}".lower()
@@ -497,6 +515,10 @@ def _error_status(result: dict[str, Any]) -> int | None:
         return 429
     if "overloaded" in haystack or "529" in haystack:
         return 529
+    if any(marker in haystack for marker in _OVERFLOW_MARKERS):
+        # 400, which no retry policy lists and which compaction recognises, so the
+        # turn goes straight to compact-and-retry.
+        return 400
     return None
 
 

@@ -50,23 +50,31 @@ _PROBE_TIMEOUT_S = 8
 
 
 class ClaudeCodeError(Exception):
-    """A Claude Code subprocess failed in a way Strix must surface to the user."""
+    """A Claude Code subprocess failed in a way Strix must surface to the user.
+
+    ``retryable`` is False only when an identical second attempt cannot succeed,
+    which in practice means the CLI is not installed. A turn that timed out,
+    crashed, or produced no result event may well clear, so those stay on the
+    normal retry path.
+    """
+
+    def __init__(self, message: str, *, retryable: bool = True) -> None:
+        super().__init__(message)
+        self.retryable = retryable
 
 
-def is_transport_error(exc: BaseException) -> bool:
-    """Whether ``exc`` is a local Claude Code transport failure, cause chain included.
+def is_permanent_error(exc: BaseException) -> bool:
+    """Whether ``exc`` is a Claude Code failure no retry can clear, cause chain included.
 
-    These are raised by the subprocess layer: the binary is missing, it would not
-    launch, the turn timed out, or the stream carried no result event. None of
-    them carry a status code, so without this they land in the statusless-retry
-    fallback and burn five attempts and roughly three minutes of backoff on a
-    condition an identical retry hits again. A genuine provider transient
-    arrives instead as a ``ClaudeStreamError`` with a status.
+    Such an error carries no status code, so without this it lands in the
+    statusless-retry fallback and burns five attempts and roughly three minutes of
+    backoff per turn, per agent, on a missing binary. The chain is walked because
+    the SDK may wrap what the transport raised.
     """
     seen: set[int] = set()
     current: BaseException | None = exc
     while current is not None and id(current) not in seen:
-        if isinstance(current, ClaudeCodeError):
+        if isinstance(current, ClaudeCodeError) and not current.retryable:
             return True
         seen.add(id(current))
         current = current.__cause__ or current.__context__
@@ -98,7 +106,7 @@ def binary_path() -> str | None:
 def _run_claude(args: list[str]) -> subprocess.CompletedProcess[str]:
     binary = binary_path()
     if binary is None:
-        raise ClaudeCodeError("the `claude` CLI is not on PATH")
+        raise ClaudeCodeError("the `claude` CLI is not on PATH", retryable=False)
     return subprocess.run(  # noqa: S603  # trusted binary, fixed argv, no shell
         [binary, *args],
         capture_output=True,
