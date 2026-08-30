@@ -607,6 +607,15 @@ func (m Model) viewerView(width int) string {
 	}
 }
 
+// subscriptionLabel names the backend a subscription run is on. Strix has two,
+// and reporting every one of them as ChatGPT mislabels a claude-code/ run.
+func subscriptionLabel(model string) string {
+	if strings.HasPrefix(strings.ToLower(model), "claude-code/") {
+		return "Claude subscription"
+	}
+	return "ChatGPT subscription"
+}
+
 func (m Model) statsView() string {
 	w := lipgloss.NewStyle().Foreground(white)
 	var b strings.Builder
@@ -617,7 +626,7 @@ func (m Model) statsView() string {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(lipgloss.NewStyle().Foreground(green).Render("ChatGPT subscription"))
+		b.WriteString(lipgloss.NewStyle().Foreground(green).Render(subscriptionLabel(m.snapshot.Model)))
 	}
 	total := numberValue(m.snapshot.Usage["total_tokens"])
 	if total > 0 {
