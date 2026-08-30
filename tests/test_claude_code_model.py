@@ -12,7 +12,12 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
-from openai.types.responses import ResponseCompletedEvent
+from openai.types.responses import (
+    ResponseCompletedEvent,
+    ResponseFunctionToolCall,
+    ResponseOutputMessage,
+    ResponseOutputText,
+)
 
 from strix.config import claude_bridge, claude_code, claude_process, codex, loader
 from strix.config.loader import load_settings
@@ -85,8 +90,13 @@ def test_stream_response_yields_one_completed_event(monkeypatch: pytest.MonkeyPa
     assert len(events) == 1
     assert isinstance(events[0], ResponseCompletedEvent)
     response = events[0].response
-    assert response.output[0].content[0].text.startswith("Reconnaissance")
+    message = response.output[0]
+    assert isinstance(message, ResponseOutputMessage)
+    block = message.content[0]
+    assert isinstance(block, ResponseOutputText)
+    assert block.text.startswith("Reconnaissance")
     # 1200 raw input + 29225 cache reads + 24303 cache writes, as _decode_usage folds them.
+    assert response.usage is not None
     assert response.usage.input_tokens == 54_728
 
 
@@ -145,7 +155,7 @@ def test_get_response_returns_model_response(monkeypatch: pytest.MonkeyPatch) ->
             prompt=None,
         )
     )
-    calls = [i for i in response.output if getattr(i, "type", None) == "function_call"]
+    calls = [i for i in response.output if isinstance(i, ResponseFunctionToolCall)]
     assert [c.name for c in calls] == ["shell", "browser"]
 
 
@@ -206,6 +216,7 @@ def test_claude_code_takes_priority_over_codex(
     load_settings()
 
     model = StrixProvider().get_model("claude-code/claude-opus-4-8")
+    assert isinstance(model, _TurnGuardModel)
     assert isinstance(model._inner, _ClaudeCodeModel)
 
 

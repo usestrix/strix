@@ -195,24 +195,28 @@ def _stringify(content: Any) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        parts: list[str] = []
-        blocks: list[Any] = content
-        for block in blocks:
-            block_dict = _as_dict(block)
-            if _is_image_block(block_dict):
-                # This text bridge cannot carry an image to claude -p. Emit an
-                # explicit marker rather than dropping it silently, so the model
-                # knows a screenshot was produced and does not narrate having
-                # inspected one it never received.
-                parts.append(_IMAGE_MARKER)
-                continue
-            text = block_dict.get("text") or block_dict.get("output") or block_dict.get("content")
-            if isinstance(text, str):
-                parts.append(text)
-            elif text is not None:
-                parts.append(json.dumps(text))
-        return "\n".join(parts)
+        return _stringify_blocks(content)
     return json.dumps(content)
+
+
+def _stringify_blocks(blocks: Any) -> str:
+    """Render a content-block list, marking the images this bridge cannot carry."""
+    parts: list[str] = []
+    for block in blocks:
+        block_dict = _as_dict(block)
+        if _is_image_block(block_dict):
+            # This text bridge cannot carry an image to claude -p. Emit an
+            # explicit marker rather than dropping it silently, so the model
+            # knows a screenshot was produced and does not narrate having
+            # inspected one it never received.
+            parts.append(_IMAGE_MARKER)
+            continue
+        text = block_dict.get("text") or block_dict.get("output") or block_dict.get("content")
+        if isinstance(text, str):
+            parts.append(text)
+        elif text is not None:
+            parts.append(json.dumps(text))
+    return "\n".join(parts)
 
 
 def _is_image_block(block: dict[str, Any]) -> bool:

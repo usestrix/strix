@@ -281,7 +281,9 @@ class _ClaudeCodeModel(Model):
 
     def __init__(self, slug: str, *, reasoning_effort: ReasoningEffort | None = None) -> None:
         self._slug = slug
-        self._reasoning_effort = reasoning_effort
+        # Annotated: inferring the attribute from the assignment widens the
+        # Literal alias to str, which reasoning_flags() then rejects.
+        self._reasoning_effort: ReasoningEffort | None = reasoning_effort
 
     @property
     def model(self) -> str:

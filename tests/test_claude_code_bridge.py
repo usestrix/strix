@@ -18,6 +18,7 @@ from strix.config import claude_bridge
 
 if TYPE_CHECKING:
     from agents.items import ModelResponse, TResponseInputItem
+    from agents.tool import Tool
 
 
 FIXTURES = Path(__file__).parent / "fixtures" / "claude_code"
@@ -226,21 +227,29 @@ def test_mcp_prefixed_tool_names_are_stripped() -> None:
 class _FakeTool:
     name = "shell"
     description = "Run a shell command in the sandbox"
-    params_json_schema: ClassVar[dict] = {
+    params_json_schema: ClassVar[dict[str, Any]] = {
         "type": "object",
         "properties": {"command": {"type": "string"}},
     }
 
 
+def _fake_tools() -> list[Tool]:
+    """``_FakeTool`` as the SDK's Tool union; build_prompt only duck-types it."""
+    return [cast("Tool", _FakeTool())]
+
+
 def test_build_prompt_includes_history_tools_and_task() -> None:
     prompt = claude_bridge.build_prompt(
         "You are a pentester.",
-        [
-            {"role": "user", "content": "scan the target"},
-            {"type": "function_call", "name": "shell", "arguments": '{"command": "nmap x"}'},
-            {"type": "function_call_output", "call_id": "c1", "output": "22/tcp open"},
-        ],
-        [_FakeTool()],
+        cast(
+            "list[TResponseInputItem]",
+            [
+                {"role": "user", "content": "scan the target"},
+                {"type": "function_call", "name": "shell", "arguments": '{"command": "nmap x"}'},
+                {"type": "function_call_output", "call_id": "c1", "output": "22/tcp open"},
+            ],
+        ),
+        _fake_tools(),
     )
     assert "You are a pentester." in prompt
     assert "shell" in prompt
@@ -256,7 +265,7 @@ def test_toolless_prompt_asks_for_the_answer_not_an_agent_step() -> None:
     # one-shot completion (dedupe, preflight) whose caller parses the reply. Give
     # the second kind the agent framing and the model narrates a step instead of
     # answering -- which is why dedupe never found the JSON object it asked for.
-    agent_turn = claude_bridge.build_prompt("sys", "do the thing", [_FakeTool()])
+    agent_turn = claude_bridge.build_prompt("sys", "do the thing", _fake_tools())
     assert "tool_calls" in agent_turn
 
     completion = claude_bridge.build_prompt("Reply with JSON.", "compare these", [])
