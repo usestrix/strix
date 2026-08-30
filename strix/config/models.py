@@ -1050,9 +1050,13 @@ def routes_through_litellm(model_name: str | None) -> bool:
     so LiteLLM-only fields must not be attached there. A bare ``claude-...``
     name is exactly that case: an ``LLM_API_BASE`` pointing at an
     OpenAI-compatible gateway in front of Claude.
+
+    Both subscription backends are served by their own transport, never by
+    LiteLLM: ``chatgpt/`` by the Responses client and ``claude-code/`` by the
+    ``claude -p`` bridge.
     """
     name = (model_name or "").strip()
-    if not name or codex.subscription_model(name):
+    if not name or codex.subscription_model(name) or claude_code.claude_code_model(name):
         return False
     prefix, _, rest = name.partition("/")
     return bool(rest) and prefix.lower() not in {"openai", "any-llm"}
