@@ -15,13 +15,23 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
 
+def _clear_probe_caches() -> None:
+    """Drop the memoized CLI probes, tolerating a monkeypatched replacement.
+
+    A test may swap ``session_state`` for a plain stub, and fixture teardown can
+    run before ``monkeypatch`` undoes that, so the stub has no ``cache_clear``.
+    """
+    for probe in (claude_code._raw_version, claude_code.session_state):
+        cache_clear = getattr(probe, "cache_clear", None)
+        if cache_clear is not None:
+            cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def _clear_caches() -> Iterator[None]:
-    claude_code._raw_version.cache_clear()
-    claude_code.session_state.cache_clear()
+    _clear_probe_caches()
     yield
-    claude_code._raw_version.cache_clear()
-    claude_code.session_state.cache_clear()
+    _clear_probe_caches()
 
 
 @pytest.mark.parametrize(

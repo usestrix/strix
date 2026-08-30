@@ -51,7 +51,7 @@ def test_context_window_claude_code_prefix_uses_slug(
         calls.append(model)
         return {"max_input_tokens": 1_000_000, "max_output_tokens": 128_000}
 
-    monkeypatch.setattr("strix.llm.context_budget.litellm.get_model_info", _model_info)
+    monkeypatch.setattr("litellm.get_model_info", _model_info)
     try:
         assert context_budget.context_window("claude-code/claude-opus-4-8") == 1_000_000
         assert calls == ["claude-opus-4-8"]
