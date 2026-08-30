@@ -21,7 +21,7 @@ def _clear_probe_caches() -> None:
     A test may swap ``session_state`` for a plain stub, and fixture teardown can
     run before ``monkeypatch`` undoes that, so the stub has no ``cache_clear``.
     """
-    for probe in (claude_code._raw_version, claude_code._status_payload, claude_code.session_state):
+    for probe in (claude_code._raw_version, claude_code._cached_status_payload):
         cache_clear = getattr(probe, "cache_clear", None)
         if cache_clear is not None:
             cache_clear()
@@ -262,16 +262,47 @@ def test_probes_decode_as_utf8_whatever_the_host_locale(monkeypatch: pytest.Monk
     assert recorded["errors"] == "replace"
 
 
-def test_transport_errors_are_recognised_through_the_cause_chain() -> None:
-    # The retry policy asks this to keep a missing binary or a turn timeout out
-    # of the statusless-retry fallback, which would spend five attempts on it.
-    error = claude_code.ClaudeCodeError("the `claude` CLI is not on PATH")
-    assert claude_code.is_transport_error(error) is True
+def test_permanent_errors_are_recognised_through_the_cause_chain() -> None:
+    # The retry policy asks this to keep a missing binary out of the
+    # statusless-retry fallback, which would spend five attempts and roughly
+    # three minutes of backoff on a binary that is not installed.
+    missing = claude_code.ClaudeCodeError("the `claude` CLI is not on PATH", retryable=False)
+    assert claude_code.is_permanent_error(missing) is True
     try:
         try:
-            raise error
+            raise missing
         except claude_code.ClaudeCodeError as exc:
             raise RuntimeError("wrapped") from exc
     except RuntimeError as wrapped:
-        assert claude_code.is_transport_error(wrapped) is True
-    assert claude_code.is_transport_error(RuntimeError("unrelated")) is False
+        assert claude_code.is_permanent_error(wrapped) is True
+
+    # A turn that timed out or crashed may well clear, so it stays retryable.
+    assert (
+        claude_code.is_permanent_error(
+            claude_code.ClaudeCodeError("claude -p timed out after 300s")
+        )
+        is False
+    )
+    assert claude_code.is_permanent_error(RuntimeError("unrelated")) is False
+
+
+def test_a_failed_probe_is_not_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    # An unknown state is accounted as an API key, so one probe losing a race with
+    # the 8s timeout would otherwise meter a whole subscription run and let
+    # --max-budget stop it. Only a real answer is remembered.
+    calls: list[int] = []
+
+    def _flaky(_args: list[str]) -> subprocess.CompletedProcess[str]:
+        calls.append(1)
+        if len(calls) == 1:
+            raise OSError("probe timed out")
+        return _fake_status({"loggedIn": True, "authMethod": "claude.ai"})
+
+    monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(claude_code, "_run_claude", _flaky)
+
+    assert claude_code.session_state() == "unknown"
+    assert claude_code.session_state() == "subscription"
+    # The good answer is cached; the failure was not.
+    assert claude_code.session_state() == "subscription"
+    assert len(calls) == 2

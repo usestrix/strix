@@ -71,9 +71,14 @@ def _validate_claude_code(console: Console, model: str | None) -> None:
             "Pro/Max account, to use the subscription."
         )
     elif state == "unknown":
+        # An unknown state is accounted as an API key, so this is not only about
+        # authentication: the run will be reported as metered and can be stopped
+        # by --max-budget even though it is spending subscription quota.
         console.print(
-            "[yellow]Warning:[/] couldn't determine the Claude Code sign-in state; "
-            "proceeding. If the scan fails to authenticate, run [cyan]claude /login[/]."
+            "[yellow]Warning:[/] couldn't determine the Claude Code sign-in state, so this "
+            "run will be reported as metered rather than as a $0 subscription. Check that "
+            "[cyan]claude auth status[/] works on this host; if the scan then fails to "
+            "authenticate, run [cyan]claude /login[/]."
         )
     logger.info("Environment OK (Claude Code subscription)")
 

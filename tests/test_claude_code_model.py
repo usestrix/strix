@@ -57,13 +57,11 @@ def _reset_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for key in ("STRIX_LLM", "LLM_DISABLE_STREAMING", "STRIX_CLAUDE_CODE_MAX_PROCS"):
         monkeypatch.delenv(key, raising=False)
     loader._cached = None
-    loader._override = None
     yield
     # load_settings() memoizes into loader._cached by direct assignment, which
     # monkeypatch does not track; reset it so a claude-code model doesn't leak
     # into an unrelated test's ReportState (which would then report $0 cost).
     loader._cached = None
-    loader._override = None
 
 
 async def _drive(model: _ClaudeCodeModel) -> list[Any]:

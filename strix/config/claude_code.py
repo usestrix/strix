@@ -175,18 +175,27 @@ def is_available() -> bool:
 
 
 @lru_cache(maxsize=1)
-def _status_payload() -> dict[str, Any] | None:
-    """``claude auth status --json``, or None when the probe failed.
-
-    Cached: the CLI's sign-in state does not change within a scan process, and
-    several call sites (preflight, the auth CLI, the cost resolver) ask about it
-    per run.
-    """
+def _cached_status_payload() -> dict[str, Any] | None:
     try:
         result = _run_claude(["auth", "status", "--json"])
     except (ClaudeCodeError, OSError, subprocess.SubprocessError):
         return None
     return _parse_status_json(result.stdout)
+
+
+def _status_payload() -> dict[str, Any] | None:
+    """``claude auth status --json``, or None when the probe failed.
+
+    A successful answer is cached: the CLI's sign-in state does not change within
+    a scan process, and several call sites (preflight, the auth CLI, the cost
+    resolver) ask about it per run. A failure is not, because an unknown state is
+    accounted as an API key: one probe losing a race with the 8s timeout would
+    otherwise meter a whole subscription run and let ``--max-budget`` stop it.
+    """
+    payload = _cached_status_payload()
+    if payload is None:
+        _cached_status_payload.cache_clear()
+    return payload
 
 
 def api_key_source() -> str | None:

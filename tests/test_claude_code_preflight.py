@@ -23,19 +23,16 @@ if TYPE_CHECKING:
 def _reset_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.delenv("STRIX_LLM", raising=False)
     loader._cached = None
-    loader._override = None
     yield
     # load_settings() memoizes into loader._cached by direct assignment, which
     # monkeypatch does not track; reset it so a claude-code model doesn't leak
     # into an unrelated test's ReportState (which would then report $0 cost).
     loader._cached = None
-    loader._override = None
 
 
 def _preflight(monkeypatch: pytest.MonkeyPatch, *, model: str, state: str, present: bool) -> None:
     monkeypatch.setenv("STRIX_LLM", model)
     loader._cached = None
-    loader._override = None
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude" if present else None)
     monkeypatch.setattr(claude_code, "version_state", lambda: "ok")
     monkeypatch.setattr(claude_code, "session_state", lambda: state)
@@ -66,7 +63,6 @@ def test_preflight_old_version_exits(
 ) -> None:
     monkeypatch.setenv("STRIX_LLM", "claude-code/claude-opus-4-8")
     loader._cached = None
-    loader._override = None
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
     monkeypatch.setattr(claude_code, "version_state", lambda: "too_old")
     monkeypatch.setattr(claude_code, "version", lambda: "1.0.0")
@@ -82,7 +78,6 @@ def test_preflight_unreadable_version_says_so(
     # CLI" sends the user somewhere that cannot fix it.
     monkeypatch.setenv("STRIX_LLM", "claude-code/claude-opus-4-8")
     loader._cached = None
-    loader._override = None
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
     monkeypatch.setattr(claude_code, "version_state", lambda: "unknown")
     monkeypatch.setattr(claude_code, "version", lambda: None)
@@ -102,7 +97,6 @@ def test_preflight_api_key_warning_names_the_env_override(
     # warning has to name the cause to be actionable.
     monkeypatch.setenv("STRIX_LLM", "claude-code/claude-opus-4-8")
     loader._cached = None
-    loader._override = None
     monkeypatch.setattr(claude_code, "binary_path", lambda: "/usr/bin/claude")
     monkeypatch.setattr(claude_code, "version_state", lambda: "ok")
     monkeypatch.setattr(claude_code, "session_state", lambda: "api_key")

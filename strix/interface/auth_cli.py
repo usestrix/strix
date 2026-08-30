@@ -1,8 +1,12 @@
-"""`strix auth` — ChatGPT subscription sign-in (login / status / logout).
+"""`strix auth` - subscription sign-in for both backends (login / status / logout).
 
-Signing in only stores OAuth tokens (``~/.strix/subscription-auth.json``); model
-selection stays with ``STRIX_LLM``. A ``chatgpt/<model>`` STRIX_LLM runs on the
-subscription.
+ChatGPT signs in here: the OAuth flow below stores its tokens in
+``~/.strix/subscription-auth.json`` and nothing else. Claude does not; every
+Claude verb delegates to the installed ``claude`` binary, which owns those
+credentials, so Strix neither stores nor reads them.
+
+Model selection stays with ``STRIX_LLM`` either way: a ``chatgpt/<model>`` or
+``claude-code/<model>`` name runs on the matching subscription.
 """
 
 from __future__ import annotations

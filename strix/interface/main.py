@@ -405,13 +405,32 @@ def _print_error_panel(title: str, message: str) -> None:
     console.print()
 
 
+def _subscription_error_heading(exc: BaseException) -> str:
+    """Headline for a subscription-backend failure.
+
+    The panel used to say "model not available" over every hint, including the
+    ones about a CLI that is not installed or a session that expired, which sends
+    the reader looking in the wrong place.
+    """
+    joined = " ".join(_exception_messages(exc)).lower()
+    if "not on path" in joined or "claude code cli" in joined:
+        return "CLAUDE CODE CLI NOT AVAILABLE"
+    if any(marker in joined for marker in ("rate limit", "rate_limit", "overloaded", "429")):
+        return "SUBSCRIPTION RATE LIMITED"
+    if any(
+        marker in joined for marker in ("401", "unauthorized", "not signed in", "invalid_grant")
+    ):
+        return "SUBSCRIPTION SIGN-IN EXPIRED"
+    return "MODEL NOT AVAILABLE ON SUBSCRIPTION"
+
+
 def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
     console = Console()
     error_text = Text()
     sub_hint = _subscription_error_hint(exc)
     if sub_hint is not None:
         border_style = "yellow"
-        error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
+        error_text.append(_subscription_error_heading(exc), style="bold yellow")
         error_text.append("\n\n", style="white")
         error_text.append(f"{sub_hint}\n", style="white")
         error_text.append(f"\nDetails: {exc}", style="dim white")
