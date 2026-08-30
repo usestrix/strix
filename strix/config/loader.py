@@ -54,22 +54,26 @@ def apply_config_override(path: Path) -> None:
 
 
 def persist_current() -> None:
-    """Write currently-set env vars to the active config file (0o600)."""
+    """Write explicitly configured values to the active config file (0o600)."""
     s = load_settings()
     target = _override or _DEFAULT_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    env_block: dict[str, str] = {}
+    env_block: dict[str, Any] = {}
     for sub_name in s.model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
             continue
-        for finfo in type(sub_model).model_fields.values():
-            for alias in _aliases_for(finfo):
+        for field_name, finfo in type(sub_model).model_fields.items():
+            aliases = _aliases_for(finfo)
+            for alias in aliases:
                 value = os.environ.get(alias.upper())
                 if value:
                     env_block[alias.upper()] = value
                     break
+            else:
+                if aliases and field_name in sub_model.model_fields_set:
+                    env_block[aliases[0].upper()] = getattr(sub_model, field_name)
 
     write_secret_text(target, json.dumps({"env": env_block}, indent=2))
 

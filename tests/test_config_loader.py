@@ -208,6 +208,36 @@ def test_persist_current_writes_env_block(tmp_path: Path, monkeypatch: pytest.Mo
     }
 
 
+def test_persist_current_preserves_file_backed_values(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "STRIX_LLM": "file-model",
+                    "LLM_API_KEY": "file-key",
+                    "LLM_API_BASE": "https://example.invalid/v1",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_BASE_URL", "https://example.invalid/v1")
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "env": {
+            "STRIX_LLM": "file-model",
+            "LLM_API_KEY": "file-key",
+            "OPENAI_BASE_URL": "https://example.invalid/v1",
+        }
+    }
+
+
 def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_LLM", "persisted-model")
     target = tmp_path / "cli-config.json"
