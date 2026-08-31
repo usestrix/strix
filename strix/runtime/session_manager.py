@@ -342,38 +342,40 @@ async def create_or_reuse(
             exposed_ports=(_CONTAINER_CAIDO_PORT,),
             bind_mounts=bind_mounts,
         )
+
+        report("Setting up the proxy")
+        caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
+        scheme = "https" if caido_endpoint.tls else "http"
+        host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
+        logger.debug("Caido host endpoint resolved: %s", host_caido_url)
+
+        # The Caido login + project setup polls the guest for a couple of seconds
+        # and nothing needs the client before the first proxy tool call, so it
+        # runs concurrently with the rest of scan start; consumers resolve the
+        # handle at first use (see CaidoBootstrapHandle).
+        caido_client = CaidoBootstrapHandle(
+            asyncio.create_task(
+                bootstrap_caido(
+                    session,
+                    host_url=host_caido_url,
+                    container_url=container_caido_url,
+                ),
+                name=f"caido-bootstrap-{scan_id}",
+            )
+        )
+
+        bundle = {
+            "client": client,
+            "session": session,
+            "caido_client": caido_client,
+            "extra_file_staging_dir": staging_dir,
+        }
+        _SESSION_CACHE[scan_id] = bundle
     except BaseException:
+        # Until the bundle is cached, cleanup(scan_id) cannot find the
+        # staging dir, so it is removed here.
         _remove_staging_dir(staging_dir)
         raise
-
-    report("Setting up the proxy")
-    caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
-    scheme = "https" if caido_endpoint.tls else "http"
-    host_caido_url = f"{scheme}://{caido_endpoint.host}:{caido_endpoint.port}"
-    logger.debug("Caido host endpoint resolved: %s", host_caido_url)
-
-    # The Caido login + project setup polls the guest for a couple of seconds
-    # and nothing needs the client before the first proxy tool call, so it
-    # runs concurrently with the rest of scan start; consumers resolve the
-    # handle at first use (see CaidoBootstrapHandle).
-    caido_client = CaidoBootstrapHandle(
-        asyncio.create_task(
-            bootstrap_caido(
-                session,
-                host_url=host_caido_url,
-                container_url=container_caido_url,
-            ),
-            name=f"caido-bootstrap-{scan_id}",
-        )
-    )
-
-    bundle = {
-        "client": client,
-        "session": session,
-        "caido_client": caido_client,
-        "extra_file_staging_dir": staging_dir,
-    }
-    _SESSION_CACHE[scan_id] = bundle
     logger.info("Sandbox session for scan %s ready and cached", scan_id)
     return bundle
 
