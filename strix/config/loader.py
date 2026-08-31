@@ -54,12 +54,16 @@ def apply_config_override(path: Path) -> None:
 
 
 def persist_current() -> None:
-    """Write currently-set env vars to the active config file (0o600)."""
+    """Merge currently-set env vars into the active config file (0o600).
+
+    Keys already on disk are preserved (including keys unknown to this
+    version's schema); env vars win on conflicts.
+    """
     s = load_settings()
     target = _override or _DEFAULT_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    env_block: dict[str, str] = {}
+    env_block: dict[str, Any] = _read_persisted_env(target)
     for sub_name in s.model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
@@ -72,6 +76,24 @@ def persist_current() -> None:
                     break
 
     write_secret_text(target, json.dumps({"env": env_block}, indent=2))
+
+
+def _read_persisted_env(path: Path) -> dict[str, Any]:
+    """Read the ``{"env": {...}}`` block already stored at ``path``."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    env_block = data.get("env", {}) if isinstance(data, dict) else {}
+    if not isinstance(env_block, dict):
+        return {}
+    return {
+        str(key).upper(): value
+        for key, value in env_block.items()
+        if value is not None and value != ""
+    }
 
 
 def _aliases_for(finfo: FieldInfo) -> list[str]:
