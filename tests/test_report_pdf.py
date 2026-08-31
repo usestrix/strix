@@ -9,8 +9,14 @@ from typing import TYPE_CHECKING
 import pytest
 from pypdf import PdfReader
 from pypdf.errors import WrongPasswordError
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.platypus import Paragraph
 
 from strix.interface.viewer.report_pdf import (
+    _inline_md,
+    _markdown_flowables,
+    _para,
+    _styles,
     build_encrypted_report,
     encrypt_pdf,
     generate_password,
@@ -103,3 +109,56 @@ def test_build_encrypted_report(tmp_path: Path) -> None:
     reader = PdfReader(BytesIO(pdf_bytes))
     assert reader.is_encrypted
     assert reader.decrypt(password)
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "(observed as '******')",  # masked secret: a run of asterisks
+        "***x***",
+        "**a *b** c*",
+        "* * *",
+        "__a *b__ c*",
+    ],
+)
+def test_inline_md_never_emits_crossed_markup(text: str) -> None:
+    Paragraph(_inline_md(text), ParagraphStyle("t"))  # reportlab raises ValueError on crossed tags
+
+
+def test_markdown_flowables_survive_unbalanced_emphasis() -> None:
+    md = (
+        "Spring Boot masks secrets in /actuator/env (observed as '******').\n\n"
+        "- bullet with ***three*** stars\n"
+        "# heading with *unbalanced\n"
+    )
+    assert len(_markdown_flowables(md, _styles())) == 3
+
+
+def test_generate_report_pdf_with_masked_secret_in_summary(tmp_path: Path) -> None:
+    run_dir = tmp_path / "strix_runs" / "masked"
+    run_dir.mkdir(parents=True)
+    record = {
+        "run_name": "masked",
+        "targets_info": [{"original": "https://example.com"}],
+        "scan_mode": "deep",
+        "status": "completed",
+        "start_time": "2026-01-01T00:00:00Z",
+        "end_time": "2026-01-01T01:02:03Z",
+        "scan_results": {
+            "executive_summary": "Password keys are masked (observed as '******').",
+            "recommendations": "Nothing.",
+        },
+    }
+    (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    assert generate_report_pdf(run_dir).startswith(b"%PDF")
+
+
+def test_para_falls_back_to_plain_text_on_crossed_markup() -> None:
+    para = _para("<b><i>x</b></i> &amp; y", ParagraphStyle("t"))
+    assert para.getPlainText() == "x & y"
+
+
+def test_inline_md_keeps_balanced_nested_emphasis() -> None:
+    assert _inline_md("**bold with *italic* inside**") == "<b>bold with <i>italic</i> inside</b>"
+    assert _inline_md("*outer **bold** inner*") == "<i>outer <b>bold</b> inner</i>"
+    assert "******" in _inline_md("(observed as '******')")  # a masked secret stays literal
