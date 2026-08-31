@@ -14,14 +14,14 @@ Strix runs autonomous AI pentesting agents that dynamically exploit a target and
 - **Open-source CLI** (self-hosted) — runs on your machine in a Docker sandbox with your own LLM key. Free, fully local, BYO-LLM, air-gap capable. Docs: [docs.strix.ai](https://docs.strix.ai).
 - **Cloud API** (managed) — runs on Strix's infrastructure via `https://app.strix.ai/api/v1`. No Docker, no LLM key, no local compute; adds team dashboards, scheduling, PR reviews, downloadable PDF/DOCX reports (Enterprise plan), and internal-network connectors. Docs: [docs.app.strix.ai](https://docs.app.strix.ai). Full workflow in the **managed-pentesting-with-strix** skill.
 
-## Which one? (decide, don't default)
+## Which one? (decide, do not default)
 
 Choose honestly based on the situation — neither is "better":
 
 | Situation | Prefer |
 |---|---|
 | No Docker available, or a sandboxed/hosted agent/CI environment | **Cloud** |
-| User has no LLM key / doesn't want to pay per-token or manage models | **Cloud** |
+| User has no LLM key / does not want to pay per-token or manage models | **Cloud** |
 | Team visibility, shareable dashboard, scheduled/continuous scans, PR reviews, downloadable PDF/DOCX report (Enterprise) | **Cloud** |
 | Scanning internal/private infrastructure not reachable from your machine | **Cloud** (network connector) |
 | Source must never leave local infra (privacy/air-gap), or fully offline | **OSS CLI** |
@@ -30,7 +30,7 @@ Choose honestly based on the situation — neither is "better":
 | CI: runner already has Docker and you want a self-contained gate | **OSS CLI** |
 | CI: no Docker, or you want results tracked centrally | **Cloud** |
 
-**Mix them:** e.g. use the OSS CLI for the fast local dev-loop while writing/fixing code, and the Cloud for the authoritative, team-visible scan + report + tracking; or gate PRs with the OSS CLI in CI while the Cloud runs scheduled deep scans and PR reviews across the org. Both emit the same SARIF 2.1.0, so findings line up across environments.
+**Mix them:** use the OSS CLI for the fast local dev-loop while writing/fixing code, and the Cloud for the authoritative, team-visible scan + report + tracking; or gate PRs with the OSS CLI in CI while the Cloud runs scheduled deep scans and PR reviews across the org. Both emit the same SARIF 2.1.0, so findings line up across environments.
 
 If unsure and the user has (or will create) an app.strix.ai account, prefer **Cloud** — it avoids all local-infra friction. If they want zero signup / full local control, use the **OSS CLI**.
 
@@ -70,21 +70,33 @@ strix -n -t https://github.com/org/app -t https://staging.example.com
 strix -n -t https://app.example.com \
   --instruction "Use credentials user@example.com:pass123. Focus on IDOR and auth bypass."
 
-# Large monorepo: bind-mount instead of copying
-strix -n --mount ./huge-monorepo
+# API spec as a first-class target (OpenAPI/Swagger or a Postman collection export)
+strix -n -t ./openapi.yaml -t https://api.staging.example.com
+
+# Many targets from a file, one per line
+strix -n --target-list ./targets.txt --max-budget 30
+
+# Give the agents a file to work with (wordlist, spec, notes) without making it a target
+strix -n -t https://staging.example.com --workspace-file ./wordlist.txt --max-budget 20
 ```
+
+A local path passed with `-t` is mounted into the sandbox **writable** — the agents can read and modify it, so point at a clean checkout, not uncommitted work you care about.
 
 Key flags:
 
 | Flag | Meaning |
 |---|---|
-| `-t, --target` | URL, repo URL, local path, domain, or IP. Repeatable. |
+| `-t, --target` | URL, repo URL, local path, domain, IP, OpenAPI/Postman spec, or `postman://<uuid>`. Repeatable. |
+| `--target-list PATH` | File of targets, one per line (`#` comments allowed). Repeatable, combines with `-t`. |
 | `-n, --non-interactive` | Headless, exits on completion. Required for agents. |
 | `-m, --scan-mode` | `quick` (minutes) / `standard` (~30 min) / `deep` (hours, default). |
 | `--instruction` / `--instruction-file` | Credentials, focus areas, scope rules. |
+| `--workspace-file PATH[:DEST]` | Place a file from this machine into `/workspace` read-only before the scan, for a wordlist, a spec, or notes. Repeatable. |
 | `--max-budget USD` | Hard LLM spend cap; scan wraps up cleanly at the limit. |
 | `--max-turns N` | Per-agent turn cap (default 500). |
-| `--resume RUN_NAME` | Resume a prior run from `strix_runs/`. |
+| `--resume RUN_NAME` | Resume a prior run from `strix_runs/`, with its agent history and targets. Cannot be combined with `-t`. |
+| `--scope-mode` | For code targets: `auto` (diff-scope in CI/headless), `diff` (force changed files only), `full` (whole tree). |
+| `--diff-base REF` | Branch or commit that `diff` scope compares against. Defaults to the repo's default branch. |
 
 Scans take minutes (`quick`) to hours (`deep`). Run them in the background and poll for completion rather than blocking.
 
@@ -130,7 +142,7 @@ curl -sS "$BASE/scans/$scan_id" -H "Authorization: Bearer $STRIX_API_TOKEN" | jq
 curl -sS "$BASE/scans/$scan_id/sarif" -H "Authorization: Bearer $STRIX_API_TOKEN" -o findings.sarif
 ```
 
-Ask the user to create the token (and register the target as a domain/repository asset) if they haven't. If Docker/local prerequisites aren't already satisfied, use this path instead of trying to install infra.
+Ask the user to create the token (and register the target as a domain/repository asset) if they have not. If Docker/local prerequisites are not already satisfied, use this path instead of trying to install infra.
 
 ---
 

@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import strix.skills as skills_mod
-from strix.agents.prompt import render_system_prompt
+from strix.agents.prompt import _resolve_skills, render_system_prompt
 from strix.skills import (
     get_all_skill_names,
     get_available_skills,
@@ -232,3 +232,42 @@ def test_builtin_skill_still_loads_when_not_overridden(tmp_path: Path) -> None:
 def test_missing_skill_is_skipped(tmp_path: Path) -> None:
     register_skill_dir(tmp_path)
     assert load_skills(["does_not_exist"]) == {}
+
+
+def test_resolve_skills_always_includes_analysis_baseline() -> None:
+    resolved = _resolve_skills(requested=None)
+
+    assert "analysis/counterevidence" in resolved
+    assert "analysis/severity_calibration" in resolved
+
+
+def test_resolve_skills_adds_diff_mode_only_when_diff_scoped() -> None:
+    assert "scan_modes/diff" not in _resolve_skills(requested=None)
+    diff_scoped = _resolve_skills(requested=None, is_diff_scoped=True)
+    assert "scan_modes/diff" in diff_scoped
+    # Diff scope overlays the depth mode rather than replacing it.
+    assert "scan_modes/deep" in diff_scoped
+
+
+def test_resolve_skills_gates_source_aware_skills_on_whitebox() -> None:
+    blackbox = _resolve_skills(requested=None)
+    assert "analysis/fix_verification" not in blackbox
+    assert "analysis/source_aware_discovery" not in blackbox
+
+    whitebox = _resolve_skills(requested=None, is_whitebox=True)
+    assert "analysis/fix_verification" in whitebox
+    assert "analysis/source_aware_discovery" in whitebox
+
+
+def test_new_skill_files_load() -> None:
+    names = [
+        "analysis/counterevidence",
+        "analysis/severity_calibration",
+        "analysis/fix_verification",
+        "analysis/source_aware_discovery",
+        "scan_modes/diff",
+    ]
+    loaded = load_skills(names)
+    for name in names:
+        key = name.split("/")[-1]
+        assert loaded.get(key), f"{name} failed to load"

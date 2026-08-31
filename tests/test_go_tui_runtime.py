@@ -857,6 +857,37 @@ async def test_agent_state_sync_does_not_mask_root_failure_with_completed_report
     assert runtime.controller.error == "finalization failed"
 
 
+@pytest.mark.asyncio
+async def test_agent_state_sync_clears_root_failure_after_user_resume() -> None:
+    runtime = GoTuiRuntime(args())
+    await runtime.coordinator.register("root", "Strix", parent_id=None)
+    await runtime.coordinator.set_status("root", "failed", error="provider rejected request")
+
+    await runtime._sync_agent_state()
+    assert runtime.controller.scan_state == "failed"
+    assert runtime.live_view.agents["root"]["error_message"] == "provider rejected request"
+
+    await runtime.coordinator.send("root", {"from": "user", "content": "try again"})
+    await runtime._sync_agent_state()
+
+    assert runtime.controller.scan_state == "running"
+    assert runtime.controller.error is None
+    root = runtime.live_view.agents["root"]
+    assert root["status"] == "waiting"
+    assert "error_message" not in root
+
+
+@pytest.mark.asyncio
+async def test_agent_state_sync_does_not_reopen_stopped_scan_with_active_root() -> None:
+    runtime = GoTuiRuntime(args())
+    runtime.controller.scan_state = "stopped"
+    await runtime.coordinator.register("root", "Strix", parent_id=None)
+
+    await runtime._sync_agent_state()
+
+    assert runtime.controller.scan_state == "stopped"
+
+
 def _direct_launch_args() -> argparse.Namespace:
     launch_args = args()
     launch_args.needs_setup = False

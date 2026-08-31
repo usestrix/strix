@@ -60,6 +60,9 @@ class TuiLiveView(BaseLiveView):
         if error_message and current.get("error_message") != error_message:
             current["error_message"] = error_message
             changed = True
+        elif error_message is None and "error_message" in current:
+            current.pop("error_message", None)
+            changed = True
         if changed:
             current["updated_at"] = now
         return changed

@@ -459,6 +459,49 @@ async def test_non_user_send_does_not_resume_budget_pause(tmp_path: Any) -> None
 
 
 @pytest.mark.asyncio
+async def test_user_send_starts_fresh_resume_attempt_after_failure() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    await coordinator.park_waiting("child", wait_kind="stalled")
+    await coordinator.record_recovery("child")
+    await coordinator.record_idle_resume("child")
+    await coordinator.set_status("child", "failed", error="provider rejected request")
+    assert await coordinator.claim_parent_notice("child") is True
+
+    delivered = await coordinator.send("child", {"from": "user", "content": "try again"})
+
+    assert delivered is True
+    assert coordinator.statuses["child"] == "waiting"
+    assert coordinator.pending_counts["child"] == 1
+    assert "child" not in coordinator.errors
+    assert "child" not in coordinator.wait_kinds
+    assert "child" not in coordinator.recovery_counts
+    assert "child" not in coordinator.idle_resume_counts
+    assert await coordinator.claim_parent_notice("child") is True
+
+
+@pytest.mark.asyncio
+async def test_non_user_send_preserves_failed_resume_state() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    await coordinator.park_waiting("child", wait_kind="stalled")
+    await coordinator.record_recovery("child")
+    await coordinator.record_idle_resume("child")
+    await coordinator.set_status("child", "failed", error="provider rejected request")
+
+    delivered = await coordinator.send("child", {"from": "root", "content": "status"})
+
+    assert delivered is True
+    assert coordinator.statuses["child"] == "failed"
+    assert coordinator.errors["child"] == "provider rejected request"
+    assert coordinator.wait_kinds["child"] == "stalled"
+    assert coordinator.recovery_counts["child"] == 1
+    assert coordinator.idle_resume_counts["child"] == 1
+
+
+@pytest.mark.asyncio
 async def test_reset_budget_stops_clears_pause_and_normalizes_statuses() -> None:
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)

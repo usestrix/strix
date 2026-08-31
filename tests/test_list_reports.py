@@ -357,3 +357,25 @@ def test_get_report_no_state_returns_error(monkeypatch: pytest.MonkeyPatch) -> N
     result = _do_get_report("vuln-0001")
     assert result["success"] is False
     assert result["report"] is None
+
+
+@pytest.mark.parametrize("nullish", ["null", "none", "NULL", " None ", "undefined", "nil"])
+def test_list_reports_ignores_nullish_filter_strings(
+    report_state: ReportState, nullish: str
+) -> None:
+    _seed(report_state)
+    unfiltered = _do_list_reports(
+        severity=None, finding_class=None, target=None, search=None, include_details=False
+    )
+    assert unfiltered["filtered_count"] == 3
+
+    assert (
+        _do_list_reports(
+            severity=nullish,
+            finding_class=nullish,
+            target=nullish,
+            search=nullish,
+            include_details=False,
+        )
+        == unfiltered
+    )

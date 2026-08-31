@@ -6,7 +6,6 @@ Strix Agent Interface
 import argparse
 import asyncio
 import contextlib
-import os
 import sys
 from pathlib import Path
 
@@ -36,6 +35,7 @@ from strix.interface.update_check import (
     is_binary_install,
     notify_update,
     prompt_update_if_available,
+    restart_after_update,
     start_background_check,
 )
 from strix.interface.utils import (
@@ -127,12 +127,10 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
 
 
 async def warm_up_llm(show_model_warning: bool = True) -> None:
-    from agents.model_settings import ModelSettings
     from agents.models.interface import ModelTracing
 
     from strix.config.models import (
         RECOMMENDED_MODEL_NAMES,
-        StrixProvider,
         configure_sdk_model_defaults,
         is_known_openai_bare_model,
         is_recommended_or_frontier_model,
@@ -209,12 +207,11 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
         if settings.dedupe.model:
-            from strix.report.dedupe import _dedupe_extra_args
+            from strix.report.dedupe import resolve_dedupe_model
 
             dedupe_model = settings.dedupe.model.strip()
             raw_model = dedupe_model
-            deduper = StrixProvider().get_model(dedupe_model)
-            deduper_extra = _dedupe_extra_args(settings.dedupe)
+            deduper = resolve_dedupe_model(settings.dedupe, dedupe_model)
             # A dedicated dedupe model may route to another provider, which must
             # never receive the main endpoint's headers; it has its own
             # DEDUPE_LLM_EXTRA_HEADERS.
@@ -226,9 +223,6 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
                 extra_headers=settings.dedupe.extra_headers,
                 has_tools=False,
             )
-            if deduper_extra:
-                merged = {**(deduper_settings.extra_args or {}), **deduper_extra}
-                deduper_settings = deduper_settings.resolve(ModelSettings(extra_args=merged))
             await asyncio.wait_for(
                 deduper.get_response(
                     system_instructions="You are a helpful assistant.",
@@ -431,12 +425,16 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
+    from strix.llm.warmup import start_import_warmup
+
+    start_import_warmup()
+
     args = parse_arguments()
 
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
         if is_binary_install() and sys.platform != "win32":
-            os.execv(sys.executable, sys.argv)  # noqa: S606  # nosec B606
+            restart_after_update()
         sys.exit(0)
 
     check_docker_installed()

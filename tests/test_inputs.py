@@ -10,6 +10,7 @@ import pytest
 
 from strix.core.inputs import (
     build_root_task,
+    build_scan_targets,
     build_scope_context,
     child_initial_input,
     make_model_settings,
@@ -89,6 +90,16 @@ def test_make_model_settings_enables_prompt_cache_for_non_bedrock_claude(model_n
     ]
 
 
+@pytest.mark.parametrize(
+    "model_name",
+    ["claude-sonnet-4-5", "openai/claude-sonnet-4-5", "any-llm/anthropic/claude-sonnet-4-5"],
+)
+def test_no_prompt_cache_for_claude_off_the_litellm_route(model_name: str) -> None:
+    # These names are served by SDK clients that raise TypeError on LiteLLM-only
+    # request kwargs — e.g. a gateway in front of Claude reached with a bare name.
+    assert _cache_points(model_name) is None
+
+
 def test_tool_config_point_not_leaked_to_non_bedrock_claude() -> None:
     # LiteLLM only consumes tool_config on Bedrock; elsewhere it leaks onto the
     # wire and native Anthropic 400s.
@@ -142,7 +153,8 @@ def test_max_reasoning_effort_sent_as_raw_body_field() -> None:
         "max", model_name="deepseek/deepseek-v4-flash", request_timeout=30
     )
     assert settings.reasoning is None
-    assert settings.extra_args == {"timeout": 30, "extra_body": {"reasoning_effort": "max"}}
+    assert settings.extra_args == {"timeout": 30}
+    assert settings.extra_body == {"reasoning_effort": "max"}
 
 
 def test_conversation_tail_breakpoint_moves_with_appended_transcript() -> None:
@@ -361,6 +373,35 @@ def test_make_model_settings_timeout_survives_reasoning_resolve() -> None:
 
     assert settings.extra_args is not None
     assert settings.extra_args["timeout"] == 120.0
+
+
+def test_scan_targets_prefer_the_workspace_checkout_over_the_remote_url() -> None:
+    config = {
+        "targets": [
+            {
+                "type": "repository",
+                "details": {
+                    "target_repo": "https://github.com/acme/billing",
+                    "workspace_subdir": "billing",
+                },
+            },
+            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+        ]
+    }
+
+    assert build_scan_targets(config) == ["/workspace/billing", "https://app.example.com"]
+
+
+def test_scan_targets_drop_empty_and_duplicate_entries() -> None:
+    config = {
+        "targets": [
+            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+            {"type": "ip_address", "details": {}},
+        ]
+    }
+
+    assert build_scan_targets(config) == ["https://app.example.com"]
 
 
 def test_openrouter_attribution_rides_on_the_request_headers() -> None:

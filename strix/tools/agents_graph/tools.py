@@ -37,6 +37,7 @@ def _render_completion_report(
     result_summary: str,
     findings: list[str],
     recommendations: list[str],
+    open_items: list[str],
 ) -> str:
     """Render a child's completion report as plain structured text.
 
@@ -61,6 +62,12 @@ def _render_completion_report(
         lines.append("")
         lines.append("Findings:")
         lines.extend(f"- {f}" for f in findings)
+    lines.append("")
+    lines.append("Open items (unresolved, need follow-up):")
+    if open_items:
+        lines.extend(f"- {o}" for o in open_items)
+    else:
+        lines.append("- (none)")
     if recommendations:
         lines.append("")
         lines.append("Recommendations:")
@@ -445,7 +452,12 @@ async def create_agent(
         name: Human-readable child name (used in graph views and
             ``send_message_to_agent`` flows).
         task: Specific objective. Be concrete — what to test, what
-            success looks like, any constraints.
+            success looks like, any constraints. Name the target the
+            child should call ``get_threat_model`` on, and any shared
+            state it should build on rather than rediscover — what
+            recon already mapped, which surfaces are already covered,
+            which coverage entry it is picking up. A child that is not
+            told what is already known repeats it.
         inherit_context: Default ``True``. The child receives the
             parent's input history as background; only set ``False``
             when starting a clean-slate task.
@@ -520,6 +532,7 @@ async def agent_finish(
     ctx: RunContextWrapper,
     result_summary: str,
     findings: list[str] | None = None,
+    open_items: list[str] | None = None,
     success: bool = True,
     report_to_parent: bool = True,
     final_recommendations: list[str] | None = None,
@@ -544,6 +557,14 @@ async def agent_finish(
     doing: what did you test, what did you find/confirm/rule out,
     what's still open.
 
+    **Close out honestly.** Before calling this, every surface you
+    assessed should have a ``record_coverage`` entry, and anything you
+    could neither confirm nor rule out belongs in ``open_items`` — an
+    unresolved candidate handed up to the parent is useful, a silently
+    dropped one is a missed vulnerability. Reporting nothing and
+    listing no open items asserts the area is clean; only say that if
+    you mean it.
+
     Args:
         result_summary: What you accomplished and discovered. Concrete
             and specific (URLs, parameters, payloads that worked).
@@ -552,6 +573,12 @@ async def agent_finish(
             ``create_vulnerability_report`` first (or
             ``create_dependency_report`` for dependency CVEs); this is
             for narrative.
+        open_items: Candidates you could NOT confirm and could NOT rule
+            out with a named control, plus anything you ran out of time
+            or access to test. State the specific gap (e.g. "password
+            reset token entropy — could not obtain a second account to
+            compare tokens"). Pass an empty list only when nothing is
+            genuinely left open.
         success: Whether the assigned subtask was completed
             successfully. Default ``True``.
         report_to_parent: Whether to deliver the completion report to
@@ -595,6 +622,7 @@ async def agent_finish(
             result_summary=result_summary,
             findings=list(findings or []),
             recommendations=list(final_recommendations or []),
+            open_items=list(open_items or []),
         )
         await coordinator.send(
             parent_id,
@@ -629,6 +657,7 @@ async def agent_finish(
             "agent_id": me,
             "summary": result_summary,
             "findings_count": len(findings or []),
+            "open_items_count": len(open_items or []),
             "has_recommendations": bool(final_recommendations),
         },
         ensure_ascii=False,

@@ -291,6 +291,12 @@ class AgentCoordinator:
             self.pending_counts[target_agent_id] = self.pending_counts.get(target_agent_id, 0) + 1
             if from_user:
                 runtime.user_wake_required = False
+                self.errors.pop(target_agent_id, None)
+                self.wait_kinds.pop(target_agent_id, None)
+                self.recovery_counts.pop(target_agent_id, None)
+                self.idle_resume_counts.pop(target_agent_id, None)
+                self._parent_notified.discard(target_agent_id)
+                self.statuses[target_agent_id] = "waiting"
             runtime.wake.set()
             stream = runtime.stream
             interrupt_on_message = runtime.interrupt_on_message

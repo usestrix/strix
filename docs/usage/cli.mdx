@@ -37,6 +37,13 @@ strix (--target <target> | --target-list <path>) [options]
   Path to a file containing detailed instructions.
 </ParamField>
 
+<ParamField path="--workspace-file" type="string">
+  Path to a file on your machine to place into the sandbox workspace before the
+  scan starts. Repeat the option for more files. Write `PATH:DEST` to choose the
+  destination inside `/workspace`. `DEST` defaults to the file name. See
+  [Workspace files](/usage/instructions#workspace-files).
+</ParamField>
+
 <ParamField path="--scan-mode, -m" type="string" default="deep">
   Scan depth: `quick`, `standard`, or `deep`.
 </ParamField>
@@ -142,6 +149,10 @@ strix -t "postman://<collection-uuid>?env=<environment-uuid>"
 
 # Targets from a file
 strix --target-list ./targets.txt
+
+# Extra files placed in the sandbox workspace
+strix --target ./my-project --workspace-file ./wordlist.txt
+strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
 ```
 
 ## Exit Codes

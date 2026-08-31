@@ -35,6 +35,7 @@ from strix.interface.tui.sidecar import (
     tui_source_dir,
     wait_process,
 )
+from strix.interface.utils import read_workspace_files
 from strix.report.state import ReportState, set_global_report_state
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -81,6 +82,7 @@ class GoTuiRuntime:
             "scan_mode": self.args.scan_mode,
             "non_interactive": False,
             "local_sources": self.args.local_sources or [],
+            "workspace_files": getattr(self.args, "workspace_files", None) or [],
             "scope_mode": self.args.scope_mode,
             "diff_base": self.args.diff_base,
             "resume_instruction": self.args.user_explicit_instruction or "",
@@ -177,11 +179,13 @@ class GoTuiRuntime:
                 scan_id=self.scan_config["run_name"],
                 image=image,
                 local_sources=self.args.local_sources or [],
+                extra_files=read_workspace_files(getattr(self.args, "workspace_files", None)),
                 coordinator=self.coordinator,
                 interactive=True,
                 max_turns=self.args.max_turns,
                 max_budget_usd=self.args.max_budget_usd,
                 event_sink=self.capture_event,
+                mcp_status_sink=self.capture_mcp_status,
             )
             await self._sync_agent_state()
             if self.controller.scan_state == "running":
@@ -206,6 +210,15 @@ class GoTuiRuntime:
     def capture_event(self, agent_id: str, event: Any) -> None:
         self.live_view.ingest_sdk_event(agent_id, event)
         self.controller.notify_changed()
+
+    def capture_mcp_status(self, roster: list[dict[str, Any]]) -> None:
+        """Receive the engine's MCP connection roster and hand it to the controller.
+
+        Runs on the scan's event loop (called from the runner at establishment
+        and from a session's on-dead callback), the same loop that drives
+        ``capture_event``, so updating the controller and repainting here is
+        safe. The controller renders it as the sidebar MCP connections panel."""
+        self.controller.set_mcp_connections(roster)
 
     async def _sync_agent_state(self) -> bool:
         parent_of, statuses, names, errors = await self.coordinator.graph_snapshot()
@@ -245,6 +258,9 @@ class GoTuiRuntime:
             scan_state = "failed"
             if root_id is not None and errors.get(root_id):
                 self.controller.error = errors[root_id]
+        elif scan_state == "failed" and root_status in {"running", "waiting", "budget_paused"}:
+            scan_state = "running"
+            self.controller.error = None
         elif scan_state != "failed":
             if report_status == "completed":
                 scan_state = "completed"

@@ -100,7 +100,7 @@ func applyMarkdownStyles(text string) string {
 		case strings.HasPrefix(line, "- "), strings.HasPrefix(line, "* "):
 			out.WriteString(Col(Green).Render("• ") + inlineFormat(line[2:]))
 		case len(line) > 2 && line[0] >= '0' && line[0] <= '9' && (line[1:3] == ". " || line[1:3] == ") "):
-			out.WriteString(Col(Green).Render(string(line[0])+". ") + inlineFormat(line[2:]))
+			out.WriteString(Col(Green).Render(line[:2]+" ") + inlineFormat(line[3:]))
 		case line == "---" || line == "***" || line == "___":
 			out.WriteString(Col(Green).Render(strings.Repeat("─", 40)))
 		default:

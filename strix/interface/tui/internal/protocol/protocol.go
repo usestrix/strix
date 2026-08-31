@@ -32,6 +32,17 @@ type Agent struct {
 	ErrorMessage string  `json:"error_message"`
 }
 
+// Connection is one MCP connection the run may reach, as the backend projects
+// it for the sidebar's MCP panel. Non-secret by construction: only the display
+// name, how many tools the connection offers, and whether its live session has
+// died (its reconnect-retry gave up). "In use" is not carried here; the client
+// derives it from the connection-tagged tool-call events in the event stream.
+type Connection struct {
+	Name      string `json:"name"`
+	ToolCount int    `json:"tool_count"`
+	Dead      bool   `json:"dead"`
+}
+
 type Event struct {
 	ID        string         `json:"id"`
 	Type      string         `json:"type"`
@@ -68,6 +79,7 @@ type Snapshot struct {
 	Vulnerabilities     []map[string]any `json:"-"`
 	Usage               map[string]any   `json:"usage"`
 	Subscription        bool             `json:"subscription"`
+	Connections         []Connection     `json:"connections"`
 	ViewerStatus        string           `json:"viewer_status"`
 	ViewerURL           *string          `json:"viewer_url"`
 	Error               *string          `json:"error"`
