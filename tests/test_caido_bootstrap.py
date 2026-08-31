@@ -102,3 +102,31 @@ async def test_login_as_guest_stops_at_deadline(
 
     assert clock.sleeps == [2.0, 3.0]
     assert [call[1]["timeout"] for call in session.calls] == [5, 3]
+
+
+@pytest.mark.asyncio
+async def test_login_as_guest_caps_final_attempt_to_subsecond_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    clock = _install_clock(monkeypatch)
+
+    class _AdvancingSession(_Session):
+        def __init__(self) -> None:
+            super().__init__([_ExecResult(success=False), _ExecResult(success=False)])
+            self._durations = iter([2.9, 0.1])
+
+        async def exec(self, *args: str, **kwargs: Any) -> _ExecResult:
+            result = await super().exec(*args, **kwargs)
+            clock.now += next(self._durations)
+            return result
+
+    session = _AdvancingSession()
+
+    with pytest.raises(RuntimeError, match=r"2 attempts"):
+        await caido_bootstrap._login_as_guest(
+            cast("BaseSandboxSession", session),
+            container_url="http://127.0.0.1:48080",
+            wait_timeout_s=5,
+        )
+
+    assert [call[1]["timeout"] for call in session.calls] == [5, pytest.approx(0.1)]
