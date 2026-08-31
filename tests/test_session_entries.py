@@ -6,8 +6,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
 from agents.sandbox.entries import File, LocalDir
 
+from strix.runtime import session_manager
 from strix.runtime.backends import (
     _BACKENDS,
     _BIND_MOUNT_BACKENDS,
@@ -334,6 +336,28 @@ def test_extra_file_staging_dir_sanitizes_the_scan_id() -> None:
 
     assert staging.is_dir()
     assert staging.is_relative_to(Path(tempfile.gettempdir()))
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_the_extra_file_staging_dir() -> None:
+    staging = extra_file_staging_dir("scan-staging-cleanup")
+    (staging / "0").mkdir()
+    (staging / "0" / "README.md").write_bytes(b"hi")
+
+    class _Client:
+        async def delete(self, _session: Any) -> None:
+            return None
+
+    session_manager._SESSION_CACHE["scan-staging-cleanup"] = {
+        "client": _Client(),
+        "session": object(),
+        "caido_client": None,
+        "extra_file_staging_dir": staging,
+    }
+
+    await session_manager.cleanup("scan-staging-cleanup")
+
+    assert not staging.exists()
 
 
 def test_only_bind_mount_capable_backends_are_registered_as_such() -> None:

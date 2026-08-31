@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
 import sys
 import tempfile
 from pathlib import Path
@@ -291,14 +292,14 @@ async def create_or_reuse(
     backend_name = load_settings().runtime.backend
     backend = get_backend(backend_name)
 
+    staging_dir: Path | None = None
     if backend_supports_bind_mounts(backend_name):
         bind_mounts = build_bind_mounts(local_sources)
         entries: dict[str | Path, BaseEntry] = {}
         if extra_files:
+            staging_dir = extra_file_staging_dir(scan_id)
             bind_mounts.extend(
-                build_extra_file_bind_mounts(
-                    extra_files, extra_file_staging_dir(scan_id), local_sources
-                )
+                build_extra_file_bind_mounts(extra_files, staging_dir, local_sources)
             )
     else:
         bind_mounts = []
@@ -334,12 +335,16 @@ async def create_or_reuse(
         image,
     )
     report("Starting sandbox container")
-    client, session = await backend(
-        image=image,
-        manifest=manifest,
-        exposed_ports=(_CONTAINER_CAIDO_PORT,),
-        bind_mounts=bind_mounts,
-    )
+    try:
+        client, session = await backend(
+            image=image,
+            manifest=manifest,
+            exposed_ports=(_CONTAINER_CAIDO_PORT,),
+            bind_mounts=bind_mounts,
+        )
+    except BaseException:
+        _remove_staging_dir(staging_dir)
+        raise
 
     report("Setting up the proxy")
     caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
@@ -366,10 +371,16 @@ async def create_or_reuse(
         "client": client,
         "session": session,
         "caido_client": caido_client,
+        "extra_file_staging_dir": staging_dir,
     }
     _SESSION_CACHE[scan_id] = bundle
     logger.info("Sandbox session for scan %s ready and cached", scan_id)
     return bundle
+
+
+def _remove_staging_dir(staging_dir: Path | None) -> None:
+    if staging_dir is not None:
+        shutil.rmtree(staging_dir, ignore_errors=True)
 
 
 async def cleanup(scan_id: str) -> None:
@@ -384,6 +395,8 @@ async def cleanup(scan_id: str) -> None:
     if bundle is None:
         logger.debug("cleanup(%s): no cached session", scan_id)
         return
+
+    _remove_staging_dir(bundle.get("extra_file_staging_dir"))
 
     caido_client = bundle.get("caido_client")
     if caido_client is not None:
