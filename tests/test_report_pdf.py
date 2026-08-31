@@ -143,7 +143,9 @@ def test_inline_md_emits_only_safe_balanced_markup(text: str, expected: str) -> 
 @pytest.mark.parametrize(
     "text",
     [
+        "*a **b* c**",
         "**a *b** c*",
+        "*outer **inner* end**",
         "__a *b__ c*",
         "***__***__",
         "__***__***",
