@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from strix.runtime.session_manager import (
     build_extra_file_bind_mounts,
     build_extra_file_entries,
     build_manifest_entries,
+    extra_file_staging_dir,
 )
 
 
@@ -317,6 +319,21 @@ def test_extra_file_bind_mounts_avoid_basename_collisions(tmp_path: Path) -> Non
     assert Path(mounts[0]["source"]).read_bytes() == b"a"
     assert Path(mounts[1]["source"]).read_bytes() == b"b"
     assert mounts[0]["source"] != mounts[1]["source"]
+
+
+def test_extra_file_staging_lives_under_the_temp_dir_not_the_run_dir() -> None:
+    staging = extra_file_staging_dir("clients-release-evisort-dev_86b7")
+
+    assert staging.is_dir()
+    assert staging.is_relative_to(Path(tempfile.gettempdir()))
+    assert "strix_runs" not in staging.parts
+
+
+def test_extra_file_staging_dir_sanitizes_the_scan_id() -> None:
+    staging = extra_file_staging_dir("../weird id/../")
+
+    assert staging.is_dir()
+    assert staging.is_relative_to(Path(tempfile.gettempdir()))
 
 
 def test_only_bind_mount_capable_backends_are_registered_as_such() -> None:

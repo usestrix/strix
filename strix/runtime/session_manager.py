@@ -6,6 +6,7 @@ import asyncio
 import logging
 import os
 import sys
+import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -13,7 +14,6 @@ from agents.sandbox.entries import BaseEntry, File, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
-from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.runtime.backends import backend_supports_bind_mounts, get_backend
 from strix.runtime.caido_bootstrap import bootstrap_caido
 from strix.runtime.caido_handle import CaidoBootstrapHandle
@@ -168,6 +168,17 @@ def build_extra_file_entries(
     return entries
 
 
+def extra_file_staging_dir(scan_id: str) -> Path:
+    """A fresh host staging directory for a scan's extra-file bind mounts.
+
+    The docker daemon resolves bind sources in its own filesystem. With a
+    remote daemon (e.g. a dind sidecar) the run directory is not shared, so
+    staging lives under the temp dir like every other bind-mount source.
+    """
+    safe = "".join(c if c.isalnum() or c in "-_." else "-" for c in scan_id)
+    return Path(tempfile.mkdtemp(prefix=f"strix-extra-files-{safe}-"))
+
+
 def build_extra_file_bind_mounts(
     extra_files: list[dict[str, Any]],
     staging_dir: Path,
@@ -284,9 +295,10 @@ async def create_or_reuse(
         bind_mounts = build_bind_mounts(local_sources)
         entries: dict[str | Path, BaseEntry] = {}
         if extra_files:
-            staging_dir = runtime_state_dir(run_dir_for(scan_id)) / "extra_files"
             bind_mounts.extend(
-                build_extra_file_bind_mounts(extra_files, staging_dir, local_sources)
+                build_extra_file_bind_mounts(
+                    extra_files, extra_file_staging_dir(scan_id), local_sources
+                )
             )
     else:
         bind_mounts = []
