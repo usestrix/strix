@@ -360,6 +360,21 @@ class AgentCoordinator:
                         len(items),
                         agent_id,
                     )
+                    # The mailbox was drained before the write, so returning a
+                    # positive count here would report messages as delivered while
+                    # the session never received them. Callers that pass
+                    # include_items=False read the next turn straight from the
+                    # session, so the instruction would be lost. Put the messages
+                    # back, ahead of anything that arrived meanwhile, and report
+                    # nothing consumed so the next drain retries them.
+                    async with self._lock:
+                        runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
+                        runtime.mailbox[:0] = queued
+                        self.pending_counts[agent_id] = max(
+                            self.pending_counts.get(agent_id, 0),
+                            len(runtime.mailbox),
+                        )
+                    return 0, []
         await self._maybe_snapshot()
         if not include_items:
             return count, []
