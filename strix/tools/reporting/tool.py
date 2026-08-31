@@ -12,11 +12,15 @@ import json
 import logging
 import re
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
 from strix.tools.nullish import clean_optional
+
+
+if TYPE_CHECKING:
+    from strix.report.state import ReportState
 
 
 logger = logging.getLogger(__name__)
@@ -257,6 +261,73 @@ def _validate_fix_verification(
     ]
 
 
+def _handle_duplicate(
+    *,
+    report_state: ReportState,
+    dedupe: dict[str, Any],
+    existing: list[dict[str, Any]],
+    report_fields: dict[str, Any],
+    agent_id: str | None,
+    agent_name: str | None,
+) -> dict[str, Any]:
+    """Merge a stronger duplicate into the report it matches, or reject it.
+
+    A duplicate verdict answers identity, not quality. When the candidate proves
+    more than the report it matches (a confirmed exploit against an unproven
+    entry, a chained attack that raises the impact, added evidence), the finding
+    of record must become the stronger one instead of being discarded, and it
+    keeps the original report id so nothing downstream sees a second finding.
+    """
+    duplicate_id = str(dedupe.get("duplicate_id") or "")
+    duplicate_title = next(
+        (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
+        "",
+    )
+
+    if dedupe.get("candidate_strength") == "stronger":
+        updated = report_state.update_vulnerability_report(
+            duplicate_id,
+            report_fields,
+            update_reason=str(dedupe.get("reason") or ""),
+            updated_by_agent_id=agent_id,
+            updated_by_agent_name=agent_name,
+        )
+        if updated is not None:
+            logger.info(
+                "Vulnerability report updated: id=%s severity=%s cvss=%s title=%s",
+                duplicate_id,
+                updated.get("severity"),
+                updated.get("cvss"),
+                updated.get("title"),
+            )
+            return {
+                "success": True,
+                "action": "updated",
+                "message": (
+                    f"This is the same vulnerability as '{duplicate_title}' "
+                    f"(id={duplicate_id}), and your evidence is stronger, so that "
+                    f"report now carries it. Do not file it again."
+                ),
+                "report_id": duplicate_id,
+                "updated_report_id": duplicate_id,
+                "severity": updated.get("severity"),
+                "cvss_score": updated.get("cvss"),
+                "reason": dedupe.get("reason", ""),
+            }
+
+    return {
+        "success": False,
+        "error": (
+            f"Potential duplicate of '{duplicate_title}' "
+            f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
+        ),
+        "duplicate_of": duplicate_id,
+        "duplicate_title": duplicate_title,
+        "confidence": dedupe.get("confidence", 0.0),
+        "reason": dedupe.get("reason", ""),
+    }
+
+
 async def _do_create(
     *,
     title: str,
@@ -358,52 +429,57 @@ async def _do_create(
             "poc_script_code": poc_script_code,
             "endpoint": endpoint,
             "method": method,
+            # Strength signals: the judge needs them to tell a confirmed exploit
+            # from an unproven observation of the same issue.
+            "severity": severity,
+            "cvss": cvss_score,
+            "confidence": confidence,
+            "confidence_rationale": confidence_rationale,
+            "evidence": evidence,
+            "counterevidence": counterevidence,
+            "cve": cve,
         }
+        report_fields: dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "severity": severity,
+            "impact": impact,
+            "target": target,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "remediation_steps": remediation_steps,
+            "evidence": evidence,
+            "assumptions": assumptions,
+            "counterevidence": counterevidence,
+            "confidence": confidence,
+            "confidence_rationale": confidence_rationale,
+            "severity_change_conditions": severity_change_conditions,
+            "fix_effort": fix_effort,
+            "cvss": cvss_score,
+            "cvss_breakdown": cvss_breakdown,
+            "endpoint": endpoint,
+            "method": method,
+            "cve": cve,
+            "cwe": cwe,
+            "code_locations": parsed_locations,
+            "fix_verification": fix_verification,
+            "fix_pr_body": fix_pr_body,
+        }
+
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
-            duplicate_id = dedupe.get("duplicate_id", "")
-            duplicate_title = next(
-                (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
-                "",
+            return _handle_duplicate(
+                report_state=report_state,
+                dedupe=dedupe,
+                existing=existing,
+                report_fields=report_fields,
+                agent_id=agent_id if isinstance(agent_id, str) else None,
+                agent_name=agent_name if isinstance(agent_name, str) else None,
             )
-            return {
-                "success": False,
-                "error": (
-                    f"Potential duplicate of '{duplicate_title}' "
-                    f"(id={duplicate_id[:8]}...) — do not re-report the same vulnerability"
-                ),
-                "duplicate_of": duplicate_id,
-                "duplicate_title": duplicate_title,
-                "confidence": dedupe.get("confidence", 0.0),
-                "reason": dedupe.get("reason", ""),
-            }
 
         report_id = report_state.add_vulnerability_report(
-            title=title,
-            description=description,
-            severity=severity,
-            impact=impact,
-            target=target,
-            technical_analysis=technical_analysis,
-            poc_description=poc_description,
-            poc_script_code=poc_script_code,
-            remediation_steps=remediation_steps,
-            evidence=evidence,
-            assumptions=assumptions,
-            counterevidence=counterevidence,
-            confidence=confidence,
-            confidence_rationale=confidence_rationale,
-            severity_change_conditions=severity_change_conditions,
-            fix_effort=fix_effort,
-            cvss=cvss_score,
-            cvss_breakdown=cvss_breakdown,
-            endpoint=endpoint,
-            method=method,
-            cve=cve,
-            cwe=cwe,
-            code_locations=parsed_locations,
-            fix_verification=fix_verification,
-            fix_pr_body=fix_pr_body,
+            **report_fields,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
@@ -509,10 +585,17 @@ async def create_vulnerability_report(
       consequence. When evidence is incomplete, lower the metric or
       continue validation; never choose a higher value "to be safe."
 
-    Automatic LLM-based **deduplication** rejects reports that describe
-    the same root cause on the same asset as an existing report. If you
-    get a ``duplicate_of`` response, do NOT retry — move on to other
-    areas.
+    Automatic LLM-based **deduplication** compares your report against
+    the ones already filed for the same root cause on the same asset:
+
+    - Stronger evidence for an already-filed issue (a working exploit
+      against an unproven entry, a chain that raises the impact, the
+      missing proof) updates that report in place. The response carries
+      ``action: "updated"`` with the existing ``report_id``. File it
+      exactly as you would a new finding — do not water it down to match
+      the older entry, and do not retry afterwards.
+    - Anything that adds nothing new is rejected with ``duplicate_of``.
+      Do NOT retry — move on to other areas.
 
     **Counterevidence pass (required before filing)**: actively build the
     strongest case that this finding is NOT exploitable, or less severe

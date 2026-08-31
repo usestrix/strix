@@ -8,6 +8,7 @@ import pytest
 
 from strix.report.dedupe import (
     _check_dependency_duplicate,
+    _parse_dedupe_response,
     _prepare_report_for_comparison,
     check_duplicate,
 )
@@ -1251,3 +1252,212 @@ async def test_dependency_report_rejects_contextual_breakdown_without_reasoning(
     assert result["success"] is False
     assert any("contextual_cvss_reasoning is required" in error for error in result["errors"])
     assert report_state.vulnerability_reports == []
+
+
+_STRONGER_KWARGS: dict[str, Any] = {
+    "title": "Unauthenticated file write on /files/{id}",
+    "description": "A multipart PATCH writes attacker content before the permission check.",
+    "impact": "Any anonymous user overwrites stored files and serves attacker content.",
+    "target": "https://cms.example.com",
+    "technical_analysis": "disk.write runs before the authorization guard.",
+    "poc_description": "1. PATCH /files/<uuid> with a multipart body as an anonymous user.",
+    "poc_script_code": "PATCH /files/2f1c HTTP/1.1\n\n--x\nowned\n--x--",
+    "remediation_steps": "Authorize before the write.",
+    "evidence": "The stored file returns the injected payload after the 403 response.",
+    "assumptions": "Assumes the uuid of one existing file is known.",
+    "counterevidence": "The endpoint answers 403, yet the write already landed.",
+    "confidence": "HIGH",
+    "confidence_rationale": "The write was observed end to end against the live host.",
+    "severity_change_conditions": "A guard before disk.write would remove the impact.",
+    "fix_effort": "MEDIUM",
+    "cvss_breakdown": _CVSS,
+    "endpoint": "/files/{id}",
+    "method": "PATCH",
+    "cve": "CVE-2025-55746",
+    "cwe": "CWE-863",
+    "code_locations": None,
+}
+
+
+def _seed_weak_report(report_state: ReportState) -> None:
+    """A version-based, unproven entry for the same issue, as an earlier agent files it."""
+    report_state.vulnerability_reports.append(
+        {
+            "id": "vuln-0009",
+            "title": "Directus 11.5.1 exposed on public host (in scope for CVE-2025-55746)",
+            "severity": "medium",
+            "timestamp": "2026-01-01 00:00:00 UTC",
+            "description": "The banner reports a version affected by CVE-2025-55746.",
+            "target": "https://cms.example.com",
+            "confidence": "low",
+            "evidence": "The version banner only.",
+            "cvss": 5.3,
+            "finding_class": "dynamic",
+            "agent_id": "aaaa1111",
+        }
+    )
+    report_state._saved_vuln_ids.add("vuln-0009")
+
+
+async def test_stronger_duplicate_updates_existing_report_in_place(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A confirmed exploit that matches an unproven entry replaces that entry's
+    content under the same id, instead of being discarded."""
+    _seed_weak_report(report_state)
+
+    async def fake_check_duplicate(
+        _candidate: dict[str, Any], _existing: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "is_duplicate": True,
+            "duplicate_id": "vuln-0009",
+            "confidence": 0.88,
+            "candidate_strength": "stronger",
+            "reason": "Same root cause, and the candidate proves the write the entry only assumed.",
+        }
+
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
+
+    result = await _do_create(**_STRONGER_KWARGS, agent_id="834f79fb", agent_name="Validation")
+
+    assert result["success"] is True
+    assert result["action"] == "updated"
+    assert result["report_id"] == "vuln-0009"
+    assert len(report_state.vulnerability_reports) == 1, "an update must not add a second finding"
+
+    report = report_state.vulnerability_reports[0]
+    assert report["id"] == "vuln-0009"
+    assert report["severity"] == "critical"
+    assert report["cvss"] == pytest.approx(9.8)
+    assert report["confidence"] == "high"
+    assert report["poc_script_code"].startswith("PATCH /files/2f1c")
+    assert report["agent_id"] == "aaaa1111", "the original reporter stays on the finding"
+
+    history = report["update_history"]
+    assert len(history) == 1
+    assert history[0]["previous_severity"] == "medium"
+    assert history[0]["previous_cvss"] == 5.3
+    assert history[0]["agent_id"] == "834f79fb"
+    assert "severity" in history[0]["fields"]
+    run_dir = report_state._run_dir
+    assert run_dir is not None
+    markdown = (run_dir / "vulnerabilities" / "vuln-0009.md").read_text(encoding="utf-8")
+    assert "PATCH /files/2f1c" in markdown, "the markdown must be re-rendered from the update"
+    assert "Update History" in markdown
+
+
+async def test_equivalent_duplicate_is_still_rejected(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _seed_weak_report(report_state)
+
+    async def fake_check_duplicate(
+        _candidate: dict[str, Any], _existing: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "is_duplicate": True,
+            "duplicate_id": "vuln-0009",
+            "confidence": 0.9,
+            "candidate_strength": "equivalent",
+            "reason": "The candidate retells the same proof.",
+        }
+
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
+
+    result = await _do_create(**_STRONGER_KWARGS)
+
+    assert result["success"] is False
+    assert result["duplicate_of"] == "vuln-0009"
+    assert len(report_state.vulnerability_reports) == 1
+    assert report_state.vulnerability_reports[0]["severity"] == "medium"
+    assert "update_history" not in report_state.vulnerability_reports[0]
+
+
+async def test_dedupe_candidate_carries_strength_signals(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The judge cannot rank two reports on the same issue without the fields
+    that carry proof strength."""
+    _seed_weak_report(report_state)
+    captured: dict[str, Any] = {}
+
+    async def fake_check_duplicate(
+        candidate: dict[str, Any], _existing: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        captured["candidate"] = candidate
+        return {"is_duplicate": False}
+
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
+
+    await _do_create(**_STRONGER_KWARGS)
+
+    candidate = captured["candidate"]
+    assert candidate["severity"] == "critical"
+    assert candidate["cvss"] == pytest.approx(9.8)
+    assert candidate["confidence"] == "high"
+    assert candidate["evidence"].startswith("The stored file")
+    assert candidate["counterevidence"]
+    assert candidate["cve"] == "CVE-2025-55746"
+
+
+def test_dedupe_comparison_includes_strength_fields() -> None:
+    cleaned = _prepare_report_for_comparison(
+        {
+            "title": "Unauth file write",
+            "severity": "critical",
+            "cvss": 9.3,
+            "confidence": "high",
+            "evidence": "Stored file carries the payload.",
+            "counterevidence": "The response is 403.",
+            "finding_class": "dynamic",
+        }
+    )
+    assert cleaned["severity"] == "critical"
+    assert cleaned["cvss"] == 9.3
+    assert cleaned["confidence"] == "high"
+    assert cleaned["evidence"] == "Stored file carries the payload."
+
+
+def test_parse_dedupe_response_defaults_unknown_strength_to_equivalent() -> None:
+    """An unknown or missing strength must never update a report by accident."""
+    parsed = _parse_dedupe_response(
+        '{"is_duplicate": true, "duplicate_id": "vuln-0001", "confidence": 0.9, "reason": "same"}'
+    )
+    assert parsed["candidate_strength"] == "equivalent"
+
+    parsed = _parse_dedupe_response(
+        '{"is_duplicate": true, "duplicate_id": "vuln-0001", "confidence": 0.9,'
+        ' "candidate_strength": "STRONGER", "reason": "chained"}'
+    )
+    assert parsed["candidate_strength"] == "stronger"
+
+
+def test_update_vulnerability_report_records_chained_impact(report_state: ReportState) -> None:
+    """Attack chaining raises the impact of a finding already on file."""
+    _seed_weak_report(report_state)
+
+    updated = report_state.update_vulnerability_report(
+        "vuln-0009",
+        {
+            "severity": "CRITICAL",
+            "cvss": 9.8,
+            "impact": "The overwritten file loads in an admin session and takes over the account.",
+            "id": "vuln-9999",
+            "finding_class": "static",
+        },
+        update_reason="A chained admin takeover follows the file write.",
+    )
+
+    assert updated is not None
+    assert updated["id"] == "vuln-0009", "identity fields are not updatable"
+    assert updated["finding_class"] == "dynamic"
+    assert updated["severity"] == "critical"
+    assert updated["updated_at"]
+    assert report_state.update_vulnerability_report("vuln-0404", {"severity": "high"}) is None
+
+
+def test_update_vulnerability_report_ignores_identical_content(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+    assert report_state.update_vulnerability_report("vuln-0009", {"severity": "medium"}) is None
+    assert "update_history" not in report_state.vulnerability_reports[0]

@@ -356,4 +356,37 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         lines.append(str(report["assumptions"]))
         lines.append("")
 
+    lines.extend(render_update_history(report.get("update_history")))
+
     return "\n".join(lines)
+
+
+def render_update_history(history: Any) -> list[str]:
+    """Render the audit trail a stronger duplicate leaves on the report it merged into."""
+    if not isinstance(history, list):
+        return []
+    entries: list[dict[str, Any]] = [
+        cast("dict[str, Any]", e) for e in history if isinstance(e, dict)
+    ]
+    if not entries:
+        return []
+
+    lines = ["## Update History\n"]
+    for entry in entries:
+        author = str(entry.get("agent_name") or entry.get("agent_id") or "an agent")
+        raw_fields = entry.get("fields")
+        fields: list[Any] = raw_fields if isinstance(raw_fields, list) else []
+        changed = ", ".join(str(field) for field in fields)
+        timestamp = str(entry.get("timestamp") or "unknown")
+        lines.append(f"**{timestamp}** — {author} updated: {changed}")
+        for key, label in (
+            ("previous_severity", "severity"),
+            ("previous_cvss", "CVSS"),
+            ("previous_confidence", "confidence"),
+        ):
+            if entry.get(key) is not None:
+                lines.append(f"  Previous {label}: {entry[key]}")
+        if entry.get("reason"):
+            lines.append(f"  Reason: {entry['reason']}")
+        lines.append("")
+    return lines
