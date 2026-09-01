@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings
+from strix.config import codex, load_settings, opencode
 from strix.interface.utils import (
     check_docker_connection,
     image_exists,
@@ -35,6 +35,17 @@ def validate_environment() -> None:
             )
             sys.exit(1)
         logger.info("Environment OK (ChatGPT subscription)")
+        return
+
+    oc = opencode.subscription_model(settings.llm.model)
+    if oc:
+        if not opencode.is_authenticated():
+            console.print(
+                f"[red]STRIX_LLM={settings.llm.model} runs on {oc.label}, "
+                "but you're not signed in.[/] Run [cyan]strix auth login opencode[/] first."
+            )
+            sys.exit(1)
+        logger.info("Environment OK (%s)", oc.label)
         return
 
     if not settings.llm.model:

@@ -72,6 +72,11 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
         "moonshot/kimi-k2.6",
         "kimi-k2.7-code",
         "moonshot/kimi-k3",
+        "opencode/gpt-5.4",
+        "opencode/claude-sonnet-5",
+        "opencode-go/kimi-k3",
+        "opencode-go/deepseek-v4-flash",
+        "opencode-go/qwen3.8-max",
     ],
 )
 def test_frontier_model_families_are_accepted(model_name: str) -> None:

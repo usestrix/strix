@@ -1,8 +1,9 @@
-"""`strix auth` — ChatGPT subscription sign-in (login / status / logout).
+"""`strix auth` — subscription sign-in (login / status / logout).
 
-Signing in only stores OAuth tokens (``~/.strix/subscription-auth.json``); model
+Signing in only stores credentials (``~/.strix/subscription-auth.json``); model
 selection stays with ``STRIX_LLM``. A ``chatgpt/<model>`` STRIX_LLM runs on the
-subscription.
+ChatGPT subscription; ``opencode/<model>`` (Zen credits) or
+``opencode-go/<model>`` (Go subscription) run on OpenCode.
 """
 
 from __future__ import annotations
@@ -21,7 +22,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings
+from strix.config import codex, load_settings, opencode
 
 
 if TYPE_CHECKING:
@@ -32,13 +33,20 @@ logger = logging.getLogger(__name__)
 
 _CALLBACK_TIMEOUT_S = 300
 
-# CLI-facing name for the login provider. Internally this is the Codex OAuth
-# flow (``codex.PROVIDER``), but users know it as ChatGPT, so that's what the
-# command and messaging say. ``codex`` is accepted as an alias.
+# CLI-facing name for the default login provider. Internally this is the Codex
+# OAuth flow (``codex.PROVIDER``), but users know it as ChatGPT, so that's what
+# the command and messaging say. ``codex`` is accepted as an alias.
 LOGIN_PROVIDER = "chatgpt"
 _ACCEPTED_PROVIDERS = frozenset({LOGIN_PROVIDER, codex.PROVIDER})
+_OPENCODE_PROVIDERS = frozenset({opencode.PROVIDER, "opencode-go", "zen"})
 
-_USAGE = "Usage:\n  strix auth login chatgpt [--manual]\n  strix auth status\n  strix auth logout"
+_USAGE = (
+    "Usage:\n"
+    "  strix auth login chatgpt [--manual]\n"
+    "  strix auth login opencode\n"
+    "  strix auth status\n"
+    "  strix auth logout [chatgpt|opencode]"
+)
 
 
 def run_auth(argv: list[str]) -> int:
@@ -55,7 +63,7 @@ def run_auth(argv: list[str]) -> int:
     handlers: dict[str, Callable[[], int]] = {
         "login": lambda: _login(console, rest),
         "status": lambda: _status(console),
-        "logout": lambda: _logout(console),
+        "logout": lambda: _logout(console, rest),
     }
     handler = handlers.get(subcommand)
     if handler is not None:
@@ -84,10 +92,14 @@ def _login(console: Console, argv: list[str]) -> int:
     except SystemExit as exc:  # argparse already printed the message
         return int(exc.code or 2)
 
+    if args.provider.lower() in _OPENCODE_PROVIDERS:
+        return _login_opencode(console)
+
     if args.provider.lower() not in _ACCEPTED_PROVIDERS:
         console.print(
             f"[red]Unsupported provider:[/] {args.provider}. "
-            f"Only '{LOGIN_PROVIDER}' (ChatGPT subscription) is supported."
+            f"Supported: '{LOGIN_PROVIDER}' (ChatGPT subscription) and "
+            f"'{opencode.PROVIDER}' (OpenCode Zen/Go)."
         )
         return 2
 
@@ -113,6 +125,63 @@ def _login(console: Console, argv: list[str]) -> int:
     codex.save_record(record)
     _print_success(console)
     return 0
+
+
+def _login_opencode(console: Console) -> int:
+    console.print()
+    console.print("[bold]Signing in with OpenCode[/] [dim](provider: opencode)[/]")
+    console.print(
+        "[dim]This uses your OpenCode Zen credits or Go subscription for inference.\n"
+        f"Get your API key at {opencode.AUTH_CONSOLE_URL}[/]"
+    )
+    console.print()
+    try:
+        key = console.input("Paste your OpenCode API key: ", password=True).strip()
+    except (EOFError, KeyboardInterrupt):
+        console.print("\n[yellow]Sign-in cancelled.[/]")
+        return 130
+    if not key:
+        console.print("[red]No API key provided.[/]")
+        return 2
+    try:
+        opencode.validate_api_key(key)
+    except opencode.OpencodeAuthError as exc:
+        console.print(f"[red]SIGN-IN FAILED:[/] {exc}")
+        return 1
+    opencode.save_api_key(key)
+    _print_opencode_success(console)
+    return 0
+
+
+def _print_opencode_success(console: Console) -> None:
+    text = Text()
+    text.append("Signed in with your OpenCode account", style="bold #22c55e")
+    text.append("\n\n", style="white")
+    text.append("Set ", style="white")
+    text.append("STRIX_LLM", style="bold white")
+    text.append(" to an ", style="white")
+    text.append("opencode/", style="bold cyan")
+    text.append(" model (e.g. ", style="white")
+    text.append("opencode/claude-sonnet-5", style="bold cyan")
+    text.append(") to run on Zen credits, or ", style="white")
+    text.append("opencode-go/", style="bold cyan")
+    text.append(" (e.g. ", style="white")
+    text.append("opencode-go/kimi-k3", style="bold cyan")
+    text.append(") to run on the Go subscription.", style="white")
+    text.append("\n\n", style="white")
+    text.append("Run a scan as usual, e.g. ", style="white")
+    text.append("strix --target https://example.com", style="bold cyan")
+    console.print()
+    console.print(
+        Panel(
+            text,
+            title="[bold white]STRIX",
+            title_align="left",
+            border_style="#22c55e",
+            padding=(1, 2),
+        )
+    )
+    console.print()
 
 
 def _run_oauth_flow(
@@ -244,24 +313,41 @@ def _first(query: dict[str, list[str]], key: str) -> str | None:
 
 def _status(console: Console) -> int:
     record = codex.read_record()
-    if record is None:
-        console.print("[yellow]Not signed in.[/] Run [cyan]strix auth login chatgpt[/] to sign in.")
+    opencode_signed_in = opencode.is_authenticated()
+    if record is None and not opencode_signed_in:
+        console.print(
+            "[yellow]Not signed in.[/] Run [cyan]strix auth login chatgpt[/] or "
+            "[cyan]strix auth login opencode[/] to sign in."
+        )
         return 1
     settings = load_settings()
-    console.print("[green]Signed in[/] with a ChatGPT subscription.")
-    console.print(f"  Account: [bold]{record.get('account_id')}[/]")
-    if codex.subscription_model(settings.llm.model):
+    if record is not None:
+        console.print("[green]Signed in[/] with a ChatGPT subscription.")
+        console.print(f"  Account: [bold]{record.get('account_id')}[/]")
+    if opencode_signed_in:
+        console.print("[green]Signed in[/] with an OpenCode account.")
+    if codex.subscription_model(settings.llm.model) or opencode.subscription_model(
+        settings.llm.model
+    ):
         console.print(f"  Runs use the subscription (STRIX_LLM=[bold]{settings.llm.model}[/]).")
     else:
         console.print(
-            "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to e.g. [cyan]chatgpt/gpt-5.4[/] "
-            "to run on the subscription."
+            "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to e.g. [cyan]chatgpt/gpt-5.4[/] or "
+            "[cyan]opencode/claude-sonnet-5[/] to run on a subscription."
         )
     return 0
 
 
-def _logout(console: Console) -> int:
-    codex.logout()
+def _logout(console: Console, argv: list[str] | None = None) -> int:
+    target = (argv[0].lower() if argv else "") or "all"
+    if target in _ACCEPTED_PROVIDERS or target == "all":
+        codex.logout()
+    if target in _OPENCODE_PROVIDERS or target == "all":
+        opencode.logout()
+    if target != "all" and target not in _ACCEPTED_PROVIDERS | _OPENCODE_PROVIDERS:
+        console.print(f"[red]Unknown provider:[/] {target}\n")
+        console.print(_USAGE)
+        return 2
     console.print("[green]Signed out.[/] Stored subscription credentials removed.")
     return 0
 

@@ -309,6 +309,7 @@ ignore = [
 # Heavy inference deps (httpx, openai) imported lazily so auth-status checks
 # don't pull them in.
 "strix/config/codex.py" = ["PLC0415"]
+"strix/config/opencode.py" = ["PLC0415"]
 # Interface utility branches per scope-mode / target-type combination;
 # splitting would obscure the decision tree without simplifying it.
 "strix/interface/utils.py" = ["PLR0912", "BLE001", "PLC0415"]

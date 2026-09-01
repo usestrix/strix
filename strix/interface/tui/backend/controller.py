@@ -24,7 +24,7 @@ from strix.interface.tui.backend.projection import (
     sanitize_terminal_text,
     terminal_projection,
 )
-from strix.interface.utils import is_subscription_run
+from strix.interface.utils import is_subscription_run, subscription_label
 
 
 if TYPE_CHECKING:
@@ -187,6 +187,10 @@ class TuiController:
         subscription = False
         with contextlib.suppress(Exception):
             subscription = is_subscription_run(self.report_state)
+        label = ""
+        if subscription:
+            with contextlib.suppress(Exception):
+                label = subscription_label()
         model_warning = ""
         if model and not is_recommended_or_frontier_model(model):
             model_warning = (
@@ -223,6 +227,7 @@ class TuiController:
             ],
             "usage": terminal_projection(usage, max_string=256, max_items=20),
             "subscription": subscription,
+            "subscription_label": label,
             "connections": [
                 {
                     "name": terminal_projection(entry["name"], max_string=64),

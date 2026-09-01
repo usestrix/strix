@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
-from strix.config import codex
+from strix.config import codex, opencode
 from strix.interface import auth_cli
 
 
@@ -104,3 +105,60 @@ def test_login_accepts_provider_aliases(provider: str, monkeypatch: pytest.Monke
 
     assert auth_cli.run_auth(["login", provider]) == 0
     assert reached["flow"] is True
+
+
+@pytest.mark.parametrize("provider", ["opencode", "OpenCode", "opencode-go", "zen"])
+def test_login_accepts_opencode_aliases(provider: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    reached = {"login": False}
+
+    def _fake_login(_console: Any) -> int:
+        reached["login"] = True
+        return 0
+
+    monkeypatch.setattr(auth_cli, "_login_opencode", _fake_login)
+    assert auth_cli.run_auth(["login", provider]) == 0
+    assert reached["login"] is True
+
+
+def test_login_opencode_validates_and_saves(monkeypatch: pytest.MonkeyPatch) -> None:
+    saved: dict[str, str] = {}
+    monkeypatch.setattr("rich.console.Console.input", lambda _self, *_a, **_k: "  sk-oc-test  ")
+    monkeypatch.setattr(opencode, "validate_api_key", lambda key: saved.setdefault("checked", key))
+    monkeypatch.setattr(opencode, "save_api_key", lambda key: saved.setdefault("key", key))
+
+    assert auth_cli.run_auth(["login", "opencode"]) == 0
+    assert saved == {"checked": "sk-oc-test", "key": "sk-oc-test"}
+
+
+def test_login_opencode_rejects_bad_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("rich.console.Console.input", lambda _self, *_a, **_k: "bad")
+
+    def _reject(_key: str) -> None:
+        raise opencode.OpencodeAuthError("invalid_key")
+
+    monkeypatch.setattr(opencode, "validate_api_key", _reject)
+    assert auth_cli.run_auth(["login", "opencode"]) == 1
+    assert opencode.is_authenticated() is False
+
+
+def test_logout_provider_scoped() -> None:
+    codex.save_record(
+        {
+            "type": "oauth",
+            "provider": "codex",
+            "access": "a",
+            "refresh": "r",
+            "account_id": "acct",
+            "expires_at": time.time() + 3600,
+        }
+    )
+    opencode.save_api_key("sk-oc-test")
+
+    assert auth_cli.run_auth(["logout", "opencode"]) == 0
+    assert opencode.is_authenticated() is False
+    assert codex.is_authenticated() is True
+
+    assert auth_cli.run_auth(["logout"]) == 0
+    assert codex.is_authenticated() is False
+
+    assert auth_cli.run_auth(["logout", "bogus"]) == 2

@@ -79,6 +79,7 @@ type Snapshot struct {
 	Vulnerabilities     []map[string]any `json:"-"`
 	Usage               map[string]any   `json:"usage"`
 	Subscription        bool             `json:"subscription"`
+	SubscriptionLabel   string           `json:"subscription_label"`
 	Connections         []Connection     `json:"connections"`
 	ViewerStatus        string           `json:"viewer_status"`
 	ViewerURL           *string          `json:"viewer_url"`

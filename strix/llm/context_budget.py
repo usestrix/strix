@@ -18,6 +18,8 @@ logger = logging.getLogger(__name__)
 _STRIPPABLE_PREFIXES = (
     "openai/",
     "chatgpt/",
+    "opencode-go/",
+    "opencode/",
     "litellm/",
     "any-llm/",
     "ollama/",
@@ -48,7 +50,11 @@ def _model_info(model: str) -> dict[str, int]:
     lookup_key = _lookup_key(model)
     # Provider-qualified ChatGPT lookups may start a synchronous device-login
     # poll. LiteLLM keys the metadata by the underlying model slug.
-    candidates = (lookup_key,) if model.startswith("chatgpt/") else (model, lookup_key)
+    candidates = (
+        (lookup_key,)
+        if model.startswith(("chatgpt/", "opencode/", "opencode-go/"))
+        else (model, lookup_key)
+    )
     for candidate in candidates:
         info = _safe_get_model_info(candidate)
         if info is not None:

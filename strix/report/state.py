@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, cast
 from uuid import uuid4
 
-from strix.config import codex
+from strix.config import opencode
 from strix.config.loader import load_settings
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.report.coverage import write_coverage
@@ -152,8 +152,13 @@ class ReportState:
 
         self._llm_usage = LLMUsageLedger()
         self._telemetry_llm_usage_baseline: dict[str, Any] = {}
-        auth_mode = codex.auth_mode(load_settings().llm.model)
-        self._llm_usage.zero_cost = auth_mode == "subscription"
+        auth_mode = opencode.auth_mode(load_settings().llm.model)
+        oc = opencode.subscription_model(load_settings().llm.model)
+        # A flat subscription has no per-run charge to report. Zen bills prepaid
+        # credits per request, so its cost is real and stays tracked.
+        self._llm_usage.zero_cost = auth_mode == "subscription" and not (
+            oc is not None and oc.metered
+        )
         self.run_record: dict[str, Any] = {
             "run_id": self.run_id,
             "run_name": self.run_name,
@@ -161,6 +166,8 @@ class ReportState:
             "end_time": None,
             "status": "running",
             "auth_mode": auth_mode,
+            "subscription_provider": opencode.subscription_provider(load_settings().llm.model),
+            "subscription_plan": opencode.subscription_plan(load_settings().llm.model),
             "targets_info": [],
             "llm_usage": self._build_llm_usage_record(),
         }

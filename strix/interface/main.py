@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings, persist_current
+from strix.config import codex, load_settings, opencode, persist_current
 from strix.core.paths import run_dir_for
 from strix.interface.cli_args import parse_arguments
 from strix.interface.environment import (
@@ -104,8 +104,14 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
 
 
 def _subscription_error_hint(exc: BaseException) -> str | None:
-    """Return an actionable hint for a known ChatGPT-subscription error, or None."""
-    if not codex.subscription_model(load_settings().llm.model):
+    """Return an actionable hint for a known subscription error, or None."""
+    model = load_settings().llm.model
+    if opencode.subscription_model(model):
+        joined = " ".join(_exception_messages(exc)).lower()
+        if "error code: 401" in joined or "http 401" in joined or "unauthorized" in joined:
+            return "Your OpenCode API key was rejected. Sign in again:\n  strix auth login opencode"
+        return None
+    if not codex.subscription_model(model):
         return None
     joined = " ".join(_exception_messages(exc)).lower()
     if "not supported when using codex with a chatgpt account" in joined:

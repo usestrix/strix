@@ -72,8 +72,32 @@ def _write_store(data: dict[str, Any]) -> None:
     write_secret_text(AUTH_PATH, json.dumps(data, indent=2))
 
 
+def read_provider_record(provider: str) -> dict[str, Any] | None:
+    """Raw record for *provider* from the shared subscription-auth store."""
+    record = _read_store().get(provider)
+    return record if isinstance(record, dict) else None
+
+
+def save_provider_record(provider: str, record: dict[str, Any]) -> None:
+    data = _read_store()
+    data[provider] = record
+    _write_store(data)
+
+
+def remove_provider_record(provider: str) -> None:
+    data = _read_store()
+    if provider not in data:
+        return
+    del data[provider]
+    if data:
+        _write_store(data)
+        return
+    with contextlib.suppress(OSError):
+        AUTH_PATH.unlink()
+
+
 def read_record() -> dict[str, Any] | None:
-    record = _read_store().get(PROVIDER)
+    record = read_provider_record(PROVIDER)
     if not isinstance(record, dict) or record.get("type") != "oauth":
         return None
     if not (record.get("access") and record.get("refresh") and record.get("account_id")):
@@ -86,21 +110,11 @@ def is_authenticated() -> bool:
 
 
 def save_record(record: dict[str, Any]) -> None:
-    data = _read_store()
-    data[PROVIDER] = record
-    _write_store(data)
+    save_provider_record(PROVIDER, record)
 
 
 def logout() -> None:
-    data = _read_store()
-    if PROVIDER not in data:
-        return
-    del data[PROVIDER]
-    if data:
-        _write_store(data)
-        return
-    with contextlib.suppress(OSError):
-        AUTH_PATH.unlink()
+    remove_provider_record(PROVIDER)
 
 
 @contextlib.contextmanager

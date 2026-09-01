@@ -617,7 +617,11 @@ func (m Model) statsView() string {
 		if b.Len() > 0 {
 			b.WriteString("\n")
 		}
-		b.WriteString(lipgloss.NewStyle().Foreground(green).Render("ChatGPT subscription"))
+		label := m.snapshot.SubscriptionLabel
+		if label == "" {
+			label = "ChatGPT subscription"
+		}
+		b.WriteString(lipgloss.NewStyle().Foreground(green).Render(label))
 	}
 	total := numberValue(m.snapshot.Usage["total_tokens"])
 	if total > 0 {

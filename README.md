@@ -320,6 +320,18 @@ strix auth status             # show the active sign-in
 strix auth logout             # forget the sign-in
 ```
 
+#### Sign in with an OpenCode subscription
+
+You can also run Strix on [OpenCode Zen](https://opencode.ai/docs/zen/) credits or an [OpenCode Go](https://opencode.ai/docs/go/) subscription:
+
+```bash
+strix auth login opencode     # paste your API key from opencode.ai/auth
+
+export STRIX_LLM="opencode/claude-sonnet-5"   # opencode/<model> runs on Zen credits
+export STRIX_LLM="opencode-go/kimi-k3"        # opencode-go/<model> runs on the Go subscription
+strix --target ./app-directory
+```
+
 #### Connect your own MCP servers
 
 Strix can connect to Model Context Protocol (MCP) servers you list and expose their tools to the agent during a run. Create `~/.strix/mcp-servers.json` with a JSON list of servers. Each entry is either a local `stdio` server that Strix launches as a subprocess, or a remote `http` server:

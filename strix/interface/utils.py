@@ -281,9 +281,27 @@ def is_subscription_run(report_state: Any) -> bool:
     record = getattr(report_state, "run_record", None)
     if isinstance(record, dict) and record.get("auth_mode"):
         return record.get("auth_mode") == "subscription"
-    from strix.config import codex
+    from strix.config import opencode
 
-    return codex.auth_mode(load_settings().llm.model) == "subscription"
+    return opencode.auth_mode(load_settings().llm.model) == "subscription"
+
+
+def subscription_label() -> str:
+    """Display name of the subscription behind the configured model."""
+    from strix.config import opencode
+
+    oc = opencode.subscription_model(load_settings().llm.model)
+    if oc:
+        return oc.label
+    return "ChatGPT subscription"
+
+
+def subscription_is_metered() -> bool:
+    """Whether the run spends per-request credits rather than a flat plan."""
+    from strix.config import opencode
+
+    oc = opencode.subscription_model(load_settings().llm.model)
+    return oc is not None and oc.metered
 
 
 def _int_stat(usage: dict[str, Any], key: str) -> int:
@@ -326,7 +344,9 @@ def _build_llm_usage_stats(
     if not usage or _int_stat(usage, "requests") <= 0:
         stats_text.append("\n")
         stats_text.append("Cost ", style="dim")
-        if subscription:
+        if subscription and subscription_is_metered():
+            stats_text.append("credits ", style="#22c55e")
+        elif subscription:
             stats_text.append("$0.00 ", style="#22c55e")
             stats_text.append("(subscription) ", style="dim")
         else:
@@ -355,7 +375,19 @@ def _build_llm_usage_stats(
     stats_text.append("Output Tokens ", style="dim")
     stats_text.append(format_token_count(output_tokens), style="white")
 
-    if subscription:
+    if subscription and subscription_is_metered():
+        # Zen spends prepaid credits per request, so a run is not free. Its
+        # Anthropic route runs through LiteLLM and yields a real charge; the
+        # OpenAI-SDK routes report none, and an unpriced run says so rather
+        # than claiming $0.00.
+        stats_text.append("  ·  ", style="dim white")
+        stats_text.append("Cost ", style="dim")
+        if cost > 0:
+            stats_text.append(f"${cost:.4f}", style="#22c55e")
+            stats_text.append(" (credits)", style="dim")
+        else:
+            stats_text.append("credits", style="#22c55e")
+    elif subscription:
         stats_text.append("  ·  ", style="dim white")
         stats_text.append("Cost ", style="dim")
         stats_text.append("$0.00", style="#22c55e")
@@ -387,7 +419,7 @@ def build_live_stats_text(report_state: Any) -> Text:
     stats_text.append(str(model), style="white")
     if is_subscription_run(report_state):
         stats_text.append("  ·  ", style="dim white")
-        stats_text.append("ChatGPT subscription", style="#22c55e")
+        stats_text.append(subscription_label(), style="#22c55e")
     stats_text.append("\n")
 
     vuln_count = len(report_state.vulnerability_reports)
@@ -433,7 +465,7 @@ def build_tui_stats_text(report_state: Any) -> Text:
     subscription = is_subscription_run(report_state)
     if subscription:
         stats_text.append("\n")
-        stats_text.append("ChatGPT subscription", style="#22c55e")
+        stats_text.append(subscription_label(), style="#22c55e")
 
     usage = _llm_usage(report_state)
     if usage and _int_stat(usage, "total_tokens") > 0:
