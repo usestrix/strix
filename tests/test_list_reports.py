@@ -73,6 +73,41 @@ def test_hydrate_from_run_dir_strips_control_chars_from_title(
     assert md_path.read_text(encoding="utf-8").startswith("# XSS in search form\n")
 
 
+def test_hydrate_names_the_class_a_legacy_record_always_had(
+    report_state: ReportState,
+) -> None:
+    # A run started before the class was persisted still holds the package metadata
+    # of a dependency finding, and resume must not read it as a dynamic one.
+    (report_state.get_run_dir() / "vulnerabilities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "vuln-0001",
+                    "title": "Directus 11.5.1 is affected by CVE-2025-55746",
+                    "severity": "medium",
+                    "timestamp": "2026-01-01 00:00:00 UTC",
+                    "dependency_metadata": {
+                        "package_name": "directus",
+                        "installed_version": "11.5.1",
+                    },
+                },
+                {
+                    "id": "vuln-0002",
+                    "title": "Reflected XSS in search",
+                    "severity": "medium",
+                    "timestamp": "2026-01-01 00:00:00 UTC",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report_state.hydrate_from_run_dir()
+
+    assert report_state.vulnerability_reports[0]["finding_class"] == "dependency_cve"
+    assert report_state.vulnerability_reports[1]["finding_class"] == "dynamic"
+
+
 def _seed(state: ReportState) -> None:
     state.add_vulnerability_report(
         title="Reflected XSS in search",

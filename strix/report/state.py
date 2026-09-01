@@ -286,6 +286,12 @@ class ReportState:
                 )
             self.vulnerability_reports = [r for r in data if isinstance(r, dict)]
             for r in self.vulnerability_reports:
+                # A finding written before the class was persisted still carries the
+                # metadata of its class, so name the class it always had.
+                if not r.get("finding_class"):
+                    r["finding_class"] = (
+                        "dependency_cve" if r.get("dependency_metadata") else "dynamic"
+                    )
                 title = r.get("title")
                 stale_md = False
                 if isinstance(title, str):
