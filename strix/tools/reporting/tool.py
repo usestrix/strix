@@ -418,30 +418,43 @@ def _rate_dependency_revision(
 
     A dependency record keeps its rating as ``cvss``/``severity`` plus the
     contextual breakdown, vector and reasoning inside ``dependency_metadata``.
-    The package identity in that metadata is copied over untouched.
+    The package identity in that metadata is copied over untouched. A new
+    breakdown needs its own reasoning. The reasoning alone can be corrected
+    when the record already carries the breakdown it explains.
     """
     breakdown = changes.pop("cvss_breakdown", None)
     reasoning = changes.pop("contextual_cvss_reasoning", None)
     if breakdown is None and reasoning is None:
         return None
-    if breakdown is None or reasoning is None:
-        missing = "contextual_cvss_reasoning" if reasoning is None else "cvss_breakdown"
+
+    metadata = dict(matched.get("dependency_metadata") or {})
+    if breakdown is None and not metadata.get("contextual_cvss_breakdown"):
         return {
             "success": False,
             "error": "Validation failed",
             "errors": [
-                f"{missing} is required: a dependency finding is re-rated with the "
-                "cvss_breakdown observed in this codebase together with the "
-                "contextual_cvss_reasoning a reader can check"
+                "cvss_breakdown is required: this dependency finding carries no "
+                "contextual rating yet, so contextual_cvss_reasoning has nothing to explain"
+            ],
+            "report_id": report_id,
+        }
+    if reasoning is None:
+        return {
+            "success": False,
+            "error": "Validation failed",
+            "errors": [
+                "contextual_cvss_reasoning is required: a dependency finding is re-rated "
+                "with the cvss_breakdown observed in this codebase together with the "
+                "reasoning a reader can check"
             ],
             "report_id": report_id,
         }
 
-    score, _severity, vector = _calculate_cvss(breakdown)
-    metadata = dict(matched.get("dependency_metadata") or {})
-    metadata["contextual_cvss_breakdown"] = breakdown
-    metadata["contextual_cvss_score"] = score
-    metadata["contextual_cvss_vector"] = vector
+    if breakdown is not None:
+        score, _severity, vector = _calculate_cvss(breakdown)
+        metadata["contextual_cvss_breakdown"] = breakdown
+        metadata["contextual_cvss_score"] = score
+        metadata["contextual_cvss_vector"] = vector
     metadata["contextual_cvss_reasoning"] = reasoning[:_MAX_CONTEXTUAL_REASONING_CHARS]
     changes["dependency_metadata"] = metadata
     return None
@@ -1263,7 +1276,8 @@ async def update_vulnerability_report(
     - ``cvss_breakdown`` replaces the whole vector. The score and the
       severity are recalculated from it, so pass all 8 metrics. On a
       dependency finding it replaces the contextual rating and needs
-      ``contextual_cvss_reasoning`` with it.
+      ``contextual_cvss_reasoning`` with it. Pass the reasoning alone to
+      correct only the explanation of the rating already on file.
     - A dependency finding never carries ``endpoint``, ``method`` or a PoC.
       File a proven exploit of the package as its own report.
     - A field that only explains another field is dropped when the field
@@ -1306,7 +1320,7 @@ async def update_vulnerability_report(
         fix_verification: Verification statement for an applyable fix.
         fix_pr_body: Replacement fix PR body.
         contextual_cvss_reasoning: Dependency findings only. What you
-            observed in this codebase that justifies the new
+            observed in this codebase that justifies the contextual
             ``cvss_breakdown``.
     """
     agent_id, agent_name = _caller_identity(ctx)

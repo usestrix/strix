@@ -1641,6 +1641,51 @@ def test_update_wants_the_reasoning_behind_a_dependency_re_rating(
     assert "update_history" not in dependency_report
 
 
+def test_update_corrects_the_reasoning_behind_a_dependency_rating_alone(
+    report_state: ReportState,
+) -> None:
+    """The rating on file stays; only its explanation is replaced."""
+    dependency_report = _seed_dependency_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The reasoning named the wrong module.",
+        fields={"contextual_cvss_reasoning": "lib/parser.ts imports it; no call site reaches it."},
+    )
+
+    assert result["success"] is True
+    assert result["updated_fields"] == ["dependency_metadata"]
+    assert dependency_report["severity"] == "medium"
+    assert dependency_report["cvss"] == 5.3
+    metadata = dependency_report["dependency_metadata"]
+    assert metadata["contextual_cvss_breakdown"] == {**_CVSS, "confidentiality": "L"}
+    assert metadata["contextual_cvss_score"] == 5.3
+    assert metadata["contextual_cvss_reasoning"].startswith("lib/parser.ts")
+    assert metadata["package_name"] == "directus"
+
+
+def test_update_wants_a_rating_before_reasoning_about_one(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+    }
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Explaining the rating.",
+        fields={"contextual_cvss_reasoning": "Reachable."},
+    )
+
+    assert result["success"] is False
+    assert any("cvss_breakdown is required" in error for error in result["errors"])
+    assert "contextual_cvss_reasoning" not in dependency_report["dependency_metadata"]
+
+
 def test_update_keeps_contextual_reasoning_off_a_dynamic_finding(
     report_state: ReportState,
 ) -> None:
