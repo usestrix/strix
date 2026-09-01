@@ -79,6 +79,19 @@ UPDATABLE_REPORT_FIELDS = frozenset(
 
 _LOWERCASE_REPORT_FIELDS = frozenset({"severity", "confidence", "fix_effort"})
 
+# Fields that only describe another field. A stronger report may raise the
+# rating or replace the locations without restating the reasoning behind the
+# old one, and that leftover reasoning then contradicts the finding it annotates
+# ("confidence: high" beside a rationale calling the evidence unconfirmed). When
+# the field they describe changes and the update carries no replacement, they
+# are dropped rather than kept.
+_DEPENDENT_REPORT_FIELDS: dict[str, tuple[str, ...]] = {
+    "confidence": ("confidence_rationale",),
+    "severity": ("severity_change_conditions",),
+    "cvss": ("cvss_breakdown",),
+    "code_locations": ("fix_verification",),
+}
+
 
 def _clean_title(title: str) -> str:
     """Return a single-line finding title.
@@ -405,6 +418,10 @@ class ReportState:
     ) -> dict[str, Any] | None:
         """Merge stronger evidence into an existing report, keeping its id.
 
+        A field that only describes a field this update replaces is dropped when
+        the update carries no replacement for it, so the merged report cannot
+        state a new rating beside the superseded reasoning for the old one.
+
         Returns the merged report, or ``None`` when the id is unknown or when
         nothing in ``fields`` changes it.
         """
@@ -428,7 +445,15 @@ class ReportState:
                 continue
             changed[key] = value
 
-        if not changed:
+        superseded = {
+            dependent
+            for primary, dependents in _DEPENDENT_REPORT_FIELDS.items()
+            if primary in changed
+            for dependent in dependents
+            if dependent not in changed and report.get(dependent) not in (None, "", [], {})
+        }
+
+        if not changed and not superseded:
             logger.info("update for %s carried no new content; keeping it as is", report_id)
             return None
 
@@ -436,6 +461,8 @@ class ReportState:
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "fields": sorted(changed),
         }
+        if superseded:
+            entry["dropped_fields"] = sorted(superseded)
         if update_reason and update_reason.strip():
             entry["reason"] = update_reason.strip()[:500]
         if updated_by_agent_id:
@@ -453,6 +480,8 @@ class ReportState:
         history.append(entry)
 
         report.update(changed)
+        for dependent in superseded:
+            report.pop(dependent, None)
         report["update_history"] = history
         report["updated_at"] = entry["timestamp"]
 
@@ -463,7 +492,7 @@ class ReportState:
         logger.info(
             "Updated vulnerability report %s with stronger evidence (%s)",
             report_id,
-            ", ".join(entry["fields"]),
+            ", ".join(entry["fields"]) or "no field replaced",
         )
 
         if self.vulnerability_updated_callback:

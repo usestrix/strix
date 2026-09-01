@@ -1461,3 +1461,84 @@ def test_update_vulnerability_report_ignores_identical_content(report_state: Rep
     _seed_weak_report(report_state)
     assert report_state.update_vulnerability_report("vuln-0009", {"severity": "medium"}) is None
     assert "update_history" not in report_state.vulnerability_reports[0]
+
+
+def test_update_drops_reasoning_left_behind_by_the_field_it_describes(
+    report_state: ReportState,
+) -> None:
+    """A rating the update replaces must not keep the rationale for the old one."""
+    _seed_weak_report(report_state)
+    report = report_state.vulnerability_reports[0]
+    report["confidence_rationale"] = "Nothing was executed; the version banner is the only signal."
+    report["cvss_breakdown"] = {"attack_vector": "network", "user_interaction": "required"}
+    report["severity_change_conditions"] = "Confirming the write would raise this."
+
+    updated = report_state.update_vulnerability_report(
+        "vuln-0009",
+        {
+            "confidence": "high",
+            "severity": "critical",
+            "cvss": 9.8,
+            "severity_change_conditions": "A guard before the write would remove the impact.",
+        },
+    )
+
+    assert updated is not None
+    assert "confidence_rationale" not in updated, "the superseded rationale must not survive"
+    assert "cvss_breakdown" not in updated
+    assert updated["severity_change_conditions"].startswith("A guard"), (
+        "a replacement the update supplies is kept, not dropped"
+    )
+    assert updated["update_history"][0]["dropped_fields"] == [
+        "confidence_rationale",
+        "cvss_breakdown",
+    ]
+
+    run_dir = report_state._run_dir
+    assert run_dir is not None
+    markdown = (run_dir / "vulnerabilities" / "vuln-0009.md").read_text(encoding="utf-8")
+    assert "version banner is the only signal" not in markdown
+    assert "Dropped as superseded: confidence_rationale, cvss_breakdown" in markdown
+
+
+async def test_stronger_duplicate_of_a_dependency_finding_is_filed_separately(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dynamic proof must not be merged into a dependency record, which would leave
+    a package pin beside an exploit against an endpoint. It becomes its own finding."""
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+    }
+
+    async def fake_check_duplicate(
+        _candidate: dict[str, Any], _existing: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "is_duplicate": True,
+            "duplicate_id": "vuln-0009",
+            "confidence": 0.9,
+            "candidate_strength": "stronger",
+            "reason": "The candidate proves the advisory the dependency entry only records.",
+        }
+
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
+
+    result = await _do_create(**_STRONGER_KWARGS)
+
+    assert result["success"] is True
+    assert result.get("action") != "updated"
+    assert len(report_state.vulnerability_reports) == 2, "the proof is kept, not merged or dropped"
+
+    assert dependency_report["severity"] == "medium", "the dependency record is left alone"
+    assert dependency_report["finding_class"] == "dependency_cve"
+    assert "update_history" not in dependency_report
+    assert "poc_script_code" not in dependency_report
+
+    filed = report_state.vulnerability_reports[1]
+    assert filed["finding_class"] == "dynamic"
+    assert filed["severity"] == "critical"
+    assert "dependency_metadata" not in filed

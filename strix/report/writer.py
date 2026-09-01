@@ -379,6 +379,10 @@ def render_update_history(history: Any) -> list[str]:
         changed = ", ".join(str(field) for field in fields)
         timestamp = str(entry.get("timestamp") or "unknown")
         lines.append(f"**{timestamp}** — {author} updated: {changed}")
+        raw_dropped = entry.get("dropped_fields")
+        if isinstance(raw_dropped, list) and raw_dropped:
+            dropped = ", ".join(str(field) for field in raw_dropped)
+            lines.append(f"  Dropped as superseded: {dropped}")
         for key, label in (
             ("previous_severity", "severity"),
             ("previous_cvss", "CVSS"),

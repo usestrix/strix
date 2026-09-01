@@ -269,7 +269,8 @@ def _handle_duplicate(
     report_fields: dict[str, Any],
     agent_id: str | None,
     agent_name: str | None,
-) -> dict[str, Any]:
+    candidate_finding_class: str = "dynamic",
+) -> dict[str, Any] | None:
     """Merge a stronger duplicate into the report it matches, or reject it.
 
     A duplicate verdict answers identity, not quality. When the candidate proves
@@ -277,14 +278,29 @@ def _handle_duplicate(
     entry, a chained attack that raises the impact, added evidence), the finding
     of record must become the stronger one instead of being discarded, and it
     keeps the original report id so nothing downstream sees a second finding.
+
+    Returns ``None`` when the caller must file the candidate as its own report.
     """
     duplicate_id = str(dedupe.get("duplicate_id") or "")
-    duplicate_title = next(
-        (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
-        "",
-    )
+    matched = next((r for r in existing if r.get("id") == duplicate_id), None)
+    duplicate_title = (matched or {}).get("title", "Unknown") if matched else ""
 
     if dedupe.get("candidate_strength") == "stronger":
+        matched_class = str((matched or {}).get("finding_class") or "dynamic").lower()
+        if matched_class != candidate_finding_class:
+            # A finding keeps its class and the metadata that belongs to it, so
+            # merging across classes would leave, for example, a dependency
+            # record carrying a package pin next to a dynamic exploit against an
+            # endpoint. File the proof under its own class instead of corrupting
+            # the match.
+            logger.info(
+                "Stronger duplicate of %s is a %s finding, not %s; filing it separately",
+                duplicate_id,
+                candidate_finding_class,
+                matched_class,
+            )
+            return None
+
         updated = report_state.update_vulnerability_report(
             duplicate_id,
             report_fields,
@@ -469,7 +485,7 @@ async def _do_create(
 
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
-            return _handle_duplicate(
+            handled = _handle_duplicate(
                 report_state=report_state,
                 dedupe=dedupe,
                 existing=existing,
@@ -477,6 +493,8 @@ async def _do_create(
                 agent_id=agent_id if isinstance(agent_id, str) else None,
                 agent_name=agent_name if isinstance(agent_name, str) else None,
             )
+            if handled is not None:
+                return handled
 
         report_id = report_state.add_vulnerability_report(
             **report_fields,
