@@ -1546,6 +1546,41 @@ async def test_stronger_duplicate_of_a_dependency_finding_is_filed_separately(
     assert "dependency_metadata" not in filed
 
 
+async def test_stronger_duplicate_of_a_legacy_dependency_record_is_filed_separately(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A dependency record saved without finding_class is still recognised by its
+    package metadata, so a dynamic proof is not merged into it."""
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report.pop("finding_class", None)
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+    }
+
+    async def fake_check_duplicate(
+        _candidate: dict[str, Any], _existing: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "is_duplicate": True,
+            "duplicate_id": "vuln-0009",
+            "confidence": 0.9,
+            "candidate_strength": "stronger",
+            "reason": "The candidate proves the advisory the dependency entry only records.",
+        }
+
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
+
+    result = await _do_create(**_STRONGER_KWARGS)
+
+    assert result["success"] is True
+    assert result.get("action") != "updated"
+    assert len(report_state.vulnerability_reports) == 2
+    assert dependency_report["severity"] == "medium"
+    assert "poc_script_code" not in dependency_report
+
+
 def test_agent_revises_its_own_report_without_a_duplicate_verdict(
     report_state: ReportState,
 ) -> None:
@@ -1717,6 +1752,30 @@ def test_update_keeps_an_exploit_out_of_a_dependency_finding(report_state: Repor
     assert dependency_report["severity"] == "medium"
     assert "poc_script_code" not in dependency_report
     assert "update_history" not in dependency_report
+
+
+def test_update_reads_a_legacy_dependency_record_by_its_metadata(
+    report_state: ReportState,
+) -> None:
+    """A dependency finding filed before finding_class was persisted still carries
+    package metadata, so its class is read from that, not defaulted to dynamic."""
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report.pop("finding_class", None)
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+    }
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="An unauthenticated PATCH wrote the file.",
+        fields={"poc_script_code": "PATCH /files/2f1c HTTP/1.1", "cvss_breakdown": _CVSS},
+    )
+
+    assert result["success"] is False
+    assert "dependency_cve" in result["error"]
+    assert "poc_script_code" not in dependency_report
 
 
 def test_update_still_corrects_the_prose_of_a_dependency_finding(

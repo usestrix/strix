@@ -261,6 +261,22 @@ def _validate_fix_verification(
     ]
 
 
+def _finding_class_of(report: dict[str, Any]) -> str:
+    """Resolve the class of a stored finding.
+
+    A finding filed before ``finding_class`` was persisted still carries the
+    metadata of its class. A record with dependency metadata is a dependency
+    finding even when the field is absent, so read the metadata before falling
+    back to dynamic.
+    """
+    declared = str(report.get("finding_class") or "").lower()
+    if declared:
+        return declared
+    if report.get("dependency_metadata"):
+        return "dependency_cve"
+    return "dynamic"
+
+
 def _handle_duplicate(
     *,
     report_state: ReportState,
@@ -286,7 +302,7 @@ def _handle_duplicate(
     duplicate_title = (matched or {}).get("title", "Unknown") if matched else ""
 
     if dedupe.get("candidate_strength") == "stronger":
-        matched_class = str((matched or {}).get("finding_class") or "dynamic").lower()
+        matched_class = _finding_class_of(matched or {})
         if matched_class != candidate_finding_class:
             # A finding keeps its class and the metadata that belongs to it, so
             # merging across classes would leave, for example, a dependency
@@ -469,7 +485,7 @@ def _reject_cross_class_revision(
     if matched is None:
         return None
 
-    matched_class = str(matched.get("finding_class") or "dynamic").lower()
+    matched_class = _finding_class_of(matched)
     if matched_class == "dynamic":
         return None
 
