@@ -29,12 +29,12 @@ lifetime, and ``cleanup()``. Three consequences:
   agent loop.
 
 Failure handling follows connection-pool discipline: discard on error, rebuild on
-next use. The instant a call errors, the supervisor disposes that session on its own
-task and never awaits on it again; the next call lazily builds a fresh one. A
-classified transient failure is retried once on the rebuilt session and then, if it
-keeps failing, temporarily quarantines the connection so the circuit breaker plus the
-next call can recover it. Authentication failures and repeated transient exhaustion
-permanently retire a connection.
+next use. A failure while connecting or rebuilding describes the session. A
+non-2xx response from a tool call describes that request, not the session. Permission
+and protocol failures from a call return a failed tool output while the connection
+stays usable. Other classified failures are retried on the rebuilt session and then,
+if they keep failing, temporarily quarantine the connection. Authentication failures
+and repeated transient exhaustion permanently retire a connection.
 
 Security: the connection's :class:`~strix.tools.mcp.config.McpConnectionConfig`
 holds a live bearer credential and is kept here in memory only, on the same
@@ -52,7 +52,7 @@ import logging
 import secrets
 import time
 import weakref
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from strix.tools.mcp.config import DEFAULT_MAX_CONCURRENT_CALLS
 from strix.tools.mcp.failures import FailureInfo, HttpStatusRecorder, classify
@@ -71,6 +71,8 @@ if TYPE_CHECKING:
     # call. Runs on the supervising task (supervised sessions) or inline (adopted
     # sessions), and its return value becomes the caller's result.
     Job = Callable[[MCPServer], Awaitable[Any]]
+
+_Phase = Literal["connect", "call"]
 
 
 logger = logging.getLogger(__name__)
@@ -118,10 +120,11 @@ class McpConnectionUnavailableError(RuntimeError):
 
 @dataclasses.dataclass
 class _Outcome:
-    """What running one job resolved to: a value, or the connection being dead."""
+    """What running one job resolved to: a value, a call failure, or a dead connection."""
 
     value: Any = None
     dead: bool = False
+    call_failure: FailureInfo | None = None
 
 
 @dataclasses.dataclass
@@ -130,6 +133,7 @@ class _Request:
 
     job: Job
     future: asyncio.Future[_Outcome]
+    phase: _Phase
 
 
 class SupervisedMcpSession:
@@ -342,11 +346,14 @@ class SupervisedMcpSession:
     async def list_tools(self) -> list[MCPTool]:
         """List the connection's tools, retrying transient session failures.
 
-        Raises :class:`McpConnectionUnavailableError` when the connection is dead.
+        Raises :class:`McpConnectionUnavailableError` when the connection is dead
+        and never returns a call failure.
         """
-        outcome = await self._run_job(lambda server: server.list_tools())
+        outcome = await self._run_job(lambda server: server.list_tools(), phase="connect")
         if outcome.dead:
             raise McpConnectionUnavailableError(self._unavailable_message())
+        if outcome.call_failure is not None:
+            raise RuntimeError("MCP list_tools returned a call failure")
         return cast("list[MCPTool]", outcome.value)
 
     async def dispatch(
@@ -360,8 +367,9 @@ class SupervisedMcpSession:
         """Run one tool call with bounded retries for transient session failures.
 
         Returns the tool output on success, or the standard failed-tool output
-        (``success: False``) with a "connection unavailable" message when the
-        connection is dead.
+        (``success: False``) when the provider rejects the call or the connection
+        is unavailable. A call rejection keeps the connection usable because the
+        provider rejected the request, not the session.
         """
         from strix.tools.mcp.client import dispatch_mcp_call
 
@@ -374,7 +382,11 @@ class SupervisedMcpSession:
                 result_transform=result_transform,
             )
 
-        outcome = await self._run_job(job)
+        outcome = await self._run_job(job, phase="call")
+        if outcome.call_failure is not None:
+            from strix.tools.mcp.client import _errored_tool_output
+
+            return _errored_tool_output(self._call_rejected_message(outcome.call_failure))
         if outcome.dead:
             from strix.tools.mcp.client import _errored_tool_output
 
@@ -383,13 +395,13 @@ class SupervisedMcpSession:
 
     # -- job routing ----------------------------------------------------------
 
-    async def _run_job(self, job: Job) -> _Outcome:
+    async def _run_job(self, job: Job, *, phase: _Phase) -> _Outcome:
         """Route one job to the owning task (supervised) or run it inline (adopted)."""
         if self._supervised:
-            return await self._submit(job)
-        return await self._execute(job)
+            return await self._submit(job, phase)
+        return await self._execute(job, phase)
 
-    async def _submit(self, job: Job) -> _Outcome:
+    async def _submit(self, job: Job, phase: _Phase) -> _Outcome:
         """Hand a job to the supervising task and await its result as a value."""
         if self._dead or self._closing or self._task is None or self._task.done():
             return _Outcome(dead=True)
@@ -399,7 +411,7 @@ class SupervisedMcpSession:
         if self._queue is None:
             self._pending.discard(future)
             return _Outcome(dead=True)
-        await self._queue.put(_Request(job=job, future=future))
+        await self._queue.put(_Request(job=job, future=future, phase=phase))
         # The task may have ended between the guard above and the put; ``_fail_pending``
         # would then never see this future, so resolve it here.
         if self._task.done() and not future.done():
@@ -458,7 +470,7 @@ class SupervisedMcpSession:
                 failure = self._recorder.take() if self._recorder is not None else None
                 failure = failure or FailureInfo("transport", reason="session cancelled")
                 self._last_failure = failure
-                if failure.kind == "auth":
+                if failure.kind in {"auth", "permission"}:
                     self._mark_dead(failure, attempt=1)
                     return
                 await self._quarantine(failure, attempt=1)
@@ -467,7 +479,7 @@ class SupervisedMcpSession:
                 continue
             if request is None:  # shutdown sentinel
                 return
-            outcome = await self._execute(request.job)
+            outcome = await self._execute(request.job, request.phase)
             if not request.future.done():
                 request.future.set_result(outcome)
             self._pending.discard(request.future)
@@ -476,7 +488,7 @@ class SupervisedMcpSession:
 
     # -- run one job with bounded classified retries --------------------------
 
-    async def _execute(self, job: Job) -> _Outcome:  # noqa: PLR0912
+    async def _execute(self, job: Job, phase: _Phase) -> _Outcome:  # noqa: PLR0912
         """Run one job on a healthy session, disposing it the instant it errors.
 
         Discard-on-error, rebuild-on-next-use is the whole discipline here, and it
@@ -499,9 +511,11 @@ class SupervisedMcpSession:
 
         The rebuild itself happens lazily at the top of the loop: once a failure has
         set ``_server`` to None, the next iteration builds a fresh session (guarded by
-        :meth:`_reconnect`) and retries the call on it. A genuine shutdown
-        (``_closing``) and a real external cancellation still propagate; only the
-        transport's teardown cancellation is contained.
+        :meth:`_reconnect`) and retries the operation on it. A permission or protocol
+        failure from a call returns immediately after disposal because it describes
+        that request, not the session. A genuine shutdown (``_closing``) and a real
+        external cancellation still propagate; only the transport's teardown
+        cancellation is contained.
         """
         if self._dead:
             return _Outcome(dead=True)
@@ -538,7 +552,7 @@ class SupervisedMcpSession:
                     failure = reconnect_failure or FailureInfo(
                         "transport", reason="reconnect failed"
                     )
-                    outcome = await self._handle_failure(failure, attempt)
+                    outcome = await self._handle_failure(failure, attempt, phase="connect")
                     if outcome is not None:
                         return outcome
                     continue
@@ -576,16 +590,30 @@ class SupervisedMcpSession:
 
             # Session is disposed and _server is None; _handle_failure may sleep for
             # backoff safely, and the next loop iteration rebuilds and retries.
-            outcome = await self._handle_failure(failure, attempt)
+            outcome = await self._handle_failure(failure, attempt, phase=phase)
             if outcome is not None:
                 return outcome
         return _Outcome(dead=True)
 
-    async def _handle_failure(self, failure: FailureInfo, attempt: int) -> _Outcome | None:
+    async def _handle_failure(
+        self, failure: FailureInfo, attempt: int, *, phase: _Phase
+    ) -> _Outcome | None:
         self._last_failure = failure
         if failure.kind == "auth":
             self._mark_dead(failure, attempt=attempt)
             return _Outcome(dead=True)
+        if failure.kind == "permission":
+            if phase == "call":
+                return _Outcome(call_failure=failure)
+            self._mark_dead(failure, attempt=attempt)
+            return _Outcome(dead=True)
+        if (
+            phase == "call"
+            and failure.kind == "protocol"
+            and failure.status is not None
+            and 400 <= failure.status <= 499
+        ):
+            return _Outcome(call_failure=failure)
         if attempt == _MAX_ATTEMPTS:
             await self._quarantine(failure, attempt=attempt)
             return _Outcome(dead=True)
@@ -690,6 +718,24 @@ class SupervisedMcpSession:
         return server
 
     # -- helpers --------------------------------------------------------------
+
+    def _call_rejected_message(self, failure: FailureInfo) -> str:
+        if failure.kind == "permission":
+            return (
+                f"MCP connection {self._name!r} rejected this call (status={failure.status}): "
+                "the provider denied this specific request, not the connection. The connection "
+                "is still available. Check the arguments — resource and project identifiers, "
+                "and required fields — and whether the configured credential is allowed to read "
+                "that resource, then retry."
+            )
+        if failure.kind == "protocol":
+            return (
+                f"MCP connection {self._name!r} rejected this call as invalid "
+                f"(status={failure.status}): the request itself was malformed, not the "
+                "connection. The connection is still available. Check the tool's required "
+                "arguments and value formats with describe_mcp, then retry."
+            )
+        raise AssertionError(f"Unexpected call failure kind: {failure.kind}")
 
     async def _safe_cleanup(self) -> None:
         """Dispose the live session on this task, completing teardown even under a

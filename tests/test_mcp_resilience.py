@@ -47,13 +47,14 @@ def _http_error(status: int, *, retry_after: str | None = None) -> httpx.HTTPSta
     ("exc", "kind"),
     [
         (_http_error(401), "auth"),
+        (_http_error(403), "permission"),
         (_http_error(429), "rate_limit"),
         (_http_error(503), "server"),
         (_http_error(404), "protocol"),
         (httpx.ReadTimeout("timed out"), "timeout"),
         (httpx.ConnectError("disconnected"), "transport"),
         (McpError(ErrorData(code=-1, message="bad response")), "protocol"),
-        (UserError("Failed to call tool: HTTP error 403"), "auth"),
+        (UserError("Failed to call tool: HTTP error 403"), "permission"),
     ],
 )
 def test_classifies_failures(exc: BaseException, kind: str) -> None:
@@ -68,6 +69,14 @@ def test_classifies_nested_exception_groups_by_specificity() -> None:
     info = classify(error)
     assert info.kind == "auth"
     assert info.status == 401
+    assert info.retryable is False
+
+
+def test_classifies_permission_before_rate_limit() -> None:
+    error = ExceptionGroup("outer", [_http_error(429), _http_error(403)])
+    info = classify(error)
+    assert info.kind == "permission"
+    assert info.status == 403
     assert info.retryable is False
 
 
@@ -147,6 +156,16 @@ def _sequence_server(name: str, error: BaseException | None = None) -> Any:
         return await original_call_tool(tool_name, arguments, meta)
 
     server.call_tool = call_tool
+    return server
+
+
+def _list_tools_error_server(name: str, error: BaseException) -> Any:
+    server = FakeMCPServer(name, [_mcp_tool("read")])
+
+    async def list_tools(*_args: Any, **_kwargs: Any) -> Any:
+        raise error
+
+    server.list_tools = list_tools
     return server
 
 
@@ -249,6 +268,51 @@ async def test_auth_failure_dies_without_retry(monkeypatch: pytest.MonkeyPatch) 
     assert result["success"] is False
     assert session.is_dead is True
     assert builds == []
+    await session.aclose()
+
+
+@pytest.mark.parametrize(
+    ("status", "name"),
+    [(403, "permission-call"), (400, "protocol-call")],
+)
+@pytest.mark.asyncio
+async def test_call_http_rejection_preserves_session(
+    monkeypatch: pytest.MonkeyPatch,
+    status: int,
+    name: str,
+) -> None:
+    first = _sequence_server(name, _http_error(status))
+    second = _sequence_server(name)
+    builds = iter([first, second])
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(next(builds)))
+
+    session = mcp_session.SupervisedMcpSession(_config(name))
+    assert await session.start()
+    result = await session.dispatch("read", {}, label=f"{name}_read")
+    assert result["success"] is False
+    assert "not the connection" in result["content"]
+    assert session.is_dead is False
+    assert session.is_unavailable is False
+    assert session._quarantine_count == 0
+
+    result = await session.dispatch("read", {}, label=f"{name}_read")
+    assert result == {"type": "text", "text": "routed:read"}
+    assert session.is_dead is False
+    await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_call_http_403_during_list_tools_dies() -> None:
+    server = _list_tools_error_server("connect-403", _http_error(403))
+    session = mcp_session.SupervisedMcpSession.adopt(
+        server,
+        name="connect-403",
+        config=_config("connect-403"),
+    )
+
+    with pytest.raises(mcp_session.McpConnectionUnavailableError):
+        await session.list_tools()
+    assert session.is_dead is True
     await session.aclose()
 
 

@@ -13,16 +13,19 @@ from agents.exceptions import UserError
 from mcp.shared.exceptions import McpError
 
 
-FailureKind = Literal["auth", "rate_limit", "server", "transport", "timeout", "protocol", "unknown"]
+FailureKind = Literal[
+    "auth", "permission", "rate_limit", "server", "transport", "timeout", "protocol", "unknown"
+]
 
 _PRIORITY: dict[FailureKind, int] = {
     "auth": 0,
-    "rate_limit": 1,
-    "server": 2,
-    "protocol": 3,
-    "timeout": 4,
-    "transport": 5,
-    "unknown": 6,
+    "permission": 1,
+    "rate_limit": 2,
+    "server": 3,
+    "protocol": 4,
+    "timeout": 5,
+    "transport": 6,
+    "unknown": 7,
 }
 _HTTP_ERROR_RE = re.compile(r"\bHTTP error\s+(\d{3})\b", re.IGNORECASE)
 
@@ -40,7 +43,7 @@ class FailureInfo:
 
     @property
     def retryable(self) -> bool:
-        return self.kind != "auth"
+        return self.kind not in {"auth", "permission"}
 
 
 def _retry_after(value: str | None) -> float | None:
@@ -67,8 +70,10 @@ def _from_status(
     request_method: str | None = None,
     request_path: str | None = None,
 ) -> FailureInfo:
-    if status in (401, 403):
+    if status == 401:
         kind: FailureKind = "auth"
+    elif status == 403:
+        kind = "permission"
     elif status == 429:
         kind = "rate_limit"
     elif 500 <= status <= 599:
