@@ -295,6 +295,7 @@ _UPDATE_TEXT_FIELDS = (
     "method",
     "fix_verification",
     "fix_pr_body",
+    "contextual_cvss_reasoning",
 )
 
 
@@ -370,48 +371,27 @@ def _collect_update_changes(  # noqa: PLR0912
     return changes, errors
 
 
-# Evidence and ratings that only a dynamic finding carries. A dependency finding is
-# rated from its advisory and describes a package, not a request against an endpoint.
+# Evidence that only a dynamic finding carries. A dependency finding describes a
+# package, not a request against an endpoint.
 _DYNAMIC_ONLY_UPDATE_FIELDS = (
     "endpoint",
     "method",
     "poc_description",
     "poc_script_code",
-    "severity",
-    "cvss",
-    "cvss_breakdown",
 )
+
+# A dependency finding is rated in the context of the codebase that pins it, and
+# that rating is only shown with the reasoning behind it.
+_DEPENDENCY_ONLY_UPDATE_FIELDS = ("contextual_cvss_reasoning",)
 
 
 def _reject_cross_class_revision(
-    report_state: ReportState,
     report_id: str,
-    changes: dict[str, Any],
-) -> dict[str, Any] | None:
-    """Keep a revision inside the class of the finding it names.
-
-    A finding keeps its class and the metadata that belongs to it. Writing an
-    exploit and a dynamic rating onto a dependency record would leave it carrying a
-    package pin next to a request against an endpoint, so the proof belongs in its
-    own dynamic finding instead.
-    """
-    matched = next(
-        (r for r in report_state.get_existing_vulnerabilities() if r.get("id") == report_id),
-        None,
-    )
-    if matched is None:
-        return None
-
-    matched_class = _finding_class_of(matched)
-    if matched_class == "dynamic":
-        return None
-
-    offending = [name for name in _DYNAMIC_ONLY_UPDATE_FIELDS if name in changes]
-    if not offending:
-        return None
-
+    matched_class: str,
+    offending: list[str],
+) -> dict[str, Any]:
     logger.info(
-        "Revision of %s carries dynamic fields (%s) a %s finding does not hold; rejecting",
+        "Revision of %s carries fields (%s) a %s finding does not hold; rejecting",
         report_id,
         ", ".join(offending),
         matched_class,
@@ -427,6 +407,78 @@ def _reject_cross_class_revision(
         "finding_class": matched_class,
         "rejected_fields": offending,
     }
+
+
+def _rate_dependency_revision(
+    report_id: str,
+    matched: dict[str, Any],
+    changes: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Turn a replacement ``cvss_breakdown`` into the contextual rating of a dependency.
+
+    A dependency record keeps its rating as ``cvss``/``severity`` plus the
+    contextual breakdown, vector and reasoning inside ``dependency_metadata``.
+    The package identity in that metadata is copied over untouched.
+    """
+    breakdown = changes.pop("cvss_breakdown", None)
+    reasoning = changes.pop("contextual_cvss_reasoning", None)
+    if breakdown is None and reasoning is None:
+        return None
+    if breakdown is None or reasoning is None:
+        missing = "contextual_cvss_reasoning" if reasoning is None else "cvss_breakdown"
+        return {
+            "success": False,
+            "error": "Validation failed",
+            "errors": [
+                f"{missing} is required: a dependency finding is re-rated with the "
+                "cvss_breakdown observed in this codebase together with the "
+                "contextual_cvss_reasoning a reader can check"
+            ],
+            "report_id": report_id,
+        }
+
+    score, _severity, vector = _calculate_cvss(breakdown)
+    metadata = dict(matched.get("dependency_metadata") or {})
+    metadata["contextual_cvss_breakdown"] = breakdown
+    metadata["contextual_cvss_score"] = score
+    metadata["contextual_cvss_vector"] = vector
+    metadata["contextual_cvss_reasoning"] = reasoning[:_MAX_CONTEXTUAL_REASONING_CHARS]
+    changes["dependency_metadata"] = metadata
+    return None
+
+
+def _fit_revision_to_class(
+    report_state: ReportState,
+    report_id: str,
+    changes: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Keep a revision inside the class of the finding it names.
+
+    A finding keeps its class and the metadata that belongs to it. Writing an
+    exploit onto a dependency record would leave it carrying a package pin next
+    to a request against an endpoint, so the proof belongs in its own dynamic
+    finding instead. A dependency finding is still re-rated, through the
+    contextual CVSS it was filed with.
+    """
+    matched = next(
+        (r for r in report_state.get_existing_vulnerabilities() if r.get("id") == report_id),
+        None,
+    )
+    if matched is None:
+        return None
+
+    matched_class = _finding_class_of(matched)
+    foreign = (
+        _DEPENDENCY_ONLY_UPDATE_FIELDS
+        if matched_class == "dynamic"
+        else _DYNAMIC_ONLY_UPDATE_FIELDS
+    )
+    offending = [name for name in foreign if name in changes]
+    if offending:
+        return _reject_cross_class_revision(report_id, matched_class, offending)
+    if matched_class == "dynamic":
+        return None
+    return _rate_dependency_revision(report_id, matched, changes)
 
 
 def _read_revision(
@@ -464,9 +516,9 @@ def _do_update(
 ) -> dict[str, Any]:
     """Apply an agent's own revision to a report it can name.
 
-    Editing a finding is its own operation. Deduplication only decides which
-    report a new candidate belongs to, so it is one caller of this path rather
-    than the only way a finding can change.
+    Editing a finding is its own operation and the only way a filed finding
+    changes. Deduplication never reaches this path: it only decides whether a
+    new candidate is a finding already on file.
     """
     report_id = (report_id or "").strip()
     changes, rejection = _read_revision(report_id, update_reason, fields)
@@ -482,7 +534,7 @@ def _do_update(
             "error": "Report state unavailable - no reports have been filed yet",
         }
 
-    class_error = _reject_cross_class_revision(report_state, report_id, changes)
+    class_error = _fit_revision_to_class(report_state, report_id, changes)
     if class_error is not None:
         return class_error
 
@@ -1182,6 +1234,7 @@ async def update_vulnerability_report(
     code_locations: list[dict[str, Any]] | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
+    contextual_cvss_reasoning: str | None = None,
 ) -> str:
     """Revise a vulnerability report that is already filed, keeping its id.
 
@@ -1208,7 +1261,11 @@ async def update_vulnerability_report(
     Notes on specific fields:
 
     - ``cvss_breakdown`` replaces the whole vector. The score and the
-      severity are recalculated from it, so pass all 8 metrics.
+      severity are recalculated from it, so pass all 8 metrics. On a
+      dependency finding it replaces the contextual rating and needs
+      ``contextual_cvss_reasoning`` with it.
+    - A dependency finding never carries ``endpoint``, ``method`` or a PoC.
+      File a proven exploit of the package as its own report.
     - A field that only explains another field is dropped when the field
       it explains changes and you pass no replacement. Pass
       ``confidence_rationale`` with a new ``confidence``, and
@@ -1248,6 +1305,9 @@ async def update_vulnerability_report(
         code_locations: Replacement code locations.
         fix_verification: Verification statement for an applyable fix.
         fix_pr_body: Replacement fix PR body.
+        contextual_cvss_reasoning: Dependency findings only. What you
+            observed in this codebase that justifies the new
+            ``cvss_breakdown``.
     """
     agent_id, agent_name = _caller_identity(ctx)
     result = await asyncio.to_thread(
@@ -1278,6 +1338,7 @@ async def update_vulnerability_report(
             "code_locations": code_locations,
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
+            "contextual_cvss_reasoning": contextual_cvss_reasoning,
         },
         agent_id=agent_id,
         agent_name=agent_name,

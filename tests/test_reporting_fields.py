@@ -1560,16 +1560,101 @@ def test_update_keeps_an_exploit_out_of_a_dependency_finding(report_state: Repor
 
     assert result["success"] is False
     assert "dependency_cve" in result["error"]
-    assert set(result["rejected_fields"]) == {
-        "endpoint",
-        "poc_script_code",
-        "severity",
-        "cvss",
-        "cvss_breakdown",
-    }
+    assert set(result["rejected_fields"]) == {"endpoint", "poc_script_code"}
     assert dependency_report["severity"] == "medium"
     assert "poc_script_code" not in dependency_report
     assert "update_history" not in dependency_report
+
+
+def _seed_dependency_report(report_state: ReportState) -> dict[str, Any]:
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+        "manifest_path": "package-lock.json",
+        "advisory_cvss": 9.8,
+        "contextual_cvss_breakdown": {**_CVSS, "confidentiality": "L"},
+        "contextual_cvss_score": 5.3,
+        "contextual_cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+        "contextual_cvss_reasoning": "The vulnerable API is imported but never called.",
+    }
+    return dependency_report
+
+
+def test_update_re_rates_a_dependency_finding_through_its_contextual_cvss(
+    report_state: ReportState,
+) -> None:
+    """A dependency finding is rated in the context of the codebase. A revised
+    breakdown replaces that contextual rating, with the reasoning a reader can
+    check, and leaves the package identity alone."""
+    dependency_report = _seed_dependency_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A call path from the upload handler to the vulnerable API was found.",
+        fields={
+            "cvss_breakdown": _CVSS,
+            "contextual_cvss_reasoning": (
+                "routes/upload.ts:88 reaches the affected parser with user input."
+            ),
+        },
+    )
+
+    assert result["success"] is True
+    assert result["severity"] == "critical"
+    assert dependency_report["severity"] == "critical"
+    assert dependency_report["cvss"] == 9.8
+    assert "cvss_breakdown" not in dependency_report
+    assert "contextual_cvss_reasoning" not in dependency_report
+    metadata = dependency_report["dependency_metadata"]
+    assert metadata["package_name"] == "directus"
+    assert metadata["installed_version"] == "11.5.1"
+    assert metadata["manifest_path"] == "package-lock.json"
+    assert metadata["advisory_cvss"] == 9.8
+    assert metadata["contextual_cvss_breakdown"] == _CVSS
+    assert metadata["contextual_cvss_score"] == 9.8
+    assert metadata["contextual_cvss_vector"] == "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    assert metadata["contextual_cvss_reasoning"].startswith("routes/upload.ts:88")
+    assert dependency_report["finding_class"] == "dependency_cve"
+    history = dependency_report["update_history"]
+    assert history[-1]["previous_severity"] == "medium"
+    assert set(history[-1]["fields"]) == {"cvss", "dependency_metadata", "severity"}
+
+
+def test_update_wants_the_reasoning_behind_a_dependency_re_rating(
+    report_state: ReportState,
+) -> None:
+    dependency_report = _seed_dependency_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The parser is reachable.",
+        fields={"cvss_breakdown": _CVSS},
+    )
+
+    assert result["success"] is False
+    assert any("contextual_cvss_reasoning" in error for error in result["errors"])
+    assert dependency_report["severity"] == "medium"
+    assert dependency_report["dependency_metadata"]["contextual_cvss_score"] == 5.3
+    assert "update_history" not in dependency_report
+
+
+def test_update_keeps_contextual_reasoning_off_a_dynamic_finding(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Re-rating.",
+        fields={"cvss_breakdown": _CVSS, "contextual_cvss_reasoning": "Reachable."},
+    )
+
+    assert result["success"] is False
+    assert result["rejected_fields"] == ["contextual_cvss_reasoning"]
+    assert report_state.vulnerability_reports[0]["severity"] == "medium"
 
 
 def test_update_reads_a_legacy_dependency_record_by_its_metadata(

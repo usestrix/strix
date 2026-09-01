@@ -45,10 +45,12 @@ def _strix_version() -> str | None:
 
 
 # Content a revision may replace. The identity of the finding (id, timestamp,
-# finding_class, dependency_metadata) and its original author stay put.
+# finding_class) and its original author stay put. dependency_metadata is
+# replaced whole, so a caller carries the package identity over itself.
 UPDATABLE_REPORT_FIELDS = frozenset(
     {
         "title",
+        "dependency_metadata",
         "severity",
         "description",
         "impact",
