@@ -1684,6 +1684,60 @@ def test_update_tool_asks_for_the_report_and_the_reason() -> None:
     assert "not deduplication" in description
 
 
+def test_update_keeps_an_exploit_out_of_a_dependency_finding(report_state: ReportState) -> None:
+    """A dependency record is rated from its advisory, so a revision must not write a
+    PoC and a dynamic rating onto it. The proof belongs in its own finding."""
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+    }
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="An unauthenticated PATCH wrote the file.",
+        fields={
+            "poc_script_code": "PATCH /files/2f1c HTTP/1.1",
+            "endpoint": "/files/{uuid}",
+            "cvss_breakdown": _CVSS,
+        },
+    )
+
+    assert result["success"] is False
+    assert "dependency_cve" in result["error"]
+    assert set(result["rejected_fields"]) == {
+        "endpoint",
+        "poc_script_code",
+        "severity",
+        "cvss",
+        "cvss_breakdown",
+    }
+    assert dependency_report["severity"] == "medium"
+    assert "poc_script_code" not in dependency_report
+    assert "update_history" not in dependency_report
+
+
+def test_update_still_corrects_the_prose_of_a_dependency_finding(
+    report_state: ReportState,
+) -> None:
+    """Fields every class carries stay editable on a dependency record."""
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The advisory names a later fixed release than the report says.",
+        fields={"remediation_steps": "Upgrade to 11.5.2 or later."},
+    )
+
+    assert result["success"] is True
+    assert dependency_report["remediation_steps"] == "Upgrade to 11.5.2 or later."
+    assert dependency_report["finding_class"] == "dependency_cve"
+
+
 def test_update_refuses_code_locations_it_cannot_use(report_state: ReportState) -> None:
     """A location without a usable file and line is reported, not dropped in silence."""
     _seed_weak_report(report_state)

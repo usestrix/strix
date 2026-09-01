@@ -437,6 +437,90 @@ def _collect_update_changes(  # noqa: PLR0912
     return changes, errors
 
 
+# Evidence and ratings that only a dynamic finding carries. A dependency finding is
+# rated from its advisory and describes a package, not a request against an endpoint.
+_DYNAMIC_ONLY_UPDATE_FIELDS = (
+    "endpoint",
+    "method",
+    "poc_description",
+    "poc_script_code",
+    "severity",
+    "cvss",
+    "cvss_breakdown",
+)
+
+
+def _reject_cross_class_revision(
+    report_state: ReportState,
+    report_id: str,
+    changes: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Keep a revision inside the class of the finding it names.
+
+    A finding keeps its class and the metadata that belongs to it. Writing an
+    exploit and a dynamic rating onto a dependency record would leave it carrying a
+    package pin next to a request against an endpoint, so the proof belongs in its
+    own dynamic finding instead.
+    """
+    matched = next(
+        (r for r in report_state.get_existing_vulnerabilities() if r.get("id") == report_id),
+        None,
+    )
+    if matched is None:
+        return None
+
+    matched_class = str(matched.get("finding_class") or "dynamic").lower()
+    if matched_class == "dynamic":
+        return None
+
+    offending = [name for name in _DYNAMIC_ONLY_UPDATE_FIELDS if name in changes]
+    if not offending:
+        return None
+
+    logger.info(
+        "Revision of %s carries dynamic fields (%s) a %s finding does not hold; rejecting",
+        report_id,
+        ", ".join(offending),
+        matched_class,
+    )
+    return {
+        "success": False,
+        "error": (
+            f"Report '{report_id}' is a {matched_class} finding, so it cannot carry "
+            f"{', '.join(offending)}. File your proof as its own vulnerability report "
+            "instead of writing it onto this one."
+        ),
+        "report_id": report_id,
+        "finding_class": matched_class,
+        "rejected_fields": offending,
+    }
+
+
+def _read_revision(
+    report_id: str, update_reason: str, fields: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Return the changes a revision asks for, or the reason it cannot be acted on."""
+    if not report_id or not str(update_reason or "").strip():
+        missing = "report_id" if not report_id else "update_reason"
+        return {}, {
+            "success": False,
+            "error": (
+                f"{missing} cannot be empty - name the report you are revising and state "
+                "what you learned that it does not yet carry"
+            ),
+        }
+
+    changes, errors = _collect_update_changes(fields)
+    if errors:
+        return {}, {"success": False, "error": "Validation failed", "errors": errors}
+    if not changes:
+        return {}, {
+            "success": False,
+            "error": "No fields to update - pass at least one field you want to replace",
+        }
+    return changes, None
+
+
 def _do_update(
     *,
     report_id: str,
@@ -452,24 +536,9 @@ def _do_update(
     than the only way a finding can change.
     """
     report_id = (report_id or "").strip()
-    if not report_id or not str(update_reason or "").strip():
-        missing = "report_id" if not report_id else "update_reason"
-        return {
-            "success": False,
-            "error": (
-                f"{missing} cannot be empty - name the report you are revising and state "
-                "what you learned that it does not yet carry"
-            ),
-        }
-
-    changes, errors = _collect_update_changes(fields)
-    if errors:
-        return {"success": False, "error": "Validation failed", "errors": errors}
-    if not changes:
-        return {
-            "success": False,
-            "error": "No fields to update - pass at least one field you want to replace",
-        }
+    changes, rejection = _read_revision(report_id, update_reason, fields)
+    if rejection is not None:
+        return rejection
 
     from strix.report.state import get_global_report_state
 
@@ -479,6 +548,10 @@ def _do_update(
             "success": False,
             "error": "Report state unavailable - no reports have been filed yet",
         }
+
+    class_error = _reject_cross_class_revision(report_state, report_id, changes)
+    if class_error is not None:
+        return class_error
 
     updated = report_state.update_vulnerability_report(
         report_id,
