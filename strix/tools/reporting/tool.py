@@ -344,6 +344,175 @@ def _handle_duplicate(
     }
 
 
+_UPDATE_TEXT_FIELDS = (
+    "title",
+    "description",
+    "impact",
+    "target",
+    "technical_analysis",
+    "poc_description",
+    "poc_script_code",
+    "remediation_steps",
+    "evidence",
+    "assumptions",
+    "counterevidence",
+    "confidence_rationale",
+    "severity_change_conditions",
+    "endpoint",
+    "method",
+    "fix_verification",
+    "fix_pr_body",
+)
+
+
+def _collect_update_changes(  # noqa: PLR0912
+    fields: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Validate the fields a revision replaces and return them with any errors."""
+    errors: list[str] = []
+    changes: dict[str, Any] = {}
+
+    for name in _UPDATE_TEXT_FIELDS:
+        value = clean_optional(fields.get(name))
+        if value is not None:
+            changes[name] = value
+
+    confidence = clean_optional(fields.get("confidence"))
+    if confidence is not None:
+        confidence = confidence.lower()
+        if confidence not in _VALID_CONFIDENCE:
+            errors.append(
+                f"Invalid confidence: {confidence!r}. Must be one of: {sorted(_VALID_CONFIDENCE)}"
+            )
+        else:
+            changes["confidence"] = confidence
+
+    fix_effort = clean_optional(fields.get("fix_effort"))
+    if fix_effort is not None:
+        fix_effort = fix_effort.lower()
+        if fix_effort not in _VALID_FIX_EFFORT:
+            errors.append(
+                f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
+            )
+        else:
+            changes["fix_effort"] = fix_effort
+
+    breakdown = fields.get("cvss_breakdown")
+    if breakdown is not None:
+        breakdown_errors = _validate_cvss_breakdown(breakdown)
+        errors.extend(breakdown_errors)
+        if not breakdown_errors:
+            try:
+                cvss_score, severity, _vector = _calculate_cvss(breakdown)
+            except ValueError as exc:
+                errors.append(str(exc))
+            else:
+                # The rating belongs to the vector, so a revised vector carries
+                # its own score and severity rather than leaving the old ones.
+                changes["cvss_breakdown"] = breakdown
+                changes["cvss"] = cvss_score
+                changes["severity"] = severity
+
+    raw_locations = fields.get("code_locations")
+    locations = _normalize_code_locations(raw_locations)
+    if locations:
+        errors.extend(_validate_code_locations(locations))
+        errors.extend(_validate_fix_verification(locations, changes.get("fix_verification")))
+        changes["code_locations"] = locations
+    elif raw_locations:
+        errors.append(
+            "code_locations were dropped as unusable - every location needs a relative "
+            "'file' and an integer 'start_line'"
+        )
+
+    cve, cwe, identifier_errors = _validate_identifiers(
+        clean_optional(fields.get("cve")), clean_optional(fields.get("cwe"))
+    )
+    errors.extend(identifier_errors)
+    if cve:
+        changes["cve"] = cve
+    if cwe:
+        changes["cwe"] = cwe
+
+    return changes, errors
+
+
+def _do_update(
+    *,
+    report_id: str,
+    update_reason: str,
+    fields: dict[str, Any],
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
+    """Apply an agent's own revision to a report it can name.
+
+    Editing a finding is its own operation. Deduplication only decides which
+    report a new candidate belongs to, so it is one caller of this path rather
+    than the only way a finding can change.
+    """
+    report_id = (report_id or "").strip()
+    if not report_id or not str(update_reason or "").strip():
+        missing = "report_id" if not report_id else "update_reason"
+        return {
+            "success": False,
+            "error": (
+                f"{missing} cannot be empty - name the report you are revising and state "
+                "what you learned that it does not yet carry"
+            ),
+        }
+
+    changes, errors = _collect_update_changes(fields)
+    if errors:
+        return {"success": False, "error": "Validation failed", "errors": errors}
+    if not changes:
+        return {
+            "success": False,
+            "error": "No fields to update - pass at least one field you want to replace",
+        }
+
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return {
+            "success": False,
+            "error": "Report state unavailable - no reports have been filed yet",
+        }
+
+    updated = report_state.update_vulnerability_report(
+        report_id,
+        changes,
+        update_reason=update_reason,
+        updated_by_agent_id=agent_id,
+        updated_by_agent_name=agent_name,
+    )
+    if updated is None:
+        known = [r.get("id") for r in report_state.get_existing_vulnerabilities()]
+        if report_id not in known:
+            error = f"Report with id '{report_id}' not found"
+        else:
+            error = f"Report '{report_id}' already says this - nothing in your update changes it"
+        return {"success": False, "error": error, "report_id": report_id}
+
+    logger.info(
+        "Vulnerability report %s revised by its author: severity=%s cvss=%s fields=%s",
+        report_id,
+        updated.get("severity"),
+        updated.get("cvss"),
+        ", ".join(sorted(changes)),
+    )
+    return {
+        "success": True,
+        "action": "updated",
+        "message": f"Report '{report_id}' now carries your revision. Do not file it again.",
+        "report_id": report_id,
+        "updated_fields": sorted(changes),
+        "severity": updated.get("severity"),
+        "cvss_score": updated.get("cvss"),
+    }
+
+
 async def _do_create(
     *,
     title: str,
@@ -981,6 +1150,137 @@ async def create_vulnerability_report(
         code_locations=code_locations,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
+        agent_id=agent_id,
+        agent_name=agent_name,
+    )
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=60, strict_mode=False)
+async def update_vulnerability_report(
+    ctx: RunContextWrapper,
+    report_id: str,
+    update_reason: str,
+    title: str | None = None,
+    description: str | None = None,
+    impact: str | None = None,
+    target: str | None = None,
+    technical_analysis: str | None = None,
+    poc_description: str | None = None,
+    poc_script_code: str | None = None,
+    remediation_steps: str | None = None,
+    evidence: str | None = None,
+    assumptions: str | None = None,
+    counterevidence: str | None = None,
+    confidence: str | None = None,
+    confidence_rationale: str | None = None,
+    severity_change_conditions: str | None = None,
+    fix_effort: str | None = None,
+    cvss_breakdown: dict[str, str] | None = None,
+    endpoint: str | None = None,
+    method: str | None = None,
+    cve: str | None = None,
+    cwe: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
+    fix_pr_body: str | None = None,
+) -> str:
+    """Revise a vulnerability report that is already filed, keeping its id.
+
+    Use this when you learn something a filed finding does not yet carry:
+
+    - You built the working exploit after filing the finding on static
+      evidence, so the PoC and the confidence change.
+    - You chained the finding with another one and the real impact is
+      higher, so the impact narrative and the CVSS vector change.
+    - Further testing narrowed or weakened the finding, so the severity
+      must come down.
+    - Counterevidence, remediation, or a code location was wrong or
+      incomplete.
+
+    This is not deduplication. You do not need a duplicate verdict to
+    revise your own finding, and you must not file a second report for a
+    finding you can revise. Call ``list_reports`` or ``get_report`` first
+    to find the id and read what the report already says.
+
+    Pass only the fields you want to replace. Every other field stays as
+    it is. Reporting rules of ``create_vulnerability_report`` apply to
+    every field you pass, including the markdown and tone rules.
+
+    Notes on specific fields:
+
+    - ``cvss_breakdown`` replaces the whole vector. The score and the
+      severity are recalculated from it, so pass all 8 metrics.
+    - A field that only explains another field is dropped when the field
+      it explains changes and you pass no replacement. Pass
+      ``confidence_rationale`` with a new ``confidence``, and
+      ``severity_change_conditions`` with a new ``cvss_breakdown``.
+    - ``code_locations`` replaces the whole list. A location carrying
+      ``fix_after`` needs ``fix_verification``.
+
+    The report keeps its id, its original author, and its filing time. The
+    revision is recorded in the report as update history, so state the
+    reason plainly.
+
+    Args:
+        report_id: Id of the report to revise (format ``vuln-NNNN``).
+        update_reason: What you learned that the report does not yet
+            carry, in one or two sentences.
+        title: Replacement title.
+        description: Replacement overview.
+        impact: Replacement impact narrative.
+        target: Replacement affected asset.
+        technical_analysis: Replacement technical details.
+        poc_description: Replacement PoC steps (no code).
+        poc_script_code: Replacement exploit script or payload.
+        remediation_steps: Replacement remediation prose (no code).
+        evidence: Replacement evidence.
+        assumptions: Replacement exploitability prerequisites.
+        counterevidence: Replacement case against the finding.
+        confidence: ``high`` / ``medium`` / ``low``.
+        confidence_rationale: The gap behind a confidence below ``high``.
+        severity_change_conditions: What would move the severity now.
+        fix_effort: ``trivial`` / ``low`` / ``medium`` / ``high``.
+        cvss_breakdown: All 8 CVSS metrics. Replaces the score and the
+            severity too.
+        endpoint: Replacement endpoint.
+        method: Replacement HTTP method.
+        cve: Replacement CVE id.
+        cwe: Replacement CWE id.
+        code_locations: Replacement code locations.
+        fix_verification: Verification statement for an applyable fix.
+        fix_pr_body: Replacement fix PR body.
+    """
+    agent_id, agent_name = _caller_identity(ctx)
+    result = await asyncio.to_thread(
+        _do_update,
+        report_id=report_id,
+        update_reason=update_reason,
+        fields={
+            "title": title,
+            "description": description,
+            "impact": impact,
+            "target": target,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "remediation_steps": remediation_steps,
+            "evidence": evidence,
+            "assumptions": assumptions,
+            "counterevidence": counterevidence,
+            "confidence": confidence,
+            "confidence_rationale": confidence_rationale,
+            "severity_change_conditions": severity_change_conditions,
+            "fix_effort": fix_effort,
+            "cvss_breakdown": cvss_breakdown,
+            "endpoint": endpoint,
+            "method": method,
+            "cve": cve,
+            "cwe": cwe,
+            "code_locations": code_locations,
+            "fix_verification": fix_verification,
+            "fix_pr_body": fix_pr_body,
+        },
         agent_id=agent_id,
         agent_name=agent_name,
     )

@@ -17,8 +17,10 @@ from strix.tools.finish.tool import finish_scan
 from strix.tools.reporting.tool import (
     _do_create,
     _do_create_dependency,
+    _do_update,
     create_dependency_report,
     create_vulnerability_report,
+    update_vulnerability_report,
 )
 
 
@@ -1542,3 +1544,155 @@ async def test_stronger_duplicate_of_a_dependency_finding_is_filed_separately(
     assert filed["finding_class"] == "dynamic"
     assert filed["severity"] == "critical"
     assert "dependency_metadata" not in filed
+
+
+def test_agent_revises_its_own_report_without_a_duplicate_verdict(
+    report_state: ReportState,
+) -> None:
+    """Editing a finding is its own operation: no dedupe verdict is involved."""
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="An unauthenticated PATCH wrote the file, so the finding is confirmed.",
+        fields={
+            "poc_script_code": "PATCH /files/2f1c HTTP/1.1",
+            "confidence": "HIGH",
+            "confidence_rationale": "The write was replayed twice.",
+            "cvss_breakdown": _CVSS,
+            "severity_change_conditions": "A guard before the write would remove the impact.",
+        },
+        agent_id="834f79fb",
+        agent_name="Directus CVE-2025-55746 Validation Agent",
+    )
+
+    assert result["success"] is True
+    assert result["action"] == "updated"
+    assert result["severity"] == "critical"
+    assert result["cvss_score"] == pytest.approx(9.8)
+    assert "cvss" in result["updated_fields"], "a new vector carries its own score"
+    assert len(report_state.vulnerability_reports) == 1
+
+    report = report_state.vulnerability_reports[0]
+    assert report["id"] == "vuln-0009"
+    assert report["confidence"] == "high"
+    assert report["agent_id"] == "aaaa1111", "the original reporter stays on the finding"
+    history = report["update_history"]
+    assert history[0]["agent_name"] == "Directus CVE-2025-55746 Validation Agent"
+    assert history[0]["reason"].startswith("An unauthenticated PATCH")
+
+    run_dir = report_state._run_dir
+    assert run_dir is not None
+    markdown = (run_dir / "vulnerabilities" / "vuln-0009.md").read_text(encoding="utf-8")
+    assert "PATCH /files/2f1c" in markdown
+
+
+@pytest.mark.parametrize(
+    ("report_id", "update_reason", "fields", "expected"),
+    [
+        ("  ", "reason", {"impact": "x"}, "report_id cannot be empty"),
+        ("vuln-0009", "   ", {"impact": "x"}, "update_reason cannot be empty"),
+        ("vuln-0009", "reason", {}, "No fields to update"),
+        ("vuln-0404", "reason", {"impact": "x"}, "not found"),
+    ],
+)
+def test_update_rejects_a_call_it_cannot_act_on(
+    report_state: ReportState,
+    report_id: str,
+    update_reason: str,
+    fields: dict[str, Any],
+    expected: str,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(report_id=report_id, update_reason=update_reason, fields=fields)
+
+    assert result["success"] is False
+    assert expected in result["error"]
+    assert "update_history" not in report_state.vulnerability_reports[0]
+
+
+def test_update_reports_every_invalid_field_at_once(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Raising the rating.",
+        fields={
+            "confidence": "very high",
+            "fix_effort": "weeks",
+            "cvss_breakdown": {**_CVSS, "attack_vector": "X"},
+            "cve": "CVE-BAD",
+        },
+    )
+
+    assert result["success"] is False
+    joined = " ".join(result["errors"])
+    assert "confidence" in joined
+    assert "fix_effort" in joined
+    assert "attack_vector" in joined
+    assert "CVE" in joined
+    assert report_state.vulnerability_reports[0]["confidence"] == "low", "nothing was applied"
+
+
+def test_update_wants_verification_for_a_fix_it_would_apply(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Adding the file the write lands in.",
+        fields={
+            "code_locations": [
+                {
+                    "file": "api/src/controllers/files.ts",
+                    "start_line": 42,
+                    "fix_before": "await storage.write(id, body)",
+                    "fix_after": "await assertPermission(req); await storage.write(id, body)",
+                }
+            ]
+        },
+    )
+
+    assert result["success"] is False
+    assert any("fix_verification" in error for error in result["errors"])
+
+
+def test_update_says_so_when_the_report_already_carries_it(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Restating the severity.",
+        fields={"confidence": "low"},
+    )
+
+    assert result["success"] is False
+    assert "already says this" in result["error"]
+    assert result["report_id"] == "vuln-0009"
+
+
+def test_update_tool_asks_for_the_report_and_the_reason() -> None:
+    schema = update_vulnerability_report.params_json_schema
+    assert set(schema["required"]) >= {"report_id", "update_reason"}
+    assert "cvss_breakdown" in schema["properties"]
+    assert "id" not in schema["properties"], "identity fields are not editable"
+    description = update_vulnerability_report.description
+    assert "not deduplication" in description
+
+
+def test_update_refuses_code_locations_it_cannot_use(report_state: ReportState) -> None:
+    """A location without a usable file and line is reported, not dropped in silence."""
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Naming the vulnerable handler.",
+        fields={"code_locations": [{"label": "the file write"}]},
+    )
+
+    assert result["success"] is False
+    assert any("start_line" in error for error in result["errors"])
