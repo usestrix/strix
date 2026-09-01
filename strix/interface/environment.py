@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings
+from strix.config import claude_code, codex, load_settings
 from strix.interface.utils import (
     check_docker_connection,
     image_exists,
@@ -17,6 +17,70 @@ from strix.interface.utils import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_claude_code(console: Console, model: str | None) -> None:
+    """Preflight for a ``claude-code/...`` run. Exits the process on any hard stop.
+
+    The ``claude`` binary and its signed-in session must live on the **host**
+    running Strix — not inside the target sandbox. This is the single most
+    common way this backend confuses people, so preflight says it out loud.
+    """
+    if claude_code.binary_path() is None:
+        console.print(
+            f"[red]STRIX_LLM={model} needs the Claude Code CLI, which isn't on PATH.[/] "
+            "Install it on this host, then run [cyan]claude /login[/] on your Pro/Max plan."
+        )
+        sys.exit(1)
+    floor = ".".join(str(part) for part in claude_code.MIN_CLAUDE_VERSION)
+    version_state = claude_code.version_state()
+    if version_state == "too_old":
+        console.print(
+            f"[red]Your Claude Code CLI ({claude_code.version()}) is too old.[/] "
+            f"Strix needs at least [cyan]{floor}[/]. Update it and retry."
+        )
+        sys.exit(1)
+    if version_state == "unknown":
+        console.print(
+            "[red]Couldn't read a version from the Claude Code CLI on PATH.[/] "
+            f"Strix needs [cyan]{floor}[/] or newer. Check that "
+            "[cyan]claude --version[/] runs on this host."
+        )
+        sys.exit(1)
+
+    state = claude_code.session_state()
+    if state == "signed_out":
+        console.print(
+            f"[red]STRIX_LLM={model} uses your Claude subscription, but the Claude Code CLI "
+            "isn't signed in.[/] Run [cyan]claude /login[/] (Pro/Max) first."
+        )
+        sys.exit(1)
+    if state == "api_key":
+        source = claude_code.api_key_source()
+        # Naming the source matters: an ANTHROPIC_API_KEY left in the environment
+        # overrides a perfectly good Pro/Max login, and `claude auth status`
+        # still shows the claude.ai account, so the cause is not obvious.
+        cause = (
+            f"[cyan]{source}[/] is overriding your sign-in, so the"
+            if source
+            else "The Claude Code CLI is on an API key, not a subscription, so the"
+        )
+        console.print(
+            f"[yellow]Warning:[/] {cause} scan will meter against that key rather "
+            "than run at $0. Unset it, or run [cyan]claude /login[/] with your "
+            "Pro/Max account, to use the subscription."
+        )
+    elif state == "unknown":
+        # An unknown state is accounted as an API key, so this is not only about
+        # authentication: the run will be reported as metered and can be stopped
+        # by --max-budget even though it is spending subscription quota.
+        console.print(
+            "[yellow]Warning:[/] couldn't determine the Claude Code sign-in state, so this "
+            "run will be reported as metered rather than as a $0 subscription. Check that "
+            "[cyan]claude auth status[/] works on this host; if the scan then fails to "
+            "authenticate, run [cyan]claude /login[/]."
+        )
+    logger.info("Environment OK (Claude Code subscription)")
 
 
 def validate_environment() -> None:
@@ -35,6 +99,10 @@ def validate_environment() -> None:
             )
             sys.exit(1)
         logger.info("Environment OK (ChatGPT subscription)")
+        return
+
+    if claude_code.claude_code_model(settings.llm.model):
+        _validate_claude_code(console, settings.llm.model)
         return
 
     if not settings.llm.model:

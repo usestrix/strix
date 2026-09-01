@@ -10,6 +10,7 @@ from litellm.exceptions import BadRequestError, ContextWindowExceededError, Rate
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from strix.config import ContextSettings
+from strix.config.claude_bridge import ClaudeStreamError
 from strix.llm import compaction
 
 
@@ -331,3 +332,25 @@ async def test_maybe_compact_skips_when_no_room_to_summarise(
     assert await compaction.maybe_compact(session, model="m", force=True) is False
     assert not captured
     assert await session.get_items() == before
+
+
+def test_claude_code_overflow_reaches_the_compaction_recovery() -> None:
+    # The Claude Code backend never touches LiteLLM, so its overflow arrives as a
+    # ClaudeStreamError rather than a typed BadRequestError. Without matching it
+    # the reactive compact-and-retry path is simply dead on that route.
+    overflow = ClaudeStreamError("API Error: prompt is too long: 1050000 tokens", status_code=400)
+    assert compaction.is_context_overflow(overflow) is True
+
+    untagged = ClaudeStreamError("input is too long for the context window")
+    assert compaction.is_context_overflow(untagged) is True
+
+    # A rate limit on the same transport must not be mistaken for overflow, and
+    # neither must an unrelated status.
+    assert (
+        compaction.is_context_overflow(ClaudeStreamError("API Error: rate limit", status_code=429))
+        is False
+    )
+    assert (
+        compaction.is_context_overflow(ClaudeStreamError("prompt is too long", status_code=500))
+        is False
+    )

@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 
 from agents.retry import ModelRetryNormalizedError, RetryPolicyContext
+from agents.run_internal.model_retry import _normalize_retry_error
 
-from strix.config import codex
+from strix.config import claude_bridge, claude_code, codex
 from strix.config.models import DEFAULT_MODEL_RETRY, _retry_statusless_provider_errors
 
 
@@ -54,8 +55,80 @@ def test_client_error_is_not_retried() -> None:
 
 
 def test_rate_limit_and_server_errors_are_retried() -> None:
-    for status in (429, 500, 502, 503, 504):
+    for status in (429, 500, 502, 503, 504, 529):
         assert _retries(ModelRetryNormalizedError(status_code=status)) is True
+
+
+def test_claude_code_overload_is_retried_end_to_end() -> None:
+    # The Claude Code backend bypasses LiteLLM, so it is the only route that can
+    # surface a bare 529 ("Overloaded"): LiteLLM's exception mapper folds 529 into
+    # a 500 before any policy sees it. Assert the *outcome* through the normalizer
+    # the runner actually uses for a custom Model, not just the tagging — tagging a
+    # status the policy does not list turns a retryable overload into a dead scan.
+    overloaded = claude_bridge.ClaudeStreamError("API Error: Overloaded", status_code=529)
+    normalized = _normalize_retry_error(overloaded, None)
+    assert normalized.status_code == 529
+    assert _retries(normalized, overloaded) is True
+
+    # A rate limit on the same path stays retryable.
+    throttled = claude_bridge.ClaudeStreamError("API Error: 429", status_code=429)
+    assert _retries(_normalize_retry_error(throttled, None), throttled) is True
+
+
+def test_claude_code_entitlement_error_is_not_retried() -> None:
+    # An org policy or plan change will not clear on a second attempt. Retrying it
+    # burns the whole backoff ladder on every turn of every agent before the scan
+    # gives up, and the user never sees the CLI's own actionable message.
+    denied = claude_bridge.ClaudeStreamError(
+        "Your organization has disabled Claude subscription access for Claude Code",
+        status_code=403,
+    )
+    assert _retries(_normalize_retry_error(denied, None), denied) is False
+
+
+def test_claude_code_missing_binary_is_not_retried() -> None:
+    # It carries no status code, so without an explicit rule it lands in the
+    # statusless fallback and burns five attempts plus roughly three minutes of
+    # backoff, per turn and per agent, on a binary that is not installed.
+    missing = claude_code.ClaudeCodeError(
+        "STRIX_LLM=claude-code/... needs the Claude Code CLI on PATH.", retryable=False
+    )
+    assert _retries(_normalize_retry_error(missing, None), missing) is False
+
+    # Wrapped by the SDK, it is still recognised.
+    try:
+        try:
+            raise missing
+        except claude_code.ClaudeCodeError as exc:
+            raise RuntimeError("model call failed") from exc
+    except RuntimeError as wrapped:
+        assert _retries(_normalize_retry_error(wrapped, None), wrapped) is False
+
+
+def test_claude_code_transient_transport_failures_still_retry() -> None:
+    # A turn that timed out, crashed, or produced no result event may well clear
+    # on the next attempt; vetoing those too would kill an agent outright the
+    # first time one heavy turn ran past LLM_TIMEOUT.
+    for message in (
+        "claude -p timed out after 300s",
+        "claude -p exited with code 1: (no stderr)",
+        "claude -p produced no result event (stderr: (no stderr))",
+        "could not launch claude -p: [Errno 24] Too many open files",
+    ):
+        failure = claude_code.ClaudeCodeError(message)
+        assert _retries(_normalize_retry_error(failure, None), failure) is True
+
+    # A genuine provider transient still carries a status and still retries.
+    overloaded = claude_bridge.ClaudeStreamError("API Error: Overloaded", status_code=529)
+    assert _retries(_normalize_retry_error(overloaded, None), overloaded) is True
+
+
+def test_claude_code_context_overflow_skips_the_retry_ladder() -> None:
+    # Retrying an overflow cannot clear it; only compacting can. Untagged it would
+    # hit the statusless fallback and spend five full-context turns first, which
+    # no other route does because they all see a typed 400 here.
+    tagged = claude_bridge.ClaudeStreamError("prompt is too long", status_code=400)
+    assert _retries(_normalize_retry_error(tagged, None), tagged) is False
 
 
 def test_timeout_error_is_retried() -> None:

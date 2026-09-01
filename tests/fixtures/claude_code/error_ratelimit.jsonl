@@ -1,0 +1,3 @@
+{"type":"system","subtype":"init","session_id":"s3","model":"claude-opus-4-8"}
+{"type":"rate_limit_event","message":"rate limit reached"}
+{"type":"result","subtype":"error_during_execution","is_error":true,"result":"API Error: 429 rate_limit_error Overloaded","api_error_status":429,"usage":{"input_tokens":0,"output_tokens":0},"session_id":"s3"}

@@ -13,7 +13,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings, persist_current
+from strix.config import claude_code, codex, load_settings, persist_current
 from strix.core.paths import run_dir_for
 from strix.interface.cli_args import parse_arguments
 from strix.interface.environment import (
@@ -104,8 +104,11 @@ def _provider_import_hint(exc: BaseException, model: str) -> str | None:
 
 
 def _subscription_error_hint(exc: BaseException) -> str | None:
-    """Return an actionable hint for a known ChatGPT-subscription error, or None."""
-    if not codex.subscription_model(load_settings().llm.model):
+    """Return an actionable hint for a known subscription-backend error, or None."""
+    model = load_settings().llm.model
+    if claude_code.claude_code_model(model):
+        return _claude_code_error_hint(exc)
+    if not codex.subscription_model(model):
         return None
     joined = " ".join(_exception_messages(exc)).lower()
     if "not supported when using codex with a chatgpt account" in joined:
@@ -123,6 +126,61 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
             "Your ChatGPT sign-in has expired or was revoked. Sign in again:\n"
             "  strix auth login chatgpt"
         )
+    return None
+
+
+# Ordered most specific first: the generic auth test below matches the word
+# "authentication", which several of the more specific errors also contain, so
+# checking it first would hand every one of them the wrong advice.
+_CLAUDE_CODE_HINTS: tuple[tuple[tuple[str, ...], str], ...] = (
+    (
+        ("not on path", "claude code cli"),
+        "The Claude Code CLI isn't installed on this host. Install it, then:\n  claude /login",
+    ),
+    (
+        (
+            "subscription access for claude code",
+            "disabled claude subscription access",
+            "use an anthropic api key instead",
+        ),
+        "Your Anthropic organization has disabled Claude Code subscription access.\n"
+        "Ask an admin to enable it, or switch to the metered path:\n"
+        "  export STRIX_LLM=anthropic/claude-opus-5\n"
+        "  export LLM_API_KEY=<key>",
+    ),
+    (
+        # Verbatim from the CLI: "There's an issue with the selected model (X).
+        # It may not exist or you may not have access to it." A typo'd slug says
+        # neither "not found" nor "invalid", which is why this used to fall
+        # through to the generic connection-failed panel.
+        (
+            "issue with the selected model",
+            "unrecognized_model",
+            "may not exist or you may not have access",
+            "model not found",
+            "invalid model",
+        ),
+        "That model isn't available on your plan, or the slug is wrong. Use a model your "
+        "subscription includes, e.g. STRIX_LLM=claude-code/claude-sonnet-4-6.",
+    ),
+    (
+        ("429", "rate limit", "rate_limit", "overloaded"),
+        "Your Claude subscription is rate-limited. Multi-agent scans burst hard, "
+        "Max 20x is realistically needed; on Pro, use a quick scan with fewer agents.",
+    ),
+    (
+        ("401", "unauthorized", "not signed in", "invalid_grant", "authentication"),
+        "Your Claude Code session has expired. Sign in again:\n  claude /login",
+    ),
+)
+
+
+def _claude_code_error_hint(exc: BaseException) -> str | None:
+    """Return an actionable hint for a known Claude Code subprocess error, or None."""
+    joined = " ".join(_exception_messages(exc)).lower()
+    for markers, hint in _CLAUDE_CODE_HINTS:
+        if any(marker in joined for marker in markers):
+            return hint
     return None
 
 
@@ -347,13 +405,32 @@ def _print_error_panel(title: str, message: str) -> None:
     console.print()
 
 
+def _subscription_error_heading(exc: BaseException) -> str:
+    """Headline for a subscription-backend failure.
+
+    The panel used to say "model not available" over every hint, including the
+    ones about a CLI that is not installed or a session that expired, which sends
+    the reader looking in the wrong place.
+    """
+    joined = " ".join(_exception_messages(exc)).lower()
+    if "not on path" in joined or "claude code cli" in joined:
+        return "CLAUDE CODE CLI NOT AVAILABLE"
+    if any(marker in joined for marker in ("rate limit", "rate_limit", "overloaded", "429")):
+        return "SUBSCRIPTION RATE LIMITED"
+    if any(
+        marker in joined for marker in ("401", "unauthorized", "not signed in", "invalid_grant")
+    ):
+        return "SUBSCRIPTION SIGN-IN EXPIRED"
+    return "MODEL NOT AVAILABLE ON SUBSCRIPTION"
+
+
 def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
     console = Console()
     error_text = Text()
     sub_hint = _subscription_error_hint(exc)
     if sub_hint is not None:
         border_style = "yellow"
-        error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
+        error_text.append(_subscription_error_heading(exc), style="bold yellow")
         error_text.append("\n\n", style="white")
         error_text.append(f"{sub_hint}\n", style="white")
         error_text.append(f"\nDetails: {exc}", style="dim white")

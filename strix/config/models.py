@@ -36,7 +36,7 @@ from openai.types.responses import (
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
 
-from strix.config import codex
+from strix.config import claude_bridge, claude_code, claude_process, codex
 from strix.config.loader import load_settings
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
@@ -74,6 +74,8 @@ def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
     if normalized.is_abort:
         return False
     if codex.is_content_guardrail_error(context.error):
+        return False
+    if claude_code.is_permanent_error(context.error):
         return False
     return normalized.status_code is None
 
@@ -240,6 +242,134 @@ class _NonStreamingModel(Model):
             prompt=prompt,
         )
         yield _completed_stream_event(response, getattr(self._inner, "model", None))
+
+
+def _request_timeout(model_settings: ModelSettings) -> float | None:
+    """The caller's per-request timeout, as ``request_timeout_extra_args`` encodes it."""
+    extra_args = model_settings.extra_args or {}
+    timeout = extra_args.get("timeout")
+    # bool is an int subclass, and a True here would silently become a 1s turn.
+    if isinstance(timeout, bool) or not isinstance(timeout, int | float):
+        return None
+    return float(timeout)
+
+
+def _record_claude_code_cost(result: dict[str, Any]) -> None:
+    """Hand Claude Code's own per-turn cost to the run ledger.
+
+    This backend never reaches LiteLLM, so ``litellm_cost_callback`` -- the hook
+    every metered route relies on -- never fires for it. The ledger drops the
+    value on a subscription run (``zero_cost``) and uses it in place of a local
+    estimate on an API-key run, where the budget guard depends on it.
+    """
+    cost = claude_bridge.result_cost(result)
+    if cost is None:
+        return
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return
+    try:
+        report_state.record_observed_llm_cost(cost)
+    except Exception:
+        logger.exception("Failed to record observed Claude Code cost")
+
+
+class _ClaudeCodeModel(Model):
+    """Run a turn on a Claude Pro/Max subscription via the ``claude -p`` binary.
+
+    Implements the Agents-SDK ``Model`` interface directly — there is no
+    OpenAI-compatible endpoint here. Each turn shells out to Claude Code once
+    (the model is stateless; Strix resends the full conversation each turn),
+    forcing a single structured reply that ``claude_bridge`` folds into a
+    ``ModelResponse``. Auth, token refresh, and the wire protocol are Claude
+    Code's problem, not ours.
+
+    A ``ClaudeStreamError`` carrying a 429/5xx ``status_code`` propagates
+    unwrapped so the runner's retry policy classifies it exactly as it would an
+    HTTP error from any other backend.
+    """
+
+    def __init__(self, slug: str, *, reasoning_effort: ReasoningEffort | None = None) -> None:
+        self._slug = slug
+        # Annotated: inferring the attribute from the assignment widens the
+        # Literal alias to str, which reasoning_flags() then rejects.
+        self._reasoning_effort: ReasoningEffort | None = reasoning_effort
+
+    @property
+    def model(self) -> str:
+        return f"{claude_code.SUBSCRIPTION_PREFIX}{self._slug}"
+
+    def _extra_args(self) -> list[str]:
+        return claude_code.reasoning_flags(self._reasoning_effort)
+
+    async def _run(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        tools: list[Tool],
+        model_settings: ModelSettings,
+    ) -> ModelResponse:
+        # Most of ModelSettings is a Responses-API concern this transport has no
+        # wire for, but two fields are real instructions from the rest of Strix
+        # and are honoured: the request timeout (LLM_TIMEOUT) bounds the turn,
+        # and parallel_tool_calls=False asks for one call per step.
+        message = claude_bridge.build_message(
+            system_instructions,
+            input,
+            tools,
+            parallel_tool_calls=model_settings.parallel_tool_calls is not False,
+        )
+        result = await claude_process.run_turn(
+            self._slug,
+            message,
+            extra_args=self._extra_args(),
+            structured=bool(tools),
+            timeout=_request_timeout(model_settings),
+        )
+        response = claude_bridge.decode_result(result)
+        _record_claude_code_cost(result)
+        return response
+
+    async def get_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> ModelResponse:
+        # The Model interface fixes this signature; the rest are Responses-API
+        # concerns this transport has no wire for.
+        del output_schema, handoffs, tracing
+        del previous_response_id, conversation_id, prompt
+        return await self._run(system_instructions, input, tools, model_settings)
+
+    async def stream_response(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> AsyncIterator[TResponseStreamEvent]:
+        del output_schema, handoffs, tracing
+        del previous_response_id, conversation_id, prompt
+        response = await self._run(system_instructions, input, tools, model_settings)
+        yield _completed_stream_event(response, self.model)
 
 
 class _TurnGuardModel(Model):
@@ -519,13 +649,20 @@ class StrixProvider(MultiProvider):
 
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
+        cc_slug = claude_code.claude_code_model(model_name)
         slug = codex.subscription_model(model_name)
         idle_timeout = float(llm.stream_idle_timeout)
-        if slug:
+        if cc_slug:
+            # The Claude Code backend emits its single event only after the
+            # subprocess turn completes, so an idle-gap timeout is meaningless
+            # and LLM_DISABLE_STREAMING does not apply — same stance as codex.
+            model: Model = _ClaudeCodeModel(cc_slug, reasoning_effort=llm.reasoning_effort)
+            idle_timeout = 0.0
+        elif slug:
             # The ChatGPT subscription backend is always streamed; it has no
             # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
             # does not apply here.
-            model: Model = _CodexResponsesModel(
+            model = _CodexResponsesModel(
                 slug,
                 codex.get_subscription_client(),
                 reasoning_effort=llm.reasoning_effort,
@@ -556,7 +693,11 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
     policy=retry_policies.any(
         retry_policies.provider_suggested(),
         retry_policies.network_error(),
-        retry_policies.http_status((429, 500, 502, 503, 504)),
+        # 529 is Anthropic's "Overloaded". LiteLLM-backed routes never surface it
+        # bare (its exception mapper folds 529 into a 500 InternalServerError), so
+        # this tuple never needed it; the Claude Code backend bypasses LiteLLM and
+        # reports the status the CLI gives it, making it the first route that can.
+        retry_policies.http_status((429, 500, 502, 503, 504, 529)),
         _retry_statusless_provider_errors,
     ),
 )
@@ -605,7 +746,14 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     """Apply Strix config to SDK-native defaults."""
     llm = settings.llm
     set_tracing_disabled(True)
-    if codex.subscription_model(llm.model):
+    if codex.subscription_model(llm.model) or claude_code.claude_code_model(llm.model):
+        # Neither subscription backend routes through LiteLLM, but stray metadata
+        # lookups (token counting, model info) still hit it with an unmapped name
+        # and would print LiteLLM's "Provider List" banner. Silence it here since
+        # the usual _configure_litellm_compatibility() path is skipped.
+        import litellm
+
+        litellm.suppress_debug_info = True
         return
     _configure_litellm_compatibility()
     _configure_openrouter_attribution(llm.model)
@@ -788,8 +936,14 @@ def _configure_litellm_default(name: str, value: str) -> None:
 
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
+    # The ChatGPT backend speaks the native Responses API, which handles special
+    # tool types (apply_patch) itself. The Claude Code bridge does NOT — it
+    # renders tools as JSON function schemas and reads back {name, arguments},
+    # so those special tools must be converted to plain function tools (True).
     if codex.subscription_model(model_name):
         return False
+    if claude_code.claude_code_model(model_name):
+        return True
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
         return True
@@ -921,9 +1075,13 @@ def routes_through_litellm(model_name: str | None) -> bool:
     so LiteLLM-only fields must not be attached there. A bare ``claude-...``
     name is exactly that case: an ``LLM_API_BASE`` pointing at an
     OpenAI-compatible gateway in front of Claude.
+
+    Both subscription backends are served by their own transport, never by
+    LiteLLM: ``chatgpt/`` by the Responses client and ``claude-code/`` by the
+    ``claude -p`` bridge.
     """
     name = (model_name or "").strip()
-    if not name or codex.subscription_model(name):
+    if not name or codex.subscription_model(name) or claude_code.claude_code_model(name):
         return False
     prefix, _, rest = name.partition("/")
     return bool(rest) and prefix.lower() not in {"openai", "any-llm"}

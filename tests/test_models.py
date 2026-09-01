@@ -125,6 +125,7 @@ def test_other_routes_keep_strict_tool_schemas(model_name: str) -> None:
         ("claude-sonnet-4-5", False),
         ("openai/claude-sonnet-4-5", False),
         ("any-llm/anthropic/claude-sonnet-4-5", False),
+        ("claude-code/claude-opus-5", False),
         ("anthropic/claude-sonnet-4-5", True),
         ("litellm/anthropic/claude-sonnet-4-5", True),
         ("bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0", True),

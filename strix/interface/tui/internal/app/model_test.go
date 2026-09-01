@@ -1220,6 +1220,20 @@ func TestStatsViewShowsSubscription(t *testing.T) {
 	}
 }
 
+func TestStatsViewNamesTheSubscriptionBackend(t *testing.T) {
+	model := New(nil)
+	model.snapshot.Model = "claude-code/claude-opus-5"
+	model.snapshot.Subscription = true
+	model.snapshot.Usage = map[string]any{"total_tokens": float64(1200)}
+	stats := ansi.Strip(model.statsView())
+	if !strings.Contains(stats, "Claude subscription") {
+		t.Fatalf("a claude-code run must not be labelled ChatGPT: %q", stats)
+	}
+	if strings.Contains(stats, "ChatGPT") {
+		t.Fatalf("a claude-code run must not be labelled ChatGPT: %q", stats)
+	}
+}
+
 func TestVulnerabilityMarkdownReport(t *testing.T) {
 	report := vulnerabilityMarkdownReport(map[string]any{
 		"title":             "SQLi in login",
