@@ -14,6 +14,7 @@ from strix.interface.scan_setup import attach_workspace_mount, build_targets_inf
 from strix.interface.update_check import self_update
 from strix.interface.utils import (
     check_mountable_dir,
+    check_mountable_file,
     collect_local_sources,
     resolve_workspace_files,
     validate_config_file,
@@ -411,12 +412,17 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         cloned = details.get("cloned_repo_path")
         if not cloned:
             continue
-        if not Path(cloned).expanduser().exists():
+        cloned_path = Path(cloned).expanduser()
+        if not cloned_path.exists():
             parser.error(
                 f"--resume {args.resume}: cloned repo at {cloned} is missing. "
                 f"It was deleted between runs. Pick a fresh --run-name to "
                 f"re-clone, or restore the directory before resuming."
             )
+        try:
+            check_mountable_dir(cloned_path)
+        except ValueError as exc:
+            parser.error(f"--resume {args.resume}: {exc}")
 
     if args.instruction is None:
         args.instruction = state.get("instruction")
@@ -424,32 +430,46 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
     # Remount the workspace the run was started with. The user already confirmed
-    # this directory, so the target mount guard does not apply to it; it only has
-    # to still be there.
+    # this directory on the original run, but run.json is on disk under the
+    # scanned tree and may have been tampered with, so the target mount guard
+    # still applies on resume: it has to both still be there and be mountable.
     args.workspace_mount = workspace_mount
 
     # Replace the workspace files the run started with, unless this resume names
     # its own. The persisted record is revalidated like a fresh flag, so an
-    # edited run.json cannot widen what a resume places. A file deleted between
-    # runs is dropped rather than fatal: it is context for the agent, not scope.
+    # edited run.json cannot widen what a resume places. Each source is also
+    # passed through the mount guard, so a tampered run.json cannot smuggle
+    # credential or system files into the sandbox. A file deleted between runs
+    # is dropped rather than fatal: it is context for the agent, not scope.
     if not getattr(args, "workspace_files", None):
-        restored = [
-            f"{source_path}:{workspace_path}"
-            for workspace_file in state.get("workspace_files") or []
-            if isinstance(workspace_file, dict)
-            and (source_path := Path(str(workspace_file.get("source_path") or ""))).is_file()
-            and (workspace_path := str(workspace_file.get("workspace_path") or ""))
-        ]
+        restored: list[str] = []
+        for workspace_file in state.get("workspace_files") or []:
+            if not isinstance(workspace_file, dict):
+                continue
+            source_path = Path(str(workspace_file.get("source_path") or "")).expanduser()
+            workspace_path = str(workspace_file.get("workspace_path") or "")
+            if not source_path.is_file() or not workspace_path:
+                continue
+            try:
+                check_mountable_file(source_path)
+            except ValueError as error:
+                parser.error(f"--resume {args.resume}: {error}")
+            restored.append(f"{source_path}:{workspace_path}")
         try:
             args.workspace_files = resolve_workspace_files(restored)
         except ValueError as error:
             parser.error(f"--resume {args.resume}: invalid workspace file: {error}")
     if workspace_mount:
-        if not Path(workspace_mount).expanduser().is_dir():
+        mount_path = Path(workspace_mount).expanduser()
+        if not mount_path.is_dir():
             parser.error(
                 f"--resume {args.resume}: the working directory {workspace_mount} "
                 f"is missing. Restore it before resuming, or start a fresh run."
             )
+        try:
+            check_mountable_dir(mount_path)
+        except ValueError as exc:
+            parser.error(f"--resume {args.resume}: {exc}")
         attach_workspace_mount(args)
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
