@@ -1401,6 +1401,23 @@ def _is_within(path: Path, ancestor: Path) -> bool:
     return path_parts[: len(ancestor_parts)] == ancestor_parts
 
 
+def _mount_guard_sets(anchor: Path) -> tuple[set[str], list[Path]]:
+    """Shared exact-match and tree sets used by both mount guards.
+
+    ``anchor`` only locates the drive for the Windows-specific checks.
+    """
+    exact = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
+    exact |= {str(Path(root).resolve()).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
+    exact.add(str(Path.home().resolve()).casefold())
+    tree_roots = set(_FORBIDDEN_MOUNT_TREES)
+    if os.name == "nt":
+        drive = Path(anchor.anchor)
+        tree_roots |= {str(drive / name) for name in _FORBIDDEN_WINDOWS_TREE_NAMES}
+        exact.add(str(drive / "Users").casefold())
+    trees = [Path(root) for root in tree_roots] + [Path(root).resolve() for root in tree_roots]
+    return exact, trees
+
+
 def check_mountable_dir(path: Path) -> None:
     resolved = path.resolve()
     if not resolved.is_dir():
@@ -1408,15 +1425,7 @@ def check_mountable_dir(path: Path) -> None:
 
     # Both the literal and the resolved form: macOS reaches /etc through the
     # /private/etc symlink, and only the resolved path is compared below.
-    exact = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
-    exact |= {str(Path(root).resolve()).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
-    exact.add(str(Path.home().resolve()).casefold())
-    tree_roots = set(_FORBIDDEN_MOUNT_TREES)
-    if os.name == "nt":
-        drive = Path(resolved.anchor)
-        tree_roots |= {str(drive / name) for name in _FORBIDDEN_WINDOWS_TREE_NAMES}
-        exact.add(str(drive / "Users").casefold())
-    trees = [Path(root) for root in tree_roots] + [Path(root).resolve() for root in tree_roots]
+    exact, trees = _mount_guard_sets(resolved)
     if (
         str(resolved).casefold() in exact
         or resolved.parent == resolved
@@ -1426,6 +1435,39 @@ def check_mountable_dir(path: Path) -> None:
             f"Refusing to mount '{resolved}' into the sandbox: it is a system "
             "or home directory, not a codebase. Point the target at the "
             "project directory you want tested."
+        )
+
+    credential = next(
+        (part for part in resolved.parts if part.casefold() in _FORBIDDEN_MOUNT_DIR_NAMES), None
+    )
+    if credential is not None:
+        raise ValueError(
+            f"Refusing to mount '{resolved}' into the sandbox: '{credential}' "
+            "holds credentials, not code."
+        )
+
+
+def check_mountable_file(path: Path) -> None:
+    """Validate a single host file may be mounted into the sandbox as a
+    workspace file.
+
+    Applies the same system/home/credential checks that ``check_mountable_dir``
+    applies to a directory, against the file's parent directory and its own
+    path components, so credential files and system files cannot be smuggled
+    into a run through workspace files.
+    """
+    resolved = path.expanduser().resolve()
+    if not resolved.is_file():
+        raise ValueError(f"'{path}' is not an existing file.")
+
+    parent = resolved.parent
+    # Both the literal and the resolved form: macOS reaches /etc through the
+    # /private/etc symlink, and only the resolved path is compared below.
+    exact, trees = _mount_guard_sets(parent)
+    if str(parent).casefold() in exact or any(_is_within(parent, tree) for tree in trees):
+        raise ValueError(
+            f"Refusing to mount '{resolved}' into the sandbox: it is a system "
+            "or home path, not a project file."
         )
 
     credential = next(

@@ -11,6 +11,7 @@ import pytest
 from strix.interface.scan_setup import attach_workspace_mount
 from strix.interface.utils import (
     check_mountable_dir,
+    check_mountable_file,
     collect_local_sources,
     dedupe_local_targets,
     infer_target_type,
@@ -247,3 +248,61 @@ def test_dedupe_collapses_the_same_path() -> None:
     assert dedupe_local_targets([_local_target("/repo"), _local_target("/repo")]) == [
         _local_target("/repo")
     ]
+
+
+def test_check_mountable_file_accepts_a_project_file(tmp_path: Path) -> None:
+    file = tmp_path / "notes.txt"
+    file.write_text("context", encoding="utf-8")
+
+    check_mountable_file(file)
+
+
+def test_check_mountable_file_rejects_missing_file(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="not an existing file"):
+        check_mountable_file(tmp_path / "nope.txt")
+
+
+def test_check_mountable_file_rejects_system_file() -> None:
+    system_file = next(
+        (p for p in (Path("/etc/passwd"), Path("/usr/bin/env")) if p.is_file()), None
+    )
+    if system_file is None:
+        pytest.skip("no system file on this platform")
+    with pytest.raises(ValueError, match="Refusing to mount"):
+        check_mountable_file(system_file)
+
+
+def test_check_mountable_file_rejects_home_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    home.mkdir()
+    file = home / "personal.txt"
+    file.write_text("secret", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: home))
+
+    with pytest.raises(ValueError, match="Refusing to mount"):
+        check_mountable_file(file)
+
+
+def test_check_mountable_file_rejects_credential_files(tmp_path: Path) -> None:
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    key = ssh_dir / "id_rsa"
+    key.write_text("key", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="holds credentials"):
+        check_mountable_file(key)
+
+
+def test_check_mountable_file_accepts_a_project_file_under_home_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    project = tmp_path / "home" / "dev" / "project"
+    project.mkdir(parents=True)
+    file = project / "data.txt"
+    file.write_text("x", encoding="utf-8")
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path / "home" / "dev"))
+
+    check_mountable_file(file)
