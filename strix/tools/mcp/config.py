@@ -12,6 +12,9 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
+DEFAULT_MAX_CONCURRENT_CALLS = 4
+
+
 class BearerAuth(BaseModel):
     """Header-token auth, sent as ``Authorization: Bearer <token>``."""
 
@@ -64,6 +67,18 @@ class McpConnectionConfig(BaseModel):
     to use it. When set, the note becomes the connection's purpose line in the
     MCP inventory every agent renders in its prompt, so it describes the
     connection once rather than being repeated onto each of its tools."""
+
+    http_timeout_seconds: float = Field(default=30.0, gt=0)
+    """HTTP request timeout; the SDK's 5-second default is below tool p95s."""
+
+    sse_read_timeout_seconds: float = Field(default=300.0, gt=0)
+    """Stream read timeout; the SDK's 5-second default is below tool p95s."""
+
+    session_timeout_seconds: float = Field(default=60.0, gt=0)
+    """MCP operation timeout for SQL queries and cloud describe fan-outs."""
+
+    max_concurrent_calls: int = Field(default=DEFAULT_MAX_CONCURRENT_CALLS, ge=1)
+    """Maximum concurrent calls for this connection name across sessions."""
 
     @model_validator(mode="after")
     def _check_transport_fields(self) -> McpConnectionConfig:

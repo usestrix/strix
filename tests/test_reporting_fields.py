@@ -16,8 +16,10 @@ from strix.tools.finish.tool import finish_scan
 from strix.tools.reporting.tool import (
     _do_create,
     _do_create_dependency,
+    _do_update,
     create_dependency_report,
     create_vulnerability_report,
+    update_vulnerability_report,
 )
 
 
@@ -1251,3 +1253,507 @@ async def test_dependency_report_rejects_contextual_breakdown_without_reasoning(
     assert result["success"] is False
     assert any("contextual_cvss_reasoning is required" in error for error in result["errors"])
     assert report_state.vulnerability_reports == []
+
+
+_CONFIRMED_KWARGS: dict[str, Any] = {
+    "title": "Unauthenticated file write on /files/{id}",
+    "description": "A multipart PATCH writes attacker content before the permission check.",
+    "impact": "Any anonymous user overwrites stored files and serves attacker content.",
+    "target": "https://cms.example.com",
+    "technical_analysis": "disk.write runs before the authorization guard.",
+    "poc_description": "1. PATCH /files/<uuid> with a multipart body as an anonymous user.",
+    "poc_script_code": "PATCH /files/2f1c HTTP/1.1\n\n--x\nowned\n--x--",
+    "remediation_steps": "Authorize before the write.",
+    "evidence": "The stored file returns the injected payload after the 403 response.",
+    "assumptions": "Assumes the uuid of one existing file is known.",
+    "counterevidence": "The endpoint answers 403, yet the write already landed.",
+    "confidence": "HIGH",
+    "confidence_rationale": "The write was observed end to end against the live host.",
+    "severity_change_conditions": "A guard before disk.write would remove the impact.",
+    "fix_effort": "MEDIUM",
+    "cvss_breakdown": _CVSS,
+    "endpoint": "/files/{id}",
+    "method": "PATCH",
+    "cve": "CVE-2025-55746",
+    "cwe": "CWE-863",
+    "code_locations": None,
+}
+
+
+def _seed_weak_report(report_state: ReportState) -> None:
+    """A version-based, unproven entry for the same issue, as an earlier agent files it."""
+    report_state.vulnerability_reports.append(
+        {
+            "id": "vuln-0009",
+            "title": "Directus 11.5.1 exposed on public host (in scope for CVE-2025-55746)",
+            "severity": "medium",
+            "timestamp": "2026-01-01 00:00:00 UTC",
+            "description": "The banner reports a version affected by CVE-2025-55746.",
+            "target": "https://cms.example.com",
+            "confidence": "low",
+            "evidence": "The version banner only.",
+            "cvss": 5.3,
+            "finding_class": "dynamic",
+            "agent_id": "aaaa1111",
+        }
+    )
+    report_state._saved_vuln_ids.add("vuln-0009")
+
+
+async def test_duplicate_verdict_rejects_without_touching_the_existing_report(
+    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Deduplication only answers identity. A duplicate is rejected and points at the
+    finding it matched; revising that finding is a separate, explicit operation."""
+    _seed_weak_report(report_state)
+
+    async def fake_check_duplicate(
+        _candidate: dict[str, Any], _existing: list[dict[str, Any]]
+    ) -> dict[str, Any]:
+        return {
+            "is_duplicate": True,
+            "duplicate_id": "vuln-0009",
+            "confidence": 0.9,
+            "reason": "Same root cause on the same endpoint.",
+        }
+
+    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
+
+    result = await _do_create(**_CONFIRMED_KWARGS, agent_id="834f79fb", agent_name="Validation")
+
+    assert result["success"] is False
+    assert result["duplicate_of"] == "vuln-0009"
+    assert "action" not in result
+    assert len(report_state.vulnerability_reports) == 1
+    report = report_state.vulnerability_reports[0]
+    assert report["severity"] == "medium", "a duplicate verdict never edits the matched finding"
+    assert "poc_script_code" not in report
+    assert "update_history" not in report
+
+
+def test_update_vulnerability_report_records_chained_impact(report_state: ReportState) -> None:
+    """Attack chaining raises the impact of a finding already on file."""
+    _seed_weak_report(report_state)
+
+    updated = report_state.update_vulnerability_report(
+        "vuln-0009",
+        {
+            "severity": "CRITICAL",
+            "cvss": 9.8,
+            "impact": "The overwritten file loads in an admin session and takes over the account.",
+            "id": "vuln-9999",
+            "finding_class": "static",
+        },
+        update_reason="A chained admin takeover follows the file write.",
+    )
+
+    assert updated is not None
+    assert updated["id"] == "vuln-0009", "identity fields are not updatable"
+    assert updated["finding_class"] == "dynamic"
+    assert updated["severity"] == "critical"
+    assert updated["updated_at"]
+    assert report_state.update_vulnerability_report("vuln-0404", {"severity": "high"}) is None
+
+
+def test_update_vulnerability_report_ignores_identical_content(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+    assert report_state.update_vulnerability_report("vuln-0009", {"severity": "medium"}) is None
+    assert "update_history" not in report_state.vulnerability_reports[0]
+
+
+def test_update_drops_reasoning_left_behind_by_the_field_it_describes(
+    report_state: ReportState,
+) -> None:
+    """A rating the update replaces must not keep the rationale for the old one."""
+    _seed_weak_report(report_state)
+    report = report_state.vulnerability_reports[0]
+    report["confidence_rationale"] = "Nothing was executed; the version banner is the only signal."
+    report["cvss_breakdown"] = {"attack_vector": "network", "user_interaction": "required"}
+    report["severity_change_conditions"] = "Confirming the write would raise this."
+
+    updated = report_state.update_vulnerability_report(
+        "vuln-0009",
+        {
+            "confidence": "high",
+            "severity": "critical",
+            "cvss": 9.8,
+            "severity_change_conditions": "A guard before the write would remove the impact.",
+        },
+    )
+
+    assert updated is not None
+    assert "confidence_rationale" not in updated, "the superseded rationale must not survive"
+    assert "cvss_breakdown" not in updated
+    assert updated["severity_change_conditions"].startswith("A guard"), (
+        "a replacement the update supplies is kept, not dropped"
+    )
+    assert updated["update_history"][0]["dropped_fields"] == [
+        "confidence_rationale",
+        "cvss_breakdown",
+    ]
+
+    run_dir = report_state._run_dir
+    assert run_dir is not None
+    markdown = (run_dir / "vulnerabilities" / "vuln-0009.md").read_text(encoding="utf-8")
+    assert "version banner is the only signal" not in markdown
+    assert "Dropped as superseded: confidence_rationale, cvss_breakdown" in markdown
+
+
+def test_agent_revises_its_own_report_without_a_duplicate_verdict(
+    report_state: ReportState,
+) -> None:
+    """Editing a finding is its own operation: no dedupe verdict is involved."""
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="An unauthenticated PATCH wrote the file, so the finding is confirmed.",
+        fields={
+            "poc_script_code": "PATCH /files/2f1c HTTP/1.1",
+            "confidence": "HIGH",
+            "confidence_rationale": "The write was replayed twice.",
+            "cvss_breakdown": _CVSS,
+            "severity_change_conditions": "A guard before the write would remove the impact.",
+        },
+        agent_id="834f79fb",
+        agent_name="Directus CVE-2025-55746 Validation Agent",
+    )
+
+    assert result["success"] is True
+    assert result["action"] == "updated"
+    assert result["severity"] == "critical"
+    assert result["cvss_score"] == pytest.approx(9.8)
+    assert "cvss" in result["updated_fields"], "a new vector carries its own score"
+    assert len(report_state.vulnerability_reports) == 1
+
+    report = report_state.vulnerability_reports[0]
+    assert report["id"] == "vuln-0009"
+    assert report["confidence"] == "high"
+    assert report["agent_id"] == "aaaa1111", "the original reporter stays on the finding"
+    history = report["update_history"]
+    assert history[0]["agent_name"] == "Directus CVE-2025-55746 Validation Agent"
+    assert history[0]["reason"].startswith("An unauthenticated PATCH")
+
+    run_dir = report_state._run_dir
+    assert run_dir is not None
+    markdown = (run_dir / "vulnerabilities" / "vuln-0009.md").read_text(encoding="utf-8")
+    assert "PATCH /files/2f1c" in markdown
+
+
+@pytest.mark.parametrize(
+    ("report_id", "update_reason", "fields", "expected"),
+    [
+        ("  ", "reason", {"impact": "x"}, "report_id cannot be empty"),
+        ("vuln-0009", "   ", {"impact": "x"}, "update_reason cannot be empty"),
+        ("vuln-0009", "reason", {}, "No fields to update"),
+        ("vuln-0404", "reason", {"impact": "x"}, "not found"),
+    ],
+)
+def test_update_rejects_a_call_it_cannot_act_on(
+    report_state: ReportState,
+    report_id: str,
+    update_reason: str,
+    fields: dict[str, Any],
+    expected: str,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(report_id=report_id, update_reason=update_reason, fields=fields)
+
+    assert result["success"] is False
+    assert expected in result["error"]
+    assert "update_history" not in report_state.vulnerability_reports[0]
+
+
+def test_update_reports_every_invalid_field_at_once(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Raising the rating.",
+        fields={
+            "confidence": "very high",
+            "fix_effort": "weeks",
+            "cvss_breakdown": {**_CVSS, "attack_vector": "X"},
+            "cve": "CVE-BAD",
+        },
+    )
+
+    assert result["success"] is False
+    joined = " ".join(result["errors"])
+    assert "confidence" in joined
+    assert "fix_effort" in joined
+    assert "attack_vector" in joined
+    assert "CVE" in joined
+    assert report_state.vulnerability_reports[0]["confidence"] == "low", "nothing was applied"
+
+
+def test_update_wants_verification_for_a_fix_it_would_apply(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Adding the file the write lands in.",
+        fields={
+            "code_locations": [
+                {
+                    "file": "api/src/controllers/files.ts",
+                    "start_line": 42,
+                    "fix_before": "await storage.write(id, body)",
+                    "fix_after": "await assertPermission(req); await storage.write(id, body)",
+                }
+            ]
+        },
+    )
+
+    assert result["success"] is False
+    assert any("fix_verification" in error for error in result["errors"])
+
+
+def test_update_says_so_when_the_report_already_carries_it(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Restating the severity.",
+        fields={"confidence": "low"},
+    )
+
+    assert result["success"] is False
+    assert "already says this" in result["error"]
+    assert result["report_id"] == "vuln-0009"
+
+
+def test_update_tool_asks_for_the_report_and_the_reason() -> None:
+    schema = update_vulnerability_report.params_json_schema
+    assert set(schema["required"]) >= {"report_id", "update_reason"}
+    assert "cvss_breakdown" in schema["properties"]
+    assert "id" not in schema["properties"], "identity fields are not editable"
+    description = update_vulnerability_report.description
+    assert "not deduplication" in description
+
+
+def test_update_keeps_an_exploit_out_of_a_dependency_finding(report_state: ReportState) -> None:
+    """A dependency record is rated from its advisory, so a revision must not write a
+    PoC and a dynamic rating onto it. The proof belongs in its own finding."""
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+    }
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="An unauthenticated PATCH wrote the file.",
+        fields={
+            "poc_script_code": "PATCH /files/2f1c HTTP/1.1",
+            "endpoint": "/files/{uuid}",
+            "cvss_breakdown": _CVSS,
+        },
+    )
+
+    assert result["success"] is False
+    assert "dependency_cve" in result["error"]
+    assert set(result["rejected_fields"]) == {"endpoint", "poc_script_code"}
+    assert dependency_report["severity"] == "medium"
+    assert "poc_script_code" not in dependency_report
+    assert "update_history" not in dependency_report
+
+
+def _seed_dependency_report(report_state: ReportState) -> dict[str, Any]:
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+        "manifest_path": "package-lock.json",
+        "advisory_cvss": 9.8,
+        "contextual_cvss_breakdown": {**_CVSS, "confidentiality": "L"},
+        "contextual_cvss_score": 5.3,
+        "contextual_cvss_vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:L/I:N/A:N",
+        "contextual_cvss_reasoning": "The vulnerable API is imported but never called.",
+    }
+    return dependency_report
+
+
+def test_update_re_rates_a_dependency_finding_through_its_contextual_cvss(
+    report_state: ReportState,
+) -> None:
+    """A dependency finding is rated in the context of the codebase. A revised
+    breakdown replaces that contextual rating, with the reasoning a reader can
+    check, and leaves the package identity alone."""
+    dependency_report = _seed_dependency_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A call path from the upload handler to the vulnerable API was found.",
+        fields={
+            "cvss_breakdown": _CVSS,
+            "contextual_cvss_reasoning": (
+                "routes/upload.ts:88 reaches the affected parser with user input."
+            ),
+        },
+    )
+
+    assert result["success"] is True
+    assert result["severity"] == "critical"
+    assert dependency_report["severity"] == "critical"
+    assert dependency_report["cvss"] == 9.8
+    assert "cvss_breakdown" not in dependency_report
+    assert "contextual_cvss_reasoning" not in dependency_report
+    metadata = dependency_report["dependency_metadata"]
+    assert metadata["package_name"] == "directus"
+    assert metadata["installed_version"] == "11.5.1"
+    assert metadata["manifest_path"] == "package-lock.json"
+    assert metadata["advisory_cvss"] == 9.8
+    assert metadata["contextual_cvss_breakdown"] == _CVSS
+    assert metadata["contextual_cvss_score"] == 9.8
+    assert metadata["contextual_cvss_vector"] == "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+    assert metadata["contextual_cvss_reasoning"].startswith("routes/upload.ts:88")
+    assert dependency_report["finding_class"] == "dependency_cve"
+    history = dependency_report["update_history"]
+    assert history[-1]["previous_severity"] == "medium"
+    assert set(history[-1]["fields"]) == {"cvss", "dependency_metadata", "severity"}
+
+
+def test_update_wants_the_reasoning_behind_a_dependency_re_rating(
+    report_state: ReportState,
+) -> None:
+    dependency_report = _seed_dependency_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The parser is reachable.",
+        fields={"cvss_breakdown": _CVSS},
+    )
+
+    assert result["success"] is False
+    assert any("contextual_cvss_reasoning" in error for error in result["errors"])
+    assert dependency_report["severity"] == "medium"
+    assert dependency_report["dependency_metadata"]["contextual_cvss_score"] == 5.3
+    assert "update_history" not in dependency_report
+
+
+def test_update_corrects_the_reasoning_behind_a_dependency_rating_alone(
+    report_state: ReportState,
+) -> None:
+    """The rating on file stays; only its explanation is replaced."""
+    dependency_report = _seed_dependency_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The reasoning named the wrong module.",
+        fields={"contextual_cvss_reasoning": "lib/parser.ts imports it; no call site reaches it."},
+    )
+
+    assert result["success"] is True
+    assert result["updated_fields"] == ["dependency_metadata"]
+    assert dependency_report["severity"] == "medium"
+    assert dependency_report["cvss"] == 5.3
+    metadata = dependency_report["dependency_metadata"]
+    assert metadata["contextual_cvss_breakdown"] == {**_CVSS, "confidentiality": "L"}
+    assert metadata["contextual_cvss_score"] == 5.3
+    assert metadata["contextual_cvss_reasoning"].startswith("lib/parser.ts")
+    assert metadata["package_name"] == "directus"
+
+
+def test_update_wants_a_rating_before_reasoning_about_one(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+    }
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Explaining the rating.",
+        fields={"contextual_cvss_reasoning": "Reachable."},
+    )
+
+    assert result["success"] is False
+    assert any("cvss_breakdown is required" in error for error in result["errors"])
+    assert "contextual_cvss_reasoning" not in dependency_report["dependency_metadata"]
+
+
+def test_update_keeps_contextual_reasoning_off_a_dynamic_finding(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Re-rating.",
+        fields={"cvss_breakdown": _CVSS, "contextual_cvss_reasoning": "Reachable."},
+    )
+
+    assert result["success"] is False
+    assert result["rejected_fields"] == ["contextual_cvss_reasoning"]
+    assert report_state.vulnerability_reports[0]["severity"] == "medium"
+
+
+def test_update_reads_a_legacy_dependency_record_by_its_metadata(
+    report_state: ReportState,
+) -> None:
+    """A dependency finding filed before finding_class was persisted still carries
+    package metadata, so its class is read from that, not defaulted to dynamic."""
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report.pop("finding_class", None)
+    dependency_report["dependency_metadata"] = {
+        "package_name": "directus",
+        "installed_version": "11.5.1",
+    }
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="An unauthenticated PATCH wrote the file.",
+        fields={"poc_script_code": "PATCH /files/2f1c HTTP/1.1", "cvss_breakdown": _CVSS},
+    )
+
+    assert result["success"] is False
+    assert "dependency_cve" in result["error"]
+    assert "poc_script_code" not in dependency_report
+
+
+def test_update_still_corrects_the_prose_of_a_dependency_finding(
+    report_state: ReportState,
+) -> None:
+    """Fields every class carries stay editable on a dependency record."""
+    _seed_weak_report(report_state)
+    dependency_report = report_state.vulnerability_reports[0]
+    dependency_report["finding_class"] = "dependency_cve"
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The advisory names a later fixed release than the report says.",
+        fields={"remediation_steps": "Upgrade to 11.5.2 or later."},
+    )
+
+    assert result["success"] is True
+    assert dependency_report["remediation_steps"] == "Upgrade to 11.5.2 or later."
+    assert dependency_report["finding_class"] == "dependency_cve"
+
+
+def test_update_refuses_code_locations_it_cannot_use(report_state: ReportState) -> None:
+    """A location without a usable file and line is reported, not dropped in silence."""
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Naming the vulnerable handler.",
+        fields={"code_locations": [{"label": "the file write"}]},
+    )
+
+    assert result["success"] is False
+    assert any("start_line" in error for error in result["errors"])

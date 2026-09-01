@@ -18,7 +18,7 @@ from agents import (
 )
 from agents.model_settings import ModelSettings
 from agents.models.fake_id import FAKE_RESPONSES_ID
-from agents.models.interface import Model
+from agents.models.interface import Model, ModelProvider
 from agents.models.multi_provider import MultiProvider
 from agents.models.openai_responses import OpenAIResponsesModel
 from agents.retry import (
@@ -48,7 +48,7 @@ if TYPE_CHECKING:
     from agents.agent_output import AgentOutputSchemaBase
     from agents.handoffs import Handoff
     from agents.items import ModelResponse, TResponseInputItem, TResponseStreamEvent
-    from agents.models.interface import ModelProvider, ModelTracing
+    from agents.models.interface import ModelTracing
     from agents.retry import ModelRetryAdvice, ModelRetryAdviceRequest
     from agents.tool import Tool
     from agents.usage import Usage
@@ -445,11 +445,60 @@ def _response_usage(usage: Usage | None) -> ResponseUsage | None:
     )
 
 
+class _CredentialedLitellmProvider(ModelProvider):
+    """LiteLLM route bound to one endpoint's credentials.
+
+    ``LitellmProvider`` reads them from the process-wide LiteLLM globals, which
+    belong to the main model; a secondary endpoint needs its own.
+    """
+
+    def __init__(self, api_key: str | None, base_url: str | None) -> None:
+        self._api_key = api_key
+        self._base_url = base_url
+
+    def get_model(self, model_name: str | None) -> Model:
+        from agents.extensions.models.litellm_model import LitellmModel
+        from agents.models.default_models import get_default_model
+
+        return LitellmModel(
+            model=model_name or get_default_model(),
+            api_key=self._api_key,
+            base_url=self._base_url,
+        )
+
+
 class StrixProvider(MultiProvider):
     """Route any non-OpenAI prefix through LiteLLM with the prefix preserved,
     so users type ``deepseek/deepseek-chat`` rather than
     ``litellm/deepseek/deepseek-chat``.
+
+    ``api_key``/``base_url`` bind every route this provider resolves to one
+    endpoint, for a secondary model (the dedupe judge) whose endpoint differs
+    from the main model's process-wide defaults.
     """
+
+    def __init__(
+        self,
+        *,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(
+            openai_api_key=api_key,
+            openai_base_url=base_url,
+            # A custom endpoint is OpenAI-compatible, i.e. chat completions; the
+            # global default is the main model's and may say otherwise.
+            openai_use_responses=False if base_url else None,
+            **kwargs,
+        )
+        self._override_api_key = api_key
+        self._override_base_url = base_url
+
+    def _create_fallback_provider(self, prefix: str) -> ModelProvider:
+        if prefix == "litellm" and (self._override_api_key or self._override_base_url):
+            return _CredentialedLitellmProvider(self._override_api_key, self._override_base_url)
+        return super()._create_fallback_provider(prefix)
 
     def _resolve_prefixed_model(
         self,
@@ -862,6 +911,22 @@ _ANTHROPIC_MODEL_MARKERS = ("anthropic", "claude", "sonnet", "opus", "haiku")
 
 def is_claude_model(model_name: str) -> bool:
     return "claude" in (model_name or "").strip().lower()
+
+
+def routes_through_litellm(model_name: str | None) -> bool:
+    """Whether :class:`StrixProvider` sends this model through LiteLLM.
+
+    Bare names and the ``openai/``/``any-llm/`` prefixes are served by the SDK's
+    own clients, which raise ``TypeError`` on request fields they do not know,
+    so LiteLLM-only fields must not be attached there. A bare ``claude-...``
+    name is exactly that case: an ``LLM_API_BASE`` pointing at an
+    OpenAI-compatible gateway in front of Claude.
+    """
+    name = (model_name or "").strip()
+    if not name or codex.subscription_model(name):
+        return False
+    prefix, _, rest = name.partition("/")
+    return bool(rest) and prefix.lower() not in {"openai", "any-llm"}
 
 
 def is_bedrock_route(model_name: str) -> bool:

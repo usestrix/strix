@@ -103,6 +103,21 @@ func bootstrapEnvelope(t *testing.T, collection string, revision int, items ...a
 	return protocol.Envelope{Version: protocol.Version, Type: "collection_bootstrap", Payload: rawJSON(t, payload)}
 }
 
+func TestStateSnapshotClearsNilError(t *testing.T) {
+	model := New(nil)
+	errText := "provider rejected"
+	model.handleEnvelope(stateEnvelope(t, 1, protocol.Snapshot{ScanState: "failed", Error: &errText}))
+	if model.errorText != errText {
+		t.Fatalf("error was not installed: %q", model.errorText)
+	}
+
+	model.handleEnvelope(stateEnvelope(t, 2, protocol.Snapshot{ScanState: "running"}))
+
+	if model.errorText != "" {
+		t.Fatalf("nil snapshot error did not clear errorText: %q", model.errorText)
+	}
+}
+
 func TestBackendDisconnectBecomesFatalUnlessUserIsQuitting(t *testing.T) {
 	model := New(nil)
 	updated, cmd := model.Update(wireErrMsg{err: fmt.Errorf("socket closed")})
@@ -160,6 +175,27 @@ func TestCollectionBootstrapChunksAndVersionedDelta(t *testing.T) {
 	}
 }
 
+func TestAgentCollectionDeltaClearsErrorMessage(t *testing.T) {
+	model := New(nil)
+	failed := protocol.Agent{ID: "root", Name: "Strix", Status: "failed", ErrorMessage: "provider rejected"}
+	model.handleEnvelope(bootstrapEnvelope(t, "agents", 1, failed))
+
+	resumed := protocol.Agent{ID: "root", Name: "Strix", Status: "waiting"}
+	delta := protocol.CollectionDelta{
+		Collection: "agents", BaseRevision: 1, Revision: 2, Cursor: 0, NextCursor: 1, Done: true,
+		Operations: []protocol.CollectionOperation{{Op: "upsert", Item: rawJSON(t, resumed)}},
+	}
+	model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "collection_delta", Payload: rawJSON(t, delta)})
+
+	if len(model.snapshot.Agents) != 1 {
+		t.Fatalf("agents were not retained: %#v", model.snapshot.Agents)
+	}
+	agent := model.snapshot.Agents[0]
+	if agent.Status != "waiting" || agent.ErrorMessage != "" {
+		t.Fatalf("agent error was not cleared: %#v", agent)
+	}
+}
+
 func TestCollectionMismatchRequestsOneResync(t *testing.T) {
 	connection := &recordingConn{}
 	model := New(newClient(connection))
@@ -181,6 +217,42 @@ func TestCollectionMismatchRequestsOneResync(t *testing.T) {
 	}
 	if model.collectionRevisions["events"] != 4 {
 		t.Fatal("mismatched delta mutated collection revision")
+	}
+}
+
+func TestFailedResyncResultBeforeSentMsgRearmsResync(t *testing.T) {
+	connection := &recordingConn{}
+	model := New(newClient(connection))
+	model.collectionRevisions["events"] = 4
+	bad := protocol.CollectionDelta{
+		Collection: "events", BaseRevision: 2, Revision: 3, Cursor: 0, NextCursor: 0, Done: true,
+	}
+
+	cmd := model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "collection_delta", Payload: rawJSON(t, bad)})
+	if cmd == nil {
+		t.Fatal("revision mismatch did not request a resync")
+	}
+	sent, ok := cmd().(sentMsg)
+	if !ok || sent.err != nil || sent.requestID == "" {
+		t.Fatalf("resync send = %#v", sent)
+	}
+
+	failed := protocol.CommandResult{
+		OK:      false,
+		Command: "collection.resync",
+		Error:   &protocol.CommandError{Code: "command_failed", Message: "resync failed"},
+	}
+	model.handleEnvelope(protocol.Envelope{
+		Version: protocol.Version, Type: "command_result", RequestID: sent.requestID, Payload: rawJSON(t, failed),
+	})
+	updated, _ := model.Update(sent)
+	model = updated.(Model)
+
+	if model.resyncRequested["events"] {
+		t.Fatal("failed resync result left resync suppressed")
+	}
+	if retry := model.handleEnvelope(protocol.Envelope{Version: protocol.Version, Type: "collection_delta", Payload: rawJSON(t, bad)}); retry == nil {
+		t.Fatal("resync was not rearmed after failure")
 	}
 }
 

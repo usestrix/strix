@@ -103,6 +103,7 @@ class TuiLiveView:
         statuses = agents_data.get("statuses") or {}
         names = agents_data.get("names") or {}
         parent_of = agents_data.get("parent_of") or {}
+        errors = agents_data.get("errors") or {}
         if not isinstance(statuses, dict):
             return
         for agent_id, status in statuses.items():
@@ -113,6 +114,7 @@ class TuiLiveView:
                 name=names.get(agent_id, agent_id) if isinstance(names, dict) else agent_id,
                 parent_id=parent_of.get(agent_id) if isinstance(parent_of, dict) else None,
                 status=str(status),
+                error_message=errors.get(agent_id) if isinstance(errors, dict) else None,
             )
         # Ahead of the replayed history, so it opens the transcript.
         self.flush_user_instruction()

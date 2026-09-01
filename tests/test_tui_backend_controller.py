@@ -12,6 +12,16 @@ from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.interface.tui.backend.controller import TuiController
 
 
+class _SendingCoordinator:
+    def __init__(self, delivered: bool = True) -> None:
+        self.delivered = delivered
+        self.messages: list[tuple[str, dict[str, object]]] = []
+
+    async def send(self, agent_id: str, message: dict[str, object]) -> bool:
+        self.messages.append((agent_id, message))
+        return self.delivered
+
+
 def args() -> argparse.Namespace:
     return argparse.Namespace(
         needs_setup=True,
@@ -427,6 +437,34 @@ def test_snapshot_exposes_working_directory() -> None:
 
     assert controller.snapshot()["working_dir"] == str(Path.cwd())
     assert controller.snapshot()["pending_mount"] == ""
+
+
+@pytest.mark.asyncio
+async def test_user_message_updates_live_agent_projection_immediately() -> None:
+    coordinator = _SendingCoordinator()
+    controller = TuiController(args(), coordinator=coordinator)
+    controller.setup_mode = False
+    controller.scan_started = True
+    controller.scan_loop = asyncio.get_running_loop()
+    controller.live_view.upsert_agent(
+        "root",
+        name="Strix",
+        status="failed",
+        error_message="provider rejected request",
+    )
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": "root", "message": "try again"},
+    )
+
+    assert result == {"sent": True}
+    assert coordinator.messages == [
+        ("root", {"from": "user", "content": "try again", "type": "instruction"})
+    ]
+    agent = controller.live_view.agents["root"]
+    assert agent["status"] == "waiting"
+    assert "error_message" not in agent
 
 
 @pytest.mark.asyncio

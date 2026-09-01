@@ -3,12 +3,17 @@
 from __future__ import annotations
 
 import pytest
+from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
 
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
+    StrixProvider,
+    _NonStreamingModel,
+    _TurnGuardModel,
     is_recommended_or_frontier_model,
     request_timeout_extra_args,
+    routes_through_litellm,
     supports_strict_tool_schemas,
 )
 
@@ -112,3 +117,38 @@ def test_claude_routes_reject_strict_tool_schemas(model_name: str) -> None:
 )
 def test_other_routes_keep_strict_tool_schemas(model_name: str) -> None:
     assert supports_strict_tool_schemas(model_name)
+
+
+@pytest.mark.parametrize(
+    ("model_name", "litellm"),
+    [
+        ("claude-sonnet-4-5", False),
+        ("openai/claude-sonnet-4-5", False),
+        ("any-llm/anthropic/claude-sonnet-4-5", False),
+        ("anthropic/claude-sonnet-4-5", True),
+        ("litellm/anthropic/claude-sonnet-4-5", True),
+        ("bedrock/anthropic.claude-sonnet-4-5-20250929-v1:0", True),
+        ("ollama/llama3", True),
+    ],
+)
+def test_routes_through_litellm_matches_the_provider(
+    monkeypatch: pytest.MonkeyPatch, model_name: str, litellm: bool
+) -> None:
+    """The helper must agree with what StrixProvider actually builds.
+
+    Callers use it to decide whether a LiteLLM-only request field is safe to
+    attach; on the SDK's own clients such a field raises TypeError mid-turn, so
+    drift here breaks every request on that route.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    assert routes_through_litellm(model_name) is litellm
+    try:
+        model = StrixProvider().get_model(model_name)
+    except ImportError:
+        # any-llm's client is an optional dependency; reaching it at all already
+        # proves the route is not LiteLLM's.
+        assert not litellm
+        return
+    while isinstance(model, _NonStreamingModel | _TurnGuardModel):
+        model = model._inner
+    assert isinstance(model, LitellmModel) is litellm

@@ -194,3 +194,28 @@ func TestVulnerabilityReportRendersCalibrationFields(t *testing.T) {
 		"Fix Verification", "bypass review reasoned only",
 	)
 }
+
+func TestVulnerabilityReportUpdateRendersReportAndReason(t *testing.T) {
+	out := ansi.Strip(Tool(tool("update_vulnerability_report",
+		map[string]any{
+			"report_id":       "vuln-0009",
+			"update_reason":   "built a working unauthenticated file write against the endpoint",
+			"poc_script_code": "curl -X PATCH https://target/files/uuid",
+		},
+		map[string]any{
+			"success":        true,
+			"action":         "updated",
+			"report_id":      "vuln-0009",
+			"severity":       "critical",
+			"cvss_score":     9.3,
+			"updated_fields": []any{"poc_script_code"},
+		},
+		"completed")))
+	requireContains(t, out,
+		"Vulnerability Report Updated",
+		"vuln-0009",
+		"built a working unauthenticated file write",
+		"CRITICAL",
+		"9.3",
+	)
+}

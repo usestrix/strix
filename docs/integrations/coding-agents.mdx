@@ -36,13 +36,14 @@ npx skills use usestrix/strix@penetration-testing-with-strix | claude
 Both use the same engine and produce the same validated findings and SARIF, so agents can pick per situation or combine them:
 
 - **Open-source CLI (self-hosted)** — runs locally in a Docker sandbox with your own LLM key. Free, fully local, air-gap capable. Best for local dev loops and full control.
-- **Managed cloud** — runs on Strix's infrastructure via the [app.strix.ai REST API](https://docs.app.strix.ai). No Docker, no LLM key, no local install; adds team dashboards, scheduling, PR reviews, and downloadable PDF/DOCX reports (Enterprise plan). Best in sandboxed/CI environments and for teams. Create an API token under **Settings → API Access**; the `managed-pentesting-with-strix` skill has the full flow.
+- **Managed cloud** — runs on Strix's infrastructure. Drive it with the `strix cloud` CLI (every REST operation has a `strix cloud <resource> <verb>` command) or the [app.strix.ai REST API](https://docs.app.strix.ai) directly. No Docker, no LLM key; adds team dashboards, scheduling, PR reviews, and downloadable PDF/DOCX reports (Enterprise plan). Best in sandboxed/CI environments and for teams. Sign in with `strix cloud login` (browser device sign-in, account created on first use) or create a token in the dashboard under **Settings → API Access**. The `managed-pentesting-with-strix` skill has the full flow.
 
 ## Agent-Friendly Interfaces
 
 Everything an agent needs is machine-readable:
 
 - **Headless CLI** — `strix -n` runs without the TUI and exits with `0` (clean), `1` (error), or `2` (vulnerabilities found).
+- **Cloud CLI** — `strix cloud` prints JSON when stdout is not a terminal (or with `--json`), never prompts without a TTY, and exits with `0` (success), `1` (error), `2` (usage), `4` (authentication required), or `5` (payment required). Credit top-ups pay the Stripe machine-payment challenge with an agent wallet (`strix cloud billing topup --credits N --yes`). Account setup also runs from the CLI: `strix cloud workspaces list|create|use`, `strix cloud org members invite`, `strix cloud billing subscribe`, `strix cloud billing portal`, and `strix cloud integrations install github`. The last three print a hosted link the user opens to finish the payment or approve the installation.
 - **REST API** — the managed platform exposes a documented [OpenAPI](https://docs.app.strix.ai/openapi.json) at `https://app.strix.ai/api/v1` (scans, vulnerabilities, assets, PR reviews, schedules, webhooks) with bearer tokens and scopes.
 - **Structured results** — every run writes `vulnerabilities.json`, `vulnerabilities.csv`, `findings.sarif` (SARIF 2.1.0), and per-finding Markdown under `strix_runs/<run-name>/`; the cloud exposes the same as JSON plus SARIF export.
 - **Budget controls** — `--max-budget` and `--max-turns` give agents hard cost/time caps.

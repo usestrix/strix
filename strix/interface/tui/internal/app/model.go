@@ -359,7 +359,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.resyncRequested[msg.collection] = false
 			}
 		} else if msg.command == "collection.resync" && msg.requestID != "" && msg.collection != "" {
-			m.resyncRequests[msg.requestID] = msg.collection
+			if m.resyncRequested[msg.collection] {
+				m.resyncRequests[msg.requestID] = msg.collection
+			}
 		}
 	case selectionCopiedMsg:
 		text := "Copied to clipboard"

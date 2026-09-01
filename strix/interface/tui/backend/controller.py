@@ -435,6 +435,7 @@ class TuiController:
             delivered = await asyncio.wrap_future(future)
         if not delivered:
             raise RuntimeError("Message could not be delivered")
+        self.live_view.upsert_agent(agent_id, status="waiting", error_message=None)
         return {"sent": True}
 
     async def _stop_agent(self, payload: dict[str, Any]) -> dict[str, Any]:

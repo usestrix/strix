@@ -116,7 +116,7 @@ const CATEGORY_TOOLS: Record<ToolCategory, readonly string[]> = {
   filesystem: ["apply_patch", "view_image", "str_replace_editor", "list_files", "search_files"],
   // Caido proxy tools (legacy: send_request)
   proxy: ["list_requests", "view_request", "repeat_request", "list_sitemap", "view_sitemap_entry", "scope_rules", "send_request"],
-  reporting: ["create_vulnerability_report", "list_reports", "get_report"],
+  reporting: ["create_vulnerability_report", "update_vulnerability_report", "list_reports", "get_report"],
   thinking: ["think"],
   agents: ["create_agent", "agent_finish", "send_message_to_agent", "wait_for_agents", "view_agent_graph", "stop_agent"],
   search: ["web_search"],

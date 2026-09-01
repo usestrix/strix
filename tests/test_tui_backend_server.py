@@ -243,13 +243,15 @@ def test_defensive_state_projection_preserves_usage_summary() -> None:
         ),
     )
     state = controller.snapshot()
-    state["provider"] = None
+    state["pending_mount"] = "current-project"
     state["future_oversized_field"] = "x" * 100_000
 
     snapshot = bounded_state_projection(state)
 
     assert snapshot["projection_truncated"] is True
     assert snapshot["usage"] == {"total_tokens": 720_400, "cost": 20.0}
+    assert snapshot["working_dir"] == state["working_dir"]
+    assert snapshot["pending_mount"] == "current-project"
 
 
 @pytest.mark.asyncio

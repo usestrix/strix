@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from strix.config import loader
 from strix.config.settings import DedupeSettings
-from strix.report.dedupe import _dedupe_model_settings
+from strix.report.dedupe import _dedupe_model_settings, resolve_dedupe_model
 
 
 if TYPE_CHECKING:
@@ -16,32 +16,49 @@ if TYPE_CHECKING:
     import pytest
 
 
-def test_dedupe_key_sent_per_call_not_via_global_env() -> None:
+def _unwrap(model: object) -> object:
+    while hasattr(model, "_inner"):
+        model = model._inner
+    return model
+
+
+def test_dedupe_key_bound_to_model_client_not_global_env() -> None:
     dedupe = DedupeSettings(STRIX_DEDUPE_MODEL="deepseek/cheap", DEDUPE_LLM_API_KEY="dedupe-key")
-    settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
-    # The key rides on the request, so a shared-provider main key can't clobber
-    # it (and vice versa) through the global provider env var.
-    assert (settings.extra_args or {})["api_key"] == "dedupe-key"
+    model = _unwrap(resolve_dedupe_model(dedupe, "deepseek/cheap"))
+    # The key is bound to the dedupe model's own client, so a shared-provider
+    # main key can't clobber it (and vice versa) through the process globals —
+    # and it never rides on the request, where every model implementation's own
+    # api_key kwarg would collide with it.
+    assert model.api_key == "dedupe-key"  # type: ignore[attr-defined]
 
 
-def test_dedupe_settings_omit_api_key_when_unset() -> None:
-    dedupe = DedupeSettings(STRIX_DEDUPE_MODEL="deepseek/cheap")
+def test_dedupe_settings_carry_no_request_credentials() -> None:
+    dedupe = DedupeSettings(
+        STRIX_DEDUPE_MODEL="deepseek/cheap",
+        DEDUPE_LLM_API_KEY="dedupe-key",
+        DEDUPE_LLM_API_BASE="https://dedupe.example/v1",
+    )
     settings = _dedupe_model_settings(dedupe, "deepseek/cheap", 300)
     assert "api_key" not in (settings.extra_args or {})
     assert "api_base" not in (settings.extra_args or {})
 
 
-def test_dedupe_endpoint_sent_per_call() -> None:
+def test_dedupe_endpoint_bound_to_model_client() -> None:
     dedupe = DedupeSettings(
         STRIX_DEDUPE_MODEL="openai/cheap",
         DEDUPE_LLM_API_KEY="dedupe-key",
         DEDUPE_LLM_API_BASE="https://dedupe.example/v1",
     )
-    settings = _dedupe_model_settings(dedupe, "openai/cheap", 300)
-    # A distinct dedupe endpoint rides on the request instead of the
-    # process-wide base URL, so it can't clobber the main model's endpoint.
-    assert (settings.extra_args or {})["api_base"] == "https://dedupe.example/v1"
-    assert (settings.extra_args or {})["api_key"] == "dedupe-key"
+    model = _unwrap(resolve_dedupe_model(dedupe, "openai/cheap"))
+    client = model._client  # type: ignore[attr-defined]
+    assert client.api_key == "dedupe-key"
+    assert str(client.base_url).startswith("https://dedupe.example/v1")
+
+
+def test_dedupe_without_credentials_uses_default_provider() -> None:
+    dedupe = DedupeSettings(STRIX_DEDUPE_MODEL="deepseek/cheap")
+    model = _unwrap(resolve_dedupe_model(dedupe, "deepseek/cheap"))
+    assert model.api_key is None  # type: ignore[attr-defined]
 
 
 def test_dedicated_dedupe_model_uses_own_headers_not_main() -> None:

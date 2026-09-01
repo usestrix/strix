@@ -327,6 +327,108 @@ strix auth status             # show the active sign-in
 strix auth logout             # forget the sign-in
 ```
 
+#### Use the managed platform: `strix cloud`
+
+The `strix cloud` commands drive the managed platform ([app.strix.ai](https://app.strix.ai)) from the terminal. Sign in once with the device flow. The sign-in creates your account and workspace on first use and stores a personal API token in `~/.strix/platform-auth.json`:
+
+```bash
+strix cloud login                         # browser approval, then workspace + scope profile
+strix cloud login --workspace "My Team"   # select a workspace by name or ID
+strix cloud whoami                        # fast local account/workspace status
+strix cloud session                       # verify remote session + consent ceiling
+strix cloud logout                        # revoke remotely, then remove locally
+```
+
+The default **Recommended** scope preset supports normal scan work, local source uploads,
+workspace switching, and user-approved credit top-ups. It excludes credential creation;
+request `tokens:write` explicitly (or choose Full) when needed. For strict least privilege, pass an explicit list such as
+`--scopes scans:read scans:write uploads:write billing:read`. Named automation
+profiles are also available with `--scope-profile minimal|recommended|full`.
+
+Every operation of the [REST API](https://docs.app.strix.ai) has a matching command in the form `strix cloud <resource> <verb>`:
+
+```bash
+strix cloud                                   # list all resources
+strix cloud scans                             # run the safe default (`scans list`)
+strix cloud scans help                        # list the verbs of a resource
+strix cloud domains add --domain example.com --asset-type web_app
+strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
+strix cloud scans start --source . --dry-run --show-files --json  # review + capture source.archive_sha256
+SOURCE_SHA256="<reviewed source.archive_sha256>"
+strix cloud scans start --source . --approve-sha256 "$SOURCE_SHA256" --wait
+strix cloud vulns list --severity critical
+strix cloud credits                           # credit balance
+strix cloud billing topup --credits 20 --yes  # explicitly approve agent payment after HTTP 402
+```
+
+Workspaces and account setup also work from the terminal:
+
+```bash
+strix cloud workspaces list                   # numbered list; `workspace` is also accepted
+strix cloud workspaces create --name "My Team" # admin + organizations:write
+strix cloud workspaces use 2                  # switch by list number, exact name, or ID
+strix cloud session scopes                    # granted scopes + login ceiling
+strix cloud session scopes set minimal        # narrow without another browser sign-in
+strix cloud billing subscribe --plan strix_cloud # opens the hosted checkout page
+strix cloud billing portal                    # opens the billing portal
+strix cloud integrations install github       # opens the app installation page
+strix cloud domains verify <domain-id>        # prints the DNS record to add
+```
+
+The last four commands end at a person. Strix creates the link, opens the browser for an interactive terminal, and always prints the URL. The user enters the card, approves the installation, or adds the DNS record. Pass `--no-browser` to print the URL only.
+
+The commands work for humans and agents: terminal output favors names, branches, lifecycle states, and numbered selectors, while redirected output (or `--json`) preserves complete machine-readable records and IDs. Human lists retain the selectors needed by follow-up commands but omit internal organization/user IDs; a selector too long for the compact table is repeated losslessly in a copyable block. Paginated lists print the next `--page` or `--offset`, and detail views preserve useful prose within a safe terminal bound; use `--json` for the complete record. Token lists distinguish API keys from named CLI device sessions. Binary downloads are the exception: intentionally redirect their raw bytes, or use `--output FILE --json` to write the file and receive structured download metadata. There are no prompts when stdin is not a terminal. Exit codes: `0` success, `1` error, `2` invalid usage, `4` authentication or plan limit, `5` payment required. `--token` and `STRIX_API_TOKEN` are stateless per-command overrides and never replace the stored sign-in; pair a CLI-session override with `--workspace-id` or `STRIX_WORKSPACE_ID`.
+
+A browser sign-in creates one reusable credential per CLI installation. Logging in again on the
+same installation replaces its secret instead of accumulating keys. Workspace switches keep that
+credential and expiry, preserve the server-side scope preference, cap access by the target role,
+and can never exceed the login consent ceiling. Each process pins its starting workspace, so a
+concurrent switch fails safely instead of sending a stale command to another organization.
+`strix cloud logout` revokes the server session before deleting the local token; use
+`--local-only` only when you deliberately cannot reach the server.
+
+Write commands take request fields as flags, and every write command also accepts one JSON object with `--data`:
+
+```bash
+strix cloud scans start --data '{"engagement_type":"code_review"}'   # literal JSON
+strix cloud scans start --data @request.json                         # read a file
+cat request.json | strix cloud scans start --data -                  # read standard input
+```
+
+For an agent or CI local-source scan, run `--dry-run --show-files --json`, review the manifest,
+and capture `source.archive_sha256`. Rerun with the same `--source`, every `--exclude`, and any
+`--include-*` selection flags, replacing `--dry-run` with `--approve-sha256 HASH`; Strix
+rebuilds the archive and refuses to upload it if the digest changed. `--yes` instead approves
+only the snapshot built in that one invocation. It is suitable for a deliberate human or
+one-shot approval, not as a digest-bound two-step agent/CI handoff.
+
+The safe default honors `.gitignore` and `.strixignore` and excludes hidden paths, secret-like
+files, VCS metadata, dependencies/build output, symlinks, and nested archives. Opt in
+separately with `--include-hidden`, `--include-sensitive`, or `--include-archives`. The client
+caps a bundle at 20,000 files, 25 MiB per file, 250 MiB expanded, and 50 MiB compressed, and
+the service independently validates the archive. Source alone infers a code review; adding a
+domain infers a live test. You can always pass `--engagement-type` explicitly.
+
+Strix removes the temporary local archive after every invocation. It deletes a staged remote
+upload after a definitive scan rejection. If a network error, `5xx` response, malformed
+success response, or interruption makes the launch outcome ambiguous, it retains the upload and reports its `upload_id` with
+`launch_outcome_unknown: true`; if automatic deletion cannot be confirmed, it reports the ID
+with `cleanup_unknown: true`. Check `strix cloud scans list` before retrying. If no scan is
+linked to the retained upload, delete it with `strix cloud uploads delete UPLOAD_ID`.
+
+Non-Enterprise scans consume the deterministic estimate shown for their scope (a source-only
+code review at the default `ultra` tier currently starts at 60 credits). Enterprise scans are
+plan-included and do not consume the credit wallet. Report downloads need Enterprise,
+schedules need Pro, and billing writes need an admin token. Plan blocks exit `4`; an
+insufficient credit wallet exits `5` without creating or charging a scan.
+
+Enable native tab completion once per shell session:
+
+```bash
+source <(strix completions zsh)       # use bash instead of zsh when appropriate
+strix completions fish | source
+```
+
 #### Connect your own MCP servers
 
 Strix can connect to Model Context Protocol (MCP) servers you list and let the agent discover and call their tools on demand during a run. Create `~/.strix/mcp-servers.json` with a JSON list of servers. Each entry is either a local `stdio` server that Strix launches as a subprocess, or a remote `http` server:

@@ -101,6 +101,9 @@ class GoTuiRuntime:
         self.report_state.vulnerability_found_callback = lambda _report: (
             self.controller.notify_changed()
         )
+        self.report_state.vulnerability_updated_callback = lambda _report: (
+            self.controller.notify_changed()
+        )
         self.controller.notify_changed()
 
     async def start_from_setup(self, verify: bool = True) -> None:
@@ -246,6 +249,9 @@ class GoTuiRuntime:
             scan_state = "failed"
             if root_id is not None and errors.get(root_id):
                 self.controller.error = errors[root_id]
+        elif scan_state == "failed" and root_status in {"running", "waiting", "budget_paused"}:
+            scan_state = "running"
+            self.controller.error = None
         elif scan_state != "failed":
             if report_status == "completed":
                 scan_state = "completed"

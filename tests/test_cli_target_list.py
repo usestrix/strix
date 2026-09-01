@@ -465,9 +465,7 @@ def test_resume_restores_only_run_local_staged_api_spec(
 
 
 def test_resume_non_object_run_json_exits(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     monkeypatch.chdir(tmp_path)
     run_dir = tmp_path / "strix_runs" / "pentest_abcd"
