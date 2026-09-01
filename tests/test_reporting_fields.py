@@ -8,7 +8,6 @@ import pytest
 
 from strix.report.dedupe import (
     _check_dependency_duplicate,
-    _parse_dedupe_response,
     _prepare_report_for_comparison,
     check_duplicate,
 )
@@ -1256,7 +1255,7 @@ async def test_dependency_report_rejects_contextual_breakdown_without_reasoning(
     assert report_state.vulnerability_reports == []
 
 
-_STRONGER_KWARGS: dict[str, Any] = {
+_CONFIRMED_KWARGS: dict[str, Any] = {
     "title": "Unauthenticated file write on /files/{id}",
     "description": "A multipart PATCH writes attacker content before the permission check.",
     "impact": "Any anonymous user overwrites stored files and serves attacker content.",
@@ -1301,57 +1300,11 @@ def _seed_weak_report(report_state: ReportState) -> None:
     report_state._saved_vuln_ids.add("vuln-0009")
 
 
-async def test_stronger_duplicate_updates_existing_report_in_place(
+async def test_duplicate_verdict_rejects_without_touching_the_existing_report(
     report_state: ReportState, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A confirmed exploit that matches an unproven entry replaces that entry's
-    content under the same id, instead of being discarded."""
-    _seed_weak_report(report_state)
-
-    async def fake_check_duplicate(
-        _candidate: dict[str, Any], _existing: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        return {
-            "is_duplicate": True,
-            "duplicate_id": "vuln-0009",
-            "confidence": 0.88,
-            "candidate_strength": "stronger",
-            "reason": "Same root cause, and the candidate proves the write the entry only assumed.",
-        }
-
-    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
-
-    result = await _do_create(**_STRONGER_KWARGS, agent_id="834f79fb", agent_name="Validation")
-
-    assert result["success"] is True
-    assert result["action"] == "updated"
-    assert result["report_id"] == "vuln-0009"
-    assert len(report_state.vulnerability_reports) == 1, "an update must not add a second finding"
-
-    report = report_state.vulnerability_reports[0]
-    assert report["id"] == "vuln-0009"
-    assert report["severity"] == "critical"
-    assert report["cvss"] == pytest.approx(9.8)
-    assert report["confidence"] == "high"
-    assert report["poc_script_code"].startswith("PATCH /files/2f1c")
-    assert report["agent_id"] == "aaaa1111", "the original reporter stays on the finding"
-
-    history = report["update_history"]
-    assert len(history) == 1
-    assert history[0]["previous_severity"] == "medium"
-    assert history[0]["previous_cvss"] == 5.3
-    assert history[0]["agent_id"] == "834f79fb"
-    assert "severity" in history[0]["fields"]
-    run_dir = report_state._run_dir
-    assert run_dir is not None
-    markdown = (run_dir / "vulnerabilities" / "vuln-0009.md").read_text(encoding="utf-8")
-    assert "PATCH /files/2f1c" in markdown, "the markdown must be re-rendered from the update"
-    assert "Update History" in markdown
-
-
-async def test_equivalent_duplicate_is_still_rejected(
-    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
-) -> None:
+    """Deduplication only answers identity. A duplicate is rejected and points at the
+    finding it matched; revising that finding is a separate, explicit operation."""
     _seed_weak_report(report_state)
 
     async def fake_check_duplicate(
@@ -1361,78 +1314,21 @@ async def test_equivalent_duplicate_is_still_rejected(
             "is_duplicate": True,
             "duplicate_id": "vuln-0009",
             "confidence": 0.9,
-            "candidate_strength": "equivalent",
-            "reason": "The candidate retells the same proof.",
+            "reason": "Same root cause on the same endpoint.",
         }
 
     monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
 
-    result = await _do_create(**_STRONGER_KWARGS)
+    result = await _do_create(**_CONFIRMED_KWARGS, agent_id="834f79fb", agent_name="Validation")
 
     assert result["success"] is False
     assert result["duplicate_of"] == "vuln-0009"
+    assert "action" not in result
     assert len(report_state.vulnerability_reports) == 1
-    assert report_state.vulnerability_reports[0]["severity"] == "medium"
-    assert "update_history" not in report_state.vulnerability_reports[0]
-
-
-async def test_dedupe_candidate_carries_strength_signals(
-    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The judge cannot rank two reports on the same issue without the fields
-    that carry proof strength."""
-    _seed_weak_report(report_state)
-    captured: dict[str, Any] = {}
-
-    async def fake_check_duplicate(
-        candidate: dict[str, Any], _existing: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        captured["candidate"] = candidate
-        return {"is_duplicate": False}
-
-    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
-
-    await _do_create(**_STRONGER_KWARGS)
-
-    candidate = captured["candidate"]
-    assert candidate["severity"] == "critical"
-    assert candidate["cvss"] == pytest.approx(9.8)
-    assert candidate["confidence"] == "high"
-    assert candidate["evidence"].startswith("The stored file")
-    assert candidate["counterevidence"]
-    assert candidate["cve"] == "CVE-2025-55746"
-
-
-def test_dedupe_comparison_includes_strength_fields() -> None:
-    cleaned = _prepare_report_for_comparison(
-        {
-            "title": "Unauth file write",
-            "severity": "critical",
-            "cvss": 9.3,
-            "confidence": "high",
-            "evidence": "Stored file carries the payload.",
-            "counterevidence": "The response is 403.",
-            "finding_class": "dynamic",
-        }
-    )
-    assert cleaned["severity"] == "critical"
-    assert cleaned["cvss"] == 9.3
-    assert cleaned["confidence"] == "high"
-    assert cleaned["evidence"] == "Stored file carries the payload."
-
-
-def test_parse_dedupe_response_defaults_unknown_strength_to_equivalent() -> None:
-    """An unknown or missing strength must never update a report by accident."""
-    parsed = _parse_dedupe_response(
-        '{"is_duplicate": true, "duplicate_id": "vuln-0001", "confidence": 0.9, "reason": "same"}'
-    )
-    assert parsed["candidate_strength"] == "equivalent"
-
-    parsed = _parse_dedupe_response(
-        '{"is_duplicate": true, "duplicate_id": "vuln-0001", "confidence": 0.9,'
-        ' "candidate_strength": "STRONGER", "reason": "chained"}'
-    )
-    assert parsed["candidate_strength"] == "stronger"
+    report = report_state.vulnerability_reports[0]
+    assert report["severity"] == "medium", "a duplicate verdict never edits the matched finding"
+    assert "poc_script_code" not in report
+    assert "update_history" not in report
 
 
 def test_update_vulnerability_report_records_chained_impact(report_state: ReportState) -> None:
@@ -1501,84 +1397,6 @@ def test_update_drops_reasoning_left_behind_by_the_field_it_describes(
     markdown = (run_dir / "vulnerabilities" / "vuln-0009.md").read_text(encoding="utf-8")
     assert "version banner is the only signal" not in markdown
     assert "Dropped as superseded: confidence_rationale, cvss_breakdown" in markdown
-
-
-async def test_stronger_duplicate_of_a_dependency_finding_is_filed_separately(
-    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A dynamic proof must not be merged into a dependency record, which would leave
-    a package pin beside an exploit against an endpoint. It becomes its own finding."""
-    _seed_weak_report(report_state)
-    dependency_report = report_state.vulnerability_reports[0]
-    dependency_report["finding_class"] = "dependency_cve"
-    dependency_report["dependency_metadata"] = {
-        "package_name": "directus",
-        "installed_version": "11.5.1",
-    }
-
-    async def fake_check_duplicate(
-        _candidate: dict[str, Any], _existing: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        return {
-            "is_duplicate": True,
-            "duplicate_id": "vuln-0009",
-            "confidence": 0.9,
-            "candidate_strength": "stronger",
-            "reason": "The candidate proves the advisory the dependency entry only records.",
-        }
-
-    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
-
-    result = await _do_create(**_STRONGER_KWARGS)
-
-    assert result["success"] is True
-    assert result.get("action") != "updated"
-    assert len(report_state.vulnerability_reports) == 2, "the proof is kept, not merged or dropped"
-
-    assert dependency_report["severity"] == "medium", "the dependency record is left alone"
-    assert dependency_report["finding_class"] == "dependency_cve"
-    assert "update_history" not in dependency_report
-    assert "poc_script_code" not in dependency_report
-
-    filed = report_state.vulnerability_reports[1]
-    assert filed["finding_class"] == "dynamic"
-    assert filed["severity"] == "critical"
-    assert "dependency_metadata" not in filed
-
-
-async def test_stronger_duplicate_of_a_legacy_dependency_record_is_filed_separately(
-    report_state: ReportState, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """A dependency record saved without finding_class is still recognised by its
-    package metadata, so a dynamic proof is not merged into it."""
-    _seed_weak_report(report_state)
-    dependency_report = report_state.vulnerability_reports[0]
-    dependency_report.pop("finding_class", None)
-    dependency_report["dependency_metadata"] = {
-        "package_name": "directus",
-        "installed_version": "11.5.1",
-    }
-
-    async def fake_check_duplicate(
-        _candidate: dict[str, Any], _existing: list[dict[str, Any]]
-    ) -> dict[str, Any]:
-        return {
-            "is_duplicate": True,
-            "duplicate_id": "vuln-0009",
-            "confidence": 0.9,
-            "candidate_strength": "stronger",
-            "reason": "The candidate proves the advisory the dependency entry only records.",
-        }
-
-    monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
-
-    result = await _do_create(**_STRONGER_KWARGS)
-
-    assert result["success"] is True
-    assert result.get("action") != "updated"
-    assert len(report_state.vulnerability_reports) == 2
-    assert dependency_report["severity"] == "medium"
-    assert "poc_script_code" not in dependency_report
 
 
 def test_agent_revises_its_own_report_without_a_duplicate_verdict(

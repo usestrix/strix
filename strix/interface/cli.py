@@ -110,7 +110,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
         vuln_text = format_vulnerability_report(report)
 
-        suffix = " (updated with stronger evidence)" if updated else ""
+        suffix = " (updated)" if updated else ""
         vuln_panel = Panel(
             vuln_text,
             title=f"[bold red]{report_id.upper()}{suffix}",

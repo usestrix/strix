@@ -94,21 +94,6 @@ CRITICAL DEDUPLICATION RULES:
    - Same CVE but different package/ecosystem is NOT a duplicate
    - Same package/ecosystem but different CVE is NOT a duplicate
 
-5. CANDIDATE STRENGTH (only matters when is_duplicate is true):
-   Identity and quality are separate questions. Once you decide two reports
-   describe the same vulnerability, judge whether the candidate is the better
-   record of it:
-   - "stronger": the candidate proves what the existing report only suspected
-     (a working PoC or an observed exploitation against a version-based,
-     static, or unconfirmed report), demonstrates a materially larger impact
-     (a chained attack, a higher CVSS, a wider blast radius), or supplies the
-     evidence the existing report names as its own gap.
-   - "equivalent": the candidate adds nothing decisive.
-   - "weaker": the existing report already proves more.
-   Judge strength from evidence, poc, severity, cvss and confidence — never
-   from wording, length or narrative polish. A longer retelling of the same
-   proof is "equivalent".
-
 COMPARISON GUIDELINES:
 - Focus on the technical root cause, not surface-level similarities
 - Same vulnerability type (SQLi, XSS) doesn't mean duplicate - location matters
@@ -121,7 +106,6 @@ FIELDS TO ANALYZE:
 - technical_analysis: Root cause details
 - poc_description: How it's exploited
 - impact: What damage it can cause
-- severity, cvss, confidence, evidence: Strength of the proof, not identity
 
 Respond with a single JSON object and nothing else:
 
@@ -129,10 +113,7 @@ Respond with a single JSON object and nothing else:
   "is_duplicate": true,
   "duplicate_id": "vuln-0001",
   "confidence": 0.95,
-  "candidate_strength": "stronger",
-  "reason": "Both reports describe SQL injection in /api/login via the username
- parameter, and the candidate dumps a row where the existing report only flags a
- suspicious error message"
+  "reason": "Both reports describe SQL injection in /api/login via the username parameter"
 }
 
 Or, if not a duplicate:
@@ -141,7 +122,6 @@ Or, if not a duplicate:
   "is_duplicate": false,
   "duplicate_id": "",
   "confidence": 0.90,
-  "candidate_strength": "equivalent",
   "reason": "Different endpoints: candidate is /api/search, existing is /api/login"
 }
 
@@ -149,13 +129,8 @@ Rules:
 - ``is_duplicate`` is a boolean.
 - ``duplicate_id`` is the exact id from existing reports, or "" if not a duplicate.
 - ``confidence`` is a number between 0 and 1.
-- ``candidate_strength`` is "stronger", "equivalent" or "weaker".
-- ``reason`` is a specific explanation mentioning endpoint/parameter/root cause,
-  and, for a duplicate, what the candidate proves that the existing report does not.
+- ``reason`` is a specific explanation mentioning endpoint/parameter/root cause.
 - Output ONLY the JSON object — no surrounding prose, no code fences."""
-
-
-CANDIDATE_STRENGTHS = frozenset({"stronger", "equivalent", "weaker"})
 
 
 def _prepare_report_for_comparison(report: dict[str, Any]) -> dict[str, Any]:
@@ -171,13 +146,6 @@ def _prepare_report_for_comparison(report: dict[str, Any]) -> dict[str, Any]:
         "method",
         "cve",
         "dependency_metadata",
-        "severity",
-        "cvss",
-        "confidence",
-        "confidence_rationale",
-        "evidence",
-        "counterevidence",
-        "finding_class",
     ]
 
     cleaned = {}
@@ -337,15 +305,10 @@ def _parse_dedupe_response(content: str) -> dict[str, Any]:
     except (TypeError, ValueError):
         confidence = 0.0
 
-    strength = str(parsed.get("candidate_strength") or "").strip().lower()
-    if strength not in CANDIDATE_STRENGTHS:
-        strength = "equivalent"
-
     return {
         "is_duplicate": bool(parsed.get("is_duplicate", False)),
         "duplicate_id": duplicate_id,
         "confidence": confidence,
-        "candidate_strength": strength,
         "reason": reason,
     }
 

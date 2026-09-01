@@ -44,9 +44,8 @@ def _strix_version() -> str | None:
         return None
 
 
-# Content a later, stronger report for the same vulnerability may replace. The
-# identity of the finding (id, timestamp, finding_class, dependency_metadata)
-# and its original author stay put.
+# Content a revision may replace. The identity of the finding (id, timestamp,
+# finding_class, dependency_metadata) and its original author stay put.
 UPDATABLE_REPORT_FIELDS = frozenset(
     {
         "title",
@@ -79,9 +78,9 @@ UPDATABLE_REPORT_FIELDS = frozenset(
 
 _LOWERCASE_REPORT_FIELDS = frozenset({"severity", "confidence", "fix_effort"})
 
-# Fields that only describe another field. A stronger report may raise the
-# rating or replace the locations without restating the reasoning behind the
-# old one, and that leftover reasoning then contradicts the finding it annotates
+# Fields that only describe another field. A revision may raise the rating or
+# replace the locations without restating the reasoning behind the old one, and
+# that leftover reasoning then contradicts the finding it annotates
 # ("confidence: high" beside a rationale calling the evidence unconfirmed). When
 # the field they describe changes and the update carries no replacement, they
 # are dropped rather than kept.
@@ -422,13 +421,13 @@ class ReportState:
         updated_by_agent_id: str | None = None,
         updated_by_agent_name: str | None = None,
     ) -> dict[str, Any] | None:
-        """Merge stronger evidence into an existing report, keeping its id.
+        """Apply a revision to an existing report, keeping its id.
 
         A field that only describes a field this update replaces is dropped when
-        the update carries no replacement for it, so the merged report cannot
+        the update carries no replacement for it, so the revised report cannot
         state a new rating beside the superseded reasoning for the old one.
 
-        Returns the merged report, or ``None`` when the id is unknown or when
+        Returns the revised report, or ``None`` when the id is unknown or when
         nothing in ``fields`` changes it.
         """
         report = next((r for r in self.vulnerability_reports if r.get("id") == report_id), None)
@@ -496,7 +495,7 @@ class ReportState:
         self._saved_vuln_ids.discard(report_id)
 
         logger.info(
-            "Updated vulnerability report %s with stronger evidence (%s)",
+            "Updated vulnerability report %s (%s)",
             report_id,
             ", ".join(entry["fields"]) or "no field replaced",
         )

@@ -362,7 +362,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
 
 
 def render_update_history(history: Any) -> list[str]:
-    """Render the audit trail a stronger duplicate leaves on the report it merged into."""
+    """Render the audit trail of every revision a report has received."""
     if not isinstance(history, list):
         return []
     entries: list[dict[str, Any]] = [
