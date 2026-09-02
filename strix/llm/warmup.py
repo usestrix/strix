@@ -92,7 +92,7 @@ def start_import_warmup(modules: tuple[str, ...] = WARMUP_MODULES) -> threading.
         return _thread
 
 
-def wait_for_import_warmup(timeout: float | None = None) -> None:
+def wait_for_import_warmup() -> None:
     """Block until the warm-up thread has finished; a no-op if none was started.
 
     Call this before the first import from the warmed graph on the calling
@@ -105,4 +105,4 @@ def wait_for_import_warmup(timeout: float | None = None) -> None:
         thread = _thread
     if thread is None or thread is threading.current_thread():
         return
-    thread.join(timeout)
+    thread.join()
