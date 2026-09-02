@@ -450,7 +450,7 @@ def main() -> None:
 
         sys.exit(run_cloud(sys.argv[2:]))
 
-    from strix.llm.warmup import start_import_warmup
+    from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
 
     start_import_warmup()
 
@@ -465,6 +465,12 @@ def main() -> None:
     check_docker_installed()
     pull_docker_image()
     validate_environment()
+
+    # Everything past this point imports from the warmed graph on this thread
+    # (the agents SDK via warm_up_llm and the runner, the TUI's live view).
+    # Importing that graph concurrently from two threads is not safe, see
+    # strix.llm.warmup, so the warm-up thread has to be finished first.
+    wait_for_import_warmup()
 
     if args.non_interactive:
         _bootstrap_scan(args)

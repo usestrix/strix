@@ -7,15 +7,31 @@ hooks -> report.state). CPython's deadlock avoidance breaks such a cycle by
 failing one import, which strands finished submodules in ``sys.modules`` with
 their parent package gone — and the next import of one of those submodules
 crashes with "partially initialized module".
+
+Second field failure: with the sandbox image already present, ``main()`` got
+from ``start_import_warmup()`` to ``warm_up_llm`` (the first agents-SDK import
+on the main thread) in a few hundred milliseconds, while the warm-up thread was
+still inside the agents package. The two imports deadlocked on each other's
+module locks, CPython failed the warm-up's import to break the cycle, and the
+main thread died with ``KeyError: 'agents.models'``. The main thread must wait
+for the warm-up before it imports from that graph.
 """
 
 from __future__ import annotations
 
+import importlib
 import subprocess
 import sys
 import textwrap
+from typing import TYPE_CHECKING
+
+import pytest
 
 from strix.llm import warmup
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _run(code: str) -> subprocess.CompletedProcess[str]:
@@ -97,3 +113,80 @@ def test_purge_does_not_touch_preexisting_or_healthy_modules() -> None:
     warmup._purge_orphaned_modules(before)
     assert "strix.llm.warmup" in sys.modules  # parent chain intact -> kept
     assert "strix" in sys.modules
+
+
+def test_wait_for_import_warmup_returns_once_the_thread_has_finished() -> None:
+    result = _run(
+        """
+        import pathlib
+        import sys
+        import tempfile
+
+        from strix.llm import warmup
+
+        root = pathlib.Path(tempfile.mkdtemp())
+        (root / "slow_pkg").mkdir()
+        (root / "slow_pkg" / "__init__.py").write_text(
+            "import time\\ntime.sleep(0.5)\\nREADY = True"
+        )
+        sys.path.insert(0, str(root))
+
+        thread = warmup.start_import_warmup(("slow_pkg",))
+        assert thread.is_alive()
+        warmup.wait_for_import_warmup()
+        assert not thread.is_alive()
+        assert sys.modules["slow_pkg"].READY
+        """
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_wait_for_import_warmup_without_a_warm_up_is_a_noop() -> None:
+    result = _run(
+        """
+        from strix.llm import warmup
+
+        warmup.wait_for_import_warmup()
+        assert warmup._thread is None
+        """
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_main_waits_for_the_import_warm_up_before_entering_the_scan_phase(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # ``strix.interface`` re-exports the ``main`` function under the module's name.
+    main_mod = importlib.import_module("strix.interface.main")
+
+    (tmp_path / "slow_pkg").mkdir()
+    (tmp_path / "slow_pkg" / "__init__.py").write_text("import time\ntime.sleep(0.5)\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.delitem(sys.modules, "slow_pkg", raising=False)
+    monkeypatch.setattr(warmup, "_thread", None)
+    real_start = warmup.start_import_warmup
+    monkeypatch.setattr(warmup, "start_import_warmup", lambda: real_start(("slow_pkg",)))
+
+    for name in (
+        "start_background_check",
+        "check_docker_installed",
+        "pull_docker_image",
+        "validate_environment",
+    ):
+        monkeypatch.setattr(main_mod, name, lambda: None)
+
+    seen: dict[str, bool] = {}
+
+    def fake_bootstrap(_args: object) -> None:
+        thread = warmup._thread
+        seen["warmup_alive"] = thread is not None and thread.is_alive()
+        seen["warmed"] = "slow_pkg" in sys.modules
+        raise SystemExit(0)
+
+    monkeypatch.setattr(main_mod, "_bootstrap_scan", fake_bootstrap)
+    monkeypatch.setattr(sys, "argv", ["strix", "-n", "--target", str(tmp_path)])
+
+    with pytest.raises(SystemExit):
+        main_mod.main()
+
+    assert seen == {"warmup_alive": False, "warmed": True}

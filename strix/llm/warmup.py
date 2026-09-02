@@ -5,9 +5,19 @@ Caido SDK, the Docker SDK) costs seconds to import cold, but none of it is
 needed until a scan actually starts. Importing it on a daemon thread at CLI
 entry overlaps that cost with the I/O-bound startup work that always precedes
 a scan (argument parsing, Docker checks, image pull, TUI setup), so by the
-time the scan begins the modules are already in ``sys.modules``. Any thread
-that needs one of them before the warm-up finishes just blocks on the normal
-import lock, so behaviour is unchanged either way.
+time the scan begins the modules are already in ``sys.modules``.
+
+The one rule: no other thread may import from the warmed graph while the
+warm-up thread is still running. CPython's per-module import locks do not make
+that safe. When two threads walk a package graph with internal import cycles
+(the agents SDK has them), each ends up waiting for a lock the other holds,
+and the import system breaks the cycle by failing one of the two imports
+outright. The failed package is dropped from ``sys.modules`` while the other
+thread is still inside it, which surfaces as ``KeyError: 'agents.models'`` or
+``ImportError: cannot import name ... from partially initialized module``.
+Callers must therefore :func:`wait_for_import_warmup` before the first import
+from the warmed graph on any other thread; once the warm-up is done the call
+returns immediately.
 """
 
 from __future__ import annotations
@@ -80,3 +90,19 @@ def start_import_warmup(modules: tuple[str, ...] = WARMUP_MODULES) -> threading.
         )
         _thread.start()
         return _thread
+
+
+def wait_for_import_warmup(timeout: float | None = None) -> None:
+    """Block until the warm-up thread has finished; a no-op if none was started.
+
+    Call this before the first import from the warmed graph on the calling
+    thread. If the warm-up already finished this returns at once. If it is
+    still running, the caller would otherwise have to import the same modules
+    itself (or race the warm-up thread for them, see the module docstring), so
+    waiting here costs nothing.
+    """
+    with _lock:
+        thread = _thread
+    if thread is None or thread is threading.current_thread():
+        return
+    thread.join(timeout)
