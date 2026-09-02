@@ -6,13 +6,16 @@ import argparse
 import io
 import json
 import sys
+import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import requests
 from rich.console import Console
 
 from strix.interface import cloud, platform_cli
 from strix.interface.cloud import http, render, runner, source_scan
+from strix.interface.cloud.source_upload import prepare_source
 from strix.interface.main import main as interface_main
 
 
@@ -169,7 +172,7 @@ def test_connector_enrollment_command_is_complete_multiline_and_terminal_safe(
         "  -e LABEL=before\x1b]52;c;copied\x07after \\\n"
         "  ghcr.io/usestrix/connector:latest"
     )
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -293,8 +296,8 @@ def test_source_prompt_shows_paths_and_literal_confirmation(
         return "n"
 
     monkeypatch.setattr(console, "input", answer)
-    monkeypatch.setattr(source_scan.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(source_scan.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     args = argparse.Namespace(
         source=str(tmp_path),
         dry_run=False,
@@ -324,7 +327,7 @@ def test_source_prompt_interruption_removes_temporary_archive(
     (tmp_path / "app.py").write_text("print('ok')\n", encoding="utf-8")
     console = Console(file=io.StringIO(), width=100)
     archive_paths: list[Path] = []
-    original_prepare = source_scan.prepare_source
+    original_prepare = prepare_source
 
     def capture_bundle(*args: Any, **kwargs: Any) -> Any:
         bundle = original_prepare(*args, **kwargs)
@@ -336,8 +339,8 @@ def test_source_prompt_interruption_removes_temporary_archive(
 
     monkeypatch.setattr(source_scan, "prepare_source", capture_bundle)
     monkeypatch.setattr(console, "input", interrupt)
-    monkeypatch.setattr(source_scan.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(source_scan.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     args = argparse.Namespace(
         source=str(tmp_path),
         dry_run=False,
@@ -394,7 +397,7 @@ def test_device_login_rejects_non_http_verification_url(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
-        platform_cli.requests,
+        requests,
         "post",
         lambda *_a, **_k: FakeResponse(
             {
@@ -427,7 +430,7 @@ def test_boolean_query_values_are_lowercase_for_url_search_params(
         seen["params"] = kwargs.get("params")
         return FakeResponse({"items": []})
 
-    monkeypatch.setattr(http.requests, "request", fake_request)
+    monkeypatch.setattr(requests, "request", fake_request)
     http.request("GET", "/test", query={"enabled": True, "disabled": False})
     assert seen["params"] == {"enabled": "true", "disabled": "false"}
 
@@ -481,7 +484,7 @@ def test_binary_response_refuses_to_write_to_a_terminal(
     monkeypatch: pytest.MonkeyPatch,
     capsys: Any,
 ) -> None:
-    monkeypatch.setattr(runner.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -513,7 +516,7 @@ def test_binary_response_can_be_intentionally_redirected(
             return None
 
     redirected = RedirectedStdout()
-    monkeypatch.setattr(runner.sys, "stdout", redirected)
+    monkeypatch.setattr(sys, "stdout", redirected)
     monkeypatch.setattr(
         http,
         "request",
@@ -534,7 +537,7 @@ def test_redirected_binary_errors_never_append_diagnostics_to_stdout(
         def iter_content(self, *, chunk_size: int) -> Any:
             assert chunk_size == 1024 * 1024
             yield b"%PDF-partial"
-            raise http.requests.ConnectionError("connection lost")
+            raise requests.ConnectionError("connection lost")
 
     response = (
         FakeResponse({"detail": "report rejected"}, status_code=500)
@@ -645,7 +648,7 @@ def test_binary_download_streams_and_preserves_existing_file_on_failure(
         def iter_content(self, *, chunk_size: int) -> Any:
             assert chunk_size == 1024 * 1024
             yield b"partial"
-            raise http.requests.ConnectionError("connection lost")
+            raise requests.ConnectionError("connection lost")
 
         def close(self) -> None:
             self.closed = True
@@ -770,7 +773,7 @@ def test_session_help_is_specific_and_human_whoami_shows_scopes(
             "scopes": ["scans:read", "organizations:read"],
         }
     )
-    monkeypatch.setattr(platform_cli.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     assert cloud.run_cloud(["whoami", "--help"]) == 0
     who_help = capsys.readouterr().out
     assert "strix cloud whoami" in who_help
@@ -784,7 +787,7 @@ def test_non_tty_whoami_and_logout_emit_json(
 ) -> None:
     monkeypatch.delenv("STRIX_API_TOKEN", raising=False)
     monkeypatch.setattr(platform_cli, "AUTH_PATH", tmp_path / "auth.json")
-    monkeypatch.setattr(platform_cli.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
     platform_cli.save_record(
         {
             "api_token": "secret",
@@ -799,7 +802,7 @@ def test_non_tty_whoami_and_logout_emit_json(
     assert json.loads(capsys.readouterr().out)["email"] == "agent@example.test"
 
     monkeypatch.setattr(
-        platform_cli.requests,
+        requests,
         "delete",
         lambda *_args, **_kwargs: type("Response", (), {"status_code": 200})(),
     )
@@ -831,7 +834,7 @@ def test_scope_picker_labels_match_the_server_presets() -> None:
 def test_noninteractive_login_never_prompts_for_workspace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(platform_cli.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     console = Console(file=io.StringIO())
     console.input = lambda *_args, **_kwargs: pytest.fail("must not prompt")  # type: ignore[method-assign]
 
@@ -896,10 +899,10 @@ def test_device_flow_slow_down_never_exceeds_the_poll_interval_cap(
         sleeps.append(seconds)
         now += seconds
 
-    monkeypatch.setattr(platform_cli.requests, "post", post)
+    monkeypatch.setattr(requests, "post", post)
     monkeypatch.setattr(platform_cli, "_app_url", lambda: "https://example.test")
-    monkeypatch.setattr(platform_cli.time, "monotonic", monotonic)
-    monkeypatch.setattr(platform_cli.time, "sleep", sleep)
+    monkeypatch.setattr(time, "monotonic", monotonic)
+    monkeypatch.setattr(time, "sleep", sleep)
 
     with pytest.raises(platform_cli.PlatformAuthError, match="expired"):
         platform_cli._run_device_flow(
@@ -933,9 +936,9 @@ def test_device_flow_accepts_external_authkit_url_and_binds_token_origin(
             ),
         ]
     )
-    monkeypatch.setattr(platform_cli.requests, "post", lambda *_a, **_k: next(responses))
+    monkeypatch.setattr(requests, "post", lambda *_a, **_k: next(responses))
     monkeypatch.setattr(platform_cli, "_app_url", lambda: "https://preview.strix.ai")
-    monkeypatch.setattr(platform_cli.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
     record = platform_cli._run_device_flow(
         Console(file=io.StringIO()),
@@ -984,7 +987,7 @@ def test_root_help_accepts_json_before_help_and_leaf_help_stays_specific(
 def test_non_tty_dispatcher_always_emits_structured_json(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: False)
 
     assert cloud.run_cloud([]) == 0
     assert json.loads(capsys.readouterr().out)["command"] == "strix cloud"
@@ -1020,7 +1023,7 @@ def test_source_upload_rejects_untrusted_destinations_before_reading_file(
     source.write_bytes(b"approved source")
     monkeypatch.setattr(http, "_app_url_override", "https://app.strix.ai")
     monkeypatch.setattr(
-        http.requests,
+        requests,
         "put",
         lambda *_args, **_kwargs: pytest.fail("an untrusted URL must not receive source bytes"),
     )
@@ -1059,7 +1062,7 @@ def test_source_upload_allows_only_managed_or_same_origin_storage(
         return response
 
     monkeypatch.setattr(http, "_app_url_override", app_url)
-    monkeypatch.setattr(http.requests, "put", put)
+    monkeypatch.setattr(requests, "put", put)
     http.upload_file(signed_url, "upload-token", source)
 
     assert request_options["allow_redirects"] is False
@@ -1080,7 +1083,7 @@ def test_source_upload_refuses_redirects_without_following_them(
         return response
 
     monkeypatch.setattr(http, "_app_url_override", "https://app.strix.ai")
-    monkeypatch.setattr(http.requests, "put", put)
+    monkeypatch.setattr(requests, "put", put)
 
     with pytest.raises(http.CloudError, match="unexpected redirect"):
         http.upload_file(
@@ -1095,7 +1098,7 @@ def test_source_upload_refuses_redirects_without_following_them(
 def test_one_time_api_token_has_save_now_warning(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",

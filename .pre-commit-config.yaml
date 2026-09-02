@@ -1,3 +1,6 @@
+# Built viewer bundles are generated output, not hand-edited source.
+exclude: ^strix/interface/viewer/static/assets/
+
 repos:
   # Ruff for fast linting and formatting
   - repo: https://github.com/astral-sh/ruff-pre-commit
@@ -9,21 +12,18 @@ repos:
       - id: ruff-format
         name: ruff-format
 
-  # MyPy for static type checking
-  - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.17.1
+  # MyPy for static type checking. Runs the project's own mypy from the uv
+  # environment (`make dev-install`) so it sees the same dependencies and
+  # stubs as `make check-all`.
+  - repo: local
     hooks:
       - id: mypy
-        additional_dependencies: [
-          types-requests,
-          types-python-dateutil,
-          pydantic,
-          fastapi,
-          pytest,
-          hatchling,
-          "openai-agents[litellm]>=0.19.0,<0.20",
-        ]
-        args: [--install-types, --non-interactive]
+        name: mypy
+        entry: uv run mypy
+        language: system
+        types_or: [python, pyi]
+        files: ^(strix|tests)/
+        require_serial: true
 
   # Built-in hooks for basic file checks
   - repo: https://github.com/pre-commit/pre-commit-hooks
@@ -62,5 +62,6 @@ ci:
   autoupdate_branch: ""
   autoupdate_commit_msg: "[pre-commit.ci] pre-commit autoupdate"
   autoupdate_schedule: weekly
-  skip: []
+  # pre-commit.ci cannot run `language: system` hooks; mypy runs via `make check-all`.
+  skip: [mypy]
   submodules: false

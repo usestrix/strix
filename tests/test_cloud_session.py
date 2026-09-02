@@ -6,6 +6,7 @@ import json
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import requests
 from rich.console import Console
 
 from strix.interface import cloud, platform_cli, platform_identity
@@ -55,7 +56,7 @@ def test_http_workspace_pin_is_captured_once(
         sent.append(dict(kwargs["headers"]))
         return Response({})
 
-    monkeypatch.setattr(http.requests, "request", fake_request)
+    monkeypatch.setattr(requests, "request", fake_request)
     http.configure()
     platform_cli.save_record(
         {
@@ -116,7 +117,7 @@ def test_logout_keeps_local_token_when_remote_outcome_is_not_definitive(
         }
     )
     monkeypatch.setattr(
-        platform_cli.requests,
+        requests,
         "delete",
         lambda *_args, **_kwargs: Response({"detail": "unavailable"}, 503),
     )
