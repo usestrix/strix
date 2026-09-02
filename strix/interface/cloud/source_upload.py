@@ -203,6 +203,17 @@ def prepare_source(
     """Select safe source files and build a bounded temporary ZIP archive."""
     source = Path(value).expanduser().resolve()
     if not source.is_dir():
+        if source.is_file() and (
+            source.name.lower().endswith(_ARCHIVE_SUFFIXES) or _has_archive_magic(source)
+        ):
+            raise http.CloudError(
+                f"--source must be a directory, not an archive: {source}",
+                next_step=(
+                    "Extract the archive and pass the directory to --source. Strix packs the "
+                    "directory and excludes dependencies, build output, and secret-like files. "
+                    "Add --dry-run --show-files to review the selection first."
+                ),
+            )
         raise http.CloudError(f"--source must be a directory: {source}")
     manifest = select_source(
         source,
@@ -224,12 +235,32 @@ def prepare_source(
     archive_bytes = archive_path.stat().st_size
     if archive_bytes > MAX_ARCHIVE_BYTES:
         archive_path.unlink(missing_ok=True)
-        raise http.CloudError(
-            "source archive is larger than the 50 MB upload limit; narrow --source or "
-            "add --exclude patterns."
-        )
+        raise _archive_too_large_error(manifest, archive_bytes)
     digest = _sha256(archive_path)
     return SourceBundle(manifest, archive_path, archive_bytes, digest)
+
+
+_LARGEST_FILES_SHOWN = 5
+
+
+def _format_mib(size: int) -> str:
+    return f"{size / (1024 * 1024):.1f} MiB"
+
+
+def _archive_too_large_error(manifest: SourceManifest, archive_bytes: int) -> http.CloudError:
+    """Name the largest selected files so the user knows what to exclude."""
+    largest = sorted(manifest.files, key=lambda item: item.size, reverse=True)
+    listed = ", ".join(
+        f"{item.archive_name} ({_format_mib(item.size)})" for item in largest[:_LARGEST_FILES_SHOWN]
+    )
+    return http.CloudError(
+        f"the source archive is {_format_mib(archive_bytes)}, larger than the "
+        f"{_format_mib(MAX_ARCHIVE_BYTES)} upload limit. Largest files: {listed}.",
+        next_step=(
+            "Add --exclude patterns for large files or directories, or point --source at a "
+            "smaller directory. Run with --dry-run --show-files to review the selection."
+        ),
+    )
 
 
 def select_source(

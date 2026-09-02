@@ -534,6 +534,69 @@ def test_insufficient_credits_exits_with_payment_code(monkeypatch: pytest.Monkey
     assert cloud.run_cloud(["scans", "start", "--domain-ids", "d1"]) == http.EXIT_PAYMENT
 
 
+def test_insufficient_credits_always_prints_topup_instruction(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.setattr(
+        http,
+        "request",
+        lambda *_a, **_k: FakeResponse(
+            status_code=402,
+            payload={"detail": "Out of credits.", "code": "scan_credit_limit_reached"},
+        ),
+    )
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    argv = ["scans", "start", "--domain-ids", "d1", "--app-url", "https://app.strix.ai"]
+    assert cloud.run_cloud(argv) == http.EXIT_PAYMENT
+    output = " ".join(capsys.readouterr().out.split())
+    assert "Error: Out of credits." in output
+    assert "Next step:" in output
+    assert "strix cloud billing topup --credits <count>" in output
+    assert "https://app.strix.ai/settings/billing" in output
+    assert "strix cloud billing credits" in output
+
+
+def test_insufficient_credits_shows_platform_hint_once(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    hint = "Buy credits at https://app.strix.ai/settings/billing. Then retry this request."
+    payload = {
+        "detail": f"Out of credits. {hint}",
+        "code": "scan_credit_limit_reached",
+        "hint": hint,
+        "topup_url": "https://app.strix.ai/settings/billing",
+    }
+    monkeypatch.setattr(
+        http, "request", lambda *_a, **_k: FakeResponse(status_code=402, payload=payload)
+    )
+    assert cloud.run_cloud(["scans", "start", "--domain-ids", "d1", "--json"]) == http.EXIT_PAYMENT
+    result = json.loads(capsys.readouterr().out)
+    assert result["error"] == "Out of credits."
+    assert result["next_step"] == hint
+    assert result["topup_url"] == "https://app.strix.ai/settings/billing"
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    assert cloud.run_cloud(["scans", "start", "--domain-ids", "d1"]) == http.EXIT_PAYMENT
+    output = " ".join(capsys.readouterr().out.split())
+    assert output.count(hint) == 1
+    assert "Error: Out of credits." in output
+    assert f"Next step: {hint}" in output
+
+
+def test_payment_required_without_body_names_the_topup_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.setattr(
+        http, "request", lambda *_a, **_k: FakeResponse(status_code=402, payload={})
+    )
+    argv = ["scans", "start", "--domain-ids", "d1", "--json", "--app-url", "https://app.strix.ai"]
+    assert cloud.run_cloud(argv) == http.EXIT_PAYMENT
+    result = json.loads(capsys.readouterr().out)
+    assert result["error"] == "Not enough credits to run this command."
+    assert "strix cloud billing topup --credits <count>" in result["next_step"]
+    assert "https://app.strix.ai/settings/billing" in result["next_step"]
+
+
 def test_data_rejects_non_object() -> None:
     assert cloud.run_cloud(["scans", "start", "--data", "[1,2]"]) == http.EXIT_USAGE
     assert cloud.run_cloud(["scans", "start", "--data", "not json"]) == http.EXIT_USAGE

@@ -1066,7 +1066,8 @@ SPEC: dict[str, dict[str, Cmd]] = {
         "request": Cmd(
             "POST",
             "/uploads/request",
-            "Request an upload URL.",
+            "Request an upload URL. To scan local source, prefer `strix cloud scans start "
+            "--source DIR`, which packs, uploads, and starts the scan in one step.",
             body=(
                 P("file_name", required=True, help="File name."),
                 P("file_size", "int", required=True, help="File size in bytes."),

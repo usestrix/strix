@@ -1035,10 +1035,14 @@ def _emit_error(
             payload = {"error": str(exc)}
             if exc.payload is not None:
                 payload["detail"] = exc.payload
+        if exc.next_step:
+            payload["next_step"] = exc.next_step
         sys.stdout.write(json.dumps(payload, indent=2, default=str) + "\n")
         return
     target = Console(stderr=True) if to_stderr else console
     target.print(f"[red]Error:[/] {escape(sanitize_terminal_text(exc))}")
+    if exc.next_step:
+        target.print(f"[yellow]Next step:[/] {escape(sanitize_terminal_text(exc.next_step))}")
 
 
 def _emit_interrupted(console: Console, *, as_json: bool, to_stderr: bool) -> None:
