@@ -172,7 +172,7 @@ strix view my-run-name
 strix view --host 0.0.0.0 --port 8080 --no-open
 ```
 
-The dashboard shows the findings, a live map of the agent team, and past runs, and it can steer a running scan. Nothing leaves your machine, and the UI ships prebuilt. `strix view` binds to `127.0.0.1` and prints a tokened link that grants access to the run, so share it carefully.
+The dashboard shows the findings, a live map of the agent team, and past runs. Nothing leaves your machine, and the UI ships prebuilt. `strix view` binds to `127.0.0.1` and prints a tokened link that grants access to the run, so share it carefully.
 
 See the [viewer documentation](https://docs.strix.ai/usage/viewer) for the options and for reaching the viewer from another machine.
 
