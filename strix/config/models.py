@@ -584,6 +584,8 @@ RECOMMENDED_MODEL_NAMES = (
     "dashscope/qwen3.7-max-2026-06-08",
     "moonshot/kimi-k3",
     "moonshot/kimi-k2.7-code",
+    "openai/MiniMax-M3",
+    "openai/MiniMax-M2.7",
 )
 
 _RECOMMENDED_MODEL_NAME_SET = frozenset(name.lower() for name in RECOMMENDED_MODEL_NAMES)
@@ -598,6 +600,7 @@ FRONTIER_MODEL_FAMILIES = (
     (("deepseek",), ("deepseek-v4", "deepseek-r1", "deepseek-reasoner")),
     (("alibaba", "dashscope", "qwen"), ("qwen3.8", "qwen3.7", "qwen3-max")),
     (("moonshot", "moonshotai", "kimi"), ("kimi-k3", "kimi-k2.7", "kimi-k2.6")),
+    (("minimax",), ("minimax-m3", "minimax-m2.7")),
 )
 
 
