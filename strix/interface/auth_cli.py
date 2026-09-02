@@ -254,7 +254,7 @@ def _status(console: Console) -> int:
         console.print(f"  Runs use the subscription (STRIX_LLM=[bold]{settings.llm.model}[/]).")
     else:
         console.print(
-            "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to e.g. [cyan]chatgpt/gpt-5.4[/] "
+            "  [yellow]Note:[/] set [cyan]STRIX_LLM[/] to e.g. [cyan]chatgpt/gpt-5.6[/] "
             "to run on the subscription."
         )
     return 0
@@ -293,7 +293,7 @@ def _print_success(console: Console) -> None:
     text.append(" to a ", style="white")
     text.append("chatgpt/", style="bold cyan")
     text.append(" model (e.g. ", style="white")
-    text.append("chatgpt/gpt-5.4", style="bold cyan")
+    text.append("chatgpt/gpt-5.6", style="bold cyan")
     text.append(") — runs are billed to your ChatGPT plan.", style="white")
     text.append("\n\n", style="white")
     text.append("Run a scan as usual, e.g. ", style="white")

@@ -568,22 +568,21 @@ RECOMMENDED_MODEL_NAMES = (
     "openai/gpt-5.6",
     "openai/gpt-5.5-pro",
     "openai/gpt-5.5",
-    "openai/gpt-5.4",
-    "openai/gpt-5.3-codex",
+    "anthropic/claude-fable-5-1",
     "anthropic/claude-fable-5",
     "anthropic/claude-opus-5",
-    "anthropic/claude-opus-4-8",
     "anthropic/claude-sonnet-5",
-    "anthropic/claude-sonnet-4-6",
     "vertex_ai/gemini-3.1-pro-preview",
     "gemini/gemini-3.1-pro-preview",
-    "gemini/gemini-3.6-flash",
+    "vertex_ai/gemini-3.7-flash",
+    "gemini/gemini-3.7-flash",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
     "dashscope/qwen3.8-max",
-    "dashscope/qwen3.7-max-2026-06-08",
     "moonshot/kimi-k3",
     "moonshot/kimi-k2.7-code",
+    "zai/glm-5.3",
+    "zai/glm-5.3-flash",
 )
 
 _RECOMMENDED_MODEL_NAME_SET = frozenset(name.lower() for name in RECOMMENDED_MODEL_NAMES)
@@ -598,6 +597,7 @@ FRONTIER_MODEL_FAMILIES = (
     (("deepseek",), ("deepseek-v4", "deepseek-r1", "deepseek-reasoner")),
     (("alibaba", "dashscope", "qwen"), ("qwen3.8", "qwen3.7", "qwen3-max")),
     (("moonshot", "moonshotai", "kimi"), ("kimi-k3", "kimi-k2.7", "kimi-k2.6")),
+    (("zai", "z-ai", "zai-org", "zhipuai"), ("glm-5.3", "glm-5.2")),
 )
 
 

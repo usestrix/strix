@@ -118,8 +118,8 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
     joined = " ".join(_exception_messages(exc)).lower()
     if "not supported when using codex with a chatgpt account" in joined:
         return (
-            "This model isn't available on your ChatGPT subscription. "
-            "Set STRIX_LLM to a model your plan includes (e.g. chatgpt/gpt-5.4)."
+            "This model is not available on your ChatGPT subscription. "
+            "Set STRIX_LLM to a model your plan includes (for example chatgpt/gpt-5.6)."
         )
     if (
         "error code: 401" in joined
@@ -171,7 +171,7 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
             )
             warn_text.append("<provider>/<model>", style="bold cyan")
             warn_text.append(
-                "' form, e.g. 'anthropic/claude-opus-4-7', 'deepseek/deepseek-v4-pro'.",
+                "' form, for example 'anthropic/claude-opus-5' or 'deepseek/deepseek-v4-pro'.",
                 style="white",
             )
             console.print(

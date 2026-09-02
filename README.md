@@ -82,7 +82,7 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 curl -sSL https://strix.ai/install | bash
 
 # Configure your AI provider
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openai/gpt-5.6"
 export LLM_API_KEY="your-api-key"
 
 # Run your first security assessment
@@ -294,7 +294,7 @@ jobs:
 ### Configuration
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openai/gpt-5.6"
 export LLM_API_KEY="your-api-key"
 
 # Optional
@@ -313,7 +313,7 @@ Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscri
 ```bash
 strix auth login chatgpt      # sign in with your ChatGPT account
 
-export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
+export STRIX_LLM="chatgpt/gpt-5.6"   # chatgpt/<model> runs on the subscription
 strix --target ./app-directory
 
 strix auth status             # show the active sign-in
@@ -448,9 +448,12 @@ Each server's tools are namespaced by `name` (for example `local_fs_read_file`).
 
 **Recommended models for best results:**
 
-- [OpenAI GPT-5.4](https://openai.com/api/) - `openai/gpt-5.4`
-- [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) - `anthropic/claude-sonnet-4-6`
-- [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) - `vertex_ai/gemini-3-pro-preview`
+- [OpenAI GPT-5.6](https://openai.com/api/) - `openai/gpt-5.6`
+- [Anthropic Claude Opus 5](https://claude.com/platform/api) - `anthropic/claude-opus-5`
+- [Google Gemini 3.1 Pro Preview](https://cloud.google.com/vertex-ai) - `vertex_ai/gemini-3.1-pro-preview`
+- [DeepSeek V4 Pro](https://platform.deepseek.com) - `deepseek/deepseek-v4-pro`
+- [Moonshot Kimi K3](https://platform.kimi.ai) - `moonshot/kimi-k3`
+- [Z.ai GLM-5.3](https://z.ai) - `zai/glm-5.3`
 
 See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, and local models.
 
