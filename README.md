@@ -172,18 +172,9 @@ strix view my-run-name
 strix view --host 0.0.0.0 --port 8080 --no-open
 ```
 
-`strix view` starts a lightweight local server (bound to `127.0.0.1` on a random port) and opens your browser to a private, tokened link. Nothing leaves your machine: the dashboard reads the run's files straight off disk, with no cloud account or upload required. The UI ships prebuilt with Strix, so there is no extra install and no JS build step.
+The dashboard shows the findings, a live map of the agent team, and past runs, and it can steer a running scan. Nothing leaves your machine, and the UI ships prebuilt. `strix view` binds to `127.0.0.1` and prints a tokened link that grants access to the run, so share it carefully.
 
-Use `--host 0.0.0.0` to make the viewer reachable from other machines. Replace `0.0.0.0` in the printed URL with the server's reachable IP or hostname. The token in that URL grants access to the selected run's scan data, history, and steering, so only share it with trusted users and restrict the port with your firewall. Requests without the token-derived session cannot read run data.
-
-### What's in the dashboard
-
-- **Overview**: run status, target, and a severity breakdown of everything found so far.
-- **Vulnerabilities**: each validated finding with its severity, details, and reproduction steps.
-- **Agent graph**: a live map of the multi-agent team, showing which agent is doing what.
-- **Steering**: send instructions to a live scan from the browser to redirect the agents mid-run.
-- **History**: browse past runs on this machine and jump between them.
-- **Reports**: generate a shareable report and email it to yourself or your team.
+See the [viewer documentation](https://docs.strix.ai/usage/viewer) for the options and for reaching the viewer from another machine.
 
 ---
 
@@ -209,18 +200,9 @@ having to discover them by crawling. Pair the spec with the live base URL so the
 agent knows where to send traffic:
 
 ```bash
-# OpenAPI / Swagger file (.json / .yaml)
+# OpenAPI / Swagger file, Postman export, or a live collection by id
 strix --target ./openapi.yaml --target https://api.your-app.com
-
-# Postman collection export
-strix --target ./collection.postman_collection.json --target https://api.your-app.com
-
-# Postman collection pulled live by id (no manual export)
-export POSTMAN_API_KEY="PMAK-..."
-strix --target postman://<collection-uuid>
-
-# ...with a Postman environment to resolve {{baseUrl}} / token variables
-strix --target "postman://<collection-uuid>?env=<environment-uuid>"
+strix --target postman://<collection-uuid> --target https://api.your-app.com
 ```
 
 
@@ -235,19 +217,9 @@ strix -t https://github.com/org/app -t https://your-app.com
 
 # Targets from a file, one target per non-empty, non-comment line
 strix --target-list ./targets.txt
-
-# White-box source-aware scan (local repository)
-strix --target ./app-directory --scan-mode standard
-
-# Focused testing with custom instructions
-strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
-
-# Provide detailed instructions through file (e.g., rules of engagement, scope, exclusions)
-strix --target api.your-app.com --instruction-file ./instruction.md
-
-# Force PR diff-scope against a specific base branch
-strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 ```
+
+See the [CLI reference](https://docs.strix.ai/usage/cli) for every option, including scan modes, diff scope, instruction files, and budgets.
 
 ### Headless Mode
 
@@ -287,9 +259,9 @@ jobs:
 ```
 
 > [!TIP]
-> In CI pull request runs, Strix automatically scopes quick reviews to changed files.
-> If diff-scope cannot resolve, ensure checkout uses full history (`fetch-depth: 0`) or pass
-> `--diff-base` explicitly.
+> In CI pull request runs, Strix automatically scopes quick reviews to changed files, which is why the
+> checkout above fetches full history. See the
+> [CI/CD documentation](https://docs.strix.ai/integrations/github-actions) for the details.
 
 ### Configuration
 
@@ -300,24 +272,20 @@ export LLM_API_KEY="your-api-key"
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
-export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
 
 > [!NOTE]
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
+> See the [configuration reference](https://docs.strix.ai/advanced/configuration) for every environment variable.
 
 #### Sign in with a ChatGPT subscription
 
 Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
 
 ```bash
-strix auth login chatgpt      # sign in with your ChatGPT account
-
+strix auth login chatgpt             # sign in with your ChatGPT account
 export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
-strix --target ./app-directory
-
-strix auth status             # show the active sign-in
-strix auth logout             # forget the sign-in
+strix auth status                    # show the active sign-in, or logout to forget it
 ```
 
 #### Use the managed platform: `strix cloud`
@@ -333,20 +301,14 @@ strix cloud vulns list --severity critical
 
 Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`. Binary downloads are the exception: redirect the raw bytes, or combine `--output FILE --json` for download metadata.
 
-See the [platform documentation](https://docs.app.strix.ai) for scopes, workspaces, billing, and source-upload options.
+See the [cloud CLI documentation](https://docs.strix.ai/cloud/cli) for scopes, workspaces, billing, and source-upload options.
 
 #### Connect your own MCP servers
 
-Strix can connect to Model Context Protocol (MCP) servers you list and expose their tools to the agent during a run. Create `~/.strix/mcp-servers.json` with a JSON list of servers. Each entry is either a local `stdio` server that Strix launches as a subprocess, or a remote `http` server:
+Strix can connect to Model Context Protocol (MCP) servers you list and expose their tools to the agent during a run. Create `~/.strix/mcp-servers.json` with a JSON list of local `stdio` servers or remote `http` servers:
 
 ```json
 [
-  {
-    "name": "local_fs",
-    "transport": "stdio",
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
-  },
   {
     "name": "github",
     "transport": "http",
@@ -357,14 +319,14 @@ Strix can connect to Model Context Protocol (MCP) servers you list and expose th
 ]
 ```
 
-Each server's tools are namespaced by `name` (for example `local_fs_read_file`). Omit `allowed_tools` to expose every tool the server offers, or set it to a list to restrict which tools the agent can call. The file is optional, and a server that fails to connect is skipped without failing the run. You can point Strix at a different file with `STRIX_MCP_CONFIG`.
+Each server's tools are namespaced by `name`, for example `github_list_issues`. See the [MCP documentation](https://docs.strix.ai/integrations/mcp) for the full schema, tool filtering, and `stdio` servers.
 
 **Recommended models for best results:**
 
 - [Z.ai GLM-5.3 on OpenRouter](https://openrouter.ai/z-ai/glm-5.3) - `openrouter/z-ai/glm-5.3` (the default pick)
 - [OpenAI GPT-5.4](https://openai.com/api/) - `openai/gpt-5.4`
-- [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) - `anthropic/claude-sonnet-4-6`
-- [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) - `vertex_ai/gemini-3-pro-preview`
+- [Anthropic Claude Opus 5](https://claude.com/platform/api) - `anthropic/claude-opus-5`
+- [Google Gemini 3.1 Pro Preview](https://cloud.google.com/vertex-ai) - `vertex_ai/gemini-3.1-pro-preview`
 - [DeepSeek V4 Pro](https://platform.deepseek.com) - `deepseek/deepseek-v4-pro`
 - [Moonshot Kimi K3](https://platform.kimi.ai) - `moonshot/kimi-k3`
 

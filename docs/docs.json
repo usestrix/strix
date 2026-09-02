@@ -25,7 +25,8 @@
             "pages": [
               "usage/cli",
               "usage/scan-modes",
-              "usage/instructions"
+              "usage/instructions",
+              "usage/viewer"
             ]
           },
           {
@@ -77,7 +78,8 @@
           {
             "group": "Strix Cloud",
             "pages": [
-              "cloud/overview"
+              "cloud/overview",
+              "cloud/cli"
             ]
           }
         ]
