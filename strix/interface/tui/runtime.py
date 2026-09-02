@@ -63,11 +63,14 @@ class GoTuiRuntime:
         self.scan_error: BaseException | None = None
         self._last_sync_fingerprint = ""
         self._error_noted_agents: set[str] = set()
+        self.model_verified = False
+        self._setup_preflight: asyncio.Task[None] | None = None
         self.controller = TuiController(
             args,
             live_view=self.live_view,
             coordinator=self.coordinator,
             on_start=self.start_from_setup,
+            on_verify=self.ensure_model_verified,
             on_quit=self.quit,
         )
         self.server = TuiBackendServer(self.controller)
@@ -107,7 +110,51 @@ class GoTuiRuntime:
         )
         self.controller.notify_changed()
 
-    async def start_from_setup(self, verify: bool = True) -> None:
+    async def check_setup_model(self) -> None:
+        """Verify the model route as soon as the start screen is up.
+
+        The same round trip a direct launch makes in prepare_and_start, run in
+        the background so the screen paints first and the outcome lands in the
+        setup log before the user has finished typing.
+        """
+        if not (load_settings().llm.model or "").strip():
+            return
+        try:
+            await self._preflight_model()
+        except Exception as exc:
+            logger.exception("Go TUI setup model preflight failed")
+            self.controller.add_message(f"Model connection failed: {exc}", "error")
+            return
+        self.controller.add_message("Model connection verified")
+
+    async def ensure_model_verified(self) -> None:
+        """Hold a setup launch until the model has answered once."""
+        preflight = self._setup_preflight
+        if preflight is not None and not preflight.done():
+            await asyncio.shield(preflight)
+        if self.model_verified:
+            return
+        try:
+            await self._preflight_model()
+        except Exception as exc:
+            logger.exception("Go TUI setup model preflight failed")
+            raise RuntimeError(f"Model connection failed: {exc}") from exc
+
+    async def _preflight_model(self) -> None:
+        model = (load_settings().llm.model or "").strip()
+        self.controller.add_message("Verifying model connection...")
+        await preflight_model_connection(model)
+        self.model_verified = True
+
+    def _start_preparation(self) -> asyncio.Task[None]:
+        """Kick off the work that runs behind the freshly painted TUI."""
+        if self.controller.setup_mode:
+            self._setup_preflight = asyncio.create_task(self.check_setup_model())
+            return self._setup_preflight
+        self.controller.begin_preparation()
+        return asyncio.create_task(self.prepare_and_start())
+
+    async def start_from_setup(self) -> None:
         candidate = deepcopy(self.args)
         candidate.scan_mode = self.controller.scan_mode
         candidate.instruction = self.controller.instruction
@@ -124,16 +171,7 @@ class GoTuiRuntime:
             if isinstance(target, dict) and target.get("original")
         ]
         targets_changed = self.controller.targets != existing_targets
-        model = (load_settings().llm.model or "").strip()
-        # A bare prompt launches optimistically: it skips the network preflight
-        # and lets any model error surface once the agent starts, like a coding
-        # agent. A named target keeps the upfront check.
-        if verify:
-            try:
-                await preflight_model_connection(model)
-            except Exception as exc:
-                logger.exception("Go TUI setup model preflight failed")
-                raise RuntimeError(f"Model connection failed: {exc}") from exc
+        persist_current()
         # A confirmed target-less launch mounts the working directory for the
         # agent to work in, without making it a scan target.
         candidate.workspace_mount = self.controller.workspace_mount
@@ -376,9 +414,7 @@ class GoTuiRuntime:
                 )
             process, backend_socket = await launch_tui_process(command, env, cwd)
             await self.server.start(backend_socket)
-            if not self.controller.setup_mode:
-                self.controller.begin_preparation()
-                prepare_task = asyncio.create_task(self.prepare_and_start())
+            prepare_task = self._start_preparation()
             sync_task = asyncio.create_task(self.sync_state())
             return_code = await wait_process(process)
             check_return_code(return_code)

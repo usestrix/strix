@@ -391,13 +391,10 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
 def _bootstrap_scan(args: argparse.Namespace) -> None:
     """Warm up the model and prepare the run for a non-interactive scan.
 
-    Interactive launches only validate the environment here; the model
-    preflight and run preparation happen inside the TUI so the interface
-    paints immediately instead of waiting on a model round trip.
+    Interactive launches skip this: the model preflight and run preparation
+    happen inside the TUI so the interface paints immediately instead of
+    waiting on a model round trip.
     """
-    validate_environment()
-    if not args.non_interactive:
-        return
     try:
         asyncio.run(warm_up_llm(show_model_warning=True))
     except ModelConnectionError as exc:
@@ -467,10 +464,9 @@ def main() -> None:
 
     check_docker_installed()
     pull_docker_image()
+    validate_environment()
 
-    # In setup mode the TUI collects the target, then runs prepare_run(),
-    # warm-up, and telemetry itself once the user starts the scan.
-    if not args.needs_setup:
+    if args.non_interactive:
         _bootstrap_scan(args)
 
     from strix.report.state import get_global_report_state
@@ -511,6 +507,7 @@ def main() -> None:
 
     if not args.run_name:
         # Setup mode where the user quit before starting a scan: nothing ran.
+        notify_update(Console())
         return
 
     results_path = run_dir_for(args.run_name)
