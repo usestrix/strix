@@ -326,12 +326,12 @@ Run scans on [app.strix.ai](https://app.strix.ai) from the terminal, without Doc
 
 ```bash
 strix cloud login                                  # browser sign-in, one credential per install
-strix cloud scans start --source . --wait          # scan local code
+strix cloud scans start --source . --yes --wait    # scan local code, approving the upload
 strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
 strix cloud vulns list --severity critical
 ```
 
-Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`.
+Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`, except for downloads, which write raw bytes or take `--output FILE`.
 
 See the [platform documentation](https://docs.app.strix.ai) for scopes, workspaces, billing, and source-upload options.
 
