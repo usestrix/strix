@@ -331,7 +331,7 @@ strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
 strix cloud vulns list --severity critical
 ```
 
-Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`, except for downloads, which write raw bytes or take `--output FILE`.
+Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`. Binary downloads are the exception: redirect the raw bytes, or combine `--output FILE --json` for download metadata.
 
 See the [platform documentation](https://docs.app.strix.ai) for scopes, workspaces, billing, and source-upload options.
 
