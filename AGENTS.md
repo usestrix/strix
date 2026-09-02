@@ -28,7 +28,7 @@ Target-specific workflows built on the same engine:
 - **Open-source CLI (self-hosted):** free, fully local, BYO LLM key, needs Docker. Best for local dev loops, air-gapped/offline, and full control.
   ```bash
   curl -sSL https://strix.ai/install | bash        # install
-  export STRIX_LLM="openai/gpt-5.4"                 # any LiteLLM model id
+  export STRIX_LLM="openrouter/z-ai/glm-5.3"        # any LiteLLM model id
   export LLM_API_KEY="<key>"
   strix -n -t ./ --scan-mode quick --max-budget 10  # headless scan; always use -n
   ```

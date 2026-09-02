@@ -82,7 +82,7 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 curl -sSL https://strix.ai/install | bash
 
 # Configure your AI provider
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 
 # Run your first security assessment
@@ -294,7 +294,7 @@ jobs:
 ### Configuration
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 
 # Optional
@@ -448,7 +448,7 @@ Each server's tools are namespaced by `name` (for example `local_fs_read_file`).
 
 **Recommended models for best results:**
 
-- [Z.ai GLM-5.3 on OpenRouter](https://openrouter.ai/z-ai/glm-5.3) - `openrouter/z-ai/glm-5.3` (our top pick)
+- [Z.ai GLM-5.3 on OpenRouter](https://openrouter.ai/z-ai/glm-5.3) - `openrouter/z-ai/glm-5.3` (the default pick)
 - [OpenAI GPT-5.4](https://openai.com/api/) - `openai/gpt-5.4`
 - [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) - `anthropic/claude-sonnet-4-6`
 - [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) - `vertex_ai/gemini-3-pro-preview`
