@@ -1129,7 +1129,7 @@ def _is_http_git_repo(url: str) -> bool:
         return False
 
 
-def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR0911
+def infer_target_type(target: str) -> tuple[str, dict[str, Any]]:  # noqa: PLR0911
     if not target or not isinstance(target, str):
         raise ValueError("Target must be a non-empty string")
 
@@ -1317,13 +1317,14 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
         workspace_subdir = details.get("workspace_subdir")
 
         if target_info["type"] == "local_code" and "target_path" in details:
-            local_sources.append(
-                {
-                    "source_path": details["target_path"],
-                    "workspace_subdir": workspace_subdir,
-                    "protect_metadata": True,
-                }
-            )
+            source: dict[str, Any] = {
+                "source_path": details["target_path"],
+                "workspace_subdir": workspace_subdir,
+                "protect_metadata": True,
+            }
+            if details.get("read_only"):
+                source["read_only"] = True
+            local_sources.append(source)
 
         elif target_info["type"] == "repository" and "cloned_repo_path" in details:
             local_sources.append(

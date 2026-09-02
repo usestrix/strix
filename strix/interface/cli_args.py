@@ -168,6 +168,31 @@ Examples:
     )
 
     parser.add_argument(
+        "--read-only-local-targets",
+        action="store_true",
+        default=False,
+        help=(
+            "Mount every local-code target read-only inside the sandbox so the "
+            "scanner cannot modify the evidence tree. Pair with --workspace-mount "
+            "to give the agent a separate writable area for remediation."
+        ),
+    )
+
+    parser.add_argument(
+        "--workspace-mount",
+        type=str,
+        metavar="DIR",
+        default=None,
+        help=(
+            "Mount a host directory into the sandbox as a writable working area, "
+            "separate from the scan targets. The directory is not an assessment "
+            "target -- the instructions are the only source of truth for what to "
+            "do with it. Pair with --read-only-local-targets for hard containment: "
+            "targets stay immutable, remediation lands here."
+        ),
+    )
+
+    parser.add_argument(
         "-n",
         "--non-interactive",
         action="store_true",
@@ -329,6 +354,15 @@ Examples:
     except ValueError as error:
         parser.error(f"--workspace-file: {error}")
 
+    # --workspace-mount is a fresh-cli directory the user wants writable inside
+    # the sandbox. It goes through the same mount guard as targets so a refused
+    # path (home, system tree, a credentials dir) fails before any API call.
+    if args.workspace_mount:
+        try:
+            check_mountable_dir(Path(args.workspace_mount).expanduser())
+        except ValueError as error:
+            parser.error(f"--workspace-mount: {error}")
+
     args.user_explicit_instruction = args.instruction if args.resume else None
     # What the user actually asked for, kept apart from args.instruction because
     # prepare_run prepends the diff-scope preamble to that. This is the text the
@@ -423,6 +457,10 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
     if not getattr(args, "user_instruction", None):
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)
+    # Restore hard containment: the flag is not re-derivable from the persisted
+    # details once this run is re-prepared, so carry it over from the record.
+    # The per-target details.read_only flags survive in targets_info themselves.
+    args.read_only_local_targets = bool(state.get("read_only_local_targets", False))
     # Remount the workspace the run was started with. The user already confirmed
     # this directory, so the target mount guard does not apply to it; it only has
     # to still be there.
@@ -450,7 +488,10 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
                 f"--resume {args.resume}: the working directory {workspace_mount} "
                 f"is missing. Restore it before resuming, or start a fresh run."
             )
-        attach_workspace_mount(args)
+        try:
+            attach_workspace_mount(args)
+        except ValueError as error:
+            parser.error(f"--resume {args.resume}: {error}")
     if state.get("diff_scope"):
         args.diff_scope = state.get("diff_scope")
     persisted_scan_mode = state.get("scan_mode")

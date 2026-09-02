@@ -105,6 +105,25 @@ def _render_workspace_files(scan_config: dict[str, Any]) -> list[str]:
     ]
 
 
+def _render_local_code_target(
+    details: dict[str, Any], workspace_path: str, *, has_workspace_mount: bool
+) -> str:
+    path = details.get("target_path", "unknown")
+    if details.get("read_only"):
+        remediation = (
+            " -- remediate in the writable working directory instead" if has_workspace_mount else ""
+        )
+        return (
+            f"- {path} (available at: {workspace_path}; "
+            "mounted read-only: this is immutable evidence and must not "
+            f"be modified{remediation})"
+        )
+    return (
+        f"- {path} (available at: {workspace_path}; "
+        "mounted live and writable -- .git/.agents/.codex are read-only)"
+    )
+
+
 def build_root_task(scan_config: dict[str, Any]) -> str:
     targets = scan_config.get("targets", []) or []
     diff_scope = scan_config.get("diff_scope") or {}
@@ -131,11 +150,12 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
                 f"- {url} (available at: {workspace_path})" if cloned else f"- {url}",
             )
         elif ttype == "local_code":
-            path = details.get("target_path", "unknown")
             sections["Local Codebases"].append(
-                f"- {path} (available at: {workspace_path}; "
-                "this is the user's real directory, mounted live and writable — "
-                ".git/.agents/.codex are read-only)"
+                _render_local_code_target(
+                    details,
+                    workspace_path,
+                    has_workspace_mount=bool(scan_config.get("workspace_mount")),
+                )
             )
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
@@ -151,21 +171,24 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             parts.extend(items)
 
     # A workspace mount is a directory to work in, not an asset to test. It is
-    # listed apart from the targets so it never reads as scope.
+    # listed apart from the targets so it never reads as scope. With
+    # --read-only-local-targets the writable copy is the remediation area where
+    # fixes land; without targets it is simply the working directory.
     if workspace_mount := scan_config.get("workspace_mount") or "":
         subdir = scan_config.get("workspace_subdir") or ""
         workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
         parts.append("\n\nWorking Directory:")
         parts.append(
             f"- {workspace_mount} (available at: {workspace_path}; "
-            "this is the user's real directory, mounted live and writable — "
-            ".git/.agents/.codex are read-only)"
+            "mounted live and writable -- this is the remediation area where "
+            "changes land; it is not an assessment target)"
         )
-        parts.append(
-            "- No scan target was set. This directory is where you work, not a "
-            "target to assess: the instructions below are the only source of "
-            "truth for what to do."
-        )
+        if not targets:
+            parts.append(
+                "- No scan target was set. This directory is where you work, "
+                "not a target to assess: the instructions below are the only "
+                "source of truth for what to do."
+            )
     # Whether anything above gave the run a scope. Workspace files never do, so
     # this is read before they are listed.
     has_scope = bool(parts)

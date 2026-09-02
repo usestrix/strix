@@ -128,6 +128,43 @@ def test_resume_restores_a_target_less_workspace_mount(
     assert args.instruction == "audit the auth flow"
 
 
+def test_resume_rejects_overlapping_workspace_without_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    evidence = tmp_path / "evidence"
+    workspace = evidence / "workspace"
+    workspace.mkdir(parents=True)
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "pentest_overlap",
+        {
+            "run_name": "pentest_overlap",
+            "targets_info": [
+                {
+                    "type": "local_code",
+                    "original": str(evidence),
+                    "details": {
+                        "target_path": str(evidence),
+                        "workspace_subdir": "evidence",
+                        "read_only": True,
+                    },
+                }
+            ],
+            "workspace_mount": str(workspace),
+            "instruction": "audit the auth flow",
+            "scan_mode": "deep",
+            "read_only_local_targets": True,
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_overlap"])
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "overlaps read-only target" in capsys.readouterr().err
+
+
 def test_resume_revalidates_persisted_workspace_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
