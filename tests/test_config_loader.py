@@ -229,16 +229,109 @@ def test_persist_current_env_overrides_file_value(
 ) -> None:
     target = tmp_path / "cli-config.json"
     target.write_text(
-        json.dumps({"env": {"STRIX_LLM": "file-model", "LLM_API_KEY": "file-key"}}),
+        json.dumps({"env": {"STRIX_LLM": "file-model", "PERPLEXITY_API_KEY": "file-pplx"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+    monkeypatch.setenv("PERPLEXITY_API_KEY", "env-pplx")
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "env": {"STRIX_LLM": "file-model", "PERPLEXITY_API_KEY": "env-pplx"}
+    }
+
+
+def test_linked_llm_model_change_drops_stored_key_and_base(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "STRIX_LLM": "file-model",
+                    "LLM_API_KEY": "file-key",
+                    "LLM_API_BASE": "http://file-base",
+                    "PERPLEXITY_API_KEY": "pplx",
+                }
+            }
+        ),
         encoding="utf-8",
     )
     loader.apply_config_override(target)
     monkeypatch.setenv("STRIX_LLM", "env-model")
 
+    llm = loader.load_settings().llm
+    assert llm.model == "env-model"
+    assert llm.api_key is None
+    assert llm.api_base is None
+
     loader.persist_current()
 
     assert json.loads(target.read_text(encoding="utf-8")) == {
-        "env": {"STRIX_LLM": "env-model", "LLM_API_KEY": "file-key"}
+        "env": {"STRIX_LLM": "env-model", "PERPLEXITY_API_KEY": "pplx"}
+    }
+
+
+def test_linked_llm_key_change_drops_stored_model(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"STRIX_LLM": "file-model", "LLM_API_KEY": "file-key"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+    monkeypatch.setenv("LLM_API_KEY", "new-key")
+
+    assert loader.load_settings().llm.model is None
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"env": {"LLM_API_KEY": "new-key"}}
+
+
+def test_linked_llm_secondary_alias_in_env_is_not_a_change(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"STRIX_LLM": "file-model", "LLM_API_KEY": "file-key"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+    monkeypatch.setenv("LLM_API_KEY", "file-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-global-key")
+
+    llm = loader.load_settings().llm
+    assert llm.model == "file-model"
+    assert llm.api_key == "file-key"
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "env": {"STRIX_LLM": "file-model", "LLM_API_KEY": "file-key"}
+    }
+
+
+def test_linked_llm_unchanged_env_keeps_stored_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"STRIX_LLM": "file-model", "LLM_API_KEY": "file-key"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+    monkeypatch.setenv("STRIX_LLM", "file-model")
+
+    assert loader.load_settings().llm.api_key == "file-key"
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "env": {"STRIX_LLM": "file-model", "LLM_API_KEY": "file-key"}
     }
 
 

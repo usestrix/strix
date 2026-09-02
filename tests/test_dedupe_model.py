@@ -114,7 +114,14 @@ def test_config_file_loads_dedupe_model(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    for key in ("STRIX_LLM", "STRIX_DEDUPE_MODEL", "STRIX_DEDUPE_REASONING_EFFORT"):
+    for key in (
+        "STRIX_LLM",
+        "LLM_API_KEY",
+        "OPENAI_API_KEY",
+        "LLM_API_BASE",
+        "STRIX_DEDUPE_MODEL",
+        "STRIX_DEDUPE_REASONING_EFFORT",
+    ):
         monkeypatch.delenv(key, raising=False)
     path = tmp_path / "config.json"
     path.write_text(
