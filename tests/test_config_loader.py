@@ -364,6 +364,22 @@ def test_persist_current_empty_env_clears_file_value(
     assert json.loads(target.read_text(encoding="utf-8")) == {"env": {"STRIX_LLM": "file-model"}}
 
 
+def test_persist_current_empty_primary_alias_does_not_save_sibling(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(json.dumps({"env": {"PERPLEXITY_API_KEY": "pplx"}}), encoding="utf-8")
+    loader.apply_config_override(target)
+    monkeypatch.setenv("LLM_API_KEY", "")
+    monkeypatch.setenv("OPENAI_API_KEY", "sibling-key")
+
+    assert loader.load_settings().llm.api_key == ""
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {"env": {"PERPLEXITY_API_KEY": "pplx"}}
+
+
 def test_persist_current_replaces_corrupt_file(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

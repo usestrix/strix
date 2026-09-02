@@ -79,16 +79,13 @@ def persist_current() -> None:
             continue
         for finfo in type(sub_model).model_fields.values():
             aliases = [alias.upper() for alias in _aliases_for(finfo)]
-            set_aliases = [alias for alias in aliases if os.environ.get(alias) is not None]
-            if not set_aliases:
+            active = next((alias for alias in aliases if alias in os.environ), None)
+            if active is None:
                 continue
             for alias in aliases:
                 env_block.pop(alias, None)
-            for alias in set_aliases:
-                value = os.environ[alias]
-                if value:
-                    env_block[alias] = value
-                    break
+            if os.environ[active]:
+                env_block[active] = os.environ[active]
 
     write_secret_text(target, json.dumps({"env": env_block}, indent=2))
 
