@@ -44,6 +44,31 @@ strix (--target <target> | --target-list <path>) [options]
   [Workspace files](/usage/instructions#workspace-files).
 </ParamField>
 
+<ParamField path="--read-only-local-targets" type="boolean" default="false">
+  Mount every local-code target read-only inside the sandbox so the scanner
+  cannot modify the evidence tree. Pair with `--workspace-mount` to give the
+  agent a separate writable area for remediation.
+
+  <Note>
+    Only affects local directory targets (e.g. `--target ./app`). Remote targets
+    (URLs, repos, API specs) are not host mounts and are unaffected.
+  </Note>
+</ParamField>
+
+<ParamField path="--workspace-mount" type="string">
+  Mount a host directory into the sandbox as a writable working area, separate
+  from the scan targets. The directory is **not** an assessment target -- the
+  instructions are the only source of truth for what to do with it. Pair with
+  `--read-only-local-targets` for hard containment: targets stay immutable,
+  remediation lands here.
+
+  <Note>
+    The host path must not overlap any `--read-only-local-targets` evidence
+    tree (a workspace cannot be, contain, or be contained by an immutable
+    evidence mount). Two writable mounts of the same path are allowed.
+  </Note>
+</ParamField>
+
 <ParamField path="--scan-mode, -m" type="string" default="deep">
   Scan depth: `quick`, `standard`, or `deep`.
 </ParamField>
@@ -153,6 +178,9 @@ strix --target-list ./targets.txt
 # Extra files placed in the sandbox workspace
 strix --target ./my-project --workspace-file ./wordlist.txt
 strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
+
+# Hard containment: immutable evidence + separate writable remediation
+strix -n --target ./evidence --read-only-local-targets --workspace-mount ./remediation
 ```
 
 ## Exit Codes
