@@ -208,6 +208,40 @@ def test_persist_current_writes_env_block(tmp_path: Path, monkeypatch: pytest.Mo
     }
 
 
+def test_persist_current_preserves_file_only_values(tmp_path: Path) -> None:
+    target = tmp_path / "cli-config.json"
+    expected = {
+        "env": {
+            "STRIX_LLM": "openrouter/z-ai/glm-5.3",
+            "LLM_API_KEY": "sk-from-file",
+        }
+    }
+    target.write_text(json.dumps(expected), encoding="utf-8")
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == expected
+
+
+def test_persist_current_replaces_stale_alias_from_environment(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"LLM_API_KEY": "sk-from-file"}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-from-env")
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "env": {"OPENAI_API_KEY": "sk-from-env"}
+    }
+
+
 def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_LLM", "persisted-model")
     target = tmp_path / "cli-config.json"

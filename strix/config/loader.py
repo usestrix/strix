@@ -54,21 +54,29 @@ def apply_config_override(path: Path) -> None:
 
 
 def persist_current() -> None:
-    """Write currently-set env vars to the active config file (0o600)."""
+    """Merge currently-set env vars into the active config file (0o600)."""
     s = load_settings()
     target = _override or _DEFAULT_PATH
     target.parent.mkdir(parents=True, exist_ok=True)
 
-    env_block: dict[str, str] = {}
-    for sub_name in s.model_fields:
+    env_block = {
+        key: value
+        for key, value in _read_env_block(target).items()
+        if isinstance(value, str)
+    }
+    process_env = {key.upper(): value for key, value in os.environ.items()}
+    for sub_name in type(s).model_fields:
         sub_model = getattr(s, sub_name)
         if not isinstance(sub_model, BaseModel):
             continue
         for finfo in type(sub_model).model_fields.values():
-            for alias in _aliases_for(finfo):
-                value = os.environ.get(alias.upper())
+            aliases = [alias.upper() for alias in _aliases_for(finfo)]
+            for alias in aliases:
+                value = process_env.get(alias)
                 if value:
-                    env_block[alias.upper()] = value
+                    for sibling_alias in aliases:
+                        env_block.pop(sibling_alias, None)
+                    env_block[alias] = value
                     break
 
     write_secret_text(target, json.dumps({"env": env_block}, indent=2))
@@ -93,17 +101,7 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
     Only includes keys whose env var is NOT already set, so env always
     wins over the persisted file.
     """
-    if not path.exists():
-        return {}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return {}
-    env_block = data.get("env", {}) if isinstance(data, dict) else {}
-    if not isinstance(env_block, dict):
-        return {}
-
-    env_block_upper = {str(k).upper(): v for k, v in env_block.items()}
+    env_block_upper = _read_env_block(path)
     env_present = {k.upper() for k in os.environ}
 
     nested: dict[str, dict[str, Any]] = {}
@@ -123,3 +121,17 @@ def _read_json_overrides(path: Path) -> dict[str, dict[str, Any]]:
         if sub_data:
             nested[sub_name] = sub_data
     return nested
+
+
+def _read_env_block(path: Path) -> dict[str, Any]:
+    """Return a config file's environment block with normalized keys."""
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return {}
+    env_block = data.get("env", {}) if isinstance(data, dict) else {}
+    if not isinstance(env_block, dict):
+        return {}
+    return {str(key).upper(): value for key, value in env_block.items()}
