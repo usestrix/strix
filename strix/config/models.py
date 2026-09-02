@@ -562,7 +562,6 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
 )
 
 RECOMMENDED_MODEL_NAMES = (
-    "openrouter/z-ai/glm-5.3",
     "zai/glm-5.3",
     "zai/glm-5.3-flash",
     "openai/gpt-5.6-sol",
