@@ -1,12 +1,28 @@
+"""Caido bootstrap tests.
+
+Covers two concerns:
+
+* the guest-login readiness probe is bounded by a configurable wall-clock
+  budget (not a fixed attempt count), and its per-attempt curl timeout never
+  runs past that deadline; and
+* a bootstrap that dies mid-setup must not leave its transport behind. The
+  bootstrap now runs concurrently with the scan start, so teardown can cancel
+  it at any await -- including inside ``Client.connect()``, where the client
+  exists but no caller will ever see it to close it.
+"""
+
 from __future__ import annotations
 
+import asyncio
 import json
+import sys
+import types
 from dataclasses import dataclass, field
 from typing import Any
 
 import pytest
 
-from strix.runtime.caido_bootstrap import _login_as_guest
+from strix.runtime.caido_bootstrap import _login_as_guest, bootstrap_caido
 
 
 @dataclass
@@ -89,7 +105,7 @@ async def test_login_as_guest_caps_final_attempt_timeout_to_remaining_budget(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The per-attempt curl timeout must never let a single attempt run past
-    the overall deadline — otherwise a request started just before the
+    the overall deadline -- otherwise a request started just before the
     deadline can block session creation for up to another 15s beyond the
     configured STRIX_CAIDO_BOOT_WAIT_S budget.
     """
@@ -113,3 +129,67 @@ async def test_login_as_guest_caps_final_attempt_timeout_to_remaining_budget(
 
 async def _no_sleep(_seconds: float) -> None:
     """asyncio.sleep stub so deadline-bound tests run instantly."""
+
+
+class _FakeExecResult:
+    stderr = b""
+    exit_code = 0
+
+    def __init__(self, stdout: str) -> None:
+        self.stdout = stdout
+
+    def ok(self) -> bool:
+        return True
+
+
+class _FakeLoginSession:
+    async def exec(self, *_args: Any, **_kwargs: Any) -> _FakeExecResult:
+        return _FakeExecResult('{"data":{"loginAsGuest":{"token":{"accessToken":"t"}}}}')
+
+
+class _FakeClient:
+    def __init__(self, connect_error: BaseException) -> None:
+        self.connect_error = connect_error
+        self.closed = False
+
+    async def connect(self) -> None:
+        raise self.connect_error
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+async def _bootstrap_expecting(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> _FakeClient:
+    """Run a bootstrap whose ``connect()`` fails with ``error``."""
+    client = _FakeClient(error)
+    # The SDK is imported inside bootstrap_caido (it is slow to import), so the
+    # fakes are injected as the modules it imports.
+    sdk = types.ModuleType("caido_sdk_client")
+    sdk.Client = lambda *_a, **_k: client  # type: ignore[attr-defined]
+    sdk.TokenAuthOptions = lambda token: token  # type: ignore[attr-defined]
+    sdk_types = types.ModuleType("caido_sdk_client.types")
+    sdk_types.CreateProjectOptions = lambda **_k: None  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "caido_sdk_client", sdk)
+    monkeypatch.setitem(sys.modules, "caido_sdk_client.types", sdk_types)
+
+    with pytest.raises(type(error)):
+        await bootstrap_caido(
+            _FakeLoginSession(),  # type: ignore[arg-type]
+            host_url="http://host",
+            container_url="http://container",
+        )
+    return client
+
+
+async def test_cancellation_during_connect_closes_the_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = await _bootstrap_expecting(monkeypatch, asyncio.CancelledError())
+    assert client.closed
+
+
+async def test_failed_connect_closes_the_client(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = await _bootstrap_expecting(monkeypatch, RuntimeError("no listener"))
+    assert client.closed

@@ -12,15 +12,27 @@ import (
 // ---------------------------------------------------------------------------
 
 func renderVulnerabilityReport(args map[string]any, result any) string {
+	return renderReport(args, result, "Vulnerability Report", "Creating report...")
+}
+
+// A revision names the report it changes and carries only the fields it
+// replaces, so it renders the same sections with the ones it left alone absent.
+func renderVulnerabilityReportUpdate(args map[string]any, result any) string {
+	return renderReport(args, result, "Vulnerability Report Updated", "Updating report...")
+}
+
+func renderReport(args map[string]any, result any, heading, pending string) string {
 	resultMap, _ := result.(map[string]any)
 	var b strings.Builder
-	b.WriteString("🐞 " + Bold(ReportHdr).Render("Vulnerability Report"))
+	b.WriteString("🐞 " + Bold(ReportHdr).Render(heading))
 
 	field := func(label, value string) {
 		if value != "" {
 			b.WriteString("\n\n" + Bold(Field).Render(label+": ") + value)
 		}
 	}
+	reportID := StringValue(args["report_id"])
+	field("Report", reportID)
 	title := StringValue(args["title"])
 	field("Title", title)
 
@@ -50,20 +62,51 @@ func renderVulnerabilityReport(args map[string]any, result any) string {
 			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
 		}
 	}
+	if confidence := StringValue(args["confidence"]); confidence != "" {
+		b.WriteString("\n\n" + Bold(Field).Render("Confidence: ") +
+			lipgloss.NewStyle().Bold(true).Foreground(confidenceColor(confidence)).
+				Render(strings.ToUpper(confidence)))
+		if rationale := StringValue(args["confidence_rationale"]); rationale != "" {
+			b.WriteString("\n" + Dim().Render(rationale))
+		}
+	}
+
+	section("Reason", StringValue(args["update_reason"]))
 	section("Description", StringValue(args["description"]))
 	section("Impact", StringValue(args["impact"]))
 	section("Technical Analysis", StringValue(args["technical_analysis"]))
+	// The case against the finding travels with the case for it: a reader
+	// triaging this needs both to judge whether to act.
+	section("Counterevidence", StringValue(args["counterevidence"]))
+	section("Severity Would Change If", StringValue(args["severity_change_conditions"]))
 	renderCodeLocations(&b, args["code_locations"])
 	section("PoC Description", StringValue(args["poc_description"]))
 	if poc := StringValue(args["poc_script_code"]); poc != "" {
 		b.WriteString("\n\n" + Bold(Field).Render("PoC Code") + "\n" + Col(Text).Render(poc))
 	}
 	section("Remediation", StringValue(args["remediation_steps"]))
+	// Any applyable fix above is one click from the user's codebase, so how it
+	// was verified belongs next to it rather than in the artifact alone.
+	section("Fix Verification", StringValue(args["fix_verification"]))
 
-	if title == "" {
-		b.WriteString("\n  " + Dim().Render("Creating report..."))
+	if title == "" && reportID == "" {
+		b.WriteString("\n  " + Dim().Render(pending))
 	}
 	return "\n\n" + b.String() + "\n\n"
+}
+
+// confidenceColor grades how firm the agent's own call is. Anything below
+// high is a claim the reader has to check, and should not read as settled.
+func confidenceColor(confidence string) lipgloss.Color {
+	switch strings.ToLower(strings.TrimSpace(confidence)) {
+	case "high":
+		return Green
+	case "medium":
+		return SevMed
+	case "low":
+		return SevHigh
+	}
+	return Gray
 }
 
 var cvssKeys = [][2]string{

@@ -6,7 +6,6 @@ Strix Agent Interface
 import argparse
 import asyncio
 import contextlib
-import os
 import sys
 from pathlib import Path
 
@@ -36,6 +35,7 @@ from strix.interface.update_check import (
     is_binary_install,
     notify_update,
     prompt_update_if_available,
+    restart_after_update,
     start_background_check,
 )
 from strix.interface.utils import (
@@ -61,6 +61,14 @@ import logging  # noqa: E402
 
 
 logger = logging.getLogger(__name__)
+
+_ROOT_SUBCOMMAND_HELP = """
+Additional commands:
+  strix cloud ...          Use the managed Strix platform
+  strix auth ...           Manage model-subscription sign-in
+  strix view [RUN]         View a completed or running scan
+  strix completions SHELL  Generate zsh, bash, or fish tab completion
+"""
 
 
 def _exception_messages(exc: BaseException) -> tuple[str, ...]:
@@ -127,12 +135,10 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
 
 
 async def warm_up_llm(show_model_warning: bool = True) -> None:
-    from agents.model_settings import ModelSettings
     from agents.models.interface import ModelTracing
 
     from strix.config.models import (
         RECOMMENDED_MODEL_NAMES,
-        StrixProvider,
         configure_sdk_model_defaults,
         is_known_openai_bare_model,
         is_recommended_or_frontier_model,
@@ -209,12 +215,11 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
         logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
 
         if settings.dedupe.model:
-            from strix.report.dedupe import _dedupe_extra_args
+            from strix.report.dedupe import resolve_dedupe_model
 
             dedupe_model = settings.dedupe.model.strip()
             raw_model = dedupe_model
-            deduper = StrixProvider().get_model(dedupe_model)
-            deduper_extra = _dedupe_extra_args(settings.dedupe)
+            deduper = resolve_dedupe_model(settings.dedupe, dedupe_model)
             # A dedicated dedupe model may route to another provider, which must
             # never receive the main endpoint's headers; it has its own
             # DEDUPE_LLM_EXTRA_HEADERS.
@@ -226,9 +231,6 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
                 extra_headers=settings.dedupe.extra_headers,
                 has_tools=False,
             )
-            if deduper_extra:
-                merged = {**(deduper_settings.extra_args or {}), **deduper_extra}
-                deduper_settings = deduper_settings.resolve(ModelSettings(extra_args=merged))
             await asyncio.wait_for(
                 deduper.get_response(
                     system_instructions="You are a helpful assistant.",
@@ -389,13 +391,10 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
 def _bootstrap_scan(args: argparse.Namespace) -> None:
     """Warm up the model and prepare the run for a non-interactive scan.
 
-    Interactive launches only validate the environment here; the model
-    preflight and run preparation happen inside the TUI so the interface
-    paints immediately instead of waiting on a model round trip.
+    Interactive launches skip this: the model preflight and run preparation
+    happen inside the TUI so the interface paints immediately instead of
+    waiting on a model round trip.
     """
-    validate_environment()
-    if not args.non_interactive:
-        return
     try:
         asyncio.run(warm_up_llm(show_model_warning=True))
     except ModelConnectionError as exc:
@@ -416,6 +415,13 @@ def main() -> None:
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
+        try:
+            parse_arguments()
+        except SystemExit as exc:
+            Console().print(_ROOT_SUBCOMMAND_HELP.strip(), markup=False)
+            raise SystemExit(exc.code) from None
+
     # `strix view [<run>]` is a viewer-only subcommand, dispatched before the
     # scan argument parser (which requires a target) and before any scan setup.
     if len(sys.argv) > 1 and sys.argv[1] == "view":
@@ -431,20 +437,36 @@ def main() -> None:
 
         sys.exit(run_auth(sys.argv[2:]))
 
+    # Generate native shell completion scripts before scan argument parsing.
+    if len(sys.argv) > 1 and sys.argv[1] in ("completion", "completions"):
+        from strix.interface.completions import run_completions
+
+        sys.exit(run_completions(sys.argv[2:]))
+
+    # `strix cloud …` drives the managed platform (app.strix.ai) and exits;
+    # it needs no target, Docker, or scan setup.
+    if len(sys.argv) > 1 and sys.argv[1] == "cloud":
+        from strix.interface.cloud import run_cloud
+
+        sys.exit(run_cloud(sys.argv[2:]))
+
+    from strix.llm.warmup import start_import_warmup
+
+    start_import_warmup()
+
     args = parse_arguments()
 
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
         if is_binary_install() and sys.platform != "win32":
-            os.execv(sys.executable, sys.argv)  # noqa: S606  # nosec B606
+            restart_after_update()
         sys.exit(0)
 
     check_docker_installed()
     pull_docker_image()
+    validate_environment()
 
-    # In setup mode the TUI collects the target, then runs prepare_run(),
-    # warm-up, and telemetry itself once the user starts the scan.
-    if not args.needs_setup:
+    if args.non_interactive:
         _bootstrap_scan(args)
 
     from strix.report.state import get_global_report_state
@@ -485,6 +507,7 @@ def main() -> None:
 
     if not args.run_name:
         # Setup mode where the user quit before starting a scan: nothing ran.
+        notify_update(Console())
         return
 
     results_path = run_dir_for(args.run_name)

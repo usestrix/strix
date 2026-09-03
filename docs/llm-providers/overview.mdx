@@ -9,14 +9,17 @@ Strix uses [LiteLLM](https://docs.litellm.ai/docs/providers) for model compatibi
 
 Set your model and API key:
 
-| Model             | Provider      | Configuration                    |
-| ----------------- | ------------- | -------------------------------- |
-| GPT-5.4           | OpenAI        | `openai/gpt-5.4`                 |
-| Claude Sonnet 4.6 | Anthropic     | `anthropic/claude-sonnet-4-6`    |
-| Gemini 3 Pro      | Google Vertex | `vertex_ai/gemini-3-pro-preview` |
+| Model                | Provider          | Configuration                    |
+| -------------------- | ----------------- | -------------------------------- |
+| GLM-5.3 (default)    | Z.ai (OpenRouter) | `openrouter/z-ai/glm-5.3`        |
+| GPT-5.4              | OpenAI            | `openai/gpt-5.4`                 |
+| Claude Sonnet 4.6    | Anthropic         | `anthropic/claude-sonnet-4-6`    |
+| Gemini 3 Pro         | Google Vertex     | `vertex_ai/gemini-3-pro-preview` |
+| DeepSeek V4 Pro      | DeepSeek          | `deepseek/deepseek-v4-pro`       |
+| Kimi K3              | Moonshot          | `moonshot/kimi-k3`               |
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 ```
 
@@ -62,6 +65,7 @@ See the [Local Models guide](/llm-providers/local) for setup instructions and re
 Use LiteLLM's `provider/model-name` format:
 
 ```
+openrouter/z-ai/glm-5.3
 openai/gpt-5.4
 anthropic/claude-sonnet-4-6
 vertex_ai/gemini-3-pro-preview

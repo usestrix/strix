@@ -104,6 +104,29 @@ def test_resume_hides_system_guidance_injected_as_user_turns(tmp_path: Path) -> 
     ] == ["starting", "continuing"]
 
 
+def test_resume_hydrates_saved_agent_errors(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run"
+    state_dir = runtime_state_dir(run_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    (state_dir / "agents.json").write_text(
+        json.dumps(
+            {
+                "statuses": {"root": "failed"},
+                "names": {"root": "Strix"},
+                "parent_of": {"root": None},
+                "errors": {"root": "provider rejected request"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    view = GoTuiLiveView()
+    view.hydrate_from_run_dir(run_dir)
+
+    assert view.agents["root"]["status"] == "failed"
+    assert view.agents["root"]["error_message"] == "provider rejected request"
+
+
 def test_resume_keeps_messages_the_user_actually_typed(tmp_path: Path) -> None:
     run_dir = tmp_path / "run"
     _write_run(

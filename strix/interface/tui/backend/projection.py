@@ -146,7 +146,9 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         }
         for message in state["messages"][-5:]
     ]
-    state["usage"] = {}
+    state["usage"] = {
+        key: state["usage"][key] for key in ("total_tokens", "cost") if key in state["usage"]
+    }
     state["error"] = terminal_projection(state["error"], max_string=512)
     state["model_warning"] = terminal_projection(state["model_warning"], max_string=256)
     state["caido_url"] = terminal_projection(state["caido_url"], max_string=256)
@@ -162,19 +164,21 @@ def bounded_state_projection(state: dict[str, Any]) -> dict[str, Any]:
         "scan_state": state["scan_state"],
         "targets": state["targets"][:4],
         "target_count": state["target_count"],
+        "working_dir": terminal_projection(state.get("working_dir", ""), max_string=256),
+        "pending_mount": terminal_projection(state.get("pending_mount", ""), max_string=256),
         "instruction": terminal_projection(state["instruction"], max_string=128),
         "scan_mode": state["scan_mode"],
         "max_budget_usd": state["max_budget_usd"],
         "max_turns": state["max_turns"],
         "scope_mode": state["scope_mode"],
         "diff_base": state["diff_base"],
-        "provider": state["provider"],
         "model": state["model"],
         "model_warning": "",
         "caido_url": None,
         "messages": [],
-        "usage": {},
+        "usage": state["usage"],
         "subscription": state["subscription"],
+        "connections": state.get("connections", [])[:32],
         "viewer_status": state["viewer_status"],
         "viewer_url": None,
         "error": terminal_projection(state["error"], max_string=256),
