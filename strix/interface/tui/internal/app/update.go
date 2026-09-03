@@ -161,7 +161,7 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	if m.snapshot.SetupMode {
 		return m.updateSetupMouse(msg)
 	}
-	showSidebar, _, chatWidth, chatHeight := m.layout()
+	showSidebar, sidebarWidth, chatWidth, chatHeight := m.layout()
 	viewerHeight := m.viewerHeight()
 	_, vulnHeight, mcpHeight, agentHeight := m.sidebarHeights()
 	x, y := msg.X, msg.Y
@@ -294,6 +294,23 @@ func (m Model) updateMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 	// Sidebar: viewer, agents, vulnerabilities, then stats.
 	switch {
 	case y < viewerHeight:
+		if m.snapshot.ViewerStatus == "running" && m.viewerCollapsed {
+			m.viewerCollapsed = false
+			return m, nil
+		}
+		if y == viewerHeight-2 {
+			panel := m.viewerPanel(sidebarWidth)
+			if labelHitAt(panel, viewerCopyLabel, chatWidth+1, 0, x, y) {
+				return m, m.startViewerCopy()
+			}
+			if labelHitAt(panel, viewerOpenLabel, chatWidth+1, 0, x, y) {
+				return m, send(m.client, "viewer.open", map[string]any{})
+			}
+		}
+		if m.snapshot.ViewerStatus == "running" && m.viewerURL() != "" {
+			m.viewerCollapsed = true
+			return m, nil
+		}
 		return m, send(m.client, "viewer.open", map[string]any{})
 	case y < viewerHeight+agentHeight:
 		m.focus = focusAgents

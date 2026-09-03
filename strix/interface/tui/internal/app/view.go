@@ -525,7 +525,7 @@ func (m Model) sidebarView(width, height int) string {
 		m.scrollbarThumb(scrollbarAgents),
 	)
 	parts := []string{
-		lipgloss.NewStyle().Width(width-2).Height(m.viewerHeight()-2).Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).Render(m.viewerView(width - 4)),
+		m.viewerPanel(width),
 		lipgloss.NewStyle().Width(width-2).Height(agentHeight-2).Border(lipgloss.RoundedBorder()).BorderForeground(agentBorder).Padding(1, 1).Render(agents),
 	}
 	if vulnHeight > 0 {
@@ -589,13 +589,38 @@ func (m Model) viewerContentWidth() int {
 	return max(1, sidebarWidth-4)
 }
 
+func (m Model) viewerPanel(width int) string {
+	return lipgloss.NewStyle().Width(width-2).Height(m.viewerHeight()-2).
+		Border(lipgloss.RoundedBorder()).BorderForeground(dark).Padding(0, 1).
+		Render(m.viewerView(width - 4))
+}
+
+const (
+	viewerOpenLabel = "Open"
+	viewerCopyLabel = "Copy"
+)
+
+func viewerAction(label string) string {
+	return lipgloss.NewStyle().Foreground(brightWhite).Background(lipgloss.Color("#262626")).Padding(0, 1).Render(label)
+}
+
+func (m Model) viewerURL() string {
+	if m.snapshot.ViewerURL == nil {
+		return ""
+	}
+	return strings.TrimSpace(*m.snapshot.ViewerURL)
+}
+
 func (m Model) viewerView(width int) string {
 	switch m.snapshot.ViewerStatus {
 	case "running":
+		if m.viewerCollapsed {
+			return lipgloss.NewStyle().Foreground(green).Render("▶ Viewer running")
+		}
 		status := lipgloss.NewStyle().Foreground(green).Render("● Viewer running")
-		if m.snapshot.ViewerURL != nil && strings.TrimSpace(*m.snapshot.ViewerURL) != "" {
-			url := wrapBlock(strings.TrimSpace(*m.snapshot.ViewerURL), width)
-			return status + "\n" + lipgloss.NewStyle().Foreground(dim).Render(url)
+		if url := m.viewerURL(); url != "" {
+			actions := viewerAction(viewerOpenLabel) + "  " + viewerAction(viewerCopyLabel)
+			return status + "\n" + lipgloss.NewStyle().Foreground(dim).Render(wrapBlock(url, width)) + "\n" + actions
 		}
 		return status
 	case "unavailable":

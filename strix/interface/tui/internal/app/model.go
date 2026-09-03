@@ -2,10 +2,13 @@ package app
 
 import (
 	"fmt"
+	"os"
+	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/atotto/clipboard"
+	"github.com/aymanbagabas/go-osc52/v2"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/viewport"
@@ -27,7 +30,41 @@ type splashTickMsg time.Time
 type sweepTickMsg time.Time
 type vulnerabilityCopiedMsg struct{ err error }
 
-var writeClipboard = clipboard.WriteAll
+var (
+	writeClipboard         = writeSystemClipboard
+	writeNativeClipboard   = clipboard.WriteAll
+	writeTerminalClipboard = func(value string) error {
+		sequence := osc52.New(value)
+		if strings.HasPrefix(os.Getenv("TERM"), "screen") && os.Getenv("TMUX") == "" {
+			sequence = sequence.Screen()
+		}
+		_, err := sequence.WriteTo(os.Stdout)
+		return err
+	}
+	writeTmuxClipboard = func(value string) error {
+		command := exec.Command("tmux", "load-buffer", "-w", "-")
+		command.Stdin = strings.NewReader(value)
+		return command.Run()
+	}
+)
+
+// writeSystemClipboard uses the host clipboard locally and OSC 52 through the
+// terminal remotely. tmux can forward the value itself even when applications
+// are not allowed to emit clipboard escape sequences.
+func writeSystemClipboard(value string) error {
+	remote := os.Getenv("SSH_CONNECTION") != "" || os.Getenv("SSH_CLIENT") != "" || os.Getenv("SSH_TTY") != ""
+	if !remote {
+		if err := writeNativeClipboard(value); err == nil {
+			return nil
+		}
+	}
+	if os.Getenv("TMUX") != "" {
+		if err := writeTmuxClipboard(value); err == nil {
+			return nil
+		}
+	}
+	return writeTerminalClipboard(value)
+}
 
 type collectionAssembly struct {
 	kind         string
@@ -123,6 +160,7 @@ type Model struct {
 	budgetPauseNotified    bool
 	followOutput           bool
 	selection              selectionState
+	viewerCollapsed        bool
 	toast                  string
 	toastID                int
 	draggingScrollbar      scrollbarTarget
