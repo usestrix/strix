@@ -8,7 +8,6 @@ import inspect
 import logging
 import os
 import time
-from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, cast
 
 from agents import (
@@ -43,7 +42,7 @@ from strix.config.tool_call_limits import TurnToolCallLimiter
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator
+    from collections.abc import AsyncGenerator, AsyncIterator
 
     from agents.agent_output import AgentOutputSchemaBase
     from agents.handoffs import Handoff
@@ -76,6 +75,23 @@ def _retry_statusless_provider_errors(context: RetryPolicyContext) -> bool:
     if codex.is_content_guardrail_error(context.error):
         return False
     return normalized.status_code is None
+
+
+async def _close_stream(stream: Any) -> None:
+    """Best-effort close for async and synchronous provider streams."""
+    aclose = getattr(stream, "aclose", None)
+    if callable(aclose):
+        with contextlib.suppress(Exception):
+            result = aclose()
+            if inspect.isawaitable(result):
+                await result
+        return
+    close = getattr(stream, "close", None)
+    if callable(close):
+        with contextlib.suppress(Exception):
+            result = close()
+            if inspect.isawaitable(result):
+                await result
 
 
 class _CodexResponsesModel(OpenAIResponsesModel):
@@ -146,21 +162,7 @@ class _CodexResponsesModel(OpenAIResponsesModel):
                 raise guardrail from exc
             raise
         finally:
-            await self._aclose(events)
-
-    @staticmethod
-    async def _aclose(events: Any) -> None:
-        aclose = getattr(events, "aclose", None)
-        if callable(aclose):
-            with contextlib.suppress(Exception):
-                await aclose()
-            return
-        close = getattr(events, "close", None)
-        if callable(close):
-            with contextlib.suppress(Exception):
-                result = close()
-                if inspect.isawaitable(result):
-                    await result
+            await _close_stream(events)
 
 
 class _NonStreamingModel(Model):
@@ -351,39 +353,38 @@ class _TurnGuardModel(Model):
             conversation_id=conversation_id,
             prompt=prompt,
         )
-        async for event in _with_idle_timeout(stream, self._stream_idle_timeout):
-            guarded = _guard_event(event, rewriter, limiter)
-            if guarded is not None:
-                yield guarded
+        async with contextlib.aclosing(
+            _with_idle_timeout(stream, self._stream_idle_timeout)
+        ) as events:
+            async for event in events:
+                guarded = _guard_event(event, rewriter, limiter)
+                if guarded is not None:
+                    yield guarded
         self._log_dropped(limiter)
-
-
-async def _aclose(stream: AsyncIterator[TResponseStreamEvent]) -> None:
-    if isinstance(stream, AsyncGenerator):
-        with contextlib.suppress(Exception):
-            await stream.aclose()
 
 
 async def _with_idle_timeout(
     stream: AsyncIterator[TResponseStreamEvent], timeout: float
-) -> AsyncIterator[TResponseStreamEvent]:
-    if timeout <= 0:
-        async for event in stream:
-            yield event
-        return
-
-    iterator = stream.__aiter__()
-    while True:
-        try:
-            event = await asyncio.wait_for(iterator.__anext__(), timeout)
-        except StopAsyncIteration:
+) -> AsyncGenerator[TResponseStreamEvent]:
+    try:
+        if timeout <= 0:
+            async for event in stream:
+                yield event
             return
-        except TimeoutError:
-            await _aclose(stream)
-            message = f"model stream produced no event for {timeout:.0f}s"
-            logger.warning("%s; abandoning the turn", message)
-            raise TimeoutError(message) from None
-        yield event
+
+        iterator = stream.__aiter__()
+        while True:
+            try:
+                event = await asyncio.wait_for(iterator.__anext__(), timeout)
+            except StopAsyncIteration:
+                return
+            except TimeoutError:
+                message = f"model stream produced no event for {timeout:.0f}s"
+                logger.warning("%s; abandoning the turn", message)
+                raise TimeoutError(message) from None
+            yield event
+    finally:
+        await _close_stream(stream)
 
 
 def _guard_event(
