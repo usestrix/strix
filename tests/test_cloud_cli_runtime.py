@@ -7,6 +7,7 @@ import io
 import json
 import sys
 import time
+import webbrowser
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -860,6 +861,281 @@ def test_login_workspace_selector_prefers_ids_and_rejects_duplicate_names() -> N
     assert platform_cli._choose_workspace(console, organizations, "org_2")["id"] == "org_2"
     with pytest.raises(platform_cli.PlatformAuthError, match="org_2, org_3"):
         platform_cli._choose_workspace(console, organizations, "Strix")
+
+
+_NEW_USER_ONBOARDING: dict[str, Any] = {
+    "workspace_named": False,
+    "repositories_connected": False,
+    "domains_added": False,
+    "github_install_url": "https://github.com/apps/strix/installations/new?state=abc",
+}
+
+_NEW_USER_LOGIN: dict[str, Any] = {
+    "api_token": "strix_pat_test",
+    "email": "alex@example.com",
+    "organization_id": "org-1",
+    "organization_name": "Alex's Workspace",
+    "scopes": ["scans:read"],
+    "is_new_user": True,
+    "onboarding": _NEW_USER_ONBOARDING,
+    "next_steps_hint": "Run the steps in order.",
+    "next_steps": [
+        {
+            "action": "Name your workspace",
+            "cli": 'strix cloud org update --name "Acme Security"',
+            "method": "PATCH",
+            "path": "/api/v1/organization",
+        },
+        {
+            "action": "Add a domain",
+            "cli": "strix cloud domains add --domain example.com --asset-type web_app",
+            "method": "POST",
+            "path": "/api/v1/domains",
+        },
+    ],
+    "dashboard_url": "https://app.strix.ai",
+}
+
+
+def test_login_guidance_is_shown_once_and_never_stored() -> None:
+    stored, guidance = platform_cli._split_login_guidance(dict(_NEW_USER_LOGIN))
+
+    assert stored["api_token"] == _NEW_USER_LOGIN["api_token"]
+    assert stored["organization_name"] == "Alex's Workspace"
+    assert set(guidance) == {
+        "is_new_user",
+        "onboarding",
+        "next_steps",
+        "next_steps_hint",
+        "dashboard_url",
+    }
+    assert not any(key in stored for key in guidance)
+
+
+def test_new_user_success_renders_setup_steps_and_github_link() -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=120)
+    stored, guidance = platform_cli._split_login_guidance(dict(_NEW_USER_LOGIN))
+
+    platform_cli._print_success(console, stored, guidance)
+
+    rendered = output.getvalue()
+    assert "Welcome to Strix" in rendered
+    assert "Alex's Workspace" in rendered
+    assert "(default name)" in rendered
+    assert "Next steps:" in rendered
+    assert "1. Name your workspace" in rendered
+    assert 'strix cloud org update --name "Acme Security"' in rendered
+    assert "2. Add a domain" in rendered
+    assert "https://github.com/apps/strix/installations/new?state=abc" in rendered
+
+
+def test_returning_user_success_stays_compact_without_guidance() -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=120)
+
+    platform_cli._print_success(
+        console,
+        {"email": "alex@example.com", "organization_name": "Acme", "scopes": ["scans:read"]},
+    )
+
+    rendered = output.getvalue()
+    assert "Signed in to the Strix platform." in rendered
+    assert "Welcome" not in rendered
+    assert "Next steps" not in rendered
+    assert "default name" not in rendered
+
+
+def test_success_ignores_unsafe_github_link_and_malformed_steps() -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=120)
+
+    platform_cli._print_success(
+        console,
+        {"organization_name": "Acme"},
+        {
+            "onboarding": {"github_install_url": "javascript:alert(1)"},
+            "next_steps": ["not a step", {"cli": "strix cloud"}],
+        },
+    )
+
+    rendered = output.getvalue()
+    assert "javascript:" not in rendered
+    assert "Next steps" not in rendered
+
+
+def test_first_login_prompts_for_a_workspace_name_and_sends_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    sent: dict[str, Any] = {}
+
+    def post(_url: str, **kwargs: Any) -> FakeResponse:
+        sent.update(kwargs["json"])
+        return FakeResponse(_NEW_USER_LOGIN)
+
+    monkeypatch.setattr(requests, "post", post)
+    console = Console(file=io.StringIO(), width=120)
+    answers = iter(["Acme Security", "1"])
+    console.input = lambda *_args, **_kwargs: next(answers)  # type: ignore[method-assign]
+
+    record = platform_cli._complete_selection(
+        console,
+        "https://example.test",
+        {
+            "selection_token": "sel-1",
+            "is_new_user": True,
+            "organizations": [
+                {
+                    "id": "org-1",
+                    "name": "Alex's Workspace",
+                    "role": "admin",
+                    "has_default_name": True,
+                }
+            ],
+            "scopes": [{"scope": "scans:read", "min_role": "viewer", "minimum": True}],
+        },
+        scopes=None,
+        scope_profile=None,
+        workspace=None,
+    )
+
+    assert sent["workspace_name"] == "Acme Security"
+    assert sent["organization_id"] == "org-1"
+    assert record["api_token"] == _NEW_USER_LOGIN["api_token"]
+
+
+def test_first_login_keeps_the_default_name_on_enter(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    sent: dict[str, Any] = {}
+
+    def post(_url: str, **kwargs: Any) -> FakeResponse:
+        sent.update(kwargs["json"])
+        return FakeResponse(_NEW_USER_LOGIN)
+
+    monkeypatch.setattr(requests, "post", post)
+    console = Console(file=io.StringIO(), width=120)
+    console.input = lambda *_args, **_kwargs: ""  # type: ignore[method-assign]
+
+    platform_cli._complete_selection(
+        console,
+        "https://example.test",
+        {
+            "selection_token": "sel-1",
+            "is_new_user": True,
+            "organizations": [
+                {
+                    "id": "org-1",
+                    "name": "Alex's Workspace",
+                    "role": "admin",
+                    "has_default_name": True,
+                }
+            ],
+            "scopes": [],
+        },
+        scopes=None,
+        scope_profile="recommended",
+        workspace=None,
+    )
+
+    assert "workspace_name" not in sent
+
+
+def test_workspace_name_prompt_rejects_overlong_names() -> None:
+    output = io.StringIO()
+    console = Console(file=output, width=120)
+    answers = iter(["x" * 101, "Acme"])
+    console.input = lambda *_args, **_kwargs: next(answers)  # type: ignore[method-assign]
+
+    assert platform_cli._choose_workspace_name(console, "Alex's Workspace") == "Acme"
+    assert "100 characters or less" in output.getvalue()
+
+
+@pytest.mark.parametrize(
+    ("is_new_user", "has_default_name", "tty"),
+    [(False, True, True), (True, False, True), (True, True, False)],
+)
+def test_workspace_name_prompt_is_skipped_for_returning_named_or_noninteractive_logins(
+    monkeypatch: pytest.MonkeyPatch, is_new_user: bool, has_default_name: bool, tty: bool
+) -> None:
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: tty)
+    sent: dict[str, Any] = {}
+
+    def post(_url: str, **kwargs: Any) -> FakeResponse:
+        sent.update(kwargs["json"])
+        return FakeResponse(_NEW_USER_LOGIN)
+
+    monkeypatch.setattr(requests, "post", post)
+    console = Console(file=io.StringIO(), width=120)
+    console.input = lambda *_args, **_kwargs: pytest.fail("must not prompt")  # type: ignore[method-assign]
+
+    platform_cli._complete_selection(
+        console,
+        "https://example.test",
+        {
+            "selection_token": "sel-1",
+            "is_new_user": is_new_user,
+            "organizations": [
+                {
+                    "id": "org-1",
+                    "name": "Alex's Workspace",
+                    "role": "admin",
+                    "has_default_name": has_default_name,
+                }
+            ],
+            "scopes": [],
+        },
+        scopes=["scans:read"],
+        scope_profile=None,
+        workspace=None,
+    )
+
+    assert "workspace_name" not in sent
+
+
+def test_github_install_offer_opens_the_browser_only_on_yes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    opened: list[str] = []
+
+    def fake_open(url: str) -> bool:
+        opened.append(url)
+        return True
+
+    monkeypatch.setattr(webbrowser, "open", fake_open)
+    guidance: dict[str, Any] = {"is_new_user": True, "onboarding": dict(_NEW_USER_ONBOARDING)}
+
+    output = io.StringIO()
+    console = Console(file=output, width=120)
+    console.input = lambda *_args, **_kwargs: "n"  # type: ignore[method-assign]
+    platform_cli._offer_github_install(console, guidance, open_browser=True)
+    assert opened == []
+    assert "strix cloud integrations install github" in output.getvalue()
+
+    console.input = lambda *_args, **_kwargs: "y"  # type: ignore[method-assign]
+    platform_cli._offer_github_install(console, guidance, open_browser=True)
+    assert opened == ["https://github.com/apps/strix/installations/new?state=abc"]
+
+
+def test_github_install_offer_never_prompts_without_a_terminal_or_browser(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(webbrowser, "open", lambda _url: pytest.fail("must not open"))
+    guidance: dict[str, Any] = {"is_new_user": True, "onboarding": dict(_NEW_USER_ONBOARDING)}
+    console = Console(file=io.StringIO(), width=120)
+    console.input = lambda *_args, **_kwargs: pytest.fail("must not prompt")  # type: ignore[method-assign]
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
+    platform_cli._offer_github_install(console, guidance, open_browser=True)
+
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    platform_cli._offer_github_install(console, guidance, open_browser=False)
+    platform_cli._offer_github_install(
+        console, {**guidance, "is_new_user": False}, open_browser=True
+    )
 
 
 def test_device_flow_slow_down_never_exceeds_the_poll_interval_cap(

@@ -39,6 +39,16 @@ _MAX_POLL_INTERVAL_S = 60
 _MAX_EXPIRES_IN_S = 30 * 60
 
 _ROLE_RANK = {"viewer": 0, "analyst": 1, "admin": 2}
+_MAX_WORKSPACE_NAME_LENGTH = 100
+
+# Sign-in guidance is shown once and never written to the credential file.
+_LOGIN_GUIDANCE_KEYS = (
+    "is_new_user",
+    "onboarding",
+    "next_steps",
+    "next_steps_hint",
+    "dashboard_url",
+)
 
 
 class PlatformAuthError(Exception):
@@ -172,6 +182,7 @@ def _login(console: Console, argv: list[str]) -> int:
         console.print("\n[yellow]Sign-in cancelled.[/]")
         return 130
 
+    record, guidance = _split_login_guidance(record)
     try:
         save_record(record)
     except OSError as exc:
@@ -184,8 +195,16 @@ def _login(console: Console, argv: list[str]) -> int:
         )
         return 1
     _revoke_replaced_legacy_session(previous_record, record)
-    _print_success(console, record)
+    _print_success(console, record, guidance)
+    _offer_github_install(console, guidance, open_browser=not args.no_browser)
     return 0
+
+
+def _split_login_guidance(record: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Separate the one-time setup guidance from the credential that is stored."""
+    guidance = {key: record[key] for key in _LOGIN_GUIDANCE_KEYS if key in record}
+    stored = {key: value for key, value in record.items() if key not in guidance}
+    return stored, guidance
 
 
 def _run_device_flow(  # noqa: PLR0912, PLR0915
@@ -395,6 +414,9 @@ def _complete_selection(
 
     chosen_org = _choose_workspace(console, organizations, workspace)
     role = str(chosen_org.get("role") or "admin")
+    workspace_name: str | None = None
+    if sys.stdin.isatty() and selection.get("is_new_user") and chosen_org.get("has_default_name"):
+        workspace_name = _choose_workspace_name(console, str(chosen_org.get("name") or ""))
     chosen_scopes = scopes
     chosen_profile = scope_profile
     if chosen_scopes is None and chosen_profile is None and sys.stdin.isatty():
@@ -404,6 +426,8 @@ def _complete_selection(
         "selection_token": selection_token,
         "organization_id": chosen_org.get("id"),
     }
+    if workspace_name is not None:
+        body["workspace_name"] = workspace_name
     if chosen_scopes is not None:
         body["scopes"] = chosen_scopes
         body["scope_profile"] = "custom"
@@ -474,6 +498,29 @@ def _choose_workspace(
         if answer.isdigit() and 1 <= int(answer) <= len(organizations):
             return organizations[int(answer) - 1]
         console.print("[yellow]Enter a number from the list.[/]")
+
+
+def _choose_workspace_name(console: Console, current: str) -> str | None:
+    """Prompt a first-time user for a workspace name. None keeps the generated name."""
+    console.print()
+    console.print(
+        "[bold]Name your workspace.[/] "
+        "[dim]Teammates see this name. Press Enter to keep the default. "
+        "You can change it later with `strix cloud org update --name`.[/]"
+    )
+    while True:
+        try:
+            answer = console.input(f"Workspace name ({_terminal_markup(current)}): ").strip()
+        except EOFError:
+            return None
+        if not answer or answer == current:
+            return None
+        if len(answer) > _MAX_WORKSPACE_NAME_LENGTH:
+            console.print(
+                f"[yellow]Use a name with {_MAX_WORKSPACE_NAME_LENGTH} characters or less.[/]"
+            )
+            continue
+        return answer
 
 
 def _choose_scopes(
@@ -632,24 +679,92 @@ def _revoke_replaced_legacy_session(
         )
 
 
-def _print_success(console: Console, record: dict[str, Any]) -> None:
+def _print_success(
+    console: Console, record: dict[str, Any], guidance: dict[str, Any] | None = None
+) -> None:
+    guidance = guidance or {}
+    onboarding = _onboarding_state(guidance)
     email = record.get("email", "")
     organization = record.get("organization_name") or record.get("organization_id", "")
     console.print()
-    console.print("[green]✓ Signed in to the Strix platform.[/]")
+    if guidance.get("is_new_user"):
+        console.print("[green]✓ Welcome to Strix. Your account and workspace are ready.[/]")
+    else:
+        console.print("[green]✓ Signed in to the Strix platform.[/]")
     if email:
         console.print(f"  Account:   [bold]{_terminal_markup(email)}[/]")
     if organization:
-        console.print(f"  Workspace: [bold]{_terminal_markup(organization)}[/]")
+        default_note = (
+            " [dim](default name)[/]" if onboarding.get("workspace_named") is False else ""
+        )
+        console.print(f"  Workspace: [bold]{_terminal_markup(organization)}[/]{default_note}")
     scopes = record.get("scopes")
     if isinstance(scopes, list) and scopes:
         console.print(f"  Access:    [dim]{_terminal_markup(_scope_summary(record))}[/]")
     console.print(f"  Token:     stored in [dim]{_terminal_markup(AUTH_PATH)}[/]")
+    _print_next_steps(console, guidance)
     console.print()
     console.print(
         "[dim]The managed platform is ready. Run `strix cloud` to list the commands. "
         "See https://docs.app.strix.ai for the API reference.[/]"
     )
+
+
+def _onboarding_state(guidance: dict[str, Any]) -> dict[str, Any]:
+    onboarding = guidance.get("onboarding")
+    if not isinstance(onboarding, dict):
+        return {}
+    return cast("dict[str, Any]", onboarding)
+
+
+def _github_install_url(guidance: dict[str, Any]) -> str | None:
+    url = _onboarding_state(guidance).get("github_install_url")
+    return url if is_safe_web_url(url) else None
+
+
+def _print_next_steps(console: Console, guidance: dict[str, Any]) -> None:
+    """Render the server-provided setup steps for a person."""
+    steps = [
+        step
+        for step in _dict_items(guidance.get("next_steps"))
+        if isinstance(step.get("action"), str) and step.get("action")
+    ]
+    github_url = _github_install_url(guidance)
+    if not steps and github_url is None:
+        return
+    console.print()
+    console.print("[bold]Next steps:[/]")
+    for index, step in enumerate(steps, start=1):
+        console.print(f"  [cyan]{index}[/]. {_terminal_markup(step['action'])}")
+        cli = step.get("cli")
+        if isinstance(cli, str) and cli:
+            console.print(f"     [dim]{_terminal_markup(cli)}[/]")
+    if github_url is not None:
+        console.print()
+        console.print("Install the Strix GitHub App to connect repositories:")
+        console.print(sanitize_terminal_text(github_url), markup=False, soft_wrap=True)
+
+
+def _offer_github_install(
+    console: Console, guidance: dict[str, Any], *, open_browser: bool
+) -> None:
+    """On a first sign-in in a terminal, offer to open the GitHub App installation page."""
+    github_url = _github_install_url(guidance)
+    if github_url is None or not open_browser or not guidance.get("is_new_user"):
+        return
+    if not sys.stdin.isatty() or not sys.stdout.isatty():
+        return
+    console.print()
+    try:
+        answer = console.input("Open the GitHub App installation page now? [y/N]: ").strip()
+    except EOFError:
+        return
+    if answer.casefold() not in {"y", "yes"}:
+        console.print("[dim]Run `strix cloud integrations install github` when you are ready.[/]")
+        return
+    with contextlib.suppress(Exception):
+        webbrowser.open(github_url)
+    console.print("[dim]Approve the installation in the browser. Then run `strix cloud repos`.[/]")
 
 
 def _status(console: Console, argv: list[str]) -> int:  # noqa: PLR0912

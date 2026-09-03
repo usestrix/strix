@@ -17,6 +17,8 @@ strix cloud session                       # verify the remote session and consen
 strix cloud logout                        # revoke remotely, then remove the local token
 ```
 
+On your first sign-in in a terminal, the CLI asks for a workspace name and offers to open the GitHub App installation page. Press Enter to keep the generated name. After each sign-in, the CLI lists the next steps for the workspace, for example the rename command, the GitHub installation link, or the first scan. Without a terminal, the CLI shows no prompts and only prints the steps.
+
 A browser sign-in creates one reusable credential for each CLI installation. A second sign-in on the same installation replaces the secret instead of adding another key. `strix cloud logout` revokes the server session before it deletes the local token. Use `--local-only` when you cannot reach the server.
 
 ## Scopes
