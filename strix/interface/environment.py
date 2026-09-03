@@ -70,7 +70,7 @@ def validate_environment() -> None:
                 error_text.append("• ", style="white")
                 error_text.append("STRIX_LLM", style="bold cyan")
                 error_text.append(
-                    " - Model name to use (e.g., 'openai/gpt-5.4' or "
+                    " - Model name to use (e.g., 'openrouter/z-ai/glm-5.3' or "
                     "'anthropic/claude-opus-4-7')\n",
                     style="white",
                 )
@@ -102,7 +102,7 @@ def validate_environment() -> None:
                     )
 
         error_text.append("\nExample setup:\n", style="white")
-        error_text.append("export STRIX_LLM='openai/gpt-5.4'\n", style="dim white")
+        error_text.append("export STRIX_LLM='openrouter/z-ai/glm-5.3'\n", style="dim white")
 
         if missing_optional_vars:
             for var in missing_optional_vars:

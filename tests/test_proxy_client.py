@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
+from strix.runtime.caido_handle import CaidoBootstrapHandle
 from strix.tools.proxy import caido_api, tools
 
 
@@ -198,12 +199,31 @@ class _Ctx:
         self.context = context
 
 
-def test_ctx_client_returns_client_when_present() -> None:
+async def test_ctx_client_returns_client_when_present() -> None:
     client = _FakeClient("host")
-    got = tools._ctx_client(cast("Any", _Ctx({"caido_client": client})))
+    got = await tools._ctx_client(cast("Any", _Ctx({"caido_client": client})))
     assert got is client
 
 
-def test_ctx_client_returns_none_without_client() -> None:
-    assert tools._ctx_client(cast("Any", _Ctx({}))) is None
-    assert tools._ctx_client(cast("Any", _Ctx(None))) is None
+async def test_ctx_client_returns_none_without_client() -> None:
+    assert await tools._ctx_client(cast("Any", _Ctx({}))) is None
+    assert await tools._ctx_client(cast("Any", _Ctx(None))) is None
+
+
+async def test_ctx_client_resolves_bootstrap_handle() -> None:
+    client = _FakeClient("host")
+
+    async def _bootstrap() -> Any:
+        return client
+
+    handle = CaidoBootstrapHandle(asyncio.ensure_future(_bootstrap()))
+    got = await tools._ctx_client(cast("Any", _Ctx({"caido_client": handle})))
+    assert got is client
+
+
+async def test_ctx_client_degrades_when_bootstrap_failed() -> None:
+    async def _bootstrap() -> Any:
+        raise RuntimeError("caido never came up")
+
+    handle = CaidoBootstrapHandle(asyncio.ensure_future(_bootstrap()))
+    assert await tools._ctx_client(cast("Any", _Ctx({"caido_client": handle}))) is None

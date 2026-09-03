@@ -143,7 +143,7 @@ def test_cost_callback_estimates_cost_with_bare_model_fallback() -> None:
     }
 
     def fake_completion_cost(**kwargs: object) -> float:
-        if kwargs["model"] == "gpt-4o-mini":
+        if kwargs["model"] == "openai/gpt-4o-mini":
             return 0.025
         raise ValueError(kwargs["model"])
 

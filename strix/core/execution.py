@@ -7,13 +7,12 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Callable
+from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
-import litellm
 from agents import RunConfig, Runner
 from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
 from agents.sandbox.errors import ExecTransportError
-from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
 from openai import (
     APIConnectionError,
     APIError,
@@ -54,6 +53,19 @@ StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
 _MAX_COMPACTIONS_PER_CYCLE = 2
+
+
+@cache
+def _teardown_sandbox_errors() -> tuple[type[BaseException], ...]:
+    """Sandbox-gone errors, tolerated during shutdown.
+
+    The Docker SDK is imported here rather than at module scope: it is only
+    reachable with the Docker runtime backend, and importing it eagerly puts it
+    on every launch's critical path.
+    """
+    from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
+
+    return (ExecTransportError, docker_errors.NotFound)
 
 
 class ProviderRefusalError(AgentsException):
@@ -126,6 +138,8 @@ def _is_transient_model_error(exc: BaseException) -> bool:
         return True
     code = _model_error_status_code(exc)
     if code is not None:
+        import litellm
+
         return bool(litellm._should_retry(code))
     return isinstance(exc, APIError)
 
@@ -188,6 +202,7 @@ async def run_agent_loop(
         agent_id,
         session=session,
         interrupt_on_message=interactive,
+        resumable=interactive,
     )
     result: RunResultBase | None = None
 
@@ -692,7 +707,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                         "Ignoring LiteLLM end-of-stream shutdown race for %s",
                         agent_id,
                     )
-                except (ExecTransportError, docker_errors.NotFound):
+                except _teardown_sandbox_errors():
                     if not coordinator.is_shutting_down:
                         raise
                     logger.warning(
@@ -992,7 +1007,7 @@ async def _start_child_runner(
 ) -> None:
     session = open_agent_session(child_id, agents_db_path)
     sessions_to_close.append(session)
-    await coordinator.attach_runtime(child_id, session=session)
+    await coordinator.attach_runtime(child_id, session=session, resumable=interactive)
 
     child_ctx: dict[str, Any] = dict(parent_ctx)
     child_ctx["agent_id"] = child_id

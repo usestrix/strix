@@ -72,6 +72,19 @@ func TestNonTablePipeLinesAreLeftAlone(t *testing.T) {
 	}
 }
 
+func TestMarkdownOrderedListsUseSingleSpaceAfterMarker(t *testing.T) {
+	out := renderAssistantMarkdown("1. hello\n2) world")
+	plain := ansi.Strip(out)
+	for _, want := range []string{"1. hello", "2) world"} {
+		if !strings.Contains(plain, want) {
+			t.Fatalf("ordered list item %q missing: %q", want, plain)
+		}
+	}
+	if strings.Contains(plain, "1.  hello") || strings.Contains(plain, "2)  world") {
+		t.Fatalf("double space after the list marker: %q", plain)
+	}
+}
+
 func TestInlineFormatKeepsNonEmphasisMarkers(t *testing.T) {
 	literal := []string{
 		"ls *.py *.go",

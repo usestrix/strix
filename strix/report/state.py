@@ -1,21 +1,21 @@
 import json
 import logging
+import re
 import subprocess
 import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Any, Optional, cast
+from typing import TYPE_CHECKING, Any, Optional, cast
 from uuid import uuid4
-
-from agents.usage import Usage
 
 from strix.config import codex
 from strix.config.loader import load_settings
-from strix.core.paths import run_dir_for
+from strix.core.paths import run_dir_for, runtime_state_dir
+from strix.report.coverage import write_coverage
+from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
-from strix.report.usage import LLMUsageLedger
 from strix.report.writer import (
     read_run_record,
     write_executive_report,
@@ -25,9 +25,15 @@ from strix.report.writer import (
 from strix.telemetry import posthog, scarf
 
 
+if TYPE_CHECKING:
+    from agents.usage import Usage
+
+
 logger = logging.getLogger(__name__)
 
 _global_report_state: Optional["ReportState"] = None
+
+_CONTROL_CHARS = re.compile(r"[\x00-\x1f\x7f]+")
 
 
 def _strix_version() -> str | None:
@@ -36,6 +42,74 @@ def _strix_version() -> str | None:
         return version("strix-agent")
     except PackageNotFoundError:
         return None
+
+
+# Content a revision may replace. The identity of the finding (id, timestamp,
+# finding_class) and its original author stay put. dependency_metadata is
+# replaced whole, so a caller carries the package identity over itself.
+UPDATABLE_REPORT_FIELDS = frozenset(
+    {
+        "title",
+        "dependency_metadata",
+        "severity",
+        "description",
+        "impact",
+        "target",
+        "technical_analysis",
+        "poc_description",
+        "poc_script_code",
+        "remediation_steps",
+        "evidence",
+        "assumptions",
+        "counterevidence",
+        "confidence",
+        "confidence_rationale",
+        "severity_change_conditions",
+        "fix_effort",
+        "cvss",
+        "cvss_breakdown",
+        "endpoint",
+        "method",
+        "cve",
+        "cwe",
+        "code_locations",
+        "fix_verification",
+        "fix_pr_body",
+    }
+)
+
+_LOWERCASE_REPORT_FIELDS = frozenset({"severity", "confidence", "fix_effort"})
+
+# Fields that only describe another field. A revision may raise the rating or
+# replace the locations without restating the reasoning behind the old one, and
+# that leftover reasoning then contradicts the finding it annotates
+# ("confidence: high" beside a rationale calling the evidence unconfirmed). When
+# the field they describe changes and the update carries no replacement, they
+# are dropped rather than kept.
+_DEPENDENT_REPORT_FIELDS: dict[str, tuple[str, ...]] = {
+    "confidence": ("confidence_rationale",),
+    "severity": ("severity_change_conditions",),
+    "cvss": ("cvss_breakdown",),
+    "code_locations": ("fix_verification",),
+}
+
+
+def _clean_title(title: str) -> str:
+    """Return a single-line finding title.
+
+    A title quotes text from the scanned target, so it can carry newlines, tabs or
+    other control characters. Those break every artifact that renders the title on
+    one line, such as the markdown heading, the CSV cell and the TUI list. Control
+    characters become spaces and runs of whitespace collapse to one space.
+    """
+    return " ".join(_CONTROL_CHARS.sub(" ", title).split())
+
+
+def _number(value: Any) -> int | float:
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _parse_repo_full_name(uri: str) -> str | None:
@@ -93,7 +167,7 @@ def get_global_report_state() -> Optional["ReportState"]:
     return _global_report_state
 
 
-def set_global_report_state(report_state: "ReportState") -> None:
+def set_global_report_state(report_state: Optional["ReportState"]) -> None:
     global _global_report_state  # noqa: PLW0603
     _global_report_state = report_state
     # New run: drop any streamed-cost entries a prior run left unconsumed.
@@ -114,6 +188,7 @@ class ReportState:
         self.run_name = run_name
         self.run_id = run_name or f"run-{uuid4().hex[:8]}"
         self.start_time = datetime.now(UTC).isoformat()
+        self.process_start_time = self.start_time
         self.end_time: str | None = None
 
         self.vulnerability_reports: list[dict[str, Any]] = []
@@ -121,7 +196,12 @@ class ReportState:
 
         self.scan_results: dict[str, Any] | None = None
         self.scan_config: dict[str, Any] | None = None
+        # Imported here so importing this module never enters the agents SDK
+        # package (which the warm-up thread may be initializing concurrently).
+        from strix.report.usage import LLMUsageLedger
+
         self._llm_usage = LLMUsageLedger()
+        self._telemetry_llm_usage_baseline: dict[str, Any] = {}
         auth_mode = codex.auth_mode(load_settings().llm.model)
         self._llm_usage.zero_cost = auth_mode == "subscription"
         self.run_record: dict[str, Any] = {
@@ -139,6 +219,7 @@ class ReportState:
 
         self.caido_url: str | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
+        self.vulnerability_updated_callback: Callable[[dict[str, Any]], None] | None = None
 
         self._sarif_repo_ctx: dict[str, Any] | None = None
         self._sarif_repo_ctx_ready: bool = False
@@ -187,6 +268,7 @@ class ReportState:
                 self.scan_results = scan_results
                 self.final_scan_result = self._format_final_scan_result(scan_results)
             self._hydrate_llm_usage(data.get("llm_usage"))
+            self._telemetry_llm_usage_baseline = self._build_llm_usage_record()
             logger.info("report state hydrated run.json from %s", run_dir)
 
         json_path = run_dir / "vulnerabilities.json"
@@ -205,8 +287,21 @@ class ReportState:
                 )
             self.vulnerability_reports = [r for r in data if isinstance(r, dict)]
             for r in self.vulnerability_reports:
+                # A finding written before the class was persisted still carries the
+                # metadata of its class, so name the class it always had.
+                if not r.get("finding_class"):
+                    r["finding_class"] = (
+                        "dependency_cve" if r.get("dependency_metadata") else "dynamic"
+                    )
+                title = r.get("title")
+                stale_md = False
+                if isinstance(title, str):
+                    r["title"] = _clean_title(title)
+                    stale_md = r["title"] != title
                 rid = r.get("id")
-                if isinstance(rid, str):
+                # A finding already on disk keeps its markdown, unless cleaning
+                # changed the title: the heading on disk then needs a rewrite.
+                if isinstance(rid, str) and not stale_md:
                     self._saved_vuln_ids.add(rid)
             logger.info(
                 "report state hydrated %d vulnerability report(s)",
@@ -226,6 +321,10 @@ class ReportState:
         remediation_steps: str | None = None,
         evidence: str | None = None,
         assumptions: str | None = None,
+        counterevidence: str | None = None,
+        confidence: str | None = None,
+        confidence_rationale: str | None = None,
+        severity_change_conditions: str | None = None,
         fix_effort: str | None = None,
         cvss: float | None = None,
         cvss_breakdown: dict[str, str] | None = None,
@@ -234,6 +333,7 @@ class ReportState:
         cve: str | None = None,
         cwe: str | None = None,
         code_locations: list[dict[str, Any]] | None = None,
+        fix_verification: str | None = None,
         fix_pr_body: str | None = None,
         finding_class: str | None = None,
         dependency_metadata: dict[str, str] | None = None,
@@ -244,7 +344,7 @@ class ReportState:
 
         report: dict[str, Any] = {
             "id": report_id,
-            "title": title.strip(),
+            "title": _clean_title(title),
             "severity": severity.lower().strip(),
             "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
         }
@@ -267,6 +367,14 @@ class ReportState:
             report["evidence"] = evidence.strip()
         if assumptions:
             report["assumptions"] = assumptions.strip()
+        if counterevidence:
+            report["counterevidence"] = counterevidence.strip()
+        if confidence:
+            report["confidence"] = confidence.strip().lower()
+        if confidence_rationale:
+            report["confidence_rationale"] = confidence_rationale.strip()
+        if severity_change_conditions:
+            report["severity_change_conditions"] = severity_change_conditions.strip()
         if fix_effort:
             report["fix_effort"] = fix_effort.strip().lower()
         if cvss is not None:
@@ -283,6 +391,8 @@ class ReportState:
             report["cwe"] = cwe.strip()
         if code_locations:
             report["code_locations"] = code_locations
+        if fix_verification:
+            report["fix_verification"] = fix_verification.strip()
         if fix_pr_body:
             report["fix_pr_body"] = fix_pr_body.strip()
         report["finding_class"] = (finding_class or "dynamic").strip().lower()
@@ -304,6 +414,100 @@ class ReportState:
         self.save_run_data()
         return report_id
 
+    def update_vulnerability_report(
+        self,
+        report_id: str,
+        fields: dict[str, Any],
+        *,
+        update_reason: str | None = None,
+        updated_by_agent_id: str | None = None,
+        updated_by_agent_name: str | None = None,
+    ) -> dict[str, Any] | None:
+        """Apply a revision to an existing report, keeping its id.
+
+        A field that only describes a field this update replaces is dropped when
+        the update carries no replacement for it, so the revised report cannot
+        state a new rating beside the superseded reasoning for the old one.
+
+        Returns the revised report, or ``None`` when the id is unknown or when
+        nothing in ``fields`` changes it.
+        """
+        report = next((r for r in self.vulnerability_reports if r.get("id") == report_id), None)
+        if report is None:
+            logger.warning("cannot update unknown vulnerability report %s", report_id)
+            return None
+
+        changed: dict[str, Any] = {}
+        for key, raw_value in fields.items():
+            if key not in UPDATABLE_REPORT_FIELDS or raw_value is None:
+                continue
+            value = raw_value
+            if isinstance(value, str):
+                value = _clean_title(value) if key == "title" else value.strip()
+                if key in _LOWERCASE_REPORT_FIELDS:
+                    value = value.lower()
+                if not value:
+                    continue
+            if report.get(key) == value:
+                continue
+            changed[key] = value
+
+        superseded = {
+            dependent
+            for primary, dependents in _DEPENDENT_REPORT_FIELDS.items()
+            if primary in changed
+            for dependent in dependents
+            if dependent not in changed and report.get(dependent) not in (None, "", [], {})
+        }
+
+        if not changed and not superseded:
+            logger.info("update for %s carried no new content; keeping it as is", report_id)
+            return None
+
+        entry: dict[str, Any] = {
+            "timestamp": datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "fields": sorted(changed),
+        }
+        if superseded:
+            entry["dropped_fields"] = sorted(superseded)
+        if update_reason and update_reason.strip():
+            entry["reason"] = update_reason.strip()[:500]
+        if updated_by_agent_id:
+            entry["agent_id"] = updated_by_agent_id
+        if updated_by_agent_name:
+            entry["agent_name"] = updated_by_agent_name
+        for key in ("severity", "cvss", "confidence"):
+            if key in changed and report.get(key) is not None:
+                entry[f"previous_{key}"] = report[key]
+
+        raw_history = report.get("update_history")
+        history: list[dict[str, Any]] = (
+            [e for e in raw_history if isinstance(e, dict)] if isinstance(raw_history, list) else []
+        )
+        history.append(entry)
+
+        report.update(changed)
+        for dependent in superseded:
+            report.pop(dependent, None)
+        report["update_history"] = history
+        report["updated_at"] = entry["timestamp"]
+
+        # The markdown on disk still shows the superseded evidence, so let the
+        # writer re-render it.
+        self._saved_vuln_ids.discard(report_id)
+
+        logger.info(
+            "Updated vulnerability report %s (%s)",
+            report_id,
+            ", ".join(entry["fields"]) or "no field replaced",
+        )
+
+        if self.vulnerability_updated_callback:
+            self.vulnerability_updated_callback(report)
+
+        self.save_run_data()
+        return report
+
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
         return list(self.vulnerability_reports)
 
@@ -311,7 +515,7 @@ class ReportState:
         self,
         *,
         agent_id: str,
-        usage: Usage | None,
+        usage: "Usage | None",
         agent_name: str | None = None,
         model: str | None = None,
     ) -> None:
@@ -329,6 +533,25 @@ class ReportState:
 
     def get_total_llm_usage(self) -> dict[str, Any]:
         return dict(self.run_record.get("llm_usage") or self._build_llm_usage_record())
+
+    def get_process_llm_usage(self) -> dict[str, int | float]:
+        """Return LLM usage accumulated since this process started."""
+        usage = self._llm_usage.to_record()
+        return {
+            key: max(
+                0, _number(usage.get(key)) - _number(self._telemetry_llm_usage_baseline.get(key))
+            )
+            for key in ("requests", "input_tokens", "output_tokens", "total_tokens", "cost")
+        }
+
+    def get_process_duration_seconds(self) -> float:
+        """Return this process's elapsed wall time for telemetry."""
+        try:
+            start = datetime.fromisoformat(self.process_start_time.replace("Z", "+00:00"))
+            duration = (datetime.now(start.tzinfo) - start).total_seconds()
+            return max(0.0, duration)
+        except (ValueError, TypeError, AttributeError):
+            return 0.0
 
     def get_total_llm_cost(self) -> float:
         """Live accumulated LLM cost, independent of the persisted run-record snapshot."""
@@ -357,6 +580,34 @@ class ReportState:
         self.save_run_data(mark_complete=True)
         posthog.end(self, exit_reason="finished_by_tool")
         scarf.end(self, exit_reason="finished_by_tool")
+
+    def record_mcp_connections(self, names: list[str]) -> None:
+        """Note the MCP servers this run connected, and persist it.
+
+        Saved as soon as the run connects rather than at the end, so an interface
+        reading the record mid-run can already attribute a tool call to the
+        server it went out to.
+        """
+        if self.run_record.get("mcp_connections") == names:
+            return
+        self.run_record["mcp_connections"] = names
+        self.save_run_data()
+
+    def record_mcp_connection_status(self, status: list[dict[str, Any]]) -> None:
+        """Persist the run's non-secret MCP connection status roster.
+
+        ``status`` is one entry per connection carrying only ``name``,
+        ``provider``, ``tool_count``, and ``dead`` (no config, url, token, or
+        auth). Saved as soon as the run connects and rewritten each time a
+        connection dies, so the viewer, which rebuilds its display by re-reading
+        the run's files from disk, can show a live connections panel and health
+        without any in-memory event sink. Kept separate from the
+        ``mcp_connections`` name list so neither field repurposes the other.
+        """
+        if self.run_record.get("mcp_connection_status") == status:
+            return
+        self.run_record["mcp_connection_status"] = status
+        self.save_run_data()
 
     def set_scan_config(self, config: dict[str, Any]) -> None:
         self.scan_config = config
@@ -417,11 +668,40 @@ class ReportState:
 {str(scan_results.get("recommendations", "")).strip()}
 """
 
+    def _coverage_document(self) -> dict[str, Any] | None:
+        """Assemble the coverage record, or None when it can't be built.
+
+        Coverage is a secondary artifact: a failure here must not cost the
+        caller its findings, so this swallows and logs rather than raising
+        into :meth:`_save_artifacts`.
+        """
+        try:
+            from strix.report.coverage import build_coverage_document, read_agent_graph
+            from strix.tools.coverage.tools import get_coverage_entries
+
+            return build_coverage_document(
+                run_record=self.run_record,
+                entries=get_coverage_entries(),
+                agent_graph=read_agent_graph(runtime_state_dir(self.get_run_dir())),
+                vulnerability_reports=self.vulnerability_reports,
+                exit_reason=self.scan_ended_exit_reason,
+            )
+        except Exception:
+            logger.exception("coverage document build failed (non-fatal)")
+            return None
+
     def _save_artifacts(self) -> None:
         """Write scan artifacts under ``run_dir``."""
         run_dir = self.get_run_dir()
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
+
+            coverage = self._coverage_document()
+            if coverage is not None:
+                try:
+                    write_coverage(run_dir, coverage)
+                except OSError:
+                    logger.exception("coverage.json write failed (non-fatal)")
 
             if self.final_scan_result:
                 write_executive_report(run_dir, self.final_scan_result)
@@ -441,6 +721,7 @@ class ReportState:
                     self.vulnerability_reports,
                     tool_version=_strix_version(),
                     repository_context=self._sarif_repository_context(),
+                    coverage=coverage,
                 )
             except Exception:
                 logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")
@@ -696,10 +977,13 @@ def _estimate_response_cost(kwargs: Any, completion_response: Any) -> float | No
         candidates.append(model.rsplit("/", 1)[-1])
 
     for candidate in candidates:
+        resolved = resolve_litellm_model(candidate)
+        if not resolved:
+            continue
         try:
             value = completion_cost(
-                completion_response={"model": candidate, "usage": usage_payload},
-                model=candidate,
+                completion_response={"model": resolved, "usage": usage_payload},
+                model=resolved,
             )
         except Exception:  # nosec B112  # noqa: BLE001, S112
             continue

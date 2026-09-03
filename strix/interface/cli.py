@@ -22,6 +22,7 @@ from .utils import (
     build_live_stats_text,
     format_vulnerability_report,
     has_model_response,
+    read_workspace_files,
 )
 
 
@@ -93,6 +94,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "scan_mode": scan_mode,
         "non_interactive": bool(getattr(args, "non_interactive", False)),
         "local_sources": getattr(args, "local_sources", None) or [],
+        "workspace_files": getattr(args, "workspace_files", None) or [],
         "scope_mode": getattr(args, "scope_mode", "auto"),
         "diff_base": getattr(args, "diff_base", None),
         "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
@@ -103,14 +105,15 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     report_state.set_scan_config(scan_config)
     report_state.save_run_data()
 
-    def display_vulnerability(report: dict[str, Any]) -> None:
+    def display_vulnerability(report: dict[str, Any], *, updated: bool = False) -> None:
         report_id = report.get("id", "unknown")
 
         vuln_text = format_vulnerability_report(report)
 
+        suffix = " (updated)" if updated else ""
         vuln_panel = Panel(
             vuln_text,
-            title=f"[bold red]{report_id.upper()}",
+            title=f"[bold red]{report_id.upper()}{suffix}",
             title_align="left",
             border_style="red",
             padding=(1, 2),
@@ -120,6 +123,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         console.print()
 
     report_state.vulnerability_found_callback = display_vulnerability
+    report_state.vulnerability_updated_callback = lambda report: display_vulnerability(
+        report, updated=True
+    )
 
     def cleanup_on_exit() -> None:
         report_state.cleanup()
@@ -193,6 +199,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     scan_id=args.run_name,
                     image=_resolve_sandbox_image(),
                     local_sources=getattr(args, "local_sources", None) or [],
+                    extra_files=read_workspace_files(getattr(args, "workspace_files", None)),
                     interactive=bool(getattr(args, "interactive", False)),
                     max_budget_usd=getattr(args, "max_budget_usd", None),
                     max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),

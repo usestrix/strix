@@ -73,6 +73,7 @@ const (
 	focusChat
 	focusAgents
 	focusVulnerabilities
+	focusMcp
 )
 
 type scrollbarTarget int
@@ -82,6 +83,7 @@ const (
 	scrollbarTrace
 	scrollbarAgents
 	scrollbarFindings
+	scrollbarMcp
 )
 
 type Model struct {
@@ -109,6 +111,7 @@ type Model struct {
 	selectedVuln           int
 	agentOffset            int
 	vulnOffset             int
+	mcpOffset              int
 	modalChoice            int
 	reportFocus            string
 	ready                  bool
@@ -356,7 +359,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.resyncRequested[msg.collection] = false
 			}
 		} else if msg.command == "collection.resync" && msg.requestID != "" && msg.collection != "" {
-			m.resyncRequests[msg.requestID] = msg.collection
+			if m.resyncRequested[msg.collection] {
+				m.resyncRequests[msg.requestID] = msg.collection
+			}
 		}
 	case selectionCopiedMsg:
 		text := "Copied to clipboard"

@@ -14,6 +14,7 @@ from agents.tool import ToolOutputImage
 
 from strix.core.paths import runtime_state_dir
 from strix.interface.tui.history import load_session_history
+from strix.tools.mcp import resolve_mcp_call
 
 
 class TuiLiveView:
@@ -26,6 +27,23 @@ class TuiLiveView:
         self._user_instruction: str | None = None
         self._user_instruction_at: str | None = None
         self._user_instruction_shown = False
+
+    def _mcp_tool_fields(self, tool_name: str, args: dict[str, Any]) -> dict[str, str]:
+        """Event fields naming the MCP server a tool call went out to, if any.
+
+        Delegates to the shared engine resolver :func:`resolve_mcp_call` so a
+        dispatch call is attributed the same way here and in strix-pro's tracer.
+        The projection has no live registry, so it passes none: it reports the
+        connection and tool read from the call's arguments and leaves the provider
+        out. Empty for every other tool, which is what tells an interface to
+        render the call as one of its own rather than as a call to a user's
+        server. ``describe_mcp`` resolves with an empty tool, which tells both
+        renderers to present the row as inspecting the connection itself.
+        """
+        info = resolve_mcp_call(tool_name, args)
+        if info is None:
+            return {}
+        return {"mcp_connection": info.connection, "mcp_tool": info.tool}
 
     def set_user_instruction(self, text: str | None, *, timestamp: str | None = None) -> None:
         """Open the transcript with what the user asked for.
@@ -73,7 +91,7 @@ class TuiLiveView:
     def hydrate_from_run_dir(self, run_dir: Path) -> None:
         # Armed before the agents are added so the root agent's arrival puts the
         # user's opening message ahead of the replayed history.
-        self._load_user_instruction(run_dir)
+        self._load_run_record(run_dir)
         state_dir = runtime_state_dir(run_dir)
         agents_path = state_dir / "agents.json"
         if not agents_path.exists():
@@ -85,6 +103,7 @@ class TuiLiveView:
         statuses = agents_data.get("statuses") or {}
         names = agents_data.get("names") or {}
         parent_of = agents_data.get("parent_of") or {}
+        errors = agents_data.get("errors") or {}
         if not isinstance(statuses, dict):
             return
         for agent_id, status in statuses.items():
@@ -95,13 +114,14 @@ class TuiLiveView:
                 name=names.get(agent_id, agent_id) if isinstance(names, dict) else agent_id,
                 parent_id=parent_of.get(agent_id) if isinstance(parent_of, dict) else None,
                 status=str(status),
+                error_message=errors.get(agent_id) if isinstance(errors, dict) else None,
             )
         # Ahead of the replayed history, so it opens the transcript.
         self.flush_user_instruction()
         self._hydrate_sdk_session_history(run_dir, statuses.keys())
 
-    def _load_user_instruction(self, run_dir: Path) -> None:
-        """Take the user's opening message from the run record, if it has one."""
+    def _load_run_record(self, run_dir: Path) -> None:
+        """Take the user's opening message off the record."""
         try:
             record = json.loads((run_dir / "run.json").read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
@@ -312,6 +332,7 @@ class TuiLiveView:
         call_id = call["call_id"]
         event_key = (agent_id, call_id)
         existing = self._tool_event_by_agent_and_call_id.get(event_key)
+        mcp_fields = self._mcp_tool_fields(call["tool_name"], call["args"])
         if existing is None:
             tool_data = {
                 "tool_name": call["tool_name"],
@@ -319,6 +340,7 @@ class TuiLiveView:
                 "status": "running",
                 "agent_id": agent_id,
                 "call_id": call_id,
+                **mcp_fields,
             }
             event = self._append_event(agent_id, "tool", tool_data, timestamp=timestamp)
             self._tool_event_by_agent_and_call_id[event_key] = event
@@ -328,7 +350,7 @@ class TuiLiveView:
             # reached a terminal state back to "running" - its result would
             # then sit next to a status that says the call is still in
             # flight.
-            update = {"tool_name": call["tool_name"], "args": call["args"]}
+            update = {"tool_name": call["tool_name"], "args": call["args"], **mcp_fields}
             if existing["data"].get("status") not in {"completed", "failed"}:
                 update["status"] = "running"
             existing["data"].update(update)
@@ -348,6 +370,10 @@ class TuiLiveView:
         event_key = (agent_id, call_id)
         event = self._tool_event_by_agent_and_call_id.get(event_key)
         if event is None:
+            # No prior call event to update, so its arguments are gone and the
+            # connection an MCP call went out to cannot be recovered. The matching
+            # call event, when there is one, already carries the MCP fields; this
+            # arrives only when the call was never projected, so it stays generic.
             event = self._append_event(
                 agent_id,
                 "tool",

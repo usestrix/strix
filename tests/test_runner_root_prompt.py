@@ -14,11 +14,13 @@ import pytest
 from agents import ModelSettings
 from openai import RateLimitError
 
+import strix.tools.mcp as mcp_pkg
 import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
 from strix.core import runner
 from strix.core.agents import AgentCoordinator
 from strix.runtime import session_manager
+from strix.tools.mcp import BearerAuth, McpConnectionConfig, McpConnectionRequest
 
 
 def _make_rate_limit_error() -> RateLimitError:
@@ -178,6 +180,76 @@ async def test_root_prompt_options_default_to_none(
     kwargs = captured["kwargs"]
     assert kwargs["instructions_override"] is None
     assert kwargs["system_prompt_context"] == {"scope": "built-in"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_available_flag_set_when_a_connection_attaches(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """When at least one MCP connection attaches, the runner sets ``mcp_available``
+    plus a named ``mcp_connections`` inventory into the scan context that reaches
+    every agent, so each agent sees which connections exist at the start while
+    still being able to re-list them at run time via list_mcps."""
+    scope_context: dict[str, Any] = {"scope": "built-in"}
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
+
+    async def _aclose() -> None:
+        return None
+
+    async def _attach(_requests: Any, registry: Any) -> list[Any]:
+        registry.add(name="fs", server=object(), purpose="local files", tool_count=2)
+        session = types.SimpleNamespace(aclose=_aclose)
+        return [types.SimpleNamespace(name="fs", tool_count=2, session=session)]
+
+    monkeypatch.setattr(mcp_pkg, "attach_mcp_requests", _attach)
+
+    request = McpConnectionRequest(
+        config=McpConnectionConfig(
+            name="fs",
+            url="https://mcp.example.com",
+            auth=BearerAuth(token="run-token"),
+        )
+    )
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-mcp-available",
+        image="img",
+        coordinator=AgentCoordinator(),
+        mcp_connection_requests=[request],
+    )
+
+    kwargs = captured["kwargs"]
+    assert kwargs["system_prompt_context"]["mcp_available"] is True
+    # The named inventory names each connected server for the prompt.
+    assert kwargs["system_prompt_context"]["mcp_connections"] == [
+        {"name": "fs", "purpose": "local files", "tool_count": 2}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_mcp_available_flag_absent_without_a_connection(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Any,
+) -> None:
+    """With no MCP connection, the scan context carries no MCP key at all, so the
+    prompt's MCP section stays off."""
+    scope_context: dict[str, Any] = {"scope": "built-in"}
+    captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
+
+    monkeypatch.setattr(mcp_pkg, "load_user_mcp_configs", list)
+
+    await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-mcp-absent",
+        image="img",
+        coordinator=AgentCoordinator(),
+    )
+
+    kwargs = captured["kwargs"]
+    assert "mcp_available" not in kwargs["system_prompt_context"]
+    assert "mcp_connections" not in kwargs["system_prompt_context"]
 
 
 @pytest.mark.asyncio

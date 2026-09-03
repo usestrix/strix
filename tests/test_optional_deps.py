@@ -11,7 +11,8 @@ PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
 def _optional_dependencies() -> dict[str, list[str]]:
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
-    return data["project"]["optional-dependencies"]
+    extras: dict[str, list[str]] = data["project"]["optional-dependencies"]
+    return extras
 
 
 def test_vertex_extra_pins_google_auth() -> None:

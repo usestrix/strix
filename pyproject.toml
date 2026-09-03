@@ -1,6 +1,6 @@
 [project]
 name = "strix-agent"
-version = "1.5.3"
+version = "1.6.1"
 description = "Open-source AI Hackers for your apps"
 readme = "README.md"
 license = "Apache-2.0"
@@ -43,6 +43,7 @@ dependencies = [
   "requests>=2.32.0",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
+  "markdown-it-py>=3.0.0",
   "reportlab>=4.0",
   "pypdf>=5.0",
   # Cap <49: 49.x drops the universal2 macOS wheel (arm64-only), which breaks
@@ -229,6 +230,7 @@ ignore = [
 # Test doubles use fixture tokens/passwords and match a callee signature whose
 # args they intentionally ignore.
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
+"tests/test_cloud_cli.py" = ["S105", "ARG001"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]
@@ -241,9 +243,14 @@ ignore = [
 "tests/test_stream_idle_timeout.py" = ["N802", "SLF001"]
 "tests/test_unknown_tool_recovery.py" = ["N802"]
 "tests/test_report_pdf.py" = ["S105", "S106"]
+# Fake MCP server matches the SDK's MCPServer signature; its args are unused.
+"tests/test_mcp_client.py" = ["S105", "S106", "ARG002"]
+# MCP connection request in a test carries a dummy bearer token.
+"tests/test_runner_root_prompt.py" = ["S106"]
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
 # circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.
 "strix/interface/viewer/server.py" = ["N802", "PLC0415"]
+"strix/interface/cloud/payment_proxy.py" = ["N802"]
 # Lazy telemetry import to avoid importing PostHog before the viewer starts.
 "strix/interface/viewer/cli.py" = ["PLC0415"]
 # Lazy imports inside functions to avoid circular dependency with
@@ -251,6 +258,11 @@ ignore = [
 "strix/tools/notes/tools.py" = ["PLC0415", "TC002"]
 "strix/tools/finish/tool.py" = ["PLC0415", "TC002"]
 "strix/tools/reporting/tool.py" = ["PLC0415", "TC002"]
+# Lazy imports of strix.tools.mcp.client avoid a circular import (client imports
+# the session module at module load).
+"strix/tools/mcp/session.py" = ["PLC0415"]
+# call_mcp is a chain of guard clauses that each return an error string.
+"strix/tools/mcp/agent_tools.py" = ["PLR0911"]
 "strix/tools/**/*.py" = [
     "ARG001", # Unused function argument (tools may have unused args for interface consistency)
 ]
@@ -270,6 +282,10 @@ ignore = [
 "strix/tools/thinking/tool.py" = ["TC002"]
 "strix/tools/web_search/tool.py" = ["TC002"]
 "strix/tools/proxy/tools.py" = ["TC002", "PLR0911"]
+# The generated Caido GraphQL schema is slow to import, so the SDK is imported
+# on first proxy call instead of at module scope (keeps it off the launch path).
+"strix/tools/proxy/caido_api.py" = ["PLC0415"]
+"strix/runtime/caido_bootstrap.py" = ["PLC0415"]
 "strix/tools/agents_graph/tools.py" = ["TC002"]
 "strix/agents/factory.py" = ["TC002"]
 # Entry point: ``Path`` is used at runtime by the typing of the
@@ -280,6 +296,13 @@ ignore = [
 # a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
 "strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401", "PLC0415"]
 "strix/report/usage.py" = ["PLC0415"]
+# LiteLLM and the Docker SDK are imported on first use, not at module scope:
+# both cost seconds to import and neither is needed until a model call is made
+# (or, for Docker, unless the Docker runtime backend is in use).
+"strix/core/execution.py" = ["PLC0415"]
+"strix/report/pricing.py" = ["PLC0415"]
+"strix/llm/compaction.py" = ["PLC0415"]
+"strix/llm/context_budget.py" = ["PLC0415"]
 # Lazy import of strix.config.models avoids a circular dependency between the
 # report pipeline and the config layer.
 "strix/report/dedupe.py" = ["PLC0415"]
@@ -391,6 +414,8 @@ known_third_party = ["pydantic", "litellm"]
 # ============================================================================
 
 [tool.bandit]
-exclude_dirs = ["docs", "build", "dist"]
+# Tests are covered by ruff's flake8-bandit rules (see per-file-ignores above),
+# which is where fixture tokens and loopback URL opens are already waived.
+exclude_dirs = ["docs", "build", "dist", "tests"]
 skips = ["B101", "B601", "B404", "B603", "B607"]  # Skip assert, shell injection, subprocess import and partial path checks
 severity = "medium"

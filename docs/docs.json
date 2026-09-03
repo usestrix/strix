@@ -25,7 +25,8 @@
             "pages": [
               "usage/cli",
               "usage/scan-modes",
-              "usage/instructions"
+              "usage/instructions",
+              "usage/viewer"
             ]
           },
           {
@@ -47,7 +48,8 @@
             "pages": [
               "integrations/github-actions",
               "integrations/ci-cd",
-              "integrations/coding-agents"
+              "integrations/coding-agents",
+              "integrations/mcp"
             ]
           },
           {
@@ -76,7 +78,8 @@
           {
             "group": "Strix Cloud",
             "pages": [
-              "cloud/overview"
+              "cloud/overview",
+              "cloud/cli"
             ]
           }
         ]
