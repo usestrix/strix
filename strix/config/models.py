@@ -562,6 +562,8 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
 )
 
 RECOMMENDED_MODEL_NAMES = (
+    "zai/glm-5.3",
+    "zai/glm-5.3-flash",
     "openai/gpt-5.6-sol",
     "openai/gpt-5.6-terra",
     "openai/gpt-5.6-luna",
@@ -570,6 +572,7 @@ RECOMMENDED_MODEL_NAMES = (
     "openai/gpt-5.5",
     "openai/gpt-5.4",
     "openai/gpt-5.3-codex",
+    "anthropic/claude-fable-5-1",
     "anthropic/claude-fable-5",
     "anthropic/claude-opus-5",
     "anthropic/claude-opus-4-8",
@@ -577,6 +580,8 @@ RECOMMENDED_MODEL_NAMES = (
     "anthropic/claude-sonnet-4-6",
     "vertex_ai/gemini-3.1-pro-preview",
     "gemini/gemini-3.1-pro-preview",
+    "vertex_ai/gemini-3.7-flash",
+    "gemini/gemini-3.7-flash",
     "gemini/gemini-3.6-flash",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
@@ -598,6 +603,7 @@ FRONTIER_MODEL_FAMILIES = (
     (("deepseek",), ("deepseek-v4", "deepseek-r1", "deepseek-reasoner")),
     (("alibaba", "dashscope", "qwen"), ("qwen3.8", "qwen3.7", "qwen3-max")),
     (("moonshot", "moonshotai", "kimi"), ("kimi-k3", "kimi-k2.7", "kimi-k2.6")),
+    (("zai", "z-ai", "zai-org", "zhipuai"), ("glm-5.3", "glm-5.2")),
 )
 
 

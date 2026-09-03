@@ -14,7 +14,7 @@ import sys
 from rich.console import Console
 from rich.markup import escape
 
-import strix.interface.cloud.http as http  # noqa: PLR0402
+from strix.interface.cloud import http
 from strix.interface.cloud.render import json_mode
 from strix.interface.cloud.runner import resolve, run
 from strix.interface.cloud.session import run_session

@@ -38,7 +38,8 @@ if TYPE_CHECKING:
 _STOPPABLE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
 
 ChangeCallback = Callable[[], None]
-StartCallback = Callable[[bool], Awaitable[None]]
+StartCallback = Callable[[], Awaitable[None]]
+VerifyCallback = Callable[[], Awaitable[None]]
 QuitCallback = Callable[[], Awaitable[None]]
 
 
@@ -53,6 +54,7 @@ class TuiController:
         coordinator: Any = None,
         report_state: ReportState | None = None,
         on_start: StartCallback | None = None,
+        on_verify: VerifyCallback | None = None,
         on_quit: QuitCallback | None = None,
         on_change: ChangeCallback | None = None,
     ) -> None:
@@ -100,7 +102,6 @@ class TuiController:
         # A target-less launch enters the live view and asks there before
         # anything is prepared; this holds the directory awaiting that answer.
         self.pending_workspace_mount: str | None = None
-        self._pending_verify = True
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
         self.error: str | None = None
@@ -113,6 +114,7 @@ class TuiController:
         self.viewer_url: str | None = None
         self._viewer_httpd: Any = None
         self._on_start = on_start
+        self._on_verify = on_verify
         self._on_quit = on_quit
         self._on_change = on_change
 
@@ -336,13 +338,6 @@ class TuiController:
         prompt_targets = build_prompt_targets_info([target.strip() for target in raw_targets])
         targets_info = dedupe_targets([*deepcopy(self.targets_info), *prompt_targets])
         targets = [str(target["original"]) for target in targets_info if target.get("original")]
-        # A bare prompt launches optimistically, like a coding agent: it skips
-        # the network model preflight and surfaces any model error live. A named
-        # target keeps the preflight so a real scan does not commit blind.
-        requested_verify = payload.get("verify", True)
-        if not isinstance(requested_verify, bool):
-            raise TypeError("verify must be a boolean")
-        verify = bool(targets) or requested_verify
         # Launching with no target mounts the working directory, so it requires
         # the user's explicit confirmation rather than happening silently.
         mount_working_dir = payload.get("mount_working_dir", False)
@@ -353,9 +348,13 @@ class TuiController:
             raise ValueError("No model configured. Set STRIX_LLM first.")
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
+        if not targets and not mount_working_dir:
+            raise ValueError("No target set. Add a target first.")
+        # The model check runs while still on the start screen, for a bare
+        # prompt as much as for a named target, so a failure lands in the setup
+        # log where the user can fix it and retry rather than in a dead run.
+        await self._verify_model()
         if not targets:
-            if not mount_working_dir:
-                raise ValueError("No target set. Add a target first.")
             self.instruction = instruction.strip()
             self.targets_info = targets_info
             self.targets = targets
@@ -363,7 +362,6 @@ class TuiController:
             # that is asked in the live view. Enter it now and prepare nothing
             # until the answer arrives, so declining leaves no run behind.
             self.pending_workspace_mount = str(Path.cwd())
-            self._pending_verify = verify
             self.setup_mode = False
             self.scan_started = True
             self.scan_state = "preparing"
@@ -377,18 +375,32 @@ class TuiController:
         self.targets_info = targets_info
         self.targets = targets
         try:
-            await self._begin_scan(verify)
+            await self._begin_scan()
         except BaseException:
             self.instruction, self.targets_info, self.targets = previous
             raise
         return {"started": True}
 
-    async def _begin_scan(self, verify: bool) -> None:
+    async def _verify_model(self) -> None:
+        if self._on_verify is None:
+            return
+        self._start_in_progress = True
+        try:
+            await self._on_verify()
+        finally:
+            self._start_in_progress = False
+
+    async def _begin_scan(self) -> None:
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
         self._start_in_progress = True
         try:
-            await self._on_start(verify)
+            await self._on_start()
+        except Exception as exc:
+            if not self.setup_mode:
+                # The live view is already up, so the failure has to show there.
+                self.fail_preparation(str(exc))
+            raise
         finally:
             self._start_in_progress = False
         self.setup_mode = False
@@ -408,7 +420,7 @@ class TuiController:
         # the whole of the input either way; the working directory is only an
         # extra the agent may look at, so the run goes ahead without one.
         self.workspace_mount = mount if approved else None
-        await self._begin_scan(self._pending_verify)
+        await self._begin_scan()
         return {"approved": approved}
 
     async def _send_message(self, payload: dict[str, Any]) -> dict[str, Any]:

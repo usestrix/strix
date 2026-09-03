@@ -30,15 +30,10 @@ func (m Model) submit(value string) (tea.Model, tea.Cmd) {
 // network references alongside it for the backend to reconcile as targets.
 func (m *Model) submitSetupPrompt(value string) (tea.Model, tea.Cmd) {
 	targets := networkTargets(value)
-	// With a target, verify the model connection before the scan commits to it.
-	// A bare prompt launches optimistically, like a coding agent, and mounts the
-	// working directory - the backend asks about that from the live view, so the
-	// prompt is held here in case it is declined.
-	verify := len(targets) > 0 || len(m.snapshot.Targets) > 0
-	payload := map[string]any{"instruction": value, "targets": targets, "verify": verify}
-	if verify {
-		m.setupMsg("Verifying model connection...", render.Col(amber))
-	} else {
+	payload := map[string]any{"instruction": value, "targets": targets}
+	// A bare prompt mounts the working directory. The backend asks about that
+	// from the live view, so the prompt is held here until it is answered.
+	if len(targets) == 0 && len(m.snapshot.Targets) == 0 {
 		m.pendingPrompt = value
 		payload["mount_working_dir"] = true
 	}

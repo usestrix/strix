@@ -72,6 +72,13 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
         "moonshot/kimi-k2.6",
         "kimi-k2.7-code",
         "moonshot/kimi-k3",
+        "anthropic/claude-fable-5-1",
+        "vertex_ai/claude-fable-5-1@default",
+        "gemini/gemini-3.7-flash",
+        "glm-5.3",
+        "zai/glm-5.3-flash",
+        "openrouter/z-ai/glm-5.3",
+        "novita/zai-org/glm-5.2",
     ],
 )
 def test_frontier_model_families_are_accepted(model_name: str) -> None:
@@ -92,6 +99,9 @@ def test_frontier_model_families_are_accepted(model_name: str) -> None:
         "openrouter/x-ai/grok-4",
         "mistral/mistral-medium-3-5",
         "mistral/magistral-medium-latest",
+        "zai/glm-4.7",
+        "openrouter/z-ai/glm-5",
+        "custom-provider/glm-5.3-local",
     ],
 )
 def test_non_frontier_models_are_rejected(model_name: str) -> None:

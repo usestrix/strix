@@ -82,7 +82,7 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 curl -sSL https://strix.ai/install | bash
 
 # Configure your AI provider
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 
 # Run your first security assessment
@@ -116,7 +116,9 @@ Strix is agent-ready. Give Claude Code, Cursor, Codex, or any [SKILL.md-compatib
 npx skills add usestrix/strix
 ```
 
-This installs nine skills: **penetration-testing-with-strix** (run headless scans and read results), **managed-pentesting-with-strix** (drive the managed [app.strix.ai](https://app.strix.ai) platform via REST — no local Docker or LLM key), **fix-security-vulnerabilities-with-strix** (remediate + re-scan to verify), **ci-security-scanning-with-strix** (PR scanning in CI), plus target-specific workflows: **application-security-testing**, **web-app-penetration-testing**, **api-security-testing**, **owasp-top-10-testing**, and **find-security-vulnerabilities-in-code**. Agents can run Strix two ways with the same engine — the open-source CLI locally, or the managed cloud when there's no local infra — and read [`AGENTS.md`](AGENTS.md) for a quick reference, [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) for the CLI docs, and [docs.app.strix.ai](https://docs.app.strix.ai) for the API.
+This installs nine skills for running pentests, fixing findings, and CI scanning, against code, web apps, APIs, and the OWASP Top 10. Agents can use the local CLI or the managed cloud with the same engine.
+
+See [`AGENTS.md`](AGENTS.md) for the quick reference, [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) for the CLI, and [docs.app.strix.ai](https://docs.app.strix.ai) for the API.
 
 ---
 
@@ -172,18 +174,9 @@ strix view my-run-name
 strix view --host 0.0.0.0 --port 8080 --no-open
 ```
 
-`strix view` starts a lightweight local server (bound to `127.0.0.1` on a random port) and opens your browser to a private, tokened link. Nothing leaves your machine: the dashboard reads the run's files straight off disk, with no cloud account or upload required. The UI ships prebuilt with Strix, so there is no extra install and no JS build step.
+The dashboard shows the findings, a live map of the agent team, and past runs. Nothing leaves your machine, and the UI ships prebuilt. `strix view` binds to `127.0.0.1` and prints a tokened link that grants access to the run, so share it carefully.
 
-Use `--host 0.0.0.0` to make the viewer reachable from other machines. Replace `0.0.0.0` in the printed URL with the server's reachable IP or hostname. The token in that URL grants access to the selected run's scan data, history, and steering, so only share it with trusted users and restrict the port with your firewall. Requests without the token-derived session cannot read run data.
-
-### What's in the dashboard
-
-- **Overview**: run status, target, and a severity breakdown of everything found so far.
-- **Vulnerabilities**: each validated finding with its severity, details, and reproduction steps.
-- **Agent graph**: a live map of the multi-agent team, showing which agent is doing what.
-- **Steering**: send instructions to a live scan from the browser to redirect the agents mid-run.
-- **History**: browse past runs on this machine and jump between them.
-- **Reports**: generate a shareable report and email it to yourself or your team.
+See the [viewer documentation](https://docs.strix.ai/usage/viewer) for the options and for reaching the viewer from another machine.
 
 ---
 
@@ -216,18 +209,9 @@ having to discover them by crawling. Pair the spec with the live base URL so the
 agent knows where to send traffic:
 
 ```bash
-# OpenAPI / Swagger file (.json / .yaml)
+# OpenAPI / Swagger file, Postman export, or a live collection by id
 strix --target ./openapi.yaml --target https://api.your-app.com
-
-# Postman collection export
-strix --target ./collection.postman_collection.json --target https://api.your-app.com
-
-# Postman collection pulled live by id (no manual export)
-export POSTMAN_API_KEY="PMAK-..."
-strix --target postman://<collection-uuid>
-
-# ...with a Postman environment to resolve {{baseUrl}} / token variables
-strix --target "postman://<collection-uuid>?env=<environment-uuid>"
+strix --target postman://<collection-uuid> --target https://api.your-app.com
 ```
 
 
@@ -242,19 +226,9 @@ strix -t https://github.com/org/app.git -t https://your-app.com
 
 # Targets from a file, one target per non-empty, non-comment line
 strix --target-list ./targets.txt
-
-# White-box source-aware scan (local repository)
-strix --target ./app-directory --scan-mode standard
-
-# Focused testing with custom instructions
-strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
-
-# Provide detailed instructions through file (e.g., rules of engagement, scope, exclusions)
-strix --target api.your-app.com --instruction-file ./instruction.md
-
-# Force PR diff-scope against a specific base branch
-strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 ```
+
+See the [CLI reference](https://docs.strix.ai/usage/cli) for every option, including scan modes, diff scope, instruction files, and budgets.
 
 ### Headless Mode
 
@@ -294,140 +268,49 @@ jobs:
 ```
 
 > [!TIP]
-> In CI pull request runs, Strix automatically scopes quick reviews to changed files.
-> If diff-scope cannot resolve, ensure checkout uses full history (`fetch-depth: 0`) or pass
-> `--diff-base` explicitly.
+> In CI pull request runs, Strix automatically scopes quick reviews to changed files, which is why the
+> checkout above fetches full history. See the
+> [CI/CD documentation](https://docs.strix.ai/integrations/github-actions) for the details.
 
 ### Configuration
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
 export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
-export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
 
 > [!NOTE]
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
+> See the [configuration reference](https://docs.strix.ai/advanced/configuration) for every environment variable.
 
 #### Sign in with a ChatGPT subscription
 
 Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
 
 ```bash
-strix auth login chatgpt      # sign in with your ChatGPT account
-
+strix auth login chatgpt             # sign in with your ChatGPT account
 export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
-strix --target ./app-directory
-
-strix auth status             # show the active sign-in
-strix auth logout             # forget the sign-in
+strix auth status                    # show the active sign-in, or logout to forget it
 ```
 
 #### Use the managed platform: `strix cloud`
 
-The `strix cloud` commands drive the managed platform ([app.strix.ai](https://app.strix.ai)) from the terminal. Sign in once with the device flow. The sign-in creates your account and workspace on first use and stores a personal API token in `~/.strix/platform-auth.json`:
+Run scans on [app.strix.ai](https://app.strix.ai) from the terminal, without Docker or an LLM key:
 
 ```bash
-strix cloud login                         # browser approval, then workspace + scope profile
-strix cloud login --workspace "My Team"   # select a workspace by name or ID
-strix cloud whoami                        # fast local account/workspace status
-strix cloud session                       # verify remote session + consent ceiling
-strix cloud logout                        # revoke remotely, then remove locally
-```
-
-The default **Recommended** scope preset supports normal scan work, local source uploads,
-workspace switching, and user-approved credit top-ups. It excludes credential creation;
-request `tokens:write` explicitly (or choose Full) when needed. For strict least privilege, pass an explicit list such as
-`--scopes scans:read scans:write uploads:write billing:read`. Named automation
-profiles are also available with `--scope-profile minimal|recommended|full`.
-
-Every operation of the [REST API](https://docs.app.strix.ai) has a matching command in the form `strix cloud <resource> <verb>`:
-
-```bash
-strix cloud                                   # list all resources
-strix cloud scans                             # run the safe default (`scans list`)
-strix cloud scans help                        # list the verbs of a resource
-strix cloud domains add --domain example.com --asset-type web_app
+strix cloud login                                  # browser sign-in, one credential per install
+strix cloud scans start --source . --yes --wait    # scan local code, approving the upload
 strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
-strix cloud scans start --source . --dry-run --show-files --json  # review + capture source.archive_sha256
-SOURCE_SHA256="<reviewed source.archive_sha256>"
-strix cloud scans start --source . --approve-sha256 "$SOURCE_SHA256" --wait
 strix cloud vulns list --severity critical
-strix cloud credits                           # credit balance
-strix cloud billing topup --credits 20 --yes  # explicitly approve agent payment after HTTP 402
 ```
 
-Workspaces and account setup also work from the terminal:
+Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`. Binary downloads are the exception: redirect the raw bytes, or combine `--output FILE --json` for download metadata.
 
-```bash
-strix cloud workspaces list                   # numbered list; `workspace` is also accepted
-strix cloud workspaces create --name "My Team" # admin + organizations:write
-strix cloud workspaces use 2                  # switch by list number, exact name, or ID
-strix cloud session scopes                    # granted scopes + login ceiling
-strix cloud session scopes set minimal        # narrow without another browser sign-in
-strix cloud billing subscribe --plan strix_cloud # opens the hosted checkout page
-strix cloud billing portal                    # opens the billing portal
-strix cloud integrations install github       # opens the app installation page
-strix cloud domains verify <domain-id>        # prints the DNS record to add
-```
-
-The last four commands end at a person. Strix creates the link, opens the browser for an interactive terminal, and always prints the URL. The user enters the card, approves the installation, or adds the DNS record. Pass `--no-browser` to print the URL only.
-
-The commands work for humans and agents: terminal output favors names, branches, lifecycle states, and numbered selectors, while redirected output (or `--json`) preserves complete machine-readable records and IDs. Human lists retain the selectors needed by follow-up commands but omit internal organization/user IDs; a selector too long for the compact table is repeated losslessly in a copyable block. Paginated lists print the next `--page` or `--offset`, and detail views preserve useful prose within a safe terminal bound; use `--json` for the complete record. Token lists distinguish API keys from named CLI device sessions. Binary downloads are the exception: intentionally redirect their raw bytes, or use `--output FILE --json` to write the file and receive structured download metadata. There are no prompts when stdin is not a terminal. Exit codes: `0` success, `1` error, `2` invalid usage, `4` authentication or plan limit, `5` payment required. `--token` and `STRIX_API_TOKEN` are stateless per-command overrides and never replace the stored sign-in; pair a CLI-session override with `--workspace-id` or `STRIX_WORKSPACE_ID`.
-
-A browser sign-in creates one reusable credential per CLI installation. Logging in again on the
-same installation replaces its secret instead of accumulating keys. Workspace switches keep that
-credential and expiry, preserve the server-side scope preference, cap access by the target role,
-and can never exceed the login consent ceiling. Each process pins its starting workspace, so a
-concurrent switch fails safely instead of sending a stale command to another organization.
-`strix cloud logout` revokes the server session before deleting the local token; use
-`--local-only` only when you deliberately cannot reach the server.
-
-Write commands take request fields as flags, and every write command also accepts one JSON object with `--data`:
-
-```bash
-strix cloud scans start --data '{"engagement_type":"code_review"}'   # literal JSON
-strix cloud scans start --data @request.json                         # read a file
-cat request.json | strix cloud scans start --data -                  # read standard input
-```
-
-For an agent or CI local-source scan, run `--dry-run --show-files --json`, review the manifest,
-and capture `source.archive_sha256`. Rerun with the same `--source`, every `--exclude`, and any
-`--include-*` selection flags, replacing `--dry-run` with `--approve-sha256 HASH`; Strix
-rebuilds the archive and refuses to upload it if the digest changed. `--yes` instead approves
-only the snapshot built in that one invocation. It is suitable for a deliberate human or
-one-shot approval, not as a digest-bound two-step agent/CI handoff.
-
-The safe default honors `.gitignore` and `.strixignore` and excludes hidden paths, secret-like
-files, VCS metadata, dependencies/build output, symlinks, and nested archives. Opt in
-separately with `--include-hidden`, `--include-sensitive`, or `--include-archives`. The client
-caps a bundle at 20,000 files, 25 MiB per file, 250 MiB expanded, and 50 MiB compressed, and
-the service independently validates the archive. Source alone infers a code review; adding a
-domain infers a live test. You can always pass `--engagement-type` explicitly.
-
-Strix removes the temporary local archive after every invocation. It deletes a staged remote
-upload after a definitive scan rejection. If a network error, `5xx` response, malformed
-success response, or interruption makes the launch outcome ambiguous, it retains the upload and reports its `upload_id` with
-`launch_outcome_unknown: true`; if automatic deletion cannot be confirmed, it reports the ID
-with `cleanup_unknown: true`. Check `strix cloud scans list` before retrying. If no scan is
-linked to the retained upload, delete it with `strix cloud uploads delete UPLOAD_ID`.
-
-Non-Enterprise scans consume the deterministic estimate shown for their scope (a source-only
-code review at the default `ultra` tier currently starts at 60 credits). Enterprise scans are
-plan-included and do not consume the credit wallet. Report downloads need Enterprise,
-schedules need Pro, and billing writes need an admin token. Plan blocks exit `4`; an
-insufficient credit wallet exits `5` without creating or charging a scan.
-
-Enable native tab completion once per shell session:
-
-```bash
-source <(strix completions zsh)       # use bash instead of zsh when appropriate
-strix completions fish | source
-```
+See the [cloud CLI documentation](https://docs.strix.ai/cloud/cli) for scopes, workspaces, billing, and source-upload options.
 
 #### Connect your own MCP servers
 
@@ -435,12 +318,6 @@ Strix can connect to Model Context Protocol (MCP) servers you list and let the a
 
 ```json
 [
-  {
-    "name": "local_fs",
-    "transport": "stdio",
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/project"]
-  },
   {
     "name": "github",
     "transport": "http",
@@ -452,12 +329,16 @@ Strix can connect to Model Context Protocol (MCP) servers you list and let the a
 ```
 
 The model uses `list_mcps`, `describe_mcp`, and `call_mcp` to reach connected servers instead of receiving one model-visible function per remote tool. Omit `allowed_tools` to make every tool on that connection discoverable, or set it to a list to restrict which tools `call_mcp` can invoke. The file is optional, and a server that fails to connect is skipped without failing the run. You can point Strix at a different file with `STRIX_MCP_CONFIG`.
+See the [MCP documentation](https://docs.strix.ai/integrations/mcp) for the full schema, tool filtering, and `stdio` servers.
 
 **Recommended models for best results:**
 
+- [Z.ai GLM-5.3 on OpenRouter](https://openrouter.ai/z-ai/glm-5.3) - `openrouter/z-ai/glm-5.3` (the default pick)
 - [OpenAI GPT-5.4](https://openai.com/api/) - `openai/gpt-5.4`
 - [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) - `anthropic/claude-sonnet-4-6`
 - [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) - `vertex_ai/gemini-3-pro-preview`
+- [DeepSeek V4 Pro](https://platform.deepseek.com) - `deepseek/deepseek-v4-pro`
+- [Moonshot Kimi K3](https://platform.kimi.ai) - `moonshot/kimi-k3`
 
 See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, and local models.
 

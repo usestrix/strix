@@ -6,6 +6,7 @@ import io
 import json
 import shutil
 import subprocess
+import sys
 import urllib.request
 import webbrowser
 from pathlib import Path
@@ -16,7 +17,7 @@ import requests
 from rich.console import Console
 
 from strix.interface import cloud, platform_cli
-from strix.interface.cloud import billing, http, payment_proxy, render, runner, workspaces
+from strix.interface.cloud import http, render, runner, workspaces
 from strix.interface.cloud.spec import GROUP_HELP, SPEC
 
 
@@ -147,7 +148,7 @@ def test_read_groups_have_safe_defaults(group: str, verb: str) -> None:
     resolved = runner.resolve(group, [])
     assert resolved is not None
     command, remaining = resolved
-    assert command is runner.SPEC[group][verb]
+    assert command is SPEC[group][verb]
     assert remaining == []
 
 
@@ -533,6 +534,69 @@ def test_insufficient_credits_exits_with_payment_code(monkeypatch: pytest.Monkey
     assert cloud.run_cloud(["scans", "start", "--domain-ids", "d1"]) == http.EXIT_PAYMENT
 
 
+def test_insufficient_credits_always_prints_topup_instruction(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.setattr(
+        http,
+        "request",
+        lambda *_a, **_k: FakeResponse(
+            status_code=402,
+            payload={"detail": "Out of credits.", "code": "scan_credit_limit_reached"},
+        ),
+    )
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    argv = ["scans", "start", "--domain-ids", "d1", "--app-url", "https://app.strix.ai"]
+    assert cloud.run_cloud(argv) == http.EXIT_PAYMENT
+    output = " ".join(capsys.readouterr().out.split())
+    assert "Error: Out of credits." in output
+    assert "Next step:" in output
+    assert "strix cloud billing topup --credits <count>" in output
+    assert "https://app.strix.ai/settings/billing" in output
+    assert "strix cloud billing credits" in output
+
+
+def test_insufficient_credits_shows_platform_hint_once(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    hint = "Buy credits at https://app.strix.ai/settings/billing. Then retry this request."
+    payload = {
+        "detail": f"Out of credits. {hint}",
+        "code": "scan_credit_limit_reached",
+        "hint": hint,
+        "topup_url": "https://app.strix.ai/settings/billing",
+    }
+    monkeypatch.setattr(
+        http, "request", lambda *_a, **_k: FakeResponse(status_code=402, payload=payload)
+    )
+    assert cloud.run_cloud(["scans", "start", "--domain-ids", "d1", "--json"]) == http.EXIT_PAYMENT
+    result = json.loads(capsys.readouterr().out)
+    assert result["error"] == "Out of credits."
+    assert result["next_step"] == hint
+    assert result["topup_url"] == "https://app.strix.ai/settings/billing"
+
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
+    assert cloud.run_cloud(["scans", "start", "--domain-ids", "d1"]) == http.EXIT_PAYMENT
+    output = " ".join(capsys.readouterr().out.split())
+    assert output.count(hint) == 1
+    assert "Error: Out of credits." in output
+    assert f"Next step: {hint}" in output
+
+
+def test_payment_required_without_body_names_the_topup_command(
+    monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.setattr(
+        http, "request", lambda *_a, **_k: FakeResponse(status_code=402, payload={})
+    )
+    argv = ["scans", "start", "--domain-ids", "d1", "--json", "--app-url", "https://app.strix.ai"]
+    assert cloud.run_cloud(argv) == http.EXIT_PAYMENT
+    result = json.loads(capsys.readouterr().out)
+    assert result["error"] == "Not enough credits to run this command."
+    assert "strix cloud billing topup --credits <count>" in result["next_step"]
+    assert "https://app.strix.ai/settings/billing" in result["next_step"]
+
+
 def test_data_rejects_non_object() -> None:
     assert cloud.run_cloud(["scans", "start", "--data", "[1,2]"]) == http.EXIT_USAGE
     assert cloud.run_cloud(["scans", "start", "--data", "not json"]) == http.EXIT_USAGE
@@ -561,7 +625,7 @@ def test_stored_token_is_never_sent_to_a_different_platform_origin(
         lambda: {"api_token": "stored-secret", "app_url": "https://app.strix.ai"},
     )
     monkeypatch.setattr(
-        http.requests,
+        requests,
         "request",
         lambda *_args, **_kwargs: pytest.fail("a mismatched origin must not receive the token"),
     )
@@ -576,7 +640,7 @@ def test_stored_token_requires_an_issuer_binding(monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(http, "_app_url_override", "https://app.strix.ai")
     monkeypatch.setattr(http, "read_record", lambda: {"api_token": "legacy-secret"})
     monkeypatch.setattr(
-        http.requests,
+        requests,
         "request",
         lambda *_args, **_kwargs: pytest.fail("an unbound token must not be sent"),
     )
@@ -602,7 +666,7 @@ def test_stored_token_is_sent_only_to_its_bound_platform(
         seen.update(url=url, headers=kwargs["headers"])
         return FakeResponse(payload={"balance": 1})
 
-    monkeypatch.setattr(http.requests, "request", request)
+    monkeypatch.setattr(requests, "request", request)
     response = http.request("GET", "/billing/credits")
 
     assert response.status_code == 200
@@ -626,7 +690,7 @@ def test_explicit_token_can_target_an_explicit_platform(
         seen.update(url=url, headers=kwargs["headers"])
         return FakeResponse(payload={"balance": 1})
 
-    monkeypatch.setattr(http.requests, "request", request)
+    monkeypatch.setattr(requests, "request", request)
     override_value = "explicit-preview-" + str(1)
     response = http.request("GET", "/billing/credits", token=override_value)
 
@@ -706,9 +770,9 @@ def test_topup_noninteractive_requires_explicit_payment_approval(
     monkeypatch.setattr(
         http, "request", lambda *_a, **_k: FakeResponse(status_code=402, payload=challenge)
     )
-    monkeypatch.setattr(runner.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: False)
     monkeypatch.setattr(
-        billing.subprocess,
+        subprocess,
         "run",
         lambda *_a, **_k: pytest.fail("wallet must not run without --yes"),
     )
@@ -732,10 +796,10 @@ def test_topup_machine_output_never_prompts_even_with_terminal_stdin(
     monkeypatch.setattr(
         http, "request", lambda *_a, **_k: FakeResponse(status_code=402, payload=challenge)
     )
-    monkeypatch.setattr(runner.sys.stdin, "isatty", lambda: True)
-    monkeypatch.setattr(runner.sys.stdout, "isatty", lambda: stdout_tty)
+    monkeypatch.setattr(sys.stdin, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: stdout_tty)
     monkeypatch.setattr(
-        runner.Console,
+        Console,
         "input",
         lambda *_a, **_k: pytest.fail("machine-readable top-up must not prompt"),
     )
@@ -839,7 +903,7 @@ def test_topup_keeps_token_out_of_wallet_process_and_forwards_payment(
         upstream.update(method=method, url=url, **kwargs)
         return FakeResponse(payload=receipt, content=json.dumps(receipt).encode())
 
-    monkeypatch.setattr(payment_proxy.requests, "request", fake_upstream_request)
+    monkeypatch.setattr(requests, "request", fake_upstream_request)
 
     def fake_run(command: list[str], **kwargs: Any) -> Any:
         commands.append(command)
@@ -905,6 +969,7 @@ def test_topup_wallet_failure_is_one_redacted_json_object(
         http, "request", lambda *_a, **_k: FakeResponse(status_code=402, payload=challenge)
     )
     monkeypatch.setattr(http, "api_token", lambda *_a, **_k: "tok")
+    monkeypatch.setenv("MPPX_ACCOUNT", "agent")
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/npx")
     monkeypatch.setattr(
         subprocess,
@@ -946,6 +1011,7 @@ def test_topup_wallet_interruption_reports_unknown_payment_outcome(
         ),
     )
     monkeypatch.setattr(http, "api_token", lambda *_a, **_k: "tok")
+    monkeypatch.setenv("MPPX_ACCOUNT", "agent")
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/npx")
     monkeypatch.setattr(
         subprocess, "run", lambda *_a, **_k: (_ for _ in ()).throw(KeyboardInterrupt)
@@ -971,6 +1037,7 @@ def test_topup_non_json_wallet_success_requires_balance_verification(
         ),
     )
     monkeypatch.setattr(http, "api_token", lambda *_a, **_k: "tok")
+    monkeypatch.setenv("MPPX_ACCOUNT", "agent")
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/npx")
     monkeypatch.setattr(
         subprocess,
@@ -997,6 +1064,7 @@ def test_topup_rejects_parseable_wallet_error_as_a_success(
         ),
     )
     monkeypatch.setattr(http, "api_token", lambda *_a, **_k: "tok")
+    monkeypatch.setenv("MPPX_ACCOUNT", "agent")
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/npx")
     monkeypatch.setattr(
         subprocess,
@@ -1036,6 +1104,7 @@ def test_topup_does_not_trust_an_unobserved_wallet_receipt(
         ),
     )
     monkeypatch.setattr(http, "api_token", lambda *_a, **_k: "tok")
+    monkeypatch.setenv("MPPX_ACCOUNT", "agent")
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/npx")
     monkeypatch.setattr(
         subprocess,
@@ -1056,7 +1125,7 @@ def test_topup_does_not_trust_an_unobserved_wallet_receipt(
 def test_topup_human_mode_requires_a_bridge_confirmed_receipt(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -1066,9 +1135,10 @@ def test_topup_human_mode_requires_a_bridge_confirmed_receipt(
         ),
     )
     monkeypatch.setattr(http, "api_token", lambda *_a, **_k: "tok")
+    monkeypatch.setenv("MPPX_ACCOUNT", "agent")
     monkeypatch.setattr(shutil, "which", lambda _name: "/usr/bin/npx")
     monkeypatch.setattr(
-        payment_proxy.requests,
+        requests,
         "request",
         lambda *_a, **_k: FakeResponse(status_code=200, content=b"<html>not a receipt</html>"),
     )
@@ -1597,7 +1667,7 @@ def test_handoff_links_reject_non_http_schemes(
     monkeypatch: pytest.MonkeyPatch,
     capsys: Any,
 ) -> None:
-    monkeypatch.setattr(runner.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -1882,7 +1952,7 @@ def test_workspace_use_preserves_definitive_conflict(
 def test_group_help_lists_all_verbs_instead_of_default_verb_help(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     assert cloud.run_cloud(["workspaces", "-h"]) == 0
     output = capsys.readouterr().out
     assert "workspaces verbs" in output
@@ -1906,7 +1976,7 @@ def test_workspace_alias_routes_to_workspaces(monkeypatch: pytest.MonkeyPatch) -
 def test_workspace_human_list_is_numbered_and_hides_ids(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -1954,7 +2024,7 @@ def test_integrations_human_list_exposes_installation_id_and_json_stays_full(
         ],
         "bitbucket_oauth_enabled": True,
     }
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(http, "request", lambda *_a, **_k: FakeResponse(payload=payload))
 
     assert cloud.run_cloud(["integrations", "list"]) == 0
@@ -1972,7 +2042,7 @@ def test_integrations_human_list_exposes_installation_id_and_json_stays_full(
 def test_pr_review_human_list_prioritizes_actionable_fields(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -2047,7 +2117,7 @@ def test_pr_review_human_list_shows_pull_request_state(
     capsys: Any,
     pr_state: str,
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -2110,7 +2180,7 @@ def test_scan_human_list_identifies_internal_and_uploaded_targets(
     record: dict[str, Any],
     expected_targets: tuple[str, ...],
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -2274,7 +2344,7 @@ def test_human_lists_prioritize_actionable_fields(
     visible: tuple[str, ...],
     hidden: tuple[str, ...],
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(http, "request", lambda *_a, **_k: FakeResponse(payload=payload))
 
     assert cloud.run_cloud(command) == 0
@@ -2288,7 +2358,7 @@ def test_human_lists_prioritize_actionable_fields(
 def test_token_human_list_shows_lifecycle_status(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -2645,7 +2715,7 @@ def test_nonstandard_human_list_envelopes_are_actionable(
     visible: tuple[str, ...],
     hidden: tuple[str, ...],
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(http, "request", lambda *_a, **_k: FakeResponse(payload=payload))
 
     assert cloud.run_cloud(command) == 0
@@ -2695,7 +2765,7 @@ def test_chat_credentials_human_view_separates_attached_and_available_sources(
             }
         ],
     }
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(http, "request", lambda *_a, **_k: FakeResponse(payload=payload))
 
     command = ["chat", "credentials", "chat-id", "--scan-ids", "source-scan-id"]
@@ -2921,7 +2991,7 @@ def test_named_human_list_views_match_api_fields(
     visible: tuple[str, ...],
     hidden: tuple[str, ...],
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(http, "request", lambda *_a, **_k: FakeResponse(payload=payload))
 
     assert cloud.run_cloud(command) == 0
@@ -2935,7 +3005,7 @@ def test_named_human_list_views_match_api_fields(
 def test_supply_chain_org_summary_human_view_shows_totals_and_repository_risk(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -3096,7 +3166,7 @@ def test_wrapped_detail_human_views_are_unwrapped_and_actionable(
     visible: tuple[str, ...],
     hidden: tuple[str, ...],
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(http, "request", lambda *_a, **_k: FakeResponse(payload=payload))
 
     assert cloud.run_cloud(command) == 0
@@ -3110,7 +3180,7 @@ def test_wrapped_detail_human_views_are_unwrapped_and_actionable(
 def test_trace_human_view_summarizes_events_and_preserves_selector(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     seen_query: dict[str, Any] = {}
 
     def fake_trace_request(_method: str, _path: str, **kwargs: Any) -> FakeResponse:
@@ -3206,7 +3276,7 @@ def test_trace_human_view_summarizes_events_and_preserves_selector(
 def test_paginated_human_list_shows_total_and_continuation_command(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -3308,7 +3378,7 @@ def test_page_pagination_explains_an_out_of_range_page() -> None:
 def test_human_detail_preserves_long_prose_beyond_table_cell_limit(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     description = (
         " ".join(["authorization context"] * 12) + " final-description-marker\nsecond-line-marker"
     )
@@ -3386,7 +3456,7 @@ def test_large_vulnerability_detail_prioritizes_evidence_and_remediation() -> No
 def test_test_user_human_view_joins_latest_verification(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",
@@ -3483,7 +3553,7 @@ def test_wide_knowledge_table_keeps_title_readable_with_long_identifiers() -> No
 def test_human_get_prioritizes_details_and_hides_internal_identity_fields(
     monkeypatch: pytest.MonkeyPatch, capsys: Any
 ) -> None:
-    monkeypatch.setattr(render.sys.stdout, "isatty", lambda: True)
+    monkeypatch.setattr(sys.stdout, "isatty", lambda: True)
     monkeypatch.setattr(
         http,
         "request",

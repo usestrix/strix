@@ -302,6 +302,62 @@ async def test_call_http_rejection_preserves_session(
 
 
 @pytest.mark.asyncio
+async def test_call_jsonrpc_error_preserves_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A JSON-RPC error is a well-formed reply to this request, so the session stays
+    # up: no reconnect, no retry, no quarantine. The streamable-HTTP client also
+    # synthesizes one (status-less "Session terminated") for an HTTP 404, which some
+    # providers return for a missing resource.
+    error = McpError(ErrorData(code=32600, message="Session terminated"))
+    builds = 0
+
+    def build(_config: Any) -> Any:
+        nonlocal builds
+        builds += 1
+        return _built_server(_sequence_server("rpc-error", error))
+
+    monkeypatch.setattr(mcp_client, "_build_server", build)
+    monkeypatch.setattr(mcp_session, "_retry_delay", _zero_delay)
+
+    session = mcp_session.SupervisedMcpSession(_config("rpc-error"))
+    assert await session.start()
+    result = await session.dispatch("read", {}, label="rpc_error_read")
+    assert result["success"] is False
+    assert "not the connection" in result["content"]
+    assert "still available" in result["content"]
+    assert session.is_dead is False
+    assert session.is_unavailable is False
+    assert session._quarantine_count == 0
+    assert builds == 1
+    await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_list_tools_during_quarantine_reports_temporary_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(mcp_session, "_retry_delay", _zero_delay)
+    monkeypatch.setattr(asyncio, "sleep", _no_sleep)
+    clock = [100.0]
+    monkeypatch.setattr("strix.tools.mcp.session.time.monotonic", lambda: clock[0])
+    builds = iter([_sequence_server("cooldown", _http_error(500)) for _ in range(3)])
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(next(builds)))
+    session = mcp_session.SupervisedMcpSession(_config("cooldown"))
+    assert await session.start()
+    await session.dispatch("read", {}, label="cooldown_read")
+    assert session.is_unavailable is True
+
+    with pytest.raises(mcp_session.McpConnectionUnavailableError) as excinfo:
+        await session.list_tools()
+    message = str(excinfo.value)
+    assert "temporarily unavailable" in message
+    assert "retrying in about 30 seconds" in message
+    assert "rest of this run" not in message
+    await session.aclose()
+
+
+@pytest.mark.asyncio
 async def test_call_http_403_during_list_tools_dies() -> None:
     server = _list_tools_error_server("connect-403", _http_error(403))
     session = mcp_session.SupervisedMcpSession.adopt(

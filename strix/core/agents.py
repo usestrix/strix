@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed", "budget_paused"]
 
+TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "stopped", "crashed", "failed"})
+
 # Why an agent parked. The user can message any agent, so this - not the agent's
 # position in the tree - decides whether waiting is bounded: only an agent waiting
 # on other agents is re-checked on a timer.
@@ -36,6 +38,10 @@ class AgentRuntime:
     task: asyncio.Task[Any] | None = None
     stream: Any | None = None
     interrupt_on_message: bool = False
+    # Whether the agent's loop parks after a terminal state and can be woken by a
+    # later message. A non-interactive loop returns instead, so once such an
+    # agent is terminal nothing will ever read its mailbox again.
+    resumable: bool = True
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     mailbox: list[dict[str, Any]] = field(default_factory=list)
     user_wake_required: bool = False
@@ -175,6 +181,7 @@ class AgentCoordinator:
         session: Session | None = None,
         task: asyncio.Task[Any] | None = None,
         interrupt_on_message: bool | None = None,
+        resumable: bool | None = None,
     ) -> None:
         async with self._lock:
             runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
@@ -184,6 +191,8 @@ class AgentCoordinator:
                 runtime.task = task
             if interrupt_on_message is not None:
                 runtime.interrupt_on_message = interrupt_on_message
+            if resumable is not None:
+                runtime.resumable = resumable
 
     async def mark_running(self, agent_id: str) -> None:
         async with self._lock:
@@ -275,16 +284,42 @@ class AgentCoordinator:
             self._parent_notified.add(agent_id)
             return True
 
+    def _unreachable_locked(self, agent_id: str) -> bool:
+        """True when the agent is terminal and no loop will ever read its mailbox."""
+        if self.statuses.get(agent_id) not in TERMINAL_STATUSES:
+            return False
+        runtime = self.runtimes.get(agent_id)
+        return runtime is not None and not runtime.resumable
+
+    async def reachability(self, agent_id: str) -> tuple[bool, Status | None]:
+        """Whether a message to ``agent_id`` can still be acted on, plus its status."""
+        async with self._lock:
+            status = self.statuses.get(agent_id)
+            if status is None:
+                return False, None
+            return not self._unreachable_locked(agent_id), status
+
     async def send(
         self, target_agent_id: str, message: dict[str, Any], *, interrupt: bool = True
     ) -> bool:
-        """Queue a user/peer message in the target's mailbox and wake it."""
+        """Queue a user/peer message in the target's mailbox and wake it.
+
+        Returns False when nothing will ever read the message: the target is
+        unknown, or it is terminal and its loop does not park for wake-ups.
+        """
         from_user = message.get("from") == "user"
         if from_user and self._budget_paused:
             await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:
             if target_agent_id not in self.statuses:
                 logger.debug("agent.send dropped unknown target=%s", target_agent_id)
+                return False
+            if self._unreachable_locked(target_agent_id):
+                logger.info(
+                    "agent.send dropped: target=%s is %s and cannot be woken",
+                    target_agent_id,
+                    self.statuses[target_agent_id],
+                )
                 return False
             runtime = self.runtimes.setdefault(target_agent_id, AgentRuntime())
             runtime.mailbox.append(dict(message))

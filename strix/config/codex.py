@@ -183,7 +183,7 @@ def build_authorize_url(challenge: str, state: str) -> str:
         "code_challenge": challenge,
         "code_challenge_method": "S256",
         "state": state,
-        "id_token_add_organizations": "true",
+        "id_token_add_organizations": "true",  # nosec B105 - boolean flag, not a secret
         "codex_cli_simplified_flow": "true",
         "originator": ORIGINATOR,
     }

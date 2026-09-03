@@ -11,7 +11,7 @@ metadata:
 
 APIs fail differently from web UIs: there is no rendered surface to crawl, the interesting bugs are authorization-shaped rather than injection-shaped, and the same endpoint behaves differently per token. This workflow targets those specifics with Strix's autonomous agents, using the current [OWASP API Security Top 10 (2023)](https://owasp.org/API-Security/editions/2023/en/0x11-t10/) as the coverage checklist. For the web-app equivalent, the current edition is the OWASP Top 10:2025 — see **owasp-top-10-testing**.
 
-Install, LLM setup, full CLI flags, and the managed-cloud path are in the **penetration-testing-with-strix** skill. Read it if `strix --version` fails or the target is not an API.
+Install, LLM setup, full CLI flags, and the managed-cloud path are in the **penetration-testing-with-strix** skill. Read it if `strix --version` fails or the target is not an API. For a run with no Docker and no LLM key, the same binary drives the managed platform: `strix cloud login`, then `strix cloud scans start ...` (details in **managed-pentesting-with-strix**).
 
 ## 1. Gather what the agents need
 

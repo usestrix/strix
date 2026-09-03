@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import time
 from typing import Any
 
 import pytest
+import requests
 
 from strix.interface import cloud
 from strix.interface.cloud import http, runner
@@ -30,7 +32,7 @@ class FakeResponse:
 @pytest.fixture(autouse=True)
 def _token(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_API_TOKEN", "idempotency-test-token")
-    monkeypatch.setattr(runner.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(time, "sleep", lambda _seconds: None)
 
 
 def test_scan_start_generates_and_sends_one_stable_key(
@@ -197,7 +199,7 @@ def test_http_client_places_key_in_the_header(monkeypatch: pytest.MonkeyPatch) -
         seen.update(kwargs)
         return FakeResponse({"ok": True})
 
-    monkeypatch.setattr(http.requests, "request", request)
+    monkeypatch.setattr(requests, "request", request)
     http.request("POST", "/scans", body={}, idempotency_key="header-key")
     assert seen["headers"]["Idempotency-Key"] == "header-key"
     assert seen["headers"]["Authorization"] == "Bearer idempotency-test-token"

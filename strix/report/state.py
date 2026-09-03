@@ -167,7 +167,7 @@ def get_global_report_state() -> Optional["ReportState"]:
     return _global_report_state
 
 
-def set_global_report_state(report_state: "ReportState") -> None:
+def set_global_report_state(report_state: Optional["ReportState"]) -> None:
     global _global_report_state  # noqa: PLW0603
     _global_report_state = report_state
     # New run: drop any streamed-cost entries a prior run left unconsumed.

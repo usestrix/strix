@@ -655,3 +655,44 @@ def test_incomplete_upload_credentials_delete_the_reserved_upload(
     monkeypatch.setattr(http, "request", fake_request)
     assert cloud.run_cloud(["scans", "start", "--source", str(tmp_path), "--yes", "--json"]) == 1
     assert ("DELETE", "/uploads/upload-incomplete") in paths
+
+
+def test_archive_source_is_rejected_with_directory_guidance(tmp_path: Path) -> None:
+    archive = tmp_path / "backend.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("app.py", "print('safe')\n")
+
+    with pytest.raises(http.CloudError, match="not an archive") as raised:
+        source_upload.prepare_source(
+            str(archive),
+            include_hidden=False,
+            include_sensitive=False,
+            include_archives=False,
+            exclude=[],
+        )
+    assert raised.value.next_step is not None
+    assert "--source" in raised.value.next_step
+    assert "--dry-run --show-files" in raised.value.next_step
+
+
+def test_oversize_archive_names_largest_files_and_exclude_guidance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "app.py").write_text("print('safe')\n", encoding="utf-8")
+    (tmp_path / "big.bin").write_bytes(os.urandom(4096))
+    monkeypatch.setattr(source_upload, "MAX_ARCHIVE_BYTES", 1024)
+
+    with pytest.raises(http.CloudError, match=r"larger than the 0\.0 MiB upload limit") as raised:
+        source_upload.prepare_source(
+            str(tmp_path),
+            include_hidden=False,
+            include_sensitive=False,
+            include_archives=False,
+            exclude=[],
+        )
+    message = str(raised.value)
+    assert message.index("big.bin") < message.index("app.py")
+    assert raised.value.next_step is not None
+    assert "--exclude" in raised.value.next_step
+    assert "--dry-run --show-files" in raised.value.next_step
+    assert not list(tmp_path.glob("strix-source-*.zip"))

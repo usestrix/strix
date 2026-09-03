@@ -109,10 +109,12 @@ def _call_semaphore(name: str, limit: int) -> asyncio.Semaphore:
 
 
 class McpConnectionUnavailableError(RuntimeError):
-    """A dead MCP connection could not be reached and did not come back.
+    """The MCP connection cannot take requests right now.
 
     Raised by :meth:`SupervisedMcpSession.list_tools` when the connection is dead
-    so the read-only dispatch tools (``describe_mcp``) can report it cleanly.
+    or in a quarantine cooldown. Its message is the session's own status text, so
+    the dispatch tools (``describe_mcp``, ``call_mcp``) can pass it to the agent
+    as-is: a cooldown reads as temporary, a dead connection as final.
     :meth:`SupervisedMcpSession.dispatch` does not raise it: a call to a dead
     connection returns the standard failed-tool output instead.
     """
@@ -607,12 +609,7 @@ class SupervisedMcpSession:
                 return _Outcome(call_failure=failure)
             self._mark_dead(failure, attempt=attempt)
             return _Outcome(dead=True)
-        if (
-            phase == "call"
-            and failure.kind == "protocol"
-            and failure.status is not None
-            and 400 <= failure.status <= 499
-        ):
+        if phase == "call" and failure.kind == "protocol":
             return _Outcome(call_failure=failure)
         if attempt == _MAX_ATTEMPTS:
             await self._quarantine(failure, attempt=attempt)
@@ -729,6 +726,13 @@ class SupervisedMcpSession:
                 "that resource, then retry."
             )
         if failure.kind == "protocol":
+            if failure.status is None:
+                return (
+                    f"MCP connection {self._name!r} rejected this call: the provider "
+                    "returned an error for this request, not the connection. The connection "
+                    "is still available. The resource may not exist or the arguments may be "
+                    "wrong. Check them with describe_mcp, then retry or move on."
+                )
             return (
                 f"MCP connection {self._name!r} rejected this call as invalid "
                 f"(status={failure.status}): the request itself was malformed, not the "

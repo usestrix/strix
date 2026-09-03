@@ -2378,7 +2378,7 @@ wheels = [
 
 [[package]]
 name = "strix-agent"
-version = "1.6.0"
+version = "1.6.1"
 source = { editable = "." }
 dependencies = [
     { name = "caido-sdk-client" },

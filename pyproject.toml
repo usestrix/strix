@@ -1,6 +1,6 @@
 [project]
 name = "strix-agent"
-version = "1.6.0"
+version = "1.6.1"
 description = "Open-source AI Hackers for your apps"
 readme = "README.md"
 license = "Apache-2.0"
@@ -250,6 +250,7 @@ ignore = [
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
 # circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.
 "strix/interface/viewer/server.py" = ["N802", "PLC0415"]
+"strix/interface/cloud/payment_proxy.py" = ["N802"]
 # Lazy telemetry import to avoid importing PostHog before the viewer starts.
 "strix/interface/viewer/cli.py" = ["PLC0415"]
 # Lazy imports inside functions to avoid circular dependency with
@@ -413,6 +414,8 @@ known_third_party = ["pydantic", "litellm"]
 # ============================================================================
 
 [tool.bandit]
-exclude_dirs = ["docs", "build", "dist"]
+# Tests are covered by ruff's flake8-bandit rules (see per-file-ignores above),
+# which is where fixture tokens and loopback URL opens are already waived.
+exclude_dirs = ["docs", "build", "dist", "tests"]
 skips = ["B101", "B601", "B404", "B603", "B607"]  # Skip assert, shell injection, subprocess import and partial path checks
 severity = "medium"

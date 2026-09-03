@@ -162,7 +162,7 @@ def test_setup_restores_prepared_cli_targets() -> None:
 async def test_start_validates_model_before_callback() -> None:
     started = False
 
-    async def start(_verify: bool = True) -> None:
+    async def start() -> None:
         nonlocal started
         started = True
 
@@ -176,7 +176,7 @@ async def test_start_validates_model_before_callback() -> None:
 async def test_start_launches_with_a_configured_model() -> None:
     started = False
 
-    async def start(_verify: bool = True) -> None:
+    async def start() -> None:
         nonlocal started
         started = True
 
@@ -194,8 +194,8 @@ async def test_start_launches_with_a_configured_model() -> None:
 async def test_prompt_targets_are_canonicalized_deduplicated_and_started() -> None:
     started: list[bool] = []
 
-    async def start(verify: bool = True) -> None:
-        started.append(verify)
+    async def start() -> None:
+        started.append(True)
 
     prompt = (
         "i need you to test fiuu.com/search-result/?s=, fiuu.com/blog/ "
@@ -218,8 +218,6 @@ async def test_prompt_targets_are_canonicalized_deduplicated_and_started() -> No
                 "192.0.2.10/search-result/?s=",
                 "https://192.0.2.10/blog/",
             ],
-            # The backend still requires verification once targets resolve.
-            "verify": False,
         },
     )
 
@@ -270,7 +268,7 @@ async def test_invalid_prompt_targets_do_not_partially_mutate_setup() -> None:
 async def test_failed_prompt_target_start_rolls_back_before_retry() -> None:
     attempts = 0
 
-    async def start(_verify: bool = True) -> None:
+    async def start() -> None:
         nonlocal attempts
         attempts += 1
         if attempts == 1:
@@ -305,7 +303,7 @@ async def test_failed_prompt_target_start_rolls_back_before_retry() -> None:
 async def test_start_without_target_requires_mount_consent() -> None:
     started = False
 
-    async def start(_verify: bool = True) -> None:
+    async def start() -> None:
         nonlocal started
         started = True
 
@@ -316,7 +314,7 @@ async def test_start_without_target_requires_mount_consent() -> None:
 
     # Mounting the working directory is never silent.
     with pytest.raises(ValueError, match="No target set"):
-        await controller.handle("setup.start", {"verify": False})
+        await controller.handle("setup.start", {})
     assert started is False
     assert controller.targets == []
     assert controller.workspace_mount is None
@@ -327,7 +325,7 @@ async def test_target_less_start_enters_live_view_and_waits_for_the_mount() -> N
     """Nothing is prepared until the live-view confirmation is answered."""
     started = False
 
-    async def start(_verify: bool = True) -> None:
+    async def start() -> None:
         nonlocal started
         started = True
 
@@ -336,7 +334,7 @@ async def test_target_less_start_enters_live_view_and_waits_for_the_mount() -> N
     loader._cached = None
     controller = TuiController(args(), on_start=start)
 
-    result = await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
+    result = await controller.handle("setup.start", {"mount_working_dir": True})
 
     assert result == {"started": True}
     # The live view is up so the prompt can be shown there, but the scan has not
@@ -352,26 +350,23 @@ async def test_target_less_start_enters_live_view_and_waits_for_the_mount() -> N
 @pytest.mark.asyncio
 async def test_confirming_the_mount_starts_the_scan_without_a_target() -> None:
     started = False
-    seen_verify: bool | None = None
 
-    async def start(verify: bool = True) -> None:
-        nonlocal started, seen_verify
+    async def start() -> None:
+        nonlocal started
         started = True
-        seen_verify = verify
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
     loader._cached = None
     controller = TuiController(args(), on_start=start)
-    await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
+    await controller.handle("setup.start", {"mount_working_dir": True})
 
     result = await controller.handle("setup.confirm_mount", {"approved": True})
 
     assert result == {"approved": True}
     assert started is True
-    # Launched optimistically, and mounted as a workspace: the scan genuinely
-    # has no target, so the instruction is the only source of truth.
-    assert seen_verify is False
+    # Mounted as a workspace: the scan genuinely has no target, so the
+    # instruction is the only source of truth.
     assert controller.workspace_mount == str(Path.cwd())
     assert controller.targets == []
     assert controller.scan_state == "running"
@@ -380,22 +375,23 @@ async def test_confirming_the_mount_starts_the_scan_without_a_target() -> None:
 
 @pytest.mark.asyncio
 async def test_declining_the_mount_runs_without_one() -> None:
-    started: list[bool] = []
+    started = 0
 
-    async def start(verify: bool = True) -> None:
-        started.append(verify)
+    async def start() -> None:
+        nonlocal started
+        started += 1
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
     loader._cached = None
     controller = TuiController(args(), on_start=start)
-    await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
+    await controller.handle("setup.start", {"mount_working_dir": True})
 
     result = await controller.handle("setup.confirm_mount", {"approved": False})
 
     assert result == {"approved": False}
     # Declining skips the directory; it does not abandon the scan.
-    assert started == [False]
+    assert started == 1
     assert controller.workspace_mount is None
     assert controller.pending_workspace_mount is None
     assert controller.setup_mode is False
@@ -405,21 +401,22 @@ async def test_declining_the_mount_runs_without_one() -> None:
 
 @pytest.mark.asyncio
 async def test_approving_the_mount_runs_with_it() -> None:
-    started: list[bool] = []
+    started = 0
 
-    async def start(verify: bool = True) -> None:
-        started.append(verify)
+    async def start() -> None:
+        nonlocal started
+        started += 1
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
     loader._cached = None
     controller = TuiController(args(), on_start=start)
-    await controller.handle("setup.start", {"verify": False, "mount_working_dir": True})
+    await controller.handle("setup.start", {"mount_working_dir": True})
 
     result = await controller.handle("setup.confirm_mount", {"approved": True})
 
     assert result == {"approved": True}
-    assert started == [False]
+    assert started == 1
     assert controller.workspace_mount == str(Path.cwd())
     assert controller.scan_state == "running"
 
@@ -468,22 +465,90 @@ async def test_user_message_updates_live_agent_projection_immediately() -> None:
 
 
 @pytest.mark.asyncio
-async def test_start_forwards_verify_flag_by_default() -> None:
-    seen_verify: bool | None = None
+async def test_start_verifies_the_model_before_a_targeted_launch() -> None:
+    order: list[str] = []
 
-    async def start(verify: bool = True) -> None:
-        nonlocal seen_verify
-        seen_verify = verify
+    async def verify() -> None:
+        order.append("verify")
+
+    async def start() -> None:
+        order.append("start")
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
     loader._cached = None
-    controller = TuiController(args_with_target(), on_start=start)
+    controller = TuiController(args(), on_start=start, on_verify=verify)
 
-    # A named target keeps the upfront model check.
-    await controller.handle("setup.start", {})
+    await controller.handle("setup.start", {"targets": ["https://example.com"]})
 
-    assert seen_verify is True
+    assert order == ["verify", "start"]
+
+
+@pytest.mark.asyncio
+async def test_start_verifies_the_model_before_a_bare_prompt_leaves_setup() -> None:
+    """A bare prompt gets the same model check as a named target, while the
+    setup log is still on screen to show the outcome."""
+    verified = 0
+
+    async def verify() -> None:
+        nonlocal verified
+        verified += 1
+
+    async def start() -> None:
+        return None
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    loader._cached = None
+    controller = TuiController(args(), on_start=start, on_verify=verify)
+
+    await controller.handle("setup.start", {"mount_working_dir": True})
+
+    assert verified == 1
+    assert controller.setup_mode is False
+    assert controller.pending_workspace_mount == str(Path.cwd())
+
+
+@pytest.mark.asyncio
+async def test_failed_model_check_keeps_the_start_screen() -> None:
+    async def verify() -> None:
+        raise RuntimeError("Model connection failed: timed out")
+
+    async def start() -> None:
+        pytest.fail("the scan must not start when the model check fails")
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    loader._cached = None
+    controller = TuiController(args(), on_start=start, on_verify=verify)
+
+    with pytest.raises(RuntimeError, match="Model connection failed"):
+        await controller.handle("setup.start", {"mount_working_dir": True})
+
+    # Still on the start screen, so the error lands in the setup log and the
+    # user can retry; no run was prepared behind a stuck live view.
+    assert controller.setup_mode is True
+    assert controller.scan_started is False
+    assert controller.scan_state == "setup"
+    assert controller.pending_workspace_mount is None
+
+
+@pytest.mark.asyncio
+async def test_confirmed_mount_launch_failure_is_reported_in_the_live_view() -> None:
+    async def start() -> None:
+        raise ValueError("Scan preparation failed")
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    loader._cached = None
+    controller = TuiController(args(), on_start=start)
+    await controller.handle("setup.start", {"mount_working_dir": True})
+
+    with pytest.raises(ValueError, match="Scan preparation failed"):
+        await controller.handle("setup.confirm_mount", {"approved": True})
+
+    assert controller.scan_state == "failed"
+    assert controller.error == "Scan preparation failed"
 
 
 @pytest.mark.asyncio
@@ -491,7 +556,7 @@ async def test_start_rejects_concurrent_and_repeated_submissions() -> None:
     entered = asyncio.Event()
     release = asyncio.Event()
 
-    async def start(_verify: bool = True) -> None:
+    async def start() -> None:
         entered.set()
         await release.wait()
 

@@ -7,6 +7,7 @@ import urllib.request
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import requests
 
 from strix.interface.cloud import payment_proxy
 
@@ -39,7 +40,8 @@ def _post(url: str, body: bytes, headers: dict[str, str] | None = None) -> bytes
         method="POST",
     )
     with urllib.request.urlopen(request, timeout=2) as response:  # noqa: S310
-        return response.read()
+        body_bytes: bytes = response.read()
+    return body_bytes
 
 
 def test_bridge_bounds_decompressed_upstream_response(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -50,7 +52,7 @@ def test_bridge_bounds_decompressed_upstream_response(monkeypatch: pytest.Monkey
         return response
 
     monkeypatch.setattr(payment_proxy, "_MAX_UPSTREAM_RESPONSE_BYTES", 4)
-    monkeypatch.setattr(payment_proxy.requests, "request", fake_request)
+    monkeypatch.setattr(requests, "request", fake_request)
 
     with payment_proxy.wallet_payment_bridge(
         upstream_url="https://app.example.test/api/v1/billing/topup",
@@ -80,7 +82,7 @@ def test_bridge_forwards_only_the_approved_request_and_protected_headers(
         captured.append(kwargs)
         return _StreamingResponse([b'{"ok":true}'])
 
-    monkeypatch.setattr(payment_proxy.requests, "request", fake_request)
+    monkeypatch.setattr(requests, "request", fake_request)
     with payment_proxy.wallet_payment_bridge(
         upstream_url="https://app.example.test/api/v1/billing/topup",
         api_token="strix-secret",  # noqa: S106
@@ -124,7 +126,7 @@ def test_bridge_limits_valid_wallet_attempts(monkeypatch: pytest.MonkeyPatch) ->
         calls += 1
         return _StreamingResponse([b"{}"])
 
-    monkeypatch.setattr(payment_proxy.requests, "request", fake_request)
+    monkeypatch.setattr(requests, "request", fake_request)
     with payment_proxy.wallet_payment_bridge(
         upstream_url="https://app.example.test/api/v1/billing/topup",
         api_token="strix-secret",  # noqa: S106

@@ -34,13 +34,30 @@ EXIT_AUTH = 4
 EXIT_PAYMENT = 5
 
 
-class CloudError(Exception):
-    """A failed cloud command. Carries the process exit code."""
+TOPUP_COMMAND = "strix cloud billing topup --credits <count>"
+BALANCE_COMMAND = "strix cloud billing credits"
 
-    def __init__(self, message: str, *, exit_code: int = EXIT_ERROR, payload: Any = None) -> None:
+
+class CloudError(Exception):
+    """A failed cloud command. Carries the process exit code.
+
+    `next_step` is a short recovery instruction that the runner prints on its
+    own line after the error, so a person or an agent can act without reading
+    the docs.
+    """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        exit_code: int = EXIT_ERROR,
+        payload: Any = None,
+        next_step: str | None = None,
+    ) -> None:
         super().__init__(message)
         self.exit_code = exit_code
         self.payload = payload
+        self.next_step = next_step
 
 
 class CloudTransportError(CloudError):
@@ -349,13 +366,43 @@ def check(response: requests.Response) -> Any:
             error_code = error_code or str(nested.get("code") or "")
             detail = str(nested.get("message") or detail)
     message = detail or f"HTTP {response.status_code}"
-    if error_code == "scan_credit_limit_reached":
-        raise CloudError(message, exit_code=EXIT_PAYMENT, payload=data)
+    if error_code == "scan_credit_limit_reached" or response.status_code == 402:
+        raise payment_required_error(data, detail=detail)
     if response.status_code in (401, 403):
         raise CloudError(message, exit_code=EXIT_AUTH, payload=data)
-    if response.status_code == 402:
-        hint = detail or (
-            "not enough credits. Run `strix cloud billing topup --credits N` to buy credits."
-        )
-        raise CloudError(hint, exit_code=EXIT_PAYMENT, payload=data)
     raise CloudError(message, exit_code=EXIT_ERROR, payload=data)
+
+
+def topup_url() -> str:
+    return f"{app_url()}/settings/billing"
+
+
+def topup_next_step(url: str | None = None) -> str:
+    return (
+        f"Buy credits with `{TOPUP_COMMAND}` or at {url or topup_url()}. "
+        f"Run `{BALANCE_COMMAND}` to see the balance. Then retry this command."
+    )
+
+
+def payment_required_error(data: Any, *, detail: str = "") -> CloudError:
+    """Build the error for an exhausted credit balance.
+
+    The platform sends the recovery instruction in `hint` and repeats it inside
+    `detail`. The CLI shows the instruction once, on its own line, and adds its
+    own instruction when the platform sends none.
+    """
+    server_hint = ""
+    server_url: str | None = None
+    if isinstance(data, dict):
+        raw = cast("dict[str, Any]", data)
+        server_hint = str(raw.get("hint") or "").strip()
+        raw_url = raw.get("topup_url")
+        if isinstance(raw_url, str) and raw_url.startswith("https://"):
+            server_url = raw_url
+    message = detail.strip()
+    if server_hint and message.endswith(server_hint):
+        message = message[: -len(server_hint)].strip()
+    if not message:
+        message = "Not enough credits to run this command."
+    next_step = server_hint or topup_next_step(server_url)
+    return CloudError(message, exit_code=EXIT_PAYMENT, payload=data, next_step=next_step)

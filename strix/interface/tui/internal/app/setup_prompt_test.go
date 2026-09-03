@@ -76,7 +76,6 @@ func commandTypes(envelopes []protocol.Envelope) []string {
 type setupStartPayload struct {
 	Instruction     string   `json:"instruction"`
 	Targets         []string `json:"targets"`
-	Verify          bool     `json:"verify"`
 	MountWorkingDir *bool    `json:"mount_working_dir"`
 }
 
@@ -90,15 +89,6 @@ func decodeSetupStart(t *testing.T, envelopes []protocol.Envelope) setupStartPay
 		t.Fatal(err)
 	}
 	return payload
-}
-
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
 }
 
 // A bare prompt launches straight away, asking to mount the working directory
@@ -121,10 +111,6 @@ func TestSetupPromptWithoutTargetLaunchesAndRequestsMount(t *testing.T) {
 	}
 	if payload.MountWorkingDir == nil || !*payload.MountWorkingDir {
 		t.Fatalf("mount was not requested: %#v", payload.MountWorkingDir)
-	}
-	// A bare prompt launches optimistically: no model preflight.
-	if payload.Verify {
-		t.Fatal("bare prompt should launch with verify=false")
 	}
 	if model.pendingPrompt != "find auth bugs in the login flow" {
 		t.Fatalf("prompt was not held in case the mount is declined: %q", model.pendingPrompt)
@@ -301,7 +287,7 @@ func TestSetupPromptRejectsNonNetworkTokens(t *testing.T) {
 	if payload.Instruction != prompt || payload.Targets == nil || len(payload.Targets) != 0 {
 		t.Fatalf("targetless payload = %#v", payload)
 	}
-	if payload.Verify || payload.MountWorkingDir == nil || !*payload.MountWorkingDir {
+	if payload.MountWorkingDir == nil || !*payload.MountWorkingDir {
 		t.Fatalf("targetless launch flags = %#v", payload)
 	}
 	if model.pendingPrompt != prompt {
@@ -323,9 +309,6 @@ func assertTargetedSetupStart(t *testing.T, prompt string, existing, want []stri
 	}
 	if !reflect.DeepEqual(payload.Targets, want) {
 		t.Fatalf("targets = %#v, want %#v", payload.Targets, want)
-	}
-	if !payload.Verify {
-		t.Fatal("targeted prompt should launch with verify=true")
 	}
 	if payload.MountWorkingDir != nil {
 		t.Fatalf("targeted prompt included mount_working_dir=%v", *payload.MountWorkingDir)

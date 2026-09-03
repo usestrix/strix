@@ -11,7 +11,7 @@ metadata:
 
 Entry point for "make my application secure" requests, where the target is not yet a single URL or repo. The job here is to pick the right test per asset, run it, and produce one ranked plan — not to run everything at maximum depth.
 
-Install, LLM setup, all CLI flags, and the managed-cloud path live in the **penetration-testing-with-strix** skill. Read it first if `strix --version` fails.
+Install, LLM setup, all CLI flags, and the managed-cloud path live in the **penetration-testing-with-strix** skill. Read it first if `strix --version` fails. For a run with no Docker and no LLM key, the same binary drives the managed platform: `strix cloud login`, then `strix cloud scans start ...` (details in **managed-pentesting-with-strix**).
 
 Only test assets the user owns or is authorized to test. Confirm authorization before the first run, and prefer staging over production, because the agents send real exploit payloads and can change data.
 
