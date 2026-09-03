@@ -135,6 +135,12 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
 
 
 async def warm_up_llm(show_model_warning: bool = True) -> None:
+    # Issue #1248: the import warm-up daemon may still be populating
+    # agents.models in sys.modules. Wait for that subpackage only — do not
+    # join the rest of the warm-up thread — then import.
+    from strix.llm.warmup import wait_for_agents_models
+
+    wait_for_agents_models()
     from agents.models.interface import ModelTracing
 
     from strix.config.models import (
