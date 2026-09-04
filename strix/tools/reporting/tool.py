@@ -1091,8 +1091,8 @@ async def create_vulnerability_report(
         cve: ``CVE-YYYY-NNNNN`` if certain, else omit.
         cwe: ``CWE-NNN`` (most specific child) if certain, else omit.
         code_locations: White-box findings — list of location objects.
-        http_exchange_ids: Proxy request ids that prove this finding.
-            Copy these ids from ``list_requests`` or ``view_request``.
+        http_exchange_ids: Proxy request IDs that prove this finding.
+            Copy these IDs from ``list_requests`` or ``view_request``.
             Include only requests that support this finding. Keep the ids
             out of ``evidence`` and all other report text.
 
