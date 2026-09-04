@@ -1,10 +1,11 @@
 """Background pre-import of the heavy scan dependencies.
 
 The scan engine's import graph (the agents SDK, OpenAI client, LiteLLM, the
-Caido SDK, the Docker SDK) costs seconds to import cold, but none of it is
-needed until a scan actually starts. Importing it on a daemon thread at CLI
-entry overlaps that cost with the I/O-bound startup work that always precedes
-a scan (argument parsing, Docker checks, image pull, TUI setup).
+Caido SDK) costs seconds to import cold, but none of it is needed until a scan
+actually starts. Importing it on a daemon thread at CLI entry overlaps that
+cost with the I/O-bound startup work that always precedes a scan (argument
+parsing, Docker checks, image pull, TUI setup). The Docker SDK is not on the
+list: the Docker checks import it on the main thread during that same window.
 
 The main thread must call :func:`wait_for_import_warmup` before its first
 import from that graph. Two threads that enter the same package graph from
@@ -25,7 +26,6 @@ WARMUP_MODULES = (
     "strix.core.runner",
     "litellm",
     "caido_sdk_client",
-    "docker",
 )
 
 _thread: threading.Thread | None = None
