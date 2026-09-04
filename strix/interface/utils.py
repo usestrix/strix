@@ -19,7 +19,8 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
-from strix.utils.api_spec import detect_spec_format
+from strix.utils.api_spec import detect_spec_format, validate_postman_uid
+from strix.utils.secret_files import write_secret_text
 
 
 logger = logging.getLogger(__name__)
@@ -1148,6 +1149,10 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
             raise ValueError(
                 f"Missing Postman collection id in '{target}' (expected postman://<collection-uid>)"
             )
+        # Reject here too, not just inside fetch_postman_collection: a malformed
+        # id (e.g. containing "..") must never reach the point of being turned
+        # into an HTTP request against the Postman API with a real API key.
+        validate_postman_uid(collection_uid, "collection")
         details = {
             "target_spec": target,
             "spec_format": "postman",
@@ -1157,6 +1162,7 @@ def infer_target_type(target: str) -> tuple[str, dict[str, str]]:  # noqa: PLR09
         query = parse_qs(parsed.query)
         env_uid = (query.get("env") or query.get("environment") or [""])[0].strip()
         if env_uid:
+            validate_postman_uid(env_uid, "environment")
             details["environment_uid"] = env_uid
         return "api_spec", details
 
@@ -1506,9 +1512,11 @@ def write_fetched_collection(collection: dict[str, Any], collection_uid: str) ->
     spec file from here on and the API key never leaves the host.
     """
     staging = Path(tempfile.gettempdir()) / "strix_api_specs" / "fetched"
-    staging.mkdir(parents=True, exist_ok=True)
     path = staging / f"{sanitize_name(collection_uid)}.postman_collection.json"
-    path.write_text(json.dumps(collection, indent=2), encoding="utf-8")
+    # A fetched collection can carry auth headers/tokens saved in Postman requests;
+    # write it 0600 like the other secret-bearing files in this codebase instead of
+    # the default umask (world-readable on a shared host).
+    write_secret_text(path, json.dumps(collection, indent=2))
     return str(path)
 
 
