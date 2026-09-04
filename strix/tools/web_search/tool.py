@@ -56,33 +56,46 @@ def _perplexity_content(api_key: str, query: str) -> str:
         return str(response.json()["choices"][0]["message"]["content"])
 
 
-def _exa_content(api_key: str, query: str) -> str:
-    url = "https://api.exa.ai/answer"
+_EXA_HIGHLIGHT_MAX_CHARS = 750
+
+
+def _exa_result_block(result: dict[str, Any]) -> str | None:
+    result_url = str(result.get("url") or result.get("id") or "")
+    if not result_url:
+        return None
+    title = str(result.get("title") or result_url)
+    parts = [f"### {title}\n{result_url}"]
+    highlights = result.get("highlights") or []
+    if isinstance(highlights, list):
+        excerpts = [str(item).strip() for item in highlights if str(item).strip()]
+        if excerpts:
+            parts.append("\n".join(f"> {excerpt}" for excerpt in excerpts))
+    return "\n".join(parts)
+
+
+def _exa_content(api_key: str, query: str, search_type: str, num_results: int) -> str:
+    url = "https://api.exa.ai/search"
     headers = {"x-api-key": api_key, "Content-Type": "application/json"}
     payload = {
         "query": f"{_SYSTEM_PROMPT}\n\n{query}",
-        "text": True,
+        "type": search_type,
+        "numResults": num_results,
+        "contents": {"highlights": {"maxCharacters": _EXA_HIGHLIGHT_MAX_CHARS}},
     }
     with requests.post(url, headers=headers, json=payload, timeout=300) as response:
         response.raise_for_status()
         body: dict[str, Any] = response.json()
-    answer = str(body.get("answer") or "").strip()
-    if not answer:
-        raise ValueError("Exa response has no answer")
-    citations: list[Any] = body.get("citations") or []
-    lines: list[str] = []
-    for citation in citations:
-        if not isinstance(citation, dict):
+    results: list[Any] = body.get("results") or []
+    blocks: list[str] = []
+    for result in results:
+        if not isinstance(result, dict):
             continue
-        entry = cast("dict[str, Any]", citation)
-        citation_url = str(entry.get("url") or entry.get("id") or "")
-        if not citation_url:
-            continue
-        title = str(entry.get("title") or citation_url)
-        lines.append(f"- {title}: {citation_url}")
-    if lines:
-        return answer + "\n\nSources:\n" + "\n".join(lines)
-    return answer
+        block = _exa_result_block(cast("dict[str, Any]", result))
+        if block:
+            blocks.append(block)
+    if not blocks:
+        raise ValueError("Exa response has no results")
+    return "\n\n".join(blocks)
 
 
 def _resolve_provider(  # noqa: PLR0911 - each provider/missing-key case needs its own return
@@ -124,7 +137,8 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
     if not query or not query.strip():
         return {"success": False, "error": "Query cannot be empty"}
 
-    resolved = _resolve_provider(load_settings().integrations)
+    integrations = load_settings().integrations
+    resolved = _resolve_provider(integrations)
     if isinstance(resolved, dict):
         return resolved
     provider, api_key = resolved
@@ -132,7 +146,12 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
 
     try:
         if provider == "exa":
-            content = _exa_content(api_key, query)
+            content = _exa_content(
+                api_key,
+                query,
+                integrations.exa_search_type,
+                integrations.exa_num_results,
+            )
         else:
             content = _perplexity_content(api_key, query)
     except requests.exceptions.Timeout:

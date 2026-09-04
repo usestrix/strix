@@ -80,7 +80,7 @@ def test_no_keys_names_both_providers() -> None:
     assert "EXA_API_KEY or PERPLEXITY_API_KEY" in resolved["error"]
 
 
-def test_exa_content_appends_citation_sources(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exa_content_renders_results_with_highlights(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: dict[str, Any] = {}
 
     def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
@@ -89,9 +89,12 @@ def test_exa_content_appends_citation_sources(monkeypatch: pytest.MonkeyPatch) -
         captured["json"] = kwargs["json"]
         return _FakeResponse(
             {
-                "answer": "CVE-2024-0001 affects it.",
-                "citations": [
-                    {"url": "https://nvd.example/cve", "title": "NVD entry"},
+                "results": [
+                    {
+                        "url": "https://nvd.example/cve",
+                        "title": "NVD entry",
+                        "highlights": ["CVE-2024-0001 affects it.", "  "],
+                    },
                     {"id": "https://blog.example/post"},
                     "not-a-dict",
                     {"title": "no url"},
@@ -101,39 +104,43 @@ def test_exa_content_appends_citation_sources(monkeypatch: pytest.MonkeyPatch) -
 
     monkeypatch.setattr(requests, "post", fake_post)
 
-    content = tool._exa_content("ek", "OpenSSH 7.4 RCE?")
+    content = tool._exa_content("ek", "OpenSSH 7.4 RCE?", "auto", 5)
 
-    assert captured["url"] == "https://api.exa.ai/answer"
+    assert captured["url"] == "https://api.exa.ai/search"
     assert captured["headers"]["x-api-key"] == "ek"
     assert "OpenSSH 7.4 RCE?" in captured["json"]["query"]
+    assert captured["json"]["type"] == "auto"
+    assert captured["json"]["numResults"] == 5
+    assert captured["json"]["contents"]["highlights"]["maxCharacters"] > 0
     assert content == (
-        "CVE-2024-0001 affects it.\n\nSources:\n"
-        "- NVD entry: https://nvd.example/cve\n"
-        "- https://blog.example/post: https://blog.example/post"
+        "### NVD entry\nhttps://nvd.example/cve\n> CVE-2024-0001 affects it.\n\n"
+        "### https://blog.example/post\nhttps://blog.example/post"
     )
 
 
-def test_exa_content_without_citations_returns_the_answer(
+def test_exa_content_renders_a_result_without_highlights(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         requests,
         "post",
-        lambda *_a, **_kw: _FakeResponse({"answer": "  Nothing found.  "}),
+        lambda *_a, **_kw: _FakeResponse(
+            {"results": [{"url": "https://ex.example", "title": "Ex"}]}
+        ),
     )
-    assert tool._exa_content("ek", "q") == "Nothing found."
+    assert tool._exa_content("ek", "q", "auto", 5) == "### Ex\nhttps://ex.example"
 
 
-@pytest.mark.parametrize("body", [{}, {"answer": None}, {"answer": "   "}])
-def test_exa_content_rejects_an_empty_answer(
+@pytest.mark.parametrize("body", [{}, {"results": None}, {"results": []}, {"results": ["x"]}])
+def test_exa_content_rejects_empty_results(
     monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]
 ) -> None:
     monkeypatch.setattr(requests, "post", lambda *_a, **_kw: _FakeResponse(body))
-    with pytest.raises(ValueError, match="no answer"):
-        tool._exa_content("ek", "q")
+    with pytest.raises(ValueError, match="no results"):
+        tool._exa_content("ek", "q", "auto", 5)
 
 
-def test_do_search_reports_an_empty_exa_answer_as_unexpected(
+def test_do_search_reports_empty_exa_results_as_unexpected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     class _Settings:
@@ -165,6 +172,30 @@ def test_environment_validation_follows_provider_rules(
 ) -> None:
     integrations = IntegrationSettings.model_validate(env)
     assert _missing_web_search_vars(integrations) == expected
+
+
+def test_exa_search_type_and_num_results_are_configurable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    class _Settings:
+        integrations = IntegrationSettings(
+            EXA_API_KEY="ek",
+            STRIX_EXA_SEARCH_TYPE="deep-reasoning",
+            STRIX_EXA_NUM_RESULTS=3,
+        )
+
+    def fake_post(_url: str, **kwargs: Any) -> _FakeResponse:
+        captured["json"] = kwargs["json"]
+        return _FakeResponse({"results": [{"url": "https://ex.example", "title": "Ex"}]})
+
+    monkeypatch.setattr(tool, "load_settings", _Settings)
+    monkeypatch.setattr(requests, "post", fake_post)
+
+    assert tool._do_search("q")["success"] is True
+    assert captured["json"]["type"] == "deep-reasoning"
+    assert captured["json"]["numResults"] == 3
 
 
 def test_do_search_reports_the_provider_it_used(monkeypatch: pytest.MonkeyPatch) -> None:
