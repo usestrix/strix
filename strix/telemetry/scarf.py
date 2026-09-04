@@ -11,6 +11,7 @@ from strix.telemetry._common import (
     SEND_TIMEOUT,
     SESSION_ID,
     base_props,
+    dispatch,
     get_version,
     is_first_run,
 )
@@ -30,27 +31,34 @@ def _is_enabled() -> bool:
 
 
 def _send(event: str, properties: dict[str, Any]) -> bool:
+    # Best-effort beacon: dispatch the HTTP call to a daemon thread so no
+    # operator-facing path (strix view, scan start, the viewer request thread)
+    # blocks on a slow or intercepted TLS handshake. The bool reports whether
+    # the event was *dispatched*, not delivered.
     if not _is_enabled():
         logger.debug("scarf disabled; skipping event %s", event)
         return False
-    try:
-        props = dict(properties)
-        version = str(props.pop("strix_version", get_version()) or "unknown")
-        path = f"/{urllib.parse.quote(event, safe='')}/{urllib.parse.quote(version, safe='')}"
-        query = urllib.parse.urlencode(
-            {k: ("" if v is None else str(v)) for k, v in props.items()},
-        )
-        url = f"{_SCARF_ENDPOINT}{path}"
-        if query:
-            url = f"{url}?{query}"
-        with requests.post(url, timeout=SEND_TIMEOUT):
-            pass
-    except Exception:  # noqa: BLE001
-        logger.debug("scarf send failed for event %s", event, exc_info=True)
-        return False
-    else:
-        logger.debug("scarf event sent: %s", event)
-        return True
+
+    def _deliver() -> None:
+        try:
+            props = dict(properties)
+            version = str(props.pop("strix_version", get_version()) or "unknown")
+            path = f"/{urllib.parse.quote(event, safe='')}/{urllib.parse.quote(version, safe='')}"
+            query = urllib.parse.urlencode(
+                {k: ("" if v is None else str(v)) for k, v in props.items()},
+            )
+            url = f"{_SCARF_ENDPOINT}{path}"
+            if query:
+                url = f"{url}?{query}"
+            with requests.post(url, timeout=SEND_TIMEOUT):
+                pass
+        except Exception:  # noqa: BLE001
+            logger.debug("scarf send failed for event %s", event, exc_info=True)
+        else:
+            logger.debug("scarf event sent: %s", event)
+
+    dispatch(_deliver)
+    return True
 
 
 def start(

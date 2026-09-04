@@ -8,6 +8,7 @@ from strix.telemetry._common import (
     SEND_TIMEOUT,
     SESSION_ID,
     base_props,
+    dispatch,
     is_first_run,
 )
 
@@ -27,24 +28,31 @@ def _is_enabled() -> bool:
 
 
 def _send(event: str, properties: dict[str, Any]) -> bool:
+    # Best-effort beacon: dispatch the HTTP call to a daemon thread so no
+    # operator-facing path (strix view, scan start, the viewer request thread)
+    # blocks on a slow or intercepted TLS handshake. The bool reports whether
+    # the event was *dispatched*, not delivered.
     if not _is_enabled():
         logger.debug("posthog disabled; skipping event %s", event)
         return False
-    try:
-        payload = {
-            "api_key": _POSTHOG_PUBLIC_API_KEY,
-            "event": event,
-            "distinct_id": SESSION_ID,
-            "properties": properties,
-        }
-        with requests.post(f"{_POSTHOG_HOST}/capture/", json=payload, timeout=SEND_TIMEOUT):
-            pass
-    except Exception:  # noqa: BLE001
-        logger.debug("posthog send failed for event %s", event, exc_info=True)
-        return False
-    else:
-        logger.debug("posthog event sent: %s", event)
-        return True
+
+    def _deliver() -> None:
+        try:
+            payload = {
+                "api_key": _POSTHOG_PUBLIC_API_KEY,
+                "event": event,
+                "distinct_id": SESSION_ID,
+                "properties": properties,
+            }
+            with requests.post(f"{_POSTHOG_HOST}/capture/", json=payload, timeout=SEND_TIMEOUT):
+                pass
+        except Exception:  # noqa: BLE001
+            logger.debug("posthog send failed for event %s", event, exc_info=True)
+        else:
+            logger.debug("posthog event sent: %s", event)
+
+    dispatch(_deliver)
+    return True
 
 
 def start(
