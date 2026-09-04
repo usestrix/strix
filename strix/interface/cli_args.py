@@ -98,6 +98,14 @@ Examples:
   # Extra files placed in the sandbox workspace
   strix --target ./my-project --workspace-file ./wordlist.txt
   strix --target https://app.com --workspace-file ./openapi.yaml:specs/openapi.yaml
+
+Managed platform (no Docker, no LLM key):
+  strix cloud login
+  strix cloud scans start --source . --yes --wait
+  strix cloud                      # list every cloud resource
+
+  Sign up at https://app.strix.ai. Enterprise (SSO, compliance reports,
+  private deployment): https://strix.ai/demo
         """,
     )
 

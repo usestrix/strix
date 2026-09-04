@@ -48,17 +48,20 @@ export function ProInlineCta({
   slug,
   icon: Icon,
   surface,
+  href = SIGNUP_URL,
 }: {
   label: string;
   desc: string;
   slug: string;
   icon: React.ElementType;
   surface?: string;
+  /** Destination before attribution params. Defaults to cloud sign-up. */
+  href?: string;
 }) {
   return (
     <Tooltip text={desc}>
       <a
-        href={ctaUrl(SIGNUP_URL, slug)}
+        href={ctaUrl(href, slug)}
         target="_blank"
         rel="noopener noreferrer"
         onClick={() => trackCta(slug, surface)}

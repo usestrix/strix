@@ -10,7 +10,7 @@ import {
   WandSparkles,
   Plug,
 } from "lucide-react";
-import { SIGNUP_URL, PRICING_URL, ctaUrl, trackCta } from "@/lib/cta";
+import { SIGNUP_URL, PRICING_URL, DEMO_URL, ctaUrl, trackCta } from "@/lib/cta";
 
 /**
  * Dialog shown when a platform feature is clicked in the sidebar: a short
@@ -141,6 +141,19 @@ export function UpgradeModal({
               <ExternalLink className="h-3 w-3" />
             </a>
           </div>
+
+          <p className="text-center text-xs text-[#666]">
+            Need SSO, compliance reports, or a private deployment?{" "}
+            <a
+              href={ctaUrl(DEMO_URL, "upgrade_book_demo")}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => trackCta("upgrade_book_demo", source)}
+              className="text-[#aaa] underline underline-offset-2 transition-colors hover:text-white"
+            >
+              Book a demo
+            </a>
+          </p>
         </div>
       </div>
     </div>

@@ -8,6 +8,7 @@ import {
   Radar,
   Rocket,
   ArrowUpRight,
+  Building2,
   History,
 } from "lucide-react";
 import type { Vulnerability, VulnerabilitySeverity } from "@/types/issues";
@@ -35,7 +36,7 @@ import {
   type LoadedRun,
   type RunsPayload,
 } from "@/data/serverSource";
-import { SIGNUP_URL, ctaUrl, trackCta } from "@/lib/cta";
+import { SIGNUP_URL, DEMO_URL, ctaUrl, trackCta } from "@/lib/cta";
 import { runTitle } from "@/lib/target-utils";
 import Sidebar from "@/components/Sidebar";
 import PastRunsView from "@/components/PastRunsView";
@@ -797,6 +798,14 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
             slug="live_scan"
             surface="agents"
             icon={Rocket}
+          />
+          <ProInlineCta
+            label="Book an enterprise demo"
+            desc="SSO, compliance-ready reports, VPC or self-hosted deployment."
+            slug="book_demo"
+            surface="agents"
+            icon={Building2}
+            href={DEMO_URL}
           />
         </div>
       </div>

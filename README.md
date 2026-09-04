@@ -15,6 +15,8 @@
 
 <a href="https://docs.strix.ai"><img src="https://img.shields.io/badge/Docs-docs.strix.ai-2b9246?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs"></a>
 <a href="https://strix.ai"><img src="https://img.shields.io/badge/Website-strix.ai-f0f0f0?style=for-the-badge&logoColor=000000" alt="Website"></a>
+<a href="https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=badge_cloud"><img src="https://img.shields.io/badge/Strix%20Cloud-app.strix.ai-000000?style=for-the-badge&logoColor=white" alt="Strix Cloud"></a>
+<a href="https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=badge_demo"><img src="https://img.shields.io/badge/Enterprise-Book%20a%20demo-7c3aed?style=for-the-badge&logoColor=white" alt="Book a demo"></a>
 [![](https://dcbadge.limes.pink/api/server/strix-ai)](https://discord.gg/strix-ai)
 
 <a href="https://deepwiki.com/usestrix/strix"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
@@ -34,7 +36,7 @@
 
 
 > [!TIP]
-> **New!** Strix integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production - [Get started with no setup required](https://app.strix.ai).
+> **New!** Strix integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production - [Get started with no setup required](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=tip_ci).
 
 ---
 
@@ -94,9 +96,23 @@ strix --target ./app-directory
 
 ---
 
-## ☁️ Strix Platform
+## Ways to Run Strix
 
-Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai)** - sign up for free, connect your repos and domains, and launch a pentest in minutes.
+The same agents, three ways to run them. Pick the one that fits your situation.
+
+| | Open Source | Strix Cloud | Enterprise |
+|---|---|---|---|
+| **Best for** | Local development, air-gapped environments, full control | Teams that want results without setup, one-time pentests | Security programs with compliance, procurement, or deployment requirements |
+| **Setup** | Docker + your own LLM key | None. Sign up and launch a pentest in minutes | Tailored onboarding |
+| **Price** | Free (Apache 2.0) | Pay per pentest or a monthly plan | Custom |
+| **Includes** | Full CLI, local viewer, CI runs | Validated findings, one-click autofix, PR reviews, scheduling, integrations | Everything in Cloud, plus SSO, compliance-ready reports (SOC 2, ISO 27001, PCI DSS), VPC or self-hosted deployment, BYOK models, dedicated support and SLA |
+| **Start** | [Quick Start](#-quick-start) | [Run a pentest →](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=table_cloud) | [Book a demo →](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=table_demo) |
+
+---
+
+## ☁️ Strix Cloud
+
+Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=cloud_heading)** - sign up for free, connect your repos and domains, and launch a pentest in minutes. No Docker and no LLM key required.
 
 - **Validated findings with PoCs** - every vulnerability includes a working proof-of-concept exploit and reproduction steps
 - **One-click autofix** - AI-generated security patches as ready-to-merge pull requests
@@ -104,7 +120,13 @@ Try the Strix full-stack penetration testing platform at **[app.strix.ai](https:
 - **DevSecOps integrations** - GitHub, GitLab, Bitbucket, Slack, Jira, Linear, and CI/CD pipelines
 - **Continuous learning** - AI that builds on past findings, adapts to your codebase, and reduces false positives over time
 
-[**Start your first pentest →**](https://app.strix.ai)
+[**Run a pentest →**](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=cloud_cta)
+
+## 🏢 Enterprise
+
+Get the same Strix experience with enterprise-grade controls: SSO (SAML/OIDC), custom compliance-ready penetration testing reports (SOC 2, ISO 27001, PCI DSS), dedicated support and SLA, custom deployment options (VPC or self-hosted), BYOK model support, and tailored AI pentesting agents optimized for your environment.
+
+[**Book a demo →**](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=enterprise_cta)
 
 ---
 
@@ -333,10 +355,6 @@ Each server's tools are namespaced by `name`, for example `github_list_issues`. 
 - [Moonshot Kimi K3](https://platform.kimi.ai) - `moonshot/kimi-k3`
 
 See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, and local models.
-
-## Enterprise Pentesting
-
-Get the same Strix experience with [enterprise-grade](https://strix.ai/demo) controls: SSO (SAML/OIDC), custom compliance-ready penetration testing reports (SOC 2, ISO 27001, PCI DSS), dedicated support & SLA, custom deployment options (VPC/self-hosted), BYOK model support, and tailored AI pentesting agents optimized for your environment. [Learn more](https://strix.ai/demo).
 
 ## Documentation
 
