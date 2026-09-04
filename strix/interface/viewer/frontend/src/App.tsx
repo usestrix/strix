@@ -707,6 +707,30 @@ function OverviewTab({
         </div>
       )}
 
+      {finished && (
+        <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
+          <p className="text-sm font-semibold text-white">Strix Cloud</p>
+          <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra.</p>
+          <div className="mt-3 flex flex-wrap gap-2.5">
+            <ProInlineCta
+              label="Run a pentest in Strix Cloud"
+              desc="Launch a pentest without Docker or an LLM key."
+              slug="overview_cloud"
+              surface="overview"
+              icon={Rocket}
+            />
+            <ProInlineCta
+              label="Book an enterprise demo"
+              desc="SSO, compliance-ready reports, VPC or self-hosted deployment."
+              slug="book_demo"
+              surface="overview"
+              icon={Building2}
+              href={DEMO_URL}
+            />
+          </div>
+        </div>
+      )}
+
       {sections.length > 0 ? (
         <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5 space-y-8">
           {sections.map((s) => (
