@@ -131,6 +131,24 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["http_exchange_ids"] == ["1042", "1088"]
 
 
+def test_create_report_does_not_commit_when_callback_fails(
+    report_state: ReportState,
+) -> None:
+    def fail_persistence(_report: dict[str, Any]) -> None:
+        raise RuntimeError("persistence failed")
+
+    report_state.vulnerability_found_callback = fail_persistence
+
+    with pytest.raises(RuntimeError, match="persistence failed"):
+        report_state.add_vulnerability_report(
+            title="Unstored finding",
+            severity="high",
+            http_exchange_ids=["1042"],
+        )
+
+    assert report_state.vulnerability_reports == []
+
+
 async def test_create_report_requires_evidence_and_assumptions(
     report_state: ReportState,
 ) -> None:
