@@ -136,8 +136,6 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
 
 
 async def warm_up_llm(show_model_warning: bool = True) -> None:
-    wait_for_import_warmup()
-
     from agents.models.interface import ModelTracing
 
     from strix.config.models import (
@@ -466,6 +464,9 @@ def main() -> None:
     check_docker_installed()
     pull_docker_image()
     validate_environment()
+
+    # Everything below imports the scan engine; do not race the warm-up thread.
+    wait_for_import_warmup()
 
     if args.non_interactive:
         _bootstrap_scan(args)
