@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from agents import RunContextWrapper, function_tool
 
 from strix.tools.nullish import clean_optional
+from strix.tools.proxy.tools import existing_request_ids
 
 
 if TYPE_CHECKING:
@@ -185,8 +186,6 @@ def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]
         return None, []
     if not isinstance(raw, list):
         return None, ["http_exchange_ids must be a list of proxy request ids"]
-    if len(raw) > _MAX_HTTP_EXCHANGE_IDS:
-        return None, [f"http_exchange_ids can contain at most {_MAX_HTTP_EXCHANGE_IDS} request ids"]
 
     normalized: list[str] = []
     errors: list[str] = []
@@ -208,10 +207,42 @@ def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]
         if any(ord(char) < 0x21 or ord(char) > 0x7E for char in request_id):
             errors.append(f"http_exchange_ids[{index}] must contain only visible ASCII characters")
             continue
+        if not request_id.isdigit():
+            errors.append(f"http_exchange_ids[{index}] must be a numeric proxy request id")
+            continue
         if request_id not in seen:
             seen.add(request_id)
             normalized.append(request_id)
+            if len(normalized) > _MAX_HTTP_EXCHANGE_IDS:
+                errors.append(
+                    f"http_exchange_ids can contain at most "
+                    f"{_MAX_HTTP_EXCHANGE_IDS} distinct request ids"
+                )
+                break
     return normalized, errors
+
+
+async def _verify_http_exchange_ids(
+    ctx: RunContextWrapper,
+    raw: Any,
+) -> tuple[list[str] | None, list[str]]:
+    """Verify proxy exchange IDs against the current Caido project."""
+    request_ids, errors = _normalize_http_exchange_ids(raw)
+    if request_ids is None or errors or not request_ids:
+        return request_ids, errors
+
+    try:
+        existing_ids = await existing_request_ids(ctx, request_ids)
+    except Exception:
+        logger.exception("Could not verify HTTP exchange IDs against the current Caido project")
+        return None, ["http_exchange_ids could not be verified against the current proxy project"]
+
+    missing_ids = [request_id for request_id in request_ids if request_id not in existing_ids]
+    if missing_ids:
+        return None, [
+            "http_exchange_ids do not exist in the current proxy project: " + ", ".join(missing_ids)
+        ]
+    return request_ids, []
 
 
 def _validate_cvss_breakdown(breakdown: Any) -> list[str]:
@@ -1242,6 +1273,21 @@ async def create_vulnerability_report(
             reduce impact and lower the severity.
         fix_effort: "low"
     """
+    http_exchange_ids, http_exchange_errors = await _verify_http_exchange_ids(
+        ctx,
+        http_exchange_ids,
+    )
+    if http_exchange_errors:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Validation failed",
+                "errors": http_exchange_errors,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
 
     result = await _do_create(
@@ -1382,6 +1428,21 @@ async def update_vulnerability_report(
             observed in this codebase that justifies the contextual
             ``cvss_breakdown``.
     """
+    http_exchange_ids, http_exchange_errors = await _verify_http_exchange_ids(
+        ctx,
+        http_exchange_ids,
+    )
+    if http_exchange_errors:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Validation failed",
+                "errors": http_exchange_errors,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
     result = await asyncio.to_thread(
         _do_update,
