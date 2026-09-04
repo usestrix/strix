@@ -64,6 +64,11 @@ async def preflight_model_connection(
     settings: Settings | None = None,
 ) -> None:
     """Verify the configured model route before starting a scan."""
+    # Same agents.models race as warm_up_llm (issue #1248); the TUI path
+    # enters here without going through that function.
+    from strix.llm.warmup import wait_for_agents_models
+
+    wait_for_agents_models()
     from agents.models.interface import ModelTracing
 
     from strix.config.models import StrixProvider, configure_sdk_model_defaults
