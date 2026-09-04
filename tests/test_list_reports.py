@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import TYPE_CHECKING
 
 import pytest
@@ -25,6 +26,86 @@ def report_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReportState
     state = ReportState(run_name="test-run")
     set_global_report_state(state)
     return state
+
+
+def test_add_vulnerability_report_strips_control_chars_from_title(
+    report_state: ReportState,
+) -> None:
+    # A title quotes text from the scanned target, so it can carry newlines or
+    # tabs that break the markdown heading, the CSV cell and the TUI list.
+    report_id = report_state.add_vulnerability_report(
+        title="\tXSS in\r\n search\x00 form ",
+        severity="medium",
+        target="https://app.example.com",
+    )
+    report = next(r for r in report_state.vulnerability_reports if r["id"] == report_id)
+    assert report["title"] == "XSS in search form"
+
+
+def test_hydrate_from_run_dir_strips_control_chars_from_title(
+    report_state: ReportState,
+) -> None:
+    # A run started before titles were normalized can hold control characters on
+    # disk, and resume re-exports those titles to the CSV, the SARIF and the TUI.
+    (report_state.get_run_dir() / "vulnerabilities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "vuln-0001",
+                    "title": "XSS in\r\n search\tform",
+                    "severity": "medium",
+                    "timestamp": "2026-01-01 00:00:00 UTC",
+                }
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    md_path = report_state.get_run_dir() / "vulnerabilities" / "vuln-0001.md"
+    md_path.parent.mkdir(exist_ok=True)
+    md_path.write_text("# XSS in\r\n search\tform\n", encoding="utf-8")
+
+    report_state.hydrate_from_run_dir()
+    report_state.save_run_data()
+
+    assert report_state.vulnerability_reports[0]["title"] == "XSS in search form"
+    # The markdown on disk holds the raw heading, so resume must rewrite it.
+    assert md_path.read_text(encoding="utf-8").startswith("# XSS in search form\n")
+
+
+def test_hydrate_names_the_class_a_legacy_record_always_had(
+    report_state: ReportState,
+) -> None:
+    # A run started before the class was persisted still holds the package metadata
+    # of a dependency finding, and resume must not read it as a dynamic one.
+    (report_state.get_run_dir() / "vulnerabilities.json").write_text(
+        json.dumps(
+            [
+                {
+                    "id": "vuln-0001",
+                    "title": "Directus 11.5.1 is affected by CVE-2025-55746",
+                    "severity": "medium",
+                    "timestamp": "2026-01-01 00:00:00 UTC",
+                    "dependency_metadata": {
+                        "package_name": "directus",
+                        "installed_version": "11.5.1",
+                    },
+                },
+                {
+                    "id": "vuln-0002",
+                    "title": "Reflected XSS in search",
+                    "severity": "medium",
+                    "timestamp": "2026-01-01 00:00:00 UTC",
+                },
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    report_state.hydrate_from_run_dir()
+
+    assert report_state.vulnerability_reports[0]["finding_class"] == "dependency_cve"
+    assert report_state.vulnerability_reports[1]["finding_class"] == "dynamic"
 
 
 def _seed(state: ReportState) -> None:

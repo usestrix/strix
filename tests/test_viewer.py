@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from strix.core.paths import latest_run_dir, runs_base_dir
-from strix.interface.viewer.cli import run_view
+from strix.interface.viewer.cli import _state_label, run_view
 from strix.interface.viewer.server import serve
 from strix.interface.viewer.transcript import (
     build_run_state,
@@ -113,6 +113,14 @@ def test_read_run_summary_surfaces_mcp_connection_status(tmp_path: Path) -> None
     }
     (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
     assert read_run_summary(run_dir)["mcp_connection_status"] == roster
+
+
+def test_viewer_cli_labels_terminal_statuses() -> None:
+    assert _state_label({"status": "completed", "finished": True}) == "[#22c55e]finished[/]"
+    assert _state_label({"status": "stopped", "finished": True}) == "[#eab308]stopped[/]"
+    assert _state_label({"status": "interrupted", "finished": True}) == "[#eab308]interrupted[/]"
+    assert _state_label({"status": "failed", "finished": True}) == "[#ef4444]failed[/]"
+    assert _state_label({"status": "running", "finished": False}) == "[#eab308]live[/]"
 
 
 def test_read_missing_artifacts_return_defaults(tmp_path: Path) -> None:

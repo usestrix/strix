@@ -12,7 +12,7 @@ metadata:
 Strix runs autonomous AI pentesting agents that dynamically exploit a target and only report findings validated with a working proof-of-concept. There are **two ways to run it, built on the same engine and producing the same findings** — pick per situation, and mix them freely:
 
 - **Open-source CLI** (self-hosted) — runs on your machine in a Docker sandbox with your own LLM key. Free, fully local, BYO-LLM, air-gap capable. Docs: [docs.strix.ai](https://docs.strix.ai).
-- **Cloud API** (managed) — runs on Strix's infrastructure via `https://app.strix.ai/api/v1`. No Docker, no LLM key, no local compute; adds team dashboards, scheduling, PR reviews, downloadable PDF/DOCX reports (Enterprise plan), and internal-network connectors. Docs: [docs.app.strix.ai](https://docs.app.strix.ai). Full workflow in the **managed-pentesting-with-strix** skill.
+- **Managed cloud** — runs on Strix's infrastructure, driven from the same CLI (`strix cloud ...`) or the REST API at `https://app.strix.ai/api/v1`. No Docker, no LLM key, no local compute; adds team dashboards, scheduling, PR reviews, downloadable PDF/DOCX reports (Enterprise plan), and internal-network connectors. Docs: [docs.app.strix.ai](https://docs.app.strix.ai). Full workflow in the **managed-pentesting-with-strix** skill.
 
 ## Which one? (decide, do not default)
 
@@ -122,27 +122,33 @@ Artifacts land in `strix_runs/<run-name>/`:
 
 ---
 
-# Option B — Cloud API (managed, no local infra)
+# Option B — Managed cloud (no local infra)
 
-Full details, asset registration, polling, reports, PR reviews, schedules, and webhooks are in the **managed-pentesting-with-strix** skill. Minimal launch-and-poll:
+The same `strix` binary drives the managed platform. Every command starts with `strix cloud`. Full details — asset registration, source uploads, reports, PR reviews, schedules, webhooks, and billing — are in the **managed-pentesting-with-strix** skill. Minimal flow:
 
 ```bash
-export STRIX_API_TOKEN="<token>"   # org-scoped bearer, from Settings → API Access at app.strix.ai
-BASE=https://app.strix.ai/api/v1
+# 1. Sign in (device flow — the user confirms a code in the browser; this also
+#    creates the account and workspace when needed)
+strix cloud login
 
-# 1. Launch a scan against an already-registered domain/repo asset
-scan_id=$(curl -sS "$BASE/scans" \
-  -H "Authorization: Bearer $STRIX_API_TOKEN" -H "Content-Type: application/json" \
-  -d '{"engagement_type":"live_test","domain_ids":["<domain-uuid>"]}' | jq -r .scan_id)
+# If you need specific scopes, request them with --scopes:
+#   strix cloud login --scopes scans:read scans:write assets:read assets:write \
+#     vulnerabilities:read billing:read billing:write
 
-# 2. Poll until terminal (pending → running → completed/failed/cancelled)
-curl -sS "$BASE/scans/$scan_id" -H "Authorization: Bearer $STRIX_API_TOKEN" | jq '.status'
+# 2. Register and verify the target domain (verification prints a DNS record for the user)
+strix cloud domains add --domain staging.example.com --asset-type web_app
+strix cloud domains verify <domain-id>
 
-# 3. Read validated findings from the scan detail's `vulnerabilities[]`, or export SARIF
-curl -sS "$BASE/scans/$scan_id/sarif" -H "Authorization: Bearer $STRIX_API_TOKEN" -o findings.sarif
+# 3. Launch and wait
+strix cloud scans start --engagement-type live_test --domain-ids <domain-id> --wait
+
+# 4. Read validated findings
+strix cloud vulns list --severity critical
 ```
 
-Ask the user to create the token (and register the target as a domain/repository asset) if they have not. If Docker/local prerequisites are not already satisfied, use this path instead of trying to install infra.
+For a local repository, `strix cloud scans start --source .` uploads the working tree (needs `uploads:write`) and infers a code review. When credits run out, `strix cloud billing topup` starts an agent-payable Stripe challenge — the managed skill covers the payment flow. Output is JSON when stdout is not a terminal, so the commands compose in scripts.
+
+The raw REST API works too (`https://app.strix.ai/api/v1`, org-scoped bearer token — see [docs.app.strix.ai](https://docs.app.strix.ai)). If Docker or local prerequisites are not already satisfied, use this path instead of trying to install infra.
 
 ---
 

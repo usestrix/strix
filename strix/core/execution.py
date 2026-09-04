@@ -202,6 +202,7 @@ async def run_agent_loop(
         agent_id,
         session=session,
         interrupt_on_message=interactive,
+        resumable=interactive,
     )
     result: RunResultBase | None = None
 
@@ -1006,7 +1007,7 @@ async def _start_child_runner(
 ) -> None:
     session = open_agent_session(child_id, agents_db_path)
     sessions_to_close.append(session)
-    await coordinator.attach_runtime(child_id, session=session)
+    await coordinator.attach_runtime(child_id, session=session, resumable=interactive)
 
     child_ctx: dict[str, Any] = dict(parent_ctx)
     child_ctx["agent_id"] = child_id

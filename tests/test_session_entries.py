@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+import tempfile
 from pathlib import Path
 from typing import Any
 
+import pytest
 from agents.sandbox.entries import File, LocalDir
 
+from strix.runtime import session_manager
 from strix.runtime.backends import (
     _BACKENDS,
     _BIND_MOUNT_BACKENDS,
@@ -18,6 +21,7 @@ from strix.runtime.session_manager import (
     build_extra_file_bind_mounts,
     build_extra_file_entries,
     build_manifest_entries,
+    extra_file_staging_dir,
 )
 
 
@@ -317,6 +321,43 @@ def test_extra_file_bind_mounts_avoid_basename_collisions(tmp_path: Path) -> Non
     assert Path(mounts[0]["source"]).read_bytes() == b"a"
     assert Path(mounts[1]["source"]).read_bytes() == b"b"
     assert mounts[0]["source"] != mounts[1]["source"]
+
+
+def test_extra_file_staging_lives_under_the_temp_dir_not_the_run_dir() -> None:
+    staging = extra_file_staging_dir("clients-release-evisort-dev_86b7")
+
+    assert staging.is_dir()
+    assert staging.is_relative_to(Path(tempfile.gettempdir()))
+    assert "strix_runs" not in staging.parts
+
+
+def test_extra_file_staging_dir_sanitizes_the_scan_id() -> None:
+    staging = extra_file_staging_dir("../weird id/../")
+
+    assert staging.is_dir()
+    assert staging.is_relative_to(Path(tempfile.gettempdir()))
+
+
+@pytest.mark.asyncio
+async def test_cleanup_removes_the_extra_file_staging_dir() -> None:
+    staging = extra_file_staging_dir("scan-staging-cleanup")
+    (staging / "0").mkdir()
+    (staging / "0" / "README.md").write_bytes(b"hi")
+
+    class _Client:
+        async def delete(self, _session: Any) -> None:
+            return None
+
+    session_manager._SESSION_CACHE["scan-staging-cleanup"] = {
+        "client": _Client(),
+        "session": object(),
+        "caido_client": None,
+        "extra_file_staging_dir": staging,
+    }
+
+    await session_manager.cleanup("scan-staging-cleanup")
+
+    assert not staging.exists()
 
 
 def test_only_bind_mount_capable_backends_are_registered_as_such() -> None:

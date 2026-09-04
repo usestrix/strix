@@ -113,11 +113,11 @@ Gate the pipeline on the exit code (see the budget/fail-open caveat above — gi
 
 # Option B — Managed platform (no runner infra)
 
-No workflow file, no Docker, no LLM key. Two ways to use it:
+No workflow file, no Docker, no LLM key. Three ways to use it:
 
 1. **PR-review app (zero code):** the user installs the Strix GitHub/GitLab/Bitbucket app and enables PR reviews for the repo in the app.strix.ai dashboard. Every PR is then reviewed automatically, with findings posted as PR comments. Nothing to add to the repo. This is the lowest-effort path — recommend it first when the user just wants PR gating.
 
-2. **API-triggered from any pipeline:** if you want to trigger from an existing pipeline (or a system without the SCM app), call the API with a token that has `pr_reviews:write` (or `scans:write`). Store the token as a CI secret; ask the user to create it at **Settings → API Access**. Example GitHub Actions step:
+2. **CLI-triggered from any pipeline:** if you want to trigger from an existing pipeline (or a system without the SCM app), use the same `strix` binary with a token that has `pr_reviews:write`. Store the token as a CI secret and ask the user to create it at **Settings → API Access**. Read the repository's `provider` and `installation_id` once with `strix cloud repos list`. Example GitHub Actions step:
 
    ```yaml
    - name: Strix PR review (managed)
@@ -125,12 +125,25 @@ No workflow file, no Docker, no LLM key. Two ways to use it:
      env:
        STRIX_API_TOKEN: ${{ secrets.STRIX_API_TOKEN }}
      run: |
-       curl -sS --fail https://app.strix.ai/api/v1/pr-reviews/start \
-         -H "Authorization: Bearer $STRIX_API_TOKEN" \
-         -H "Content-Type: application/json" \
-         -d "{\"repository_full_name\":\"${{ github.repository }}\",\"pr_number\":${{ github.event.pull_request.number }}}"
+       curl -sSL https://strix.ai/install | bash
+       strix cloud pr-reviews start \
+         --provider github \
+         --installation-id "${{ vars.STRIX_INSTALLATION_ID }}" \
+         --repository-full-name "${{ github.repository }}" \
+         --pr-number "${{ github.event.pull_request.number }}"
    ```
 
-   To gate the build on results, poll the PR review / scan status and fail on unresolved criticals/highs. Full endpoints (PR reviews, scans, SARIF export, schedules for scheduled deep scans) are in the **managed-pentesting-with-strix** skill.
+   Output is JSON when stdout is not a terminal, and there are no prompts without a TTY. To gate the build on results, poll `strix cloud pr-reviews get <id> --json` and fail on unresolved criticals or highs. The raw REST endpoint (`POST /api/v1/pr-reviews/start`) works too when the pipeline cannot install the CLI.
+
+3. **Source upload from a pipeline without an SCM app:** upload the checked-out tree as a cloud code review (`scans:write` and `uploads:write`). The two-step digest handoff keeps a human in control of what leaves the runner:
+
+   ```bash
+   strix cloud scans start --source . --dry-run --show-files --json   # review, capture source.archive_sha256
+   strix cloud scans start --source . --approve-sha256 "$SOURCE_SHA256" --wait
+   ```
+
+   Exit codes: `0` success, `4` auth or plan limit, `5` payment required. Non-Enterprise scans consume credits.
+
+Full CLI coverage (PR reviews, scans, SARIF export, schedules) is in the **managed-pentesting-with-strix** skill.
 
 Recommend Option B for most teams (no maintenance, central dashboard); use Option A when scans must stay entirely within your own infrastructure.

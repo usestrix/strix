@@ -11,6 +11,8 @@ import asyncio
 import contextlib
 import json
 import re
+import time
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 import pytest
@@ -160,9 +162,13 @@ def _config(name: str, allowed_tools: list[str] | None) -> McpConnectionConfig:
     return McpConnectionConfig(
         name=name,
         url="https://mcp.example.com",
-        auth=BearerAuth(token="run-token"),
+        auth=BearerAuth(token="run-token"),  # nosec B106
         allowed_tools=allowed_tools,
     )
+
+
+def _built_server(server: MCPServer) -> mcp_client.BuiltMcpServer:
+    return mcp_client.BuiltMcpServer(server, None)
 
 
 def _ctx(registry: McpRegistry | None) -> ToolContext[dict[str, Any]]:
@@ -204,7 +210,7 @@ def test_bearer_config_parses_from_dict() -> None:
     )
 
     assert isinstance(config.auth, BearerAuth)
-    assert config.auth.token == "abc"
+    assert config.auth.token == "abc"  # nosec B105
     assert config.allowed_tools == ["list_files"]
 
 
@@ -298,7 +304,9 @@ async def test_connect_returns_sessions_without_registering_agent_tools(
         "fs": FakeMCPServer("fs", [_mcp_tool("read_file"), _mcp_tool("write_file")]),
         "db": FakeMCPServer("db", [_mcp_tool("query")]),
     }
-    monkeypatch.setattr(mcp_client, "_build_server", lambda config: servers[config.name])
+    monkeypatch.setattr(
+        mcp_client, "_build_server", lambda config: _built_server(servers[config.name])
+    )
 
     connections = await mcp_client.connect_mcp_servers(
         [_config("fs", None), _config("db", ["query"])]
@@ -315,7 +323,7 @@ async def test_connect_returns_sessions_without_registering_agent_tools(
 @pytest.mark.asyncio
 async def test_tool_count_honors_the_allowlist(monkeypatch: pytest.MonkeyPatch) -> None:
     server = FakeMCPServer("fs", [_mcp_tool("read_file"), _mcp_tool("write_file")])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(server))
 
     connections = await mcp_client.connect_mcp_servers([_config("fs", ["read_file"])])
 
@@ -329,7 +337,7 @@ async def test_connection_notes_ride_on_the_connection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     server = FakeMCPServer("db", [_mcp_tool("query")])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(server))
     config = McpConnectionConfig(
         name="db",
         url="https://mcp.example.com",
@@ -356,7 +364,7 @@ def test_build_server_stdio_branch() -> None:
         env={"TOKEN": "x"},
     )
 
-    server = mcp_client._build_server(config)
+    server = mcp_client._build_server(config).server
 
     assert isinstance(server, MCPServerStdio)
     assert server.name == "local_fs"
@@ -366,7 +374,7 @@ def test_build_server_stdio_branch() -> None:
 
 
 def test_build_server_http_branch() -> None:
-    server = mcp_client._build_server(_config("files_main", ["list_files"]))
+    server = mcp_client._build_server(_config("files_main", ["list_files"])).server
 
     assert isinstance(server, MCPServerStreamableHttp)
     assert server.name == "files_main"
@@ -847,7 +855,9 @@ async def test_connect_skips_a_connection_whose_connect_is_cancelled(
             cleaned.append(self._name)
 
     servers = {"good": _Tracking("good"), "bad": _Tracking("bad", cancel_connect=True)}
-    monkeypatch.setattr(mcp_client, "_build_server", lambda config: servers[config.name])
+    monkeypatch.setattr(
+        mcp_client, "_build_server", lambda config: _built_server(servers[config.name])
+    )
 
     configs = [_config("good", ["t"]), _config("bad", ["t"])]
 
@@ -883,7 +893,9 @@ async def test_connect_cleans_up_started_sessions_when_attach_is_cancelled(
             cleaned.append(self._name)
 
     servers = {"good": _Tracking("good"), "slow": _Tracking("slow", block_connect=True)}
-    monkeypatch.setattr(mcp_client, "_build_server", lambda config: servers[config.name])
+    monkeypatch.setattr(
+        mcp_client, "_build_server", lambda config: _built_server(servers[config.name])
+    )
 
     async def _attach() -> list[Any]:
         # Connect "good" first, then hang forever connecting "slow".
@@ -962,7 +974,7 @@ async def test_attach_populates_registry_with_provider_and_transform(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     server = FakeMCPServer("db", [_mcp_tool("query")])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(server))
 
     def transform(_label: str, structured: Any) -> Any:
         return {"kept": structured}
@@ -995,7 +1007,7 @@ async def test_attach_bare_request_matches_the_command_line_shape(
     # The command-line path wraps each config in a bare request (no provider or
     # transform); purpose then falls back to the connection's notes.
     server = FakeMCPServer("db", [_mcp_tool("query")])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(server))
     config = McpConnectionConfig(
         name="db",
         url="https://mcp.example.com",
@@ -1026,7 +1038,9 @@ async def test_attach_is_fail_open_and_skips_a_failed_connection(
             raise RuntimeError("cannot reach server")
 
     servers = {"good": good, "bad": _Failing("bad", [_mcp_tool("t")])}
-    monkeypatch.setattr(mcp_client, "_build_server", lambda config: servers[config.name])
+    monkeypatch.setattr(
+        mcp_client, "_build_server", lambda config: _built_server(servers[config.name])
+    )
 
     registry = McpRegistry()
     connections = await attach_mcp_requests(
@@ -1213,7 +1227,7 @@ def _secret_config(name: str) -> McpConnectionConfig:
     return McpConnectionConfig(
         name=name,
         url="https://mcp.example.com",
-        auth=BearerAuth(token="super-secret-bearer-token-42"),
+        auth=BearerAuth(token="super-secret-bearer-token-42"),  # nosec B106
         allowed_tools=["read_file"],
     )
 
@@ -1234,7 +1248,7 @@ async def test_call_mcp_reconnects_and_retries_after_a_session_death(
     first = _DyingHttpServer("fs", [_mcp_tool("read_file")], death=ConnectionError("403"))
     second = FakeMCPServer("fs", [_mcp_tool("read_file")])
     built = iter([first, second])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: next(built))
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(next(built)))
 
     session = await _started_session(_secret_config("fs"))
     registry = McpRegistry()
@@ -1257,15 +1271,15 @@ async def test_call_mcp_reconnects_and_retries_after_a_session_death(
 async def test_call_mcp_marks_connection_dead_when_reconnect_keeps_failing(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # The session dies and the reconnect attempt also fails: the connection is
-    # marked dead and the call returns the standard failed-tool output.
+    # Reconnect failures are retried and then quarantine the connection rather
+    # than permanently retiring it on the first failed reconnect.
     first = _DyingHttpServer("fs", [_mcp_tool("read_file")], death=ConnectionError("403"))
     built = {"n": 0}
 
-    def _build(_config: McpConnectionConfig) -> MCPServer:
+    def _build(_config: McpConnectionConfig) -> mcp_client.BuiltMcpServer:
         built["n"] += 1
         if built["n"] == 1:
-            return first
+            return _built_server(first)
         raise ConnectionError("cannot reconnect")
 
     monkeypatch.setattr(mcp_client, "_build_server", _build)
@@ -1282,9 +1296,12 @@ async def test_call_mcp_marks_connection_dead_when_reconnect_keeps_failing(
     assert isinstance(out, dict)
     assert out["success"] is False
     assert "unavailable" in out["content"]
-    assert session.is_dead is True
+    assert session.is_dead is False
+    assert session.is_unavailable is True
+    assert session.server is None
+    assert session._task is not None and not session._task.done()
 
-    # A later call short-circuits to the same failed output without a new attempt.
+    # A later call during cooldown short-circuits to the same failed output.
     again = await call_mcp.on_invoke_tool(
         _ctx(registry), json.dumps({"connection": "fs", "tool": "read_file"})
     )
@@ -1309,18 +1326,21 @@ async def _pump_until(predicate: Callable[[], bool], *, limit: int = 100) -> Non
     raise AssertionError("condition not reached")
 
 
+def _quarantine_reached(session: SupervisedMcpSession, count: int) -> bool:
+    return session.is_dead or session._quarantine_count >= count
+
+
 @pytest.mark.asyncio
 async def test_idle_session_death_self_heals_on_reconnect(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     # A session that dies while idle (its supervising task cancelled between calls,
-    # modeling the transport scope dying with no call in flight) reconnects once on
-    # its own and keeps serving, rather than staying dead until a later call would
-    # have triggered a reconnect.
+    # modeling the transport scope dying with no call in flight) is quarantined and
+    # keeps serving, rather than ending its supervising task.
     first = FakeMCPServer("fs", [_mcp_tool("read_file")])
     second = FakeMCPServer("fs", [_mcp_tool("read_file")])
     built = iter([first, second])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: next(built))
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(next(built)))
 
     session = await _started_session(_secret_config("fs"))
     registry = McpRegistry()
@@ -1328,15 +1348,16 @@ async def test_idle_session_death_self_heals_on_reconnect(
 
     assert session._task is not None
     session._task.cancel()  # idle transport death: no call in flight
-    await _pump_until(lambda: session.server is second)
+    await _pump_until(lambda: session.is_unavailable)
     assert session.is_dead is False
+    assert session.server is None
 
-    # The reconnected session serves calls normally.
+    # Once the cooldown expires, the next call reconnects onto a fresh session.
+    session._unavailable_until = time.monotonic() - 1
     out = await call_mcp.on_invoke_tool(
         _ctx(registry), json.dumps({"connection": "fs", "tool": "read_file"})
     )
     assert out == {"type": "text", "text": "routed:read_file"}
-
     await session.aclose()
 
 
@@ -1344,26 +1365,24 @@ async def test_idle_session_death_self_heals_on_reconnect(
 async def test_flapping_idle_session_is_marked_dead_without_looping(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    # If a session reconnects after an idle death but dies again before serving any
-    # call, the supervisor stops reconnecting and marks the connection dead, so a
-    # server that instantly drops on connect cannot spin in a reconnect loop.
+    # Repeated idle deaths consume quarantine slots; the supervisor stays alive
+    # until the configured permanent-death threshold is reached.
     first = FakeMCPServer("fs", [_mcp_tool("read_file")])
     second = FakeMCPServer("fs", [_mcp_tool("read_file")])
     built = iter([first, second])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: next(built))
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(next(built)))
 
     session = await _started_session(_secret_config("fs"))
     registry = McpRegistry()
     registry.add(name="fs", session=session, tool_count=1)
 
     assert session._task is not None
-    # First idle death heals onto the second server (only two builds ever happen).
-    session._task.cancel()
-    await _pump_until(lambda: session.server is second)
-    assert session.is_dead is False
-
-    # Second idle death before any call is served: give up rather than reconnect.
-    session._task.cancel()
+    # Three idle deaths exhaust the quarantine budget.
+    for count in range(1, 4):
+        session._task.cancel()
+        await _pump_until(partial(_quarantine_reached, session, count))
+        if session.is_dead:
+            break
     await _pump_until(lambda: session._task is not None and session._task.done())
     assert session.is_dead is True
 
@@ -1420,7 +1439,7 @@ async def test_aclose_is_bounded_when_an_in_flight_call_hangs(
     # aclose falls back to cancelling the supervising task, and cleanup still runs.
     monkeypatch.setattr(mcp_session_mod, "_SHUTDOWN_TIMEOUT", 0.2)
     server = _HangingCallServer("fs", [_mcp_tool("read_file")])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(server))
 
     session = await _started_session(_secret_config("fs"))
     call = asyncio.create_task(session.dispatch("read_file", {}, label="fs_read_file"))
@@ -1444,7 +1463,7 @@ async def test_aclose_cleans_up_when_connect_is_cancelled_mid_await(
     # is cancelled; aclose must not raise on it and must still cancel + clean up the
     # partially connected supervisor.
     server = _HangingConnectServer("fs", [_mcp_tool("read_file")])
-    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: server)
+    monkeypatch.setattr(mcp_client, "_build_server", lambda _config: _built_server(server))
 
     session = SupervisedMcpSession(_secret_config("fs"))
     start = asyncio.create_task(session.start())
@@ -1469,14 +1488,14 @@ async def test_a_session_death_is_contained_and_other_connections_survive(
     healthy = FakeMCPServer("healthy", [_mcp_tool("read_file")])
     dying_builds = {"n": 0}
 
-    def _build(config: McpConnectionConfig) -> MCPServer:
+    def _build(config: McpConnectionConfig) -> mcp_client.BuiltMcpServer:
         if config.name == "healthy":
-            return healthy
+            return _built_server(healthy)
         # The dying connection connects once, then its rebuild raises, so it ends
         # up marked dead rather than recovering.
         dying_builds["n"] += 1
         if dying_builds["n"] == 1:
-            return dying
+            return _built_server(dying)
         raise ConnectionError("cannot reconnect")
 
     monkeypatch.setattr(mcp_client, "_build_server", _build)
@@ -1513,11 +1532,13 @@ async def test_reconnect_reuses_the_stored_config_and_never_logs_the_token(
     # inventory list_mcps emits.
     seen_tokens: list[str | None] = []
 
-    def _build(config: McpConnectionConfig) -> MCPServer:
+    def _build(config: McpConnectionConfig) -> mcp_client.BuiltMcpServer:
         seen_tokens.append(config.auth.token if config.auth else None)
         if len(seen_tokens) == 1:
-            return _DyingHttpServer("fs", [_mcp_tool("read_file")], death=ConnectionError("403"))
-        return FakeMCPServer("fs", [_mcp_tool("read_file")])
+            return _built_server(
+                _DyingHttpServer("fs", [_mcp_tool("read_file")], death=ConnectionError("403"))
+            )
+        return _built_server(FakeMCPServer("fs", [_mcp_tool("read_file")]))
 
     monkeypatch.setattr(mcp_client, "_build_server", _build)
 
@@ -1566,23 +1587,37 @@ class _RaisingMCPServer(FakeMCPServer):
 
 
 @pytest.mark.asyncio
-async def test_session_on_dead_fires_once_on_the_death_transition() -> None:
-    # An adopted session with no config cannot reconnect, so the first failed
-    # call marks it dead; the on-dead callback fires exactly once, on the edge.
+async def test_session_on_dead_fires_once_on_the_death_transition(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An adopted session with no config cannot reconnect, so repeated transient
+    # exhaustion eventually marks it dead; the callback fires once on that edge.
     server = _RaisingMCPServer("db", [_mcp_tool("read")])
     session = SupervisedMcpSession.adopt(server, name="db")
     fires: list[int] = []
     session.set_on_dead(lambda: fires.append(1))
 
+    clock = [100.0]
+    monkeypatch.setattr("strix.tools.mcp.session.time.monotonic", lambda: clock[0])
+    monkeypatch.setattr(mcp_session_mod, "_retry_delay", lambda _attempt, _retry_after: 0)
+
+    async def no_sleep(_delay: float) -> None:
+        return None
+
+    monkeypatch.setattr(asyncio, "sleep", no_sleep)
     out = await session.dispatch("read", {}, label="db_read")
 
-    assert session.is_dead is True
+    assert session.is_dead is False
     assert isinstance(out, dict) and out.get("success") is False
-    assert fires == [1]
+    assert fires == []
 
-    # A later call to the already-dead session must not fire the callback again.
+    clock[0] += 31
+    await session.dispatch("read", {}, label="db_read")
+    assert session.is_dead is False
+    clock[0] += 61
     await session.dispatch("read", {}, label="db_read")
     assert fires == [1]
+    assert session.is_dead is True
 
 
 def test_registry_statuses_report_the_live_dead_flag_and_provider() -> None:

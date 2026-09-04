@@ -428,6 +428,7 @@ async def run_strix_scan(
                         }
                         for summary in mcp_registry.summaries()
                     ]
+
                     # Feed a non-secret connection roster (name / provider /
                     # tool_count / dead) to two consumers: once now (all
                     # currently healthy) and again whenever a connection later

@@ -30,12 +30,16 @@ from agents.mcp import (
     create_static_tool_filter,
 )
 from mcp.client.stdio import stdio_client
+from mcp.shared._httpx_utils import create_mcp_http_client
 
+from strix.tools.mcp.failures import HttpStatusRecorder
 from strix.tools.mcp.session import McpConnectionUnavailableError, SupervisedMcpSession
 
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+    import httpx
 
     from strix.tools.mcp.config import McpConnectionConfig
     from strix.tools.mcp.registry import McpConnectionRequest, McpRegistry
@@ -69,6 +73,13 @@ class ConnectedMcpServer(NamedTuple):
     name: str
     tool_count: int
     notes: str | None = None
+
+
+class BuiltMcpServer(NamedTuple):
+    """A constructed SDK server and its optional HTTP failure recorder."""
+
+    server: MCPServer
+    recorder: HttpStatusRecorder | None
 
 
 def _auth_headers(config: McpConnectionConfig) -> dict[str, str]:
@@ -108,8 +119,11 @@ class _QuietMCPServerStdio(MCPServerStdio):
         return _quiet_stdio_streams(self.params)
 
 
-def _build_server(config: McpConnectionConfig) -> MCPServer:
+def _build_server(config: McpConnectionConfig) -> BuiltMcpServer:
     """Construct (but do not connect) the SDK server for one connection.
+
+    The returned tuple carries the server and, for HTTP connections, a recorder
+    that retains sanitized response metadata for the owning session.
 
     When ``allowed_tools`` is a list the static filter means the server will not
     even list tools outside it, so it is the authoritative gate on what
@@ -128,22 +142,43 @@ def _build_server(config: McpConnectionConfig) -> MCPServer:
             "args": config.args,
             "env": config.env,
         }
-        return _QuietMCPServerStdio(
-            params=stdio_params,
-            name=config.name,
-            tool_filter=tool_filter,
-            cache_tools_list=True,
+        return BuiltMcpServer(
+            _QuietMCPServerStdio(
+                params=stdio_params,
+                name=config.name,
+                tool_filter=tool_filter,
+                cache_tools_list=True,
+            ),
+            None,
         )
+
+    recorder = HttpStatusRecorder()
+
+    def httpx_client_factory(
+        headers: dict[str, str] | None = None,
+        timeout: httpx.Timeout | None = None,
+        auth: httpx.Auth | None = None,
+    ) -> httpx.AsyncClient:
+        client = create_mcp_http_client(headers=headers, timeout=timeout, auth=auth)
+        client.event_hooks.setdefault("response", []).append(recorder)
+        return client
 
     http_params: MCPServerStreamableHttpParams = {
         "url": cast("str", config.url),
         "headers": _auth_headers(config),
+        "timeout": config.http_timeout_seconds,
+        "sse_read_timeout": config.sse_read_timeout_seconds,
+        "httpx_client_factory": httpx_client_factory,
     }
-    return MCPServerStreamableHttp(
-        params=http_params,
-        name=config.name,
-        tool_filter=tool_filter,
-        cache_tools_list=True,
+    return BuiltMcpServer(
+        MCPServerStreamableHttp(
+            params=http_params,
+            name=config.name,
+            tool_filter=tool_filter,
+            cache_tools_list=True,
+            client_session_timeout_seconds=config.session_timeout_seconds,
+        ),
+        recorder,
     )
 
 

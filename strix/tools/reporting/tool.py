@@ -12,11 +12,15 @@ import json
 import logging
 import re
 from pathlib import PurePosixPath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
 from strix.tools.nullish import clean_optional
+
+
+if TYPE_CHECKING:
+    from strix.report.state import ReportState
 
 
 logger = logging.getLogger(__name__)
@@ -257,6 +261,329 @@ def _validate_fix_verification(
     ]
 
 
+def _finding_class_of(report: dict[str, Any]) -> str:
+    """Resolve the class of a stored finding.
+
+    A finding filed before ``finding_class`` was persisted still carries the
+    metadata of its class. A record with dependency metadata is a dependency
+    finding even when the field is absent, so read the metadata before falling
+    back to dynamic.
+    """
+    declared = str(report.get("finding_class") or "").lower()
+    if declared:
+        return declared
+    if report.get("dependency_metadata"):
+        return "dependency_cve"
+    return "dynamic"
+
+
+_UPDATE_TEXT_FIELDS = (
+    "title",
+    "description",
+    "impact",
+    "target",
+    "technical_analysis",
+    "poc_description",
+    "poc_script_code",
+    "remediation_steps",
+    "evidence",
+    "assumptions",
+    "counterevidence",
+    "confidence_rationale",
+    "severity_change_conditions",
+    "endpoint",
+    "method",
+    "fix_verification",
+    "fix_pr_body",
+    "contextual_cvss_reasoning",
+)
+
+
+def _collect_update_changes(  # noqa: PLR0912
+    fields: dict[str, Any],
+) -> tuple[dict[str, Any], list[str]]:
+    """Validate the fields a revision replaces and return them with any errors."""
+    errors: list[str] = []
+    changes: dict[str, Any] = {}
+
+    for name in _UPDATE_TEXT_FIELDS:
+        value = clean_optional(fields.get(name))
+        if value is not None:
+            changes[name] = value
+
+    confidence = clean_optional(fields.get("confidence"))
+    if confidence is not None:
+        confidence = confidence.lower()
+        if confidence not in _VALID_CONFIDENCE:
+            errors.append(
+                f"Invalid confidence: {confidence!r}. Must be one of: {sorted(_VALID_CONFIDENCE)}"
+            )
+        else:
+            changes["confidence"] = confidence
+
+    fix_effort = clean_optional(fields.get("fix_effort"))
+    if fix_effort is not None:
+        fix_effort = fix_effort.lower()
+        if fix_effort not in _VALID_FIX_EFFORT:
+            errors.append(
+                f"Invalid fix_effort: {fix_effort!r}. Must be one of: {sorted(_VALID_FIX_EFFORT)}"
+            )
+        else:
+            changes["fix_effort"] = fix_effort
+
+    breakdown = fields.get("cvss_breakdown")
+    if breakdown is not None:
+        breakdown_errors = _validate_cvss_breakdown(breakdown)
+        errors.extend(breakdown_errors)
+        if not breakdown_errors:
+            try:
+                cvss_score, severity, _vector = _calculate_cvss(breakdown)
+            except ValueError as exc:
+                errors.append(str(exc))
+            else:
+                # The rating belongs to the vector, so a revised vector carries
+                # its own score and severity rather than leaving the old ones.
+                changes["cvss_breakdown"] = breakdown
+                changes["cvss"] = cvss_score
+                changes["severity"] = severity
+
+    raw_locations = fields.get("code_locations")
+    locations = _normalize_code_locations(raw_locations)
+    if locations:
+        errors.extend(_validate_code_locations(locations))
+        errors.extend(_validate_fix_verification(locations, changes.get("fix_verification")))
+        changes["code_locations"] = locations
+    elif raw_locations:
+        errors.append(
+            "code_locations were dropped as unusable - every location needs a relative "
+            "'file' and an integer 'start_line'"
+        )
+
+    cve, cwe, identifier_errors = _validate_identifiers(
+        clean_optional(fields.get("cve")), clean_optional(fields.get("cwe"))
+    )
+    errors.extend(identifier_errors)
+    if cve:
+        changes["cve"] = cve
+    if cwe:
+        changes["cwe"] = cwe
+
+    return changes, errors
+
+
+# Evidence that only a dynamic finding carries. A dependency finding describes a
+# package, not a request against an endpoint.
+_DYNAMIC_ONLY_UPDATE_FIELDS = (
+    "endpoint",
+    "method",
+    "poc_description",
+    "poc_script_code",
+)
+
+# A dependency finding is rated in the context of the codebase that pins it, and
+# that rating is only shown with the reasoning behind it.
+_DEPENDENCY_ONLY_UPDATE_FIELDS = ("contextual_cvss_reasoning",)
+
+
+def _reject_cross_class_revision(
+    report_id: str,
+    matched_class: str,
+    offending: list[str],
+) -> dict[str, Any]:
+    logger.info(
+        "Revision of %s carries fields (%s) a %s finding does not hold; rejecting",
+        report_id,
+        ", ".join(offending),
+        matched_class,
+    )
+    return {
+        "success": False,
+        "error": (
+            f"Report '{report_id}' is a {matched_class} finding, so it cannot carry "
+            f"{', '.join(offending)}. File your proof as its own vulnerability report "
+            "instead of writing it onto this one."
+        ),
+        "report_id": report_id,
+        "finding_class": matched_class,
+        "rejected_fields": offending,
+    }
+
+
+def _rate_dependency_revision(
+    report_id: str,
+    matched: dict[str, Any],
+    changes: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Turn a replacement ``cvss_breakdown`` into the contextual rating of a dependency.
+
+    A dependency record keeps its rating as ``cvss``/``severity`` plus the
+    contextual breakdown, vector and reasoning inside ``dependency_metadata``.
+    The package identity in that metadata is copied over untouched. A new
+    breakdown needs its own reasoning. The reasoning alone can be corrected
+    when the record already carries the breakdown it explains.
+    """
+    breakdown = changes.pop("cvss_breakdown", None)
+    reasoning = changes.pop("contextual_cvss_reasoning", None)
+    if breakdown is None and reasoning is None:
+        return None
+
+    metadata = dict(matched.get("dependency_metadata") or {})
+    if breakdown is None and not metadata.get("contextual_cvss_breakdown"):
+        return {
+            "success": False,
+            "error": "Validation failed",
+            "errors": [
+                "cvss_breakdown is required: this dependency finding carries no "
+                "contextual rating yet, so contextual_cvss_reasoning has nothing to explain"
+            ],
+            "report_id": report_id,
+        }
+    if reasoning is None:
+        return {
+            "success": False,
+            "error": "Validation failed",
+            "errors": [
+                "contextual_cvss_reasoning is required: a dependency finding is re-rated "
+                "with the cvss_breakdown observed in this codebase together with the "
+                "reasoning a reader can check"
+            ],
+            "report_id": report_id,
+        }
+
+    if breakdown is not None:
+        score, _severity, vector = _calculate_cvss(breakdown)
+        metadata["contextual_cvss_breakdown"] = breakdown
+        metadata["contextual_cvss_score"] = score
+        metadata["contextual_cvss_vector"] = vector
+    metadata["contextual_cvss_reasoning"] = reasoning[:_MAX_CONTEXTUAL_REASONING_CHARS]
+    changes["dependency_metadata"] = metadata
+    return None
+
+
+def _fit_revision_to_class(
+    report_state: ReportState,
+    report_id: str,
+    changes: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Keep a revision inside the class of the finding it names.
+
+    A finding keeps its class and the metadata that belongs to it. Writing an
+    exploit onto a dependency record would leave it carrying a package pin next
+    to a request against an endpoint, so the proof belongs in its own dynamic
+    finding instead. A dependency finding is still re-rated, through the
+    contextual CVSS it was filed with.
+    """
+    matched = next(
+        (r for r in report_state.get_existing_vulnerabilities() if r.get("id") == report_id),
+        None,
+    )
+    if matched is None:
+        return None
+
+    matched_class = _finding_class_of(matched)
+    foreign = (
+        _DEPENDENCY_ONLY_UPDATE_FIELDS
+        if matched_class == "dynamic"
+        else _DYNAMIC_ONLY_UPDATE_FIELDS
+    )
+    offending = [name for name in foreign if name in changes]
+    if offending:
+        return _reject_cross_class_revision(report_id, matched_class, offending)
+    if matched_class == "dynamic":
+        return None
+    return _rate_dependency_revision(report_id, matched, changes)
+
+
+def _read_revision(
+    report_id: str, update_reason: str, fields: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any] | None]:
+    """Return the changes a revision asks for, or the reason it cannot be acted on."""
+    if not report_id or not str(update_reason or "").strip():
+        missing = "report_id" if not report_id else "update_reason"
+        return {}, {
+            "success": False,
+            "error": (
+                f"{missing} cannot be empty - name the report you are revising and state "
+                "what you learned that it does not yet carry"
+            ),
+        }
+
+    changes, errors = _collect_update_changes(fields)
+    if errors:
+        return {}, {"success": False, "error": "Validation failed", "errors": errors}
+    if not changes:
+        return {}, {
+            "success": False,
+            "error": "No fields to update - pass at least one field you want to replace",
+        }
+    return changes, None
+
+
+def _do_update(
+    *,
+    report_id: str,
+    update_reason: str,
+    fields: dict[str, Any],
+    agent_id: str | None = None,
+    agent_name: str | None = None,
+) -> dict[str, Any]:
+    """Apply an agent's own revision to a report it can name.
+
+    Editing a finding is its own operation and the only way a filed finding
+    changes. Deduplication never reaches this path: it only decides whether a
+    new candidate is a finding already on file.
+    """
+    report_id = (report_id or "").strip()
+    changes, rejection = _read_revision(report_id, update_reason, fields)
+    if rejection is not None:
+        return rejection
+
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return {
+            "success": False,
+            "error": "Report state unavailable - no reports have been filed yet",
+        }
+
+    class_error = _fit_revision_to_class(report_state, report_id, changes)
+    if class_error is not None:
+        return class_error
+
+    updated = report_state.update_vulnerability_report(
+        report_id,
+        changes,
+        update_reason=update_reason,
+        updated_by_agent_id=agent_id,
+        updated_by_agent_name=agent_name,
+    )
+    if updated is None:
+        known = [r.get("id") for r in report_state.get_existing_vulnerabilities()]
+        if report_id not in known:
+            error = f"Report with id '{report_id}' not found"
+        else:
+            error = f"Report '{report_id}' already says this - nothing in your update changes it"
+        return {"success": False, "error": error, "report_id": report_id}
+
+    logger.info(
+        "Vulnerability report %s revised by its author: severity=%s cvss=%s fields=%s",
+        report_id,
+        updated.get("severity"),
+        updated.get("cvss"),
+        ", ".join(sorted(changes)),
+    )
+    return {
+        "success": True,
+        "action": "updated",
+        "message": f"Report '{report_id}' now carries your revision. Do not file it again.",
+        "report_id": report_id,
+        "updated_fields": sorted(changes),
+        "severity": updated.get("severity"),
+        "cvss_score": updated.get("cvss"),
+    }
+
+
 async def _do_create(
     *,
     title: str,
@@ -359,9 +686,37 @@ async def _do_create(
             "endpoint": endpoint,
             "method": method,
         }
+        report_fields: dict[str, Any] = {
+            "title": title,
+            "description": description,
+            "severity": severity,
+            "impact": impact,
+            "target": target,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "remediation_steps": remediation_steps,
+            "evidence": evidence,
+            "assumptions": assumptions,
+            "counterevidence": counterevidence,
+            "confidence": confidence,
+            "confidence_rationale": confidence_rationale,
+            "severity_change_conditions": severity_change_conditions,
+            "fix_effort": fix_effort,
+            "cvss": cvss_score,
+            "cvss_breakdown": cvss_breakdown,
+            "endpoint": endpoint,
+            "method": method,
+            "cve": cve,
+            "cwe": cwe,
+            "code_locations": parsed_locations,
+            "fix_verification": fix_verification,
+            "fix_pr_body": fix_pr_body,
+        }
+
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
-            duplicate_id = dedupe.get("duplicate_id", "")
+            duplicate_id = str(dedupe.get("duplicate_id") or "")
             duplicate_title = next(
                 (r.get("title", "Unknown") for r in existing if r.get("id") == duplicate_id),
                 "",
@@ -379,31 +734,7 @@ async def _do_create(
             }
 
         report_id = report_state.add_vulnerability_report(
-            title=title,
-            description=description,
-            severity=severity,
-            impact=impact,
-            target=target,
-            technical_analysis=technical_analysis,
-            poc_description=poc_description,
-            poc_script_code=poc_script_code,
-            remediation_steps=remediation_steps,
-            evidence=evidence,
-            assumptions=assumptions,
-            counterevidence=counterevidence,
-            confidence=confidence,
-            confidence_rationale=confidence_rationale,
-            severity_change_conditions=severity_change_conditions,
-            fix_effort=fix_effort,
-            cvss=cvss_score,
-            cvss_breakdown=cvss_breakdown,
-            endpoint=endpoint,
-            method=method,
-            cve=cve,
-            cwe=cwe,
-            code_locations=parsed_locations,
-            fix_verification=fix_verification,
-            fix_pr_body=fix_pr_body,
+            **report_fields,
             agent_id=agent_id if isinstance(agent_id, str) else None,
             agent_name=agent_name if isinstance(agent_name, str) else None,
         )
@@ -512,7 +843,9 @@ async def create_vulnerability_report(
     Automatic LLM-based **deduplication** rejects reports that describe
     the same root cause on the same asset as an existing report. If you
     get a ``duplicate_of`` response, do NOT retry — move on to other
-    areas.
+    areas. When you have learned something a filed finding does not yet
+    carry, revise that finding with ``update_vulnerability_report``
+    instead of filing this report again.
 
     **Counterevidence pass (required before filing)**: actively build the
     strongest case that this finding is NOT exploitable, or less severe
@@ -880,6 +1213,147 @@ async def create_vulnerability_report(
         code_locations=code_locations,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
+        agent_id=agent_id,
+        agent_name=agent_name,
+    )
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=60, strict_mode=False)
+async def update_vulnerability_report(
+    ctx: RunContextWrapper,
+    report_id: str,
+    update_reason: str,
+    title: str | None = None,
+    description: str | None = None,
+    impact: str | None = None,
+    target: str | None = None,
+    technical_analysis: str | None = None,
+    poc_description: str | None = None,
+    poc_script_code: str | None = None,
+    remediation_steps: str | None = None,
+    evidence: str | None = None,
+    assumptions: str | None = None,
+    counterevidence: str | None = None,
+    confidence: str | None = None,
+    confidence_rationale: str | None = None,
+    severity_change_conditions: str | None = None,
+    fix_effort: str | None = None,
+    cvss_breakdown: dict[str, str] | None = None,
+    endpoint: str | None = None,
+    method: str | None = None,
+    cve: str | None = None,
+    cwe: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
+    fix_pr_body: str | None = None,
+    contextual_cvss_reasoning: str | None = None,
+) -> str:
+    """Revise a vulnerability report that is already filed, keeping its id.
+
+    Use this when you learn something a filed finding does not yet carry:
+
+    - You built the working exploit after filing the finding on static
+      evidence, so the PoC and the confidence change.
+    - You chained the finding with another one and the real impact is
+      higher, so the impact narrative and the CVSS vector change.
+    - Further testing narrowed or weakened the finding, so the severity
+      must come down.
+    - Counterevidence, remediation, or a code location was wrong or
+      incomplete.
+
+    This is not deduplication. You do not need a duplicate verdict to
+    revise your own finding, and you must not file a second report for a
+    finding you can revise. Call ``list_reports`` or ``get_report`` first
+    to find the id and read what the report already says.
+
+    Pass only the fields you want to replace. Every other field stays as
+    it is. Reporting rules of ``create_vulnerability_report`` apply to
+    every field you pass, including the markdown and tone rules.
+
+    Notes on specific fields:
+
+    - ``cvss_breakdown`` replaces the whole vector. The score and the
+      severity are recalculated from it, so pass all 8 metrics. On a
+      dependency finding it replaces the contextual rating and needs
+      ``contextual_cvss_reasoning`` with it. Pass the reasoning alone to
+      correct only the explanation of the rating already on file.
+    - A dependency finding never carries ``endpoint``, ``method`` or a PoC.
+      File a proven exploit of the package as its own report.
+    - A field that only explains another field is dropped when the field
+      it explains changes and you pass no replacement. Pass
+      ``confidence_rationale`` with a new ``confidence``, and
+      ``severity_change_conditions`` with a new ``cvss_breakdown``.
+    - ``code_locations`` replaces the whole list. A location carrying
+      ``fix_after`` needs ``fix_verification``.
+
+    The report keeps its id, its original author, and its filing time. The
+    revision is recorded in the report as update history, so state the
+    reason plainly.
+
+    Args:
+        report_id: Id of the report to revise (format ``vuln-NNNN``).
+        update_reason: What you learned that the report does not yet
+            carry, in one or two sentences.
+        title: Replacement title.
+        description: Replacement overview.
+        impact: Replacement impact narrative.
+        target: Replacement affected asset.
+        technical_analysis: Replacement technical details.
+        poc_description: Replacement PoC steps (no code).
+        poc_script_code: Replacement exploit script or payload.
+        remediation_steps: Replacement remediation prose (no code).
+        evidence: Replacement evidence.
+        assumptions: Replacement exploitability prerequisites.
+        counterevidence: Replacement case against the finding.
+        confidence: ``high`` / ``medium`` / ``low``.
+        confidence_rationale: The gap behind a confidence below ``high``.
+        severity_change_conditions: What would move the severity now.
+        fix_effort: ``trivial`` / ``low`` / ``medium`` / ``high``.
+        cvss_breakdown: All 8 CVSS metrics. Replaces the score and the
+            severity too.
+        endpoint: Replacement endpoint.
+        method: Replacement HTTP method.
+        cve: Replacement CVE id.
+        cwe: Replacement CWE id.
+        code_locations: Replacement code locations.
+        fix_verification: Verification statement for an applyable fix.
+        fix_pr_body: Replacement fix PR body.
+        contextual_cvss_reasoning: Dependency findings only. What you
+            observed in this codebase that justifies the contextual
+            ``cvss_breakdown``.
+    """
+    agent_id, agent_name = _caller_identity(ctx)
+    result = await asyncio.to_thread(
+        _do_update,
+        report_id=report_id,
+        update_reason=update_reason,
+        fields={
+            "title": title,
+            "description": description,
+            "impact": impact,
+            "target": target,
+            "technical_analysis": technical_analysis,
+            "poc_description": poc_description,
+            "poc_script_code": poc_script_code,
+            "remediation_steps": remediation_steps,
+            "evidence": evidence,
+            "assumptions": assumptions,
+            "counterevidence": counterevidence,
+            "confidence": confidence,
+            "confidence_rationale": confidence_rationale,
+            "severity_change_conditions": severity_change_conditions,
+            "fix_effort": fix_effort,
+            "cvss_breakdown": cvss_breakdown,
+            "endpoint": endpoint,
+            "method": method,
+            "cve": cve,
+            "cwe": cwe,
+            "code_locations": code_locations,
+            "fix_verification": fix_verification,
+            "fix_pr_body": fix_pr_body,
+            "contextual_cvss_reasoning": contextual_cvss_reasoning,
+        },
         agent_id=agent_id,
         agent_name=agent_name,
     )

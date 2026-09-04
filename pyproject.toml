@@ -1,6 +1,6 @@
 [project]
 name = "strix-agent"
-version = "1.5.3"
+version = "1.6.1"
 description = "Open-source AI Hackers for your apps"
 readme = "README.md"
 license = "Apache-2.0"
@@ -43,6 +43,7 @@ dependencies = [
   "requests>=2.32.0",
   "cvss>=3.2",
   "caido-sdk-client>=0.2.0",
+  "markdown-it-py>=3.0.0",
   "reportlab>=4.0",
   "pypdf>=5.0",
   # Cap <49: 49.x drops the universal2 macOS wheel (arm64-only), which breaks
@@ -229,6 +230,7 @@ ignore = [
 # Test doubles use fixture tokens/passwords and match a callee signature whose
 # args they intentionally ignore.
 "tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
+"tests/test_cloud_cli.py" = ["S105", "ARG001"]
 "tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
 # Hatchling loads the build hook by path, not as an importable package.
 "scripts/tui_sidecar_hook.py" = ["INP001"]
@@ -248,6 +250,7 @@ ignore = [
 # Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
 # circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.
 "strix/interface/viewer/server.py" = ["N802", "PLC0415"]
+"strix/interface/cloud/payment_proxy.py" = ["N802"]
 # Lazy telemetry import to avoid importing PostHog before the viewer starts.
 "strix/interface/viewer/cli.py" = ["PLC0415"]
 # Lazy imports inside functions to avoid circular dependency with
@@ -411,6 +414,8 @@ known_third_party = ["pydantic", "litellm"]
 # ============================================================================
 
 [tool.bandit]
-exclude_dirs = ["docs", "build", "dist"]
+# Tests are covered by ruff's flake8-bandit rules (see per-file-ignores above),
+# which is where fixture tokens and loopback URL opens are already waived.
+exclude_dirs = ["docs", "build", "dist", "tests"]
 skips = ["B101", "B601", "B404", "B603", "B607"]  # Skip assert, shell injection, subprocess import and partial path checks
 severity = "medium"

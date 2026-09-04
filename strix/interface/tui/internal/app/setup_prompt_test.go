@@ -94,25 +94,6 @@ func commandTypes(envelopes []protocol.Envelope) []string {
 	return types
 }
 
-// startVerify returns the verify flag on the setup.start command, and whether
-// a setup.start command was present at all.
-func startVerify(t *testing.T, envelopes []protocol.Envelope) (verify, found bool) {
-	t.Helper()
-	for _, envelope := range envelopes {
-		if envelope.Type != "setup.start" {
-			continue
-		}
-		var payload struct {
-			Verify bool `json:"verify"`
-		}
-		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-			t.Fatal(err)
-		}
-		return payload.Verify, true
-	}
-	return false, false
-}
-
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -159,10 +140,6 @@ func TestSetupPromptWithoutTargetLaunchesAndRequestsMount(t *testing.T) {
 	}
 	if mount, found := startPayloadFlag(t, envelopes, "mount_working_dir"); !found || !mount {
 		t.Fatalf("mount was not requested: mount_working_dir=%v found=%v", mount, found)
-	}
-	// A bare prompt launches optimistically: no model preflight.
-	if verify, found := startVerify(t, envelopes); !found || verify {
-		t.Fatalf("bare prompt should launch with verify=false, got verify=%v found=%v", verify, found)
 	}
 	// setup.start leaves setup mode, so it must be the last command sent.
 	if start, instr := firstIndex(types, "setup.start"), lastIndex(types, "setup.set_instruction"); start < instr {
@@ -273,9 +250,8 @@ func TestSetupPromptWithTargetLaunches(t *testing.T) {
 			t.Fatalf("missing %s in %v", want, types)
 		}
 	}
-	// A named target keeps the upfront model check.
-	if verify, found := startVerify(t, envelopes); !found || !verify {
-		t.Fatalf("targeted prompt should launch with verify=true, got verify=%v found=%v", verify, found)
+	if _, found := startPayloadFlag(t, envelopes, "mount_working_dir"); found {
+		t.Fatalf("a targeted prompt must not ask to mount the working directory: %v", types)
 	}
 	// The target and instruction must reach the backend before setup.start
 	// closes the setup guard.

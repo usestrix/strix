@@ -343,15 +343,19 @@ async def test_setup_preflights_model_before_starting(
         assert candidate.scope_mode == "diff"
         assert candidate.diff_base == "origin/main"
 
+    monkeypatch.setattr(go_tui, "persist_current", lambda: calls.append("persist"))
     monkeypatch.setattr(go_tui, "build_targets_info", build)
     monkeypatch.setattr(go_tui, "prepare_run", prepare)
     monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
     monkeypatch.setattr(runtime, "init_run_state", lambda: calls.append("state"))
     monkeypatch.setattr(runtime, "start_scan", lambda: calls.append("scan"))
 
+    # The controller runs these two in turn for every setup launch.
+    await runtime.ensure_model_verified()
     await runtime.start_from_setup()
 
-    assert calls == ["preflight", "targets", "prepare", "telemetry", "state", "scan"]
+    # The same steps, in the same order, as a direct launch's prepare_and_start.
+    assert calls == ["preflight", "persist", "targets", "prepare", "telemetry", "state", "scan"]
     assert runtime.args.scan_mode == "quick"
     assert runtime.args.instruction == ""
     assert runtime.args.max_budget_usd == 8.5
@@ -360,35 +364,138 @@ async def test_setup_preflights_model_before_starting(
     assert runtime.args.diff_base == "origin/main"
 
 
+def _setup_model(
+    monkeypatch: pytest.MonkeyPatch, model: str | None = "openrouter/test-model"
+) -> None:
+    monkeypatch.setattr(
+        go_tui,
+        "load_settings",
+        lambda: SimpleNamespace(llm=SimpleNamespace(model=model)),
+    )
+
+
+def _setup_messages(runtime: GoTuiRuntime) -> list[tuple[str, str]]:
+    return [(message["level"], message["text"]) for message in runtime.controller.messages]
+
+
 @pytest.mark.asyncio
-async def test_optimistic_setup_skips_model_preflight(
+async def test_setup_model_check_reports_success_in_the_setup_log(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = GoTuiRuntime(args())
-    runtime.controller.targets = [str(Path.cwd())]
+    calls: list[str] = []
+
+    async def preflight(model: str) -> None:
+        calls.append(model)
+
+    _setup_model(monkeypatch)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+
+    await runtime.check_setup_model()
+
+    assert calls == ["openrouter/test-model"]
+    assert runtime.model_verified is True
+    assert _setup_messages(runtime) == [
+        ("info", "Verifying model connection..."),
+        ("info", "Model connection verified"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_setup_model_check_reports_failure_without_leaving_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(args())
+
+    async def preflight(_model: str) -> None:
+        raise TimeoutError("connection timed out")
+
+    _setup_model(monkeypatch)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+
+    await runtime.check_setup_model()
+
+    assert runtime.model_verified is False
+    assert runtime.controller.setup_mode is True
+    assert runtime.controller.scan_state == "setup"
+    assert _setup_messages(runtime)[-1] == (
+        "error",
+        "Model connection failed: connection timed out",
+    )
+
+
+@pytest.mark.asyncio
+async def test_setup_model_check_waits_for_a_configured_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(args())
+
+    _setup_model(monkeypatch, model=None)
+    monkeypatch.setattr(
+        go_tui,
+        "preflight_model_connection",
+        lambda _model: pytest.fail("nothing to check without a model"),
+    )
+
+    await runtime.check_setup_model()
+
+    assert runtime.model_verified is False
+    assert runtime.controller.messages == []
+
+
+@pytest.mark.asyncio
+async def test_ensure_model_verified_reuses_the_startup_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(args())
+    release = asyncio.Event()
     calls: list[str] = []
 
     async def preflight(_model: str) -> None:
         calls.append("preflight")
+        await release.wait()
 
-    monkeypatch.setattr(
-        go_tui,
-        "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
-    )
+    _setup_model(monkeypatch)
     monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(go_tui, "build_targets_info", lambda _args, **_kw: calls.append("targets"))
-    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: calls.append("prepare"))
-    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
-    monkeypatch.setattr(runtime, "init_run_state", lambda: calls.append("state"))
-    monkeypatch.setattr(runtime, "start_scan", lambda: calls.append("scan"))
+    runtime._setup_preflight = asyncio.create_task(runtime.check_setup_model())
+    await asyncio.sleep(0)
 
-    await runtime.start_from_setup(verify=False)
+    # A launch that arrives mid-check waits for it rather than racing a second
+    # round trip.
+    ensure = asyncio.create_task(runtime.ensure_model_verified())
+    await asyncio.sleep(0)
+    assert not ensure.done()
+    release.set()
+    await ensure
 
-    # No preflight: the scan launches straight through and any model error
-    # surfaces once the agent runs.
-    assert "preflight" not in calls
-    assert calls == ["targets", "prepare", "telemetry", "state", "scan"]
+    assert calls == ["preflight"]
+    assert runtime.model_verified is True
+
+
+@pytest.mark.asyncio
+async def test_ensure_model_verified_retries_after_a_failed_startup_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(args())
+    outcomes = iter([TimeoutError("connection timed out"), None])
+    calls: list[str] = []
+
+    async def preflight(_model: str) -> None:
+        calls.append("preflight")
+        outcome = next(outcomes)
+        if outcome is not None:
+            raise outcome
+
+    _setup_model(monkeypatch)
+    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+
+    await runtime.check_setup_model()
+    assert runtime.model_verified is False
+
+    await runtime.ensure_model_verified()
+
+    assert calls == ["preflight", "preflight"]
+    assert runtime.model_verified is True
 
 
 @pytest.mark.asyncio
@@ -400,15 +507,8 @@ async def test_confirmed_target_less_launch_mounts_workspace_without_targets(
     runtime.controller.workspace_mount = str(Path.home())
     prepared: list[argparse.Namespace] = []
 
-    async def preflight(_model: str) -> None:
-        return None
-
-    monkeypatch.setattr(
-        go_tui,
-        "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
-    )
-    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    _setup_model(monkeypatch)
+    monkeypatch.setattr(go_tui, "persist_current", lambda: None)
     monkeypatch.setattr(
         go_tui,
         "build_targets_info",
@@ -419,7 +519,7 @@ async def test_confirmed_target_less_launch_mounts_workspace_without_targets(
     monkeypatch.setattr(runtime, "init_run_state", lambda: None)
     monkeypatch.setattr(runtime, "start_scan", lambda: None)
 
-    await runtime.start_from_setup(verify=False)
+    await runtime.start_from_setup()
 
     assert prepared[0].workspace_mount == str(Path.home())
     assert prepared[0].targets_info == []
@@ -442,15 +542,8 @@ async def test_setup_preserves_prepared_cli_targets(
     runtime = GoTuiRuntime(runtime_args)
     calls: list[str] = []
 
-    async def preflight(_model: str) -> None:
-        calls.append("preflight")
-
-    monkeypatch.setattr(
-        go_tui,
-        "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
-    )
-    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    _setup_model(monkeypatch)
+    monkeypatch.setattr(go_tui, "persist_current", lambda: calls.append("persist"))
     monkeypatch.setattr(
         go_tui,
         "build_targets_info",
@@ -465,7 +558,7 @@ async def test_setup_preserves_prepared_cli_targets(
 
     assert runtime.controller.targets == ["https://example.com"]
     assert runtime.args.targets_info[0]["type"] == "web"
-    assert calls == ["preflight", "prepare", "telemetry", "state", "scan"]
+    assert calls == ["persist", "prepare", "telemetry", "state", "scan"]
 
 
 @pytest.mark.asyncio
@@ -798,19 +891,17 @@ async def test_setup_preflight_failure_does_not_start_scan(
         nonlocal started
         started = True
 
-    monkeypatch.setattr(
-        go_tui,
-        "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
-    )
+    _setup_model(monkeypatch)
     monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
+    monkeypatch.setattr(go_tui, "persist_current", mark_started)
     monkeypatch.setattr(go_tui, "build_targets_info", mark_started)
     monkeypatch.setattr(runtime, "init_run_state", mark_started)
     monkeypatch.setattr(runtime, "start_scan", mark_started)
 
     with pytest.raises(RuntimeError, match="Model connection failed: 401 Unauthorized"):
-        await runtime.start_from_setup()
+        await runtime.ensure_model_verified()
 
+    assert runtime.model_verified is False
     assert started is False
     assert runtime.scan_task is None
 

@@ -185,6 +185,4 @@ async def test_roster_is_persisted_even_without_a_status_sink(
     )
 
     assert persisted, "roster must persist even when no status sink is attached"
-    assert persisted[-1] == [
-        {"name": "local_fs", "provider": None, "tool_count": 3, "dead": False}
-    ]
+    assert persisted[-1] == [{"name": "local_fs", "provider": None, "tool_count": 3, "dead": False}]

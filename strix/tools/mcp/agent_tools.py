@@ -50,13 +50,6 @@ def _unknown_connection(connection: str, registry: McpRegistry) -> str:
     return f"Unknown MCP connection {connection!r}. Available connections: {available}."
 
 
-def _unavailable_connection(connection: str) -> str:
-    return (
-        f"MCP connection {connection!r} is unavailable: its live session failed and "
-        "could not be reconnected, so it is unavailable for the rest of this run."
-    )
-
-
 def _format_tool(tool: MCPTool) -> str:
     schema = json.dumps(tool.inputSchema or {"type": "object"}, indent=2, ensure_ascii=False)
     description = (tool.description or "").strip() or "(no description)"
@@ -114,8 +107,8 @@ async def describe_mcp(ctx: RunContextWrapper, connection: str) -> str:
         return _unknown_connection(connection, registry)
     try:
         tools = await entry.session.list_tools()
-    except McpConnectionUnavailableError:
-        return _unavailable_connection(connection)
+    except McpConnectionUnavailableError as exc:
+        return str(exc)
     if not tools:
         return f"MCP connection {connection!r} offers no tools."
     header = f"MCP connection {connection!r} offers {len(tools)} tool(s):"
@@ -170,8 +163,8 @@ async def call_mcp(
         return invalid_arguments
     try:
         available = await entry.session.list_tools()
-    except McpConnectionUnavailableError:
-        return _errored_tool_output(_unavailable_connection(connection))
+    except McpConnectionUnavailableError as exc:
+        return _errored_tool_output(str(exc))
     valid_names = {mcp_tool.name for mcp_tool in available}
     if tool not in valid_names:
         offered = ", ".join(sorted(valid_names)) or "(none)"
