@@ -24,6 +24,13 @@ from strix.utils.api_spec import detect_spec_format
 
 logger = logging.getLogger(__name__)
 
+DOCKER_PERMISSION_ERROR_MARKERS = ("permission denied", "operation not permitted")
+DOCKER_SOCKET_ACCESS_HINT = (
+    "Docker is installed, but Strix cannot access the Docker socket. "
+    "Run Strix with a user that can access Docker, or add your user to the docker group "
+    "and restart your shell before trying again.\n"
+)
+
 
 def get_severity_color(severity: str) -> str:
     severity_colors = {
@@ -1596,18 +1603,25 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         ) from e
 
 
+def _is_docker_permission_error(exc: DockerException) -> bool:
+    message = str(exc).lower()
+    return any(marker in message for marker in DOCKER_PERMISSION_ERROR_MARKERS)
+
+
 def check_docker_connection() -> Any:
     import docker
     from docker.errors import DockerException
 
     try:
         return docker.from_env()
-    except DockerException:
+    except DockerException as exc:
         console = Console()
         error_text = Text()
         error_text.append("DOCKER NOT AVAILABLE", style="bold red")
         error_text.append("\n\n", style="white")
         error_text.append("Cannot connect to Docker daemon.\n", style="white")
+        if _is_docker_permission_error(exc):
+            error_text.append(DOCKER_SOCKET_ACCESS_HINT, style="white")
         error_text.append(
             "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
             style="white",
