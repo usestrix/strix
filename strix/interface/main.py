@@ -334,7 +334,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     )
     if not args.non_interactive:
         console.print(
-            "[dim]Cloud[/]  [#22c55e]strix cloud login[/]  [dim]no Docker, no LLM key[/]  "
+            "[dim]Cloud[/]  [#60a5fa]app.strix.ai[/]  [dim]no Docker, no LLM key[/]  "
             "[dim]·[/]  [dim]Enterprise[/]  [#60a5fa]strix.ai/demo[/]"
         )
     console.print()
