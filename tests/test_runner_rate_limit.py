@@ -1,4 +1,4 @@
-"""Tests for graceful handling of persistent RateLimitError in run_strix_scan."""
+"""Tests for graceful handling of persistent usage/rate-limit errors in run_strix_scan."""
 
 from __future__ import annotations
 
@@ -24,11 +24,22 @@ def _make_rate_limit_error() -> RateLimitError:
     return RateLimitError("rate limited", response=response, body=None)
 
 
-@pytest.mark.asyncio
-async def test_persistent_rate_limit_stops_gracefully(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, caplog: pytest.LogCaptureFixture
-) -> None:
-    """A persistent RateLimitError stops the scan (root -> 'stopped') without raising."""
+class _ProviderUsageLimitError(Exception):
+    """A non-OpenAI (e.g. LiteLLM-routed) provider exception whose text carries the
+    usage-limit marker but which is *not* an ``openai.RateLimitError``."""
+
+
+def _make_litellm_usage_limit_error() -> Exception:
+    return _ProviderUsageLimitError(
+        "litellm.RateLimitError: 429 - {'error': {'type': 'usage_limit_reached', "
+        "'message': 'The usage limit has been reached'}}"
+    )
+
+
+async def _run_scan_raising(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, error: BaseException
+) -> tuple[Any, AgentCoordinator]:
+    """Drive run_strix_scan with a fully mocked scan whose agent loop raises ``error``."""
     monkeypatch.setattr(runner, "run_dir_for", lambda _scan_id: tmp_path)
     monkeypatch.setattr(runner, "runtime_state_dir", lambda _run_dir: tmp_path)
     monkeypatch.setattr(runner, "setup_scan_logging", lambda _run_dir: lambda: None)
@@ -70,21 +81,24 @@ async def test_persistent_rate_limit_stops_gracefully(
     monkeypatch.setattr(runner, "make_child_factory", lambda **_kwargs: lambda **_k: object())
     monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: object())
 
-    async def _raise_rate_limit(*_args: Any, **_kwargs: Any) -> None:
-        raise _make_rate_limit_error()
+    async def _raise(*_args: Any, **_kwargs: Any) -> None:
+        raise error
 
-    monkeypatch.setattr(runner, "run_agent_loop", _raise_rate_limit)
+    monkeypatch.setattr(runner, "run_agent_loop", _raise)
 
     coordinator = AgentCoordinator()
+    result = await runner.run_strix_scan(
+        scan_config={"targets": [], "scan_mode": "deep"},
+        scan_id="scan-test",
+        image="img",
+        coordinator=coordinator,
+    )
+    return result, coordinator
 
-    with caplog.at_level(logging.WARNING):
-        result = await runner.run_strix_scan(
-            scan_config={"targets": [], "scan_mode": "deep"},
-            scan_id="scan-test",
-            image="img",
-            coordinator=coordinator,
-        )
 
+def _assert_stopped_resumably(
+    result: Any, coordinator: AgentCoordinator, caplog: pytest.LogCaptureFixture
+) -> None:
     assert result is None
     root_ids = [aid for aid, parent in coordinator.parent_of.items() if parent is None]
     assert len(root_ids) == 1
@@ -92,3 +106,29 @@ async def test_persistent_rate_limit_stops_gracefully(
     # the resume hint must carry the real scan id, not a literal placeholder
     assert "strix --resume scan-test" in caplog.text
     assert "<run_name>" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_persistent_rate_limit_stops_gracefully(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A persistent OpenAI RateLimitError stops the scan (root -> 'stopped') without raising."""
+    with caplog.at_level(logging.WARNING):
+        result, coordinator = await _run_scan_raising(
+            monkeypatch, tmp_path, _make_rate_limit_error()
+        )
+    _assert_stopped_resumably(result, coordinator, caplog)
+
+
+@pytest.mark.asyncio
+async def test_persistent_usage_limit_non_openai_stops_gracefully(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Any, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A usage-limit error from a non-OpenAI (LiteLLM-routed) provider — not an
+    ``openai.RateLimitError`` — must also land on the resumable stop path, not the
+    generic failure path."""
+    with caplog.at_level(logging.WARNING):
+        result, coordinator = await _run_scan_raising(
+            monkeypatch, tmp_path, _make_litellm_usage_limit_error()
+        )
+    _assert_stopped_resumably(result, coordinator, caplog)

@@ -18,7 +18,7 @@ from openai import RateLimitError
 
 from strix.agents.factory import build_strix_agent, make_child_factory
 from strix.agents.prompt import render_system_prompt
-from strix.config import load_settings
+from strix.config import codex, load_settings
 from strix.config.models import (
     StrixProvider,
     configure_sdk_model_defaults,
@@ -614,23 +614,35 @@ async def run_strix_scan(
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
         return None
-    except RateLimitError as exc:
-        logger.warning(
-            "Scan %s stopped: persistent rate limit from the LLM provider (%s). "
-            "Resume with 'strix --resume %s' once the limit clears.",
-            scan_id,
-            exc,
-            scan_id,
-        )
-        if root_id is not None:
-            with contextlib.suppress(Exception):
-                await coordinator.set_status(root_id, "stopped")
-        return None
     except (asyncio.CancelledError, KeyboardInterrupt):
         logger.info("Scan %s interrupted by the user", scan_id)
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "running")
+        raise
+    except Exception as exc:
+        # A usage-limit rejection is resumable regardless of the provider's
+        # exception class: OpenAI raises RateLimitError, but a LiteLLM-routed
+        # provider may surface the same exhausted-window error as a different
+        # type. Both retry layers already stop retrying it (see
+        # codex.is_usage_limit_error), so route it to the same resumable stop
+        # instead of the generic failure path.
+        if isinstance(exc, RateLimitError) or codex.is_usage_limit_error(exc):
+            logger.warning(
+                "Scan %s stopped: persistent rate limit from the LLM provider (%s). "
+                "Resume with 'strix --resume %s' once the limit clears.",
+                scan_id,
+                exc,
+                scan_id,
+            )
+            if root_id is not None:
+                with contextlib.suppress(Exception):
+                    await coordinator.set_status(root_id, "stopped")
+            return None
+        logger.exception("Strix scan %s failed", scan_id)
+        if root_id is not None:
+            with contextlib.suppress(Exception):
+                await coordinator.set_status(root_id, "failed")
         raise
     except BaseException:
         logger.exception("Strix scan %s failed", scan_id)

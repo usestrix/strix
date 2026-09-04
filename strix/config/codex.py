@@ -160,6 +160,21 @@ def is_content_guardrail_error(exc: BaseException) -> bool:
     return any(marker in text for marker in _GUARDRAIL_MARKERS)
 
 
+_USAGE_LIMIT_MARKERS = (
+    "usage_limit_reached",
+    "usage limit has been reached",
+)
+
+
+def is_usage_limit_error(exc: BaseException) -> bool:
+    """A plan/subscription usage window is exhausted (e.g. ChatGPT's 5-hour or
+    weekly cap), not an ordinary throttle. Terminal for the run: retrying only
+    burns more of the same exhausted quota and cannot succeed until it resets,
+    so the run should stop resumably instead of thrashing the backoff."""
+    text = str(exc).lower()
+    return any(marker in text for marker in _USAGE_LIMIT_MARKERS)
+
+
 def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
 

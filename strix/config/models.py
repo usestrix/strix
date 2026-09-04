@@ -545,6 +545,15 @@ class StrixProvider(MultiProvider):
         )
 
 
+def _not_usage_limit_error(context: RetryPolicyContext) -> bool:
+    # A usage-limit rejection (a plan/subscription window is exhausted, e.g.
+    # ChatGPT's 5-hour or weekly cap) is terminal for the run: retrying only
+    # burns more of the same exhausted quota and cannot succeed until it resets.
+    # Composed with ``all`` below so the run fails fast and stops resumably
+    # instead of thrashing the backoff on a limit that will not clear for hours.
+    return not codex.is_usage_limit_error(context.error)
+
+
 DEFAULT_MODEL_RETRY = ModelRetrySettings(
     max_retries=5,
     backoff=ModelRetryBackoffSettings(
@@ -553,11 +562,14 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
         multiplier=2.0,
         jitter=False,
     ),
-    policy=retry_policies.any(
-        retry_policies.provider_suggested(),
-        retry_policies.network_error(),
-        retry_policies.http_status((429, 500, 502, 503, 504)),
-        _retry_statusless_provider_errors,
+    policy=retry_policies.all(
+        retry_policies.any(
+            retry_policies.provider_suggested(),
+            retry_policies.network_error(),
+            retry_policies.http_status((429, 500, 502, 503, 504)),
+            _retry_statusless_provider_errors,
+        ),
+        _not_usage_limit_error,
     ),
 )
 

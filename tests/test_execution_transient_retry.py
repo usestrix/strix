@@ -172,3 +172,23 @@ async def test_run_cycle_does_not_retry_permanent_error(
     streams = [_FakeStream(exc=bad_request), _FakeStream()]
     with pytest.raises(BadRequestError):
         await _run_once(monkeypatch, streams)
+
+
+def test_usage_limit_error_is_terminal_not_transient() -> None:
+    usage_limited = RateLimitError(
+        "Error code: 429 - {'error': {'type': 'usage_limit_reached', "
+        "'message': 'The usage limit has been reached'}}",
+        response=httpx.Response(429, request=_request()),
+        body={"type": "usage_limit_reached"},
+    )
+    assert codex.is_usage_limit_error(usage_limited) is True
+    # A usage-limit rejection must not be retried like an ordinary throttle.
+    assert execution._is_transient_model_error(usage_limited) is False
+
+
+def test_ordinary_rate_limit_is_not_usage_limit() -> None:
+    rate_limited = RateLimitError(
+        "slow down", response=httpx.Response(429, request=_request()), body=None
+    )
+    assert codex.is_usage_limit_error(rate_limited) is False
+    assert execution._is_transient_model_error(rate_limited) is True
