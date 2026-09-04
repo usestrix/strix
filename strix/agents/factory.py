@@ -69,7 +69,7 @@ from strix.tools.todo.tools import (
     mark_todo_pending,
     update_todo,
 )
-from strix.tools.web_search.tool import web_search
+from strix.tools.web_search.tool import web_get_contents, web_search
 
 
 if TYPE_CHECKING:
@@ -579,6 +579,7 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     save_threat_model,
     amend_threat_model,
     web_search,
+    web_get_contents,
     create_vulnerability_report,
     create_dependency_report,
     update_vulnerability_report,

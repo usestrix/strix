@@ -1,16 +1,20 @@
-"""``web_search`` — security-focused web search (Exa or Perplexity)."""
+"""Security-focused web research tools (Exa or Perplexity)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import requests
 from agents import RunContextWrapper, function_tool
 
 from strix.config import load_settings
+
+
+if TYPE_CHECKING:
+    from collections.abc import Callable
 
 
 logger = logging.getLogger(__name__)
@@ -57,6 +61,20 @@ def _perplexity_content(api_key: str, query: str) -> str:
 
 
 _EXA_HIGHLIGHT_MAX_CHARS = 750
+_EXA_PAGE_MAX_CHARS = 20000
+_EXA_MAX_CONTENT_URLS = 10
+_EXA_SUMMARY_PROMPT = (
+    "Summarize this page for a penetration tester. Keep concrete technical detail: "
+    "affected products and exact versions, CVE and CWE identifiers, CVSS scores, "
+    "exploitation preconditions, payloads or commands, and mitigations. "
+    "Leave out marketing copy and navigation text."
+)
+
+
+def _exa_search_contents(content_mode: str) -> dict[str, Any]:
+    if content_mode == "highlights":
+        return {"highlights": {"maxCharacters": _EXA_HIGHLIGHT_MAX_CHARS}}
+    return {"summary": {"query": _EXA_SUMMARY_PROMPT}}
 
 
 def _exa_result_block(result: dict[str, Any]) -> str | None:
@@ -65,6 +83,9 @@ def _exa_result_block(result: dict[str, Any]) -> str | None:
         return None
     title = str(result.get("title") or result_url)
     parts = [f"### {title}\n{result_url}"]
+    summary = str(result.get("summary") or "").strip()
+    if summary:
+        parts.append(summary)
     highlights = result.get("highlights") or []
     if isinstance(highlights, list):
         excerpts = [str(item).strip() for item in highlights if str(item).strip()]
@@ -73,28 +94,67 @@ def _exa_result_block(result: dict[str, Any]) -> str | None:
     return "\n".join(parts)
 
 
-def _exa_content(api_key: str, query: str, search_type: str, num_results: int) -> str:
-    url = "https://api.exa.ai/search"
-    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
-    payload = {
-        "query": f"{_SYSTEM_PROMPT}\n\n{query}",
-        "type": search_type,
-        "numResults": num_results,
-        "contents": {"highlights": {"maxCharacters": _EXA_HIGHLIGHT_MAX_CHARS}},
-    }
-    with requests.post(url, headers=headers, json=payload, timeout=300) as response:
-        response.raise_for_status()
-        body: dict[str, Any] = response.json()
-    results: list[Any] = body.get("results") or []
+def _exa_page_block(result: dict[str, Any]) -> str | None:
+    result_url = str(result.get("url") or result.get("id") or "")
+    text = str(result.get("text") or "").strip()
+    if not result_url or not text:
+        return None
+    if len(text) > _EXA_PAGE_MAX_CHARS:
+        text = f"{text[:_EXA_PAGE_MAX_CHARS]}\n[truncated at {_EXA_PAGE_MAX_CHARS} characters]"
+    title = str(result.get("title") or result_url)
+    return f"### {title}\n{result_url}\n\n{text}"
+
+
+def _exa_blocks(
+    results: list[Any],
+    render: Callable[[dict[str, Any]], str | None],
+) -> list[str]:
     blocks: list[str] = []
     for result in results:
         if not isinstance(result, dict):
             continue
-        block = _exa_result_block(cast("dict[str, Any]", result))
+        block = render(cast("dict[str, Any]", result))
         if block:
             blocks.append(block)
+    return blocks
+
+
+def _exa_post(api_key: str, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+    with requests.post(endpoint, headers=headers, json=payload, timeout=300) as response:
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+    return body
+
+
+def _exa_content(
+    api_key: str,
+    query: str,
+    search_type: str,
+    num_results: int,
+    content_mode: str,
+) -> str:
+    body = _exa_post(
+        api_key,
+        "https://api.exa.ai/search",
+        {
+            "query": f"{_SYSTEM_PROMPT}\n\n{query}",
+            "type": search_type,
+            "numResults": num_results,
+            "contents": _exa_search_contents(content_mode),
+        },
+    )
+    blocks = _exa_blocks(body.get("results") or [], _exa_result_block)
     if not blocks:
         raise ValueError("Exa response has no results")
+    return "\n\n".join(blocks)
+
+
+def _exa_page_text(api_key: str, urls: list[str]) -> str:
+    body = _exa_post(api_key, "https://api.exa.ai/contents", {"urls": urls, "text": True})
+    blocks = _exa_blocks(body.get("results") or [], _exa_page_block)
+    if not blocks:
+        raise ValueError("Exa returned no page contents")
     return "\n\n".join(blocks)
 
 
@@ -133,7 +193,35 @@ def _not_configured_error(missing: str) -> dict[str, Any]:
     }
 
 
-def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error class needs its own sanitized return
+def _guarded_call(  # noqa: PLR0911 - each error class needs its own sanitized return
+    tool: str,
+    rejected_hint: str,
+    fetch: Callable[[], str],
+) -> str | dict[str, Any]:
+    """Run a provider call and translate any failure into a sanitized error dict."""
+    try:
+        return fetch()
+    except requests.exceptions.Timeout:
+        logger.warning("%s timed out", tool)
+        return {"success": False, "error": f"{tool} timed out. Try again or narrow the request"}
+    except requests.exceptions.HTTPError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        logger.exception("%s HTTP error status=%s", tool, status)
+        if status is not None and 400 <= status < 500:
+            return {"success": False, "error": rejected_hint}
+        return {"success": False, "error": f"{tool} service is unavailable. Try again later"}
+    except requests.exceptions.RequestException:
+        logger.exception("%s network error", tool)
+        return {"success": False, "error": f"{tool} network error. Try again later"}
+    except (KeyError, IndexError, ValueError):
+        logger.exception("%s response shape unexpected", tool)
+        return {"success": False, "error": f"{tool} returned an unexpected response. Try again"}
+    except Exception:
+        logger.exception("%s failed", tool)
+        return {"success": False, "error": f"{tool} failed unexpectedly"}
+
+
+def _do_search(query: str) -> dict[str, Any]:
     if not query or not query.strip():
         return {"success": False, "error": "Query cannot be empty"}
 
@@ -144,62 +232,74 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
     provider, api_key = resolved
     logger.info("web_search provider=%s query (len=%d): %s", provider, len(query), query[:120])
 
-    try:
+    def fetch() -> str:
         if provider == "exa":
-            content = _exa_content(
+            return _exa_content(
                 api_key,
                 query,
                 integrations.exa_search_type,
                 integrations.exa_num_results,
+                integrations.exa_content_mode,
             )
-        else:
-            content = _perplexity_content(api_key, query)
-    except requests.exceptions.Timeout:
-        logger.warning("web_search timed out")
+        return _perplexity_content(api_key, query)
+
+    outcome = _guarded_call(
+        "Web search",
+        (
+            "Web search rejected the query. Refine it "
+            "(more specific, shorter, no unusual characters) and retry"
+        ),
+        fetch,
+    )
+    if isinstance(outcome, dict):
+        return outcome
+    return {
+        "success": True,
+        "query": query,
+        "provider": provider,
+        "content": outcome,
+    }
+
+
+def _do_get_contents(urls: list[str]) -> dict[str, Any]:
+    cleaned = [url.strip() for url in urls if url and url.strip()]
+    if not cleaned:
+        return {"success": False, "error": "Provide at least one URL"}
+    if len(cleaned) > _EXA_MAX_CONTENT_URLS:
         return {
             "success": False,
-            "error": "Web search timed out. Try again or shorten the query",
+            "error": f"Too many URLs. Pass at most {_EXA_MAX_CONTENT_URLS} per call",
         }
-    except requests.exceptions.HTTPError as exc:
-        status = exc.response.status_code if exc.response is not None else None
-        logger.exception("web_search HTTP error status=%s", status)
-        if status is not None and 400 <= status < 500:
-            return {
-                "success": False,
-                "error": (
-                    "Web search rejected the query. Refine it "
-                    "(more specific, shorter, no unusual characters) and retry"
-                ),
-            }
+
+    integrations = load_settings().integrations
+    api_key = integrations.exa_api_key
+    if not api_key:
+        return _not_configured_error("EXA_API_KEY")
+    if integrations.web_search_provider == "perplexity":
+        logger.warning("web_get_contents invoked while the provider is pinned to Perplexity")
         return {
             "success": False,
-            "error": "Web search service is unavailable. Try again later",
+            "error": (
+                "Page fetching needs the Exa provider "
+                "(operator pinned STRIX_WEB_SEARCH_PROVIDER to perplexity). "
+                "Use web_search instead"
+            ),
         }
-    except requests.exceptions.RequestException:
-        logger.exception("web_search network error")
-        return {
-            "success": False,
-            "error": "Web search network error. Try again later",
-        }
-    except (KeyError, IndexError, ValueError):
-        logger.exception("web_search response shape unexpected")
-        return {
-            "success": False,
-            "error": "Web search returned an unexpected response. Try again",
-        }
-    except Exception:
-        logger.exception("web_search failed")
-        return {
-            "success": False,
-            "error": "Web search failed unexpectedly",
-        }
-    else:
-        return {
-            "success": True,
-            "query": query,
-            "provider": provider,
-            "content": content,
-        }
+
+    logger.info("web_get_contents urls=%d", len(cleaned))
+    outcome = _guarded_call(
+        "Page fetch",
+        "Page fetch was rejected. Check the URLs are complete, public, and correctly formed",
+        lambda: _exa_page_text(api_key, cleaned),
+    )
+    if isinstance(outcome, dict):
+        return outcome
+    return {
+        "success": True,
+        "urls": cleaned,
+        "provider": "exa",
+        "content": outcome,
+    }
 
 
 @function_tool(timeout=330)
@@ -234,6 +334,13 @@ async def web_search(ctx: RunContextWrapper, query: str) -> str:
     exploits, Kali-compatible tooling, and concrete code/command
     examples.
 
+    With the Exa provider you get a ranked list of results, each with a
+    title, URL, and a short security-focused summary (or verbatim
+    highlights when ``STRIX_EXA_CONTENT_MODE=highlights``). Read the
+    result you need, then call ``web_get_contents`` with its URL to pull
+    the full page text when a summary is not enough. With Perplexity you
+    get a single synthesized cited answer.
+
     **Good example queries** (each is a full sentence, names a
     version/product, and asks one concrete thing):
 
@@ -260,4 +367,29 @@ async def web_search(ctx: RunContextWrapper, query: str) -> str:
             ticket title for a senior security engineer.
     """
     result = await asyncio.to_thread(_do_search, query)
+    return json.dumps(result, ensure_ascii=False, default=str)
+
+
+@function_tool(timeout=330)
+async def web_get_contents(ctx: RunContextWrapper, urls: list[str]) -> str:
+    """Fetch the full, cleaned text of specific web pages (Exa only).
+
+    Use this as the drill-down step after ``web_search``: when a result's
+    summary or highlights are not enough, pass that result's URL here to
+    read the whole page. Good for reading a full advisory, a CVE writeup,
+    an exploit proof-of-concept, or vendor documentation end to end.
+
+    Prefer ``web_search`` first to find the right pages, then fetch only
+    the few URLs worth reading in full — each page can be large, so avoid
+    fetching many pages you do not need.
+
+    This tool needs the Exa provider (``EXA_API_KEY``). When the operator
+    pins the provider to Perplexity, it returns an error and you should
+    use ``web_search`` instead.
+
+    Args:
+        urls: The page URLs to fetch, at most 10 per call. Use complete,
+            public URLs (for example the ones returned by ``web_search``).
+    """
+    result = await asyncio.to_thread(_do_get_contents, urls)
     return json.dumps(result, ensure_ascii=False, default=str)
