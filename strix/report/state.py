@@ -73,6 +73,7 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "cve",
         "cwe",
         "code_locations",
+        "http_exchange_ids",
         "fix_verification",
         "fix_pr_body",
     }
@@ -333,6 +334,7 @@ class ReportState:
         cve: str | None = None,
         cwe: str | None = None,
         code_locations: list[dict[str, Any]] | None = None,
+        http_exchange_ids: list[str] | None = None,
         fix_verification: str | None = None,
         fix_pr_body: str | None = None,
         finding_class: str | None = None,
@@ -391,6 +393,8 @@ class ReportState:
             report["cwe"] = cwe.strip()
         if code_locations:
             report["code_locations"] = code_locations
+        if http_exchange_ids:
+            report["http_exchange_ids"] = http_exchange_ids
         if fix_verification:
             report["fix_verification"] = fix_verification.strip()
         if fix_pr_body:

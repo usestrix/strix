@@ -115,6 +115,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         cve=None,
         cwe="CWE-79",
         code_locations=None,
+        http_exchange_ids=["1042", "1042", "1088"],
         fix_pr_body="## Fix\nEncode output.",
     )
     assert result["success"] is True
@@ -127,6 +128,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["counterevidence"] == "No output encoding or CSP observed on this response."
     assert report["confidence"] == "high"
     assert report["severity_change_conditions"] == "A strict CSP would lower the severity."
+    assert report["http_exchange_ids"] == ["1042", "1088"]
 
 
 async def test_create_report_requires_evidence_and_assumptions(
@@ -1040,7 +1042,13 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
 
 def test_vuln_tool_exposes_new_params() -> None:
     props = create_vulnerability_report.params_json_schema["properties"]
-    for field in ("evidence", "assumptions", "fix_effort", "fix_pr_body"):
+    for field in (
+        "evidence",
+        "assumptions",
+        "fix_effort",
+        "fix_pr_body",
+        "http_exchange_ids",
+    ):
         assert field in props
 
     dep_props = create_dependency_report.params_json_schema["properties"]
@@ -1353,6 +1361,30 @@ def test_update_vulnerability_report_records_chained_impact(report_state: Report
     assert updated["severity"] == "critical"
     assert updated["updated_at"]
     assert report_state.update_vulnerability_report("vuln-0404", {"severity": "high"}) is None
+
+
+def test_update_replaces_http_exchange_ids(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A replay produced a clearer proving exchange.",
+        fields={"http_exchange_ids": ["204", "204", "205"]},
+    )
+
+    assert result["success"] is True
+    assert report_state.vulnerability_reports[0]["http_exchange_ids"] == ["204", "205"]
+
+
+async def test_create_rejects_invalid_http_exchange_ids(report_state: ReportState) -> None:
+    result = await _do_create(
+        **_CONFIRMED_KWARGS,
+        http_exchange_ids=["ok", "contains space"],
+    )
+
+    assert result["success"] is False
+    assert any("visible ASCII" in error for error in result["errors"])
+    assert report_state.vulnerability_reports == []
 
 
 def test_update_vulnerability_report_ignores_identical_content(report_state: ReportState) -> None:
