@@ -80,7 +80,9 @@ def test_no_keys_names_both_providers() -> None:
     assert "EXA_API_KEY or PERPLEXITY_API_KEY" in resolved["error"]
 
 
-def test_exa_content_renders_results_with_highlights(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_exa_content_requests_summaries_and_renders_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     captured: dict[str, Any] = {}
 
     def fake_post(url: str, **kwargs: Any) -> _FakeResponse:
@@ -93,7 +95,7 @@ def test_exa_content_renders_results_with_highlights(monkeypatch: pytest.MonkeyP
                     {
                         "url": "https://nvd.example/cve",
                         "title": "NVD entry",
-                        "highlights": ["CVE-2024-0001 affects it.", "  "],
+                        "summary": "  CVE-2024-0001 is a heap overflow.  ",
                     },
                     {"id": "https://blog.example/post"},
                     "not-a-dict",
@@ -104,47 +106,18 @@ def test_exa_content_renders_results_with_highlights(monkeypatch: pytest.MonkeyP
 
     monkeypatch.setattr(requests, "post", fake_post)
 
-    content = tool._exa_content("ek", "OpenSSH 7.4 RCE?", "auto", 5, "highlights")
+    content = tool._exa_content("ek", "OpenSSH 7.4 RCE?", "auto", 5)
 
     assert captured["url"] == "https://api.exa.ai/search"
     assert captured["headers"]["x-api-key"] == "ek"
     assert "OpenSSH 7.4 RCE?" in captured["json"]["query"]
     assert captured["json"]["type"] == "auto"
     assert captured["json"]["numResults"] == 5
-    assert captured["json"]["contents"]["highlights"]["maxCharacters"] > 0
-    assert "summary" not in captured["json"]["contents"]
+    assert captured["json"]["contents"] == {"summary": {"query": tool._EXA_SUMMARY_PROMPT}}
     assert content == (
-        "### NVD entry\nhttps://nvd.example/cve\n> CVE-2024-0001 affects it.\n\n"
+        "### NVD entry\nhttps://nvd.example/cve\nCVE-2024-0001 is a heap overflow.\n\n"
         "### https://blog.example/post\nhttps://blog.example/post"
     )
-
-
-def test_exa_content_defaults_to_summary_and_renders_it(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    captured: dict[str, Any] = {}
-
-    def fake_post(_url: str, **kwargs: Any) -> _FakeResponse:
-        captured["json"] = kwargs["json"]
-        return _FakeResponse(
-            {
-                "results": [
-                    {
-                        "url": "https://nvd.example/cve",
-                        "title": "NVD entry",
-                        "summary": "  CVE-2024-0001 is a heap overflow.  ",
-                    },
-                ],
-            }
-        )
-
-    monkeypatch.setattr(requests, "post", fake_post)
-
-    content = tool._exa_content("ek", "q", "auto", 5, "summary")
-
-    assert captured["json"]["contents"]["summary"]["query"]
-    assert "highlights" not in captured["json"]["contents"]
-    assert content == "### NVD entry\nhttps://nvd.example/cve\nCVE-2024-0001 is a heap overflow."
 
 
 def test_exa_content_renders_a_result_without_contents(
@@ -157,7 +130,7 @@ def test_exa_content_renders_a_result_without_contents(
             {"results": [{"url": "https://ex.example", "title": "Ex"}]}
         ),
     )
-    assert tool._exa_content("ek", "q", "auto", 5, "summary") == "### Ex\nhttps://ex.example"
+    assert tool._exa_content("ek", "q", "auto", 5) == "### Ex\nhttps://ex.example"
 
 
 @pytest.mark.parametrize("body", [{}, {"results": None}, {"results": []}, {"results": ["x"]}])
@@ -166,28 +139,7 @@ def test_exa_content_rejects_empty_results(
 ) -> None:
     monkeypatch.setattr(requests, "post", lambda *_a, **_kw: _FakeResponse(body))
     with pytest.raises(ValueError, match="no results"):
-        tool._exa_content("ek", "q", "auto", 5, "summary")
-
-
-def test_exa_content_mode_is_configurable(monkeypatch: pytest.MonkeyPatch) -> None:
-    captured: dict[str, Any] = {}
-
-    class _Settings:
-        integrations = IntegrationSettings(
-            EXA_API_KEY="ek",
-            STRIX_EXA_CONTENT_MODE="highlights",
-        )
-
-    def fake_post(_url: str, **kwargs: Any) -> _FakeResponse:
-        captured["json"] = kwargs["json"]
-        return _FakeResponse({"results": [{"url": "https://ex.example", "title": "Ex"}]})
-
-    monkeypatch.setattr(tool, "load_settings", _Settings)
-    monkeypatch.setattr(requests, "post", fake_post)
-
-    assert tool._do_search("q")["success"] is True
-    assert "highlights" in captured["json"]["contents"]
-    assert "summary" not in captured["json"]["contents"]
+        tool._exa_content("ek", "q", "auto", 5)
 
 
 def test_do_search_reports_empty_exa_results_as_unexpected(

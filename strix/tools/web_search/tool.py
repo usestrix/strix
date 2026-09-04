@@ -60,7 +60,6 @@ def _perplexity_content(api_key: str, query: str) -> str:
         return str(response.json()["choices"][0]["message"]["content"])
 
 
-_EXA_HIGHLIGHT_MAX_CHARS = 750
 _EXA_PAGE_MAX_CHARS = 20000
 _EXA_MAX_CONTENT_URLS = 10
 _EXA_SUMMARY_PROMPT = (
@@ -69,12 +68,6 @@ _EXA_SUMMARY_PROMPT = (
     "exploitation preconditions, payloads or commands, and mitigations. "
     "Leave out marketing copy and navigation text."
 )
-
-
-def _exa_search_contents(content_mode: str) -> dict[str, Any]:
-    if content_mode == "highlights":
-        return {"highlights": {"maxCharacters": _EXA_HIGHLIGHT_MAX_CHARS}}
-    return {"summary": {"query": _EXA_SUMMARY_PROMPT}}
 
 
 def _exa_result_block(result: dict[str, Any]) -> str | None:
@@ -86,11 +79,6 @@ def _exa_result_block(result: dict[str, Any]) -> str | None:
     summary = str(result.get("summary") or "").strip()
     if summary:
         parts.append(summary)
-    highlights = result.get("highlights") or []
-    if isinstance(highlights, list):
-        excerpts = [str(item).strip() for item in highlights if str(item).strip()]
-        if excerpts:
-            parts.append("\n".join(f"> {excerpt}" for excerpt in excerpts))
     return "\n".join(parts)
 
 
@@ -127,13 +115,7 @@ def _exa_post(api_key: str, endpoint: str, payload: dict[str, Any]) -> dict[str,
     return body
 
 
-def _exa_content(
-    api_key: str,
-    query: str,
-    search_type: str,
-    num_results: int,
-    content_mode: str,
-) -> str:
+def _exa_content(api_key: str, query: str, search_type: str, num_results: int) -> str:
     body = _exa_post(
         api_key,
         "https://api.exa.ai/search",
@@ -141,7 +123,7 @@ def _exa_content(
             "query": f"{_SYSTEM_PROMPT}\n\n{query}",
             "type": search_type,
             "numResults": num_results,
-            "contents": _exa_search_contents(content_mode),
+            "contents": {"summary": {"query": _EXA_SUMMARY_PROMPT}},
         },
     )
     blocks = _exa_blocks(body.get("results") or [], _exa_result_block)
@@ -239,7 +221,6 @@ def _do_search(query: str) -> dict[str, Any]:
                 query,
                 integrations.exa_search_type,
                 integrations.exa_num_results,
-                integrations.exa_content_mode,
             )
         return _perplexity_content(api_key, query)
 
@@ -335,11 +316,10 @@ async def web_search(ctx: RunContextWrapper, query: str) -> str:
     examples.
 
     With the Exa provider you get a ranked list of results, each with a
-    title, URL, and a short security-focused summary (or verbatim
-    highlights when ``STRIX_EXA_CONTENT_MODE=highlights``). Read the
-    result you need, then call ``web_get_contents`` with its URL to pull
-    the full page text when a summary is not enough. With Perplexity you
-    get a single synthesized cited answer.
+    title, URL, and a short security-focused summary. Read the result
+    you need, then call ``web_get_contents`` with its URL to pull the
+    full page text when a summary is not enough. With Perplexity you get
+    a single synthesized cited answer.
 
     **Good example queries** (each is a full sentence, names a
     version/product, and asks one concrete thing):
@@ -375,8 +355,8 @@ async def web_get_contents(ctx: RunContextWrapper, urls: list[str]) -> str:
     """Fetch the full, cleaned text of specific web pages (Exa only).
 
     Use this as the drill-down step after ``web_search``: when a result's
-    summary or highlights are not enough, pass that result's URL here to
-    read the whole page. Good for reading a full advisory, a CVE writeup,
+    summary is not enough, pass that result's URL here to read the whole
+    page. Good for reading a full advisory, a CVE writeup,
     an exploit proof-of-concept, or vendor documentation end to end.
 
     Prefer ``web_search`` first to find the right pages, then fetch only
