@@ -41,6 +41,7 @@ from strix.interface.update_check import (
 from strix.interface.utils import (
     build_final_stats_text,
 )
+from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
 from strix.telemetry import posthog, scarf
 from strix.telemetry.logging import configure_dependency_logging
 
@@ -135,6 +136,8 @@ def _subscription_error_hint(exc: BaseException) -> str | None:
 
 
 async def warm_up_llm(show_model_warning: bool = True) -> None:
+    wait_for_import_warmup()
+
     from agents.models.interface import ModelTracing
 
     from strix.config.models import (
@@ -449,8 +452,6 @@ def main() -> None:
         from strix.interface.cloud import run_cloud
 
         sys.exit(run_cloud(sys.argv[2:]))
-
-    from strix.llm.warmup import start_import_warmup
 
     start_import_warmup()
 

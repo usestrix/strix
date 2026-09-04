@@ -31,6 +31,7 @@ from strix.interface.utils import (
     stage_api_specs,
     write_fetched_collection,
 )
+from strix.llm.warmup import wait_for_import_warmup
 from strix.telemetry import posthog, scarf
 from strix.utils.api_spec import (
     SpecParseError,
@@ -64,6 +65,8 @@ async def preflight_model_connection(
     settings: Settings | None = None,
 ) -> None:
     """Verify the configured model route before starting a scan."""
+    wait_for_import_warmup()
+
     from agents.models.interface import ModelTracing
 
     from strix.config.models import StrixProvider, configure_sdk_model_defaults

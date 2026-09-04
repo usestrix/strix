@@ -92,6 +92,32 @@ def test_failed_warm_import_purges_orphaned_submodules() -> None:
     assert result.returncode == 0, result.stderr
 
 
+def test_wait_for_import_warmup_lets_main_thread_import_the_agents_graph() -> None:
+    result = _run(
+        """
+        import sys
+
+        from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
+
+        # Same shape as the CLI: warm-up starts, then the main thread needs a
+        # module from the middle of the agents graph before it has finished.
+        start_import_warmup()
+        wait_for_import_warmup()
+
+        from agents.models.interface import ModelTracing  # noqa: F401
+
+        assert "agents" in sys.modules
+        assert "agents.models" in sys.modules
+        assert "strix.core.runner" in sys.modules
+        """
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_wait_for_import_warmup_is_a_no_op_without_a_thread() -> None:
+    warmup.wait_for_import_warmup(timeout=0)
+
+
 def test_purge_does_not_touch_preexisting_or_healthy_modules() -> None:
     before = frozenset(sys.modules) - {"strix.llm.warmup"}
     warmup._purge_orphaned_modules(before)

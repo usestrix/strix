@@ -80,3 +80,17 @@ def start_import_warmup(modules: tuple[str, ...] = WARMUP_MODULES) -> threading.
         )
         _thread.start()
         return _thread
+
+
+def wait_for_import_warmup(timeout: float | None = None) -> None:
+    """Block until the warm-up thread has finished, if one was started.
+
+    Call this before the first import of a warmed module on another thread.
+    Two threads walking the same package graph hold each other's import locks,
+    CPython breaks the cycle by failing one side, and the failed side's
+    orphan purge can remove a package the other thread is still importing.
+    """
+    with _lock:
+        thread = _thread
+    if thread is not None and thread is not threading.current_thread():
+        thread.join(timeout)
