@@ -12,8 +12,14 @@ from __future__ import annotations
 import subprocess
 import sys
 import textwrap
+import threading
+from typing import TYPE_CHECKING
 
 from strix.llm import warmup
+
+
+if TYPE_CHECKING:
+    import pytest
 
 
 def _run(code: str) -> subprocess.CompletedProcess[str]:
@@ -74,6 +80,24 @@ def test_wait_for_import_warmup_lets_main_thread_import_the_agents_graph() -> No
         """
     )
     assert result.returncode == 0, result.stderr
+
+
+def test_wait_for_import_warmup_blocks_until_the_thread_finishes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    release = threading.Event()
+    monkeypatch.setattr(warmup, "_warm", lambda _modules: release.wait())
+    monkeypatch.setattr(warmup, "_thread", None)
+    warmup.start_import_warmup(())
+
+    waiter = threading.Thread(target=warmup.wait_for_import_warmup)
+    waiter.start()
+    waiter.join(0.2)
+    assert waiter.is_alive(), "returned before the warm-up finished"
+
+    release.set()
+    waiter.join(5)
+    assert not waiter.is_alive()
 
 
 def test_failed_warm_import_does_not_raise() -> None:
