@@ -452,9 +452,12 @@ def main() -> None:
 
     from strix.llm.warmup import start_import_warmup
 
-    start_import_warmup()
-
+    # parse_arguments() first so --version/--help/argparse errors exit before
+    # the (heavier) import warm-up runs. Warm-up then overlaps with the I/O
+    # startup below (update check, Docker checks, image pull).
     args = parse_arguments()
+
+    start_import_warmup()
 
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):

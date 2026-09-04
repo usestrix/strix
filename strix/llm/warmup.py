@@ -65,6 +65,24 @@ def _warm(modules: tuple[str, ...]) -> None:
             _purge_orphaned_modules(before)
 
 
+def _preimport_thread_unsafe_sdk() -> None:
+    """Import the ``agents`` SDK once, on the caller's thread, before the daemon
+    warm-up starts.
+
+    ``openai-agents`` has an internal import cycle (``agents.agent_output`` <->
+    ``agents.agent``) that is not thread-safe: when two threads import the
+    ``agents`` package concurrently, CPython's deadlock-avoidance can hand one
+    of them a partially initialized module, raising ``ImportError: cannot
+    import name 'AgentOutputSchemaBase' ... (circular import)``. Fully importing
+    the package single-threaded here closes that race window before the daemon
+    warm-up thread (and the main thread's later report import) touch it.
+    """
+    try:
+        importlib.import_module("agents")
+    except Exception:  # noqa: BLE001 - a failed warm-up must never fail the run.
+        logger.debug("Pre-import of agents SDK failed", exc_info=True)
+
+
 def start_import_warmup(modules: tuple[str, ...] = WARMUP_MODULES) -> threading.Thread:
     """Start importing the heavy scan dependencies in the background, once.
 
@@ -75,6 +93,7 @@ def start_import_warmup(modules: tuple[str, ...] = WARMUP_MODULES) -> threading.
     with _lock:
         if _thread is not None:
             return _thread
+        _preimport_thread_unsafe_sdk()
         _thread = threading.Thread(
             target=_warm, args=(modules,), name="strix-import-warmup", daemon=True
         )
