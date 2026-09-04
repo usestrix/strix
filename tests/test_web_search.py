@@ -226,12 +226,13 @@ def test_exa_page_text_requests_full_text_and_renders_pages(
 
     monkeypatch.setattr(requests, "post", fake_post)
 
-    content = tool._exa_page_text("ek", ["https://nvd.example/cve"])
+    content, fetched = tool._exa_page_text("ek", ["https://nvd.example/cve"])
 
     assert captured["url"] == "https://api.exa.ai/contents"
     assert captured["headers"]["x-api-key"] == "ek"
     assert captured["json"] == {"urls": ["https://nvd.example/cve"], "text": True}
     assert content == "### NVD entry\nhttps://nvd.example/cve\n\nFull advisory body."
+    assert fetched == {"https://nvd.example/cve"}
 
 
 def test_exa_page_text_truncates_a_long_page(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -243,7 +244,7 @@ def test_exa_page_text_truncates_a_long_page(monkeypatch: pytest.MonkeyPatch) ->
             {"results": [{"url": "https://ex.example", "text": body}]}
         ),
     )
-    content = tool._exa_page_text("ek", ["https://ex.example"])
+    content, _fetched = tool._exa_page_text("ek", ["https://ex.example"])
     assert "truncated at" in content
     assert content.count("A") == tool._EXA_PAGE_MAX_CHARS
 
@@ -306,7 +307,7 @@ def test_do_get_contents_returns_page_text(monkeypatch: pytest.MonkeyPatch) -> N
         integrations = IntegrationSettings(EXA_API_KEY="ek")
 
     monkeypatch.setattr(tool, "load_settings", _Settings)
-    monkeypatch.setattr(tool, "_exa_page_text", lambda *_a: "page")
+    monkeypatch.setattr(tool, "_exa_page_text", lambda *_a: ("page", {"https://ex.example"}))
 
     result = tool._do_get_contents([" https://ex.example "])
 
@@ -316,6 +317,57 @@ def test_do_get_contents_returns_page_text(monkeypatch: pytest.MonkeyPatch) -> N
         "provider": "exa",
         "content": "page",
     }
+
+
+def test_do_get_contents_reports_urls_exa_did_not_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Settings:
+        integrations = IntegrationSettings(EXA_API_KEY="ek")
+
+    monkeypatch.setattr(tool, "load_settings", _Settings)
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda *_a, **_kw: _FakeResponse(
+            {"results": [{"url": "https://ok.example/", "text": "Body."}]}
+        ),
+    )
+
+    result = tool._do_get_contents(["https://ok.example", "https://blocked.example"])
+
+    assert result["success"] is True
+    assert result["urls"] == ["https://ok.example"]
+    assert result["failed_urls"] == ["https://blocked.example"]
+    assert "1 of 2" in result["warning"]
+    assert "blocked.example" not in result["content"]
+
+
+def test_do_get_contents_omits_the_warning_when_every_page_returns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Settings:
+        integrations = IntegrationSettings(EXA_API_KEY="ek")
+
+    monkeypatch.setattr(tool, "load_settings", _Settings)
+    monkeypatch.setattr(
+        requests,
+        "post",
+        lambda *_a, **_kw: _FakeResponse(
+            {
+                "results": [
+                    {"url": "https://a.example", "text": "A."},
+                    {"url": "https://b.example", "text": "B."},
+                ]
+            }
+        ),
+    )
+
+    result = tool._do_get_contents(["https://a.example", "https://b.example"])
+
+    assert result["urls"] == ["https://a.example", "https://b.example"]
+    assert "failed_urls" not in result
+    assert "warning" not in result
 
 
 def test_do_get_contents_sanitizes_a_network_error(monkeypatch: pytest.MonkeyPatch) -> None:

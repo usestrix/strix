@@ -132,12 +132,28 @@ def _exa_content(api_key: str, query: str, search_type: str, num_results: int) -
     return "\n\n".join(blocks)
 
 
-def _exa_page_text(api_key: str, urls: list[str]) -> str:
+def _normalize_url(url: str) -> str:
+    return url.strip().rstrip("/").lower()
+
+
+def _exa_page_text(api_key: str, urls: list[str]) -> tuple[str, set[str]]:
+    """Fetch page text and report which of the requested URLs Exa returned."""
     body = _exa_post(api_key, "https://api.exa.ai/contents", {"urls": urls, "text": True})
-    blocks = _exa_blocks(body.get("results") or [], _exa_page_block)
+    blocks: list[str] = []
+    fetched: set[str] = set()
+    results: list[Any] = body.get("results") or []
+    for result in results:
+        if not isinstance(result, dict):
+            continue
+        page = cast("dict[str, Any]", result)
+        block = _exa_page_block(page)
+        if not block:
+            continue
+        blocks.append(block)
+        fetched.add(_normalize_url(str(page.get("url") or page.get("id") or "")))
     if not blocks:
         raise ValueError("Exa returned no page contents")
-    return "\n\n".join(blocks)
+    return "\n\n".join(blocks), fetched
 
 
 def _resolve_provider(  # noqa: PLR0911 - each provider/missing-key case needs its own return
@@ -175,11 +191,11 @@ def _not_configured_error(missing: str) -> dict[str, Any]:
     }
 
 
-def _guarded_call(  # noqa: PLR0911 - each error class needs its own sanitized return
+def _guarded_call[T](  # noqa: PLR0911 - each error class needs its own sanitized return
     tool: str,
     rejected_hint: str,
-    fetch: Callable[[], str],
-) -> str | dict[str, Any]:
+    fetch: Callable[[], T],
+) -> T | dict[str, Any]:
     """Run a provider call and translate any failure into a sanitized error dict."""
     try:
         return fetch()
@@ -275,12 +291,24 @@ def _do_get_contents(urls: list[str]) -> dict[str, Any]:
     )
     if isinstance(outcome, dict):
         return outcome
-    return {
+    content, fetched = outcome
+    missing = [url for url in cleaned if _normalize_url(url) not in fetched]
+    result: dict[str, Any] = {
         "success": True,
-        "urls": cleaned,
+        "urls": [url for url in cleaned if url not in missing],
         "provider": "exa",
-        "content": outcome,
+        "content": content,
     }
+    if missing:
+        logger.warning(
+            "web_get_contents returned %d of %d pages", len(cleaned) - len(missing), len(cleaned)
+        )
+        result["failed_urls"] = missing
+        result["warning"] = (
+            f"Exa returned no content for {len(missing)} of {len(cleaned)} requested URLs. "
+            "Those pages are missing from the content below"
+        )
+    return result
 
 
 @function_tool(timeout=330)
@@ -366,6 +394,11 @@ async def web_get_contents(ctx: RunContextWrapper, urls: list[str]) -> str:
     This tool needs the Exa provider (``EXA_API_KEY``). When the operator
     pins the provider to Perplexity, it returns an error and you should
     use ``web_search`` instead.
+
+    Some pages block extraction. When a page returns no content, the
+    result lists it under ``failed_urls`` and the ``content`` field holds
+    only the pages that came back. Check ``failed_urls`` before you
+    conclude that a page had nothing useful.
 
     Args:
         urls: The page URLs to fetch, at most 10 per call. Use complete,
