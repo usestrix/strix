@@ -4,16 +4,16 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+import pytest
 import requests
 
 from strix.config.settings import IntegrationSettings
+from strix.interface.environment import _missing_web_search_vars
 from strix.tools.web_search import tool
 
 
 if TYPE_CHECKING:
     from typing import Self
-
-    import pytest
 
 
 class _FakeResponse:
@@ -122,6 +122,49 @@ def test_exa_content_without_citations_returns_the_answer(
         lambda *_a, **_kw: _FakeResponse({"answer": "  Nothing found.  "}),
     )
     assert tool._exa_content("ek", "q") == "Nothing found."
+
+
+@pytest.mark.parametrize("body", [{}, {"answer": None}, {"answer": "   "}])
+def test_exa_content_rejects_an_empty_answer(
+    monkeypatch: pytest.MonkeyPatch, body: dict[str, Any]
+) -> None:
+    monkeypatch.setattr(requests, "post", lambda *_a, **_kw: _FakeResponse(body))
+    with pytest.raises(ValueError, match="no answer"):
+        tool._exa_content("ek", "q")
+
+
+def test_do_search_reports_an_empty_exa_answer_as_unexpected(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Settings:
+        integrations = IntegrationSettings(EXA_API_KEY="ek")
+
+    monkeypatch.setattr(tool, "load_settings", _Settings)
+    monkeypatch.setattr(requests, "post", lambda *_a, **_kw: _FakeResponse({}))
+
+    result = tool._do_search("q")
+
+    assert result["success"] is False
+    assert "unexpected response" in result["error"]
+
+
+@pytest.mark.parametrize(
+    ("env", "expected"),
+    [
+        ({}, ["EXA_API_KEY", "PERPLEXITY_API_KEY"]),
+        ({"EXA_API_KEY": "ek"}, []),
+        ({"PERPLEXITY_API_KEY": "pk"}, []),
+        ({"STRIX_WEB_SEARCH_PROVIDER": "exa", "PERPLEXITY_API_KEY": "pk"}, ["EXA_API_KEY"]),
+        ({"STRIX_WEB_SEARCH_PROVIDER": "exa", "EXA_API_KEY": "ek"}, []),
+        ({"STRIX_WEB_SEARCH_PROVIDER": "perplexity", "EXA_API_KEY": "ek"}, ["PERPLEXITY_API_KEY"]),
+        ({"STRIX_WEB_SEARCH_PROVIDER": "perplexity", "PERPLEXITY_API_KEY": "pk"}, []),
+    ],
+)
+def test_environment_validation_follows_provider_rules(
+    env: dict[str, str], expected: list[str]
+) -> None:
+    integrations = IntegrationSettings.model_validate(env)
+    assert _missing_web_search_vars(integrations) == expected
 
 
 def test_do_search_reports_the_provider_it_used(monkeypatch: pytest.MonkeyPatch) -> None:

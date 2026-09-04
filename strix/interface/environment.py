@@ -8,7 +8,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import codex, load_settings
+from strix.config import IntegrationSettings, codex, load_settings
 from strix.interface.utils import (
     check_docker_connection,
     image_exists,
@@ -17,6 +17,17 @@ from strix.interface.utils import (
 
 
 logger = logging.getLogger(__name__)
+
+
+def _missing_web_search_vars(integrations: IntegrationSettings) -> list[str]:
+    """Mirror the web_search provider rules: which key(s) the selected provider needs."""
+    if integrations.web_search_provider == "exa":
+        return [] if integrations.exa_api_key else ["EXA_API_KEY"]
+    if integrations.web_search_provider == "perplexity":
+        return [] if integrations.perplexity_api_key else ["PERPLEXITY_API_KEY"]
+    if integrations.exa_api_key or integrations.perplexity_api_key:
+        return []
+    return ["EXA_API_KEY", "PERPLEXITY_API_KEY"]
 
 
 def validate_environment() -> None:
@@ -46,9 +57,7 @@ def validate_environment() -> None:
     if not settings.llm.api_base:
         missing_optional_vars.append("LLM_API_BASE")
 
-    if not settings.integrations.perplexity_api_key and not settings.integrations.exa_api_key:
-        missing_optional_vars.append("EXA_API_KEY")
-        missing_optional_vars.append("PERPLEXITY_API_KEY")
+    missing_optional_vars.extend(_missing_web_search_vars(settings.integrations))
 
     if missing_required_vars:
         error_text = Text()

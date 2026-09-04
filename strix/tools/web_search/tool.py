@@ -67,6 +67,8 @@ def _exa_content(api_key: str, query: str) -> str:
         response.raise_for_status()
         body: dict[str, Any] = response.json()
     answer = str(body.get("answer") or "").strip()
+    if not answer:
+        raise ValueError("Exa response has no answer")
     citations: list[Any] = body.get("citations") or []
     lines: list[str] = []
     for citation in citations:
