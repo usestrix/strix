@@ -34,6 +34,7 @@ _LLM_ENV_KEYS = [
     "STRIX_WEB_SEARCH_PROVIDER",
     # RuntimeSettings
     "STRIX_IMAGE",
+    "STRIX_IMAGE_PULL_POLICY",
     "STRIX_RUNTIME_BACKEND",
     # TelemetrySettings
     "STRIX_TELEMETRY",
@@ -140,6 +141,12 @@ def test_tool_output_max_bytes_rejects_sub_notice_values() -> None:
 
 def test_tool_output_max_bytes_accepts_floor() -> None:
     assert ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=1024).tool_output_max_bytes == 1024
+
+
+def test_runtime_image_pull_policy_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_IMAGE_PULL_POLICY", "never")
+
+    assert loader.load_settings().runtime.image_pull_policy == "never"
 
 
 # --------------------------------------------------------------------------- #

@@ -190,11 +190,18 @@ def pull_docker_image() -> None:
     console = Console()
     client = check_docker_connection()
 
-    image = load_settings().runtime.image
+    runtime = load_settings().runtime
+    image = runtime.image
 
     if image_exists(client, image):
         logger.debug("Docker image already present locally: %s", image)
         return
+
+    if runtime.image_pull_policy == "never":
+        raise RuntimeError(
+            f"Docker image {image!r} is not available locally and "
+            "STRIX_IMAGE_PULL_POLICY=never forbids pulling it"
+        )
 
     logger.info("Pulling docker image: %s", image)
     console.print()

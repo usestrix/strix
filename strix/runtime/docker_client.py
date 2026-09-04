@@ -26,7 +26,7 @@ import contextlib
 import logging
 import os
 import uuid
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from agents.sandbox.errors import ExposedPortUnavailableError
 from agents.sandbox.manifest import Manifest
@@ -52,6 +52,22 @@ logger = logging.getLogger(__name__)
 
 
 _SANDBOX_NETWORK_ENV = "STRIX_DOCKER_SANDBOX_NETWORK"
+
+
+def _ensure_image_available(
+    client: Any,
+    image: str,
+    pull_policy: Literal["auto", "never"],
+) -> None:
+    if client.image_exists(image):
+        return
+    if pull_policy == "never":
+        raise RuntimeError(
+            f"Docker image {image!r} is not available locally and "
+            "STRIX_IMAGE_PULL_POLICY=never forbids pulling it"
+        )
+    repo, tag = parse_repository_tag(image)
+    client.docker_client.images.pull(repo, tag=tag or None, all_tags=False)
 
 
 def _sandbox_network() -> str | None:
@@ -165,6 +181,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     # Host directories to bind-mount into the container, set by the docker
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
     strix_bind_mounts: list[dict[str, Any]] | None = None
+    image_pull_policy: Literal["auto", "never"] = "auto"
 
     async def _create_container(
         self,
@@ -176,9 +193,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     ) -> Container:
         # ----- BEGIN VERBATIM COPY of DockerSandboxClient._create_container -----
         # SDK ref: src/agents/sandbox/sandboxes/docker.py:1434-1477 (v0.14.6).
-        if not self.image_exists(image):
-            repo, tag = parse_repository_tag(image)
-            self.docker_client.images.pull(repo, tag=tag or None, all_tags=False)
+        _ensure_image_available(self, image, self.image_pull_policy)
 
         assert self.image_exists(image)
         environment: dict[str, str] | None = None

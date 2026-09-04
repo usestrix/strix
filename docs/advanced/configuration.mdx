@@ -130,6 +130,13 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Docker image to use for the sandbox container.
 </ParamField>
 
+<ParamField path="STRIX_IMAGE_PULL_POLICY" default="auto" type="string">
+  Controls sandbox image acquisition. Use `never` to require a preloaded image
+  and fail without pulling when it is unavailable; `auto` preserves the default
+  first-run pull behavior. This does not restrict network access from a running
+  sandbox.
+</ParamField>
+
 <ParamField path="DOCKER_HOST" type="string">
   Docker daemon socket path. Use for remote Docker hosts or custom configurations.
 </ParamField>
