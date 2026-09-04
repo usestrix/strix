@@ -30,6 +30,8 @@ _LLM_ENV_KEYS = [
     "STRIX_FORCE_REQUIRED_TOOL_CHOICE",
     "LLM_TIMEOUT",
     "PERPLEXITY_API_KEY",
+    "EXA_API_KEY",
+    "STRIX_WEB_SEARCH_PROVIDER",
     # RuntimeSettings
     "STRIX_IMAGE",
     "STRIX_RUNTIME_BACKEND",
@@ -77,6 +79,17 @@ def test_read_json_overrides_maps_to_nested_settings(tmp_path: Path) -> None:
     assert loader._read_json_overrides(path) == {
         "llm": {"model": "my-model"},
         "integrations": {"perplexity_api_key": "pk"},
+    }
+
+
+def test_read_json_overrides_maps_exa_and_provider(tmp_path: Path) -> None:
+    path = tmp_path / "cli-config.json"
+    path.write_text(
+        json.dumps({"env": {"EXA_API_KEY": "exa-key", "STRIX_WEB_SEARCH_PROVIDER": "exa"}}),
+        encoding="utf-8",
+    )
+    assert loader._read_json_overrides(path) == {
+        "integrations": {"exa_api_key": "exa-key", "web_search_provider": "exa"},
     }
 
 

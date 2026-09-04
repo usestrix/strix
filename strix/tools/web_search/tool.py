@@ -1,11 +1,11 @@
-"""``web_search`` — Perplexity-backed security-focused web search."""
+"""``web_search`` — security-focused web search (Exa or Perplexity)."""
 
 from __future__ import annotations
 
 import asyncio
 import json
 import logging
-from typing import Any
+from typing import Any, cast
 
 import requests
 from agents import RunContextWrapper, function_tool
@@ -41,22 +41,7 @@ Structure your response to be comprehensive yet concise, emphasizing the most cr
 security implications and details."""
 
 
-def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error class needs its own sanitized return
-    if not query or not query.strip():
-        return {"success": False, "error": "Query cannot be empty"}
-
-    api_key = load_settings().integrations.perplexity_api_key
-    if not api_key:
-        logger.warning("web_search invoked without PERPLEXITY_API_KEY configured")
-        return {
-            "success": False,
-            "error": (
-                "Web search is not configured for this scan "
-                "(operator needs to set PERPLEXITY_API_KEY). Proceed without it"
-            ),
-        }
-    logger.info("web_search query (len=%d): %s", len(query), query[:120])
-
+def _perplexity_content(api_key: str, query: str) -> str:
     url = "https://api.perplexity.ai/chat/completions"
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     payload = {
@@ -66,11 +51,88 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
             {"role": "user", "content": query},
         ],
     }
+    with requests.post(url, headers=headers, json=payload, timeout=300) as response:
+        response.raise_for_status()
+        return str(response.json()["choices"][0]["message"]["content"])
+
+
+def _exa_content(api_key: str, query: str) -> str:
+    url = "https://api.exa.ai/answer"
+    headers = {"x-api-key": api_key, "Content-Type": "application/json"}
+    payload = {
+        "query": f"{_SYSTEM_PROMPT}\n\n{query}",
+        "text": True,
+    }
+    with requests.post(url, headers=headers, json=payload, timeout=300) as response:
+        response.raise_for_status()
+        body: dict[str, Any] = response.json()
+    answer = str(body.get("answer") or "").strip()
+    citations: list[Any] = body.get("citations") or []
+    lines: list[str] = []
+    for citation in citations:
+        if not isinstance(citation, dict):
+            continue
+        entry = cast("dict[str, Any]", citation)
+        citation_url = str(entry.get("url") or entry.get("id") or "")
+        if not citation_url:
+            continue
+        title = str(entry.get("title") or citation_url)
+        lines.append(f"- {title}: {citation_url}")
+    if lines:
+        return answer + "\n\nSources:\n" + "\n".join(lines)
+    return answer
+
+
+def _resolve_provider(  # noqa: PLR0911 - each provider/missing-key case needs its own return
+    integrations: Any,
+) -> tuple[str, str] | dict[str, Any]:
+    """Pick the search provider and its key, or return a sanitized error dict."""
+    provider = integrations.web_search_provider
+    perplexity_key = integrations.perplexity_api_key
+    exa_key = integrations.exa_api_key
+
+    if provider == "perplexity":
+        if not perplexity_key:
+            return _not_configured_error("PERPLEXITY_API_KEY")
+        return ("perplexity", perplexity_key)
+    if provider == "exa":
+        if not exa_key:
+            return _not_configured_error("EXA_API_KEY")
+        return ("exa", exa_key)
+
+    if exa_key:
+        return ("exa", exa_key)
+    if perplexity_key:
+        return ("perplexity", perplexity_key)
+    return _not_configured_error("EXA_API_KEY or PERPLEXITY_API_KEY")
+
+
+def _not_configured_error(missing: str) -> dict[str, Any]:
+    logger.warning("web_search invoked without %s configured", missing)
+    return {
+        "success": False,
+        "error": (
+            "Web search is not configured for this scan "
+            f"(operator needs to set {missing}). Proceed without it"
+        ),
+    }
+
+
+def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error class needs its own sanitized return
+    if not query or not query.strip():
+        return {"success": False, "error": "Query cannot be empty"}
+
+    resolved = _resolve_provider(load_settings().integrations)
+    if isinstance(resolved, dict):
+        return resolved
+    provider, api_key = resolved
+    logger.info("web_search provider=%s query (len=%d): %s", provider, len(query), query[:120])
 
     try:
-        with requests.post(url, headers=headers, json=payload, timeout=300) as response:
-            response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+        if provider == "exa":
+            content = _exa_content(api_key, query)
+        else:
+            content = _perplexity_content(api_key, query)
     except requests.exceptions.Timeout:
         logger.warning("web_search timed out")
         return {
@@ -114,13 +176,14 @@ def _do_search(query: str) -> dict[str, Any]:  # noqa: PLR0911 - each error clas
         return {
             "success": True,
             "query": query,
+            "provider": provider,
             "content": content,
         }
 
 
 @function_tool(timeout=330)
 async def web_search(ctx: RunContextWrapper, query: str) -> str:
-    """Real-time web search via Perplexity — your primary research tool.
+    """Real-time web search (Exa or Perplexity) — your primary research tool.
 
     Use it liberally for anything that's not in your training data:
 

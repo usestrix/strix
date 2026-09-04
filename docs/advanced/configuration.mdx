@@ -80,6 +80,14 @@ affecting the agents that do the actual testing.
   API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
 </ParamField>
 
+<ParamField path="EXA_API_KEY" type="string">
+  API key for Exa. Enables real-time web search through the Exa `/answer` endpoint. This is the preferred web search provider.
+</ParamField>
+
+<ParamField path="STRIX_WEB_SEARCH_PROVIDER" default="auto" type="string">
+  Web search provider: `auto`, `perplexity`, or `exa`. With `auto`, Strix uses Exa when `EXA_API_KEY` is set, and Perplexity otherwise. Set an explicit provider to pin one when you configure both keys.
+</ParamField>
+
 <ParamField path="POSTMAN_API_KEY" type="string">
   Postman API key (`PMAK-…`). Enables fetching Postman collections by id as a target (`postman://<collection-uid>`), and Postman environments (`postman://<collection-uid>?env=<environment-uid>`) to resolve collection variables. Not needed when passing a local collection export file.
 </ParamField>
@@ -159,7 +167,8 @@ strix --target ./app --config /path/to/config.json
 export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="sk-..."
 
-# Optional: Enable web search
+# Optional: Enable web search (Exa preferred, Perplexity supported)
+export EXA_API_KEY="..."
 export PERPLEXITY_API_KEY="pplx-..."
 
 # Optional: Custom timeouts

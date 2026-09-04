@@ -273,7 +273,8 @@ export LLM_API_KEY="your-api-key"
 
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
-export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
+export EXA_API_KEY="your-api-key"         # for search capabilities (preferred)
+export PERPLEXITY_API_KEY="your-api-key"  # alternative search provider
 ```
 
 > [!NOTE]
