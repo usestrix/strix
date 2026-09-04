@@ -136,6 +136,81 @@ def test_installer_downloads_and_runs_linux_arm64_release(tmp_path: Path) -> Non
     assert installed_result.stdout.strip() == f"strix {RELEASE_VERSION}"
 
 
+def test_installer_leaves_unmanaged_executables_unchanged(tmp_path: Path) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    archive_path = _create_release_archive(tmp_path)
+    mock_bin = _create_mock_commands(tmp_path, machine="aarch64")
+    environment, home_path, _ = _create_installer_environment(
+        tmp_path,
+        archive_path,
+        mock_bin,
+    )
+
+    unmanaged_path = mock_bin / "strix"
+    unmanaged_content = "#!/bin/sh\nprintf 'unmanaged strix\\n'\n"
+    _write_executable(unmanaged_path, unmanaged_content)
+
+    local_bin = home_path / ".local" / "bin"
+    local_bin.mkdir(parents=True)
+    pipx_path = local_bin / "strix"
+    pipx_content = "#!/bin/sh\nprintf 'pipx strix\\n'\n"
+    _write_executable(pipx_path, pipx_content)
+    environment["PATH"] = f"{mock_bin}:{local_bin}:/usr/bin:/bin"
+
+    pipx_log_path = tmp_path / "pipx.log"
+    environment["STRIX_TEST_PIPX_LOG"] = str(pipx_log_path)
+    _write_executable(
+        mock_bin / "pipx",
+        '#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$STRIX_TEST_PIPX_LOG"\n',
+    )
+
+    result = _run_installer(repository_root, environment)
+
+    assert result.returncode == 0, result.stderr
+    assert unmanaged_path.read_text(encoding="utf-8") == unmanaged_content
+    assert pipx_path.read_text(encoding="utf-8") == pipx_content
+    assert not pipx_log_path.exists()
+    assert result.stdout.count("Found another strix executable at:") == 2
+    assert str(unmanaged_path) in result.stdout
+    assert str(pipx_path) in result.stdout
+    assert (home_path / ".strix/bin/strix").is_file()
+
+
+def test_installer_does_not_remove_conflict_found_during_verification(
+    tmp_path: Path,
+) -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    archive_path = _create_release_archive(tmp_path)
+    mock_bin = _create_mock_commands(tmp_path, machine="aarch64")
+    environment, home_path, _ = _create_installer_environment(
+        tmp_path,
+        archive_path,
+        mock_bin,
+    )
+
+    unmanaged_path = tmp_path / "other-bin" / "strix"
+    unmanaged_path.parent.mkdir()
+    unmanaged_content = "#!/bin/sh\nprintf 'unmanaged strix\\n'\n"
+    _write_executable(unmanaged_path, unmanaged_content)
+    environment["STRIX_TEST_UNMANAGED_PATH"] = str(unmanaged_path)
+    _write_executable(
+        mock_bin / "which",
+        """#!/bin/sh
+if [ -x "$HOME/.strix/bin/strix" ]; then
+  printf '%s\\n' "$STRIX_TEST_UNMANAGED_PATH"
+fi
+""",
+    )
+
+    result = _run_installer(repository_root, environment)
+
+    assert result.returncode == 0, result.stderr
+    assert unmanaged_path.read_text(encoding="utf-8") == unmanaged_content
+    assert "Found conflicting strix at:" in result.stdout
+    assert str(unmanaged_path) in result.stdout
+    assert (home_path / ".strix/bin/strix").is_file()
+
+
 def test_installer_rejects_unsupported_architecture(tmp_path: Path) -> None:
     repository_root = Path(__file__).resolve().parents[1]
     archive_path = _create_release_archive(tmp_path)
