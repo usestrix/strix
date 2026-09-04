@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any, cast
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 from agents import RunContextWrapper, function_tool
@@ -133,7 +134,11 @@ def _exa_content(api_key: str, query: str, search_type: str, num_results: int) -
 
 
 def _normalize_url(url: str) -> str:
-    return url.strip().rstrip("/").lower()
+    """Canonical form for matching: case-fold scheme and host only, drop a trailing slash."""
+    parts = urlsplit(url.strip())
+    return urlunsplit(
+        (parts.scheme.lower(), parts.netloc.lower(), parts.path.rstrip("/"), parts.query, "")
+    )
 
 
 def _exa_page_text(api_key: str, urls: list[str]) -> tuple[str, set[str]]:

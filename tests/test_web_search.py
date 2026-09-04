@@ -343,6 +343,18 @@ def test_do_get_contents_reports_urls_exa_did_not_return(
     assert "blocked.example" not in result["content"]
 
 
+def test_normalize_url_folds_only_scheme_and_host() -> None:
+    assert tool._normalize_url("HTTPS://Ex.Example/Path/") == tool._normalize_url(
+        "https://ex.example/Path"
+    )
+    assert tool._normalize_url("https://ex.example/Path") != tool._normalize_url(
+        "https://ex.example/path"
+    )
+    assert tool._normalize_url("https://ex.example/p?Q=A") != tool._normalize_url(
+        "https://ex.example/p?q=a"
+    )
+
+
 def test_do_get_contents_omits_the_warning_when_every_page_returns(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
