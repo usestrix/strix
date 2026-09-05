@@ -145,6 +145,7 @@ class GoTuiRuntime:
     async def _preflight_model(self) -> None:
         model = (load_settings().llm.model or "").strip()
         self.controller.add_message("Verifying model connection...")
+        set_scan_phase("preflight")
         await preflight_model_connection(model)
         self.model_verified = True
 
@@ -183,7 +184,11 @@ class GoTuiRuntime:
             candidate.target = list(self.controller.targets)
             candidate.target_list = []
             build_targets_info(candidate)
-        prepare_run(candidate)
+        try:
+            prepare_run(candidate)
+        except Exception as exc:
+            report_error("scan_preparation_failed", exc)
+            raise
         telemetry_start(candidate)
 
         vars(self.args).update(vars(candidate))
