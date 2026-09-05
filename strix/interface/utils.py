@@ -1551,7 +1551,32 @@ def stage_api_specs(targets_info: list[dict[str, Any]], run_name: str) -> list[d
     ]
 
 
-def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None) -> str:
+DEFAULT_GIT_CLONE_TIMEOUT_SECONDS: float = 300.0
+
+
+def clone_repository(
+    repo_url: str,
+    run_name: str,
+    dest_name: str | None = None,
+    timeout: float | None = None,
+) -> str:
+    """Clone a git repository to a temporary workspace for scanning.
+
+    Args:
+        repo_url: The URL or path of the git repository to clone.
+        run_name: The current run identifier used for namespacing temporary files.
+        dest_name: Optional custom subdirectory/destination name for the clone.
+        timeout: Maximum time in seconds to wait for the clone operation before timing out.
+            If None, the timeout is loaded from settings (STRIX_GIT_CLONE_TIMEOUT, defaulting
+            to 300s). Set to 0 to disable the timeout.
+
+    Returns:
+        The absolute path to the cloned repository directory.
+
+    Raises:
+        ValueError: If git fails to clone, times out, or git is not installed.
+        FileNotFoundError: If git executable cannot be found in PATH.
+    """
     console = Console()
 
     git_executable = shutil.which("git")
@@ -1571,6 +1596,18 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
     if clone_path.exists():
         shutil.rmtree(clone_path)
 
+    effective_timeout: float | None
+    if timeout is None:
+        try:
+            cfg_timeout = load_settings().runtime.git_clone_timeout
+            effective_timeout = float(cfg_timeout) if cfg_timeout > 0 else None
+        except Exception:
+            effective_timeout = DEFAULT_GIT_CLONE_TIMEOUT_SECONDS
+    elif timeout <= 0:
+        effective_timeout = None
+    else:
+        effective_timeout = float(timeout)
+
     try:
         with console.status(f"[bold cyan]Cloning repository {repo_url}...", spinner="dots"):
             subprocess.run(  # noqa: S603
@@ -1583,10 +1620,20 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
                 capture_output=True,
                 text=True,
                 check=True,
+                timeout=effective_timeout,
             )
 
         return str(clone_path.absolute())
 
+    except subprocess.TimeoutExpired as e:
+        if clone_path.exists():
+            shutil.rmtree(clone_path, ignore_errors=True)
+        timeout_str = f"{int(effective_timeout)}s" if effective_timeout else "configured limit"
+        raise ValueError(
+            f"Cloning repository {repo_url} timed out after {timeout_str}. "
+            "You can increase or disable the limit with --git-clone-timeout or "
+            "STRIX_GIT_CLONE_TIMEOUT, or clone the repository locally first."
+        ) from e
     except subprocess.CalledProcessError as e:
         detail = e.stderr if hasattr(e, "stderr") and e.stderr else str(e)
         raise ValueError(f"Could not clone repository {repo_url}: {detail}") from e
