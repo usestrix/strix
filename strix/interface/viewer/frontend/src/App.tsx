@@ -718,6 +718,7 @@ function OverviewTab({
               slug="overview_cloud"
               surface="overview"
               icon={Rocket}
+              primary
             />
             <ProInlineCta
               label="Try Strix Enterprise"
@@ -822,6 +823,7 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
             slug="live_scan"
             surface="agents"
             icon={Rocket}
+            primary
           />
           <ProInlineCta
             label="Try Strix Enterprise"
