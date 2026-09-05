@@ -53,6 +53,47 @@ class _StructuredRefusalStream:
         return
 
 
+class _BlockingRunStream:
+    def __init__(self) -> None:
+        self.is_complete = False
+        self.run_loop_exception: BaseException | None = None
+        self.new_items: list[Any] = []
+        self.cancel_mode: str | None = None
+        self.cancel_calls = 0
+        self.stream_events_started = asyncio.Event()
+        self.run_loop_settled = asyncio.Event()
+        self.cleanup_order: list[str] = []
+        self.run_loop_task = asyncio.create_task(self._run_loop())
+
+    async def _run_loop(self) -> None:
+        try:
+            await asyncio.Event().wait()
+        finally:
+            # Make ordering observable: cancellation must be joined before the
+            # coordinator forgets which stream belonged to this agent.
+            await asyncio.sleep(0)
+            self.cleanup_order.append("run-loop-settled")
+            self.run_loop_settled.set()
+
+    async def stream_events(self) -> Any:
+        try:
+            self.stream_events_started.set()
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            # Match openai-agents 0.19.0: cancellation while waiting for an
+            # event cancels the run result before propagating.
+            self.cancel()
+            raise
+        for event in _NO_STREAM_EVENTS:
+            yield event
+
+    def cancel(self, mode: str = "immediate") -> None:
+        self.cancel_calls += 1
+        self.cancel_mode = mode
+        self.is_complete = True
+        self.run_loop_task.cancel()
+
+
 async def _call_finish_scan(
     coordinator: AgentCoordinator, agent_id: str, parent_id: str | None
 ) -> dict[str, Any]:
@@ -859,6 +900,97 @@ async def test_structured_provider_refusal_fails_interactive_agent(
     assert result is None
     assert coordinator.statuses["root"] == "failed"
     assert coordinator.errors["root"] == refusal
+
+
+@pytest.mark.asyncio
+async def test_cancelled_while_attaching_cancels_settles_and_detaches_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = _BlockingRunStream()
+    monkeypatch.setattr(
+        "strix.core.execution.Runner.run_streamed", lambda *_args, **_kwargs: stream
+    )
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    attach_started = asyncio.Event()
+
+    async def _blocked_attach(_agent_id: str, _stream: Any) -> None:
+        attach_started.set()
+        await asyncio.Event().wait()
+
+    async def _record_detach(agent_id: str, attached_stream: Any) -> None:
+        stream.cleanup_order.append("detach")
+        await AgentCoordinator.detach_stream(coordinator, agent_id, attached_stream)
+
+    monkeypatch.setattr(coordinator, "attach_stream", _blocked_attach)
+    monkeypatch.setattr(coordinator, "detach_stream", _record_detach)
+
+    task = asyncio.create_task(
+        execution._run_cycle(
+            MagicMock(),
+            coordinator,
+            "root",
+            input_data="task",
+            run_config=MagicMock(),
+            context={},
+            max_turns=5,
+            session=None,
+            interactive=False,
+            event_sink=None,
+            hooks=None,
+        )
+    )
+    await asyncio.wait_for(attach_started.wait(), timeout=1.0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert stream.cancel_mode == "immediate"
+    assert stream.cancel_calls == 1
+    assert stream.run_loop_task.done()
+    assert stream.run_loop_settled.is_set()
+    assert stream.cleanup_order == ["run-loop-settled", "detach"]
+    assert coordinator.runtimes["root"].stream is None
+
+
+@pytest.mark.asyncio
+async def test_sdk_self_cancel_is_settled_and_not_cancelled_twice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stream = _BlockingRunStream()
+    monkeypatch.setattr(
+        "strix.core.execution.Runner.run_streamed", lambda *_args, **_kwargs: stream
+    )
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    task = asyncio.create_task(
+        execution._run_cycle(
+            MagicMock(),
+            coordinator,
+            "root",
+            input_data="task",
+            run_config=MagicMock(),
+            context={},
+            max_turns=5,
+            session=None,
+            interactive=False,
+            event_sink=None,
+            hooks=None,
+        )
+    )
+    await asyncio.wait_for(stream.stream_events_started.wait(), timeout=1.0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert stream.cancel_mode == "immediate"
+    assert stream.cancel_calls == 1
+    assert stream.run_loop_task.done()
+    assert stream.run_loop_settled.is_set()
+    assert coordinator.runtimes["root"].stream is None
 
 
 @pytest.mark.asyncio
