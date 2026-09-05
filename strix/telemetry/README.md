@@ -16,7 +16,7 @@ We collect only very **basic** usage data including:
 **System Context:** OS type, architecture, Strix version\
 **Scan Context:** Scan mode (quick/standard/deep), scan type (whitebox/blackbox)\
 **Model Usage:** Which LLM model is being used and whether it runs via an API key or a model subscription (not prompts or responses)\
-**Feature Usage:** Which built-in skills are loaded\
+**Feature Usage:** Which built-in skills were used during a scan (reported once, at scan end)\
 **Aggregate Metrics:** Vulnerability counts by severity and weakness category (CWE)
 
 ### What We **Never** Collect

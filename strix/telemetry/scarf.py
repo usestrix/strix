@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any
 import requests
 
 from strix.config import load_settings
+from strix.skills import get_loaded_skill_names
 from strix.telemetry._common import (
     SEND_TIMEOUT,
     SESSION_ID,
@@ -90,17 +91,6 @@ def finding(severity: str, cwe: str | None = None, is_cve: bool = False) -> None
     )
 
 
-def skill_loaded(skill_name: str) -> None:
-    _send(
-        "skill_loaded",
-        {
-            **base_props(),
-            "session": SESSION_ID,
-            "skill": skill_name,
-        },
-    )
-
-
 def end(report_state: ReportState, exit_reason: str = "completed") -> None:
     if report_state.scarf_scan_ended_sent:
         return
@@ -140,6 +130,7 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
             "vulnerabilities_total": len(report_state.vulnerability_reports),
             **{f"vulnerabilities_{k}": v for k, v in vulnerabilities_counts.items()},
             **llm_props,
+            "skills": ",".join(get_loaded_skill_names()),
         },
     )
 
