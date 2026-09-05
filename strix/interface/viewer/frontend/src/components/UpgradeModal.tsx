@@ -149,7 +149,7 @@ export function UpgradeModal({
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => trackCta("upgrade_book_demo", source)}
-              className="text-[#aaa] underline underline-offset-2 transition-colors hover:text-white"
+              className="whitespace-nowrap text-[#aaa] underline underline-offset-2 transition-colors hover:text-white"
             >
               Try Strix Enterprise
             </a>
