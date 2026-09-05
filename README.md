@@ -16,7 +16,7 @@
 <a href="https://docs.strix.ai"><img src="https://img.shields.io/badge/Docs-docs.strix.ai-2b9246?style=for-the-badge&logo=gitbook&logoColor=white" alt="Docs"></a>
 <a href="https://strix.ai"><img src="https://img.shields.io/badge/Website-strix.ai-f0f0f0?style=for-the-badge&logoColor=000000" alt="Website"></a>
 <a href="https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=badge_cloud"><img src="https://img.shields.io/badge/Strix%20Cloud-app.strix.ai-000000?style=for-the-badge&logoColor=white" alt="Strix Cloud"></a>
-<a href="https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=badge_demo"><img src="https://img.shields.io/badge/Enterprise-Book%20a%20demo-7c3aed?style=for-the-badge&logoColor=white" alt="Book a demo"></a>
+<a href="https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=badge_demo"><img src="https://img.shields.io/badge/Try%20Strix%20Enterprise-7c3aed?style=for-the-badge&logoColor=white" alt="Try Strix Enterprise"></a>
 [![](https://dcbadge.limes.pink/api/server/strix-ai)](https://discord.gg/strix-ai)
 
 <a href="https://deepwiki.com/usestrix/strix"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
@@ -106,7 +106,7 @@ The same agents, three ways to run them. Pick the one that fits your situation.
 | **Setup** | Docker + your own LLM key | None. Sign up and launch a pentest in minutes | Tailored onboarding |
 | **Price** | Free (Apache 2.0) | Pay per pentest or a monthly plan | Custom |
 | **Includes** | Full CLI, local viewer, CI runs | Validated findings, one-click autofix, PR reviews, scheduling, integrations | Everything in Cloud, plus SSO, compliance-ready reports (SOC 2, ISO 27001, PCI DSS), VPC or self-hosted deployment, BYOK models, dedicated support and SLA |
-| **Start** | [Quick Start](#-quick-start) | [Run a pentest →](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=table_cloud) | [Book a demo →](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=table_demo) |
+| **Start** | [Quick Start](#-quick-start) | [Run a pentest →](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=table_cloud) | [Try Strix Enterprise →](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=table_demo) |
 
 ---
 
@@ -126,7 +126,7 @@ Try the Strix full-stack penetration testing platform at **[app.strix.ai](https:
 
 Get the same Strix experience with enterprise-grade controls: SSO (SAML/OIDC), custom compliance-ready penetration testing reports (SOC 2, ISO 27001, PCI DSS), dedicated support and SLA, custom deployment options (VPC or self-hosted), BYOK model support, and tailored AI pentesting agents optimized for your environment.
 
-[**Book a demo →**](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=enterprise_cta)
+[**Try Strix Enterprise →**](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=enterprise_cta)
 
 ---
 

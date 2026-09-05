@@ -720,7 +720,7 @@ function OverviewTab({
               icon={Rocket}
             />
             <ProInlineCta
-              label="Book an enterprise demo"
+              label="Try Strix Enterprise"
               desc="SSO, compliance-ready reports, VPC or self-hosted deployment."
               slug="book_demo"
               surface="overview"
@@ -824,7 +824,7 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
             icon={Rocket}
           />
           <ProInlineCta
-            label="Book an enterprise demo"
+            label="Try Strix Enterprise"
             desc="SSO, compliance-ready reports, VPC or self-hosted deployment."
             slug="book_demo"
             surface="agents"

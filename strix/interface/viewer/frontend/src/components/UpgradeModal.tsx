@@ -151,7 +151,7 @@ export function UpgradeModal({
               onClick={() => trackCta("upgrade_book_demo", source)}
               className="text-[#aaa] underline underline-offset-2 transition-colors hover:text-white"
             >
-              Book a demo
+              Try Strix Enterprise
             </a>
           </p>
         </div>
