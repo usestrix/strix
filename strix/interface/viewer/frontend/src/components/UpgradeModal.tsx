@@ -143,7 +143,7 @@ export function UpgradeModal({
           </div>
 
           <p className="text-center text-xs text-[#666]">
-            Need SSO, compliance reports, or a private deployment?{" "}
+            SSO, compliance reports, or a private deployment?{" "}
             <a
               href={ctaUrl(DEMO_URL, "upgrade_book_demo")}
               target="_blank"

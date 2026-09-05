@@ -112,7 +112,7 @@ The same agents, three ways to run them. Pick the one that fits your situation.
 
 ## ☁️ Strix Cloud
 
-Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=cloud_heading)** - sign up for free, connect your repos and domains, and launch a pentest in minutes. No Docker and no LLM key required.
+Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=cloud_heading)** - sign up for free, connect your repos and domains, and launch a pentest in minutes.
 
 - **Validated findings with PoCs** - every vulnerability includes a working proof-of-concept exploit and reproduction steps
 - **One-click autofix** - AI-generated security patches as ready-to-merge pull requests

@@ -714,7 +714,7 @@ function OverviewTab({
           <div className="mt-3 flex flex-wrap gap-2.5">
             <ProInlineCta
               label="Run a pentest in Strix Cloud"
-              desc="Launch a pentest without Docker or an LLM key."
+              desc="Validated findings, autofix, and PR reviews."
               slug="overview_cloud"
               surface="overview"
               icon={Rocket}
