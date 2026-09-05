@@ -1,6 +1,5 @@
 import logging
 import re
-import threading
 from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
@@ -241,21 +240,18 @@ def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str
 
 
 _LOADED_SKILLS: set[str] = set()
-_LOADED_SKILLS_LOCK = threading.Lock()
 
 
 def _track_skill_loaded(skill_name: str, file_path: Path) -> None:
     builtin = get_strix_resource_path("skills")
     if not file_path.is_relative_to(builtin):
         skill_name = "custom"
-    with _LOADED_SKILLS_LOCK:
-        _LOADED_SKILLS.add(skill_name)
+    _LOADED_SKILLS.add(skill_name)
 
 
 def get_loaded_skill_names() -> list[str]:
     """Distinct skills loaded so far in this process (custom skills collapse to ``"custom"``)."""
-    with _LOADED_SKILLS_LOCK:
-        return sorted(_LOADED_SKILLS)
+    return sorted(_LOADED_SKILLS)
 
 
 def _candidate_skill_files(skill_name: str) -> list[Path]:
