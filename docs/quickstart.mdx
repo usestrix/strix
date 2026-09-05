@@ -55,13 +55,13 @@ Strix accepts multiple target types:
 strix --target ./app-directory
 
 # GitHub repository
-strix --target https://github.com/org/repo
+strix --target https://github.com/org/repo.git
 
 # Live web application
 strix --target https://your-app.com
 
 # Multiple targets (white-box testing)
-strix -t https://github.com/org/repo -t https://your-app.com
+strix -t https://github.com/org/repo.git -t https://your-app.com
 
 # Targets from a file, one target per non-empty, non-comment line
 strix --target-list ./targets.txt

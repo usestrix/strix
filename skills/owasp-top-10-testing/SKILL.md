@@ -40,7 +40,7 @@ Maximum category coverage comes from giving the agents both the source and a run
 
 ```bash
 strix -n \
-  -t https://github.com/org/app \
+  -t https://github.com/org/app.git \
   -t https://staging.example.com \
   --scan-mode deep --max-budget 30 \
   --instruction "OWASP Top 10:2025 assessment. Cover every category systematically and map each finding to its 2025 category id.

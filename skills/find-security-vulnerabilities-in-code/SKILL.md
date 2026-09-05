@@ -20,7 +20,7 @@ Install, LLM setup, all flags, and the managed-cloud path are in the **penetrati
 strix -n -t ./ --scan-mode standard --max-budget 15
 
 # A GitHub repo directly
-strix -n -t https://github.com/org/app --max-budget 15
+strix -n -t https://github.com/org/app.git --max-budget 15
 
 # Monorepo: point at the service that matters, not the whole tree
 strix -n -t ./services/checkout --max-budget 20

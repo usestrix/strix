@@ -12,27 +12,6 @@ import (
 	"github.com/usestrix/strix/tui/internal/protocol"
 )
 
-// lastIndex returns the index of the last command of the given type, or -1.
-func lastIndex(types []string, want string) int {
-	last := -1
-	for i, value := range types {
-		if value == want {
-			last = i
-		}
-	}
-	return last
-}
-
-// firstIndex returns the index of the first command of the given type, or -1.
-func firstIndex(types []string, want string) int {
-	for i, value := range types {
-		if value == want {
-			return i
-		}
-	}
-	return -1
-}
-
 // drainCommands runs a (possibly batched) command and decodes every protocol
 // frame the sends wrote to the connection, in order.
 func drainCommands(t *testing.T, cmd tea.Cmd, connection *recordingConn) []protocol.Envelope {
@@ -94,30 +73,22 @@ func commandTypes(envelopes []protocol.Envelope) []string {
 	return types
 }
 
-func contains(values []string, want string) bool {
-	for _, value := range values {
-		if value == want {
-			return true
-		}
-	}
-	return false
+type setupStartPayload struct {
+	Instruction     string   `json:"instruction"`
+	Targets         []string `json:"targets"`
+	MountWorkingDir *bool    `json:"mount_working_dir"`
 }
 
-// startPayloadFlag reports a boolean field on the setup.start command.
-func startPayloadFlag(t *testing.T, envelopes []protocol.Envelope, field string) (value, found bool) {
+func decodeSetupStart(t *testing.T, envelopes []protocol.Envelope) setupStartPayload {
 	t.Helper()
-	for _, envelope := range envelopes {
-		if envelope.Type != "setup.start" {
-			continue
-		}
-		var payload map[string]any
-		if err := json.Unmarshal(envelope.Payload, &payload); err != nil {
-			t.Fatal(err)
-		}
-		flag, ok := payload[field].(bool)
-		return flag, ok
+	if len(envelopes) != 1 || envelopes[0].Type != "setup.start" {
+		t.Fatalf("expected one setup.start command, got %v", commandTypes(envelopes))
 	}
-	return false, false
+	var payload setupStartPayload
+	if err := json.Unmarshal(envelopes[0].Payload, &payload); err != nil {
+		t.Fatal(err)
+	}
+	return payload
 }
 
 // A bare prompt launches straight away, asking to mount the working directory
@@ -130,20 +101,16 @@ func TestSetupPromptWithoutTargetLaunchesAndRequestsMount(t *testing.T) {
 	updated, cmd := model.submit("find auth bugs in the login flow")
 	model = updated.(Model)
 	envelopes := drainCommands(t, cmd, connection)
-	types := commandTypes(envelopes)
+	payload := decodeSetupStart(t, envelopes)
 
-	if !contains(types, "setup.set_instruction") || !contains(types, "setup.start") {
-		t.Fatalf("bare prompt did not launch: %v", types)
+	if payload.Instruction != "find auth bugs in the login flow" {
+		t.Fatalf("instruction was not preserved: %q", payload.Instruction)
 	}
-	if contains(types, "setup.add_target") {
-		t.Fatalf("the working directory must not be added as a target: %v", types)
+	if payload.Targets == nil || len(payload.Targets) != 0 {
+		t.Fatalf("targetless prompt sent targets: %#v", payload.Targets)
 	}
-	if mount, found := startPayloadFlag(t, envelopes, "mount_working_dir"); !found || !mount {
-		t.Fatalf("mount was not requested: mount_working_dir=%v found=%v", mount, found)
-	}
-	// setup.start leaves setup mode, so it must be the last command sent.
-	if start, instr := firstIndex(types, "setup.start"), lastIndex(types, "setup.set_instruction"); start < instr {
-		t.Fatalf("setup.start (%d) must come after setup.set_instruction (%d): %v", start, instr, types)
+	if payload.MountWorkingDir == nil || !*payload.MountWorkingDir {
+		t.Fatalf("mount was not requested: %#v", payload.MountWorkingDir)
 	}
 	if model.pendingPrompt != "find auth bugs in the login flow" {
 		t.Fatalf("prompt was not held in case the mount is declined: %q", model.pendingPrompt)
@@ -235,32 +202,119 @@ func TestMountConfirmationAnswers(t *testing.T) {
 	}
 }
 
-// A prompt that names a target adds it and launches.
-func TestSetupPromptWithTargetLaunches(t *testing.T) {
+func TestSetupPromptExtractsExactSchemeLessFiuuTarget(t *testing.T) {
+	assertTargetedSetupStart(t, "fiuu.com", nil, []string{"fiuu.com"})
+}
+
+func TestSetupPromptExtractsOrderedSchemeLessFiuuTargets(t *testing.T) {
+	prompt := "i need you to test fiuu.com/search-result/?s=, fiuu.com/blog/ (fiuu.com/blog/-9 will show you the sql query), fiuu.com/newsroom/, and fiuu.com/faq/ for sqli. all of the pages likely use mysql and the same database"
+	want := []string{
+		"fiuu.com/search-result/?s=",
+		"fiuu.com/blog/",
+		"fiuu.com/blog/-9",
+		"fiuu.com/newsroom/",
+		"fiuu.com/faq/",
+	}
+	assertTargetedSetupStart(t, prompt, nil, want)
+}
+
+func TestSetupPromptExtractsOrderedSchemeLessIPTargets(t *testing.T) {
+	prompt := "i need you to test 192.0.2.10/search-result/?s=, 192.0.2.10/blog/ (192.0.2.10/blog/-9 will show you the sql query), 192.0.2.10/newsroom/, and 192.0.2.10/faq/ for sqli"
+	want := []string{
+		"192.0.2.10/search-result/?s=",
+		"192.0.2.10/blog/",
+		"192.0.2.10/blog/-9",
+		"192.0.2.10/newsroom/",
+		"192.0.2.10/faq/",
+	}
+	assertTargetedSetupStart(t, prompt, nil, want)
+}
+
+func TestSetupPromptKeepsSchemeAndNoSchemeCandidates(t *testing.T) {
+	prompt := "test https://example.com, example.com, https://example.com and example.com."
+	assertTargetedSetupStart(t, prompt, nil, []string{"https://example.com", "example.com"})
+}
+
+func TestSetupPromptExtractsHostSubdomainAndIPTargets(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		prompt string
+		want   []string
+	}{
+		{
+			name:   "mixed hosts and IP",
+			prompt: "test example.com, api.example.com:8443/search?q=x#results, and 192.0.2.10:8080/admin.",
+			want:   []string{"example.com", "api.example.com:8443/search?q=x#results", "192.0.2.10:8080/admin"},
+		},
+		{
+			name:   "IP only",
+			prompt: "test 192.0.2.10:8080/admin only.",
+			want:   []string{"192.0.2.10:8080/admin"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assertTargetedSetupStart(t, tc.prompt, nil, tc.want)
+		})
+	}
+}
+
+func TestSetupPromptTrimsTargetPunctuation(t *testing.T) {
+	prompt := "test (\"https://example.com/path?q=x#frag\"), '[2001:db8::1]:8443/admin'; api.example.com, 2001:db8::2, localhost:3000, and https://münich.example/path."
+	want := []string{
+		"https://example.com/path?q=x#frag",
+		"[2001:db8::1]:8443/admin",
+		"api.example.com",
+		"2001:db8::2",
+		"localhost:3000",
+		"https://münich.example/path",
+	}
+	assertTargetedSetupStart(t, prompt, nil, want)
+}
+
+func TestSetupPromptWithExistingTargetVerifiesWithoutMount(t *testing.T) {
+	assertTargetedSetupStart(t, "focus on authentication", []string{"example.com"}, []string{})
+}
+
+func TestSetupPromptRejectsNonNetworkTokens(t *testing.T) {
+	prompt := "Review README.md and main.py. Email dev@example.com about /etc/passwd, ./fixtures/site.test, and release v1.2.3-beta. This is ordinary prose."
 	connection := &recordingConn{}
 	model := New(&Client{conn: connection})
 	model.snapshot = protocol.Snapshot{SetupMode: true}
 
-	_, cmd := model.submit("https://juice-shop.example.com hit the coupon endpoint")
-	envelopes := drainCommands(t, cmd, connection)
-	types := commandTypes(envelopes)
+	updated, cmd := model.submit(prompt)
+	model = updated.(Model)
+	payload := decodeSetupStart(t, drainCommands(t, cmd, connection))
+	if payload.Instruction != prompt || payload.Targets == nil || len(payload.Targets) != 0 {
+		t.Fatalf("targetless payload = %#v", payload)
+	}
+	if payload.MountWorkingDir == nil || !*payload.MountWorkingDir {
+		t.Fatalf("targetless launch flags = %#v", payload)
+	}
+	if model.pendingPrompt != prompt {
+		t.Fatalf("prompt was not held for mount confirmation: %q", model.pendingPrompt)
+	}
+}
 
-	for _, want := range []string{"setup.add_target", "setup.set_instruction", "setup.start"} {
-		if !contains(types, want) {
-			t.Fatalf("missing %s in %v", want, types)
-		}
+func assertTargetedSetupStart(t *testing.T, prompt string, existing, want []string) {
+	t.Helper()
+	connection := &recordingConn{}
+	model := New(&Client{conn: connection})
+	model.snapshot = protocol.Snapshot{SetupMode: true, Targets: existing}
+
+	updated, cmd := model.submit(prompt)
+	model = updated.(Model)
+	payload := decodeSetupStart(t, drainCommands(t, cmd, connection))
+	if payload.Instruction != prompt {
+		t.Fatalf("instruction = %q, want %q", payload.Instruction, prompt)
 	}
-	if _, found := startPayloadFlag(t, envelopes, "mount_working_dir"); found {
-		t.Fatalf("a targeted prompt must not ask to mount the working directory: %v", types)
+	if !reflect.DeepEqual(payload.Targets, want) {
+		t.Fatalf("targets = %#v, want %#v", payload.Targets, want)
 	}
-	// The target and instruction must reach the backend before setup.start
-	// closes the setup guard.
-	start := firstIndex(types, "setup.start")
-	if target := lastIndex(types, "setup.add_target"); start < target {
-		t.Fatalf("setup.start (%d) must come after setup.add_target (%d): %v", start, target, types)
+	if payload.MountWorkingDir != nil {
+		t.Fatalf("targeted prompt included mount_working_dir=%v", *payload.MountWorkingDir)
 	}
-	if instr := lastIndex(types, "setup.set_instruction"); start < instr {
-		t.Fatalf("setup.start (%d) must come after setup.set_instruction (%d): %v", start, instr, types)
+	if model.pendingPrompt != "" {
+		t.Fatalf("targeted prompt was held for a mount: %q", model.pendingPrompt)
 	}
 }
 

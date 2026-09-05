@@ -3,7 +3,7 @@ title: "MCP Servers"
 description: "Connect your own MCP servers and expose their tools to the agent"
 ---
 
-Strix can connect to [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers you list and expose their tools to the agent during a run. Use this to let the agent read how your system is actually built instead of inferring it from the outside.
+Strix can connect to [Model Context Protocol (MCP)](https://modelcontextprotocol.io) servers you list and let the agent discover and call their tools on demand during a run. Use this to let the agent read how your system is actually built instead of inferring it from the outside.
 
 A few things it pays off for:
 
@@ -47,9 +47,8 @@ Strix reads this file at the start of each run. There is no default file, so no 
 ## Fields
 
 <ParamField path="name" type="string" required>
-  A short label for the connection. Each server's tools are namespaced by
-  `name` (for example `local_fs_read_file`), so two servers can offer the same
-  tool name without colliding.
+  A short label for the connection. The agent passes it to `describe_mcp` and
+  `call_mcp`, so two servers can offer the same tool name without colliding.
 </ParamField>
 
 <ParamField path="transport" type="string">
@@ -123,6 +122,18 @@ viewer (`strix view`), so a call that left Strix for a server you connected is
 easy to pick out of a transcript. The terminal shows the call and its arguments;
 results can be large and arbitrary, so read them in the viewer, which shows a
 preview you can expand.
+
+## Calling tools
+
+Individual remote tools are not registered as model-visible functions. The
+agent uses three bounded dispatch tools instead:
+
+- `list_mcps` lists the connected servers.
+- `describe_mcp` returns one connection's allowed tool names, descriptions, and schemas.
+- `call_mcp` invokes an allowed tool with arguments matching that schema.
+
+This keeps the model's tool list bounded even when a server exposes a large
+catalog. `allowed_tools` is enforced before dispatch.
 
 ## Behavior
 

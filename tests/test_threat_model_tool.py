@@ -303,6 +303,13 @@ def test_path_on_a_known_host_resolves_to_the_scan_target() -> None:
     assert _get_impl("https://app.example.com/admin/login", scan_targets)["found"] is True
 
 
+def test_nondefault_port_on_a_known_host_resolves_to_the_host_target() -> None:
+    scan_targets = ["app.example.com"]
+    _save_impl("https://app.example.com:8443/admin", _BLACKBOX_MODEL, "root", scan_targets)
+
+    assert _get_impl("http://app.example.com:3000/login", scan_targets)["found"] is True
+
+
 def test_two_scan_targets_on_one_host_stay_separate() -> None:
     scan_targets = ["https://example.com/tenant-a", "https://example.com/tenant-b"]
     _save_impl("https://example.com/tenant-a", _BLACKBOX_MODEL, "root", scan_targets)

@@ -189,11 +189,18 @@ See the [viewer documentation](https://docs.strix.ai/usage/viewer) for the optio
 strix --target ./app-directory
 
 # Security review of a GitHub repository
-strix --target https://github.com/org/repo
+strix --target https://github.com/org/repo.git
 
 # Black-box web application assessment
 strix --target https://your-app.com
 ```
+
+Web targets are host-level: paths and queries passed to `--target` are removed,
+and repeated URLs on the same host collapse to one target. Put exact starting
+endpoints in `--instruction`. Network references entered in the interactive
+start screen are inferred as host/IP targets while the complete text remains the
+task. Scheme, port, path, and query differences on the same host collapse to one
+target; distinct hosts, subdomains, and IP addresses remain separate targets.
 
 ### API Testing (OpenAPI / Swagger / Postman)
 
@@ -215,7 +222,7 @@ strix --target postman://<collection-uuid> --target https://api.your-app.com
 strix --target https://your-app.com --instruction "Perform authenticated testing using credentials: user:pass"
 
 # Multi-target testing (source code + deployed app)
-strix -t https://github.com/org/app -t https://your-app.com
+strix -t https://github.com/org/app.git -t https://your-app.com
 
 # Targets from a file, one target per non-empty, non-comment line
 strix --target-list ./targets.txt
@@ -306,7 +313,7 @@ See the [cloud CLI documentation](https://docs.strix.ai/cloud/cli) for scopes, w
 
 #### Connect your own MCP servers
 
-Strix can connect to Model Context Protocol (MCP) servers you list and expose their tools to the agent during a run. Create `~/.strix/mcp-servers.json` with a JSON list of local `stdio` servers or remote `http` servers:
+Strix can connect to Model Context Protocol (MCP) servers you list and let the agent discover and call their tools on demand during a run. Create `~/.strix/mcp-servers.json` with a JSON list of servers. Each entry is either a local `stdio` server that Strix launches as a subprocess, or a remote `http` server:
 
 ```json
 [
@@ -320,7 +327,8 @@ Strix can connect to Model Context Protocol (MCP) servers you list and expose th
 ]
 ```
 
-Each server's tools are namespaced by `name`, for example `github_list_issues`. See the [MCP documentation](https://docs.strix.ai/integrations/mcp) for the full schema, tool filtering, and `stdio` servers.
+The model uses `list_mcps`, `describe_mcp`, and `call_mcp` to reach connected servers instead of receiving one model-visible function per remote tool. Omit `allowed_tools` to make every tool on that connection discoverable, or set it to a list to restrict which tools `call_mcp` can invoke. The file is optional, and a server that fails to connect is skipped without failing the run. You can point Strix at a different file with `STRIX_MCP_CONFIG`.
+See the [MCP documentation](https://docs.strix.ai/integrations/mcp) for the full schema, tool filtering, and `stdio` servers.
 
 **Recommended models for best results:**
 

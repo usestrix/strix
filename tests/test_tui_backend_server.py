@@ -187,17 +187,17 @@ async def test_server_command_round_trip_over_inherited_socket() -> None:
             child,
             {
                 "version": 3,
-                "type": "setup.add_target",
+                "type": "setup.set_instruction",
                 "request_id": "test-1",
-                "payload": {"target": "example.com"},
+                "payload": {"instruction": "test example.com"},
             },
         )
         result = await receive_until(child, "command_result", request_id="test-1")
         assert result["payload"]["ok"] is True
-        assert result["payload"]["command"] == "setup.add_target"
+        assert result["payload"]["command"] == "setup.set_instruction"
         state = await receive_until(child, "state")
         assert state["payload"]["revision"] >= 1
-        assert state["payload"]["state"]["targets"] == ["example.com"]
+        assert state["payload"]["state"]["instruction"] == "test example.com"
     finally:
         child.close()
         await server.close()
@@ -310,9 +310,9 @@ async def test_invalid_version_error_is_correlated_and_next_command_succeeds() -
             child,
             {
                 "version": 2,
-                "type": "setup.add_target",
+                "type": "setup.set_instruction",
                 "request_id": "bad-version",
-                "payload": {"target": "ignored.example"},
+                "payload": {"instruction": "ignored"},
             },
         )
         rejected = await receive_until(child, "command_result", request_id="bad-version")
@@ -322,9 +322,9 @@ async def test_invalid_version_error_is_correlated_and_next_command_succeeds() -
             child,
             {
                 "version": 3,
-                "type": "setup.add_target",
+                "type": "setup.set_instruction",
                 "request_id": "after-error",
-                "payload": {"target": "example.com"},
+                "payload": {"instruction": "test example.com"},
             },
         )
         accepted = await receive_until(child, "command_result", request_id="after-error")

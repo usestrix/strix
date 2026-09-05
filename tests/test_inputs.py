@@ -8,13 +8,16 @@ from typing import Any
 import litellm
 import pytest
 
+from strix.agents.prompt import render_system_prompt
 from strix.core.inputs import (
     build_root_task,
     build_scan_targets,
     build_scope_context,
+    build_scope_target_labels,
     child_initial_input,
     make_model_settings,
 )
+from strix.interface.utils import build_target_summary_text
 
 
 def _child_kwargs(parent_history: list[Any]) -> dict[str, Any]:
@@ -205,18 +208,22 @@ def test_build_root_task_repository_target() -> None:
     assert "https://example.com/repo.git" in task
 
 
-def test_build_root_task_web_application_with_instructions() -> None:
+def test_build_root_task_web_target_injected_as_context() -> None:
+    """The prompt leads and the configured target remains visible below it."""
     config = {
         "targets": [
-            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+            {"type": "web_application", "details": {"target_host": "app.example.com"}},
         ],
         "user_instructions": "Focus on auth.",
     }
     task = build_root_task(config)
 
-    assert "URLs:" in task
-    assert "https://app.example.com" in task
-    assert "Special instructions: Focus on auth." in task
+    assert task.startswith("Focus on auth.")
+    assert "Hosts:" in task
+    assert "app.example.com" in task
+    assert "configured targets and supporting material" in task
+    assert "Special instructions:" not in task
+    assert "SYSTEM-VERIFIED" not in task
 
 
 def test_build_root_task_workspace_mount_is_not_a_target() -> None:
@@ -232,9 +239,9 @@ def test_build_root_task_workspace_mount_is_not_a_target() -> None:
     assert "Working Directory:" in task
     assert "/workspace/api" in task
     assert "No scan target was set" in task
-    assert "Special instructions: Find IDOR in the checkout flow." in task
+    assert task.startswith("Find IDOR in the checkout flow.")
     # It must not be presented as an asset to test.
-    for label in ("Local Codebases:", "Repositories:", "URLs:", "IP Addresses:"):
+    for label in ("Local Codebases:", "Repositories:", "Hosts:", "IP Addresses:"):
         assert label not in task
 
 
@@ -245,6 +252,115 @@ def test_build_scope_context_authorizes_nothing_without_targets() -> None:
     )
 
     assert scope["authorized_targets"] == []
+    assert scope["user_instruction_hosts_expand_scope"] is True
+    assert build_target_summary_text([]).plain == "Target  task-defined scope"
+
+
+def test_scope_prompt_authorizes_flag_and_instruction_hosts_with_subdomains() -> None:
+    config: dict[str, Any] = {
+        "targets": [
+            {
+                "type": "web_application",
+                "details": {"target_host": "app.example.com"},
+                "original": "app.example.com",
+            }
+        ],
+        "user_instructions": (
+            "Test https://app.example.com/search?q=test and "
+            "https://app.example.com/blog/. Also test https://api.example.net/v1."
+        ),
+    }
+    context = build_scope_context(config)
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, system_prompt_context=context)
+    task = build_root_task(config)
+
+    assert "SYSTEM-VERIFIED SCOPE" in prompt
+    assert context["authorized_targets"] == [
+        {"type": "web_host", "value": "app.example.com", "workspace_path": ""}
+    ]
+    assert "host: app.example.com (includes app.example.com and *.app.example.com)" in prompt
+    assert prompt.count("host: app.example.com") == 1
+    assert "https://app.example.com/search?q=test" not in prompt
+    assert "https://app.example.com/search?q=test" in task
+    assert "https://app.example.com/blog/" in task
+    assert "https://api.example.net/v1" in task
+    assert "Every network host explicitly named in the user's root scan task" in prompt
+    assert "exact hostname and all of its descendant subdomains" in prompt
+    assert "scheme, port, path, query, or fragment" in prompt
+    assert "not `example.com`, sibling hosts such as `api.example.com`" in prompt
+
+    assert build_scope_target_labels(config["targets"]) == [
+        "host: app.example.com (includes *.app.example.com)"
+    ]
+    assert build_target_summary_text(config["targets"]).plain == (
+        "Target  host: app.example.com (includes *.app.example.com)"
+    )
+
+
+def test_scope_prompt_authorizes_subdomains_for_each_configured_host() -> None:
+    targets = [
+        {
+            "type": "web_application",
+            "details": {"target_host": "fiuu.com"},
+            "original": "fiuu.com",
+        },
+        {
+            "type": "web_application",
+            "details": {"target_host": "api.fiuu.com"},
+            "original": "api.fiuu.com",
+        },
+    ]
+    context = build_scope_context({"targets": targets})
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, system_prompt_context=context)
+
+    assert context["authorized_targets"] == [
+        {"type": "web_host", "value": "fiuu.com", "workspace_path": ""},
+        {"type": "web_host", "value": "api.fiuu.com", "workspace_path": ""},
+    ]
+    assert "host: fiuu.com (includes fiuu.com and *.fiuu.com)" in prompt
+    assert "host: api.fiuu.com (includes api.fiuu.com and *.api.fiuu.com)" in prompt
+
+
+def test_scope_prompt_keeps_web_ip_targets_exact() -> None:
+    context = build_scope_context(
+        {
+            "targets": [
+                {
+                    "type": "ip_address",
+                    "details": {"target_ip": "192.0.2.10"},
+                }
+            ]
+        }
+    )
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, system_prompt_context=context)
+
+    assert context["authorized_targets"] == [
+        {"type": "ip_address", "value": "192.0.2.10", "workspace_path": ""}
+    ]
+    assert "ip_address: 192.0.2.10 (exact address)" in prompt
+    assert "https://192.0.2.10:8443/admin" not in prompt
+
+
+def test_scope_prompt_does_not_make_repository_origin_a_live_target() -> None:
+    context = build_scope_context(
+        {
+            "targets": [
+                {
+                    "type": "repository",
+                    "details": {"target_repo": "https://github.com/acme/app.git"},
+                }
+            ]
+        }
+    )
+
+    prompt = render_system_prompt(scan_mode="quick", is_root=True, system_prompt_context=context)
+
+    assert "repository: https://github.com/acme/app.git" in prompt
+    assert "Repository hosting origins named only by configured repository targets" in prompt
+    assert "are not live web targets" in prompt
 
 
 def test_build_root_task_diff_scope() -> None:
@@ -385,23 +501,23 @@ def test_scan_targets_prefer_the_workspace_checkout_over_the_remote_url() -> Non
                     "workspace_subdir": "billing",
                 },
             },
-            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+            {"type": "web_application", "details": {"target_host": "app.example.com"}},
         ]
     }
 
-    assert build_scan_targets(config) == ["/workspace/billing", "https://app.example.com"]
+    assert build_scan_targets(config) == ["/workspace/billing", "app.example.com"]
 
 
 def test_scan_targets_drop_empty_and_duplicate_entries() -> None:
     config = {
         "targets": [
-            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
-            {"type": "web_application", "details": {"target_url": "https://app.example.com"}},
+            {"type": "web_application", "details": {"target_host": "app.example.com"}},
+            {"type": "web_application", "details": {"target_host": "app.example.com"}},
             {"type": "ip_address", "details": {}},
         ]
     }
 
-    assert build_scan_targets(config) == ["https://app.example.com"]
+    assert build_scan_targets(config) == ["app.example.com"]
 
 
 def test_openrouter_attribution_rides_on_the_request_headers() -> None:

@@ -104,7 +104,10 @@ def test_build_targets_info_rejects_unparseable_spec(tmp_path: Path) -> None:
         build_targets_info(args)
 
 
-def test_stage_api_specs_copies_spec_into_workspace_dir(tmp_path: Path) -> None:
+def test_stage_api_specs_copies_spec_into_workspace_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
     targets = _resolved_targets(_write_spec(tmp_path / "src"))
     (source,) = stage_api_specs(targets, "stage-run")
 
@@ -114,7 +117,10 @@ def test_stage_api_specs_copies_spec_into_workspace_dir(tmp_path: Path) -> None:
     assert targets[0]["details"]["workspace_path"] == "/workspace/api-specs/openapi.json"
 
 
-def test_stage_api_specs_disambiguates_same_filename(tmp_path: Path) -> None:
+def test_stage_api_specs_disambiguates_same_filename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
     targets = _resolved_targets(
         _write_spec(tmp_path / "a"),
         _write_spec(tmp_path / "b"),
@@ -148,5 +154,5 @@ def test_build_scope_context_authorizes_base_urls(tmp_path: Path) -> None:
 
     types = {a["type"] for a in authorized}
     assert "api_spec" in types
-    assert "web_application" in types
-    assert any(a["value"] == "https://api.shop.test/v1" for a in authorized)
+    assert "web_host" in types
+    assert any(a["value"] == "api.shop.test" for a in authorized)

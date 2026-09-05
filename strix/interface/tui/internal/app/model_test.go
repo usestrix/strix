@@ -317,7 +317,7 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 		SetupMode:    true,
 		ScanState:    "setup",
 		Model:        "gpt-5.4",
-		Targets:      []string{"/workspace/source", "https://example.com"},
+		Targets:      []string{"/workspace/source", "example.com"},
 		Instruction:  "focus on access control",
 		ScanMode:     "quick",
 		MaxBudgetUSD: floatPointer(12.5),
@@ -332,7 +332,7 @@ func TestSetupUsesDedicatedStartScreen(t *testing.T) {
 	for _, want := range []string{
 		"gpt-5.4",
 		"/workspace/source",
-		"https://example.com",
+		"example.com",
 	} {
 		if !strings.Contains(view, want) {
 			t.Fatalf("start screen is missing %q: %s", want, view)
@@ -410,13 +410,10 @@ func TestLeadingSlashIsPromptTextNotACommand(t *testing.T) {
 	if cmd == nil {
 		t.Fatal("enter did not submit")
 	}
-	types := commandTypes(drainCommands(t, cmd, connection))
-	if !contains(types, "setup.start") {
-		t.Fatalf("a slash-leading prompt did not launch a scan: %v", types)
-	}
-	// The path is read as a target and the sentence as the instruction.
-	if !contains(types, "setup.add_target") || !contains(types, "setup.set_instruction") {
-		t.Fatalf("slash-leading prompt was not split into target and instruction: %v", types)
+	payload := decodeSetupStart(t, drainCommands(t, cmd, connection))
+	// The entire value remains prompt text; the path is not promoted to a target.
+	if payload.Instruction != "/etc/passwd is world readable, check it" || len(payload.Targets) != 0 {
+		t.Fatalf("slash-leading prompt was not preserved as instruction text: %#v", payload)
 	}
 	for _, line := range result.setupLog {
 		if strings.Contains(ansi.Strip(line), "Unknown command") {

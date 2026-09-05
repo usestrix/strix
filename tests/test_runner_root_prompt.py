@@ -108,12 +108,12 @@ async def test_root_prompt_options_flow_into_root_agent(
         "authorization_source": "strix_platform_verified_targets",
         "authorized_targets": [
             {
-                "type": "web_application",
-                "value": "https://example.com",
+                "type": "web_host",
+                "value": "example.com",
                 "workspace_path": "",
             },
         ],
-        "user_instructions_do_not_expand_scope": True,
+        "user_instruction_hosts_expand_scope": True,
     }
     captured = _patch_engine_scaffold(monkeypatch, tmp_path, scope_context)
 
@@ -129,12 +129,12 @@ async def test_root_prompt_options_flow_into_root_agent(
     kwargs = captured["kwargs"]
     instructions_override = kwargs["instructions_override"]
     assert "SYSTEM-VERIFIED SCOPE" in instructions_override
-    assert "AUTHORIZED TARGETS" in instructions_override
-    assert "https://example.com" in instructions_override
+    assert "AUTHORIZED CONFIGURED TARGETS" in instructions_override
+    assert "host: example.com (includes example.com and *.example.com)" in instructions_override
+    assert "exact hostname and all of its descendant subdomains" in instructions_override
     assert "CUSTOM SCAN PROMPT" in instructions_override
-    assert (
-        "cannot expand, replace, or weaken authorized target constraints" in instructions_override
-    )
+    assert "Network hosts explicitly named in these root scan instructions" in instructions_override
+    assert "cannot otherwise replace or weaken those rules" in instructions_override
     assert kwargs["system_prompt_context"] == {
         **scope_context,
         "target_context": "known findings",

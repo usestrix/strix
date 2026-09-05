@@ -298,9 +298,15 @@ async def test_setup_preflights_model_before_starting(
 ) -> None:
     runtime_args = args()
     runtime_args.instruction = "CLI instruction"
+    runtime_args.targets_info = [
+        {
+            "type": "web_application",
+            "details": {"target_host": "example.com"},
+            "original": "example.com",
+        }
+    ]
     runtime = GoTuiRuntime(runtime_args)
     assert runtime.controller.instruction == "CLI instruction"
-    runtime.controller.targets = ["https://example.com", "/workspace/mounted"]
     runtime.controller.scan_mode = "quick"
     runtime.controller.instruction = ""
     runtime.controller.max_budget_usd = 8.5
@@ -320,22 +326,6 @@ async def test_setup_preflights_model_before_starting(
     )
     monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
 
-    def build(candidate: argparse.Namespace, **_: object) -> None:
-        calls.append("targets")
-        assert candidate.target == ["https://example.com", "/workspace/mounted"]
-        candidate.targets_info = [
-            {
-                "type": "web",
-                "details": {"target_url": "https://example.com"},
-                "original": "https://example.com",
-            },
-            {
-                "type": "local_code",
-                "details": {"target_path": "/workspace/mounted"},
-                "original": "/workspace/mounted",
-            },
-        ]
-
     def prepare(candidate: argparse.Namespace) -> None:
         calls.append("prepare")
         assert candidate.max_budget_usd == 8.5
@@ -344,7 +334,6 @@ async def test_setup_preflights_model_before_starting(
         assert candidate.diff_base == "origin/main"
 
     monkeypatch.setattr(go_tui, "persist_current", lambda: calls.append("persist"))
-    monkeypatch.setattr(go_tui, "build_targets_info", build)
     monkeypatch.setattr(go_tui, "prepare_run", prepare)
     monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
     monkeypatch.setattr(runtime, "init_run_state", lambda: calls.append("state"))
@@ -355,7 +344,7 @@ async def test_setup_preflights_model_before_starting(
     await runtime.start_from_setup()
 
     # The same steps, in the same order, as a direct launch's prepare_and_start.
-    assert calls == ["preflight", "persist", "targets", "prepare", "telemetry", "state", "scan"]
+    assert calls == ["preflight", "persist", "prepare", "telemetry", "state", "scan"]
     assert runtime.args.scan_mode == "quick"
     assert runtime.args.instruction == ""
     assert runtime.args.max_budget_usd == 8.5
@@ -376,6 +365,46 @@ def _setup_model(
 
 def _setup_messages(runtime: GoTuiRuntime) -> list[tuple[str, str]]:
     return [(message["level"], message["text"]) for message in runtime.controller.messages]
+
+
+@pytest.mark.asyncio
+async def test_setup_copies_inferred_target_records_into_prepared_run(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    runtime = GoTuiRuntime(args())
+    runtime.controller.targets_info = [
+        {
+            "type": "web_application",
+            "details": {"target_host": "fiuu.com"},
+            "original": "fiuu.com",
+        },
+        {
+            "type": "ip_address",
+            "details": {"target_ip": "192.0.2.10"},
+            "original": "192.0.2.10",
+        },
+    ]
+    runtime.controller.targets = ["fiuu.com", "192.0.2.10"]
+    prepared: list[argparse.Namespace] = []
+
+    monkeypatch.setattr(
+        go_tui,
+        "load_settings",
+        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
+    )
+    monkeypatch.setattr(go_tui, "preflight_model_connection", lambda _model: asyncio.sleep(0))
+    monkeypatch.setattr(go_tui, "persist_current", lambda: None)
+    monkeypatch.setattr(go_tui, "prepare_run", prepared.append)
+    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
+    monkeypatch.setattr(runtime, "init_run_state", lambda: None)
+    monkeypatch.setattr(runtime, "start_scan", lambda: None)
+
+    await runtime.start_from_setup()
+
+    assert prepared[0].targets_info == runtime.controller.targets_info
+    assert runtime.args.targets_info == runtime.controller.targets_info
+    assert prepared[0].workspace_mount is None
+    assert prepared[0].targets_info is not runtime.controller.targets_info
 
 
 @pytest.mark.asyncio
@@ -509,11 +538,6 @@ async def test_confirmed_target_less_launch_mounts_workspace_without_targets(
 
     _setup_model(monkeypatch)
     monkeypatch.setattr(go_tui, "persist_current", lambda: None)
-    monkeypatch.setattr(
-        go_tui,
-        "build_targets_info",
-        lambda _args, **_kw: pytest.fail("a target-less launch must not build targets"),
-    )
     monkeypatch.setattr(go_tui, "prepare_run", prepared.append)
     monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
     monkeypatch.setattr(runtime, "init_run_state", lambda: None)
@@ -534,9 +558,9 @@ async def test_setup_preserves_prepared_cli_targets(
     runtime_args.target_list = []
     runtime_args.targets_info = [
         {
-            "type": "web",
-            "details": {"url": "https://example.com"},
-            "original": "https://example.com",
+            "type": "web_application",
+            "details": {"target_host": "example.com"},
+            "original": "example.com",
         }
     ]
     runtime = GoTuiRuntime(runtime_args)
@@ -544,11 +568,6 @@ async def test_setup_preserves_prepared_cli_targets(
 
     _setup_model(monkeypatch)
     monkeypatch.setattr(go_tui, "persist_current", lambda: calls.append("persist"))
-    monkeypatch.setattr(
-        go_tui,
-        "build_targets_info",
-        lambda _args, **_kw: pytest.fail("prepared targets should not be rebuilt"),
-    )
     monkeypatch.setattr(go_tui, "prepare_run", lambda _args: calls.append("prepare"))
     monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: calls.append("telemetry"))
     monkeypatch.setattr(runtime, "init_run_state", lambda: calls.append("state"))
@@ -556,245 +575,11 @@ async def test_setup_preserves_prepared_cli_targets(
 
     await runtime.start_from_setup()
 
-    assert runtime.controller.targets == ["https://example.com"]
-    assert runtime.args.targets_info[0]["type"] == "web"
+    assert runtime.controller.targets == ["example.com"]
+    assert runtime.args.targets_info[0]["type"] == "web_application"
     assert calls == ["persist", "prepare", "telemetry", "state", "scan"]
 
 
-@pytest.mark.asyncio
-async def test_setup_target_change_preserves_local_targets(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_args = args()
-    runtime_args.target = []
-    runtime_args.target_list = ["targets.txt"]
-    runtime_args.targets_info = [
-        {
-            "type": "local_code",
-            "details": {"target_path": "/workspace/source"},
-            "original": "/workspace/source",
-        }
-    ]
-    runtime = GoTuiRuntime(runtime_args)
-    runtime.controller.targets.append("https://example.com")
-
-    async def preflight(_model: str) -> None:
-        return None
-
-    def build(target_args: argparse.Namespace, **_: object) -> None:
-        assert target_args.target == ["/workspace/source", "https://example.com"]
-        target_args.targets_info = [
-            {
-                "type": "web",
-                "details": {"url": "https://example.com"},
-                "original": "https://example.com",
-            },
-            {
-                "type": "local_code",
-                "details": {"target_path": "/workspace/source"},
-                "original": "/workspace/source",
-            },
-        ]
-
-    monkeypatch.setattr(
-        go_tui,
-        "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
-    )
-    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(go_tui, "build_targets_info", build)
-    monkeypatch.setattr(go_tui, "prepare_run", lambda _args: None)
-    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
-    monkeypatch.setattr(runtime, "init_run_state", lambda: None)
-    monkeypatch.setattr(runtime, "start_scan", lambda: None)
-
-    await runtime.start_from_setup()
-
-    assert runtime.args.target_list == []
-    assert runtime.args.targets_info[0]["type"] == "web"
-    assert runtime.args.targets_info[1]["type"] == "local_code"
-
-
-@pytest.mark.asyncio
-async def test_setup_same_basename_uses_combined_workspace_names_on_retry(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    existing_repo = "https://example.com/first/app.git"
-    added_repo = "https://example.com/second/app.git"
-    runtime_args = args()
-    runtime_args.target = []
-    runtime_args.target_list = ["targets.txt"]
-    runtime_args.targets_info = [
-        {
-            "type": "repository",
-            "details": {
-                "target_repo": existing_repo,
-                "workspace_subdir": "app",
-                "cloned_repo_path": "/clones/app",
-            },
-            "original": existing_repo,
-        }
-    ]
-    runtime = GoTuiRuntime(runtime_args)
-    runtime.controller.targets.append(added_repo)
-    prepare_attempts = 0
-    started: list[str] = []
-
-    async def preflight(_model: str) -> None:
-        return None
-
-    def build(target_args: argparse.Namespace, **_: object) -> None:
-        assert target_args.target == [existing_repo, added_repo]
-        target_args.targets_info = [
-            {
-                "type": "repository",
-                "details": {
-                    "target_repo": existing_repo,
-                    "workspace_subdir": "app",
-                },
-                "original": existing_repo,
-            },
-            {
-                "type": "repository",
-                "details": {
-                    "target_repo": added_repo,
-                    "workspace_subdir": "app-2",
-                },
-                "original": added_repo,
-            },
-        ]
-
-    def prepare(candidate: argparse.Namespace) -> None:
-        nonlocal prepare_attempts
-        prepare_attempts += 1
-        assert [target["details"]["workspace_subdir"] for target in candidate.targets_info] == [
-            "app",
-            "app-2",
-        ]
-        if prepare_attempts == 1:
-            candidate.targets_info[0]["details"]["target_repo"] = "/mutated"
-            candidate.targets_info[1]["details"]["workspace_subdir"] = "mutated"
-            raise ValueError("retry setup")
-
-    monkeypatch.setattr(
-        go_tui,
-        "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
-    )
-    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(go_tui, "build_targets_info", build)
-    monkeypatch.setattr(go_tui, "prepare_run", prepare)
-    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
-    monkeypatch.setattr(runtime, "init_run_state", lambda: started.append("state"))
-    monkeypatch.setattr(runtime, "start_scan", lambda: started.append("scan"))
-
-    with pytest.raises(ValueError, match="retry setup"):
-        await runtime.start_from_setup()
-
-    assert runtime.args.targets_info[0]["details"] == {
-        "target_repo": existing_repo,
-        "workspace_subdir": "app",
-        "cloned_repo_path": "/clones/app",
-    }
-    assert started == []
-
-    await runtime.start_from_setup()
-
-    assert prepare_attempts == 2
-    assert runtime.args.target_list == []
-    assert [target["details"]["workspace_subdir"] for target in runtime.args.targets_info] == [
-        "app",
-        "app-2",
-    ]
-    assert runtime.args.targets_info[0]["details"]["target_repo"] == existing_repo
-    assert started == ["state", "scan"]
-
-
-@pytest.mark.asyncio
-async def test_setup_target_rebuild_restores_all_target_fields_on_failure(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    runtime_args = args()
-    runtime_args.target = None
-    runtime_args.target_list = ["targets.txt"]
-    runtime_args.targets_info = [
-        {
-            "type": "local_code",
-            "details": {"target_path": "/workspace/source"},
-            "original": "/workspace/source",
-        }
-    ]
-    original_targets_info = json.loads(json.dumps(runtime_args.targets_info))
-    runtime = GoTuiRuntime(runtime_args)
-    runtime.controller.targets.append("https://example.com")
-
-    async def preflight(_model: str) -> None:
-        return None
-
-    def fail_rebuild(target_args: argparse.Namespace, **_: object) -> None:
-        target_args.target = ["mutated"]
-        target_args.target_list = ["mutated.txt"]
-        target_args.targets_info = [{"original": "partial"}]
-        raise ValueError("bad target")
-
-    monkeypatch.setattr(
-        go_tui,
-        "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
-    )
-    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(go_tui, "build_targets_info", fail_rebuild)
-
-    with pytest.raises(ValueError, match="bad target"):
-        await runtime.start_from_setup()
-
-    assert runtime.args.target is None
-    assert runtime.args.target_list == ["targets.txt"]
-    assert runtime.args.targets_info == original_targets_info
-
-
-@pytest.mark.asyncio
-async def test_setup_rebuild_canonicalizes_relative_local_target(
-    tmp_path: Any,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    source = tmp_path / "source"
-    source.mkdir()
-    monkeypatch.chdir(tmp_path)
-    runtime_args = args()
-    runtime_args.target = []
-    runtime_args.target_list = []
-    runtime = GoTuiRuntime(runtime_args)
-    runtime.controller.targets = ["source"]
-    prepared = False
-
-    async def preflight(_model: str) -> None:
-        return None
-
-    def prepare(candidate: argparse.Namespace) -> None:
-        nonlocal prepared
-        prepared = True
-        assert len(candidate.targets_info) == 1
-        assert candidate.targets_info[0]["details"]["target_path"] == str(source.resolve())
-
-    monkeypatch.setattr(
-        go_tui,
-        "load_settings",
-        lambda: SimpleNamespace(llm=SimpleNamespace(model="openrouter/test-model")),
-    )
-    monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
-    monkeypatch.setattr(go_tui, "prepare_run", prepare)
-    monkeypatch.setattr(go_tui, "telemetry_start", lambda _args: None)
-    monkeypatch.setattr(runtime, "init_run_state", lambda: None)
-    monkeypatch.setattr(runtime, "start_scan", lambda: None)
-
-    await runtime.start_from_setup()
-
-    assert prepared is True
-    assert runtime.args.targets_info[0]["original"] == str(source.resolve())
-
-
-@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_setup_prepare_system_exit_is_recoverable_and_transactional(
     monkeypatch: pytest.MonkeyPatch,
@@ -806,9 +591,9 @@ async def test_setup_prepare_system_exit_is_recoverable_and_transactional(
     runtime_args.target_list = []
     runtime_args.targets_info = [
         {
-            "type": "web",
-            "details": {"url": "https://example.com"},
-            "original": "https://example.com",
+            "type": "web_application",
+            "details": {"target_host": "example.com"},
+            "original": "example.com",
         }
     ]
     original_args = json.loads(json.dumps(vars(runtime_args)))
@@ -823,7 +608,7 @@ async def test_setup_prepare_system_exit_is_recoverable_and_transactional(
     def fail_prepare(candidate: argparse.Namespace) -> None:
         assert candidate is not runtime.args
         candidate.run_name = "mutated-run"
-        candidate.targets_info[0]["details"]["url"] = "https://mutated.example"
+        candidate.targets_info[0]["details"]["target_host"] = "mutated.example"
         raise ValueError("invalid diff scope")
 
     def telemetry(_candidate: argparse.Namespace) -> None:
@@ -881,7 +666,7 @@ async def test_setup_preflight_failure_does_not_start_scan(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     runtime = GoTuiRuntime(args())
-    runtime.controller.targets = ["https://example.com"]
+    runtime.controller.targets = ["example.com"]
     started = False
 
     async def preflight(_model: str) -> None:
@@ -894,7 +679,6 @@ async def test_setup_preflight_failure_does_not_start_scan(
     _setup_model(monkeypatch)
     monkeypatch.setattr(go_tui, "preflight_model_connection", preflight)
     monkeypatch.setattr(go_tui, "persist_current", mark_started)
-    monkeypatch.setattr(go_tui, "build_targets_info", mark_started)
     monkeypatch.setattr(runtime, "init_run_state", mark_started)
     monkeypatch.setattr(runtime, "start_scan", mark_started)
 

@@ -39,6 +39,18 @@ def args() -> argparse.Namespace:
     )
 
 
+def args_with_target(host: str = "example.com") -> argparse.Namespace:
+    setup_args = args()
+    setup_args.targets_info = [
+        {
+            "type": "web_application",
+            "details": {"target_host": host},
+            "original": host,
+        }
+    ]
+    return setup_args
+
+
 @pytest.fixture(autouse=True)
 def isolated_config(tmp_path: Path) -> None:
     for key in (
@@ -57,11 +69,10 @@ def isolated_config(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_setup_state_is_serializable() -> None:
-    controller = TuiController(args())
-    await controller.handle("setup.add_target", {"target": "https://example.com"})
+    controller = TuiController(args_with_target())
     await controller.handle("setup.set_instruction", {"instruction": "focus on auth"})
     snapshot = controller.snapshot()
-    assert snapshot["targets"] == ["https://example.com"]
+    assert snapshot["targets"] == ["example.com"]
     assert snapshot["instruction"] == "focus on auth"
     assert snapshot["scan_state"] == "setup"
     assert snapshot["scan_mode"] == "deep"
@@ -111,19 +122,15 @@ async def test_setup_controls_reject_changes_after_start() -> None:
     controller.scan_started = True
 
     with pytest.raises(RuntimeError, match="can no longer be changed"):
-        await controller.handle("setup.add_target", {"target": "https://example.com"})
+        await controller.handle("setup.set_instruction", {"instruction": "new task"})
 
 
 @pytest.mark.asyncio
 async def test_large_target_list_reports_truncated_snapshot_count() -> None:
     controller = TuiController(args())
-
-    for index in range(20):
-        await controller.handle("setup.add_target", {"target": f"https://target-{index}.example"})
-    added = await controller.handle("setup.add_target", {"target": "https://last.example"})
+    controller.targets = [f"target-{index}.example" for index in range(21)]
     snapshot = controller.snapshot()
 
-    assert added == {"target": "https://last.example", "total": 21}
     assert snapshot["target_count"] == 21
     # The snapshot only carries a bounded prefix of the list.
     assert len(snapshot["targets"]) == 16
@@ -142,13 +149,13 @@ def test_state_populates_model_warning_for_non_frontier_model() -> None:
 def test_setup_restores_prepared_cli_targets() -> None:
     setup_args = args()
     setup_args.targets_info = [
-        {"type": "web", "details": {}, "original": "https://example.com"},
+        {"type": "web_application", "details": {}, "original": "example.com"},
         {"type": "local_code", "details": {}, "original": "/workspace/source"},
     ]
 
     controller = TuiController(setup_args)
 
-    assert controller.snapshot()["targets"] == ["https://example.com", "/workspace/source"]
+    assert controller.snapshot()["targets"] == ["example.com", "/workspace/source"]
 
 
 @pytest.mark.asyncio
@@ -159,8 +166,7 @@ async def test_start_validates_model_before_callback() -> None:
         nonlocal started
         started = True
 
-    controller = TuiController(args(), on_start=start)
-    await controller.handle("setup.add_target", {"target": "https://example.com"})
+    controller = TuiController(args_with_target(), on_start=start)
     with pytest.raises(ValueError, match="No model configured"):
         await controller.handle("setup.start", {})
     assert started is False
@@ -176,13 +182,121 @@ async def test_start_launches_with_a_configured_model() -> None:
 
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     loader._cached = None
-    controller = TuiController(args(), on_start=start)
-    await controller.handle("setup.add_target", {"target": "https://example.com"})
+    controller = TuiController(args_with_target(), on_start=start)
 
     result = await controller.handle("setup.start", {})
 
     assert result == {"started": True}
     assert started is True
+
+
+@pytest.mark.asyncio
+async def test_prompt_targets_are_canonicalized_deduplicated_and_started() -> None:
+    started: list[bool] = []
+
+    async def start() -> None:
+        started.append(True)
+
+    prompt = (
+        "i need you to test fiuu.com/search-result/?s=, fiuu.com/blog/ "
+        "(fiuu.com/blog/-9 will show you the sql query), fiuu.com/newsroom/, "
+        "and fiuu.com/faq/ for sqli. all of the pages likely use mysql and the same database"
+    )
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    loader._cached = None
+    controller = TuiController(args(), on_start=start)
+
+    result = await controller.handle(
+        "setup.start",
+        {
+            "instruction": prompt,
+            "targets": [
+                "fiuu.com/search-result/?s=",
+                "https://FIUU.com/blog/",
+                "fiuu.com/blog/-9",
+                "api.fiuu.com/admin",
+                "192.0.2.10/search-result/?s=",
+                "https://192.0.2.10/blog/",
+            ],
+        },
+    )
+
+    assert result == {"started": True}
+    assert started == [True]
+    assert controller.instruction == prompt
+    assert controller.targets == ["fiuu.com", "api.fiuu.com", "192.0.2.10"]
+    assert controller.targets_info == [
+        {
+            "type": "web_application",
+            "details": {"target_host": "fiuu.com"},
+            "original": "fiuu.com",
+        },
+        {
+            "type": "web_application",
+            "details": {"target_host": "api.fiuu.com"},
+            "original": "api.fiuu.com",
+        },
+        {
+            "type": "ip_address",
+            "details": {"target_ip": "192.0.2.10"},
+            "original": "192.0.2.10",
+        },
+    ]
+    assert controller.pending_workspace_mount is None
+
+
+@pytest.mark.asyncio
+async def test_invalid_prompt_targets_do_not_partially_mutate_setup() -> None:
+    controller = TuiController(args())
+
+    with pytest.raises(ValueError, match="invalid host"):
+        await controller.handle(
+            "setup.start",
+            {
+                "instruction": "changed",
+                "targets": ["fiuu.com/path", "https://bad host/path"],
+            },
+        )
+
+    assert controller.instruction == ""
+    assert controller.targets == []
+    assert controller.targets_info == []
+    assert controller.setup_mode is True
+
+
+@pytest.mark.asyncio
+async def test_failed_prompt_target_start_rolls_back_before_retry() -> None:
+    attempts = 0
+
+    async def start() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("preparation failed")
+
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    loader._cached = None
+    controller = TuiController(args(), on_start=start)
+
+    with pytest.raises(RuntimeError, match="preparation failed"):
+        await controller.handle(
+            "setup.start",
+            {"instruction": "test old.example", "targets": ["old.example"]},
+        )
+
+    assert controller.instruction == ""
+    assert controller.targets == []
+    assert controller.targets_info == []
+    assert controller.setup_mode is True
+
+    await controller.handle(
+        "setup.start",
+        {"instruction": "test new.example", "targets": ["new.example"]},
+    )
+
+    assert controller.instruction == "test new.example"
+    assert controller.targets == ["new.example"]
+    assert controller.targets_info[0]["details"] == {"target_host": "new.example"}
 
 
 @pytest.mark.asyncio
@@ -364,9 +478,8 @@ async def test_start_verifies_the_model_before_a_targeted_launch() -> None:
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
     loader._cached = None
     controller = TuiController(args(), on_start=start, on_verify=verify)
-    await controller.handle("setup.add_target", {"target": "https://example.com"})
 
-    await controller.handle("setup.start", {})
+    await controller.handle("setup.start", {"targets": ["https://example.com"]})
 
     assert order == ["verify", "start"]
 
@@ -450,8 +563,7 @@ async def test_start_rejects_concurrent_and_repeated_submissions() -> None:
     os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
     os.environ["ANTHROPIC_API_KEY"] = "test-key"
     loader._cached = None
-    controller = TuiController(args(), on_start=start)
-    await controller.handle("setup.add_target", {"target": "https://example.com"})
+    controller = TuiController(args_with_target(), on_start=start)
 
     first_start = asyncio.create_task(controller.handle("setup.start", {}))
     await entered.wait()

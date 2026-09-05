@@ -31,6 +31,7 @@ from urllib.parse import urlsplit
 from agents import RunContextWrapper, function_tool
 
 from strix.core.agents import AgentCoordinator
+from strix.core.targets import canonical_network_host
 
 
 logger = logging.getLogger(__name__)
@@ -170,11 +171,19 @@ def _snap_to_scan_target(raw: str, scan_targets: list[str]) -> str:
     if any(known == identity for _, known in scoped):
         return raw
 
-    authority = _remote_authority(raw)
-    if authority:
-        hosted = [target for target, _ in scoped if _remote_authority(target) == authority]
-        # Two scan targets on one host are distinguished only by their paths,
-        # so snapping to "the host" would merge two distinct models into one.
+    try:
+        _, network_host = canonical_network_host(raw)
+    except ValueError:
+        network_host = ""
+    if network_host:
+        hosted: list[str] = []
+        for target, _ in scoped:
+            try:
+                _, target_host = canonical_network_host(target)
+            except ValueError:
+                continue
+            if target_host == network_host:
+                hosted.append(target)
         return hosted[0] if len(hosted) == 1 else raw
 
     directory = _local_directory(raw)

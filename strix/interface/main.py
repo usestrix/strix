@@ -40,6 +40,7 @@ from strix.interface.update_check import (
 )
 from strix.interface.utils import (
     build_final_stats_text,
+    build_target_summary_text,
 )
 from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
 from strix.telemetry import posthog, scarf
@@ -273,16 +274,7 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     else:
         completion_text.append("SESSION ENDED", style="bold #eab308")
 
-    target_text = Text()
-    target_text.append("Target", style="dim")
-    target_text.append("  ")
-    if len(args.targets_info) == 1:
-        target_text.append(args.targets_info[0]["original"], style="bold white")
-    else:
-        target_text.append(f"{len(args.targets_info)} targets", style="bold white")
-        for target_info in args.targets_info:
-            target_text.append("\n        ")
-            target_text.append(target_info["original"], style="white")
+    target_text = build_target_summary_text(args.targets_info)
 
     stats_text = build_final_stats_text(report_state)
 

@@ -35,7 +35,7 @@ Notes that matter for web apps specifically:
 
 - **Give it credentials via `--instruction`** (or `--instruction-file` for anything long), including how to log in if the flow is unusual (magic link, SSO, MFA-exempt test user).
 - **Two accounts beat one.** Multi-tenant IDOR and broken-access-control bugs — consistently the highest-impact class in web apps — can only be proven when the agent can attempt cross-account access.
-- **Add the repo for white-box depth** when you have the source: `-t https://github.com/org/app -t https://staging.example.com` (or a local path). Source access materially improves coverage of business-logic and authorization flaws.
+- **Add the repo for white-box depth** when you have the source: `-t https://github.com/org/app.git -t https://staging.example.com` (or a local path). Source access materially improves coverage of business-logic and authorization flaws.
 - **Localhost works.** Point at `http://host.docker.internal:3000` (Docker Desktop) so the sandbox can reach a dev server on the host.
 - `--scan-mode quick` for a fast dev-loop pass, `standard` (~30 min) for a normal review, `deep` for pre-release assurance. Always set `--max-budget`.
 

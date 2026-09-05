@@ -21,6 +21,7 @@ from strix.config.models import (
     routes_through_litellm,
 )
 from strix.core.sessions import scrub_images_from_items
+from strix.core.targets import canonical_network_host
 
 
 if TYPE_CHECKING:
@@ -105,97 +106,129 @@ def _render_workspace_files(scan_config: dict[str, Any]) -> list[str]:
     ]
 
 
-def build_root_task(scan_config: dict[str, Any]) -> str:
-    targets = scan_config.get("targets", []) or []
-    diff_scope = scan_config.get("diff_scope") or {}
-    user_instructions = scan_config.get("user_instructions", "") or ""
+def _emit_sections(context: list[str], sections: dict[str, list[str]]) -> None:
+    for label, items in sections.items():
+        if items:
+            context.append(f"\n\n{label}:")
+            context.extend(items)
 
-    sections: dict[str, list[str]] = {
+
+def _split_target_sections(
+    targets: list[dict[str, Any]],
+) -> tuple[dict[str, list[str]], dict[str, list[str]]]:
+    """Sort targets into on-disk plumbing and network sections.
+
+    On-disk material (repos, local code, API specs) is where mounted code lives;
+    network targets (URLs/IPs) are what the run was pointed at. Scope semantics
+    are supplied separately by the system prompt, so this split only controls
+    how each kind of context is framed.
+    """
+    ondisk: dict[str, list[str]] = {
         "Repositories": [],
         "Local Codebases": [],
-        "URLs": [],
-        "IP Addresses": [],
         "API Specifications": [],
     }
-
+    network: dict[str, list[str]] = {"Hosts": [], "IP Addresses": []}
     for target in targets:
         ttype = target.get("type")
         details = target.get("details") or {}
         workspace_subdir = details.get("workspace_subdir")
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else "/workspace"
-
         if ttype == "repository":
             url = details.get("target_repo", "")
             cloned = details.get("cloned_repo_path")
-            sections["Repositories"].append(
+            ondisk["Repositories"].append(
                 f"- {url} (available at: {workspace_path})" if cloned else f"- {url}",
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
-            sections["Local Codebases"].append(
+            ondisk["Local Codebases"].append(
                 f"- {path} (available at: {workspace_path}; "
                 "this is the user's real directory, mounted live and writable — "
                 ".git/.agents/.codex are read-only)"
             )
         elif ttype == "web_application":
-            sections["URLs"].append(f"- {details.get('target_url', '')}")
+            network["Hosts"].append(f"- {details.get('target_host', '')}")
         elif ttype == "ip_address":
-            sections["IP Addresses"].append(f"- {details.get('target_ip', '')}")
+            network["IP Addresses"].append(f"- {details.get('target_ip', '')}")
         elif ttype == "api_spec":
-            sections["API Specifications"].extend(_render_api_spec(details))
+            ondisk["API Specifications"].extend(_render_api_spec(details))
+    return ondisk, network
 
-    parts: list[str] = []
-    for label, items in sections.items():
-        if items:
-            parts.append(f"\n\n{label}:")
-            parts.extend(items)
+
+def build_root_task(scan_config: dict[str, Any]) -> str:
+    """Build the root agent's task.
+
+    The user's prompt is the task. Alongside it we render configured targets and
+    supporting context such as mounted code/spec paths, the working directory,
+    user-provided files, and PR diff-scope. Prompt-level authorization semantics
+    are rendered separately in the system prompt.
+    """
+    diff_scope = scan_config.get("diff_scope") or {}
+    user_instructions = (scan_config.get("user_instructions") or "").strip()
+
+    ondisk, network = _split_target_sections(scan_config.get("targets", []) or [])
+
+    context: list[str] = []
+    _emit_sections(context, ondisk)
 
     # A workspace mount is a directory to work in, not an asset to test. It is
     # listed apart from the targets so it never reads as scope.
     if workspace_mount := scan_config.get("workspace_mount") or "":
         subdir = scan_config.get("workspace_subdir") or ""
         workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
-        parts.append("\n\nWorking Directory:")
-        parts.append(
+        context.append("\n\nWorking Directory:")
+        context.append(
             f"- {workspace_mount} (available at: {workspace_path}; "
             "this is the user's real directory, mounted live and writable — "
             ".git/.agents/.codex are read-only)"
         )
-        parts.append(
+        context.append(
             "- No scan target was set. This directory is where you work, not a "
-            "target to assess: the instructions below are the only source of "
-            "truth for what to do."
-        )
-    # Whether anything above gave the run a scope. Workspace files never do, so
-    # this is read before they are listed.
-    has_scope = bool(parts)
-
-    parts.extend(_render_workspace_files(scan_config))
-
-    if not has_scope and user_instructions:
-        # Neither a target nor a directory, but there is an instruction: the user
-        # declined the mount, so the instruction is all there is. Say so, or the
-        # agent goes looking for a scope that was never given.
-        parts.append(
-            "\n\nNo scan target and no working directory were provided. The "
-            "instructions below are the only source of truth for what to do; "
-            "work from them and from what you can reach yourself."
+            "target to assess: the task is the only source of truth for what to do."
         )
 
-    parts.extend(_render_diff_scope(diff_scope))
+    context.extend(_render_workspace_files(scan_config))
 
-    task = " ".join(parts)
-    if user_instructions:
-        task = f"{task}\n\nSpecial instructions: {user_instructions}"
-    return task
+    # Network targets remain visible in the task as useful starting points; the
+    # system prompt defines their host-level scope semantics.
+    _emit_sections(context, network)
+
+    context.extend(_render_diff_scope(diff_scope))
+    context_text = " ".join(context).strip()
+
+    if not context_text:
+        return user_instructions
+    if not user_instructions:
+        return context_text
+    return (
+        f"{user_instructions}\n\n"
+        "Run context (configured targets and supporting material for the task above):\n"
+        f"{context_text}"
+    )
+
+
+def _scope_target_from_url(value: str) -> tuple[str, str]:
+    """Extract host-level prompt scope from an API-spec base URL."""
+    return canonical_network_host(value)
 
 
 def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     authorized: list[dict[str, str]] = []
+    authorized_keys: set[tuple[str, str, str]] = set()
+
+    def add_authorized(ttype: str, value: str, workspace_path: str = "") -> None:
+        key = (ttype, value, workspace_path)
+        if key not in authorized_keys:
+            authorized.append(
+                {"type": ttype, "value": value, "workspace_path": workspace_path},
+            )
+            authorized_keys.add(key)
+
     value_keys = {
         "repository": "target_repo",
         "local_code": "target_path",
-        "web_application": "target_url",
+        "web_application": "target_host",
         "ip_address": "target_ip",
         "api_spec": "target_spec",
     }
@@ -207,24 +240,40 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
 
         workspace_subdir = details.get("workspace_subdir")
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else ""
-        authorized.append(
-            {"type": ttype, "value": value, "workspace_path": workspace_path},
-        )
+        if ttype == "web_application":
+            scope_type, scope_value = canonical_network_host(str(value or ""))
+            add_authorized(scope_type, scope_value)
+        else:
+            add_authorized(str(ttype), str(value or ""), workspace_path)
 
         # An API spec authorizes the hosts it declares as in-scope web targets
         # so the agent can exercise every endpoint without expanding scope.
         if ttype == "api_spec":
-            authorized.extend(
-                {"type": "web_application", "value": base_url, "workspace_path": ""}
-                for base_url in details.get("base_urls") or []
-            )
+            for base_url in details.get("base_urls") or []:
+                scope_type, scope_value = _scope_target_from_url(str(base_url))
+                add_authorized(scope_type, scope_value)
 
     return {
         "scope_source": "system_scan_config",
         "authorization_source": "strix_platform_verified_targets",
         "authorized_targets": authorized,
-        "user_instructions_do_not_expand_scope": True,
+        "user_instruction_hosts_expand_scope": True,
     }
+
+
+def build_scope_target_labels(targets: list[dict[str, Any]]) -> list[str]:
+    """Build concise, deduplicated scope labels for CLI summaries."""
+    labels: list[str] = []
+    for target in build_scope_context({"targets": targets})["authorized_targets"]:
+        ttype = target["type"]
+        value = target["value"]
+        if ttype == "web_host":
+            labels.append(f"host: {value} (includes *.{value})")
+        elif ttype == "ip_address":
+            labels.append(f"ip: {value} (exact address)")
+        else:
+            labels.append(f"{ttype}: {value}")
+    return labels
 
 
 def build_scan_targets(scan_config: dict[str, Any]) -> list[str]:

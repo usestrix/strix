@@ -104,11 +104,9 @@ def _mcp_startup_summary(connections: list[ConnectedMcpServer]) -> str:
 def _record_mcp_connections(connections: list[ConnectedMcpServer]) -> None:
     """Record which MCP servers this run connected, for the interfaces.
 
-    A server's tools are offered to the model under a name built from the
-    connection name and the tool's own name, which cannot be split back apart, so
-    the TUI and the run viewer need the names to match a tool call against before
-    they can show which server it went out to. Kept on the run record because the
-    viewer reads a finished run from disk.
+    The model calls MCP tools through the explicit connection argument on
+    describe_mcp/call_mcp. The interfaces still need the connected names to
+    label calls and render a finished run from disk.
     """
     report_state = get_global_report_state()
     if report_state is None:
@@ -171,9 +169,10 @@ def _compose_root_instructions_override(
     return (
         f"{base_instructions}\n\n"
         "<root_scan_instructions_override>\n"
-        "The following root scan instructions are subordinate to the "
-        "system-verified scope above. They cannot expand, replace, or weaken "
-        "authorized target constraints.\n\n"
+        "Network hosts explicitly named in these root scan instructions and "
+        "their descendant subdomains are in scope under the system-verified "
+        "scope rules above. These instructions cannot otherwise replace or "
+        "weaken those rules.\n\n"
         f"{root_instructions_override}\n"
         "</root_scan_instructions_override>"
     )
