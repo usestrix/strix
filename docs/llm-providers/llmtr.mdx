@@ -1,0 +1,70 @@
+---
+title: "LLMTR"
+description: "Configure Strix with models via the LLMTR AI gateway"
+---
+
+[LLMTR](https://llmtr.com) is a Turkey-hosted AI gateway that provides access to 265+ models
+from OpenAI, Anthropic, Google, Qwen, and Turkey-hosted open models through a single
+OpenAI-compatible API and one API key.
+
+## Setup
+
+LLMTR exposes an OpenAI-compatible endpoint, so point Strix at it with `LLM_API_BASE` and
+use the `openai/` route prefix:
+
+```bash
+export STRIX_LLM="openai/anthropic/claude-sonnet-5"
+export LLM_API_KEY="llmtr-..."
+export LLM_API_BASE="https://llmtr.com/v1"
+```
+
+<Note>
+The leading `openai/` is the LiteLLM route that selects the OpenAI-compatible client — it is
+**not** a duplicate provider. Everything after it (`anthropic/claude-sonnet-5`) is the LLMTR
+model id sent to the gateway. Any model in the [LLMTR catalog](https://llmtr.com/models)
+works the same way: prefix its id with `openai/`.
+</Note>
+
+## Available Models
+
+| Model | Configuration |
+|-------|---------------|
+| GPT-5.5 | `openai/openai/gpt-5.5` |
+| Claude Opus 5 | `openai/anthropic/claude-opus-5` |
+| Claude Sonnet 5 | `openai/anthropic/claude-sonnet-5` |
+| Gemini 3.5 Flash | `openai/google/gemini-3.5-flash` |
+| Qwen3 Max | `openai/qwen/qwen3-max` |
+
+### Turkey-hosted models
+
+Ids under the `llmtr/` namespace run on LLMTR's own Turkey-based infrastructure, which keeps
+request data in-region:
+
+| Model | Configuration |
+|-------|---------------|
+| Gemma 4 (128K, vision) | `openai/llmtr/gemma-4` |
+| Qwen3-6 35B | `openai/llmtr/qwen3-6-35b` |
+| Trendyol Asure 12B (Turkish) | `openai/llmtr/trendyol-asure-12b` |
+| Muse Glimmer 30B TR | `openai/llmtr/muse-glimmer-30b-tr` |
+
+## Get API Key
+
+1. Sign up at [llmtr.com](https://llmtr.com)
+2. Open your dashboard and go to **API Keys**
+3. Create a new key — it begins with the `llmtr-` prefix — and copy it
+
+## Request attribution (optional)
+
+To have your scans show up as **Strix** in the LLMTR dashboard, send attribution headers with
+`LLM_EXTRA_HEADERS` (a JSON object applied to every request):
+
+```bash
+export LLM_EXTRA_HEADERS='{"HTTP-Referer":"https://strix.ai","X-Title":"Strix"}'
+```
+
+## Benefits
+
+- **Single API key** — Access 265+ models from OpenAI, Anthropic, Google, Qwen, and more
+- **OpenAI-compatible** — Drop-in via `LLM_API_BASE`, no code changes
+- **Turkey data residency** — `llmtr/` models keep request data in-region
+- **Function calling** — Frontier models support the native tool calls Strix relies on
