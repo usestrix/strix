@@ -16,6 +16,7 @@ from openai import (
 )
 
 from strix.config import codex
+from strix.config.models import ModelStreamTimeoutError
 from strix.core import execution
 from strix.core.agents import AgentCoordinator
 
@@ -159,6 +160,16 @@ async def test_run_cycle_gives_up_after_max_retries(
         for _ in range(execution._MAX_TRANSIENT_MODEL_RETRIES + 1)
     ]
     with pytest.raises(APIError):
+        await _run_once(monkeypatch, streams)
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_gives_up_after_max_stream_timeout_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    timeout = ModelStreamTimeoutError("model stream produced no event for 1s")
+    streams = [_FakeStream(exc=timeout) for _ in range(execution._MAX_STREAM_TIMEOUT_RETRIES + 1)]
+    with pytest.raises(ModelStreamTimeoutError):
         await _run_once(monkeypatch, streams)
 
 

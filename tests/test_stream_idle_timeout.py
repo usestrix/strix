@@ -23,7 +23,12 @@ from openai import AsyncOpenAI
 
 from strix.config import loader
 from strix.config.loader import load_settings
-from strix.config.models import StrixProvider, _TurnGuardModel, _with_idle_timeout
+from strix.config.models import (
+    ModelStreamTimeoutError,
+    StrixProvider,
+    _TurnGuardModel,
+    _with_idle_timeout,
+)
 
 
 if TYPE_CHECKING:
@@ -64,6 +69,24 @@ class _StallingHandler(BaseHTTPRequestHandler):
         self.stop.wait(_STALL_SECONDS)
 
 
+class _FirstEventStallingHandler(BaseHTTPRequestHandler):
+    """Sends stream headers, then waits before sending the first event."""
+
+    stop = threading.Event()
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+    def do_POST(self) -> None:
+        length = int(self.headers.get("Content-Length", 0))
+        self.rfile.read(length)
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        self.wfile.flush()
+        self.stop.wait(_STALL_SECONDS)
+
+
 @pytest.fixture
 def stalling_gateway() -> Iterator[str]:
     _StallingHandler.stop.clear()
@@ -78,10 +101,33 @@ def stalling_gateway() -> Iterator[str]:
         server.server_close()
 
 
-def _stream(base_url: str, *, idle_timeout: float) -> AsyncIterator[Any]:
+@pytest.fixture
+def first_event_stalling_gateway() -> Iterator[str]:
+    _FirstEventStallingHandler.stop.clear()
+    server = HTTPServer(("127.0.0.1", 0), _FirstEventStallingHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}/v1"
+    finally:
+        _FirstEventStallingHandler.stop.set()
+        server.shutdown()
+        server.server_close()
+
+
+def _stream(
+    base_url: str,
+    *,
+    idle_timeout: float,
+    first_event_timeout: float = 0.0,
+) -> AsyncIterator[Any]:
     client = AsyncOpenAI(api_key="tok", base_url=base_url, max_retries=0, timeout=_STALL_SECONDS)
     inner: Model = OpenAIChatCompletionsModel(model="gw-model", openai_client=client)
-    guarded = _TurnGuardModel(inner, stream_idle_timeout=idle_timeout)
+    guarded = _TurnGuardModel(
+        inner,
+        stream_idle_timeout=idle_timeout,
+        stream_first_event_timeout=first_event_timeout,
+    )
     return guarded.stream_response(
         None,
         "go",
@@ -96,8 +142,20 @@ def _stream(base_url: str, *, idle_timeout: float) -> AsyncIterator[Any]:
     )
 
 
-async def _drain(base_url: str, *, idle_timeout: float) -> list[Any]:
-    return [event async for event in _stream(base_url, idle_timeout=idle_timeout)]
+async def _drain(
+    base_url: str,
+    *,
+    idle_timeout: float,
+    first_event_timeout: float = 0.0,
+) -> list[Any]:
+    return [
+        event
+        async for event in _stream(
+            base_url,
+            idle_timeout=idle_timeout,
+            first_event_timeout=first_event_timeout,
+        )
+    ]
 
 
 @pytest.mark.asyncio
@@ -118,6 +176,33 @@ async def test_stalled_stream_is_abandoned_by_the_watchdog(stalling_gateway: str
 
 
 @pytest.mark.asyncio
+async def test_first_event_timeout_abandons_silent_stream(
+    first_event_stalling_gateway: str,
+) -> None:
+    started = time.monotonic()
+    with pytest.raises(ModelStreamTimeoutError, match="no first event within 1s"):
+        await _drain(
+            first_event_stalling_gateway,
+            idle_timeout=10,
+            first_event_timeout=1,
+        )
+
+    assert time.monotonic() - started < _STALL_SECONDS
+
+
+@pytest.mark.asyncio
+async def test_first_event_timeout_does_not_replace_idle_timeout(
+    stalling_gateway: str,
+) -> None:
+    with pytest.raises(ModelStreamTimeoutError, match="produced no event for 1s"):
+        await _drain(
+            stalling_gateway,
+            idle_timeout=1,
+            first_event_timeout=10,
+        )
+
+
+@pytest.mark.asyncio
 async def test_events_keep_flowing_while_the_stream_is_alive() -> None:
     async def _live() -> AsyncIterator[Any]:
         for i in range(5):
@@ -131,7 +216,12 @@ async def test_events_keep_flowing_while_the_stream_is_alive() -> None:
 
 @pytest.fixture
 def _reset_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    for key in ("STRIX_LLM", "LLM_DISABLE_STREAMING", "LLM_STREAM_IDLE_TIMEOUT"):
+    for key in (
+        "STRIX_LLM",
+        "LLM_DISABLE_STREAMING",
+        "LLM_STREAM_IDLE_TIMEOUT",
+        "LLM_STREAM_FIRST_EVENT_TIMEOUT",
+    ):
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(loader, "_cached", None)
     monkeypatch.setattr(loader, "_override", None)
@@ -156,6 +246,20 @@ def test_idle_timeout_is_configurable(
     model = StrixProvider().get_model("openai/gpt-4o-mini")
     assert isinstance(model, _TurnGuardModel)
     assert model._stream_idle_timeout == 45
+    assert model._stream_first_event_timeout == 0
+
+
+def test_first_event_timeout_is_configurable(
+    monkeypatch: pytest.MonkeyPatch, _reset_settings: None
+) -> None:
+    monkeypatch.setattr("strix.config.models.MultiProvider.get_model", lambda *_: _DummyModel())
+    monkeypatch.setenv("LLM_STREAM_IDLE_TIMEOUT", "45")
+    monkeypatch.setenv("LLM_STREAM_FIRST_EVENT_TIMEOUT", "12")
+    load_settings()
+
+    model = StrixProvider().get_model("openai/gpt-4o-mini")
+    assert isinstance(model, _TurnGuardModel)
+    assert model._stream_first_event_timeout == 12
 
 
 def test_idle_timeout_is_off_without_streaming(
@@ -171,3 +275,4 @@ def test_idle_timeout_is_off_without_streaming(
     model = StrixProvider().get_model("openai/gpt-4o-mini")
     assert isinstance(model, _TurnGuardModel)
     assert model._stream_idle_timeout == 0
+    assert model._stream_first_event_timeout == 0

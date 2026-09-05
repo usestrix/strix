@@ -61,6 +61,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+class ModelStreamTimeoutError(TimeoutError):
+    """Raised when a model stream exceeds its event timeout."""
+
+
 def request_timeout_extra_args(timeout_s: float | None) -> dict[str, float] | None:
     """Per-request model timeout; a plain float so ``ModelSettings.to_json_dict()`` stays serializable."""  # noqa: E501
     if not timeout_s or timeout_s <= 0:
@@ -267,10 +271,12 @@ class _TurnGuardModel(Model):
         *,
         max_tool_calls_per_turn: int = 0,
         stream_idle_timeout: float = 0.0,
+        stream_first_event_timeout: float = 0.0,
     ) -> None:
         self._inner = inner
         self._max_tool_calls_per_turn = max_tool_calls_per_turn
         self._stream_idle_timeout = stream_idle_timeout
+        self._stream_first_event_timeout = stream_first_event_timeout
 
     def _limiter(self) -> TurnToolCallLimiter:
         return TurnToolCallLimiter(self._max_tool_calls_per_turn)
@@ -351,7 +357,11 @@ class _TurnGuardModel(Model):
             conversation_id=conversation_id,
             prompt=prompt,
         )
-        async for event in _with_idle_timeout(stream, self._stream_idle_timeout):
+        async for event in _with_idle_timeout(
+            stream,
+            self._stream_idle_timeout,
+            self._stream_first_event_timeout,
+        ):
             guarded = _guard_event(event, rewriter, limiter)
             if guarded is not None:
                 yield guarded
@@ -365,24 +375,39 @@ async def _aclose(stream: AsyncIterator[TResponseStreamEvent]) -> None:
 
 
 async def _with_idle_timeout(
-    stream: AsyncIterator[TResponseStreamEvent], timeout: float
+    stream: AsyncIterator[TResponseStreamEvent],
+    timeout: float,
+    first_event_timeout: float = 0.0,
 ) -> AsyncIterator[TResponseStreamEvent]:
-    if timeout <= 0:
+    effective_first_event_timeout = first_event_timeout if first_event_timeout > 0 else timeout
+    if timeout <= 0 and effective_first_event_timeout <= 0:
         async for event in stream:
             yield event
         return
 
     iterator = stream.__aiter__()
+    yielded_event = False
     while True:
+        event_timeout = timeout if yielded_event else effective_first_event_timeout
         try:
-            event = await asyncio.wait_for(iterator.__anext__(), timeout)
+            if event_timeout > 0:
+                event = await asyncio.wait_for(iterator.__anext__(), event_timeout)
+            else:
+                event = await iterator.__anext__()
         except StopAsyncIteration:
             return
         except TimeoutError:
             await _aclose(stream)
-            message = f"model stream produced no event for {timeout:.0f}s"
+            if yielded_event:
+                message = f"model stream produced no event for {timeout:.0f}s"
+            else:
+                message = (
+                    f"model stream produced no first event within "
+                    f"{effective_first_event_timeout:.0f}s"
+                )
             logger.warning("%s; abandoning the turn", message)
-            raise TimeoutError(message) from None
+            raise ModelStreamTimeoutError(message) from None
+        yielded_event = True
         yield event
 
 
@@ -521,6 +546,7 @@ class StrixProvider(MultiProvider):
         llm = load_settings().llm
         slug = codex.subscription_model(model_name)
         idle_timeout = float(llm.stream_idle_timeout)
+        first_event_timeout = float(llm.stream_first_event_timeout)
         if slug:
             # The ChatGPT subscription backend is always streamed; it has no
             # non-streaming mode to fall back to, so LLM_DISABLE_STREAMING
@@ -538,10 +564,12 @@ class StrixProvider(MultiProvider):
                 # is done, so an idle gap is meaningless here; the request
                 # timeout bounds it instead.
                 idle_timeout = 0.0
+                first_event_timeout = 0.0
         return _TurnGuardModel(
             model,
             max_tool_calls_per_turn=llm.max_tool_calls_per_turn,
             stream_idle_timeout=idle_timeout,
+            stream_first_event_timeout=first_event_timeout,
         )
 
 

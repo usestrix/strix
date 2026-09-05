@@ -58,6 +58,12 @@ class LlmSettings(BaseSettings):
     )
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
     stream_idle_timeout: int = Field(default=300, ge=0, alias="LLM_STREAM_IDLE_TIMEOUT")
+    # Time allowed for the first stream event (0 = use stream_idle_timeout).
+    stream_first_event_timeout: int = Field(
+        default=0,
+        ge=0,
+        alias="LLM_STREAM_FIRST_EVENT_TIMEOUT",
+    )
     max_tool_calls_per_turn: int = Field(
         default=32,
         ge=0,
