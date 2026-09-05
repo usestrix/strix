@@ -710,7 +710,7 @@ function OverviewTab({
       {finished && (
         <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
           <p className="text-sm font-semibold text-white">Strix Cloud</p>
-          <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra.</p>
+          <p className="mt-0.5 text-xs text-[#666]">Run your next pentest in Strix Cloud.</p>
           <div className="mt-3 flex flex-wrap gap-2.5">
             <ProInlineCta
               label="Run a pentest in Strix Cloud"
@@ -814,11 +814,11 @@ function AgentsTab({ run, canSteer }: { run: LoadedRun; canSteer: boolean }) {
       {/* Re-run always routes to Strix Cloud. */}
       <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
         <p className="text-sm font-semibold text-white">Run this pentest with more depth</p>
-        <p className="mt-0.5 text-xs text-[#666]">Re-run this pentest on managed infra in the cloud.</p>
+        <p className="mt-0.5 text-xs text-[#666]">Run this pentest again in Strix Cloud.</p>
         <div className="mt-3 flex flex-wrap gap-2.5">
           <ProInlineCta
             label="Re-run in Strix Pro with more depth"
-            desc="Run this pentest on managed infra with more depth."
+            desc="More depth, validated findings, and autofix."
             slug="live_scan"
             surface="agents"
             icon={Rocket}
