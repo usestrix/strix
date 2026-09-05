@@ -627,8 +627,16 @@ class ReportState:
                 "local_sources": config.get("local_sources", []),
                 "scope_mode": config.get("scope_mode", "auto"),
                 "diff_base": config.get("diff_base"),
+                "transport": None,
             }
         )
+
+    def set_observed_transport(self, transport: str | None) -> None:
+        """Record the observed sandbox transport (e.g. 'mount-free' or 'bind-mount')."""
+        if self.run_record.get("transport") == transport:
+            return
+        self.run_record["transport"] = transport
+        self.save_run_data()
 
     def save_run_data(self, mark_complete: bool = False, status: str | None = None) -> None:
         if mark_complete:
