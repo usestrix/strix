@@ -120,13 +120,22 @@ async def _compact_session(
 
 
 _MAX_TRANSIENT_MODEL_RETRIES = 5
+_MAX_OPENROUTER_PROMPT_POLICY_RETRIES = 3
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
+_OPENROUTER_PROMPT_POLICY_REJECTION = (
+    "invalid prompt: your prompt was flagged as potentially violating our usage policy"
+)
 
 
 def _model_error_status_code(exc: BaseException) -> int | None:
     code = getattr(exc, "status_code", None)
     return code if isinstance(code, int) else None
+
+
+def _is_openrouter_prompt_policy_rejection(exc: BaseException) -> bool:
+    error_text = str(exc).lower()
+    return "openrouter" in error_text and _OPENROUTER_PROMPT_POLICY_REJECTION in error_text
 
 
 def _is_transient_model_error(exc: BaseException) -> bool:
@@ -658,6 +667,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     image_strips = 0
     compactions = 0
     model_retries = 0
+    prompt_policy_retries = 0
     while True:
         stream: Any = None
         pre_run_items: list[Any] = []
@@ -734,8 +744,29 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             await coordinator.trigger_budget_stop()
             raise
         except Exception as exc:
+            prompt_policy_rejection = _is_openrouter_prompt_policy_rejection(exc)
             if (
-                image_strips < 3
+                prompt_policy_rejection
+                and prompt_policy_retries < _MAX_OPENROUTER_PROMPT_POLICY_RETRIES
+            ):
+                prompt_policy_retries += 1
+                delay = _transient_model_retry_delay(prompt_policy_retries)
+                logger.warning(
+                    "intermittent OpenRouter prompt-policy rejection for %s; replaying "
+                    "unchanged turn (attempt %d/%d, backoff %.1fs): %r",
+                    agent_id,
+                    prompt_policy_retries,
+                    _MAX_OPENROUTER_PROMPT_POLICY_RETRIES,
+                    delay,
+                    exc,
+                )
+                await asyncio.sleep(delay)
+                if session is not None:
+                    input_data = []
+                continue
+            if (
+                not prompt_policy_rejection
+                and image_strips < 3
                 and session is not None
                 and getattr(exc, "status_code", None) in _INPUT_REJECTION_CODES
             ):
