@@ -110,6 +110,83 @@ async def test_each_model_turn_bumps_the_turn_marker() -> None:
     assert context.context[LLM_TURN_KEY] == 2
 
 
+async def _wait_with(inner: dict[str, Any], timeout_seconds: Any) -> dict[str, Any]:
+    ctx = ToolContext(
+        context=inner,
+        tool_name="wait_for_agents",
+        tool_call_id="call-1",
+        tool_arguments="{}",
+    )
+    raw: str = await wait_for_agents.on_invoke_tool(
+        ctx, json.dumps({"reason": "waiting for wave 1", "timeout_seconds": timeout_seconds})
+    )
+    return cast("dict[str, Any]", json.loads(raw))
+
+
+@pytest.fixture
+def _captured_timeouts(monkeypatch: pytest.MonkeyPatch) -> Iterator[list[float]]:
+    """Record the timeout handed to the inner wait, without ever waiting."""
+    captured: list[float] = []
+
+    async def fake_wait_for(awaitable: Any, timeout: float) -> None:
+        captured.append(timeout)
+        awaitable.close()
+        raise TimeoutError
+
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+    yield captured
+
+
+@pytest.mark.asyncio
+async def test_oversized_timeout_still_returns_the_clean_timeout_payload(_fast_wait: None) -> None:
+    # A model asking to wait "indefinitely" must not blow past the SDK's
+    # tool-call ceiling and lose the payload telling it what to do next.
+    result = await _wait_with(await _context(), 300_000)
+
+    assert result["success"] is True
+    assert result["wait_outcome"] == "timeout"
+    assert result["timeout_seconds"] == _WAIT_SECONDS
+    assert "clamped" in result["note"]
+
+
+@pytest.mark.asyncio
+async def test_inner_wait_gets_the_clamped_timeout(_captured_timeouts: list[float]) -> None:
+    assert (await _wait_with(await _context(), 300_000))["timeout_seconds"] == 300
+    assert _captured_timeouts == [300]
+
+
+@pytest.mark.asyncio
+async def test_non_positive_timeout_is_floored(_captured_timeouts: list[float]) -> None:
+    assert (await _wait_with(await _context(), 0))["timeout_seconds"] == 1
+    assert (await _wait_with(await _context(), -30))["timeout_seconds"] == 1
+    assert _captured_timeouts == [1, 1]
+
+
+@pytest.mark.asyncio
+async def test_in_range_timeout_passes_through(_captured_timeouts: list[float]) -> None:
+    result = await _wait_with(await _context(), 60)
+
+    assert result["timeout_seconds"] == 60
+    assert "clamped" not in result["note"]
+    assert _captured_timeouts == [60]
+
+
+@pytest.mark.asyncio
+async def test_early_returns_are_unaffected_by_an_oversized_timeout(_fast_wait: None) -> None:
+    inner = await _context()
+    inner[LLM_TURN_KEY] = 1
+    coordinator = cast("AgentCoordinator", inner["coordinator"])
+    await coordinator.send("root", {"type": "information", "content": "child done"})
+
+    assert (await _wait_with(inner, 300_000))["wait_outcome"] == "message_arrived"
+    assert (await _wait_with(inner, 300_000))["wait_outcome"] == "already_waited"
+
+    inner[LLM_TURN_KEY] = 2
+    await coordinator.set_status("root", "stopped")
+
+    assert (await _wait_with(inner, 300_000))["wait_outcome"] == "stopped"
+
+
 @pytest.mark.asyncio
 async def test_a_collapsed_wait_still_reports_arriving_messages(_fast_wait: None) -> None:
     inner = await _context()

@@ -286,11 +286,21 @@ def _session_items_payload(items: list[Any]) -> list[dict[str, Any]]:
 
 
 _WAIT_DEFAULT_TIMEOUT_S = 300
-# Enforced by the SDK around the whole tool call, so it caps an oversized
-# ``timeout_seconds`` the model asks for. One second of headroom lets the
-# tool's own timeout fire first and return a clean result.
+_WAIT_MIN_TIMEOUT_S = 1
+# Enforced by the SDK around the whole tool call. Requested timeouts are
+# clamped to the default, so this one second of headroom lets the tool's
+# own timeout fire first and return a clean result.
 _WAIT_HARD_CEILING_S = _WAIT_DEFAULT_TIMEOUT_S + 1
 _WAITED_TURN_KEY = "waited_llm_turn"
+
+
+def _effective_wait_timeout(requested: Any) -> int:
+    """Clamp a requested wait timeout into the range the tool can honour."""
+    try:
+        seconds = int(requested)
+    except (TypeError, ValueError):
+        return _WAIT_DEFAULT_TIMEOUT_S
+    return max(_WAIT_MIN_TIMEOUT_S, min(seconds, _WAIT_DEFAULT_TIMEOUT_S))
 
 
 @function_tool(timeout=_WAIT_HARD_CEILING_S)
@@ -338,8 +348,8 @@ async def wait_for_agents(  # noqa: PLR0911
         reason: One-line note shown in graph snapshots while you're
             waiting (helps a human or sibling agent debug who's stuck
             on what).
-        timeout_seconds: Max seconds to wait (default 300, and values above
-            that are cut short by a hard ceiling). This is only
+        timeout_seconds: Max seconds to wait (default 300, which is also the
+            maximum — larger requests are clamped to it). This is only
             a cap — the tool returns the INSTANT a message arrives, so a
             larger value never makes you wait longer when the reply does
             come. Right-size it to what you're waiting on: a short wait
@@ -351,6 +361,7 @@ async def wait_for_agents(  # noqa: PLR0911
             elapses. On timeout the tool returns and you decide whether to
             keep working or wait again.
     """
+    effective_timeout = _effective_wait_timeout(timeout_seconds)
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
     me = inner.get("agent_id")
@@ -449,16 +460,19 @@ async def wait_for_agents(  # noqa: PLR0911
 
     await coordinator.park_waiting(me, wait_kind="agents")
     try:
-        await asyncio.wait_for(coordinator.wait_for_message(me), timeout_seconds)
+        await asyncio.wait_for(coordinator.wait_for_message(me), effective_timeout)
     except TimeoutError:
         await coordinator.mark_running(me)
+        note = "No messages within timeout — continue work or call agent_finish."
+        if effective_timeout != timeout_seconds:
+            note += f" Requested timeout was clamped to the {effective_timeout}s maximum."
         return json.dumps(
             {
                 "success": True,
                 "wait_outcome": "timeout",
-                "timeout_seconds": timeout_seconds,
+                "timeout_seconds": effective_timeout,
                 "reason": reason,
-                "note": "No messages within timeout — continue work or call agent_finish.",
+                "note": note,
             },
             ensure_ascii=False,
             default=str,
