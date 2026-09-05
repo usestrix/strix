@@ -45,7 +45,8 @@ _COMPACTION_RESULT_MESSAGES = {
 }
 
 ChangeCallback = Callable[[], None]
-StartCallback = Callable[[bool], Awaitable[None]]
+StartCallback = Callable[[], Awaitable[None]]
+VerifyCallback = Callable[[], Awaitable[None]]
 QuitCallback = Callable[[], Awaitable[None]]
 
 
@@ -60,6 +61,7 @@ class TuiController:
         coordinator: Any = None,
         report_state: ReportState | None = None,
         on_start: StartCallback | None = None,
+        on_verify: VerifyCallback | None = None,
         on_quit: QuitCallback | None = None,
         on_change: ChangeCallback | None = None,
     ) -> None:
@@ -108,14 +110,19 @@ class TuiController:
         # A target-less launch enters the live view and asks there before
         # anything is prepared; this holds the directory awaiting that answer.
         self.pending_workspace_mount: str | None = None
-        self._pending_verify = True
         self.messages: list[dict[str, str]] = []
         self._next_message_id = 1
         self.error: str | None = None
+        # The run's MCP connection roster (name / tool_count / dead), pushed by
+        # the engine via the mcp_status_sink once the connections are established
+        # and again each time one dies. Empty for a run with no MCP connections,
+        # so the Go sidebar simply omits the panel. Non-secret by construction.
+        self.mcp_connections: list[dict[str, Any]] = []
         self.viewer_status = "idle"
         self.viewer_url: str | None = None
         self._viewer_httpd: Any = None
         self._on_start = on_start
+        self._on_verify = on_verify
         self._on_quit = on_quit
         self._on_change = on_change
 
@@ -136,6 +143,24 @@ class TuiController:
             self.report_state = report_state
         if scan_loop is not None:
             self.scan_loop = scan_loop
+
+    def set_mcp_connections(self, roster: list[dict[str, Any]]) -> None:
+        """Store the run's MCP connection roster and repaint.
+
+        ``roster`` is the engine's non-secret status snapshot: one entry per
+        connection carrying ``name``, ``tool_count``, and ``dead``. Called once
+        when the connections are established (all healthy) and again whenever a
+        connection dies (the same whole-roster snapshot, with that one now dead)."""
+        self.mcp_connections = [
+            {
+                "name": str(entry.get("name", "")),
+                "tool_count": int(entry.get("tool_count", 0) or 0),
+                "dead": bool(entry.get("dead", False)),
+            }
+            for entry in roster
+            if isinstance(entry, dict) and entry.get("name")
+        ]
+        self.notify_changed()
 
     def begin_preparation(self) -> None:
         """Mark a directly-launched run as preparing behind the live TUI."""
@@ -209,6 +234,14 @@ class TuiController:
             ],
             "usage": terminal_projection(usage, max_string=256, max_items=20),
             "subscription": subscription,
+            "connections": [
+                {
+                    "name": terminal_projection(entry["name"], max_string=64),
+                    "tool_count": entry["tool_count"],
+                    "dead": entry["dead"],
+                }
+                for entry in self.mcp_connections[:32]
+            ],
             "viewer_status": self.viewer_status,
             "viewer_url": terminal_projection(self.viewer_url, max_string=1024),
             "error": terminal_projection(self.error, max_string=2 * 1024),
@@ -306,12 +339,6 @@ class TuiController:
     async def _start(self, payload: dict[str, Any]) -> dict[str, Any]:
         if self.scan_started or self._start_in_progress:
             raise RuntimeError("Scan is already starting or running")
-        # A bare prompt launches optimistically, like a coding agent: it skips
-        # the network model preflight and surfaces any model error live. A named
-        # target keeps the preflight so a real scan does not commit blind.
-        verify = payload.get("verify", True)
-        if not isinstance(verify, bool):
-            raise TypeError("verify must be a boolean")
         # Launching with no target mounts the working directory, so it requires
         # the user's explicit confirmation rather than happening silently.
         mount_working_dir = payload.get("mount_working_dir", False)
@@ -322,27 +349,44 @@ class TuiController:
             raise ValueError("No model configured. Set STRIX_LLM first.")
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
+        if not self.targets and not mount_working_dir:
+            raise ValueError("No target set. Add a target first.")
+        # The model check runs while still on the start screen, for a bare
+        # prompt as much as for a named target, so a failure lands in the setup
+        # log where the user can fix it and retry rather than in a dead run.
+        await self._verify_model()
         if not self.targets:
-            if not mount_working_dir:
-                raise ValueError("No target set. Add a target first.")
             # Mounting the working directory needs the user's confirmation, and
             # that is asked in the live view. Enter it now and prepare nothing
             # until the answer arrives, so declining leaves no run behind.
             self.pending_workspace_mount = str(Path.cwd())
-            self._pending_verify = verify
             self.setup_mode = False
             self.scan_started = True
             self.scan_state = "preparing"
             return {"started": True}
-        await self._begin_scan(verify)
+        await self._begin_scan()
         return {"started": True}
 
-    async def _begin_scan(self, verify: bool) -> None:
+    async def _verify_model(self) -> None:
+        if self._on_verify is None:
+            return
+        self._start_in_progress = True
+        try:
+            await self._on_verify()
+        finally:
+            self._start_in_progress = False
+
+    async def _begin_scan(self) -> None:
         if self._on_start is None:
             raise RuntimeError("Scan start is unavailable")
         self._start_in_progress = True
         try:
-            await self._on_start(verify)
+            await self._on_start()
+        except Exception as exc:
+            if not self.setup_mode:
+                # The live view is already up, so the failure has to show there.
+                self.fail_preparation(str(exc))
+            raise
         finally:
             self._start_in_progress = False
         self.setup_mode = False
@@ -362,7 +406,7 @@ class TuiController:
         # the whole of the input either way; the working directory is only an
         # extra the agent may look at, so the run goes ahead without one.
         self.workspace_mount = mount if approved else None
-        await self._begin_scan(self._pending_verify)
+        await self._begin_scan()
         return {"approved": approved}
 
     async def _send_message(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -399,6 +443,7 @@ class TuiController:
             delivered = await asyncio.wrap_future(future)
         if not delivered:
             raise RuntimeError("Message could not be delivered")
+        self.live_view.upsert_agent(agent_id, status="waiting", error_message=None)
         return {"sent": True}
 
     async def _run_on_scan_loop(self, coroutine: Coroutine[Any, Any, Any]) -> Any:

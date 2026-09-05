@@ -30,7 +30,7 @@ class RendererErrorBoundary extends Component<
 }
 
 function SafeToolRenderer(props: ToolRendererProps) {
-  const Renderer = getToolRenderer(props.toolName);
+  const Renderer = getToolRenderer(props.toolName, props.mcpConnection);
   return (
     <RendererErrorBoundary toolName={props.toolName}>
       <Renderer {...props} />
@@ -61,6 +61,10 @@ function coerce(value: unknown): unknown {
   } catch {
     return { __raw: value };
   }
+}
+
+function asOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value ? value : null;
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -244,11 +248,14 @@ export function AgentTranscript({
             const isTool = event.type === "tool";
             const toolName = isTool ? String(event.data?.tool_name ?? "tool") : "";
             const role = !isTool ? String(event.data?.role ?? "assistant") : "";
+            // Present only on a call to one of the user's own MCP servers.
+            const mcpConnection = asOptionalString(event.data?.mcp_connection);
+            const mcpTool = asOptionalString(event.data?.mcp_tool);
 
             let Icon;
             let iconColor: string;
             if (isTool) {
-              const meta = getToolIcon(toolName);
+              const meta = getToolIcon(toolName, mcpConnection);
               Icon = meta.icon;
               iconColor = meta.color;
             } else {
@@ -279,6 +286,8 @@ export function AgentTranscript({
                   {isTool ? (
                     <SafeToolRenderer
                       toolName={toolName}
+                      mcpConnection={mcpConnection}
+                      mcpTool={mcpTool}
                       args={asRecord(event.data?.args)}
                       result={coerce(event.data?.result) ?? null}
                       status={

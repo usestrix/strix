@@ -15,6 +15,7 @@ from agents import RunContextWrapper, function_tool
 from strix.core.agents import Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
+from strix.report.state import get_global_report_state
 from strix.skills import validate_requested_skills
 
 
@@ -28,6 +29,40 @@ def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
     return ctx.context if isinstance(ctx.context, dict) else {}
 
 
+def _filed_reports_by(agent_id: str) -> list[dict[str, Any]]:
+    """Vulnerability reports the agent actually filed, from report state.
+
+    The narrative ``findings`` an agent hands to ``agent_finish`` is prose; a
+    parent that wants to act on a child's work needs the report ids. Read them
+    from the report state rather than trusting the child's description.
+    """
+    state = get_global_report_state()
+    if state is None:
+        return []
+    filed: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for report in state.get_existing_vulnerabilities():
+        if report.get("agent_id") != agent_id:
+            continue
+        report_id = str(report.get("id") or "")
+        if not report_id or report_id in seen:
+            continue
+        seen.add(report_id)
+        filed.append(report)
+    return filed
+
+
+def _render_filed_report(report: dict[str, Any]) -> str:
+    line = f"- {report.get('id')}"
+    severity = report.get("severity")
+    if severity:
+        line += f" [{str(severity).upper()}]"
+    title = report.get("title")
+    if title:
+        line += f" {title}"
+    return line
+
+
 def _render_completion_report(
     *,
     agent_name: str,
@@ -37,6 +72,8 @@ def _render_completion_report(
     result_summary: str,
     findings: list[str],
     recommendations: list[str],
+    open_items: list[str],
+    filed_reports: list[dict[str, Any]] | None = None,
 ) -> str:
     """Render a child's completion report as plain structured text.
 
@@ -61,6 +98,18 @@ def _render_completion_report(
         lines.append("")
         lines.append("Findings:")
         lines.extend(f"- {f}" for f in findings)
+    lines.append("")
+    lines.append("Vulnerability reports filed by this agent (authoritative; use these ids):")
+    if filed_reports:
+        lines.extend(_render_filed_report(r) for r in filed_reports)
+    else:
+        lines.append("- (none)")
+    lines.append("")
+    lines.append("Open items (unresolved, need follow-up):")
+    if open_items:
+        lines.extend(f"- {o}" for o in open_items)
+    else:
+        lines.append("- (none)")
     if recommendations:
         lines.append("")
         lines.append("Recommendations:")
@@ -142,8 +191,11 @@ async def send_message_to_agent(
     **Don't** use for routine "hello/status" pings, for context the
     target already has (children inherit parent history), or when
     parent/child completion via ``agent_finish`` already covers the
-    flow. Messages to any registered agent wake it, regardless of
+    flow. In interactive runs a message wakes the target regardless of
     status, so a follow-up can restart a completed/stopped/failed agent.
+    In non-interactive runs a finished agent is gone for good: the call
+    fails with the target's status, and you should read its filed
+    reports (``list_reports``) or spawn a new agent instead of waiting.
 
     Args:
         target_agent_id: Recipient's 8-char id.
@@ -188,10 +240,23 @@ async def send_message_to_agent(
         },
     )
     if not delivered:
+        _, status = await coordinator.reachability(target_agent_id)
+        if status is None:
+            error = f"Target agent '{target_agent_id}' not found"
+        else:
+            error = (
+                f"Target agent '{target_agent_id}' is '{status}' and cannot be woken in "
+                "this run; it will never read this message. Its filed reports are in "
+                "list_reports / get_report. Do not wait_for_agents on it - spawn a new "
+                "agent if more work is needed."
+            )
         return json.dumps(
             {
                 "success": False,
-                "error": f"Target agent '{target_agent_id}' not found or message delivery failed",
+                "error": error,
+                "target_agent_id": target_agent_id,
+                "target_status": status,
+                "delivery_status": "not_delivered",
             },
             ensure_ascii=False,
             default=str,
@@ -357,6 +422,31 @@ async def wait_for_agents(  # noqa: PLR0911
             default=str,
         )
 
+    # Non-interactive agents cannot be woken once terminal, so with nobody
+    # running or waiting there is no message left to wait for.
+    if not await coordinator.active_agents_except(me):
+        _, statuses, names, _ = await coordinator.graph_snapshot()
+        return json.dumps(
+            {
+                "success": True,
+                "wait_outcome": "no_active_agents",
+                "reason": reason,
+                "agents": [
+                    {"agent_id": aid, "name": names.get(aid, aid), "status": status}
+                    for aid, status in statuses.items()
+                    if aid != me
+                ],
+                "note": (
+                    "No other agent is running or waiting, so no message can arrive. "
+                    "Finished agents' results are in list_reports / get_report and their "
+                    "completion reports are already in your history. Continue your own "
+                    "work, spawn a new agent, or finish."
+                ),
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     await coordinator.park_waiting(me, wait_kind="agents")
     try:
         await asyncio.wait_for(coordinator.wait_for_message(me), timeout_seconds)
@@ -445,7 +535,12 @@ async def create_agent(
         name: Human-readable child name (used in graph views and
             ``send_message_to_agent`` flows).
         task: Specific objective. Be concrete — what to test, what
-            success looks like, any constraints.
+            success looks like, any constraints. Name the target the
+            child should call ``get_threat_model`` on, and any shared
+            state it should build on rather than rediscover — what
+            recon already mapped, which surfaces are already covered,
+            which coverage entry it is picking up. A child that is not
+            told what is already known repeats it.
         inherit_context: Default ``True``. The child receives the
             parent's input history as background; only set ``False``
             when starting a clean-slate task.
@@ -520,6 +615,7 @@ async def agent_finish(
     ctx: RunContextWrapper,
     result_summary: str,
     findings: list[str] | None = None,
+    open_items: list[str] | None = None,
     success: bool = True,
     report_to_parent: bool = True,
     final_recommendations: list[str] | None = None,
@@ -544,6 +640,14 @@ async def agent_finish(
     doing: what did you test, what did you find/confirm/rule out,
     what's still open.
 
+    **Close out honestly.** Before calling this, every surface you
+    assessed should have a ``record_coverage`` entry, and anything you
+    could neither confirm nor rule out belongs in ``open_items`` — an
+    unresolved candidate handed up to the parent is useful, a silently
+    dropped one is a missed vulnerability. Reporting nothing and
+    listing no open items asserts the area is clean; only say that if
+    you mean it.
+
     Args:
         result_summary: What you accomplished and discovered. Concrete
             and specific (URLs, parameters, payloads that worked).
@@ -552,6 +656,12 @@ async def agent_finish(
             ``create_vulnerability_report`` first (or
             ``create_dependency_report`` for dependency CVEs); this is
             for narrative.
+        open_items: Candidates you could NOT confirm and could NOT rule
+            out with a named control, plus anything you ran out of time
+            or access to test. State the specific gap (e.g. "password
+            reset token entropy — could not obtain a second account to
+            compare tokens"). Pass an empty list only when nothing is
+            genuinely left open.
         success: Whether the assigned subtask was completed
             successfully. Default ``True``.
         report_to_parent: Whether to deliver the completion report to
@@ -583,6 +693,9 @@ async def agent_finish(
             default=str,
         )
 
+    filed_reports = _filed_reports_by(me)
+    filed_report_ids = [str(r.get("id")) for r in filed_reports]
+
     parent_notified = False
     if report_to_parent and await coordinator.claim_parent_notice(me):
         async with coordinator._lock:
@@ -595,6 +708,8 @@ async def agent_finish(
             result_summary=result_summary,
             findings=list(findings or []),
             recommendations=list(final_recommendations or []),
+            open_items=list(open_items or []),
+            filed_reports=filed_reports,
         )
         await coordinator.send(
             parent_id,
@@ -604,6 +719,7 @@ async def agent_finish(
                 "content": report,
                 "type": "completion",
                 "priority": "high",
+                "filed_report_ids": filed_report_ids,
             },
         )
         parent_notified = True
@@ -614,10 +730,11 @@ async def agent_finish(
         await notify_parent_on_terminal(coordinator, me, "completed")
 
     logger.info(
-        "agent_finish: %s success=%s findings=%d parent_notified=%s",
+        "agent_finish: %s success=%s findings=%d filed_reports=%d parent_notified=%s",
         me,
         success,
         len(findings or []),
+        len(filed_report_ids),
         parent_notified,
     )
 
@@ -628,7 +745,9 @@ async def agent_finish(
             "parent_notified": parent_notified,
             "agent_id": me,
             "summary": result_summary,
+            "filed_report_ids": filed_report_ids,
             "findings_count": len(findings or []),
+            "open_items_count": len(open_items or []),
             "has_recommendations": bool(final_recommendations),
         },
         ensure_ascii=False,

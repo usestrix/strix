@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING
 from urllib.parse import urlsplit
 
 from strix.core.paths import latest_run_dir, runs_base_dir
+from strix.interface.viewer.cli import _state_label, run_view
 from strix.interface.viewer.server import serve
 from strix.interface.viewer.transcript import (
     build_run_state,
@@ -48,6 +49,31 @@ def test_latest_run_dir_none_when_no_runs(tmp_path: Path, monkeypatch: pytest.Mo
     assert runs_base_dir() == tmp_path / "strix_runs"
 
 
+def test_view_cli_help_includes_host(capsys: pytest.CaptureFixture[str]) -> None:
+    try:
+        run_view(["--help"])
+    except SystemExit as exc:
+        assert exc.code == 0
+    else:
+        raise AssertionError("--help should exit")
+
+    help_text = capsys.readouterr().out
+    assert "--host HOST" in help_text
+    assert "0.0.0.0" in help_text
+
+
+def test_server_can_bind_all_ipv4_interfaces(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path, "remote", status="running", end_time=None)
+
+    httpd, url, _ = serve(run_dir, host="0.0.0.0", open_browser=False)
+    try:
+        assert httpd.server_address[0] == "0.0.0.0"
+        assert url == f"http://0.0.0.0:{httpd.server_address[1]}"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_latest_run_dir_picks_newest_by_record_mtime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -68,6 +94,33 @@ def test_read_run_summary_finished_flag(tmp_path: Path) -> None:
     # A terminal status without an end_time is not "finished".
     partial = _make_run(tmp_path, "partial", status="failed", end_time=None)
     assert read_run_summary(partial)["finished"] is False
+
+
+def test_read_run_summary_surfaces_mcp_connection_status(tmp_path: Path) -> None:
+    """The engine persists the non-secret MCP roster under mcp_connection_status;
+    read_run_summary spreads the whole record, so /api/run carries it to the
+    viewer verbatim."""
+    run_dir = _make_run(tmp_path, "mcp", status="running", end_time=None)
+    roster = [
+        {"name": "local_fs", "provider": None, "tool_count": 3, "dead": False},
+        {"name": "db", "provider": "supabase", "tool_count": 7, "dead": True},
+    ]
+    record = {
+        "run_name": "mcp",
+        "status": "running",
+        "end_time": None,
+        "mcp_connection_status": roster,
+    }
+    (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
+    assert read_run_summary(run_dir)["mcp_connection_status"] == roster
+
+
+def test_viewer_cli_labels_terminal_statuses() -> None:
+    assert _state_label({"status": "completed", "finished": True}) == "[#22c55e]finished[/]"
+    assert _state_label({"status": "stopped", "finished": True}) == "[#eab308]stopped[/]"
+    assert _state_label({"status": "interrupted", "finished": True}) == "[#eab308]interrupted[/]"
+    assert _state_label({"status": "failed", "finished": True}) == "[#ef4444]failed[/]"
+    assert _state_label({"status": "running", "finished": False}) == "[#eab308]live[/]"
 
 
 def test_read_missing_artifacts_return_defaults(tmp_path: Path) -> None:
@@ -173,14 +226,15 @@ def test_server_serves_api_and_static(tmp_path: Path, monkeypatch: pytest.Monkey
     (assets / "assets" / "app.js").write_text("console.log(1)", encoding="utf-8")
     monkeypatch.setattr("strix.interface.viewer.server.bundle_dir", lambda: assets)
 
-    httpd, url, _ = serve(run_dir, open_browser=False)
+    httpd, url, token = serve(run_dir, open_browser=False)
     try:
-        status, ctype, body = _get(f"{url}/api/run")
+        cookie = _session_cookie(url, token)
+        status, ctype, body = _get(f"{url}/api/run", cookie=cookie)
         assert status == 200
         assert "application/json" in ctype
         assert json.loads(body)["finished"] is True
 
-        status, _, body = _get(f"{url}/api/transcript")
+        status, _, body = _get(f"{url}/api/transcript", cookie=cookie)
         assert {a["id"] for a in json.loads(body)["agents"]} == {"root", "child"}
 
         # Real asset is served.
@@ -429,6 +483,22 @@ def test_unauthorized_client_cannot_acquire_capability(
         httpd.server_close()
 
 
+def test_run_data_requires_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    run_dir = _make_run(tmp_path, "private", status="completed", end_time="2026-01-01T00:00:00Z")
+    _bundle(tmp_path, monkeypatch)
+
+    httpd, url, token = serve(run_dir, open_browser=False)
+    try:
+        cookie = _session_cookie(url, token)
+        for path in ("/api/run", "/api/vulnerabilities", "/api/report", "/api/transcript"):
+            assert _get_status(url + path) == 403, path
+            assert _get_status(url + path, cookie=f"{_cookie_name(url)}=wrong") == 403, path
+            assert _get_status(url + path, cookie=cookie) == 200, path
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
 def test_auth_status_reflects_expiry(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     run_dir = _make_run(tmp_path, "status", status="running", end_time=None)
     _bundle(tmp_path, monkeypatch)
@@ -561,11 +631,10 @@ def test_historical_run_data_requires_verification(
 
     httpd, url, token = serve(launched, open_browser=False)
     try:
-        # The launched run is always viewable, no verification and no cookie.
-        status, _, _ = _get(f"{url}/api/run")
-        assert status == 200
-
+        # The launched run needs the session capability, but not email verification.
+        assert _get_status(f"{url}/api/run") == 403
         cookie = _session_cookie(url, token)
+        assert _get_status(f"{url}/api/run", cookie=cookie) == 200
 
         # A different run needs the session capability first: a cookie-less
         # caller is forbidden even once the machine is verified.

@@ -8,7 +8,7 @@ Configure Strix using environment variables or a config file.
 ## LLM Configuration
 
 <ParamField path="STRIX_LLM" type="string" required>
-  Model name in LiteLLM format (e.g., `openai/gpt-5.4`, `anthropic/claude-sonnet-4-6`).
+  Model name in LiteLLM format (e.g., `openrouter/z-ai/glm-5.3`, `openai/gpt-5.4`).
 </ParamField>
 
 <ParamField path="LLM_API_KEY" type="string">
@@ -80,6 +80,22 @@ affecting the agents that do the actual testing.
   API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
 </ParamField>
 
+<ParamField path="EXA_API_KEY" type="string">
+  API key for Exa. Enables real-time web search through the Exa `/search` endpoint. Exa also powers the `web_get_contents` tool, which fetches the full text of a page through the Exa `/contents` endpoint. This is the preferred web search provider.
+</ParamField>
+
+<ParamField path="STRIX_WEB_SEARCH_PROVIDER" default="auto" type="string">
+  Web search provider: `auto`, `perplexity`, or `exa`. With `auto`, Strix uses Exa when `EXA_API_KEY` is set, and Perplexity otherwise. Set an explicit provider to pin one when you configure both keys.
+</ParamField>
+
+<ParamField path="STRIX_EXA_SEARCH_TYPE" default="auto" type="string">
+  Exa search mode: `auto`, `fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`. Lower modes return results faster. Higher modes plan across more steps and take more time. This setting applies only to the Exa provider.
+</ParamField>
+
+<ParamField path="STRIX_EXA_NUM_RESULTS" default="5" type="integer">
+  Number of Exa results to return, from `1` to `100`. Each result includes a title, a URL, and a short security-focused summary. To read a full page, the agent calls `web_get_contents` with the result URL. This setting applies only to the Exa provider.
+</ParamField>
+
 <ParamField path="POSTMAN_API_KEY" type="string">
   Postman API key (`PMAK-…`). Enables fetching Postman collections by id as a target (`postman://<collection-uid>`), and Postman environments (`postman://<collection-uid>?env=<environment-uid>`) to resolve collection variables. Not needed when passing a local collection export file.
 </ParamField>
@@ -145,7 +161,7 @@ strix --target ./app --config /path/to/config.json
 ```json
 {
   "env": {
-    "STRIX_LLM": "openai/gpt-5.4",
+    "STRIX_LLM": "openrouter/z-ai/glm-5.3",
     "LLM_API_KEY": "sk-...",
     "STRIX_REASONING_EFFORT": "high"
   }
@@ -156,10 +172,11 @@ strix --target ./app --config /path/to/config.json
 
 ```bash
 # Required
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="sk-..."
 
-# Optional: Enable web search
+# Optional: Enable web search (Exa preferred, Perplexity supported)
+export EXA_API_KEY="..."
 export PERPLEXITY_API_KEY="pplx-..."
 
 # Optional: Custom timeouts

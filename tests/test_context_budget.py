@@ -31,7 +31,7 @@ def test_context_window_chatgpt_prefix_skips_provider_auth(
         calls.append(model)
         return {"max_input_tokens": 1_050_000, "max_output_tokens": 128_000}
 
-    monkeypatch.setattr("strix.llm.context_budget.litellm.get_model_info", _model_info)
+    monkeypatch.setattr("litellm.get_model_info", _model_info)
     try:
         assert context_budget.context_window("chatgpt/gpt-5.6-luna") == 1_050_000
         assert calls == ["gpt-5.6-luna"]
@@ -45,7 +45,7 @@ def test_context_window_unmapped_uses_fallback(monkeypatch: pytest.MonkeyPatch) 
     def _raise(_model: str) -> dict[str, int]:
         raise ValueError("This model isn't mapped yet.")
 
-    monkeypatch.setattr("strix.llm.context_budget.litellm.get_model_info", _raise)
+    monkeypatch.setattr("litellm.get_model_info", _raise)
     expected = load_settings().context.fallback_context_tokens
     assert context_budget.context_window("totally-made-up-model") == expected
     context_budget._model_info.cache_clear()
@@ -55,7 +55,7 @@ def test_count_tokens_fallback_on_error(monkeypatch: pytest.MonkeyPatch) -> None
     def _raise(**_kwargs: object) -> int:
         raise RuntimeError("no tokenizer")
 
-    monkeypatch.setattr("strix.llm.context_budget.litellm.token_counter", _raise)
+    monkeypatch.setattr("litellm.token_counter", _raise)
     # Falls back to UTF-8 byte length (upper bound on tokens).
     assert context_budget.count_tokens("weird-model", "x" * 400) == 400
     assert context_budget.count_tokens("weird-model", "😀" * 10) == 40

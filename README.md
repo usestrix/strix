@@ -17,6 +17,9 @@
 <a href="https://strix.ai"><img src="https://img.shields.io/badge/Website-strix.ai-f0f0f0?style=for-the-badge&logoColor=000000" alt="Website"></a>
 [![](https://dcbadge.limes.pink/api/server/strix-ai)](https://discord.gg/strix-ai)
 
+<a href="https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=badge_cloud"><img src="https://img.shields.io/badge/Strix%20Cloud-app.strix.ai-2b9246?style=for-the-badge&logoColor=white" alt="Strix Cloud"></a>
+<a href="https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=badge_demo"><img src="https://img.shields.io/badge/Try%20Strix%20Enterprise-555555?style=for-the-badge&logoColor=white" alt="Try Strix Enterprise"></a>
+
 <a href="https://deepwiki.com/usestrix/strix"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
 <a href="https://github.com/usestrix/strix"><img src="https://img.shields.io/github/stars/usestrix/strix?style=flat-square" alt="GitHub Stars"></a>
 <a href="LICENSE"><img src="https://img.shields.io/badge/License-Apache%202.0-3b82f6?style=flat-square" alt="License"></a>
@@ -34,7 +37,7 @@
 
 
 > [!TIP]
-> **New!** Strix integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production - [Get started with no setup required](https://app.strix.ai).
+> **New!** Strix integrates seamlessly with GitHub Actions and CI/CD pipelines. Automatically scan for vulnerabilities on every pull request and block insecure code before it reaches production - [Get started with no setup required](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=tip_ci).
 
 ---
 
@@ -82,7 +85,7 @@ Strix are autonomous AI penetration testing agents that act just like real hacke
 curl -sSL https://strix.ai/install | bash
 
 # Configure your AI provider
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 
 # Run your first security assessment
@@ -94,9 +97,17 @@ strix --target ./app-directory
 
 ---
 
-## ☁️ Strix Platform
+## Ways to Run Strix
 
-Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai)** - sign up for free, connect your repos and domains, and launch a pentest in minutes.
+- **Open Source** - free, runs locally with Docker and your own LLM key. [Quick Start](https://docs.strix.ai/quickstart)
+- **Strix Cloud** - no setup, validated findings, one-click autofix, and PR reviews. [Run a pentest →](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=table_cloud)
+- **Enterprise** - SSO, compliance-ready reports, VPC or self-hosted deployment. [Try Strix Enterprise →](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=table_demo)
+
+---
+
+## ☁️ Strix Cloud
+
+Try the Strix full-stack penetration testing platform at **[app.strix.ai](https://app.strix.ai?utm_source=github&utm_medium=readme&utm_content=cloud_heading)** - sign up for free, connect your repos and domains, and launch a pentest in minutes.
 
 - **Validated findings with PoCs** - every vulnerability includes a working proof-of-concept exploit and reproduction steps
 - **One-click autofix** - AI-generated security patches as ready-to-merge pull requests
@@ -104,7 +115,13 @@ Try the Strix full-stack penetration testing platform at **[app.strix.ai](https:
 - **DevSecOps integrations** - GitHub, GitLab, Bitbucket, Slack, Jira, Linear, and CI/CD pipelines
 - **Continuous learning** - AI that builds on past findings, adapts to your codebase, and reduces false positives over time
 
-[**Start your first pentest →**](https://app.strix.ai)
+[**Run a pentest →**](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=cloud_cta)
+
+## 🏢 Enterprise
+
+Get the same Strix experience with enterprise-grade controls: SSO (SAML/OIDC), custom compliance-ready penetration testing reports (SOC 2, ISO 27001, PCI DSS), dedicated support and SLA, custom deployment options (VPC or self-hosted), BYOK model support, and tailored AI pentesting agents optimized for your environment.
+
+[**Try Strix Enterprise →**](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=enterprise_cta)
 
 ---
 
@@ -116,7 +133,9 @@ Strix is agent-ready. Give Claude Code, Cursor, Codex, or any [SKILL.md-compatib
 npx skills add usestrix/strix
 ```
 
-This installs four skills: **penetration-testing-with-strix** (run headless scans and read results), **managed-pentesting-with-strix** (drive the managed [app.strix.ai](https://app.strix.ai) platform via REST — no local Docker or LLM key), **fix-security-vulnerabilities-with-strix** (remediate + re-scan to verify), and **ci-security-scanning-with-strix** (PR scanning in CI). Agents can run Strix two ways with the same engine — the open-source CLI locally, or the managed cloud when there's no local infra — and read [`AGENTS.md`](AGENTS.md) for a quick reference, [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) for the CLI docs, and [docs.app.strix.ai](https://docs.app.strix.ai) for the API.
+This installs nine skills for running pentests, fixing findings, and CI scanning, against code, web apps, APIs, and the OWASP Top 10. Agents can use the local CLI or the managed cloud with the same engine.
+
+See [`AGENTS.md`](AGENTS.md) for the quick reference, [docs.strix.ai/llms.txt](https://docs.strix.ai/llms.txt) for the CLI, and [docs.app.strix.ai](https://docs.app.strix.ai) for the API.
 
 ---
 
@@ -167,18 +186,14 @@ strix view
 
 # ...or open a specific run by name
 strix view my-run-name
+
+# Expose the viewer on all IPv4 interfaces at a fixed port
+strix view --host 0.0.0.0 --port 8080 --no-open
 ```
 
-`strix view` starts a lightweight local server (bound to `127.0.0.1` on a random port) and opens your browser to a private, tokened link. Nothing leaves your machine: the dashboard reads the run's files straight off disk, with no cloud account or upload required. The UI ships prebuilt with Strix, so there is no extra install and no JS build step.
+The dashboard shows the findings, a live map of the agent team, and past runs. Nothing leaves your machine, and the UI ships prebuilt. `strix view` binds to `127.0.0.1` and prints a tokened link that grants access to the run, so share it carefully.
 
-### What's in the dashboard
-
-- **Overview**: run status, target, and a severity breakdown of everything found so far.
-- **Vulnerabilities**: each validated finding with its severity, details, and reproduction steps.
-- **Agent graph**: a live map of the multi-agent team, showing which agent is doing what.
-- **Steering**: send instructions to a live scan from the browser to redirect the agents mid-run.
-- **History**: browse past runs on this machine and jump between them.
-- **Reports**: generate a shareable report and email it to yourself or your team.
+See the [viewer documentation](https://docs.strix.ai/usage/viewer) for the options and for reaching the viewer from another machine.
 
 ---
 
@@ -204,18 +219,9 @@ having to discover them by crawling. Pair the spec with the live base URL so the
 agent knows where to send traffic:
 
 ```bash
-# OpenAPI / Swagger file (.json / .yaml)
+# OpenAPI / Swagger file, Postman export, or a live collection by id
 strix --target ./openapi.yaml --target https://api.your-app.com
-
-# Postman collection export
-strix --target ./collection.postman_collection.json --target https://api.your-app.com
-
-# Postman collection pulled live by id (no manual export)
-export POSTMAN_API_KEY="PMAK-..."
-strix --target postman://<collection-uuid>
-
-# ...with a Postman environment to resolve {{baseUrl}} / token variables
-strix --target "postman://<collection-uuid>?env=<environment-uuid>"
+strix --target postman://<collection-uuid> --target https://api.your-app.com
 ```
 
 
@@ -230,19 +236,9 @@ strix -t https://github.com/org/app -t https://your-app.com
 
 # Targets from a file, one target per non-empty, non-comment line
 strix --target-list ./targets.txt
-
-# White-box source-aware scan (local repository)
-strix --target ./app-directory --scan-mode standard
-
-# Focused testing with custom instructions
-strix --target api.your-app.com --instruction "Focus on business logic flaws and IDOR vulnerabilities"
-
-# Provide detailed instructions through file (e.g., rules of engagement, scope, exclusions)
-strix --target api.your-app.com --instruction-file ./instruction.md
-
-# Force PR diff-scope against a specific base branch
-strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
 ```
+
+See the [CLI reference](https://docs.strix.ai/usage/cli) for every option, including scan modes, diff scope, instruction files, and budgets.
 
 ### Interactive Commands
 
@@ -287,50 +283,77 @@ jobs:
 ```
 
 > [!TIP]
-> In CI pull request runs, Strix automatically scopes quick reviews to changed files.
-> If diff-scope cannot resolve, ensure checkout uses full history (`fetch-depth: 0`) or pass
-> `--diff-base` explicitly.
+> In CI pull request runs, Strix automatically scopes quick reviews to changed files, which is why the
+> checkout above fetches full history. See the
+> [CI/CD documentation](https://docs.strix.ai/integrations/github-actions) for the details.
 
 ### Configuration
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 
 # Optional
 export LLM_API_BASE="your-api-base-url"  # if using a local model, e.g. Ollama, LMStudio
-export PERPLEXITY_API_KEY="your-api-key"  # for search capabilities
-export STRIX_REASONING_EFFORT="high"  # control thinking effort (default: high, quick scan: medium)
 ```
 
 > [!NOTE]
 > Strix automatically saves your configuration to `~/.strix/cli-config.json`, so you don't have to re-enter it on every run.
+> See the [configuration reference](https://docs.strix.ai/advanced/configuration) for every environment variable.
 
 #### Sign in with a ChatGPT subscription
 
 Instead of a metered API key, you can run Strix on your ChatGPT Plus/Pro subscription:
 
 ```bash
-strix auth login chatgpt      # sign in with your ChatGPT account
-
+strix auth login chatgpt             # sign in with your ChatGPT account
 export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
-strix --target ./app-directory
-
-strix auth status             # show the active sign-in
-strix auth logout             # forget the sign-in
+strix auth status                    # show the active sign-in, or logout to forget it
 ```
+
+#### Use the managed platform: `strix cloud`
+
+Run scans on [app.strix.ai](https://app.strix.ai) from the terminal, without Docker or an LLM key:
+
+```bash
+strix cloud login                                  # browser sign-in, one credential per install
+strix cloud scans start --source . --yes --wait    # scan local code, approving the upload
+strix cloud scans start --engagement-type live_test --domain-ids <uuid> --wait
+strix cloud vulns list --severity critical
+```
+
+Every [REST API](https://docs.app.strix.ai) operation has a matching `strix cloud <resource> <verb>` command. Run `strix cloud` to list the resources, and add `help` to a resource to list its verbs. Output is JSON when stdout is not a terminal or when you pass `--json`. Binary downloads are the exception: redirect the raw bytes, or combine `--output FILE --json` for download metadata.
+
+See the [cloud CLI documentation](https://docs.strix.ai/cloud/cli) for scopes, workspaces, billing, and source-upload options.
+
+#### Connect your own MCP servers
+
+Strix can connect to Model Context Protocol (MCP) servers you list and expose their tools to the agent during a run. Create `~/.strix/mcp-servers.json` with a JSON list of local `stdio` servers or remote `http` servers:
+
+```json
+[
+  {
+    "name": "github",
+    "transport": "http",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "auth": { "kind": "bearer", "token": "your-token" },
+    "allowed_tools": ["list_issues"]
+  }
+]
+```
+
+Each server's tools are namespaced by `name`, for example `github_list_issues`. See the [MCP documentation](https://docs.strix.ai/integrations/mcp) for the full schema, tool filtering, and `stdio` servers.
 
 **Recommended models for best results:**
 
+- [Z.ai GLM-5.3 on OpenRouter](https://openrouter.ai/z-ai/glm-5.3) - `openrouter/z-ai/glm-5.3` (the default pick)
 - [OpenAI GPT-5.4](https://openai.com/api/) - `openai/gpt-5.4`
 - [Anthropic Claude Sonnet 4.6](https://claude.com/platform/api) - `anthropic/claude-sonnet-4-6`
 - [Google Gemini 3 Pro Preview](https://cloud.google.com/vertex-ai) - `vertex_ai/gemini-3-pro-preview`
+- [DeepSeek V4 Pro](https://platform.deepseek.com) - `deepseek/deepseek-v4-pro`
+- [Moonshot Kimi K3](https://platform.kimi.ai) - `moonshot/kimi-k3`
 
 See the [LLM Providers documentation](https://docs.strix.ai/llm-providers/overview) for all supported providers including Vertex AI, Bedrock, Azure, and local models.
-
-## Enterprise Pentesting
-
-Get the same Strix experience with [enterprise-grade](https://strix.ai/demo) controls: SSO (SAML/OIDC), custom compliance-ready penetration testing reports (SOC 2, ISO 27001, PCI DSS), dedicated support & SLA, custom deployment options (VPC/self-hosted), BYOK model support, and tailored AI pentesting agents optimized for your environment. [Learn more](https://strix.ai/demo).
 
 ## Documentation
 

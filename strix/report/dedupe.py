@@ -7,7 +7,6 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
-from agents.model_settings import ModelSettings
 from agents.models.interface import ModelTracing
 from openai.types.responses import ResponseOutputMessage
 
@@ -22,6 +21,8 @@ from strix.report.state import get_global_report_state
 
 if TYPE_CHECKING:
     from agents.items import ModelResponse
+    from agents.model_settings import ModelSettings
+    from agents.models.interface import Model
 
     from strix.config.settings import DedupeSettings
 
@@ -29,30 +30,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _dedupe_extra_args(dedupe: DedupeSettings) -> dict[str, str]:
-    """Per-call credential + endpoint for the dedupe model.
-
-    Provider env vars and the global base URL are process-wide, so a
-    shared-provider dedupe key or a distinct dedupe endpoint can't be installed
-    globally without clobbering (or being clobbered by) the main model's
-    config. Passing them per call keeps the two apart. Only applies when a
-    dedicated dedupe model is configured.
-    """
-    if not dedupe.model:
-        return {}
-    extra: dict[str, str] = {}
-    if dedupe.api_key and dedupe.api_key.strip():
-        extra["api_key"] = dedupe.api_key.strip()
-    if dedupe.api_base and dedupe.api_base.strip():
-        extra["api_base"] = dedupe.api_base.strip()
-    return extra
-
-
 def _dedupe_model_settings(
     dedupe: DedupeSettings, model_name: str, request_timeout: float | None
 ) -> ModelSettings:
     llm = load_settings().llm
-    settings = make_model_settings(
+    return make_model_settings(
         dedupe.reasoning_effort,
         model_name=model_name,
         force_required_tool_choice=False,
@@ -64,10 +46,21 @@ def _dedupe_model_settings(
         extra_headers=dedupe.extra_headers if dedupe.model else llm.extra_headers,
         has_tools=False,
     )
-    extra = _dedupe_extra_args(dedupe)
-    if extra:
-        settings = settings.resolve(ModelSettings(extra_args=extra))
-    return settings
+
+
+def resolve_dedupe_model(dedupe: DedupeSettings, model_name: str) -> Model:
+    """Resolve the dedupe model, bound to its own endpoint when it has one.
+
+    Credentials can't ride on the request: every model implementation already
+    passes its own ``api_key``/``base_url``, so the same keys in ``extra_args``
+    collide with them and raise before anything is sent. A provider bound to the
+    dedupe endpoint keeps it apart from the main model's process-wide defaults.
+    """
+    api_key = (dedupe.api_key or "").strip() if dedupe.model else ""
+    api_base = (dedupe.api_base or "").strip() if dedupe.model else ""
+    if not (api_key or api_base):
+        return StrixProvider().get_model(model_name)
+    return StrixProvider(api_key=api_key or None, base_url=api_base or None).get_model(model_name)
 
 
 DEDUPE_SYSTEM_PROMPT = """You are an expert vulnerability report deduplication judge.
@@ -371,7 +364,7 @@ async def check_duplicate(
 
         configure_sdk_model_defaults(settings)
         resolved_model = model_name.strip()
-        model = StrixProvider().get_model(resolved_model)
+        model = resolve_dedupe_model(dedupe, resolved_model)
         response = await model.get_response(
             system_instructions=DEDUPE_SYSTEM_PROMPT,
             input=user_msg,

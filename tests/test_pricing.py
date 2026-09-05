@@ -14,7 +14,10 @@ def test_resolves_common_bare_model_names() -> None:
     assert resolve_litellm_model("deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
     assert resolve_litellm_model("openai/deepseek-v4-flash") == "deepseek/deepseek-v4-flash"
     assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
-    assert resolve_litellm_model("MiniMax-M3") == "minimax/MiniMax-M3"
+    # MiniMax-M3 is sold by several LiteLLM providers at different prices, so
+    # the resolver must not guess from its bare name. A provider-qualified
+    # model remains deterministic.
+    assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
 
 
 def test_resolver_returns_none_for_unresolvable_model() -> None:

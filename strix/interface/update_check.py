@@ -264,6 +264,36 @@ def prompt_update_if_available(console: Console) -> bool:
     return run_package_upgrade(console, method)
 
 
+def restart_env() -> dict[str, str]:
+    """Environment for re-exec'ing the binary after a self-update.
+
+    The PyInstaller bootloader marks its child process via environment
+    variables (``_MEIPASS2`` on older versions, ``_PYI_*`` on 6.x) that
+    point at the already-extracted archive of the *running* version. If
+    they leak into the re-exec'd process, the new binary skips extraction
+    and runs the old code, so the update never appears to take effect.
+    Library-path variables the bootloader overrode are restored from the
+    ``*_ORIG`` copies it saved.
+    """
+    env = {
+        key: value
+        for key, value in os.environ.items()
+        if key != "_MEIPASS2" and not key.startswith("_PYI_")
+    }
+    for var in ("LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH"):
+        orig = env.pop(f"{var}_ORIG", None)
+        if orig is not None:
+            env[var] = orig
+        elif var in os.environ:
+            env.pop(var, None)
+    return env
+
+
+def restart_after_update() -> None:
+    """Replace the current process with the freshly updated binary."""
+    os.execve(sys.executable, sys.argv, restart_env())  # noqa: S606  # nosec B606
+
+
 def _release_target() -> str | None:
     raw_os = platform.system().lower()
     os_name = {"darwin": "macos", "linux": "linux", "windows": "windows"}.get(raw_os)

@@ -45,7 +45,11 @@ def run_view(argv: list[str]) -> None:
         default=0,
         help="Port to serve on (default: an available ephemeral port).",
     )
-    parser.add_argument("--host", default="127.0.0.1", help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Host to bind to (default: 127.0.0.1; use 0.0.0.0 for all IPv4 interfaces).",
+    )
     parser.add_argument(
         "--no-open",
         action="store_true",
@@ -83,7 +87,7 @@ def run_view(argv: list[str]) -> None:
 
     posthog.viewer_opened(source="cli", live=live)
 
-    state_label = "[#eab308]live[/]" if live else "[#22c55e]finished[/]"
+    state_label = _state_label(summary)
     console.print()
     console.print(f"Serving [bold white]{run_name}[/] ({state_label}) at:")
     # Print the URL alone on its own line with soft_wrap so Rich never inserts a
@@ -101,6 +105,18 @@ def run_view(argv: list[str]) -> None:
     finally:
         httpd.shutdown()
         httpd.server_close()
+
+
+def _state_label(summary: dict[str, object]) -> str:
+    if not summary.get("finished", False):
+        return "[#eab308]live[/]"
+
+    status = summary.get("status")
+    if status == "failed":
+        return "[#ef4444]failed[/]"
+    if status in {"stopped", "interrupted"}:
+        return f"[#eab308]{status}[/]"
+    return "[#22c55e]finished[/]"
 
 
 def _resolve_run_dir(run: str | None, console: Console) -> Path:

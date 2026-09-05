@@ -7,6 +7,8 @@ description: Subdomain takeover testing for dangling DNS records and unclaimed c
 
 Subdomain takeover lets an attacker serve content from a trusted subdomain by claiming resources referenced by dangling DNS (CNAME/A/ALIAS/NS) or mis-bound provider configurations. Consequences include phishing on a trusted origin, cookie and CORS pivot, OAuth redirect abuse, and CDN cache poisoning.
 
+Use `infrastructure_lifecycle` instead for expired registrable domains, MX/recovery identity, update/control endpoints, or long-lived software consumers. Provider error fingerprints are leads; confirm current claimability and custom-domain ownership requirements from authoritative provider behavior/documentation.
+
 ## Attack Surface
 
 - Dangling CNAME/A/ALIAS to third-party services (hosting, storage, serverless, CDN)

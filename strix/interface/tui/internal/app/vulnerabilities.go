@@ -134,7 +134,7 @@ func clampVulnerabilityOffset(offset, total, height int) int {
 }
 
 func (m Model) vulnerabilityPageSize() int {
-	_, vulnHeight, _ := m.sidebarHeights()
+	_, vulnHeight, _, _ := m.sidebarHeights()
 	return max(1, vulnHeight-2)
 }
 

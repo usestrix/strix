@@ -18,6 +18,7 @@ from strix.config.models import (
     is_openrouter_model,
     model_supports_reasoning,
     request_timeout_extra_args,
+    routes_through_litellm,
 )
 from strix.core.sessions import scrub_images_from_items
 
@@ -226,6 +227,23 @@ def build_scope_context(scan_config: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def build_scan_targets(scan_config: dict[str, Any]) -> list[str]:
+    """One canonical string per authorized target.
+
+    Agents refer to the target in whatever words they were handed, so anything
+    keyed on a target the model types drifts apart across a run. This is the
+    scan's own spelling, which target-keyed tools resolve against. A checkout is
+    named by its workspace path rather than its remote URL, so the local tree —
+    and its revision — is what gets inspected.
+    """
+    targets: list[str] = []
+    for target in build_scope_context(scan_config)["authorized_targets"]:
+        value = target["workspace_path"] or target["value"]
+        if value and value not in targets:
+            targets.append(value)
+    return targets
+
+
 def make_model_settings(
     reasoning_effort: ReasoningEffort | None,
     *,
@@ -250,7 +268,7 @@ def make_model_settings(
         and model_supports_reasoning(model_name)
     ):
         model_settings = model_settings.resolve(
-            _reasoning_settings(reasoning_effort, model_settings.extra_args),
+            _reasoning_settings(reasoning_effort),
         )
     if force_required_tool_choice and _accepts_required_tool_choice(model_name):
         model_settings = model_settings.resolve(ModelSettings(tool_choice="required"))
@@ -276,20 +294,19 @@ def _request_headers(
     return headers or None
 
 
-def _reasoning_settings(
-    effort: ReasoningEffort,
-    extra_args: dict[str, Any] | None,
-) -> ModelSettings:
+def _reasoning_settings(effort: ReasoningEffort) -> ModelSettings:
     """``max`` is not in the OpenAI SDK's ``Reasoning.effort`` enum, so send it as
     a raw body field instead — also keeping it clear of LiteLLM's DeepSeek mapping,
     which collapses every ``reasoning_effort`` level to plain thinking-enabled.
     Providers that don't support ``max`` reject the request.
+
+    It goes in ``extra_body``, the field every model implementation forwards as the
+    request's ``extra_body``; the same value under ``extra_args`` collides with that
+    keyword and raises before a request is ever sent.
     """
     if effort != "max":
         return ModelSettings(reasoning=Reasoning(effort=effort))
-    return ModelSettings(
-        extra_args={**(extra_args or {}), "extra_body": {"reasoning_effort": "max"}},
-    )
+    return ModelSettings(extra_body={"reasoning_effort": "max"})
 
 
 def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
@@ -300,8 +317,13 @@ def _prompt_cache_extra_args(model_name: str) -> dict[str, Any] | None:
     it — elsewhere it leaks onto the wire and native Anthropic 400s). Unmapped
     Bedrock models get no points at all: Bedrock rejects the passed-through
     field outright.
+
+    The field is LiteLLM's own, consumed by its transform, so it only goes to
+    routes LiteLLM serves. A bare ``claude-...`` name is served by the SDK's
+    OpenAI client instead (a gateway in front of Claude), and that client raises
+    ``TypeError`` on request kwargs it does not know.
     """
-    if not is_claude_model(model_name):
+    if not is_claude_model(model_name) or not routes_through_litellm(model_name):
         return None
     if is_bedrock_route(model_name) and not bedrock_route_supports_prompt_caching(model_name):
         return None

@@ -35,6 +35,25 @@ Skip the setup. Run Strix in the cloud at [app.strix.ai](https://app.strix.ai).
 2. Connect your repository or enter a target URL
 3. Launch your first scan
 
+## Scan Local Source
+
+Send a local working tree to the managed white-box scanner without connecting a source-control provider:
+
+```bash
+# Review the exact file manifest and capture source.archive_sha256. Nothing is uploaded.
+strix cloud scans start --source . --dry-run --show-files --json
+SOURCE_SHA256="<reviewed source.archive_sha256>"
+
+# Repeat the same source-selection flags and approve that exact snapshot.
+strix cloud scans start --source . --approve-sha256 "$SOURCE_SHA256" --wait
+```
+
+In a Git repository, Strix includes tracked files and untracked files that are not ignored. Hidden files, `.git`, symlinks, dependencies and build output, secret-like filenames, and nested archives are excluded by default. Use `.strixignore` or repeat `--exclude GLOB` for project-specific exclusions. `--include-hidden`, `--include-sensitive`, and `--include-archives` are explicit opt-ins.
+
+The CLI limits individual files, total expanded bytes, archive bytes, and file count. For an agent or CI handoff, repeat the same `--source`, `--exclude`, and `--include-*` flags with `--approve-sha256`; Strix refuses the upload if the rebuilt archive differs from the reviewed digest. `--yes` is a one-invocation approval for the snapshot built at that moment, not a digest-bound two-step approval.
+
+The temporary local archive is always removed. After a definitive launch rejection, Strix also deletes the staged remote upload. If a network error, server error, or interruption makes the launch outcome ambiguous, it retains the upload and reports its ID; check `strix cloud scans list` before retrying, then delete an unlinked upload with `strix cloud uploads delete UPLOAD_ID`.
+
 <Card title="Try Strix Cloud" icon="rocket" href="https://app.strix.ai">
   Run your first pentest in minutes.
 </Card>
