@@ -12,6 +12,8 @@ from strix.telemetry._common import (
     SEND_TIMEOUT,
     SESSION_ID,
     base_props,
+    exception_props,
+    get_scan_phase,
     get_version,
     is_first_run,
 )
@@ -135,10 +137,13 @@ def end(report_state: ReportState, exit_reason: str = "completed") -> None:
     )
 
 
-def error(error_type: str) -> None:
+def error(error_type: str, exc: BaseException | None = None) -> None:
     props: dict[str, Any] = {
         **base_props(),
         "session": SESSION_ID,
         "error_type": error_type,
+        "phase": get_scan_phase(),
     }
+    if exc is not None:
+        props.update(exception_props(exc))
     _send("error", props)

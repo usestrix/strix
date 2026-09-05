@@ -37,6 +37,7 @@ from strix.interface.tui.sidecar import (
 )
 from strix.interface.utils import read_workspace_files
 from strix.report.state import ReportState, set_global_report_state
+from strix.telemetry import report_error, set_scan_phase
 from strix.utils.resource_paths import get_strix_resource_path
 
 
@@ -138,6 +139,7 @@ class GoTuiRuntime:
             await self._preflight_model()
         except Exception as exc:
             logger.exception("Go TUI setup model preflight failed")
+            report_error("model_connection_failed", exc)
             raise RuntimeError(f"Model connection failed: {exc}") from exc
 
     async def _preflight_model(self) -> None:
@@ -195,13 +197,21 @@ class GoTuiRuntime:
         launch so the interface appears immediately.
         """
         model = (load_settings().llm.model or "").strip()
+        set_scan_phase("preflight")
         try:
             await preflight_model_connection(model)
+        except Exception as exc:
+            logger.exception("Go TUI scan preparation failed")
+            report_error("model_connection_failed", exc)
+            self.controller.fail_preparation(str(exc))
+            return
+        try:
             persist_current()
             prepare_run(self.args)
             telemetry_start(self.args)
         except Exception as exc:
             logger.exception("Go TUI scan preparation failed")
+            report_error("scan_preparation_failed", exc)
             self.controller.fail_preparation(str(exc))
             return
         self.controller.scan_state = "running"
@@ -240,6 +250,9 @@ class GoTuiRuntime:
             self.controller.scan_state = "completed" if report_status == "completed" else "stopped"
         except Exception as exc:
             logger.exception("Go TUI scan failed")
+            report_error("unhandled_exception", exc)
+            if self.report_state is not None and self.report_state.scan_ended_exit_reason is None:
+                self.report_state.scan_ended_exit_reason = "error"
             self.scan_error = exc
             self.controller.error = str(exc)
             self.controller.scan_state = "failed"

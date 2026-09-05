@@ -19,6 +19,7 @@ from rich.panel import Panel
 from rich.text import Text
 
 from strix.config import load_settings
+from strix.telemetry import report_error
 from strix.utils.api_spec import detect_spec_format
 
 
@@ -1602,7 +1603,8 @@ def check_docker_connection() -> Any:
 
     try:
         return docker.from_env()
-    except DockerException:
+    except DockerException as exc:
+        report_error("docker_unavailable", exc)
         console = Console()
         error_text = Text()
         error_text.append("DOCKER NOT AVAILABLE", style="bold red")

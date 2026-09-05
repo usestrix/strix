@@ -45,6 +45,7 @@ from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
+from strix.telemetry import set_scan_phase
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
     WORKSPACE_SPILL_DIR,
@@ -114,6 +115,13 @@ def _record_mcp_connections(connections: list[ConnectedMcpServer]) -> None:
     if report_state is None:
         return
     report_state.record_mcp_connections([connection.name for connection in connections])
+
+
+def _note_exit_reason(reason: str) -> None:
+    """Record why the scan stopped so the end-of-scan beacon reports it."""
+    report_state = get_global_report_state()
+    if report_state is not None and report_state.scan_ended_exit_reason is None:
+        report_state.scan_ended_exit_reason = reason
 
 
 def _persist_mcp_status(roster: list[dict[str, Any]]) -> None:
@@ -313,6 +321,7 @@ async def run_strix_scan(
         root_id = uuid.uuid4().hex[:8]
 
     logger.info("Bringing up sandbox session for scan %s", scan_id)
+    set_scan_phase("sandbox_init")
     bundle = await session_manager.create_or_reuse(
         scan_id,
         image=image,
@@ -322,6 +331,7 @@ async def run_strix_scan(
     )
     report("Waiting for the first model response")
     logger.info("Sandbox ready for scan %s", scan_id)
+    set_scan_phase("agent_setup")
 
     sandbox_session = bundle["session"]
 
@@ -573,6 +583,7 @@ async def run_strix_scan(
         async with coordinator._lock:
             root_status = coordinator.statuses.get(root_id)
 
+        set_scan_phase("agent_loop")
         result = await run_agent_loop(
             agent=root_agent,
             initial_input=initial_input,
@@ -610,6 +621,7 @@ async def run_strix_scan(
         return result  # noqa: TRY300
     except BudgetExceededError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
+        _note_exit_reason("budget_exceeded")
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")
@@ -622,6 +634,7 @@ async def run_strix_scan(
             exc,
             scan_id,
         )
+        _note_exit_reason("rate_limited")
         if root_id is not None:
             with contextlib.suppress(Exception):
                 await coordinator.set_status(root_id, "stopped")

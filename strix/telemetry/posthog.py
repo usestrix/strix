@@ -9,6 +9,8 @@ from strix.telemetry._common import (
     SEND_TIMEOUT,
     SESSION_ID,
     base_props,
+    exception_props,
+    get_scan_phase,
     get_version,
     is_first_run,
 )
@@ -178,6 +180,12 @@ def viewer_agent_steered() -> None:
     _send("viewer_agent_steered", {**base_props()})
 
 
-def error(error_type: str) -> None:
-    props = {**base_props(), "error_type": error_type}
+def error(error_type: str, exc: BaseException | None = None) -> None:
+    props: dict[str, Any] = {
+        **base_props(),
+        "error_type": error_type,
+        "phase": get_scan_phase(),
+    }
+    if exc is not None:
+        props.update(exception_props(exc))
     _send("error", props)

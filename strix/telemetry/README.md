@@ -12,7 +12,7 @@ Privacy is our priority. All collected data is anonymized by default. Each sessi
 
 We collect only very **basic** usage data including:
 
-**Session Errors:** Duration and error types (not messages or stack traces)\
+**Session Errors:** Duration, the failure category, the scan phase, and the exception class name (not messages or stack traces)\
 **System Context:** OS type, architecture, Strix version\
 **Scan Context:** Scan mode (quick/standard/deep), scan type (whitebox/blackbox)\
 **Model Usage:** Which LLM model is being used and whether it runs via an API key or a model subscription (not prompts or responses)\
