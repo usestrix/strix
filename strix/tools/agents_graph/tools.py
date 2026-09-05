@@ -12,7 +12,8 @@ from typing import Any, Literal, get_args
 
 from agents import RunContextWrapper, function_tool
 
-from strix.core.agents import Status, coordinator_from_context
+from strix.config import load_settings
+from strix.core.agents import AgentCoordinator, Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
 from strix.report.state import get_global_report_state
@@ -23,6 +24,36 @@ _ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting"})
 
 
 logger = logging.getLogger(__name__)
+
+
+async def _fan_out_limit_error(coordinator: AgentCoordinator, parent_id: str) -> str | None:
+    """Return a model-facing error if spawning a child would breach a fan-out cap.
+
+    Bounds token spend: every extra agent re-pays the full system prompt on each
+    of its turns, so an unbounded graph is the biggest single-target cost driver.
+    Both caps are configurable (``STRIX_MAX_AGENTS`` / ``STRIX_MAX_AGENT_DEPTH``);
+    ``0`` disables that check.
+    """
+    graph = load_settings().agent_graph
+
+    if graph.max_agents and await coordinator.agent_count() >= graph.max_agents:
+        return (
+            f"Agent limit reached ({graph.max_agents} agents). Cannot spawn another. "
+            "Do this work yourself, reuse an existing agent via send_message_to_agent, "
+            "or wait_for_agents to let running ones finish. The operator can raise "
+            "STRIX_MAX_AGENTS if a larger fan-out is intended."
+        )
+
+    if graph.max_agent_depth:
+        child_depth = await coordinator.depth_of(parent_id) + 1
+        if child_depth > graph.max_agent_depth:
+            return (
+                f"Agent depth limit reached (max {graph.max_agent_depth}). This agent is "
+                "too deep in the tree to spawn a child. Run the subtask yourself or hand it "
+                "back to a shallower agent. The operator can raise STRIX_MAX_AGENT_DEPTH."
+            )
+
+    return None
 
 
 def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
@@ -564,6 +595,14 @@ async def create_agent(
                 "success": False,
                 "error": "Scan runner did not provide a child-agent spawner in context",
             },
+            ensure_ascii=False,
+            default=str,
+        )
+
+    limit_error = await _fan_out_limit_error(coordinator, parent_id)
+    if limit_error:
+        return json.dumps(
+            {"success": False, "error": limit_error, "agent_id": None},
             ensure_ascii=False,
             default=str,
         )

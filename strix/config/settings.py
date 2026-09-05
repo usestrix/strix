@@ -88,6 +88,9 @@ class ContextSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     auto_compact: bool = Field(default=True, alias="STRIX_CONTEXT_AUTO_COMPACT")
+    # A larger buffer makes compaction fire sooner (smaller live window), trading
+    # a few extra summary calls for a smaller per-turn context. Raise it to lower
+    # token cost.
     compact_buffer_tokens: int = Field(default=20_000, gt=0, alias="STRIX_CONTEXT_BUFFER_TOKENS")
     keep_tokens: int = Field(default=8_000, gt=0, alias="STRIX_CONTEXT_KEEP_TOKENS")
     fallback_context_tokens: int = Field(
@@ -99,6 +102,30 @@ class ContextSettings(BaseSettings):
     # Floor above the truncation-notice size so a preview always fits.
     tool_output_max_bytes: int = Field(
         default=50 * 1024, ge=1024, alias="STRIX_TOOL_OUTPUT_MAX_BYTES"
+    )
+
+
+class AgentGraphSettings(BaseSettings):
+    """Multi-agent fan-out limits — optionally bound how many agents a scan spawns.
+
+    Every spawned agent re-pays the full system prompt on each of its turns and
+    (by default) inherits a copy of its parent's history, so an unbounded fan-out
+    is a large driver of token spend on one target. These knobs put a
+    deterministic ceiling on it when set. All default to ``0`` (disabled), so the
+    out-of-the-box behavior is unchanged; operators opt in to bound cost.
+    """
+
+    model_config = _BASE_CONFIG
+
+    # Max total agents in the graph (root included). 0 = unlimited (default).
+    max_agents: int = Field(default=0, ge=0, alias="STRIX_MAX_AGENTS")
+    # Max spawn depth. Root is depth 1; a child of root is depth 2. 0 = unlimited.
+    max_agent_depth: int = Field(default=0, ge=0, alias="STRIX_MAX_AGENT_DEPTH")
+    # Token cap on the parent history copied into a child spawned with
+    # inherit_context=True. The tail (most recent turns) is kept; older turns are
+    # dropped with a marker. 0 = copy the full parent history (default).
+    inherit_context_max_tokens: int = Field(
+        default=0, ge=0, alias="STRIX_INHERIT_CONTEXT_MAX_TOKENS"
     )
 
 
@@ -172,6 +199,7 @@ class Settings(BaseSettings):
 
     llm: LlmSettings = Field(default_factory=LlmSettings)
     dedupe: DedupeSettings = Field(default_factory=DedupeSettings)
+    agent_graph: AgentGraphSettings = Field(default_factory=AgentGraphSettings)
     runtime: RuntimeSettings = Field(default_factory=RuntimeSettings)
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)

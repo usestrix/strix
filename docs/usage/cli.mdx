@@ -48,6 +48,13 @@ strix (--target <target> | --target-list <path>) [options]
   Scan depth: `quick`, `standard`, or `deep`.
 </ParamField>
 
+<ParamField path="--reasoning-effort" type="string">
+  Model reasoning effort for this run: `none`, `minimal`, `low`, `medium`,
+  `high`, `xhigh`, or `max`. Higher = more thinking tokens = higher cost and
+  (usually) deeper analysis. Overrides `STRIX_REASONING_EFFORT` and the config
+  file for this run. Defaults to the configured value (`high`).
+</ParamField>
+
 <ParamField path="--scope-mode" type="string" default="auto">
   Code scope mode: `auto` (enable PR diff-scope in CI/headless runs), `diff` (force changed-files scope), or `full` (disable diff-scope).
 </ParamField>

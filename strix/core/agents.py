@@ -465,6 +465,27 @@ class AgentCoordinator:
                 if aid != agent_id and status in {"running", "waiting"}
             ]
 
+    async def agent_count(self) -> int:
+        """Total agents in the graph (root included), across every status."""
+        async with self._lock:
+            return len(self.parent_of)
+
+    async def depth_of(self, agent_id: str) -> int:
+        """1-based spawn depth of ``agent_id`` (root = 1).
+
+        Walks parent links defensively: an unknown id or a cycle stops the walk
+        rather than looping forever.
+        """
+        async with self._lock:
+            depth = 0
+            seen: set[str] = set()
+            current: str | None = agent_id
+            while current is not None and current in self.parent_of and current not in seen:
+                seen.add(current)
+                depth += 1
+                current = self.parent_of.get(current)
+            return max(depth, 1)
+
     async def graph_snapshot(
         self,
     ) -> tuple[dict[str, str | None], dict[str, Status], dict[str, str], dict[str, str]]:

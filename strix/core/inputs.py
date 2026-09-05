@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
+from strix.config import load_settings
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
     OPENROUTER_ATTRIBUTION_HEADERS,
@@ -21,6 +22,41 @@ from strix.config.models import (
     routes_through_litellm,
 )
 from strix.core.sessions import scrub_images_from_items
+
+
+# Rough tokens→chars factor for bounding inherited context without a model-bound
+# tokenizer. ~4 chars/token is the usual estimate; kept conservative so the cap
+# never lets more through than intended.
+_CHARS_PER_TOKEN = 4
+_HISTORY_TRUNCATED_MARKER = {
+    "role": "user",
+    "content": "[... older inherited context dropped to bound token cost ...]",
+}
+
+
+def _trim_parent_history(parent_history: list[Any]) -> list[Any]:
+    """Keep the most-recent tail of ``parent_history`` within the configured cap.
+
+    A child inheriting its parent's whole history re-pays for it on every one of
+    its own turns, so an unbounded copy multiplies token cost across the fan-out.
+    ``STRIX_INHERIT_CONTEXT_MAX_TOKENS`` bounds it; ``0`` keeps the full history.
+    """
+    max_tokens = load_settings().agent_graph.inherit_context_max_tokens
+    if max_tokens <= 0 or not parent_history:
+        return parent_history
+
+    char_budget = max_tokens * _CHARS_PER_TOKEN
+    kept: list[Any] = []
+    used = 0
+    for item in reversed(parent_history):
+        size = len(json.dumps(item, ensure_ascii=False, default=str))
+        if used + size > char_budget and kept:
+            kept.append(_HISTORY_TRUNCATED_MARKER)
+            break
+        kept.append(item)
+        used += size
+    kept.reverse()
+    return kept
 
 
 if TYPE_CHECKING:
@@ -351,6 +387,7 @@ def child_initial_input(
     user messages.
     """
     parts: list[str] = []
+    parent_history = _trim_parent_history(parent_history)
     if parent_history:
         rendered = json.dumps(
             scrub_images_from_items(parent_history),

@@ -8,6 +8,7 @@ from typing import Any
 import litellm
 import pytest
 
+from strix.config import loader
 from strix.core.inputs import (
     build_root_task,
     build_scan_targets,
@@ -60,6 +61,45 @@ def test_child_initial_input_no_consecutive_same_role(parent_history: list[Any])
 
     roles = [msg["role"] for msg in result]
     assert all(prev != nxt for prev, nxt in pairwise(roles))
+
+
+def test_child_initial_input_trims_inherited_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Tiny cap so all but the most recent item is dropped.
+    monkeypatch.setenv("STRIX_INHERIT_CONTEXT_MAX_TOKENS", "1")
+    loader._cached = None
+    try:
+        history = [
+            {"role": "assistant", "content": "oldest work item that should be dropped"},
+            {"role": "assistant", "content": "newest work item that should be kept"},
+        ]
+        result = child_initial_input(**_child_kwargs(history))
+    finally:
+        loader._cached = None
+
+    content = result[0]["content"]
+    assert "newest work item that should be kept" in content
+    assert "oldest work item that should be dropped" not in content
+    assert "older inherited context dropped" in content
+
+
+def test_child_initial_input_keeps_full_history_when_cap_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_INHERIT_CONTEXT_MAX_TOKENS", "0")
+    loader._cached = None
+    try:
+        history = [
+            {"role": "assistant", "content": "first item kept"},
+            {"role": "assistant", "content": "second item kept"},
+        ]
+        result = child_initial_input(**_child_kwargs(history))
+    finally:
+        loader._cached = None
+
+    content = result[0]["content"]
+    assert "first item kept" in content
+    assert "second item kept" in content
+    assert "older inherited context dropped" not in content
 
 
 def _cache_points(model_name: str) -> Any:
