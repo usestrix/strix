@@ -140,6 +140,10 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
 
 ## Sandbox Configuration
 
+<ParamField path="STRIX_REQUIRE_MOUNT_FREE" default="0" type="string">
+  Enforces mount-free (bind-mount-free) transport for local-code Docker scans. Set to `1`, `true`, `yes`, or `on` to ensure no host directories are bind-mounted into the sandbox container. Local project files are transferred as an isolated snapshot payload. The snapshot lives in the container's writable layer and is discarded with it; in-tree directory symlinks are omitted; symlinked projects are read into memory.
+</ParamField>
+
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">
   Maximum execution time in seconds for sandbox operations.
 </ParamField>
