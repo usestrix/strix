@@ -99,15 +99,9 @@ strix --target ./app-directory
 
 ## Ways to Run Strix
 
-The same agents, three ways to run them. Pick the one that fits your situation.
-
-| | Open Source | Strix Cloud | Enterprise |
-|---|---|---|---|
-| **Best for** | Local development, air-gapped environments, full control | Teams that want results without setup, one-time pentests | Security programs with compliance, procurement, or deployment requirements |
-| **Setup** | Docker + your own LLM key | None. Sign up and launch a pentest in minutes | Tailored onboarding |
-| **Price** | Free (Apache 2.0) | Pay per pentest or a monthly plan | Custom |
-| **Includes** | Full CLI, local viewer, CI runs | Validated findings, one-click autofix, PR reviews, scheduling, integrations | Everything in Cloud, plus SSO, compliance-ready reports (SOC 2, ISO 27001, PCI DSS), VPC or self-hosted deployment, BYOK models, dedicated support and SLA |
-| **Start** | [Quick Start](#-quick-start) | [Run a pentest →](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=table_cloud) | [Try Strix Enterprise →](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=table_demo) |
+- **Open Source** - free, runs locally with Docker and your own LLM key. [Quick Start](#-quick-start)
+- **Strix Cloud** - no setup, validated findings, one-click autofix, and PR reviews. [Run a pentest →](https://app.strix.ai?intent=pentest&utm_source=github&utm_medium=readme&utm_content=table_cloud)
+- **Enterprise** - SSO, compliance-ready reports, VPC or self-hosted deployment. [Try Strix Enterprise →](https://strix.ai/demo?utm_source=github&utm_medium=readme&utm_content=table_demo)
 
 ---
 
