@@ -332,6 +332,16 @@ def test_make_model_settings_sets_request_timeout() -> None:
     assert settings.extra_args["timeout"] == 300.0
 
 
+def test_make_model_settings_sets_configured_token_budget() -> None:
+    settings = make_model_settings(
+        "none",
+        model_name="gpt-4o",
+        max_tokens=12_000,
+    )
+
+    assert settings.max_tokens == 12_000
+
+
 def test_make_model_settings_omits_timeout_when_unset() -> None:
     settings = make_model_settings("none", model_name="gpt-4o")
 
