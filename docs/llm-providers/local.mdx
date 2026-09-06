@@ -37,6 +37,66 @@ For critical assessments, we strongly recommend using state-of-the-art cloud mod
    export LLM_API_BASE="http://localhost:11434"
    ```
 
+### Context Window
+
+Strix scans keep tool results, agent handoffs, screenshots, and partial findings in the model context. A local model that starts with a small context window can clip important state and make the scan look unreliable even when the model endpoint is healthy.
+
+Use at least these context sizes when your hardware allows it:
+
+| Scan mode | Minimum context | Recommended context |
+|-----------|-----------------|---------------------|
+| Quick | 16k tokens | 32k tokens |
+| Standard | 32k tokens | 64k tokens |
+| Deep | 64k tokens | 128k+ tokens |
+
+Ollama models often run with a smaller default context unless you raise `num_ctx`. Create a Modelfile for the model you want to use:
+
+```text
+FROM qwen3-vl
+PARAMETER num_ctx 65536
+```
+
+Then build and select that local variant:
+
+```bash
+ollama create qwen3-vl-64k -f Modelfile
+export STRIX_LLM="ollama/qwen3-vl-64k"
+export LLM_API_BASE="http://localhost:11434"
+export STRIX_CONTEXT_FALLBACK_TOKENS="65536"
+```
+
+You can also set `num_ctx` on OpenAI-compatible local servers that expose runtime parameters. In LM Studio, set the context length in the model settings before starting the local server. In llama.cpp, start the server with an explicit context size:
+
+```bash
+llama-server --ctx-size 65536 --model /path/to/model.gguf
+```
+
+Larger context windows require more VRAM and RAM. If the model becomes slow or fails to load, lower the scan mode first, then lower the context window. Avoid using a 4k or 8k context for real scans; it is usually too small for Strix's agent workflow.
+
+When you use a custom local model name, keep `STRIX_CONTEXT_FALLBACK_TOKENS` aligned with the server's configured context size. This prevents Strix from assuming a larger unknown-model fallback window and compacting too late.
+
+### Context Clipping Symptoms
+
+These symptoms usually mean the local model is clipping or losing context:
+
+- Agents repeat the same enumeration steps without using earlier results.
+- Tool calls become incomplete, malformed, or unrelated to the current target.
+- The scan reaches context overflow or summarization errors repeatedly.
+- Final reports miss findings that appeared earlier in the run.
+- Child agents stop early after large directory, HTTP, or screenshot outputs.
+
+If this happens, increase the model context window and tune Strix's context settings:
+
+```bash
+export STRIX_CONTEXT_AUTO_COMPACT="1"
+export STRIX_CONTEXT_BUFFER_TOKENS="20000"
+export STRIX_CONTEXT_KEEP_TOKENS="8000"
+export STRIX_CONTEXT_SUMMARY_TOKENS="4096"
+export STRIX_TOOL_OUTPUT_MAX_TOKENS="8000"
+```
+
+For constrained local hardware, reduce `STRIX_TOOL_OUTPUT_MAX_TOKENS` before reducing the model context window. That keeps oversized tool results from crowding out the scan plan and prior findings.
+
 ### Recommended Models
 
 We recommend these models for the best balance of reasoning and tool use:
