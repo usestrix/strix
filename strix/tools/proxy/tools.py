@@ -67,6 +67,30 @@ async def _call[T](client: Client, fn: Callable[[Client], Awaitable[T]]) -> T:
         return await fn(client)
 
 
+async def existing_request_ids(
+    ctx: RunContextWrapper,
+    request_ids: list[str],
+) -> set[str]:
+    """Return request IDs that exist in the current Caido project."""
+    if not request_ids:
+        return set()
+
+    client = await _ctx_client(ctx)
+    if client is None:
+        raise RuntimeError("Caido client is not available")
+
+    httpql_filter = " OR ".join(f"id.eq:{request_id}" for request_id in request_ids)
+    connection = await _call(
+        client,
+        lambda client: caido_api.list_requests_with_client(
+            client,
+            httpql_filter=httpql_filter,
+            first=len(request_ids),
+        ),
+    )
+    return {str(edge.node.request.id) for edge in connection.edges}
+
+
 def _to_tool_json(value: Any) -> Any:
     """Recursively convert SDK dataclasses/Pydantic objects to tool JSON values."""
     if value is None or isinstance(value, str | int | float | bool):

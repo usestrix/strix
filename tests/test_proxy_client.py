@@ -9,6 +9,7 @@ call at a time against the shared client.
 from __future__ import annotations
 
 import asyncio
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 
 import pytest
@@ -227,3 +228,36 @@ async def test_ctx_client_degrades_when_bootstrap_failed() -> None:
 
     handle = CaidoBootstrapHandle(asyncio.ensure_future(_bootstrap()))
     assert await tools._ctx_client(cast("Any", _Ctx({"caido_client": handle}))) is None
+
+
+async def test_existing_request_ids_queries_current_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _FakeClient("host")
+    connection = SimpleNamespace(
+        edges=[
+            SimpleNamespace(
+                node=SimpleNamespace(request=SimpleNamespace(id="1042")),
+            )
+        ]
+    )
+
+    async def list_requests_with_client(
+        passed_client: Any,
+        *,
+        httpql_filter: str,
+        first: int,
+    ) -> Any:
+        assert passed_client is client
+        assert httpql_filter == "id.eq:1042 OR id.eq:1088"
+        assert first == 2
+        return connection
+
+    monkeypatch.setattr(caido_api, "list_requests_with_client", list_requests_with_client)
+
+    existing = await tools.existing_request_ids(
+        cast("Any", _Ctx({"caido_client": client})),
+        ["1042", "1088"],
+    )
+
+    assert existing == {"1042"}

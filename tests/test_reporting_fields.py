@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 
@@ -13,10 +13,13 @@ from strix.report.dedupe import (
 )
 from strix.report.state import ReportState, set_global_report_state
 from strix.tools.finish.tool import finish_scan
+from strix.tools.reporting import tool as reporting_tool
 from strix.tools.reporting.tool import (
     _do_create,
     _do_create_dependency,
     _do_update,
+    _normalize_http_exchange_ids,
+    _verify_http_exchange_ids,
     create_dependency_report,
     create_vulnerability_report,
     update_vulnerability_report,
@@ -115,6 +118,7 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
         cve=None,
         cwe="CWE-79",
         code_locations=None,
+        http_exchange_ids=["1042", "1042", "1088"],
         fix_pr_body="## Fix\nEncode output.",
     )
     assert result["success"] is True
@@ -127,6 +131,25 @@ async def test_create_report_persists_new_fields(report_state: ReportState) -> N
     assert report["counterevidence"] == "No output encoding or CSP observed on this response."
     assert report["confidence"] == "high"
     assert report["severity_change_conditions"] == "A strict CSP would lower the severity."
+    assert report["http_exchange_ids"] == ["1042", "1088"]
+
+
+def test_create_report_does_not_commit_when_callback_fails(
+    report_state: ReportState,
+) -> None:
+    def fail_persistence(_report: dict[str, Any]) -> None:
+        raise RuntimeError("persistence failed")
+
+    report_state.vulnerability_found_callback = fail_persistence
+
+    with pytest.raises(RuntimeError, match="persistence failed"):
+        report_state.add_vulnerability_report(
+            title="Unstored finding",
+            severity="high",
+            http_exchange_ids=["1042"],
+        )
+
+    assert report_state.vulnerability_reports == []
 
 
 async def test_create_report_requires_evidence_and_assumptions(
@@ -1040,7 +1063,13 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
 
 def test_vuln_tool_exposes_new_params() -> None:
     props = create_vulnerability_report.params_json_schema["properties"]
-    for field in ("evidence", "assumptions", "fix_effort", "fix_pr_body"):
+    for field in (
+        "evidence",
+        "assumptions",
+        "fix_effort",
+        "fix_pr_body",
+        "http_exchange_ids",
+    ):
         assert field in props
 
     dep_props = create_dependency_report.params_json_schema["properties"]
@@ -1353,6 +1382,57 @@ def test_update_vulnerability_report_records_chained_impact(report_state: Report
     assert updated["severity"] == "critical"
     assert updated["updated_at"]
     assert report_state.update_vulnerability_report("vuln-0404", {"severity": "high"}) is None
+
+
+def test_update_replaces_http_exchange_ids(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="A replay produced a clearer proving exchange.",
+        fields={"http_exchange_ids": ["204", "204", "205"]},
+    )
+
+    assert result["success"] is True
+    assert report_state.vulnerability_reports[0]["http_exchange_ids"] == ["204", "205"]
+
+
+async def test_create_rejects_invalid_http_exchange_ids(report_state: ReportState) -> None:
+    result = await _do_create(
+        **_CONFIRMED_KWARGS,
+        http_exchange_ids=["ok", "contains space"],
+    )
+
+    assert result["success"] is False
+    assert any("visible ASCII" in error for error in result["errors"])
+    assert report_state.vulnerability_reports == []
+
+
+def test_http_exchange_id_limit_applies_after_deduplication() -> None:
+    request_ids, errors = _normalize_http_exchange_ids(["1042"] * 11)
+
+    assert errors == []
+    assert request_ids == ["1042"]
+
+
+async def test_http_exchange_ids_must_exist_in_current_proxy_project(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def existing_request_ids(
+        _ctx: Any,
+        _request_ids: list[str],
+    ) -> set[str]:
+        return {"1042"}
+
+    monkeypatch.setattr(reporting_tool, "existing_request_ids", existing_request_ids)
+
+    request_ids, errors = await _verify_http_exchange_ids(
+        cast("Any", object()),
+        ["1042", "1088"],
+    )
+
+    assert request_ids is None
+    assert errors == ["http_exchange_ids do not exist in the current proxy project: 1088"]
 
 
 def test_update_vulnerability_report_ignores_identical_content(report_state: ReportState) -> None:

@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Any
 from agents import RunContextWrapper, function_tool
 
 from strix.tools.nullish import clean_optional
+from strix.tools.proxy.tools import existing_request_ids
 
 
 if TYPE_CHECKING:
@@ -168,6 +169,8 @@ _REQUIRED_FIELDS = {
 
 _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 _VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
+_MAX_HTTP_EXCHANGE_IDS = 10
+_MAX_HTTP_EXCHANGE_ID_CHARS = 128
 
 
 def _validate_required_text(fields: dict[str, str]) -> list[str]:
@@ -175,6 +178,71 @@ def _validate_required_text(fields: dict[str, str]) -> list[str]:
     return [
         msg for name, msg in _REQUIRED_FIELDS.items() if not str(fields.get(name) or "").strip()
     ]
+
+
+def _normalize_http_exchange_ids(raw: Any) -> tuple[list[str] | None, list[str]]:
+    """Return distinct proxy exchange ids in their original order."""
+    if raw is None:
+        return None, []
+    if not isinstance(raw, list):
+        return None, ["http_exchange_ids must be a list of proxy request ids"]
+
+    normalized: list[str] = []
+    errors: list[str] = []
+    seen: set[str] = set()
+    for index, value in enumerate(raw):
+        if not isinstance(value, str):
+            errors.append(f"http_exchange_ids[{index}] must be a string")
+            continue
+        request_id = value.strip()
+        if not request_id:
+            errors.append(f"http_exchange_ids[{index}] cannot be empty")
+            continue
+        if len(request_id) > _MAX_HTTP_EXCHANGE_ID_CHARS:
+            errors.append(
+                f"http_exchange_ids[{index}] must be {_MAX_HTTP_EXCHANGE_ID_CHARS} "
+                "characters or fewer"
+            )
+            continue
+        if any(ord(char) < 0x21 or ord(char) > 0x7E for char in request_id):
+            errors.append(f"http_exchange_ids[{index}] must contain only visible ASCII characters")
+            continue
+        if not request_id.isdigit():
+            errors.append(f"http_exchange_ids[{index}] must be a numeric proxy request id")
+            continue
+        if request_id not in seen:
+            seen.add(request_id)
+            normalized.append(request_id)
+            if len(normalized) > _MAX_HTTP_EXCHANGE_IDS:
+                errors.append(
+                    f"http_exchange_ids can contain at most "
+                    f"{_MAX_HTTP_EXCHANGE_IDS} distinct request ids"
+                )
+                break
+    return normalized, errors
+
+
+async def _verify_http_exchange_ids(
+    ctx: RunContextWrapper,
+    raw: Any,
+) -> tuple[list[str] | None, list[str]]:
+    """Verify proxy exchange IDs against the current Caido project."""
+    request_ids, errors = _normalize_http_exchange_ids(raw)
+    if request_ids is None or errors or not request_ids:
+        return request_ids, errors
+
+    try:
+        existing_ids = await existing_request_ids(ctx, request_ids)
+    except Exception:
+        logger.exception("Could not verify HTTP exchange IDs against the current Caido project")
+        return None, ["http_exchange_ids could not be verified against the current proxy project"]
+
+    missing_ids = [request_id for request_id in request_ids if request_id not in existing_ids]
+    if missing_ids:
+        return None, [
+            "http_exchange_ids do not exist in the current proxy project: " + ", ".join(missing_ids)
+        ]
+    return request_ids, []
 
 
 def _validate_cvss_breakdown(breakdown: Any) -> list[str]:
@@ -299,7 +367,7 @@ _UPDATE_TEXT_FIELDS = (
 )
 
 
-def _collect_update_changes(  # noqa: PLR0912
+def _collect_update_changes(  # noqa: PLR0912, PLR0915
     fields: dict[str, Any],
 ) -> tuple[dict[str, Any], list[str]]:
     """Validate the fields a revision replaces and return them with any errors."""
@@ -368,6 +436,12 @@ def _collect_update_changes(  # noqa: PLR0912
     if cwe:
         changes["cwe"] = cwe
 
+    raw_http_exchange_ids = fields.get("http_exchange_ids")
+    http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(raw_http_exchange_ids)
+    errors.extend(http_exchange_errors)
+    if raw_http_exchange_ids is not None and not http_exchange_errors:
+        changes["http_exchange_ids"] = http_exchange_ids or []
+
     return changes, errors
 
 
@@ -378,6 +452,7 @@ _DYNAMIC_ONLY_UPDATE_FIELDS = (
     "method",
     "poc_description",
     "poc_script_code",
+    "http_exchange_ids",
 )
 
 # A dependency finding is rated in the context of the codebase that pins it, and
@@ -606,6 +681,7 @@ async def _do_create(
     cve: str | None,
     cwe: str | None,
     code_locations: list[dict[str, Any]] | None,
+    http_exchange_ids: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
@@ -651,6 +727,10 @@ async def _do_create(
     errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
     cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)
     errors.extend(identifier_errors)
+    normalized_http_exchange_ids, http_exchange_errors = _normalize_http_exchange_ids(
+        http_exchange_ids
+    )
+    errors.extend(http_exchange_errors)
 
     if errors:
         return {"success": False, "error": "Validation failed", "errors": errors}
@@ -712,6 +792,7 @@ async def _do_create(
             "code_locations": parsed_locations,
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
+            "http_exchange_ids": normalized_http_exchange_ids,
         }
 
         dedupe = await check_duplicate(candidate, existing)
@@ -796,6 +877,7 @@ async def create_vulnerability_report(
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    http_exchange_ids: list[str] | None = None,
     confidence_rationale: str | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
@@ -1040,6 +1122,10 @@ async def create_vulnerability_report(
         cve: ``CVE-YYYY-NNNNN`` if certain, else omit.
         cwe: ``CWE-NNN`` (most specific child) if certain, else omit.
         code_locations: White-box findings — list of location objects.
+        http_exchange_ids: Proxy request IDs that prove this finding.
+            Copy these IDs from ``list_requests`` or ``view_request``.
+            Include only requests that support this finding. Keep the ids
+            out of ``evidence`` and all other report text.
 
             **How ``fix_before`` / ``fix_after`` work**: they're used as
             literal GitHub/GitLab PR suggestion blocks. When a reviewer
@@ -1187,6 +1273,21 @@ async def create_vulnerability_report(
             reduce impact and lower the severity.
         fix_effort: "low"
     """
+    http_exchange_ids, http_exchange_errors = await _verify_http_exchange_ids(
+        ctx,
+        http_exchange_ids,
+    )
+    if http_exchange_errors:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Validation failed",
+                "errors": http_exchange_errors,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
 
     result = await _do_create(
@@ -1211,6 +1312,7 @@ async def create_vulnerability_report(
         cve=cve,
         cwe=cwe,
         code_locations=code_locations,
+        http_exchange_ids=http_exchange_ids,
         fix_verification=fix_verification,
         fix_pr_body=fix_pr_body,
         agent_id=agent_id,
@@ -1245,6 +1347,7 @@ async def update_vulnerability_report(
     cve: str | None = None,
     cwe: str | None = None,
     code_locations: list[dict[str, Any]] | None = None,
+    http_exchange_ids: list[str] | None = None,
     fix_verification: str | None = None,
     fix_pr_body: str | None = None,
     contextual_cvss_reasoning: str | None = None,
@@ -1317,12 +1420,29 @@ async def update_vulnerability_report(
         cve: Replacement CVE id.
         cwe: Replacement CWE id.
         code_locations: Replacement code locations.
+        http_exchange_ids: Replacement proxy request ids. Pass an empty
+            list to remove all linked exchanges.
         fix_verification: Verification statement for an applyable fix.
         fix_pr_body: Replacement fix PR body.
         contextual_cvss_reasoning: Dependency findings only. What you
             observed in this codebase that justifies the contextual
             ``cvss_breakdown``.
     """
+    http_exchange_ids, http_exchange_errors = await _verify_http_exchange_ids(
+        ctx,
+        http_exchange_ids,
+    )
+    if http_exchange_errors:
+        return json.dumps(
+            {
+                "success": False,
+                "error": "Validation failed",
+                "errors": http_exchange_errors,
+            },
+            ensure_ascii=False,
+            default=str,
+        )
+
     agent_id, agent_name = _caller_identity(ctx)
     result = await asyncio.to_thread(
         _do_update,
@@ -1350,6 +1470,7 @@ async def update_vulnerability_report(
             "cve": cve,
             "cwe": cwe,
             "code_locations": code_locations,
+            "http_exchange_ids": http_exchange_ids,
             "fix_verification": fix_verification,
             "fix_pr_body": fix_pr_body,
             "contextual_cvss_reasoning": contextual_cvss_reasoning,
