@@ -12,6 +12,7 @@ from strix.config.models import (
     _NonStreamingModel,
     _TurnGuardModel,
     is_recommended_or_frontier_model,
+    model_supports_reasoning,
     request_timeout_extra_args,
     routes_through_litellm,
     supports_strict_tool_schemas,
@@ -21,6 +22,19 @@ from strix.config.models import (
 @pytest.mark.parametrize("model_name", RECOMMENDED_MODEL_NAMES)
 def test_recommended_models_are_accepted(model_name: str) -> None:
     assert is_recommended_or_frontier_model(model_name)
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    ["openai/glm-5.3", "glm-5.3", "hosted_vllm/glm-5.3", "openai/kimi-k3", "openai/qwen3.8-max"],
+)
+def test_reasoning_support_follows_the_model_not_the_route(model_name: str) -> None:
+    assert model_supports_reasoning(model_name)
+
+
+def test_reasoning_support_rejects_unknown_models() -> None:
+    assert not model_supports_reasoning("openai/no-such-model-xyz")
+    assert not model_supports_reasoning("openai/gpt-4.1")
 
 
 def test_request_timeout_extra_args_positive() -> None:
