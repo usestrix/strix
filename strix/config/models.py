@@ -593,17 +593,27 @@ RECOMMENDED_MODEL_NAMES = (
 
 _RECOMMENDED_MODEL_NAME_SET = frozenset(name.lower() for name in RECOMMENDED_MODEL_NAMES)
 
-FRONTIER_MODEL_FAMILIES = (
-    (("azure", "azure_ai", "bedrock_mantle", "chatgpt", "openai"), ("gpt-5",)),
-    (
-        ("anthropic", "azure_ai", "bedrock", "claude", "databricks", "snowflake", "vertex_ai"),
-        ("claude-fable-5", "claude-opus-5", "claude-opus-4", "claude-sonnet-5", "claude-sonnet-4"),
-    ),
-    (("google", "gemini", "vertex_ai"), ("gemini-3",)),
-    (("deepseek",), ("deepseek-v4", "deepseek-r1", "deepseek-reasoner")),
-    (("alibaba", "dashscope", "qwen"), ("qwen3.8", "qwen3.7", "qwen3-max")),
-    (("moonshot", "moonshotai", "kimi"), ("kimi-k3", "kimi-k2.7", "kimi-k2.6")),
-    (("zai", "z-ai", "zai-org", "zhipuai"), ("glm-5.3", "glm-5.2")),
+# Matched against the bare model name only: the route (``openai/``, ``openrouter/``,
+# a local gateway, ...) says nothing about the model's quality.
+FRONTIER_MODEL_PREFIXES = (
+    "gpt-5",
+    "claude-fable-5",
+    "claude-opus-5",
+    "claude-opus-4",
+    "claude-sonnet-5",
+    "claude-sonnet-4",
+    "gemini-3",
+    "deepseek-v4",
+    "deepseek-r1",
+    "deepseek-reasoner",
+    "qwen3.8",
+    "qwen3.7",
+    "qwen3-max",
+    "kimi-k3",
+    "kimi-k2.7",
+    "kimi-k2.6",
+    "glm-5.3",
+    "glm-5.2",
 )
 
 
@@ -837,11 +847,8 @@ def is_recommended_or_frontier_model(model_name: str) -> bool:
         return False
     if name in _RECOMMENDED_MODEL_NAME_SET:
         return True
-    provider_name, bare_model_name = _split_model_provider(name)
-    return any(
-        _matches_frontier_family(provider_name, bare_model_name, provider_markers, prefixes)
-        for provider_markers, prefixes in FRONTIER_MODEL_FAMILIES
-    )
+    bare_model_name = name.rsplit("/", 1)[-1]
+    return _matches_model_prefix(bare_model_name, FRONTIER_MODEL_PREFIXES)
 
 
 def _normalized_model_name(model_name: str) -> str:
@@ -851,28 +858,6 @@ def _normalized_model_name(model_name: str) -> str:
             name = name[len(prefix) :]
             break
     return name
-
-
-def _split_model_provider(model_name: str) -> tuple[str | None, str]:
-    if "/" not in model_name:
-        return None, model_name
-    provider_name, bare_model_name = model_name.rsplit("/", 1)
-    return provider_name, bare_model_name
-
-
-def _matches_frontier_family(
-    provider_name: str | None,
-    model_name: str,
-    provider_markers: tuple[str, ...],
-    model_prefixes: tuple[str, ...],
-) -> bool:
-    if not _matches_model_prefix(model_name, model_prefixes):
-        return False
-    if provider_name is None:
-        return True
-    return _contains_provider_marker(
-        provider_name, provider_markers, split_compound_names=True
-    ) or _contains_provider_marker(model_name, provider_markers)
 
 
 def _matches_model_prefix(model_name: str, model_prefixes: tuple[str, ...]) -> bool:
@@ -890,16 +875,6 @@ def _model_name_candidates(model_name: str) -> tuple[str, ...]:
         model_name.split(".", index)[-1] for index in range(1, model_name.count(".") + 1)
     )
     return (model_name, *suffixes)
-
-
-def _contains_provider_marker(
-    value: str, provider_markers: tuple[str, ...], *, split_compound_names: bool = False
-) -> bool:
-    parts = set(value.replace(".", "/").split("/"))
-    if split_compound_names:
-        for separator in ("_", "-"):
-            parts.update(piece for part in tuple(parts) for piece in part.split(separator))
-    return any(marker in parts for marker in provider_markers)
 
 
 def is_known_openai_bare_model(model_name: str) -> bool:

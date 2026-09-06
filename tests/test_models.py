@@ -79,6 +79,14 @@ def test_recommended_models_are_matched_case_insensitively() -> None:
         "zai/glm-5.3-flash",
         "openrouter/z-ai/glm-5.3",
         "novita/zai-org/glm-5.2",
+        "openai/glm-5.3",
+        "openai/zai-org/glm-5.3",
+        "hosted_vllm/glm-5.3",
+        "openai/claude-opus-4-8",
+        "openai/deepseek-v4-pro",
+        "custom-ollama/gpt-5-mini-local",
+        "custom-provider/claude-opus-4-local",
+        "custom-provider/glm-5.3-local",
     ],
 )
 def test_frontier_model_families_are_accepted(model_name: str) -> None:
@@ -93,15 +101,13 @@ def test_frontier_model_families_are_accepted(model_name: str) -> None:
         "anthropic/claude-3-5-sonnet-latest",
         "ollama/llama3.1",
         "deepseek/deepseek-chat",
-        "custom-ollama/gpt-5-mini-local",
-        "custom-provider/claude-opus-4-local",
         "xai/grok-4.5",
         "openrouter/x-ai/grok-4",
         "mistral/mistral-medium-3-5",
         "mistral/magistral-medium-latest",
         "zai/glm-4.7",
+        "openai/glm-4.7",
         "openrouter/z-ai/glm-5",
-        "custom-provider/glm-5.3-local",
     ],
 )
 def test_non_frontier_models_are_rejected(model_name: str) -> None:

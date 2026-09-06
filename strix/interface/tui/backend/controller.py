@@ -192,7 +192,7 @@ class TuiController:
         model_warning = ""
         if model and not is_recommended_or_frontier_model(model):
             model_warning = (
-                f"{model} is not a recommended frontier model; pentest quality could be degraded"
+                f"{model} is not a recommended frontier model. Pentest quality could be degraded."
             )
         state = {
             "setup_mode": self.setup_mode,

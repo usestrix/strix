@@ -370,6 +370,17 @@ func TestStartedSnapshotTransitionsToLiveView(t *testing.T) {
 	}
 }
 
+func TestSplashModelWarningRendersTheBackendSentenceOnce(t *testing.T) {
+	warning := "openai/glm-5.3 is not a recommended frontier model. Pentest quality could be degraded."
+	got := ansi.Strip(splashModelWarning("openai/glm-5.3", warning))
+	if got != "⚠ "+warning {
+		t.Fatalf("splash warning = %q, want %q", got, "⚠ "+warning)
+	}
+	if got := ansi.Strip(splashModelWarning("other/model", warning)); got != "⚠ "+warning {
+		t.Fatalf("splash warning with unrelated model = %q", got)
+	}
+}
+
 func TestSetupStartScreenFitsNarrowTerminal(t *testing.T) {
 	model := New(nil)
 	model.width, model.height = 40, 18
