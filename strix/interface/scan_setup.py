@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
@@ -123,6 +124,12 @@ def build_targets_info(args: argparse.Namespace) -> None:
         if target_type == "api_spec":
             _resolve_api_spec(target, target_dict)
 
+        # Hard containment: with --read-only-local-targets the scanner must not
+        # be able to modify the evidence tree, so every local-code target is
+        # marked read-only here and the sandbox mounts it accordingly.
+        if target_type == "local_code" and getattr(args, "read_only_local_targets", False):
+            target_dict["read_only"] = True
+
         args.targets_info.append(
             {"type": target_type, "details": target_dict, "original": display_target}
         )
@@ -199,6 +206,34 @@ def prepare_run(args: argparse.Namespace) -> None:
     _persist_run_record(args)
 
 
+def _same_location(left: Path, right: Path) -> bool:
+    try:
+        return left.samefile(right)
+    except OSError:
+        return left == right
+
+
+def _reject_workspace_overlap(workspace: Path, local_sources: list[dict[str, Any]]) -> None:
+    workspace = workspace.expanduser().resolve()
+    for source in local_sources:
+        # Only immutable evidence needs an alias guard. Two writable views do
+        # not weaken the containment contract.
+        if not source.get("read_only"):
+            continue
+        evidence = Path(str(source["source_path"])).expanduser().resolve()
+        workspace_inside_evidence = any(
+            _same_location(candidate, evidence) for candidate in (workspace, *workspace.parents)
+        )
+        evidence_inside_workspace = any(
+            _same_location(candidate, workspace) for candidate in (evidence, *evidence.parents)
+        )
+        if workspace_inside_evidence or evidence_inside_workspace:
+            raise ValueError(
+                f"Workspace mount '{workspace}' overlaps read-only target '{evidence}'. "
+                "Use disjoint directories so writable work cannot alias immutable evidence."
+            )
+
+
 def attach_workspace_mount(args: argparse.Namespace) -> None:
     """Expose ``args.workspace_mount`` to the sandbox without making it a target.
 
@@ -210,8 +245,19 @@ def attach_workspace_mount(args: argparse.Namespace) -> None:
     mount = getattr(args, "workspace_mount", None)
     if not mount:
         return
-    args.workspace_subdir = derive_local_base_name(mount)
     local_sources = list(getattr(args, "local_sources", None) or [])
+    _reject_workspace_overlap(Path(mount), local_sources)
+    base_subdir = derive_local_base_name(mount)
+    used_subdirs = {
+        str(source["workspace_subdir"])
+        for source in local_sources
+        if source.get("workspace_subdir")
+    }
+    args.workspace_subdir = base_subdir
+    suffix = 2
+    while args.workspace_subdir in used_subdirs:
+        args.workspace_subdir = f"{base_subdir}-{suffix}"
+        suffix += 1
     local_sources.append(
         {
             "source_path": mount,
@@ -261,6 +307,10 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         # Persisted so --resume can remount the workspace: it is not a target,
         # so it cannot be rebuilt from targets_info.
         "workspace_mount": getattr(args, "workspace_mount", None),
+        # Persisted so --resume keeps local-code targets read-only. The flag is
+        # baked into details.read_only at build_targets_info time; this is the
+        # user-facing record of that choice.
+        "read_only_local_targets": getattr(args, "read_only_local_targets", False),
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scope_mode": args.scope_mode,
         "diff_base": args.diff_base,

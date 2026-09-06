@@ -67,6 +67,17 @@ strix -t https://github.com/org/repo -t https://your-app.com
 strix --target-list ./targets.txt
 ```
 
+## Keep Local Evidence Read-Only
+
+Use a separate writable directory when the scanner may propose code changes:
+
+```bash
+mkdir -p ./remediation
+strix --target ./evidence --read-only-local-targets --workspace-mount ./remediation
+```
+
+The evidence directory is mounted read-only. The remediation directory is writable but is not added to the scan's authorized targets.
+
 ## Next Steps
 
 <CardGroup cols={2}>

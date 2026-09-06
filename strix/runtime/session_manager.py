@@ -60,7 +60,16 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
             continue
         resolved = Path(host_path).expanduser().resolve()
         target = f"{_WORKSPACE_ROOT}/{ws_subdir}"
-        bind_mounts.append({"source": str(resolved), "target": target, "read_only": False})
+        # A source carries read_only=True when its target was created with
+        # --read-only-local-targets (evidence trees stay immutable); workspace
+        # mounts and ordinary targets stay writable for the agent.
+        bind_mounts.append(
+            {
+                "source": str(resolved),
+                "target": target,
+                "read_only": bool(src.get("read_only", False)),
+            }
+        )
         if src.get("protect_metadata"):
             bind_mounts.extend(_metadata_mounts(resolved, target))
     return bind_mounts
@@ -291,9 +300,15 @@ async def create_or_reuse(
 
     backend_name = load_settings().runtime.backend
     backend = get_backend(backend_name)
+    supports_bind_mounts = backend_supports_bind_mounts(backend_name)
+    if not supports_bind_mounts and any(source.get("read_only") for source in local_sources):
+        raise RuntimeError(
+            f"Sandbox backend '{backend_name}' cannot enforce read-only local targets. "
+            "Use a bind-mount-capable backend or omit --read-only-local-targets."
+        )
 
     staging_dir: Path | None = None
-    if backend_supports_bind_mounts(backend_name):
+    if supports_bind_mounts:
         bind_mounts = build_bind_mounts(local_sources)
         entries: dict[str | Path, BaseEntry] = {}
         if extra_files:
