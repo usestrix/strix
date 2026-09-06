@@ -837,17 +837,7 @@ def model_supports_reasoning(model_name: str) -> bool:
     entry = litellm.model_cost.get(name)
     if entry is None and "/" in name:
         entry = litellm.model_cost.get(name.rsplit("/", 1)[1])
-    if entry is not None:
-        return bool(entry.get("supports_reasoning"))
-    # Reasoning is a property of the model, not of the route: a model only
-    # mapped under other providers (``zai/glm-5.3`` for ``openai/glm-5.3``)
-    # still reasons through an OpenAI-compatible gateway.
-    bare_name = name.rsplit("/", 1)[-1]
-    return any(
-        bool(candidate.get("supports_reasoning"))
-        for key, candidate in litellm.model_cost.items()
-        if key.endswith(f"/{bare_name}") and isinstance(candidate, dict)
-    )
+    return bool(entry and entry.get("supports_reasoning"))
 
 
 def is_recommended_or_frontier_model(model_name: str) -> bool:
