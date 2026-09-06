@@ -3,13 +3,24 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import threading
 from pathlib import Path
 
 import pytest
 
 from strix.config import apply_config_override, loader
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.core.agents import COMPACTION_FAILED, COMPACTION_SUCCESS, COMPACTION_UNAVAILABLE
 from strix.interface.tui.backend.controller import TuiController
+
+
+COMPACT_COMMAND = "/compact"
+COMPRESS_COMMAND = "/compress"
+COMPACTION_AGENT_ID = "compact-agent"
+COMPACTION_SUCCESS_MESSAGE = "Context compaction complete."
+COMPACTION_UNAVAILABLE_MESSAGE = "Context compaction could not be completed for this agent."
+COMPACTION_FAILED_MESSAGE = "Context compaction failed. Please try again."
+THREAD_JOIN_TIMEOUT_SECONDS = 1.0
 
 
 class _SendingCoordinator:
@@ -519,6 +530,107 @@ async def test_stop_handles_coordinator_rejection_after_stale_active_projection(
 
     with pytest.raises(RuntimeError, match="no longer active"):
         await controller.handle("agent.stop", {"agent_id": "agent-1"})
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("command", [COMPACT_COMMAND, COMPRESS_COMMAND])
+async def test_compact_command_compacts_without_sending_message(command: str) -> None:
+    class Coordinator:
+        def __init__(self) -> None:
+            self.compacted: list[str] = []
+            self.sent: list[tuple[str, dict[str, str]]] = []
+
+        async def compact_agent_session(self, agent_id: str) -> str:
+            self.compacted.append(agent_id)
+            return COMPACTION_SUCCESS
+
+        async def send(self, agent_id: str, message: dict[str, str]) -> bool:
+            self.sent.append((agent_id, message))
+            return True
+
+    coordinator = Coordinator()
+    controller = TuiController(args(), coordinator=coordinator)
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": COMPACTION_AGENT_ID, "message": command},
+    )
+
+    assert result == {"compacted": True}
+    assert coordinator.compacted == [COMPACTION_AGENT_ID]
+    assert coordinator.sent == []
+    events = controller.live_view.events_for_agent(COMPACTION_AGENT_ID)
+    assert [event["data"]["content"] for event in events] == [
+        command,
+        COMPACTION_SUCCESS_MESSAGE,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_compact_command_reports_unavailable_compaction() -> None:
+    class Coordinator:
+        async def compact_agent_session(self, _agent_id: str) -> str:
+            return COMPACTION_UNAVAILABLE
+
+    controller = TuiController(args(), coordinator=Coordinator())
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": COMPACTION_AGENT_ID, "message": COMPACT_COMMAND},
+    )
+
+    assert result == {"compacted": False}
+    events = controller.live_view.events_for_agent(COMPACTION_AGENT_ID)
+    assert events[-1]["data"]["content"] == COMPACTION_UNAVAILABLE_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_compact_command_reports_failed_compaction() -> None:
+    class Coordinator:
+        async def compact_agent_session(self, _agent_id: str) -> str:
+            return COMPACTION_FAILED
+
+    controller = TuiController(args(), coordinator=Coordinator())
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+
+    result = await controller.handle(
+        "agent.send_message",
+        {"agent_id": COMPACTION_AGENT_ID, "message": COMPACT_COMMAND},
+    )
+
+    assert result == {"compacted": False}
+    events = controller.live_view.events_for_agent(COMPACTION_AGENT_ID)
+    assert events[-1]["data"]["content"] == COMPACTION_FAILED_MESSAGE
+
+
+@pytest.mark.asyncio
+async def test_scan_loop_runner_rejects_missing_loop() -> None:
+    controller = TuiController(args())
+    coroutine = asyncio.sleep(0)
+    try:
+        with pytest.raises(RuntimeError, match="Scan loop is not ready"):
+            await controller._run_on_scan_loop(coroutine)
+    finally:
+        coroutine.close()
+
+
+@pytest.mark.asyncio
+async def test_scan_loop_runner_dispatches_to_background_loop() -> None:
+    controller = TuiController(args())
+    scan_loop = asyncio.new_event_loop()
+    thread = threading.Thread(target=scan_loop.run_forever)
+    thread.start()
+    try:
+        controller.set_runtime(scan_loop=scan_loop)
+        result = await controller._run_on_scan_loop(asyncio.sleep(0, result=COMPACTION_SUCCESS))
+    finally:
+        scan_loop.call_soon_threadsafe(scan_loop.stop)
+        thread.join(timeout=THREAD_JOIN_TIMEOUT_SECONDS)
+        scan_loop.close()
+
+    assert result == COMPACTION_SUCCESS
 
 
 @pytest.mark.asyncio

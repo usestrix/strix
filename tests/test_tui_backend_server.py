@@ -12,6 +12,7 @@ import pytest
 from agents.tool import ToolOutputImage
 
 from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.core.agents import COMPACTION_SUCCESS
 from strix.interface.tui.backend.controller import TuiController
 from strix.interface.tui.backend.projection import bounded_state_projection, terminal_projection
 from strix.interface.tui.backend.protocol import (
@@ -23,6 +24,12 @@ from strix.interface.tui.backend.protocol import (
 )
 from strix.interface.tui.backend.server import TuiBackendServer
 from strix.interface.tui.live_view import TuiLiveView
+
+
+COMPACTION_AGENT_ID = "compact-agent"
+COMPACT_COMMAND = "/compact"
+COMPACTION_REQUEST_ID = "compact-request"
+COMPACTION_SUCCESS_MESSAGE = "Context compaction complete."
 
 
 def args() -> argparse.Namespace:
@@ -198,6 +205,56 @@ async def test_server_command_round_trip_over_inherited_socket() -> None:
         state = await receive_until(child, "state")
         assert state["payload"]["revision"] >= 1
         assert state["payload"]["state"]["targets"] == ["example.com"]
+    finally:
+        child.close()
+        await server.close()
+
+
+@pytest.mark.asyncio
+async def test_compact_command_round_trip_over_tui_socket() -> None:
+    class Coordinator:
+        def __init__(self) -> None:
+            self.compacted: list[str] = []
+
+        async def compact_agent_session(self, agent_id: str) -> str:
+            self.compacted.append(agent_id)
+            return COMPACTION_SUCCESS
+
+    coordinator = Coordinator()
+    controller = TuiController(args(), coordinator=coordinator)
+    controller.set_runtime(scan_loop=asyncio.get_running_loop())
+    backend, child = socket.socketpair()
+    child.setblocking(False)  # noqa: FBT003
+    server = TuiBackendServer(controller)
+    await start_server(server, backend, child)
+    try:
+        await receive_initial_state(child)
+        await send_message(
+            child,
+            {
+                "version": PROTOCOL_VERSION,
+                "type": "agent.send_message",
+                "request_id": COMPACTION_REQUEST_ID,
+                "payload": {
+                    "agent_id": COMPACTION_AGENT_ID,
+                    "message": COMPACT_COMMAND,
+                },
+            },
+        )
+
+        result = await receive_until(
+            child,
+            "command_result",
+            request_id=COMPACTION_REQUEST_ID,
+        )
+        assert result["payload"]["ok"] is True
+        assert result["payload"]["result"] == {"compacted": True}
+        assert coordinator.compacted == [COMPACTION_AGENT_ID]
+        events = controller.live_view.events_for_agent(COMPACTION_AGENT_ID)
+        assert [event["data"]["content"] for event in events] == [
+            COMPACT_COMMAND,
+            COMPACTION_SUCCESS_MESSAGE,
+        ]
     finally:
         child.close()
         await server.close()

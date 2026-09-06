@@ -16,7 +16,12 @@ from agents.tool_context import ToolContext
 from openai.types.responses import ResponseOutputMessage, ResponseOutputRefusal
 
 from strix.core import execution
-from strix.core.agents import AgentCoordinator
+from strix.core.agents import (
+    COMPACTION_FAILED,
+    COMPACTION_SUCCESS,
+    COMPACTION_UNAVAILABLE,
+    AgentCoordinator,
+)
 from strix.core.execution import (
     _notify_root_on_budget_reserve,
     notify_parent_on_terminal,
@@ -1308,3 +1313,66 @@ async def test_autonomous_nudge_does_not_offer_the_user() -> None:
     )
 
     assert "respond_to_user" not in items[0]["content"]
+
+
+COMPACTION_AGENT_ID = "compact-agent"
+
+
+@pytest.mark.asyncio
+async def test_coordinator_runs_attached_manual_compactor() -> None:
+    compacted_agents: list[str] = []
+
+    async def compact() -> bool:
+        compacted_agents.append(COMPACTION_AGENT_ID)
+        return True
+
+    coordinator = AgentCoordinator()
+    await coordinator.register(COMPACTION_AGENT_ID, "Compactor", parent_id=None)
+    await coordinator.attach_runtime(COMPACTION_AGENT_ID, compact=compact)
+
+    assert await coordinator.compact_agent_session(COMPACTION_AGENT_ID) == COMPACTION_SUCCESS
+    assert compacted_agents == [COMPACTION_AGENT_ID]
+
+
+@pytest.mark.asyncio
+async def test_coordinator_rejects_manual_compaction_without_runtime() -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register(COMPACTION_AGENT_ID, "Compactor", parent_id=None)
+
+    assert await coordinator.compact_agent_session(COMPACTION_AGENT_ID) == COMPACTION_UNAVAILABLE
+
+
+@pytest.mark.asyncio
+async def test_coordinator_reports_failed_manual_compactor() -> None:
+    async def compact() -> bool:
+        raise RuntimeError("compaction failed")
+
+    coordinator = AgentCoordinator()
+    await coordinator.register(COMPACTION_AGENT_ID, "Compactor", parent_id=None)
+    await coordinator.attach_runtime(COMPACTION_AGENT_ID, compact=compact)
+
+    assert await coordinator.compact_agent_session(COMPACTION_AGENT_ID) == COMPACTION_FAILED
+
+
+@pytest.mark.asyncio
+async def test_force_compact_session_rejects_missing_session() -> None:
+    assert await execution._force_compact_session(MagicMock(), None, MagicMock()) is False
+
+
+@pytest.mark.asyncio
+async def test_force_compact_session_uses_provider_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    session = MagicMock()
+    calls: list[tuple[Any, Any, Any, bool]] = []
+
+    async def compact(agent: Any, attached: Any, config: Any, *, force: bool) -> bool:
+        calls.append((agent, attached, config, force))
+        return True
+
+    agent = MagicMock()
+    run_config = MagicMock()
+    monkeypatch.setattr(execution, "_compact_session", compact)
+
+    assert await execution._force_compact_session(agent, session, run_config) is True
+    assert calls == [(agent, session, run_config, True)]
