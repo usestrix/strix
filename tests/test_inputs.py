@@ -71,6 +71,7 @@ def test_make_model_settings_enables_prompt_cache_for_bedrock_claude() -> None:
     assert _cache_points("bedrock/global.anthropic.claude-opus-4-8") == [
         {"location": "message", "role": "system"},
         {"location": "tool_config"},
+        {"location": "message", "index": -2},
         {"location": "message", "index": -1},
     ]
 
@@ -86,6 +87,7 @@ def test_make_model_settings_enables_prompt_cache_for_bedrock_claude() -> None:
 def test_make_model_settings_enables_prompt_cache_for_non_bedrock_claude(model_name: str) -> None:
     assert _cache_points(model_name) == [
         {"location": "message", "role": "system"},
+        {"location": "message", "index": -2},
         {"location": "message", "index": -1},
     ]
 
@@ -141,6 +143,7 @@ def test_prompt_cache_kept_for_non_bedrock_claude_even_if_unmapped(monkeypatch: 
     for model in ("anthropic/claude-brand-new-9", "openrouter/anthropic/claude-brand-new"):
         assert _cache_points(model) == [
             {"location": "message", "role": "system"},
+            {"location": "message", "index": -2},
             {"location": "message", "index": -1},
         ]
 
