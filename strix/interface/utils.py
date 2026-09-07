@@ -1402,7 +1402,16 @@ def _is_within(path: Path, ancestor: Path) -> bool:
     return path_parts[: len(ancestor_parts)] == ancestor_parts
 
 
-def check_mountable_dir(path: Path) -> None:
+def check_mountable_dir(path: Path, *, allow_home: bool = False) -> None:
+    """Refuse system trees and credential directories for sandbox bind-mounts.
+
+    Scan targets (`--target`) pass ``allow_home=False`` (default), so the
+    operator's exact ``$HOME`` is also refused. Workspace mounts used by the
+    target-less TUI / ``--resume`` flow pass ``allow_home=True``: the operator
+    already confirmed that working directory, and it may legitimately be
+    ``$HOME``, but system trees and credential directories (``.ssh``, ``.aws``, …)
+    must still be refused.
+    """
     resolved = path.resolve()
     if not resolved.is_dir():
         raise ValueError(f"'{path}' is not an existing directory.")
@@ -1411,7 +1420,8 @@ def check_mountable_dir(path: Path) -> None:
     # /private/etc symlink, and only the resolved path is compared below.
     exact = {str(Path(root)).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
     exact |= {str(Path(root).resolve()).casefold() for root in _FORBIDDEN_MOUNT_ROOTS}
-    exact.add(str(Path.home().resolve()).casefold())
+    if not allow_home:
+        exact.add(str(Path.home().resolve()).casefold())
     tree_roots = set(_FORBIDDEN_MOUNT_TREES)
     if os.name == "nt":
         drive = Path(resolved.anchor)

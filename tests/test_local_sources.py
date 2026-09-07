@@ -86,8 +86,8 @@ def test_workspace_mount_is_mounted_without_becoming_a_target(
 ) -> None:
     """A workspace mount reaches the sandbox but carries no target semantics.
 
-    It is the directory the agent works in, so it is exempt from the guard that
-    refuses home directories for scan targets, and it never enters targets_info.
+    Exact ``$HOME`` remains allowed for workspace mounts (unlike scan targets),
+    but the mount never enters targets_info.
     """
     home = tmp_path / "home"
     home.mkdir()
@@ -108,6 +108,23 @@ def test_workspace_mount_is_mounted_without_becoming_a_target(
     assert build_bind_mounts(args.local_sources)[0]["target"] == (
         f"/workspace/{args.workspace_subdir}"
     )
+
+
+def test_workspace_mount_still_rejects_credential_dirs(tmp_path: Path) -> None:
+    ssh_dir = tmp_path / ".ssh"
+    ssh_dir.mkdir()
+    args = argparse.Namespace(targets_info=[], local_sources=[], workspace_mount=str(ssh_dir))
+    with pytest.raises(ValueError, match="Refusing to mount"):
+        attach_workspace_mount(args)
+
+
+def test_workspace_mount_still_rejects_system_trees() -> None:
+    etc = Path("/etc")
+    if not etc.is_dir():
+        pytest.skip("no /etc on this platform")
+    args = argparse.Namespace(targets_info=[], local_sources=[], workspace_mount=str(etc))
+    with pytest.raises(ValueError, match="Refusing to mount"):
+        attach_workspace_mount(args)
 
 
 def test_workspace_mount_absent_leaves_local_sources_alone() -> None:
