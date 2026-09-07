@@ -1,0 +1,107 @@
+---
+title: "Safe First Run"
+description: "Verify your Strix setup safely using a local vulnerable demo app"
+---
+
+Strix is an autonomous pentesting tool — it actively probes, submits forms, and sends requests to its target. Before pointing it at anything you care about, verify your setup against a **local intentionally vulnerable application** where no real damage is possible.
+
+<Warning>
+**Only scan systems you own or are explicitly authorized to test.** Unauthorized scanning is illegal in most jurisdictions. When in doubt, use the local targets described on this page.
+</Warning>
+
+## Option 1: OWASP Juice Shop (Recommended)
+
+[Juice Shop](https://owasp.org/www-project-juice-shop/) is OWASP's intentionally vulnerable web application with 100+ challenges covering the OWASP Top 10. It runs locally in Docker — same as Strix's sandbox.
+
+### Setup
+
+```bash
+# Pull and run Juice Shop (runs on port 3000)
+docker run --rm -d --name juice-shop -p 3000:3000 bkimminich/juice-shop
+
+# Verify it's running
+curl -s http://localhost:3000 | head -5
+```
+
+### Run Strix Against It
+
+```bash
+# Quick scan — fastest way to verify your setup works
+strix --target http://host.docker.internal:3000 --scan-mode quick
+
+# Standard scan — broader coverage
+strix --target http://host.docker.internal:3000 --scan-mode standard
+```
+
+<Note>
+Use `host.docker.internal` (not `localhost`) so the Strix sandbox container can reach the Juice Shop container on your host machine.
+</Note>
+
+### What to Expect
+
+A quick scan against Juice Shop typically finds:
+- SQL injection in the login and search endpoints
+- XSS in user-facing input fields
+- Broken authentication (weak password policies)
+- Information disclosure (error stack traces, directory listings)
+
+Results are saved to `strix_runs/<run-name>/`. Run `strix view` to see the interactive report.
+
+### Cleanup
+
+```bash
+docker stop juice-shop
+```
+
+## Option 2: DVWA (Damn Vulnerable Web Application)
+
+A simpler target for quick setup verification.
+
+```bash
+# Pull and run DVWA (runs on port 8080)
+docker run --rm -d --name dvwa -p 8080:80 vulnerables/web-dvwa
+
+# Default credentials: admin / password
+# Run Strix
+strix --target http://host.docker.internal:8080 --scan-mode quick
+```
+
+## Option 3: Local Codebase (White-Box)
+
+If you want to test Strix's source-aware scanning without any network target:
+
+```bash
+# Clone an intentionally vulnerable codebase
+git clone https://github.com/OWASP/NodeGoat.git /tmp/nodegoat
+
+# Run Strix in white-box mode
+strix --target /tmp/nodegoat --scan-mode quick
+```
+
+This analyzes the source code directly — no running application needed.
+
+<Warning>
+Strix mounts the target directory **live and writable**. The agent may create or modify files during scanning. Always use a fresh clone (as shown above) or commit/stash your changes before scanning an existing working directory.
+</Warning>
+
+## Verifying Your Setup
+
+After your first scan completes, check:
+
+1. **Results directory exists**: `ls strix_runs/`
+2. **Report generated**: Check for `penetration_test_report.md` in the run directory
+3. **Findings present**: `cat strix_runs/<run>/vulnerabilities.json | python3 -m json.tool | head -20`
+4. **Interactive viewer**: `strix view` opens a local dashboard showing findings, severity, and agent activity
+
+## Next Steps
+
+Once your setup is verified against a safe local target:
+
+<CardGroup cols={2}>
+  <Card title="Target Your App" icon="bullseye" href="/quickstart">
+    Point Strix at your own application or codebase.
+  </Card>
+  <Card title="Scan Modes" icon="gauge" href="/usage/scan-modes">
+    Choose the right scan depth for your use case.
+  </Card>
+</CardGroup>
