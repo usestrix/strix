@@ -419,3 +419,15 @@ known_third_party = ["pydantic", "litellm"]
 exclude_dirs = ["docs", "build", "dist", "tests"]
 skips = ["B101", "B601", "B404", "B603", "B607"]  # Skip assert, shell injection, subprocess import and partial path checks
 severity = "medium"
+
+# ============================================================================
+# uv — dependency release-age cooldown
+# ============================================================================
+
+[tool.uv]
+# Don't resolve a version until it's a few days old — a guard against a freshly-
+# compromised upstream. One day under the Dependabot cooldown so its bumps still
+# resolve here; cryptography is exempt for fast security patches. Needs uv >= 0.9.17.
+required-version = ">=0.9.17"
+exclude-newer = "6 days"
+exclude-newer-package = { cryptography = false }
