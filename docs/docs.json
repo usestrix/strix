@@ -36,6 +36,7 @@
               "llm-providers/openai",
               "llm-providers/anthropic",
               "llm-providers/openrouter",
+              "llm-providers/llmtr",
               "llm-providers/vertex",
               "llm-providers/bedrock",
               "llm-providers/azure",
