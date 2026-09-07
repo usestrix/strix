@@ -177,7 +177,8 @@ def prepare_run(args: argparse.Namespace) -> None:
         if target_info["type"] == "repository":
             repo_url = target_info["details"]["target_repo"]
             dest_name = target_info["details"].get("workspace_subdir")
-            cloned_path = clone_repository(repo_url, args.run_name, dest_name)
+            timeout = getattr(args, "git_clone_timeout", None)
+            cloned_path = clone_repository(repo_url, args.run_name, dest_name, timeout=timeout)
             target_info["details"]["cloned_repo_path"] = cloned_path
 
     args.local_sources = collect_local_sources(args.targets_info)
