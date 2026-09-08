@@ -16,6 +16,7 @@ from strix.report.coverage import write_coverage
 from strix.report.pricing import resolve_litellm_model
 from strix.report.sarif import write_sarif
 from strix.report.writer import (
+    VULNERABILITIES_FILENAME,
     read_run_record,
     read_vulnerabilities,
     write_executive_report,
@@ -213,7 +214,6 @@ class ReportState:
 
         self.vulnerability_reports: list[dict[str, Any]] = []
         self.baseline_vulnerability_reports: list[dict[str, Any]] = []
-        self.baseline_run_name: str | None = None
         self.final_scan_result: str | None = None
 
         self.scan_results: dict[str, Any] | None = None
@@ -294,13 +294,13 @@ class ReportState:
             self._telemetry_llm_usage_baseline = self._build_llm_usage_record()
             logger.info("report state hydrated run.json from %s", run_dir)
 
-        json_path = run_dir / "vulnerabilities.json"
+        json_path = run_dir / VULNERABILITIES_FILENAME
         if json_path.exists():
             try:
                 self.vulnerability_reports = read_vulnerabilities(run_dir)
             except (RuntimeError, TypeError) as exc:
                 raise RuntimeError(
-                    f"vulnerabilities.json at {json_path} is corrupt ({exc}); "
+                    f"{VULNERABILITIES_FILENAME} at {json_path} is corrupt ({exc}); "
                     f"refusing to start fresh — that would overwrite prior "
                     f"vulnerability MDs on disk. Inspect or delete the run dir.",
                 ) from exc
@@ -331,7 +331,6 @@ class ReportState:
         baseline_run_name: str,
         vulnerability_reports: list[dict[str, Any]],
     ) -> None:
-        self.baseline_run_name = baseline_run_name
         self.baseline_vulnerability_reports = list(vulnerability_reports)
         logger.info(
             "loaded %d baseline vulnerability report(s) from %s",

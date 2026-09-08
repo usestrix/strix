@@ -217,6 +217,45 @@ def test_list_reports_and_get_report_exclude_baseline_findings(
     assert baseline_lookup["report"] is None
 
 
+def test_hydrate_baseline_run_reads_dedupe_only_findings(
+    report_state: ReportState,
+) -> None:
+    baseline_dir = report_state.get_run_dir().parent / BASELINE_RUN_NAME
+    baseline_dir.mkdir()
+    baseline_report = {
+        "id": BASELINE_REPORT_ID,
+        "title": BASELINE_REPORT_TITLE,
+        "severity": BASELINE_REPORT_SEVERITY,
+    }
+    (baseline_dir / "vulnerabilities.json").write_text(
+        json.dumps([baseline_report]),
+        encoding="utf-8",
+    )
+
+    report_state.hydrate_baseline_run(BASELINE_RUN_NAME)
+
+    assert report_state.get_dedupe_vulnerabilities() == [baseline_report]
+    assert report_state.get_existing_vulnerabilities() == []
+
+
+def test_hydrate_baseline_run_ignores_missing_selection(report_state: ReportState) -> None:
+    report_state.hydrate_baseline_run(None)
+
+    assert report_state.get_dedupe_vulnerabilities() == []
+
+
+def test_hydrate_from_run_dir_rejects_corrupt_vulnerabilities(
+    report_state: ReportState,
+) -> None:
+    (report_state.get_run_dir() / "vulnerabilities.json").write_text(
+        "{not-json",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="refusing to start fresh"):
+        report_state.hydrate_from_run_dir()
+
+
 def test_list_reports_filter_severity(report_state: ReportState) -> None:
     _seed(report_state)
     result = _do_list_reports(

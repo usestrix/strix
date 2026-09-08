@@ -26,6 +26,7 @@ from strix.skills import SKILLS_DIR_ENV, env_skill_dirs, validate_requested_skil
 # Severities ``--fail-on`` accepts, most severe first.
 FAIL_ON_SEVERITIES = ("critical", "high", "medium", "low", "info")
 
+
 BASELINE_RUN_ARG = "--baseline-run"
 RUN_NAME_PATH_SEPARATORS = ("/", "\\")
 

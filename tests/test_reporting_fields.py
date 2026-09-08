@@ -801,22 +801,21 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
         return {"is_duplicate": False}
 
     monkeypatch.setattr("strix.report.dedupe.check_duplicate", fake_check_duplicate)
-    report_state.vulnerability_reports.append(
-        {
-            "id": "vuln-0001",
-            "title": "CVE-2024-0001 in other 1.0.0",
-            "severity": "low",
-            "timestamp": "2026-01-01 00:00:00 UTC",
-            "description": "Existing dependency finding.",
-            "target": "repo/package.json",
-            "cve": "CVE-2024-0001",
-            "dependency_metadata": {
-                "package_name": "other",
-                "installed_version": "1.0.0",
-                "package_ecosystem": "npm",
-            },
-        }
-    )
+    baseline_report = {
+        "id": "vuln-0001",
+        "title": "CVE-2024-0001 in other 1.0.0",
+        "severity": "low",
+        "timestamp": "2026-01-01 00:00:00 UTC",
+        "description": "Existing dependency finding.",
+        "target": "repo/package.json",
+        "cve": "CVE-2024-0001",
+        "dependency_metadata": {
+            "package_name": "other",
+            "installed_version": "1.0.0",
+            "package_ecosystem": "npm",
+        },
+    }
+    report_state.load_baseline_vulnerabilities(BASELINE_RUN_NAME, [baseline_report])
 
     result = await _do_create_dependency(
         title="CVE-2024-0001 in sample 1.0.0",
@@ -842,6 +841,7 @@ async def test_dependency_report_dedupe_candidate_includes_dependency_metadata(
     )
 
     assert result["success"] is True
+    assert captured["existing"] == [baseline_report]
     assert captured["candidate"] == {
         "title": "CVE-2024-0001 in sample 1.0.0",
         "description": "Published advisory affects the pinned version.",
@@ -905,6 +905,9 @@ async def test_create_report_suppresses_duplicate_from_baseline_run(
         remediation_steps="Use parameterized queries.",
         evidence="The response contains authenticated data.",
         assumptions="Assumes the endpoint is reachable.",
+        counterevidence="No parameter binding is present.",
+        confidence="high",
+        severity_change_conditions="Parameterized queries would eliminate the issue.",
         fix_effort="low",
         cvss_breakdown=_CVSS,
         endpoint="/login",
