@@ -6,6 +6,7 @@ Strix Agent Interface
 import argparse
 import asyncio
 import contextlib
+import signal
 import sys
 from pathlib import Path
 
@@ -418,7 +419,38 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
     telemetry_start(args)
 
 
+def _enable_parent_death_signal() -> None:
+    """On Linux, ask the kernel to deliver SIGTERM when our parent dies.
+
+    Strix ships as a PyInstaller onefile binary: the process users see is an
+    outer bootloader that spawns the real Python app as a child. When a caller
+    stops a scan by killing the direct child -- e.g. ``subprocess.run(..., timeout=)``
+    sends SIGKILL, or a container/pipeline sends SIGKILL -- the bootloader dies
+    but the inner app cannot receive or forward that SIGKILL: it is reparented
+    to PID 1 and keeps scanning as an orphaned background process.
+
+    PR_SET_PDEATHSIG makes the kernel deliver SIGTERM to this process the moment
+    the bootloader dies, so the app's existing SIGTERM handler (cleanup + exit)
+    runs instead of leaking an orphaned scan. No-op outside Linux.
+    """
+    if sys.platform != "linux":
+        return
+    try:
+        import ctypes  # noqa: PLC0415  (stdlib; late import keeps startup lean)
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        PR_SET_PDEATHSIG = 1
+        if libc.prctl(PR_SET_PDEATHSIG, signal.SIGTERM) != 0:
+            logger.warning(
+                "prctl(PR_SET_PDEATHSIG, SIGTERM) failed: %s",
+                ctypes.get_errno(),
+            )
+    except Exception:
+        logger.debug("PR_SET_PDEATHSIG unavailable", exc_info=True)
+
+
 def main() -> None:
+    _enable_parent_death_signal()
     configure_dependency_logging()
 
     if sys.platform == "win32":
