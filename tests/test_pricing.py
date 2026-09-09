@@ -40,13 +40,18 @@ def test_prefers_native_provider_route_over_aggregators() -> None:
             "output_cost_per_token": 6e-06,
         },
     }
-    with patch.object(litellm, "model_cost", model_cost):
-        assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
+    try:
+        with patch.object(litellm, "model_cost", model_cost):
+            assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
 
-    # An explicitly aggregator-qualified name still resolves to that aggregator.
-    resolve_litellm_model.cache_clear()
-    with patch.object(litellm, "model_cost", model_cost):
-        assert resolve_litellm_model("x-ai/grok-4.5") == "openrouter/x-ai/grok-4.5"
+        # An explicitly aggregator-qualified name still resolves to that aggregator.
+        resolve_litellm_model.cache_clear()
+        with patch.object(litellm, "model_cost", model_cost):
+            assert resolve_litellm_model("x-ai/grok-4.5") == "openrouter/x-ai/grok-4.5"
+    finally:
+        # The resolver cache is process-wide: drop the mock-derived entries so a
+        # later test cannot read them instead of consulting the real registry.
+        resolve_litellm_model.cache_clear()
 
 
 def test_resolver_returns_none_for_unresolvable_model() -> None:
