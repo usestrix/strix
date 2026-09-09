@@ -1,0 +1,44 @@
+---
+title: "OrcaRouter"
+description: "Configure Strix with models via OrcaRouter"
+---
+
+[OrcaRouter](https://www.orcarouter.ai) routes each request to the best model across 150+ models from OpenAI, Anthropic, Google, DeepSeek, Qwen, and more, through a single OpenAI-compatible API.
+
+## Setup
+
+```bash
+export STRIX_LLM="openai/openai/gpt-5.5"
+export LLM_API_BASE="https://api.orcarouter.ai/v1"
+export LLM_API_KEY="sk-orca-..."
+```
+
+## Available Models
+
+Access any model on OrcaRouter using the format `openai/<provider>/<model>`:
+
+| Model | Configuration |
+|-------|---------------|
+| OrcaRouter Auto | `openai/orcarouter/auto` |
+| GPT-5.5 | `openai/openai/gpt-5.5` |
+| Claude Sonnet 4.6 | `openai/anthropic/claude-sonnet-4.6` |
+| Gemini 3 Pro | `openai/google/gemini-3.1-pro-preview` |
+| DeepSeek V4 Flash | `openai/deepseek/deepseek-v4-flash` |
+
+## Get API Key
+
+1. Go to [orcarouter.ai](https://www.orcarouter.ai)
+2. Sign in and navigate to **API Keys**
+3. Create a new API key (starts with `sk-orca-`)
+
+## Notes
+
+- Model IDs are namespaced by provider (`openai/`, `anthropic/`, `google/`, ...). Keep the full `<provider>/<model>` id after the `openai/` prefix — OrcaRouter rejects bare model names.
+- `orcarouter/auto` is an adaptive router, not a model: it picks an upstream per request. Its candidate pool can include models without tool-calling support, so for agentic scans pin a specific model such as `openai/gpt-5.5`.
+
+## Benefits
+
+- **Adaptive routing** — `orcarouter/auto` selects the best upstream per request with no client-side logic
+- **Single API** — Access OpenAI, Anthropic, Google, DeepSeek, and more
+- **OpenAI-compatible** — Drop-in replacement using `LLM_API_BASE`
+- **Gateway-level security** — It also runs gateway-level, zero-trust security for AI agents on the same endpoint — screening every prompt/response and governing every tool call on a default-deny basis, with no application code changes.
