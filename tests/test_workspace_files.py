@@ -59,6 +59,23 @@ def test_a_windows_drive_letter_is_not_mistaken_for_a_dest_separator(
     assert _split_workspace_spec(spec) == expected
 
 
+def test_a_single_letter_source_with_a_workspace_destination_is_not_a_drive_letter() -> None:
+    assert _split_workspace_spec("a:/workspace/input.txt") == ("a", "/workspace/input.txt")
+
+
+def test_a_single_letter_file_can_declare_an_absolute_workspace_destination(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "a").write_text("x", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    # A relative, single-letter spec: "a:/workspace/input.txt" is exactly the
+    # shape rpartition(":") could confuse for a Windows drive letter.
+    resolved = resolve_workspace_files(["a:/workspace/input.txt"])
+
+    assert resolved[0]["workspace_path"] == "/workspace/input.txt"
+
+
 @pytest.mark.skipif(sys.platform != "win32", reason="tmp_path is only drive-letter-shaped here")
 def test_a_bare_windows_path_resolves_end_to_end(tmp_path: Path) -> None:
     source = tmp_path / "wordlist.txt"

@@ -1722,13 +1722,20 @@ def _split_workspace_spec(spec: str) -> tuple[str, str | None]:
 
     A Windows drive letter's colon (``C:\\path\\file``) is the only colon in a
     bare path. ``rpartition`` still finds it, leaving a single-letter ``raw``
-    with the rest of the path in what would be ``dest`` -- that split is
-    detected here and rejected, so the whole spec is returned as the path.
+    with the rest of the path in what would be ``dest``. That collides with a
+    real single-letter source that declares an absolute ``/workspace/...``
+    destination (``a:/workspace/input.txt``), so the drive-letter case is only
+    taken when ``dest`` is not one of those: the explicit form keeps its
+    existing meaning either way.
     """
     raw, sep, dest = spec.rpartition(":")
     if not sep or not dest.strip():
         return spec, None
-    if re.fullmatch(r"[A-Za-z]", raw) and dest[:1] in ("\\", "/"):
+    if (
+        re.fullmatch(r"[A-Za-z]", raw)
+        and dest[:1] in ("\\", "/")
+        and not dest.startswith("/workspace/")
+    ):
         return spec, None
     return raw, dest
 
