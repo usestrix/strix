@@ -20,6 +20,35 @@ def test_resolves_common_bare_model_names() -> None:
     assert resolve_litellm_model("minimax/MiniMax-M3") == "minimax/MiniMax-M3"
 
 
+def test_prefers_native_provider_route_over_aggregators() -> None:
+    """Equally priced routes must resolve to the provider's own, not the first alphabetically."""
+    resolve_litellm_model.cache_clear()
+    model_cost = {
+        "openrouter/x-ai/grok-4.5": {
+            "litellm_provider": "openrouter",
+            "input_cost_per_token": 2e-06,
+            "output_cost_per_token": 6e-06,
+        },
+        "perplexity/xai/grok-4.5": {
+            "litellm_provider": "perplexity",
+            "input_cost_per_token": 2e-06,
+            "output_cost_per_token": 6e-06,
+        },
+        "xai/grok-4.5": {
+            "litellm_provider": "xai",
+            "input_cost_per_token": 2e-06,
+            "output_cost_per_token": 6e-06,
+        },
+    }
+    with patch.object(litellm, "model_cost", model_cost):
+        assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
+
+    # An explicitly aggregator-qualified name still resolves to that aggregator.
+    resolve_litellm_model.cache_clear()
+    with patch.object(litellm, "model_cost", model_cost):
+        assert resolve_litellm_model("x-ai/grok-4.5") == "openrouter/x-ai/grok-4.5"
+
+
 def test_resolver_returns_none_for_unresolvable_model() -> None:
     resolve_litellm_model.cache_clear()
     assert resolve_litellm_model("provider/not-a-real-model") is None
