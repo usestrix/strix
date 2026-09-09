@@ -1597,23 +1597,44 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         ) from e
 
 
-def check_docker_connection() -> Any:
-    import docker
-    from docker.errors import DockerException
+def check_docker_connection(backend: str | None = None) -> Any:
+    import os
+
+    from strix.config import load_settings
+    from strix.runtime.backends import get_docker_client
+
+    if backend is None:
+        backend = os.environ.get("STRIX_RUNTIME_BACKEND", "").strip()
+        if not backend:
+            try:
+                backend = getattr(load_settings().runtime, "backend", "docker")
+            except Exception:
+                backend = "docker"
+    resolved_backend = (backend or "docker").lower()
+    display_name = "Podman" if resolved_backend == "podman" else "Docker"
 
     try:
-        return docker.from_env()
-    except DockerException as exc:
-        report_error("docker_unavailable", exc)
+        client = get_docker_client(resolved_backend)
+        client.ping()
+    except Exception as exc:
+        report_error(f"{resolved_backend}_unavailable", exc)
         console = Console()
         error_text = Text()
-        error_text.append("DOCKER NOT AVAILABLE", style="bold red")
+        error_text.append(f"{display_name.upper()} NOT AVAILABLE", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("Cannot connect to Docker daemon.\n", style="white")
-        error_text.append(
-            "Please ensure Docker Desktop is installed and running, and try running strix again.\n",
-            style="white",
-        )
+        error_text.append(f"Cannot connect to {display_name} daemon.\n", style="white")
+        if resolved_backend == "podman":
+            error_text.append(
+                "Please ensure Podman is running (e.g. 'podman machine start' or system service),\n"
+                "and try running strix again.\n",
+                style="white",
+            )
+        else:
+            error_text.append(
+                "Please ensure Docker Desktop is installed and running, "
+                "and try running strix again.\n",
+                style="white",
+            )
 
         panel = Panel(
             error_text,
@@ -1623,7 +1644,9 @@ def check_docker_connection() -> Any:
             padding=(1, 2),
         )
         console.print("\n", panel, "\n")
-        raise RuntimeError("Docker not available") from None
+        raise RuntimeError(f"{display_name} not available") from None
+    else:
+        return client
 
 
 def image_exists(client: Any, image_name: str) -> bool:

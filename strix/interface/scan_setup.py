@@ -31,6 +31,7 @@ from strix.interface.utils import (
     stage_api_specs,
     write_fetched_collection,
 )
+from strix.runtime.backends import get_host_gateway
 from strix.telemetry import posthog, scarf
 from strix.utils.api_spec import (
     SpecParseError,
@@ -130,7 +131,10 @@ def build_targets_info(args: argparse.Namespace) -> None:
     args.targets_info = dedupe_local_targets(args.targets_info)
 
     assign_workspace_subdirs(args.targets_info)
-    rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+    rewrite_localhost_targets(
+        args.targets_info,
+        get_host_gateway(load_settings().runtime.backend),
+    )
 
 
 def _resolve_api_spec(target: str, details: dict[str, Any]) -> None:

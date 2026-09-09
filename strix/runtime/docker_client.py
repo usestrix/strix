@@ -165,6 +165,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     # Host directories to bind-mount into the container, set by the docker
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
     strix_bind_mounts: list[dict[str, Any]] | None = None
+    host_gateway: str = "host.docker.internal"
 
     async def _create_container(
         self,
@@ -230,6 +231,8 @@ class StrixDockerSandboxClient(DockerSandboxClient):
                 cap_add.append(cap)
 
         extra_hosts = create_kwargs.setdefault("extra_hosts", {})
+        host_gw = getattr(self, "host_gateway", "host.docker.internal")
+        extra_hosts[host_gw] = "host-gateway"
         extra_hosts["host.docker.internal"] = "host-gateway"
 
         _apply_sandbox_network(create_kwargs)
