@@ -1597,11 +1597,11 @@ def clone_repository(repo_url: str, run_name: str, dest_name: str | None = None)
         ) from e
 
 
-def check_docker_connection(backend: str | None = None) -> Any:
+def check_runtime_connection(backend: str | None = None) -> Any:
     import os
 
     from strix.config import load_settings
-    from strix.runtime.backends import get_docker_client
+    from strix.runtime.backends import get_runtime_client
 
     if backend is None:
         backend = os.environ.get("STRIX_RUNTIME_BACKEND", "").strip()
@@ -1614,7 +1614,7 @@ def check_docker_connection(backend: str | None = None) -> Any:
     display_name = "Podman" if resolved_backend == "podman" else "Docker"
 
     try:
-        client = get_docker_client(resolved_backend)
+        client = get_runtime_client(resolved_backend)
         client.ping()
     except Exception as exc:
         report_error(f"{resolved_backend}_unavailable", exc)

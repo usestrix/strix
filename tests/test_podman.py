@@ -12,17 +12,17 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from strix.interface.environment import check_docker_installed
-from strix.interface.utils import check_docker_connection
+from strix.interface.environment import check_runtime_installed
+from strix.interface.utils import check_runtime_connection
 from strix.runtime.backends import (
     _BACKENDS,
     _BIND_MOUNT_BACKENDS,
     auto_detect_podman_socket,
     backend_supports_bind_mounts,
     get_backend,
-    get_docker_client,
     get_host_gateway,
     get_podman_socket_candidates,
+    get_runtime_client,
     normalize_socket_url,
     parse_podman_machine_inspect,
     register_backend,
@@ -307,7 +307,7 @@ def test_socket_fallthrough_graceful_on_missing_or_failed_socket(
             return_value="unix:///unreachable.sock",
         ),
     ):
-        client = get_docker_client("podman")
+        client = get_runtime_client("podman")
 
     assert client is mock_default_client
     mock_docker.from_env.assert_called_once()
@@ -325,7 +325,7 @@ def test_socket_fallthrough_strix_runtime_socket_raw_path_normalization() -> Non
 # ============================================================================
 
 
-def test_check_docker_installed_podman_success(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_runtime_installed_podman_success(monkeypatch: pytest.MonkeyPatch) -> None:
     """When STRIX_RUNTIME_BACKEND=podman, succeeds if podman is in PATH even if docker is not."""
     monkeypatch.setenv("STRIX_RUNTIME_BACKEND", "podman")
 
@@ -336,20 +336,20 @@ def test_check_docker_installed_podman_success(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr("shutil.which", fake_which)
     # Should not raise or sys.exit
-    check_docker_installed()
+    check_runtime_installed()
 
 
-def test_check_docker_installed_podman_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_runtime_installed_podman_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """When STRIX_RUNTIME_BACKEND=podman and neither podman nor docker in PATH, exits with error."""
     monkeypatch.setenv("STRIX_RUNTIME_BACKEND", "podman")
     monkeypatch.setattr("shutil.which", lambda _cmd: None)
 
     with pytest.raises(SystemExit) as exc_info:
-        check_docker_installed()
+        check_runtime_installed()
     assert exc_info.value.code == 1
 
 
-def test_check_docker_installed_docker_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_check_runtime_installed_docker_missing(monkeypatch: pytest.MonkeyPatch) -> None:
     """When backend is docker and docker is missing from PATH, exits with error."""
     monkeypatch.setenv("STRIX_RUNTIME_BACKEND", "docker")
 
@@ -361,19 +361,19 @@ def test_check_docker_installed_docker_missing(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr("shutil.which", fake_which)
 
     with pytest.raises(SystemExit) as exc_info:
-        check_docker_installed()
+        check_runtime_installed()
     assert exc_info.value.code == 1
 
 
-def test_check_docker_connection_podman_uses_podman_backend(
+def test_check_runtime_connection_podman_uses_podman_backend(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """check_docker_connection connects and pings backend client."""
+    """check_runtime_connection connects and pings backend client."""
     monkeypatch.setenv("STRIX_RUNTIME_BACKEND", "podman")
 
     mock_client = MagicMock()
-    with patch("strix.runtime.backends.get_docker_client", return_value=mock_client) as mock_get:
-        client = check_docker_connection()
+    with patch("strix.runtime.backends.get_runtime_client", return_value=mock_client) as mock_get:
+        client = check_runtime_connection()
         mock_get.assert_called_once_with("podman")
         mock_client.ping.assert_called_once()
         assert client is mock_client

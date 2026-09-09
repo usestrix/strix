@@ -1,4 +1,4 @@
-"""Startup environment validation and Docker image management."""
+"""Startup environment validation and sandbox image management."""
 
 import logging
 import os
@@ -11,7 +11,7 @@ from rich.text import Text
 
 from strix.config import IntegrationSettings, codex, load_settings
 from strix.interface.utils import (
-    check_docker_connection,
+    check_runtime_connection,
     image_exists,
     process_pull_line,
 )
@@ -164,7 +164,7 @@ def validate_environment() -> None:
     )
 
 
-def check_docker_installed() -> None:
+def check_runtime_installed() -> None:
     backend = os.environ.get("STRIX_RUNTIME_BACKEND", "").strip()
     if not backend:
         try:
@@ -205,7 +205,7 @@ def check_docker_installed() -> None:
     logger.debug("%s CLI present", display_name)
 
 
-def pull_docker_image() -> None:
+def pull_runtime_image() -> None:
     from docker.errors import DockerException
 
     console = Console()
@@ -217,7 +217,7 @@ def pull_docker_image() -> None:
             backend = "docker"
     backend = (backend or "docker").lower()
     display_name = "Podman" if backend == "podman" else "Docker"
-    client = check_docker_connection(backend)
+    client = check_runtime_connection(backend)
 
     image = load_settings().runtime.image
 

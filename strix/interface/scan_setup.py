@@ -48,8 +48,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-HOST_GATEWAY_HOSTNAME = "host.docker.internal"
-
 
 class ModelConnectionError(RuntimeError):
     """An ordinary model preflight failure, annotated with its model route."""

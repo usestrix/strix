@@ -298,8 +298,8 @@ def resolve_runtime_socket(backend: str = "docker") -> str | None:
     return None
 
 
-def get_docker_client(backend: str = "docker") -> Any:
-    """Create a Docker client for ``backend`` using multi-layer socket fallthrough:
+def get_runtime_client(backend: str = "docker") -> Any:
+    """Create a container runtime client for ``backend`` using multi-layer socket fallthrough:
 
     STRIX_RUNTIME_SOCKET → DOCKER_HOST → per-backend auto-detection → docker.from_env() default.
     Gracefully falls through to docker.from_env() on connection/ping failure.
@@ -350,9 +350,10 @@ async def _docker_backend(
 
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
-    raw_client = get_docker_client("docker")
+    raw_client = get_runtime_client("docker")
     client = StrixDockerSandboxClient(raw_client)
     client.host_gateway = get_host_gateway("docker")
+    client.backend_name = "docker"
     client.strix_bind_mounts = bind_mounts or []
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)
@@ -376,9 +377,10 @@ async def _podman_backend(
 
     from strix.runtime.docker_client import StrixDockerSandboxClient
 
-    raw_client = get_docker_client("podman")
+    raw_client = get_runtime_client("podman")
     client = StrixDockerSandboxClient(raw_client)
     client.host_gateway = get_host_gateway("podman")
+    client.backend_name = "podman"
     client.strix_bind_mounts = bind_mounts or []
     options = DockerSandboxClientOptions(image=image, exposed_ports=exposed_ports)
     session = await client.create(options=options, manifest=manifest)
