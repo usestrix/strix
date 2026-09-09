@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from strix.config.settings import RuntimeSettings
 from strix.interface.environment import check_runtime_installed
 from strix.interface.utils import check_runtime_connection
 from strix.runtime.backends import (
@@ -268,7 +269,7 @@ def test_socket_fallthrough_docker_host(monkeypatch: pytest.MonkeyPatch) -> None
 
 
 def test_socket_fallthrough_autodetect_podman(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Auto-detects first existing socket candidate when env vars are unset."""
+    """Auto-detects first existing, live socket candidate when env vars are unset."""
     monkeypatch.delenv("STRIX_RUNTIME_SOCKET", raising=False)
     monkeypatch.delenv("DOCKER_HOST", raising=False)
 
@@ -280,15 +281,42 @@ def test_socket_fallthrough_autodetect_podman(monkeypatch: pytest.MonkeyPatch) -
         ),
         patch.object(Path, "exists", return_value=True),
         patch.object(Path, "resolve", return_value=fake_sock),
+        patch("strix.runtime.backends._socket_is_live", return_value=True),
     ):
         detected = auto_detect_podman_socket()
         assert detected == f"unix://{fake_sock}"
 
 
+def test_socket_fallthrough_autodetect_podman_skips_stale_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stale/unreachable candidate is skipped in favor of the next live one."""
+    monkeypatch.delenv("STRIX_RUNTIME_SOCKET", raising=False)
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+
+    stale_sock = Path("/run/user/1000/podman/podman.sock")
+    live_sock = Path("/run/podman/podman.sock")
+
+    def fake_is_live(url: str) -> bool:
+        return url == f"unix://{live_sock}"
+
+    with (
+        patch(
+            "strix.runtime.backends.get_podman_socket_candidates",
+            return_value=[stale_sock, live_sock],
+        ),
+        patch.object(Path, "exists", return_value=True),
+        patch.object(Path, "resolve", side_effect=[stale_sock, live_sock]),
+        patch("strix.runtime.backends._socket_is_live", side_effect=fake_is_live),
+    ):
+        detected = auto_detect_podman_socket()
+        assert detected == f"unix://{live_sock}"
+
+
 def test_socket_fallthrough_graceful_on_missing_or_failed_socket(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Connection failure on detected socket gracefully falls through to docker.from_env()."""
+    """Docker backend connection failure gracefully falls through to docker.from_env()."""
     monkeypatch.delenv("STRIX_RUNTIME_SOCKET", raising=False)
     monkeypatch.delenv("DOCKER_HOST", raising=False)
 
@@ -307,10 +335,53 @@ def test_socket_fallthrough_graceful_on_missing_or_failed_socket(
             return_value="unix:///unreachable.sock",
         ),
     ):
-        client = get_runtime_client("podman")
+        client = get_runtime_client("docker")
 
     assert client is mock_default_client
     mock_docker.from_env.assert_called_once()
+
+
+def test_get_runtime_client_podman_raises_instead_of_falling_back_to_docker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed Podman socket connection raises rather than silently using Docker."""
+    monkeypatch.delenv("STRIX_RUNTIME_SOCKET", raising=False)
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+
+    mock_docker = MagicMock()
+    mock_bad_client = MagicMock()
+    mock_bad_client.ping.side_effect = ConnectionRefusedError("Daemon unreachable")
+    mock_docker.DockerClient.return_value = mock_bad_client
+
+    with (
+        patch.dict("sys.modules", {"docker": mock_docker}),
+        patch(
+            "strix.runtime.backends.resolve_runtime_socket",
+            return_value="unix:///unreachable.sock",
+        ),
+        pytest.raises(RuntimeError, match="podman"),
+    ):
+        get_runtime_client("podman")
+
+    mock_docker.from_env.assert_not_called()
+
+
+def test_get_runtime_client_podman_raises_when_no_socket_resolved(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No resolvable Podman socket at all raises rather than defaulting to Docker."""
+    monkeypatch.delenv("STRIX_RUNTIME_SOCKET", raising=False)
+    monkeypatch.delenv("DOCKER_HOST", raising=False)
+
+    mock_docker = MagicMock()
+    with (
+        patch.dict("sys.modules", {"docker": mock_docker}),
+        patch("strix.runtime.backends.resolve_runtime_socket", return_value=None),
+        pytest.raises(RuntimeError, match="podman"),
+    ):
+        get_runtime_client("podman")
+
+    mock_docker.from_env.assert_not_called()
 
 
 def test_socket_fallthrough_strix_runtime_socket_raw_path_normalization() -> None:
@@ -377,3 +448,23 @@ def test_check_runtime_connection_podman_uses_podman_backend(
         mock_get.assert_called_once_with("podman")
         mock_client.ping.assert_called_once()
         assert client is mock_client
+
+
+# ============================================================================
+# 8. Runtime Backend Setting Normalization (2 tests)
+# ============================================================================
+
+
+def test_runtime_settings_backend_is_lowercased(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A mixed-case STRIX_RUNTIME_BACKEND is normalized so get_backend() finds it."""
+    monkeypatch.setenv("STRIX_RUNTIME_BACKEND", "Podman")
+    settings = RuntimeSettings()
+    assert settings.backend == "podman"
+    assert get_backend(settings.backend) is not None
+
+
+def test_runtime_settings_backend_defaults_when_blank(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A blank/whitespace-only STRIX_RUNTIME_BACKEND still normalizes to the docker default."""
+    monkeypatch.setenv("STRIX_RUNTIME_BACKEND", "  ")
+    settings = RuntimeSettings()
+    assert settings.backend == "docker"

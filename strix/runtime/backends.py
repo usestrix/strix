@@ -214,16 +214,40 @@ def get_podman_socket_candidates(
     return result
 
 
+def _socket_is_live(socket_url: str) -> bool:
+    """Return True if a docker-compatible client can connect to and ping ``socket_url``."""
+    import docker
+
+    try:
+        client: Any = docker.DockerClient(base_url=socket_url)
+        try:
+            client.ping()
+        finally:
+            with contextlib.suppress(Exception):
+                client.close()
+    except Exception:  # noqa: BLE001
+        return False
+    return True
+
+
 def auto_detect_podman_socket() -> str | None:
-    """Look for an existing Podman socket on the host."""
+    """Look for a live Podman socket on the host.
+
+    Candidates are tried in order; a candidate that exists but does not
+    respond to a ping (stale socket file, wrong machine, etc.) is skipped
+    in favor of the next one instead of being returned as-is.
+    """
     try:
         candidates = get_podman_socket_candidates()
         for candidate in candidates:
             try:
-                if candidate.exists() or candidate.is_socket():
-                    return f"unix://{candidate.resolve()}"
+                if not (candidate.exists() or candidate.is_socket()):
+                    continue
             except OSError:
                 continue
+            url = f"unix://{candidate.resolve()}"
+            if _socket_is_live(url):
+                return url
     except Exception:  # noqa: BLE001
         logger.debug("Podman socket auto-detection failed", exc_info=True)
     return None
@@ -302,27 +326,44 @@ def get_runtime_client(backend: str = "docker") -> Any:
     """Create a container runtime client for ``backend`` using multi-layer socket fallthrough:
 
     STRIX_RUNTIME_SOCKET → DOCKER_HOST → per-backend auto-detection → docker.from_env() default.
-    Gracefully falls through to docker.from_env() on connection/ping failure.
+
+    The ``docker.from_env()`` default is only used for the ``docker`` backend itself: falling
+    back to it for a non-docker backend (e.g. ``podman``) would silently run the sandbox on the
+    wrong runtime, so that case raises instead.
     """
     import docker
 
-    socket_url = resolve_runtime_socket(backend)
+    normalized_backend = (backend or "docker").strip().lower()
+    socket_url = resolve_runtime_socket(normalized_backend)
     if socket_url:
         try:
             client: Any = docker.DockerClient(base_url=socket_url)
             client.ping()
-        except Exception:  # noqa: BLE001
+        except Exception as exc:
+            if normalized_backend != "docker":
+                raise RuntimeError(
+                    f"Could not connect to the {normalized_backend} runtime via socket "
+                    f"{socket_url}. Set STRIX_RUNTIME_SOCKET to a reachable {normalized_backend} "
+                    "socket, or check that the daemon is running."
+                ) from exc
             logger.warning(
                 "Failed to connect to %s via socket %s; falling through to default",
-                backend,
+                normalized_backend,
                 socket_url,
                 exc_info=True,
             )
         else:
-            logger.info("Connected to %s runtime via socket: %s", backend, socket_url)
+            logger.info("Connected to %s runtime via socket: %s", normalized_backend, socket_url)
             return client
 
-    logger.debug("Using docker.from_env() default for backend %s", backend)
+    if normalized_backend != "docker":
+        raise RuntimeError(
+            f"No reachable {normalized_backend} socket found (checked STRIX_RUNTIME_SOCKET, "
+            "DOCKER_HOST, and auto-detection). Set STRIX_RUNTIME_SOCKET to the "
+            f"{normalized_backend} socket path, or set STRIX_RUNTIME_BACKEND=docker to use Docker."
+        )
+
+    logger.debug("Using docker.from_env() default for backend %s", normalized_backend)
     return docker.from_env()
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import AliasChoices, Field
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -113,6 +113,13 @@ class RuntimeSettings(BaseSettings):
     socket: str | None = Field(default=None, alias="STRIX_RUNTIME_SOCKET")
     # Max screenshot/image tool outputs kept live per agent context (0 = none).
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
+
+    @field_validator("backend", mode="after")
+    @classmethod
+    def _normalize_backend(cls, value: str) -> str:
+        # Normalize once here so every consumer (registry lookup, install
+        # checks, socket detection) agrees on the same casing.
+        return value.strip().lower() or "docker"
 
 
 class TelemetrySettings(BaseSettings):
