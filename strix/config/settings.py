@@ -110,6 +110,10 @@ class RuntimeSettings(BaseSettings):
         alias="STRIX_IMAGE",
     )
     backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
+    require_mount_free: bool = Field(
+        default=False,
+        alias="STRIX_REQUIRE_MOUNT_FREE",
+    )
     # Max screenshot/image tool outputs kept live per agent context (0 = none).
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
 

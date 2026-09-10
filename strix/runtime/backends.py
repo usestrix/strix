@@ -55,6 +55,7 @@ _BACKENDS: dict[str, SandboxBackend] = {
 }
 
 _BIND_MOUNT_BACKENDS: set[str] = {"docker"}
+_MOUNT_FREE_BACKENDS: set[str] = {"docker"}
 
 
 def get_backend(name: str) -> SandboxBackend:
@@ -80,25 +81,39 @@ def register_backend(
     backend: SandboxBackend,
     *,
     supports_bind_mounts: bool = False,
+    supports_mount_free: bool = False,
 ) -> None:
     """Register a custom backend under ``name``.
 
     Intended for downstream users who ship their own runtime — register
     before any ``session_manager.create_or_reuse`` call. Re-registering
-    an existing name overwrites the prior entry. ``supports_bind_mounts``
-    defaults to False: a remote runtime cannot see the caller's filesystem, so
-    it is handed local sources as manifest entries to upload instead.
+    an existing name overwrites the prior entry. Custom backends default
+    to no bind mounts and no mount-free support (fail-closed); callers must
+    explicitly opt in to capabilities they support.
     """
     _BACKENDS[name] = backend
     if supports_bind_mounts:
         _BIND_MOUNT_BACKENDS.add(name)
     else:
         _BIND_MOUNT_BACKENDS.discard(name)
-    logger.info("Registered sandbox backend: %s (bind mounts: %s)", name, supports_bind_mounts)
+    if supports_mount_free:
+        _MOUNT_FREE_BACKENDS.add(name)
+    else:
+        _MOUNT_FREE_BACKENDS.discard(name)
+    logger.info(
+        "Registered sandbox backend: %s (bind mounts: %s, mount-free: %s)",
+        name,
+        supports_bind_mounts,
+        supports_mount_free,
+    )
 
 
 def backend_supports_bind_mounts(name: str) -> bool:
     return name in _BIND_MOUNT_BACKENDS
+
+
+def backend_supports_mount_free(name: str) -> bool:
+    return name in _MOUNT_FREE_BACKENDS
 
 
 def supported_backends() -> list[str]:

@@ -6,16 +6,23 @@ import asyncio
 import logging
 import os
 import shutil
+import stat
 import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agents.sandbox.entries import BaseEntry, File, LocalDir
+from agents.sandbox import SandboxPathGrant
+from agents.sandbox.entries import BaseEntry, Dir, File, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
-from strix.runtime.backends import backend_supports_bind_mounts, get_backend
+from strix.report.state import get_global_report_state
+from strix.runtime.backends import (
+    backend_supports_bind_mounts,
+    backend_supports_mount_free,
+    get_backend,
+)
 from strix.runtime.caido_bootstrap import bootstrap_caido
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 
@@ -66,6 +73,140 @@ def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any
     return bind_mounts
 
 
+def _process_symlink_entry(
+    entry: os.DirEntry[str],
+    real_root: Path,
+    source_root: Path,
+    children: dict[str | Path, BaseEntry],
+) -> None:
+    try:
+        target_str = Path(entry.path).readlink().as_posix()
+    except OSError as e:
+        logger.warning("mount-free: skipping unreadable symlink %s: %s", entry.path, e)
+        return
+
+    target_path = Path(target_str)
+    resolved_target = (
+        (real_root / target_path).resolve()
+        if not target_path.is_absolute()
+        else target_path.resolve()
+    )
+
+    if not resolved_target.exists():
+        logger.warning(
+            "mount-free: skipping dangling symlink %s -> %s",
+            entry.path,
+            resolved_target,
+        )
+        return
+
+    try:
+        resolved_target.relative_to(source_root)
+    except ValueError:
+        logger.warning(
+            "mount-free: skipping out-of-tree symlink %s -> %s",
+            entry.path,
+            resolved_target,
+        )
+        return
+
+    if resolved_target.is_dir():
+        logger.warning(
+            "mount-free: skipping directory symlink %s -> %s",
+            entry.path,
+            resolved_target,
+        )
+    elif resolved_target.is_file():
+        try:
+            content = resolved_target.read_bytes()
+            children[entry.name] = File(content=content)
+        except OSError as e:
+            logger.warning(
+                "mount-free: could not read symlink target %s -> %s: %s",
+                entry.path,
+                resolved_target,
+                e,
+            )
+
+
+def _read_pinned_file_entry(
+    entry: os.DirEntry[str],
+    root_fd: int,
+) -> File:
+    try:
+        file_fd = os.open(
+            entry.name,
+            os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0),
+            dir_fd=root_fd,
+        )
+    except OSError as e:
+        msg = f"mount-free: failed to open file {entry.path!r} safely: {e}"
+        raise RuntimeError(msg) from e
+
+    with os.fdopen(file_fd, "rb", closefd=True) as f:
+        fst = os.fstat(f.fileno())
+        if not stat.S_ISREG(fst.st_mode):
+            msg = f"mount-free: {entry.path!r} is not a regular file"
+            raise RuntimeError(msg)
+        return File(content=f.read())
+
+
+def _symlink_safe_dir_entry(
+    root: Path,
+    *,
+    _source_root: Path | None = None,
+    _visited_inodes: set[tuple[int, int]] | None = None,
+) -> Dir:
+    """Walk *root* recursively with descriptor-pinned no-follow semantics and build a ``Dir`` tree.
+
+    Symlinks are resolved only when their real target stays inside *_source_root*.
+    Out-of-tree symlinks, dangling symlinks, and directory symlink loops are
+    skipped with a warning to preserve sandbox containment. Regular files are opened
+    with descriptor pinning and no-follow flags to prevent check/open symlink swap races.
+    """
+    source_root = root.resolve() if _source_root is None else _source_root
+    visited: set[tuple[int, int]] = set() if _visited_inodes is None else _visited_inodes
+
+    real_root = root.resolve()
+    try:
+        root_fd = os.open(
+            str(real_root),
+            os.O_RDONLY | os.O_DIRECTORY | getattr(os, "O_NOFOLLOW", 0),
+        )
+    except OSError as e:
+        msg = f"mount-free: cannot open directory {real_root}: {e}"
+        raise RuntimeError(msg) from e
+
+    try:
+        st = os.fstat(root_fd)
+        inode_key = (st.st_dev, st.st_ino)
+        if inode_key in visited:
+            logger.warning("mount-free: skipping directory loop at %s", root)
+            return Dir(children={})
+        visited.add(inode_key)
+
+        children: dict[str | Path, BaseEntry] = {}
+        with os.scandir(str(real_root)) as it:
+            entries = sorted(it, key=lambda e: e.name)
+
+        for entry in entries:
+            if entry.is_symlink():
+                _process_symlink_entry(entry, real_root, source_root, children)
+            elif entry.is_dir(follow_symlinks=False):
+                child_path = real_root / entry.name
+                children[entry.name] = _symlink_safe_dir_entry(
+                    child_path,
+                    _source_root=source_root,
+                    _visited_inodes=visited.copy(),
+                )
+            elif entry.is_file(follow_symlinks=False):
+                children[entry.name] = _read_pinned_file_entry(entry, root_fd)
+
+        return Dir(children=children)
+    finally:
+        os.close(root_fd)
+
+
 def build_manifest_entries(local_sources: list[dict[str, Any]]) -> dict[str | Path, BaseEntry]:
     entries: dict[str | Path, BaseEntry] = {}
     for src in local_sources:
@@ -73,8 +214,25 @@ def build_manifest_entries(local_sources: list[dict[str, Any]]) -> dict[str | Pa
         host_path = src.get("source_path") or ""
         if not ws_subdir or not host_path:
             continue
-        entries[ws_subdir] = LocalDir(src=Path(host_path).expanduser().resolve())
+        resolved = Path(host_path).expanduser().resolve()
+        has_symlinks = any(p.is_symlink() for p in resolved.rglob("*"))
+        if has_symlinks:
+            entries[ws_subdir] = _symlink_safe_dir_entry(resolved)
+        else:
+            entries[ws_subdir] = LocalDir(src=resolved)
     return entries
+
+
+def build_manifest_grants(local_sources: list[dict[str, Any]]) -> list[SandboxPathGrant]:
+    grants: list[SandboxPathGrant] = []
+    for src in local_sources:
+        ws_subdir = src.get("workspace_subdir") or ""
+        host_path = src.get("source_path") or ""
+        if not ws_subdir or not host_path:
+            continue
+        resolved = Path(host_path).expanduser().resolve()
+        grants.append(SandboxPathGrant(path=str(resolved), read_only=True))
+    return grants
 
 
 def _extra_file_rel_path(workspace_path: str) -> str | None:
@@ -291,9 +449,18 @@ async def create_or_reuse(
 
     backend_name = load_settings().runtime.backend
     backend = get_backend(backend_name)
+    require_mount_free = load_settings().runtime.require_mount_free
+
+    if require_mount_free and not backend_supports_mount_free(backend_name):
+        raise RuntimeError(
+            f"STRIX_REQUIRE_MOUNT_FREE is enabled, but backend {backend_name!r} "
+            "does not support mount-free transport.",
+        )
+
+    use_bind_mounts = backend_supports_bind_mounts(backend_name) and not require_mount_free
 
     staging_dir: Path | None = None
-    if backend_supports_bind_mounts(backend_name):
+    if use_bind_mounts:
         bind_mounts = build_bind_mounts(local_sources)
         entries: dict[str | Path, BaseEntry] = {}
         if extra_files:
@@ -315,6 +482,7 @@ async def create_or_reuse(
     container_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
     manifest = Manifest(
         entries=entries,
+        extra_path_grants=tuple(build_manifest_grants(local_sources)),
         environment=Environment(
             value={
                 "PYTHONUNBUFFERED": "1",
@@ -364,11 +532,20 @@ async def create_or_reuse(
             )
         )
 
+        transport: str | None = None
+        if local_sources:
+            transport = "bind-mount" if use_bind_mounts else "mount-free"
+
+        report_state = get_global_report_state()
+        if report_state is not None:
+            report_state.set_observed_transport(transport)
+
         bundle = {
             "client": client,
             "session": session,
             "caido_client": caido_client,
             "extra_file_staging_dir": staging_dir,
+            "transport": transport,
         }
         _SESSION_CACHE[scan_id] = bundle
     except BaseException:
@@ -420,6 +597,8 @@ async def cleanup(scan_id: str) -> None:
     docker_client = getattr(client, "docker_client", None)
     if docker_client is not None:
         try:
-            docker_client.close()
+            close_res = docker_client.close()
+            if asyncio.iscoroutine(close_res):
+                await close_res
         except Exception:  # noqa: BLE001
             logger.debug("cleanup(%s): docker_client.close() raised", scan_id, exc_info=True)
