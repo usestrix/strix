@@ -359,6 +359,7 @@ async def create_or_reuse(
                     session,
                     host_url=host_caido_url,
                     container_url=container_caido_url,
+                    boot_wait_s=load_settings().runtime.caido_boot_wait_s,
                 ),
                 name=f"caido-bootstrap-{scan_id}",
             )
