@@ -344,24 +344,24 @@ class AgentCoordinator:
                     agent_id,
                     len(items),
                 )
-            else:
-                try:
-                    async with session_write_lock(session):
-                        await session.add_items(items)
-                except Exception:
-                    logger.exception(
-                        "failed to append %d queued messages to the session of %s; "
-                        "restoring them to the mailbox for retry",
-                        len(items),
-                        agent_id,
+                return 0, []
+            try:
+                async with session_write_lock(session):
+                    await session.add_items(items)
+            except Exception:
+                logger.exception(
+                    "failed to append %d queued messages to the session of %s; "
+                    "restoring them to the mailbox for retry",
+                    len(items),
+                    agent_id,
+                )
+                async with self._lock:
+                    runtime.mailbox[0:0] = queued
+                    self.pending_counts[agent_id] = self.pending_counts.get(agent_id, 0) + len(
+                        queued
                     )
-                    async with self._lock:
-                        runtime.mailbox[0:0] = queued
-                        self.pending_counts[agent_id] = self.pending_counts.get(agent_id, 0) + len(
-                            queued
-                        )
-                        runtime.wake.set()
-                    return 0, []
+                    runtime.wake.set()
+                return 0, []
         await self._maybe_snapshot()
         if not include_items:
             return count, []
