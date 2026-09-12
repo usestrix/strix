@@ -58,22 +58,33 @@ LDAP injection exploits unsanitized user input concatenated into LDAP search fil
 
 ### Authentication Bypass (Search-Then-Bind)
 
-Target pattern: `(&(uid=INPUT)(userPassword=INPUT2))` or a two-step search-then-bind where only `uid` is attacker-controlled.
+Three distinct mechanisms apply here, each requiring a different precondition. Do not report any of them as a working bypass until the resulting bind actually succeeds without the target account's real credentials — a widened search or a parser error is not proof by itself.
+
+**Unauthenticated ("blank password") bind — try this first**
+
+Per RFC 4513 §5.1.2, a bind with a non-empty DN and a *zero-length* password is defined as an unauthenticated bind, which most directory servers accept and report as success without checking any password. If the app calls `bind(foundDN, suppliedPassword)` without rejecting an empty `suppliedPassword` up front, submitting an empty password authenticates as whatever DN the search step returned — no filter metacharacter needed, and it works even against a fixed, valid `uid`:
+
+```
+uid: admin
+password: (empty string)
+```
+
+**Wildcard value against a search-only auth check**
+
+Some implementations never bind at all — they treat "search returned a result" as authenticated, e.g. `(&(uid=INPUT)(userPassword=INPUT2))` evaluated only via `search()`. Here a wildcard produces a fully valid, balanced filter with no broken syntax:
+
+```
+uid: admin
+password: *
+```
+`(&(uid=admin)(userPassword=*))` matches the admin entry as long as it has *any* `userPassword` value set — true almost universally. This defeats only the search-only anti-pattern; confirm which flow you're facing (search-only vs. actual bind) before reporting.
+
+**Operator truncation (parser-dependent — verify before relying on it)**
 
 ```
 uid: *)(uid=*))(|(uid=*
 ```
-Resulting filter: `(&(uid=*)(uid=*))(|(uid=*)(userPassword=x))` — the trailing `(|(uid=*` clause is unbalanced by design so the parser accepts the first matching branch, returning the first directory entry (often the first admin/service account) as the bind target.
-
-```
-uid: admin)(&))
-```
-Neutralizes the second AND-clause: `(&(uid=admin)(&))(userPassword=...)` — some parsers short-circuit on the empty `(&)` and treat the identity as matched without password comparison.
-
-```
-uid: *)(|(objectClass=*
-```
-Wildcard-widens to match any object in scope — useful when the app performs `search()` then blindly binds as whatever DN comes back first.
+Against `(&(uid=INPUT)(userPassword=INPUT2))` this yields `(&(uid=*)(uid=*))(|(uid=*)(userPassword=x))` — two adjacent top-level filter expressions, not one grouped OR. Whether this changes anything depends entirely on the client library: RFC 4515-strict parsers reject filters with trailing content after a complete expression, while some tolerant implementations parse only the first complete expression and silently discard the rest. Use this as a parser-fingerprinting probe, not an assumed bypass. Even where it does widen the *search* result, the subsequent *bind* still requires that returned DN's real password unless paired with the blank-password technique above.
 
 ### Attribute/Wildcard Enumeration
 
@@ -97,25 +108,28 @@ Binary-search the character space per position to minimize requests, exactly as 
 
 ### DN Injection
 
-When user input flows into the base DN or RDN rather than a filter value:
+Base/target DNs use RDN grammar (RFC 4514: comma-separated `attr=value` components), not filter syntax — parentheses and `|` have no special meaning in a DN and just become part of a literal, likely non-matching attribute value. Probe with the DN's actual separator instead:
 
 ```
-ou=Users,dc=corp,dc=com)(|(objectClass=*
+Sales,ou=Executives
 ```
-Escapes the intended subtree scope, expanding the search base to the entire directory or a sibling OU the app never intended to expose.
+If the app builds a search base as `"ou=" + input + ",dc=corp,dc=com"`, an unescaped comma in `input` inserts an additional RDN component **ahead of** the fixed suffix — this example yields `ou=Sales,ou=Executives,dc=corp,dc=com`, valid only if that exact nested path exists in the directory. Because the fixed suffix is appended verbatim, comma injection alone cannot remove or replace it; it can only add components in front of it, so impact here is bounded by the existing directory structure.
+
+The high-impact variant needs no injection trick at all: a directory-browser or "search within OU" feature that passes a path parameter straight through as the base DN with **no fixed suffix**. There, any DN the caller supplies becomes the literal search base outright, exposing whatever subtree it points to regardless of intended scope.
 
 ## Key Vulnerabilities
 
 ### Search Filter Injection (Classic)
 
 - Root cause: `"(&(uid=" + input + ")(objectClass=user))"` string concatenation
-- Unbalanced parentheses in `input` change filter grouping; LDAP filter parsers are permissive about trailing content in many client libraries, so a syntactically "complete" leading clause is evaluated even with garbage appended
+- Unbalanced parentheses in `input` change filter grouping, but the effect is parser-dependent: RFC 4515-strict implementations reject a filter with trailing content after a complete expression, while some client libraries parse only the first complete expression and silently discard the rest — establish which behavior applies before treating this as a reliable bypass rather than a fingerprinting probe
 - Confirm by sending a value with an unescaped `)` and observing either an error or a behavior change vs. a value with the same `)` percent-encoded
 
 ### Authentication Bypass via Search-Then-Bind
 
-- Most vulnerable pattern: app searches for a user by attacker-controlled identifier, then binds using the *returned DN* with the supplied password — if the search filter can be manipulated to always return the first entry in the directory (frequently a privileged service account near the top of the tree), and the app does not verify the returned `uid` matches the requested one, auth bypass follows
-- Distinct from credential brute-force: this manipulates *which entry* is matched, not the password check itself
+- Highest-confidence variant: the app calls `bind(foundDN, suppliedPassword)` without rejecting a zero-length `suppliedPassword` first — RFC 4513's unauthenticated-bind semantics make the bind succeed regardless of the real password (see Core Payloads above)
+- Filter-manipulation variant: if the search filter can be widened to change *which entry* is returned, and the app never verifies the returned identity matches the one requested, the attacker still needs that entry's real password to complete the bind on its own — this is an identity-confusion/data-exposure primitive, not a full bypass, unless combined with the blank-password technique
+- Distinct from credential brute-force: these manipulate *which entry* is matched or *whether a password is checked at all*, not the password value itself
 
 ### Blind Data Extraction
 
@@ -127,11 +141,12 @@ Escapes the intended subtree scope, expanding the search base to the entire dire
 
 ### Blind Injection via Group/ACL Checks
 
-- Applications that gate access with `(&(uid=USER)(memberOf=cn=admins,ou=groups,dc=corp,dc=com))` are vulnerable if `USER` is attacker-controlled and unescaped — inject to short-circuit the `memberOf` clause entirely: `admin)(|(objectClass=*`
+- Applications that gate access with `(&(uid=USER)(memberOf=cn=admins,ou=groups,dc=corp,dc=com))` are worth probing if `USER` is attacker-controlled and unescaped — try the operator-truncation payload from Core Payloads (`admin)(|(objectClass=*`) to test whether the parser discards the trailing `memberOf` clause, but confirm the specific client library's tolerance for trailing content before treating this as a reliable bypass rather than a fingerprinting probe
 
 ### DN/RDN Injection in Write Operations
 
-- Where user input builds a target DN for add/modify/delete operations (self-service directory tools, provisioning APIs), injecting `,` or additional RDN components can redirect the operation to an unintended entry or OU
+- Where user input builds a target DN for add/modify/delete operations (self-service directory tools, provisioning APIs), an unescaped comma inserts an extra RDN component ahead of any fixed suffix, redirecting the operation to a different — but still nested and existing — entry or OU
+- Where no fixed suffix is appended at all, the supplied value becomes the literal target DN outright, with no injection technique required
 
 ## Bypass Techniques
 
@@ -188,7 +203,7 @@ Escapes the intended subtree scope, expanding the search base to the entire dire
 1. Prioritize search-then-bind login flows — they carry the highest impact (full auth bypass) and are the most common vulnerable pattern
 2. Test the same input in both filter context and DN context separately; escaping is frequently inconsistent between the two
 3. Active Directory tolerates more filter malformation than OpenLDAP in some client libraries — fingerprint the backend early via error phrasing to calibrate payloads
-4. When `$ne`-style widening payloads fail, fall back to attribute-name aliasing (`sAMAccountName` vs `userPrincipalName` vs `mail`) before concluding the sink is unreachable
+4. When wildcard/operator-truncation payloads fail, fall back to attribute-name aliasing (`sAMAccountName` vs `userPrincipalName` vs `mail`) before concluding the sink is unreachable
 5. Autocomplete and "check availability" endpoints are underexplored oracles for blind extraction — they leak boolean signal without looking like a security-relevant feature
 6. Always check whether extracted DNs or attributes get reused in a second directory operation — second-order injection is common in provisioning/sync tooling
 7. Document the exact vulnerable concatenation (from source when available); defenses must escape correctly per RFC 4515, not merely blocklist a handful of characters
