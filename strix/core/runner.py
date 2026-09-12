@@ -271,6 +271,7 @@ async def run_strix_scan(
 
     from strix.tools.coverage.tools import hydrate_coverage_from_disk
     from strix.tools.notes.tools import hydrate_notes_from_disk
+    from strix.tools.proxy.unproductive_tracker import reset_unproductive_tracker
     from strix.tools.threat_model.tools import hydrate_threat_models_from_disk
     from strix.tools.todo.tools import hydrate_todos_from_disk
 
@@ -278,6 +279,7 @@ async def run_strix_scan(
     hydrate_notes_from_disk(state_dir)
     hydrate_coverage_from_disk(state_dir)
     hydrate_threat_models_from_disk(state_dir)
+    reset_unproductive_tracker()
 
     root_id: str | None = None
     if is_resume:
