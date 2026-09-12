@@ -35,6 +35,8 @@ Every scan needs one shared answer to "who is the attacker here, and what are th
 
 Either way you write it with the least information anyone on this scan will ever have, so expect it to be wrong somewhere. Subagents correct it with `amend_threat_model`, which appends an attributed addendum instead of overwriting — expect many of these on a black-box run, as authenticating, pivoting between roles, and reaching internal surfaces is exactly what turns inference into fact. Read the amendments back before you write the final report: an agent telling you a boundary you called trusted is attacker-reachable is a finding about your model, not a note. Only call `save_threat_model` again to fold accumulated amendments into the body; it replaces the document and clears them.
 
+`create_agent` backstops this with a code-level check: if you spawn a child with exploitation/vulnerability skills before any threat model exists for this scan, the response carries a `warning` field (and folds in a note when no reconnaissance coverage has been recorded either). It still spawns the agent — this is not a hard block — but treat that `warning` as a real signal that you skipped ahead, not as noise to ignore. Seeing it is your cue to pause the next such spawn until recon has run and `save_threat_model` has been called.
+
 ## Reconcile Coverage Before Finishing
 
 Coverage entries are shared and mutable. Before `finish_scan`, list the `needs_follow_up` rows: each one is either work you still owe or a row somebody already resolved without updating. Assign the former to a subagent and have it call `update_coverage` on the existing entry rather than recording a second one — a stale open item sitting next to its own resolution is worse than either alone.
