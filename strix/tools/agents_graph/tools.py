@@ -12,6 +12,8 @@ from typing import Any, Literal, get_args
 
 from agents import RunContextWrapper, function_tool
 
+from strix.config import load_settings
+from strix.config.models import invalid_model_reason
 from strix.core.agents import Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
@@ -501,6 +503,7 @@ async def create_agent(
     task: str,
     inherit_context: bool = True,
     skills: list[str] | None = None,
+    model: str | None = None,
 ) -> str:
     """Spawn a specialist child agent to run in parallel.
 
@@ -546,6 +549,17 @@ async def create_agent(
             when starting a clean-slate task.
         skills: List of skill names (e.g. ``["xss", "sql_injection"]``).
             Max 5; prefer 1-3.
+        model: Optional. Leave unset — every child runs on the scan's
+            configured model by default. Set this only to deliberately get a
+            **second opinion** from a differently-configured model on
+            surfaces the scan has already reviewed (e.g. entries sitting at
+            ``needs_follow_up`` in ``list_coverage``, or a target you judge
+            under-covered relative to its size). This is not a general
+            "pick any model for this agent" knob — different model
+            families catch different things, so a second, independent pass
+            with fresh eyes can surface what the first pass missed. Accepts
+            the same ``<provider>/<model>`` strings as ``STRIX_LLM``
+            (e.g. ``"anthropic/claude-opus-4-7"``).
     """
     inner = _ctx(ctx)
     coordinator = coordinator_from_context(inner)
@@ -577,6 +591,16 @@ async def create_agent(
             default=str,
         )
 
+    if model is not None:
+        api_base = load_settings().llm.api_base
+        model_error = invalid_model_reason(model, api_base=api_base)
+        if model_error:
+            return json.dumps(
+                {"success": False, "error": f"invalid model: {model_error}", "agent_id": None},
+                ensure_ascii=False,
+                default=str,
+            )
+
     parent_history = list(ctx.turn_input) if inherit_context and ctx.turn_input else []
     try:
         result = await spawner(
@@ -585,6 +609,7 @@ async def create_agent(
             task=task,
             skills=skill_list,
             parent_history=parent_history,
+            model=model,
         )
     except Exception as e:
         logger.exception("create_agent: scan runner failed to spawn child '%s'", name)

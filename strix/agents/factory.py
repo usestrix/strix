@@ -658,6 +658,7 @@ def build_strix_agent(
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
+    model: str | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -670,6 +671,12 @@ def build_strix_agent(
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
+        model: Per-agent model override. ``None`` (the default) leaves the
+            agent's own ``model`` unset, so it runs on the run-wide model
+            configured on ``RunConfig``. A non-``None`` value overrides that
+            for this agent only — every other agent in the scan is
+            unaffected. Used for deliberately spawning a "second opinion"
+            child on a different model; see ``strix.tools.agents_graph.tools.create_agent``.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -715,7 +722,7 @@ def build_strix_agent(
         instructions=instructions,
         tools=tools,
         tool_use_behavior=_finish_tool_use_behavior,
-        model=None,
+        model=model,
         capabilities=[
             Filesystem(
                 configure_tools=_make_filesystem_configurator(
@@ -750,7 +757,7 @@ def make_child_factory(
     without the graph tool knowing about runner internals.
     """
 
-    def _factory(*, name: str, skills: list[str]) -> SandboxAgent[Any]:
+    def _factory(*, name: str, skills: list[str], model: str | None = None) -> SandboxAgent[Any]:
         return build_strix_agent(
             name=name,
             skills=skills,
@@ -762,6 +769,7 @@ def make_child_factory(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
+            model=model,
         )
 
     return _factory
