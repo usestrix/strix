@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 from typing import Any
 
@@ -196,8 +197,19 @@ def test_check_mountable_dir_accepts_a_project_under_the_home_root(
 
 
 def test_infer_target_type_applies_the_mount_policy() -> None:
+    # `infer_target_type` only reaches the mount policy for a path that exists,
+    # so pick a protected system directory this platform actually has. The
+    # policy itself already knows about both families (`_FORBIDDEN_MOUNT_TREES`
+    # and `_FORBIDDEN_WINDOWS_TREE_NAMES`); only the fixture was Unix-only.
+    candidates = (
+        [Path(Path.cwd().anchor) / "Windows"] if os.name == "nt" else [Path("/etc"), Path("/usr")]
+    )
+    system_dir = next((p for p in candidates if p.is_dir()), None)
+    if system_dir is None:
+        pytest.skip("no protected system directory on this platform")
+
     with pytest.raises(ValueError, match="Refusing to mount"):
-        infer_target_type("/etc")
+        infer_target_type(str(system_dir))
 
 
 def test_read_target_list_file_strips_blank_lines(tmp_path: Path) -> None:

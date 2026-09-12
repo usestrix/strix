@@ -108,6 +108,7 @@ path = "scripts/tui_sidecar_hook.py"
 
 [tool.mypy]
 python_version = "3.12"
+platform = "linux"
 strict = true
 strict_optional = true
 warn_redundant_casts = true
