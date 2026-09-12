@@ -100,6 +100,10 @@ Complex findings warrant specialized subagents:
 - Use message passing only when essential (requests/answers, critical handoffs)
 - Prefer batched updates over routine status messages
 
+**Second Opinions**
+
+Every agent runs on the scan's configured model by default, but `create_agent` accepts an optional `model` override for the rare case where that isn't enough: deliberately re-reviewing already-covered surfaces (piling-up `needs_follow_up` entries, or a target under-covered relative to its size) with a differently-configured model, since different model families notice different things on the same input. This is not a general-purpose "pick a model for this agent" knob and nothing spawns it automatically — see the `scan_modes/second_opinion` skill before reaching for it.
+
 ## Completion
 
 When all agents report completion:

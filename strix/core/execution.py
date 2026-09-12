@@ -315,6 +315,7 @@ async def spawn_child_agent(
     task: str,
     skills: list[str],
     parent_history: list[Any],
+    model: str | None = None,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
@@ -323,13 +324,14 @@ async def spawn_child_agent(
         raise TypeError("Parent agent_id missing from context")
 
     child_id = uuid.uuid4().hex[:8]
-    child_agent = factory(name=name, skills=skills)
+    child_agent = factory(name=name, skills=skills, model=model)
     await coordinator.register(
         child_id,
         name,
         parent_id,
         task=task,
         skills=skills,
+        model=model,
     )
 
     await _start_child_runner(
@@ -345,6 +347,7 @@ async def spawn_child_agent(
         name=name,
         parent_id=parent_id,
         task=task,
+        model=model,
         initial_input=child_initial_input(
             name=name,
             child_id=child_id,
@@ -414,7 +417,8 @@ async def respawn_subagents(
                 )
 
             child_skills = list(md.get("skills") or [])
-            child_agent = factory(name=name, skills=child_skills)
+            child_model = md.get("model") if isinstance(md.get("model"), str) else None
+            child_agent = factory(name=name, skills=child_skills, model=child_model)
             await _start_child_runner(
                 parent_ctx=parent_ctx,
                 coordinator=coordinator,
@@ -428,6 +432,7 @@ async def respawn_subagents(
                 name=name,
                 parent_id=parent_id,
                 task=str(md.get("task", "")),
+                model=child_model,
                 initial_input=[],
                 start_parked=start_parked,
                 event_sink=event_sink,
@@ -1001,6 +1006,7 @@ async def _start_child_runner(
     parent_id: str | None,
     task: str,
     initial_input: Any,
+    model: str | None = None,
     start_parked: bool = False,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
@@ -1013,6 +1019,11 @@ async def _start_child_runner(
     child_ctx["agent_id"] = child_id
     child_ctx["parent_id"] = parent_id
     child_ctx["task"] = task
+    if model is not None:
+        # Lets ReportUsageHooks record/estimate this agent's cost against the
+        # model it actually runs on, not the run-wide default — see
+        # ``build_strix_agent``'s ``model`` override.
+        child_ctx["agent_model"] = model
 
     async def _child_loop() -> None:
         # A budget stop is a clean scan-wide shutdown, not a child failure: the
