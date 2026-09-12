@@ -47,6 +47,7 @@ from strix.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
+from strix.tools.recon_ledger.tools import list_endpoints, record_endpoint, update_endpoint
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
@@ -575,6 +576,9 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     record_coverage,
     update_coverage,
     list_coverage,
+    record_endpoint,
+    update_endpoint,
+    list_endpoints,
     get_threat_model,
     save_threat_model,
     amend_threat_model,

@@ -271,12 +271,14 @@ async def run_strix_scan(
 
     from strix.tools.coverage.tools import hydrate_coverage_from_disk
     from strix.tools.notes.tools import hydrate_notes_from_disk
+    from strix.tools.recon_ledger.tools import hydrate_recon_ledger_from_disk
     from strix.tools.threat_model.tools import hydrate_threat_models_from_disk
     from strix.tools.todo.tools import hydrate_todos_from_disk
 
     hydrate_todos_from_disk(state_dir)
     hydrate_notes_from_disk(state_dir)
     hydrate_coverage_from_disk(state_dir)
+    hydrate_recon_ledger_from_disk(state_dir)
     hydrate_threat_models_from_disk(state_dir)
 
     root_id: str | None = None

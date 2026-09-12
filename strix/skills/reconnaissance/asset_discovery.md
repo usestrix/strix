@@ -98,7 +98,8 @@ For ASN-owned ranges, sweep IPs directly with `naabu`/`httpx` and read served ce
    `httpx -l hosts.txt -sc -title -server -td -tls-grab -json -o assets.jsonl`
 3. **Classify** assets by function from title/tech/path signals: app, API, marketing, auth, CI/CD, observability, storage, admin, VCS, mail. Cluster by role, not by a specific product.
 4. **Port sweep** interesting hosts with `naabu` for non-HTTP services (DBs, caches, brokers, mgmt ports).
-5. **Prioritize** by exposure and value, then hand each finding to the right specialist skill:
+5. **Record every endpoint, route, and parameter you find** with `record_endpoint` — from crawling (`katana`), directory/route brute force (`ffuf`), JS bundle analysis, or an OpenAPI/GraphQL spec — as you find it, not folded into a note afterward. This is what lets vulnerability-assessment agents call `list_endpoints` and start testing instead of re-discovering the same routes by probing for them.
+6. **Prioritize** by exposure and value, then hand each finding to the right specialist skill:
    - Exposed dashboards / debug / observability / metadata leaks → `information_disclosure`
    - Login/admin panels with default or weak creds → `weak_password_detection`
    - Dangling DNS / unclaimed provider resources → `subdomain_takeover`
