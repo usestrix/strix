@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import os
 from typing import TYPE_CHECKING
 
@@ -85,6 +86,13 @@ def _isolate_git_config(
     monkeypatch.setenv("GIT_COMMITTER_EMAIL", "tests@example.com")
 
 
+# Errors that mean "this name is not representable here", as opposed to a
+# filesystem that is full, read-only, or otherwise broken.
+_REJECTED_NAME_ERRNOS = frozenset(
+    {errno.EINVAL, errno.EILSEQ, errno.ENAMETOOLONG},
+)
+
+
 @pytest.fixture
 def write_control_character_file() -> Callable[[Path, str, str], Path]:
     """Create a file whose *name* carries terminal control characters, or skip.
@@ -103,6 +111,11 @@ def write_control_character_file() -> Callable[[Path, str, str], Path]:
         try:
             path.write_text(content, encoding="utf-8")
         except OSError as exc:  # pragma: no cover - platform dependent
+            # Only "the name itself is unacceptable" is a reason to skip. A
+            # full disk or an unwritable temp directory must still fail these
+            # security tests rather than quietly reporting them as skipped.
+            if exc.errno not in _REJECTED_NAME_ERRNOS:
+                raise
             pytest.skip(f"this filesystem rejects control characters in filenames: {exc}")
         return path
 

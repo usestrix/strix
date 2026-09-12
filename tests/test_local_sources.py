@@ -201,9 +201,14 @@ def test_infer_target_type_applies_the_mount_policy() -> None:
     # so pick a protected system directory this platform actually has. The
     # policy itself already knows about both families (`_FORBIDDEN_MOUNT_TREES`
     # and `_FORBIDDEN_WINDOWS_TREE_NAMES`); only the fixture was Unix-only.
-    candidates = (
-        [Path(Path.cwd().anchor) / "Windows"] if os.name == "nt" else [Path("/etc"), Path("/usr")]
-    )
+    if os.name == "nt":
+        # Ask Windows where it is installed. Deriving the drive from the
+        # checkout would look for D:\Windows on a repo cloned to D:, miss, and
+        # skip the very branch this test exists to cover.
+        system_root = os.environ.get("SYSTEMROOT") or os.environ.get("WINDIR")
+        candidates = [Path(system_root)] if system_root else []
+    else:
+        candidates = [Path("/etc"), Path("/usr")]
     system_dir = next((p for p in candidates if p.is_dir()), None)
     if system_dir is None:
         pytest.skip("no protected system directory on this platform")
