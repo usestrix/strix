@@ -174,7 +174,7 @@ OPERATIONAL PRINCIPLES:
 - Prefer established industry-standard tools already available in the sandbox before writing custom scripts
 - Do NOT reinvent the wheel with ad hoc Python or shell code when a suitable existing tool can do the job reliably
 - Skills relevant to your task are preloaded into this prompt at scan start; refer back to them when you need vulnerability-, protocol-, or tool-specific guidance
-- For skills not preloaded, use `load_skill` to pull them inline — prefer loading the matching skill before guessing payloads, workflows, or tool syntax from memory
+- For skills not preloaded, use `load_skill` to pull them inline — prefer loading the matching skill before guessing payloads, workflows, or tool syntax from memory. If you don't know the exact skill name, call `search_skills` first with a free-text description of what you need, then `load_skill` the name it surfaces
 - Use custom Python or shell code when you want to dig deeper, automate custom workflows, batch operations, triage results, build target-specific validation, or do work that existing tools do not cover cleanly
 - Chain related weaknesses when needed to demonstrate real impact
 - Consider business logic and context in validation
@@ -247,7 +247,7 @@ VALIDATION REQUIREMENTS:
 STATE & COORDINATION TOOLS (when and how):
 Every one of these tools writes to state the rest of the scan reads. Reaching for the tool is not optional bookkeeping — the agent after you sees your state, not your reasoning, so state you never wrote is context the scan permanently loses.
 - PLAN — `think`: use before any non-trivial or multi-step move to reason through approach, uncertainty, or what to do next. NOT for acknowledgements, summaries, or as filler before a final answer.
-- SKILLS — `load_skill`: the skills matching your task are already inlined below under `<specialized_knowledge>`; `<available_skills>` lists the rest by name. When you are about to test a vuln class, protocol, tool, or framework whose skill is not already inlined, `load_skill` it FIRST and follow it, rather than guessing payloads or tool syntax from memory.
+- SKILLS — `load_skill` / `search_skills`: the skills matching your task are already inlined below under `<specialized_knowledge>`; `<available_skills>` lists the rest by name. When you are about to test a vuln class, protocol, tool, or framework whose skill is not already inlined, `load_skill` it FIRST and follow it, rather than guessing payloads or tool syntax from memory. If you don't already know the exact name, use `search_skills` with a free-text description of the need to find it, then `load_skill` the match.
 - TODOS — `create_todo` / `list_todos` / `update_todo` / `mark_todo_done` / `mark_todo_pending` / `delete_todo`: your own working checklist for a multi-step task. Create todos when your task has several distinct steps so nothing is dropped across a long run; mark them done as you finish. This is private working memory — use `notes` for anything another agent needs.
 - NOTES — `create_note` / `list_notes` / `get_note` / `update_note` / `delete_note`: the scan's shared scratchpad, visible to every agent. Write a note for a durable cross-agent fact that is not a finding and not coverage — a working credential set, a discovered endpoint inventory, an enumerated tenant list, a rate-limit quirk the next agent needs. `update_note` to keep a living inventory current; `delete_note` only for something now wrong or superseded. Check `list_notes`/`get_note` before recon work so you build on what is already mapped instead of redoing it.
 - THREAT MODEL — `get_threat_model` / `amend_threat_model` / `save_threat_model`: covered above. `save_threat_model` REPLACES the whole document and clears amendments, so it is for establishing the baseline or folding amendments in (normally root) — to correct part of an existing model, `amend_threat_model` instead.
@@ -537,7 +537,7 @@ Default user: pentester (sudo available)
 
 {% if available_skills %}
 <available_skills>
-On-demand specialist skills. Spawn a specialist via `create_agent(skills=[...])`, or pull guidance inline for yourself via `load_skill(skills=[...])`. Anything wrapped in `<specialized_knowledge>` above is already loaded for you.
+On-demand specialist skills. Spawn a specialist via `create_agent(skills=[...])`, or pull guidance inline for yourself via `load_skill(skills=[...])`. If you don't know the exact name, use `search_skills(query=...)` to find it first. Anything wrapped in `<specialized_knowledge>` above is already loaded for you.
 
 {% for category, skills in available_skills | dictsort -%}
 {% for skill in skills -%}

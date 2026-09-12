@@ -3,7 +3,7 @@ import re
 from collections import Counter
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TypeGuard
+from typing import Any, TypeGuard
 
 import yaml
 
@@ -16,9 +16,12 @@ _FRONTMATTER_PATTERN = re.compile(r"^---\s*\n(?P<body>.*?)\n---\s*\n", re.DOTALL
 
 _INTERNAL_SKILL_CATEGORIES: frozenset[str] = frozenset({"scan_modes", "coordination", "analysis"})
 _ROOT_SKILL_CATEGORY = "root"
+_SEARCH_BODY_CHARS = 500
+_SEARCH_TOKEN_PATTERN = re.compile(r"[a-z0-9]+")
 
 _EXTRA_SKILL_DIRS: list[Path] = []
 _SKILL_METADATA_CACHE: dict[tuple[Path, int, int], dict[str, str]] = {}
+_SKILL_BODY_PREVIEW_CACHE: dict[tuple[Path, int, int], str] = {}
 
 
 def _is_frontmatter_mapping(value: object) -> TypeGuard[dict[object, object]]:
@@ -210,6 +213,78 @@ def get_available_skills() -> dict[str, list[dict[str, str]]]:
         description = " ".join(metadata.get("description", "").split())
         grouped.setdefault(category, []).append({"name": name, "description": description})
     return grouped
+
+
+def _read_skill_body_preview(file_path: Path) -> str:
+    """Return (and cache) the first ~500 chars of a skill's body, for search."""
+    try:
+        stat = file_path.stat()
+    except OSError:
+        return ""
+    cache_key = (file_path, stat.st_mtime_ns, stat.st_size)
+    cached = _SKILL_BODY_PREVIEW_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        content = file_path.read_text(encoding="utf-8")
+    except (OSError, ValueError):
+        return ""
+    _, body = _parse_skill_content(content, file_path)
+    preview = body[:_SEARCH_BODY_CHARS]
+    _SKILL_BODY_PREVIEW_CACHE[cache_key] = preview
+    return preview
+
+
+def _tokenize(text: str) -> set[str]:
+    return set(_SEARCH_TOKEN_PATTERN.findall(text.lower()))
+
+
+def search_skills(query: str, top_k: int = 5) -> list[dict[str, Any]]:
+    """Rank skills by lexical overlap with *query* (no embeddings, no new deps).
+
+    Tokenizes the query and, for each skill, its name + frontmatter
+    description (weighted heavily) and the first ~500 chars of its body
+    (weighted lightly). Scores by weighted token overlap; ties break
+    alphabetically by ``category/name``.
+    """
+    query_tokens = _tokenize(query)
+    if not query_tokens:
+        return []
+
+    scored: list[tuple[float, str, str, dict[str, Any]]] = []
+    for category, name in _iter_user_skill_files():
+        file_path = _qualified_skill_file_for_name(f"{category}/{name}")
+        if file_path is None:
+            continue
+        metadata = _read_skill_metadata(file_path)
+        description = " ".join(metadata.get("description", "").split())
+        name_tokens = _tokenize(name.replace("_", " "))
+        description_tokens = _tokenize(description)
+        body_tokens = _tokenize(_read_skill_body_preview(file_path))
+
+        score = (
+            3.0 * len(query_tokens & name_tokens)
+            + 2.0 * len(query_tokens & description_tokens)
+            + 1.0 * len(query_tokens & body_tokens)
+        )
+        if score <= 0:
+            continue
+        scored.append(
+            (
+                score,
+                category,
+                name,
+                {
+                    "name": name,
+                    "category": category,
+                    "description": description,
+                    "score": score,
+                },
+            )
+        )
+
+    scored.sort(key=lambda item: (-item[0], item[1], item[2]))
+    return [entry for _, _, _, entry in scored[:top_k]]
 
 
 def validate_requested_skills(skill_list: list[str], max_skills: int = 5) -> str | None:
