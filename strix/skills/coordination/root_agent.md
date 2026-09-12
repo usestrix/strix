@@ -47,6 +47,9 @@ Structure agents by function:
 - Asset discovery and enumeration
 - Technology fingerprinting
 - Attack surface mapping
+- Record every discovered endpoint, route, and parameter with `record_endpoint` so later agents can query the surface instead of re-probing for it
+
+Vulnerability-assessment and exploitation agents should call `list_endpoints` before spending requests hunting for routes themselves - recon has usually already found and recorded them.
 
 **Vulnerability Assessment**
 - Injection testing (SQLi, XSS, command injection)
