@@ -278,6 +278,22 @@ def _amendments_of(model: dict[str, Any]) -> list[dict[str, Any]]:
     return [item for item in raw if isinstance(item, dict)]
 
 
+def any_threat_model_exists() -> bool:
+    """Whether any target on this scan has a derived threat model yet.
+
+    Used by ``create_agent``'s soft gate (see ``strix/tools/agents_graph/tools.py``):
+    spawning an exploitation-oriented specialist before any threat model exists
+    is exactly the failure mode that gate warns about, so it needs a cheap,
+    read-only way to ask "has anyone derived one at all" without caring which
+    target it belongs to.
+    """
+    with _store_lock:
+        return any(
+            isinstance(model.get("content"), str) and model["content"].strip()
+            for model in _MODELS.values()
+        )
+
+
 def _not_found(identity: str) -> dict[str, Any]:
     return {
         "success": True,

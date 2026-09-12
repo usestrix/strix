@@ -16,13 +16,107 @@ from strix.core.agents import Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
 from strix.report.state import get_global_report_state
-from strix.skills import validate_requested_skills
+from strix.skills import get_available_skills, validate_requested_skills
+from strix.tools.coverage.tools import get_coverage_entries
+from strix.tools.threat_model.tools import any_threat_model_exists
 
 
 _ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting"})
 
 
 logger = logging.getLogger(__name__)
+
+
+# --- Soft threat-model gate for exploitation-oriented children -------------
+#
+# Why this exists: root_agent.md already *tells* the root agent, in prose, to
+# recon and build a threat model before spawning exploitation/hunter
+# subagents (especially black-box, where "recon comes first"). But that is
+# prompt-only guidance an LLM can and does skip under its own initiative.
+# Two independent third-party benchmarks found this actually happens: a
+# grey-box eval measured 1/20 known vulns found on a real app, and a
+# separate review found ~1,300 of ~1,350 requests spent fuzzing guessed
+# conventional API paths, never discovering the app's real nested routes,
+# because exploitation started before real recon did.
+#
+# This is a *soft* backstop: create_agent still spawns the child (a false
+# block could stall a legitimate white-box/small-scope scan where a threat
+# model is genuine overkill) but attaches a `warning` field to the response
+# so the root agent has a code-level signal to weigh, not just prose to
+# ignore. Tune the heuristic here — the skill category treated as
+# "exploitation" and the coverage risk_area substrings treated as "recon
+# happened" — rather than inline in create_agent.
+_EXPLOITATION_SKILL_CATEGORY = "vulnerabilities"
+_RECON_RISK_AREA_HINTS: tuple[str, ...] = (
+    "recon",
+    "asset discovery",
+    "enumeration",
+    "fingerprint",
+    "attack surface",
+)
+
+
+def _exploitation_skill_names() -> frozenset[str]:
+    """Skill names under ``strix/skills/vulnerabilities/``, read from disk.
+
+    Derived rather than hardcoded so a new vulnerability skill file is
+    covered automatically, without a matching edit here going stale.
+    """
+    return frozenset(
+        skill["name"] for skill in get_available_skills().get(_EXPLOITATION_SKILL_CATEGORY, [])
+    )
+
+
+def _requests_exploitation_skill(skill_list: list[str]) -> bool:
+    """Whether any requested skill looks exploitation/vulnerability-oriented."""
+    if not skill_list:
+        return False
+    exploitation_skills = _exploitation_skill_names()
+    return any(
+        skill in exploitation_skills or skill.rsplit("/", 1)[-1] in exploitation_skills
+        for skill in skill_list
+    )
+
+
+def _no_recon_coverage_yet() -> bool:
+    """True when nothing in the shared coverage ledger looks like recon work."""
+    entries = get_coverage_entries()
+    if not entries:
+        return True
+    return not any(
+        hint in str(entry.get("risk_area", "")).lower()
+        for entry in entries
+        for hint in _RECON_RISK_AREA_HINTS
+    )
+
+
+def _threat_model_gate_warning(skill_list: list[str]) -> str | None:
+    """Return the create_agent warning for this spawn, or None if it doesn't apply.
+
+    Fires only when the child looks exploitation-oriented AND no threat model
+    has been established yet for this scan. The "no recon coverage either" signal
+    is folded into the same message rather than emitted as a second warning.
+    """
+    if not _requests_exploitation_skill(skill_list):
+        return None
+
+    if any_threat_model_exists():
+        return None
+
+    message = (
+        "No threat model has been established for this scan yet. Black-box targets "
+        "should have reconnaissance run and a threat model saved via save_threat_model "
+        "before spawning exploitation specialists — otherwise they will guess at attack "
+        "surface instead of testing what's actually there."
+    )
+    if _no_recon_coverage_yet():
+        message += (
+            " No coverage entries suggesting reconnaissance (asset discovery, "
+            "enumeration, fingerprinting) have been recorded yet either, which "
+            "suggests this may be the first specialist spawned before any recon "
+            "took place."
+        )
+    return message
 
 
 def _ctx(ctx: RunContextWrapper) -> dict[str, Any]:
@@ -602,6 +696,11 @@ async def create_agent(
         len(skill_list),
         len(task or ""),
     )
+
+    if result.get("success"):
+        warning = _threat_model_gate_warning(skill_list)
+        if warning:
+            result = {**result, "warning": warning}
 
     return json.dumps(
         result,
