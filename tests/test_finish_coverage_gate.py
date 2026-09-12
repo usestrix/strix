@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from strix.tools.coverage.tools import _record_impl, hydrate_coverage_from_disk
-from strix.tools.finish.tool import _coverage_summary, _do_finish
+from strix.tools.finish.tool import _coverage_summary, _do_finish, finish_scan
 
 
 if TYPE_CHECKING:
@@ -66,23 +66,22 @@ def test_an_empty_ledger_still_warns_first() -> None:
 
 
 @pytest.mark.parametrize(
-    ("field_name", "placeholder"),
+    "field_name",
     [
-        ("executive_summary", "Business-level summary for leadership."),
-        ("methodology", "Frameworks, scope, and approach."),
-        ("technical_analysis", "Consolidated findings + systemic themes."),
-        ("recommendations", "Prioritized, actionable remediation."),
+        "executive_summary",
+        "methodology",
+        "technical_analysis",
+        "recommendations",
     ],
 )
-def test_finish_rejects_schema_description_placeholders(
-    field_name: str, placeholder: str
-) -> None:
+def test_finish_rejects_schema_description_placeholders(field_name: str) -> None:
     report_fields = {
         "executive_summary": "No material exposure was confirmed.",
         "methodology": "The scoped paths were reviewed and exercised.",
         "technical_analysis": "Observed controls held under the tested cases.",
         "recommendations": "Retest after material changes.",
     }
+    placeholder = finish_scan.params_json_schema["properties"][field_name]["description"]
     report_fields[field_name] = f" \n{placeholder}\t"
 
     result = _do_finish(parent_id=None, agent_graph={}, **report_fields)
