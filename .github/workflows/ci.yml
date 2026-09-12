@@ -26,7 +26,11 @@ jobs:
       - run: uv lock --check
       - run: uv run --frozen ruff check .
       - run: uv run --frozen ruff format --check .
-      - run: uv run --frozen mypy strix/
+      # --platform selects which sys.platform branches mypy checks, so one
+      # Linux runner covers all three.
+      - run: uv run --frozen mypy --platform linux strix/
+      - run: uv run --frozen mypy --platform darwin strix/
+      - run: uv run --frozen mypy --platform win32 strix/
       - run: uv run --frozen bandit -r strix/ -c pyproject.toml
 
   pytest:
