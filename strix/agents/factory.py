@@ -28,7 +28,7 @@ from strix.tools.agents_graph.tools import (
 )
 from strix.tools.coverage.tools import list_coverage, record_coverage, update_coverage
 from strix.tools.finish.tool import finish_scan
-from strix.tools.load_skill.tool import load_skill
+from strix.tools.load_skill.tool import load_skill, search_skills
 from strix.tools.mcp import call_mcp, describe_mcp, list_mcps
 from strix.tools.notes.tools import (
     create_note,
@@ -562,6 +562,7 @@ def _finish_tool_use_behavior(
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
+    search_skills,
     create_todo,
     list_todos,
     update_todo,
