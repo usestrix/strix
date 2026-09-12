@@ -152,3 +152,46 @@ def test_installer_rejects_unsupported_architecture(tmp_path: Path) -> None:
     assert "Unsupported OS/Arch: linux/riscv64" in result.stdout
     assert not curl_log_path.exists()
     assert not (home_path / ".strix").exists()
+
+
+def _install_with_decoy(tmp_path: Path, decoy_directory_name: str) -> tuple[Path, Path, Path]:
+    """Run the installer with an unrelated `strix` ahead of it on `PATH`."""
+    repository_root = Path(__file__).resolve().parents[1]
+    archive_path = _create_release_archive(tmp_path)
+    mock_bin = _create_mock_commands(tmp_path, machine="aarch64")
+
+    pipx_log_path = tmp_path / "pipx.log"
+    _write_executable(
+        mock_bin / "pipx",
+        f'#!/bin/sh\nprintf \'%s\n\' "$*" >> "{pipx_log_path}"\n',
+    )
+
+    decoy_directory = tmp_path / decoy_directory_name
+    decoy_directory.mkdir(parents=True)
+    decoy_path = decoy_directory / "strix"
+    _write_executable(decoy_path, "#!/bin/sh\nprintf 'other-strix 1.2.3\n'\n")
+
+    environment, home_path, _ = _create_installer_environment(tmp_path, archive_path, mock_bin)
+    environment["PATH"] = f"{decoy_directory}:{environment['PATH']}"
+
+    result = _run_installer(repository_root, environment)
+    assert result.returncode == 0, result.stderr
+
+    return decoy_path, pipx_log_path, home_path
+
+
+def test_installer_leaves_unrelated_strix_executables_alone(tmp_path: Path) -> None:
+    decoy_path, pipx_log_path, home_path = _install_with_decoy(tmp_path, "other-bin")
+
+    assert decoy_path.exists()
+    assert decoy_path.read_text(encoding="utf-8") == "#!/bin/sh\nprintf 'other-strix 1.2.3\n'\n"
+    assert not pipx_log_path.exists()
+    assert (home_path / ".strix/bin/strix").exists()
+
+
+def test_installer_does_not_uninstall_a_pipx_managed_strix(tmp_path: Path) -> None:
+    decoy_path, pipx_log_path, home_path = _install_with_decoy(tmp_path, ".local/bin")
+
+    assert decoy_path.exists()
+    assert not pipx_log_path.exists()
+    assert (home_path / ".strix/bin/strix").exists()
