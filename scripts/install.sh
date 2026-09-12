@@ -99,13 +99,30 @@ print_message() {
     echo -e "${color}${message}${NC}"
 }
 
+pipx_owns() {
+    # Ask pipx instead of guessing from the path. A uv-managed or hand-placed
+    # strix can sit in ~/.local/bin too, and telling the user to
+    # "pipx uninstall strix-agent" would then either do nothing or uninstall a
+    # different package than the one winning PATH resolution.
+    local path=$1
+    local bin_dir
+
+    command -v pipx >/dev/null 2>&1 || return 1
+    bin_dir=$(pipx environment --value PIPX_BIN_DIR 2>/dev/null) || return 1
+    [[ -n "$bin_dir" ]] || return 1
+    [[ "$(dirname "$path")" == "${bin_dir%/}" ]] || return 1
+    pipx list --short 2>/dev/null | grep -q "^strix-agent "
+}
+
 describe_removal() {
     local path=$1
 
-    if [[ "$path" == *".local/bin"* ]] && command -v pipx >/dev/null 2>&1; then
-        echo -e "${MUTED}  It looks like a pipx installation. To remove it: ${NC}pipx uninstall strix-agent"
+    if pipx_owns "$path"; then
+        echo -e "${MUTED}  pipx installed it. To remove it: ${NC}pipx uninstall strix-agent"
     else
-        echo -e "${MUTED}  To remove it: ${NC}rm $path"
+        # Quote the path: a copied "rm" of a path with spaces or globbing
+        # characters would otherwise split or expand.
+        echo -e "${MUTED}  To remove it: ${NC}rm $(printf '%q' "$path")"
     fi
 }
 
