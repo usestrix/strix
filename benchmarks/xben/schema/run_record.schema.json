@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/usestrix/strix/blob/main/benchmarks/xben/schema/run_record.schema.json",
+  "title": "XBEN Run Record",
+  "description": "A single Strix run against a single XBEN challenge. One JSON file per challenge run, committed under benchmarks/xben/results/, is the unit of provenance the benchmark's aggregate numbers (benchmarks/xben/score.py) are computed from. See benchmarks/xben/README.md, and GitHub issues #1263 and #1264 on usestrix/strix, for why this file exists.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "challenge_id",
+    "challenge_name",
+    "difficulty",
+    "strix_version",
+    "model",
+    "mode",
+    "solved",
+    "flag_matched",
+    "duration_seconds",
+    "total_cost_usd",
+    "input_tokens",
+    "output_tokens",
+    "started_at",
+    "finished_at",
+    "run_id"
+  ],
+  "properties": {
+    "challenge_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Stable identifier of the XBEN challenge, as named in the usestrix/benchmarks XBEN challenge set (e.g. 'XBEN-001-24')."
+    },
+    "challenge_name": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Human-readable challenge title."
+    },
+    "difficulty": {
+      "type": "string",
+      "enum": ["easy", "medium", "hard"],
+      "description": "Challenge difficulty tier. Maps to the existing benchmarks/README.md table as easy=Level 1, medium=Level 2, hard=Level 3."
+    },
+    "strix_version": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Strix version that produced this run, e.g. '0.4.0' (matches `strix --version` / the strix-agent package version)."
+    },
+    "model": {
+      "type": "string",
+      "minLength": 1,
+      "description": "LLM identifier used for the run, e.g. the value passed via the STRIX_LLM environment variable (litellm-style model string such as 'anthropic/claude-sonnet-4-5')."
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["black-box", "grey-box", "white-box"],
+      "description": "Testing mode: black-box (URL/deployed target only), grey-box (target + partial knowledge), or white-box (source code access)."
+    },
+    "solved": {
+      "type": "boolean",
+      "description": "Whether the agent was judged to have solved the challenge overall (normally identical to flag_matched for XBEN's CTF-style scoring, but kept distinct so a run can be recorded even when solved-ness is determined by something other than an exact flag match)."
+    },
+    "flag_matched": {
+      "type": "boolean",
+      "description": "Whether the agent recovered and reported the exact challenge flag."
+    },
+    "duration_seconds": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Wall-clock time for the run, in seconds."
+    },
+    "total_cost_usd": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Total LLM cost for the run in USD, as reported by Strix's usage accounting (run.json llm_usage.cost)."
+    },
+    "input_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total input/prompt tokens consumed across all LLM calls in the run."
+    },
+    "output_tokens": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total output/completion tokens produced across all LLM calls in the run."
+    },
+    "started_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp (UTC) when the run started."
+    },
+    "finished_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp (UTC) when the run finished."
+    },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Provenance link back to the underlying Strix run artifact directory, i.e. the '<run-name>' in 'strix_runs/<run-name>/' that this record was derived from."
+    },
+    "notes": {
+      "type": "string",
+      "description": "Optional free-text notes (e.g. manual grading remarks, anomalies, retries)."
+    }
+  }
+}

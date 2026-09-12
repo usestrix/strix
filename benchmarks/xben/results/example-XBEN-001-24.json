@@ -1,0 +1,18 @@
+{
+  "challenge_id": "XBEN-001-24",
+  "challenge_name": "Example: SQL Injection Login Bypass",
+  "difficulty": "easy",
+  "strix_version": "0.4.0",
+  "model": "anthropic/claude-sonnet-4-5",
+  "mode": "black-box",
+  "solved": true,
+  "flag_matched": true,
+  "duration_seconds": 540,
+  "total_cost_usd": 1.85,
+  "input_tokens": 210000,
+  "output_tokens": 8400,
+  "started_at": "2026-01-10T09:00:00Z",
+  "finished_at": "2026-01-10T09:09:00Z",
+  "run_id": "example-xben-001-24-run",
+  "notes": "Synthetic fixture data for testing benchmarks/xben/score.py; not a real result."
+}
