@@ -127,6 +127,26 @@ _ARCHIVE_MAGIC_PREFIXES = (
 )
 
 
+# Whether `st_ctime_ns` belongs in the identity a source file is pinned to.
+#
+# On POSIX it is the inode-change time and a real tamper signal: a chmod or a
+# rename that leaves size and mtime untouched still moves it. On Windows the
+# value does not hold still for a file that was written moments ago. A path
+# `stat` can be served from cached directory metadata while `fstat` reads the
+# handle directly, and NTFS settles that metadata asynchronously, so the two
+# disagree by roughly 1-30 ms with nothing having touched the file. Comparing
+# it there rejects unchanged sources instead of catching tampering (#1258).
+_IDENTITY_INCLUDES_CTIME = os.name != "nt"
+
+
+def _stat_identity(info: os.stat_result) -> tuple[int, ...]:
+    """Fields that must not change between selecting a file and archiving it."""
+    identity: tuple[int, ...] = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
+    if _IDENTITY_INCLUDES_CTIME:
+        identity = (*identity, info.st_ctime_ns)
+    return identity
+
+
 @dataclass(frozen=True)
 class SelectedFile:
     path: Path
@@ -136,6 +156,13 @@ class SelectedFile:
     inode: int
     mtime_ns: int
     ctime_ns: int
+
+    @property
+    def identity(self) -> tuple[int, ...]:
+        identity: tuple[int, ...] = (self.device, self.inode, self.size, self.mtime_ns)
+        if _IDENTITY_INCLUDES_CTIME:
+            identity = (*identity, self.ctime_ns)
+        return identity
 
 
 @dataclass(frozen=True)
@@ -597,14 +624,7 @@ def _write_archive(destination: Path, files: tuple[SelectedFile, ...]) -> None:
                 raise http.CloudError(f"could not safely read {item.archive_name}: {exc}") from exc
             with os.fdopen(descriptor, "rb") as source_file:
                 current = os.fstat(source_file.fileno())
-                if (
-                    not stat.S_ISREG(current.st_mode)
-                    or current.st_size != item.size
-                    or current.st_dev != item.device
-                    or current.st_ino != item.inode
-                    or current.st_mtime_ns != item.mtime_ns
-                    or current.st_ctime_ns != item.ctime_ns
-                ):
+                if not stat.S_ISREG(current.st_mode) or _stat_identity(current) != item.identity:
                     raise http.CloudError(
                         f"{item.archive_name} changed while the source archive was being built; "
                         "retry."
@@ -627,11 +647,7 @@ def _write_archive(destination: Path, files: tuple[SelectedFile, ...]) -> None:
                     if (
                         source_file.read(1)
                         or not stat.S_ISREG(final.st_mode)
-                        or final.st_size != item.size
-                        or final.st_dev != item.device
-                        or final.st_ino != item.inode
-                        or final.st_mtime_ns != item.mtime_ns
-                        or final.st_ctime_ns != item.ctime_ns
+                        or _stat_identity(final) != item.identity
                     ):
                         raise http.CloudError(
                             f"{item.archive_name} changed while the source archive was being "
