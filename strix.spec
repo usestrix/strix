@@ -7,6 +7,14 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 project_root = Path(SPECPATH)
 strix_root = project_root / 'strix'
 
+tui_name = 'strix-tui.exe' if sys.platform == 'win32' else 'strix-tui'
+tui_binary = project_root / 'build' / 'sidecar' / tui_name
+if not tui_binary.is_file():
+    raise FileNotFoundError(
+        f'Missing Go TUI sidecar at {tui_binary}; run `make tui-build` first'
+    )
+binaries = [(str(tui_binary), 'strix/bin')]
+
 datas = []
 
 for md_file in strix_root.rglob('skills/**/*.md'):
@@ -21,16 +29,19 @@ for xml_file in strix_root.rglob('*.xml'):
     rel_path = xml_file.relative_to(project_root)
     datas.append((str(xml_file), str(rel_path.parent)))
 
-for tcss_file in strix_root.rglob('*.tcss'):
-    rel_path = tcss_file.relative_to(project_root)
-    datas.append((str(tcss_file), str(rel_path.parent)))
-
-datas += collect_data_files('textual')
+# Prebuilt local-viewer SPA (served by `strix view`).
+viewer_static = strix_root / 'interface' / 'viewer' / 'static'
+for asset in viewer_static.rglob('*'):
+    if asset.is_file():
+        rel_path = asset.relative_to(project_root)
+        datas.append((str(asset), str(rel_path.parent)))
 
 datas += collect_data_files('tiktoken')
 datas += collect_data_files('tiktoken_ext')
 
 datas += collect_data_files('litellm')
+
+datas += collect_data_files('agents', includes=['**/*.md', '**/*.jinja', '**/*.json'])
 
 hiddenimports = [
     # Core dependencies
@@ -42,17 +53,6 @@ hiddenimports = [
     'litellm.llms.bedrock',
     'litellm.utils',
     'litellm.caching',
-
-    # Textual TUI
-    'textual',
-    'textual.app',
-    'textual.widgets',
-    'textual.containers',
-    'textual.screen',
-    'textual.binding',
-    'textual.reactive',
-    'textual.css',
-    'textual._text_area_theme',
 
     # Rich console
     'rich',
@@ -116,34 +116,83 @@ hiddenimports = [
     'strix.interface.main',
     'strix.interface.cli',
     'strix.interface.tui',
+    'strix.interface.tui.runtime',
+    'strix.interface.tui.history',
+    'strix.interface.tui.live_view',
+    'strix.interface.tui.backend',
+    'strix.interface.tui.backend.controller',
+    'strix.interface.tui.backend.messages',
+    'strix.interface.tui.backend.protocol',
+    'strix.interface.tui.backend.server',
     'strix.interface.utils',
-    'strix.interface.tool_components',
     'strix.agents',
-    'strix.agents.base_agent',
-    'strix.agents.state',
-    'strix.agents.StrixAgent',
-    'strix.llm',
-    'strix.llm.llm',
-    'strix.llm.config',
-    'strix.llm.utils',
-    'strix.llm.memory_compressor',
+    'strix.agents.factory',
+    'strix.agents.prompt',
+    'strix.config.loader',
+    'strix.config.settings',
+    'strix.config.codex',
+    'strix.core',
+    'strix.core.agents',
+    'strix.core.execution',
+    'strix.core.inputs',
+    'strix.core.paths',
+    'strix.core.runner',
+    'strix.core.sessions',
+    'strix.report',
+    'strix.report.dedupe',
+    'strix.report.state',
+    'strix.report.writer',
+    'strix.interface.viewer',
+    'strix.interface.viewer.auth',
+    'strix.interface.viewer.cli',
+    'strix.interface.viewer.report_pdf',
+    'strix.interface.viewer.server',
+    'strix.interface.viewer.transcript',
+
+    # PDF report generation + encryption
+    'reportlab',
+    'reportlab.pdfgen',
+    'reportlab.pdfbase',
+    'reportlab.lib',
+    'reportlab.platypus',
+    'pypdf',
+    'cryptography',
     'strix.runtime',
-    'strix.runtime.runtime',
-    'strix.runtime.docker_runtime',
+    'strix.runtime.backends',
+    'strix.runtime.caido_bootstrap',
+    'strix.runtime.docker_client',
+    'strix.runtime.session_manager',
     'strix.telemetry',
-    'strix.telemetry.tracer',
+    'strix.telemetry.logging',
+    'strix.telemetry.posthog',
     'strix.tools',
-    'strix.tools.registry',
-    'strix.tools.executor',
-    'strix.tools.argument_parser',
+    'strix.tools.agents_graph.tools',
+    'strix.tools.finish.tool',
+    'strix.tools.notes.tools',
+    'strix.tools.proxy._calls',
+    'strix.tools.proxy.tools',
+    'strix.tools.python.tool',
+    'strix.tools.reporting.tool',
+    'strix.tools.thinking.tool',
+    'strix.tools.todo.tools',
+    'strix.tools.web_search.tool',
     'strix.skills',
 ]
 
 hiddenimports += collect_submodules('litellm')
-hiddenimports += collect_submodules('textual')
 hiddenimports += collect_submodules('rich')
 hiddenimports += collect_submodules('pydantic')
 hiddenimports += collect_submodules('pygments')
+# reportlab loads renderers/fonts dynamically, so pull its whole tree in.
+hiddenimports += collect_submodules('reportlab')
+
+# reportlab ships bundled fonts (.pfb/.afm) it needs at runtime.
+datas += collect_data_files('reportlab')
+
+# reportlab imports PIL (pillow) lazily for image handling, so it must be
+# bundled explicitly and kept out of the excludes list below.
+hiddenimports += collect_submodules('PIL')
+datas += collect_data_files('PIL')
 
 excludes = [
     # Sandbox-only packages
@@ -156,9 +205,6 @@ excludes = [
     'pyte',
     'openhands_aci',
     'openhands-aci',
-    'gql',
-    'fastapi',
-    'uvicorn',
     'numpydoc',
 
     # Google Cloud / Vertex AI
@@ -194,14 +240,13 @@ excludes = [
     'numpy',
     'pandas',
     'scipy',
-    'PIL',
     'cv2',
 ]
 
 a = Analysis(
     ['strix/interface/main.py'],
     pathex=[str(project_root)],
-    binaries=[],
+    binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],

@@ -64,3 +64,9 @@ Failure recovery:
 
 If uncertain, query web_search with:
 `site:github.com/ffuf/ffuf <flag> README`
+
+Alternate tool for path/file enumeration: `dirsearch -u <url> -e php,html,js,json`
+ships with curated wordlists, sane defaults, and built-in recursion. Reach
+for ffuf when you need surgical fuzzing of any input position (header,
+body, vhost) or precise filter control; reach for dirsearch for a quick
+broad sweep with no setup.

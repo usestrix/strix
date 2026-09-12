@@ -15,7 +15,6 @@ Thorough understanding before exploitation. Test every parameter, every endpoint
 
 **Whitebox (source available)**
 - Map every file, module, and code path in the repository
-- Load and maintain shared `wiki` notes from the start (`list_notes(category="wiki")` then `get_note(note_id=...)`), then continuously update one repo note
 - Start with broad source-aware triage (`semgrep`, `ast-grep`, `gitleaks`, `trufflehog`, `trivy fs`) and use outputs to drive deep review
 - Execute at least one structural AST pass (`sg` and/or Tree-sitter) per repository and store artifacts for reuse
 - Keep AST artifacts bounded and query-driven (target relevant paths/sinks first; avoid whole-repo generic function dumps)
@@ -31,7 +30,8 @@ Thorough understanding before exploitation. Test every parameter, every endpoint
 - Review file handling: upload, download, processing
 - Understand the deployment model and infrastructure assumptions
 - Check all dependency versions and repository risks against CVE/misconfiguration data
-- Before final completion, update the shared repo wiki with scanner summary + dynamic follow-ups
+- For quick CVE lookups on a named product/version, use `vulnx search <query>`
+  (ProjectDiscovery's CVE database) before falling back to web_search
 
 **Blackbox (no source)**
 - Exhaustive subdomain enumeration with multiple sources and tools
@@ -105,6 +105,7 @@ Test every input vector with every applicable technique.
 - CORS misconfiguration exploitation
 - WebSocket security testing
 - GraphQL-specific attacks (introspection, batching, nested queries)
+- LLM/RAG/agent features: load `llm_applications` for OWASP 2026 LLM01-LLM10 coverage and `llm_prompt_injection` for deep injection testing
 
 ## Phase 4: Vulnerability Chaining
 

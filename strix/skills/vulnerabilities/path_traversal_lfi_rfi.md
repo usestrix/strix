@@ -11,6 +11,7 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 
 **Path Traversal**
 - Read files outside intended roots via `../`, encoding, normalization gaps
+- Write or create files outside intended roots, then evaluate framework-controlled resolution paths separately from direct web access
 
 **Local File Inclusion (LFI)**
 - Include server-side files into interpreters/templates
@@ -51,7 +52,7 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 ### Capability Probes
 
 - Path traversal baseline: `../../etc/hosts` and `C:\Windows\win.ini`
-- Encodings: `%2e%2e%2f`, `%252e%252e%252f`, `..%2f`, `..%5c`, mixed UTF-8 (`%c0%2e`), Unicode dots and slashes
+- Encodings: `%2e%2e%2f`, `%252e%252e%252f`, `..%2f`, `..%5c`, and Unicode lookalikes only where a documented conversion layer maps them to path syntax
 - Normalization tests: `..../`, `..\\`, `././`, trailing dot/double dot segments; repeated decoding
 - Absolute path acceptance: `/etc/passwd`, `C:\Windows\System32\drivers\etc\hosts`
 - Server mismatch: `/static/..;/../etc/passwd` ("..;"), encoded slashes (`%2F`), double-decoding via upstream
@@ -69,7 +70,7 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 
 ### OAST
 
-- RFI/LFI with wrappers that trigger outbound fetches (HTTP/DNS) to confirm inclusion/execution
+- For RFI or URL-capable resource loaders, a correlated callback confirms server-side resolution/fetch. It does not by itself prove inclusion or execution; use a separate response or side-effect oracle for that claim.
 
 ### Side Effects
 
@@ -81,7 +82,7 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 ### Path Traversal Bypasses
 
 **Encodings**
-- Single/double URL-encoding, mixed case, overlong UTF-8, UTF-16, path normalization oddities
+- Single/double URL-encoding, mixed case, UTF-16 or Unicode conversion only when present in the stack, and path normalization oddities
 
 **Mixed Separators**
 - `/` and `\\` on Windows; `//` and `\\\\` collapse differences across frameworks
@@ -147,13 +148,38 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 - Verify symlink handling and path canonicalization prior to write
 - Impact: overwrite config/templates or drop webshells into served directories
 
+### File Write to Execution
+
+Characterize the write primitive before choosing a payload:
+
+- create vs overwrite vs append; atomic replace vs streamed write
+- absolute vs relative path; controllable directory, filename, extension, and bytes
+- text encoding, newline conversion, templating, compression, or report generation applied before write
+- target process permissions and whether symlinks are followed
+- immediate load, hot reload, cache invalidation, restart, scheduled task, or user action required
+
+Then inventory generic execution and influence surfaces:
+
+- view/template search paths and implicit rendering
+- module, controller, plugin, package, or class autoload directories
+- application bootstrap files and language package initializers
+- server/user configuration that changes handler or interpreter behavior
+- job definitions, hooks, startup scripts, cron/task inputs, and CI workspace files
+- logs, sessions, caches, generated sources, and compiled-template directories later included or evaluated
+
+Do not require the malicious file to be directly web-accessible. An HTTP extension allowlist can block `/path/payload.ext` while an internal view engine, autoloader, or interpreter still opens and executes that file through a clean route. Trace public request filtering and internal file resolution as separate security boundaries.
+
+Test search order with candidate marker files or filesystem traces. Trigger the normal route/action that causes internal resolution. Record whether the framework creates, compiles, caches, or executes the artifact and what reload condition is required.
+
 ## Testing Methodology
 
 1. **Inventory file operations** - Downloads, previews, templates, logs, exports/imports, report engines, uploads, archive extractors
 2. **Identify input joins** - Path joins (base + user), include/require/template loads, resource fetchers, archive extract destinations
 3. **Probe normalization** - Separators, encodings, double-decodes, case, trailing dots/slashes
 4. **Compare behaviors** - Web server vs application behavior
-5. **Escalate** - From disclosure (read) to influence (write/extract/include), then to execution (wrapper/engine chains)
+5. **Characterize writes** - Determine create/overwrite/append, path and byte control, permissions, and reload/trigger conditions
+6. **Map resolvers** - Test template/view search paths, autoloaders, plugins, configs, jobs, and other internal consumers separately from direct file serving
+7. **Escalate** - From disclosure (read) to influence (write/extract/include), then to execution through a proven resolver or interpreter
 
 ## Validation
 
@@ -161,7 +187,8 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 2. For LFI, demonstrate inclusion of a benign local file or harmless wrapper output (`php://filter` base64 of index.php)
 3. For RFI, prove remote fetch by OAST or controlled output; avoid destructive payloads
 4. For Zip Slip, create an archive with `../` entries and show write outside target (e.g., marker file read back)
-5. Provide before/after file paths, exact requests, and content hashes/lengths for reproducibility
+5. For file-write chains, first prove a canary is created at the intended path, then prove the normal resolver loads it; document cache/reload requirements
+6. Provide before/after file paths, exact requests, and content hashes/lengths for reproducibility
 
 ## False Positives
 
@@ -184,6 +211,7 @@ Improper file path handling and dynamic inclusion enable sensitive file disclosu
 3. For LFI, prefer `php://filter` base64 probes over destructive payloads; enumerate readable logs and sessions
 4. Validate extraction code with synthetic archives; include symlinks and deep `../` chains
 5. Use minimal PoCs and hard evidence (hashes, paths). Avoid noisy DoS against filesystems
+6. When direct execution is blocked, enumerate internal search paths before assuming the write is low impact
 
 ## Summary
 

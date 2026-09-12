@@ -8,7 +8,7 @@ Configure Strix using environment variables or a config file.
 ## LLM Configuration
 
 <ParamField path="STRIX_LLM" type="string" required>
-  Model name in LiteLLM format (e.g., `openai/gpt-5.4`, `anthropic/claude-sonnet-4-6`).
+  Model name in LiteLLM format (e.g., `openrouter/z-ai/glm-5.3`, `openai/gpt-5.4`).
 </ParamField>
 
 <ParamField path="LLM_API_KEY" type="string">
@@ -17,6 +17,14 @@ Configure Strix using environment variables or a config file.
 
 <ParamField path="LLM_API_BASE" type="string">
   Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
+</ParamField>
+
+<ParamField path="LLM_EXTRA_HEADERS" type="string">
+  Extra HTTP headers sent on every LLM request, as a JSON object (e.g.
+  `{"X-Feature-Key":"value","X-Tenant":"acme"}`). Useful for OpenAI-compatible
+  gateways that require attribution or routing headers in addition to the bearer
+  token. The bearer token itself still comes from `LLM_API_KEY`. Applies to both
+  the LiteLLM and native OpenAI routing paths.
 </ParamField>
 
 <ParamField path="LLM_TIMEOUT" default="300" type="integer">
@@ -28,11 +36,42 @@ Configure Strix using environment variables or a config file.
 </ParamField>
 
 <ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
-  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`. Defaults to `medium` for quick scan mode.
+  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Defaults to `medium` for quick scan mode.
 </ParamField>
 
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
   Timeout in seconds for memory compression operations (context summarization).
+</ParamField>
+
+### Dedicated deduplication model
+
+Finding deduplication is a cheap, structured classification task. By default it
+runs on the main model, but you can route it to a smaller/cheaper model without
+affecting the agents that do the actual testing.
+
+<ParamField path="STRIX_DEDUPE_MODEL" type="string">
+  Model used to judge whether a candidate finding duplicates an existing report.
+  Falls back to `STRIX_LLM` when unset.
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_API_KEY" type="string">
+  Optional provider key for the deduplication model.
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_API_BASE" type="string">
+  Optional custom API base URL for the deduplication model. Use when the dedupe
+  model runs on a different endpoint than the main model.
+</ParamField>
+
+<ParamField path="DEDUPE_LLM_EXTRA_HEADERS" type="string">
+  Optional JSON object of extra HTTP headers sent on every deduplication-model
+  request, e.g. `{"X-Feature-Key":"value"}`. A dedicated dedupe model never
+  inherits `LLM_EXTRA_HEADERS`; set this when its endpoint needs custom headers.
+</ParamField>
+
+<ParamField path="STRIX_DEDUPE_REASONING_EFFORT" type="string">
+  Reasoning effort for the deduplication model. Defaults to the model's own
+  baseline when unset.
 </ParamField>
 
 ## Optional Features
@@ -41,20 +80,28 @@ Configure Strix using environment variables or a config file.
   API key for Perplexity AI. Enables real-time web search during scans for OSINT and vulnerability research.
 </ParamField>
 
-<ParamField path="STRIX_DISABLE_BROWSER" default="false" type="boolean">
-  Disable browser automation tools.
+<ParamField path="EXA_API_KEY" type="string">
+  API key for Exa. Enables real-time web search through the Exa `/search` endpoint. Exa also powers the `web_get_contents` tool, which fetches the full text of a page through the Exa `/contents` endpoint. This is the preferred web search provider.
+</ParamField>
+
+<ParamField path="STRIX_WEB_SEARCH_PROVIDER" default="auto" type="string">
+  Web search provider: `auto`, `perplexity`, or `exa`. With `auto`, Strix uses Exa when `EXA_API_KEY` is set, and Perplexity otherwise. Set an explicit provider to pin one when you configure both keys.
+</ParamField>
+
+<ParamField path="STRIX_EXA_SEARCH_TYPE" default="auto" type="string">
+  Exa search mode: `auto`, `fast`, `instant`, `deep-lite`, `deep`, or `deep-reasoning`. Lower modes return results faster. Higher modes plan across more steps and take more time. This setting applies only to the Exa provider.
+</ParamField>
+
+<ParamField path="STRIX_EXA_NUM_RESULTS" default="5" type="integer">
+  Number of Exa results to return, from `1` to `100`. Each result includes a title, a URL, and a short security-focused summary. To read a full page, the agent calls `web_get_contents` with the result URL. This setting applies only to the Exa provider.
+</ParamField>
+
+<ParamField path="POSTMAN_API_KEY" type="string">
+  Postman API key (`PMAK-…`). Enables fetching Postman collections by id as a target (`postman://<collection-uid>`), and Postman environments (`postman://<collection-uid>?env=<environment-uid>`) to resolve collection variables. Not needed when passing a local collection export file.
 </ParamField>
 
 <ParamField path="STRIX_TELEMETRY" default="1" type="string">
-  Global telemetry default toggle. Set to `0`, `false`, `no`, or `off` to disable both PostHog and OTEL unless overridden by per-channel flags below.
-</ParamField>
-
-<ParamField path="STRIX_OTEL_TELEMETRY" type="string">
-  Enable/disable OpenTelemetry run observability independently. When unset, falls back to `STRIX_TELEMETRY`.
-</ParamField>
-
-<ParamField path="STRIX_POSTHOG_TELEMETRY" type="string">
-  Enable/disable PostHog product telemetry independently. When unset, falls back to `STRIX_TELEMETRY`.
+  Telemetry toggle. Set to `0`, `false`, `no`, or `off` to disable telemetry (PostHog, Scarf, OTEL).
 </ParamField>
 
 <ParamField path="TRACELOOP_BASE_URL" type="string">
@@ -79,7 +126,7 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
 
 ## Docker Configuration
 
-<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:0.1.13" type="string">
+<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.3.0" type="string">
   Docker image to use for the sandbox container.
 </ParamField>
 
@@ -114,7 +161,7 @@ strix --target ./app --config /path/to/config.json
 ```json
 {
   "env": {
-    "STRIX_LLM": "openai/gpt-5.4",
+    "STRIX_LLM": "openrouter/z-ai/glm-5.3",
     "LLM_API_KEY": "sk-...",
     "STRIX_REASONING_EFFORT": "high"
   }
@@ -125,10 +172,11 @@ strix --target ./app --config /path/to/config.json
 
 ```bash
 # Required
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="sk-..."
 
-# Optional: Enable web search
+# Optional: Enable web search (Exa preferred, Perplexity supported)
+export EXA_API_KEY="..."
 export PERPLEXITY_API_KEY="pplx-..."
 
 # Optional: Custom timeouts

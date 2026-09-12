@@ -54,3 +54,55 @@ If you use LM Studio, vLLM, or other runners:
 export STRIX_LLM="openai/local-model"
 export LLM_API_BASE="http://localhost:1234/v1"  # Adjust port as needed
 ```
+
+### Gateways that require custom headers
+
+Some OpenAI-compatible gateways require extra HTTP headers (for attribution or
+tenant routing) alongside the bearer token. Set them with `LLM_EXTRA_HEADERS` as
+a JSON object — they are sent on every request:
+
+```bash
+export STRIX_LLM="openai/your-model"
+export LLM_API_BASE="https://your-gateway.example/v1"
+export LLM_API_KEY="your-bearer-token"          # sent as Authorization: Bearer ...
+export LLM_EXTRA_HEADERS='{"X-Feature-Key":"value","X-Tenant":"acme"}'
+```
+
+For endpoints behind a private CA, point Strix at your certificate bundle with
+the standard `SSL_CERT_FILE=/path/to/ca-bundle.pem` — never disable TLS
+verification against a real endpoint.
+
+## Tool calling must return structured `tool_calls`
+
+Strix is entirely tool-driven: every working turn must be a **native** function/tool call. If your inference server returns the tool call as plain assistant text instead of a structured `tool_calls` field, Strix never sees a call it can execute, so the agent makes no real progress — it re-prompts the model for a tool call and gives up once its recovery attempts are exhausted.
+
+This is almost always an **inference-server configuration** problem, not a model or Strix problem. Common symptoms are the model printing a call as text such as:
+
+```text
+<tool_call>{"name": "exec_command", "arguments": {"cmd": "nmap ..."}}</tool_call>
+exec_command(cmd="nmap ...", timeout=180)
+{"action": "exec_command", "params": {"cmd": "nmap ..."}}
+```
+
+The fix belongs on the inference server: it must be configured to parse the model's tool tokens into structured `tool_calls`. A correctly configured endpoint either returns a structured call or rejects the request outright — it never leaks the call as text.
+
+### Fixes by server
+
+**llama.cpp (`llama-server`)**
+- Run with `--jinja` and a correct tool-use chat template (`--chat-template` / `--chat-template-file` matching the model). Recent builds enable `--jinja` by default — **upgrade** if yours doesn't.
+- For thinking models, align or disable reasoning (`--reasoning-format`, `-rea off`) so it doesn't break tool-call parsing.
+- A low temperature (e.g. `--temp 0.2`) improves tool-call reliability.
+
+**Ollama**
+- Use a recent Ollama and a model whose template wires tools. Modern Ollama refuses tools (`tools param requires --jinja flag`) if the template lacks tool support.
+- For reasoning models (e.g. qwen3), disable the model's **thinking** mode — thinking left on frequently pushes the tool call into the text `content` instead of the structured `tool_calls` field. Turn it off on the Ollama side (a non-thinking model variant, or `think: false` in the model's parameters / `Modelfile`).
+- Raise **`num_ctx`** to at least 16k–32k. Strix sends a large system prompt plus many tool schemas; at Ollama's small default context the tool definitions are truncated out of the prompt and the model stops emitting valid calls. A short test prompt can look fine while a real scan fails, so set this explicitly rather than inferring it from a quick check.
+
+**vLLM**
+- Start with `--enable-auto-tool-choice`, a matching `--tool-call-parser` (`hermes`, `qwen3_xml`, or `llama3_json`), and a matching `--reasoning-parser` for reasoning models.
+
+A low sampling temperature (roughly 0.2–0.6, depending on the family) also measurably reduces malformed tool calls on open-weight models. Set it on the server or in your model's parameters.
+
+<Warning>
+Even correctly configured, small models (< ~30B) emit malformed or text-form tool calls far more often than frontier models. Prefer a capable model for reliable agentic behavior.
+</Warning>

@@ -30,23 +30,33 @@ The agent can take any captured request and replay it with modifications:
 
 ## Python Integration
 
-All proxy functions are automatically available in Python sessions. This enables powerful scripted security testing:
+Proxy helpers are available to sandbox Python scripts through the image-baked `caido_api` module. This enables powerful scripted security testing:
 
 ```python
-# List recent POST requests
-post_requests = list_requests(
-    httpql_filter='req.method.eq:"POST"',
-    page_size=20
-)
+import asyncio
 
-# View a specific request
-request_details = view_request("req_123", part="request")
+from caido_api import list_requests, repeat_request, view_request
 
-# Replay with modified payload
-response = repeat_request("req_123", {
-    "body": '{"user_id": "admin"}'
-})
-print(f"Status: {response['status_code']}")
+
+async def main():
+    # List recent POST requests
+    post_requests = await list_requests(
+        httpql_filter='req.method.eq:"POST"',
+        first=20,
+    )
+
+    # View a specific request
+    request_details = await view_request("req_123", part="request")
+
+    # Replay with modified payload
+    response = await repeat_request(
+        "req_123",
+        modifications={"body": '{"user_id": "admin"}'},
+    )
+    print(response["status"], request_details is not None, len(post_requests.edges))
+
+
+asyncio.run(main())
 ```
 
 ### Available Functions
@@ -56,28 +66,42 @@ print(f"Status: {response['status_code']}")
 | `list_requests()`      | Query captured traffic with HTTPQL filters |
 | `view_request()`       | Get full request/response details          |
 | `repeat_request()`     | Replay a request with modifications        |
-| `send_request()`       | Send a new HTTP request                    |
+| `list_sitemap()`       | Browse the request-tree view of discovered surface |
+| `view_sitemap_entry()` | Inspect one sitemap entry + its related requests |
 | `scope_rules()`        | Manage proxy scope (allowlist/denylist)    |
-| `list_sitemap()`       | View discovered endpoints                  |
-| `view_sitemap_entry()` | Get details for a sitemap entry            |
+
+For one-off arbitrary requests, use shell tooling like `curl` — the
+sandbox's `HTTP_PROXY` env routes the traffic through Caido
+automatically, so it lands in `list_requests` and can be replayed via
+`repeat_request`.
 
 ### Example: Automated IDOR Testing
 
 ```python
+import asyncio
+
 # Get all requests to user endpoints
-user_requests = list_requests(
-    httpql_filter='req.path.cont:"/users/"'
-)
+from caido_api import list_requests, repeat_request
 
-for req in user_requests.get('requests', []):
-    # Try accessing with different user IDs
-    for test_id in ['1', '2', 'admin', '../admin']:
-        response = repeat_request(req['id'], {
-            'url': req['path'].replace('/users/1', f'/users/{test_id}')
-        })
 
-        if response['status_code'] == 200:
-            print(f"Potential IDOR: {test_id} returned 200")
+async def main():
+    user_requests = await list_requests(httpql_filter='req.path.cont:"/users/"')
+
+    for edge in user_requests.edges:
+        req = edge.node.request
+        scheme = "https" if req.is_tls else "http"
+        for test_id in ["1", "2", "admin", "../admin"]:
+            url = f"{scheme}://{req.host}{req.path.replace('/users/1', f'/users/{test_id}')}"
+            response = await repeat_request(
+                req.id,
+                modifications={"url": url},
+            )
+            print(req.id, test_id, response["status"])
+            if response["status"] == "DONE":
+                print(f"Replay completed for candidate {test_id}")
+
+
+asyncio.run(main())
 ```
 
 ## Human-in-the-Loop

@@ -67,6 +67,8 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 
 - Double extensions: avatar.jpg.php, report.pdf.html; mixed casing: .pHp, .PhAr
 - Magic-byte spoofing: valid JPEG header then embedded script; verify server uses content inspection, not extensions alone
+- Detector/consumer differential: make the upload validator and the later parser disagree about type, structure, or validity
+- Probe detector scan windows, recursion/nesting limits, maximum bytes inspected, invalid-syntax recovery, and version-specific magic databases
 
 ### Archive Attacks
 
@@ -120,6 +122,8 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 - Client-side only checks; relying on JS/MIME provided by browser
 - Trusting multipart boundary part headers blindly
 - Extension allowlists without server-side content inspection
+- One parser validates metadata or leading bytes while another parser processes the full file
+- Type-detection wrappers assumed identical even when they bundle different library/database versions
 
 ### Evasion Tricks
 
@@ -146,8 +150,9 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 1. **Map the pipeline** - Client → ingress → storage → processors → serving. Note where validation and auth occur
 2. **Identify allowed types** - Size limits, filename rules, storage keys, and who serves the content
 3. **Collect baselines** - Capture resulting URLs and headers for legitimate uploads
-4. **Exercise bypass families** - Extension games, MIME/content-type, magic bytes, polyglots, metadata payloads, archive structure
-5. **Validate execution** - Can uploaded content execute on server or client?
+4. **Map validators and consumers** - Identify the detector/library/version when possible and every later parser, converter, renderer, or browser context
+5. **Exercise bypass families** - Extension games, MIME/content-type, magic bytes, parser limits, polyglots, metadata payloads, archive structure
+6. **Validate execution** - Prove the accepted object reaches a more privileged consumer and can execute or render active content
 
 ## Validation
 
@@ -182,6 +187,7 @@ Upload surfaces are high risk: server-side execution (RCE), stored XSS, malware 
 8. When you cannot get execution, aim for stored XSS or header-driven script execution
 9. Validate that CDNs honor attachment/nosniff
 10. Document full pipeline behavior per asset type
+11. Reproduce detector/consumer mismatches on the deployed library versions; OS packages and language bindings may ship different limits
 
 ## Summary
 

@@ -1,17 +1,25 @@
+# Node / local-viewer SPA source (the built bundle in
+# strix/interface/viewer/static/ is committed and shipped; do not ignore it)
+node_modules/
+strix/interface/viewer/frontend/node_modules/
+strix/interface/viewer/frontend/.vite/
+
 # Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
-build/
+# Anchored to the repo root: these are Python build-artifact dir names, but
+# unanchored they also match nested source dirs (e.g. the viewer's src/lib).
+/build/
 develop-eggs/
 dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -39,18 +47,6 @@ pip-delete-this-directory.txt
 .pydevproject
 .settings/
 
-# Testing
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-.hypothesis/
-.pytest_cache/
-htmlcov/
-
 # FastAPI
 .env.local
 .env.development.local
@@ -58,7 +54,7 @@ htmlcov/
 .env.production.local
 
 # MongoDB
-data/
+/data/
 mongod.log
 *.mongodb
 *.mongorc.js
@@ -97,3 +93,8 @@ Thumbs.db
 schema.graphql
 
 .opencode/
+
+# Root-only local data and reference checkouts
+/.benchmarks/
+/references/
+/strix_runs_main/

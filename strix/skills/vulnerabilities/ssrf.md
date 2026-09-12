@@ -123,7 +123,11 @@ Server-Side Request Forgery enables the server to reach networks and services th
 
 ## Blind SSRF
 
-- Use OAST (DNS/HTTP) to confirm egress
+- Use OAST (DNS/HTTP) to confirm egress. `interactsh-client -v` (running
+  in the sandbox) gives you a unique `*.oast.fun` domain; embed it in
+  the URL parameter and watch the interactsh stdout for the inbound
+  DNS/HTTP hit. Each invocation yields a fresh domain — restart between
+  payloads if you need to correlate hits to a specific request.
 - Derive internal reachability from timing, response size, TLS errors, and ETag differences
 - Build a port map by binary searching timeouts (short connect/read timeouts yield cleaner diffs)
 
@@ -157,6 +161,7 @@ Server-Side Request Forgery enables the server to reach networks and services th
 - Strict allowlists with DNS pinning and no redirect following
 - SSRF simulators/mocks returning canned responses without real egress
 - Blocked egress confirmed by uniform errors across all targets and protocols
+- OAST callbacks where the source IP matches the tester's machine, not the server — the browser or a client-side fetch made the request, not the backend
 
 ## Impact
 

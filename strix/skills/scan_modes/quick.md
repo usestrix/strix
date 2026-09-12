@@ -15,7 +15,6 @@ Optimize for fast feedback on critical security issues. Skip exhaustive enumerat
 
 **Whitebox (source available)**
 - Focus on recent changes: git diffs, new commits, modified files—these are most likely to contain fresh bugs
-- Read existing `wiki` notes first (`list_notes(category="wiki")` then `get_note(note_id=...)`) to avoid remapping from scratch
 - Run a fast static triage on changed files first (`semgrep`, then targeted `sg` queries)
 - Run at least one lightweight AST pass (`sg` or Tree-sitter) so structural mapping is not skipped
 - Keep AST commands tightly scoped to changed or high-risk paths; avoid broad repository-wide pattern dumps
@@ -23,7 +22,6 @@ Optimize for fast feedback on critical security issues. Skip exhaustive enumerat
 - Identify security-sensitive patterns in changed code: auth checks, input handling, database queries, file operations
 - Trace user input through modified code paths
 - Check if security controls were modified or bypassed
-- Before completion, update the shared repo wiki with what changed and what needs dynamic follow-up
 
 **Blackbox (no source)**
 - Map authentication and critical user flows

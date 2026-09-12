@@ -39,6 +39,12 @@ if ! command -v uv &> /dev/null; then
     exit 1
 fi
 
+if ! command -v go &> /dev/null; then
+    echo -e "${RED}Error: Go is not installed${NC}"
+    echo "Go 1.24 or newer is required to build the Bubble Tea TUI."
+    exit 1
+fi
+
 echo -e "\n${BLUE}Installing dependencies...${NC}"
 uv sync --frozen
 
@@ -47,6 +53,14 @@ echo -e "${YELLOW}Version:${NC} $VERSION"
 
 echo -e "\n${BLUE}Cleaning previous builds...${NC}"
 rm -rf build/ dist/
+
+echo -e "\n${BLUE}Building Bubble Tea sidecar...${NC}"
+TUI_BINARY="build/sidecar/strix-tui"
+if [ "$OS_NAME" = "windows" ]; then
+    TUI_BINARY="${TUI_BINARY}.exe"
+fi
+mkdir -p build/sidecar
+(cd strix/interface/tui && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "../../../$TUI_BINARY" ./cmd/strix-tui)
 
 echo -e "\n${BLUE}Building binary with PyInstaller...${NC}"
 uv run pyinstaller strix.spec --noconfirm

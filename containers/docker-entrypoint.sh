@@ -1,6 +1,22 @@
 #!/bin/bash
 set -e
 
+if [ -n "${STRIX_HOST_UID:-}" ] && [ "${STRIX_HOST_UID}" != "0" ] && [ "${STRIX_HOST_UID}" != "$(id -u)" ]; then
+  exec sudo -E -- bash -c '
+    set -e
+    gid="${STRIX_HOST_GID:-$STRIX_HOST_UID}"
+    old_uid="$1"
+    old_gid="$2"
+    export PATH="$3"
+    shift 3
+    sed -i "s|^pentester:x:${old_uid}:${old_gid}:|pentester:x:${STRIX_HOST_UID}:${gid}:|" /etc/passwd
+    sed -i "s|^pentester:x:${old_gid}:|pentester:x:${gid}:|" /etc/group
+    chown -R "${STRIX_HOST_UID}:${gid}" /home/pentester /app/certs
+    chown "${STRIX_HOST_UID}:${gid}" /workspace
+    exec setpriv --reuid "${STRIX_HOST_UID}" --regid "${gid}" --init-groups "$0" "$@"
+  ' "$0" "$(id -u)" "$(id -g)" "$PATH" "$@"
+fi
+
 CAIDO_PORT=48080
 CAIDO_LOG="/tmp/caido_startup.log"
 
@@ -9,10 +25,24 @@ if [ ! -f /app/certs/ca.p12 ]; then
   exit 1
 fi
 
+# Caido enforces a Host allowlist (DNS-rebinding protection) and rejects requests
+# whose Host header is a hostname it doesn't recognize. To reach Caido over a
+# hostname (rather than an IP literal), set STRIX_CAIDO_ALLOWED_DOMAINS to a
+# comma-separated list of hostnames to allow. Unset by default.
+# See https://docs.caido.io/app/guides/domain_allowlist
+CAIDO_UI_DOMAIN_ARGS=()
+if [ -n "${STRIX_CAIDO_ALLOWED_DOMAINS:-}" ]; then
+  IFS=',' read -ra _caido_domains <<< "${STRIX_CAIDO_ALLOWED_DOMAINS}"
+  for _d in "${_caido_domains[@]}"; do
+    [ -n "$_d" ] && CAIDO_UI_DOMAIN_ARGS+=(--ui-domain "$_d")
+  done
+fi
+
 caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
           --allow-guests \
           --no-logging \
           --no-open \
+          "${CAIDO_UI_DOMAIN_ARGS[@]}" \
           --import-ca-cert /app/certs/ca.p12 \
           --import-ca-cert-pass "" > "$CAIDO_LOG" 2>&1 &
 
@@ -47,68 +77,7 @@ fi
 
 sleep 2
 
-echo "Fetching API token..."
-TOKEN=""
-for attempt in 1 2 3 4 5; do
-  RESPONSE=$(curl -sL -X POST \
-    -H "Content-Type: application/json" \
-    -d '{"query":"mutation LoginAsGuest { loginAsGuest { token { accessToken } } }"}' \
-    http://localhost:${CAIDO_PORT}/graphql)
-
-  TOKEN=$(echo "$RESPONSE" | jq -r '.data.loginAsGuest.token.accessToken // empty')
-
-  if [ -n "$TOKEN" ] && [ "$TOKEN" != "null" ]; then
-    echo "Successfully obtained API token (attempt $attempt)."
-    break
-  fi
-
-  echo "Token fetch attempt $attempt failed: $RESPONSE"
-  sleep $((attempt * 2))
-done
-
-if [ -z "$TOKEN" ] || [ "$TOKEN" == "null" ]; then
-  echo "ERROR: Failed to get API token from Caido after 5 attempts."
-  echo "=== Caido log ==="
-  cat "$CAIDO_LOG" 2>/dev/null || echo "(no log available)"
-  exit 1
-fi
-
-export CAIDO_API_TOKEN=$TOKEN
-echo "Caido API token has been set."
-
-echo "Creating a new Caido project..."
-CREATE_PROJECT_RESPONSE=$(curl -sL -X POST \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"query":"mutation CreateProject { createProject(input: {name: \"sandbox\", temporary: true}) { project { id } } }"}' \
-  http://localhost:${CAIDO_PORT}/graphql)
-
-PROJECT_ID=$(echo $CREATE_PROJECT_RESPONSE | jq -r '.data.createProject.project.id')
-
-if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" == "null" ]; then
-  echo "Failed to create Caido project."
-  echo "Response: $CREATE_PROJECT_RESPONSE"
-  exit 1
-fi
-
-echo "Caido project created with ID: $PROJECT_ID"
-
-echo "Selecting Caido project..."
-SELECT_RESPONSE=$(curl -sL -X POST \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $TOKEN" \
-  -d '{"query":"mutation SelectProject { selectProject(id: \"'$PROJECT_ID'\") { currentProject { project { id } } } }"}' \
-  http://localhost:${CAIDO_PORT}/graphql)
-
-SELECTED_ID=$(echo $SELECT_RESPONSE | jq -r '.data.selectProject.currentProject.project.id')
-
-if [ "$SELECTED_ID" != "$PROJECT_ID" ]; then
-    echo "Failed to select Caido project."
-    echo "Response: $SELECT_RESPONSE"
-    exit 1
-fi
-
-echo "✅ Caido project selected successfully."
+echo "Caido is up — host bootstraps the guest token + project via the Python SDK."
 
 echo "Configuring system-wide proxy settings..."
 
@@ -118,9 +87,9 @@ export https_proxy=http://127.0.0.1:${CAIDO_PORT}
 export HTTP_PROXY=http://127.0.0.1:${CAIDO_PORT}
 export HTTPS_PROXY=http://127.0.0.1:${CAIDO_PORT}
 export ALL_PROXY=http://127.0.0.1:${CAIDO_PORT}
+export NO_PROXY=localhost,127.0.0.1
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
-export CAIDO_API_TOKEN=${TOKEN}
 EOF
 
 cat << EOF | sudo tee /etc/environment
@@ -129,7 +98,7 @@ https_proxy=http://127.0.0.1:${CAIDO_PORT}
 HTTP_PROXY=http://127.0.0.1:${CAIDO_PORT}
 HTTPS_PROXY=http://127.0.0.1:${CAIDO_PORT}
 ALL_PROXY=http://127.0.0.1:${CAIDO_PORT}
-CAIDO_API_TOKEN=${TOKEN}
+NO_PROXY=localhost,127.0.0.1
 EOF
 
 cat << EOF | sudo tee /etc/wgetrc
@@ -138,10 +107,13 @@ http_proxy=http://127.0.0.1:${CAIDO_PORT}
 https_proxy=http://127.0.0.1:${CAIDO_PORT}
 EOF
 
-echo "source /etc/profile.d/proxy.sh" >> ~/.bashrc
-echo "source /etc/profile.d/proxy.sh" >> ~/.zshrc
+# Use POSIX `.` (not the bashism `source`) so these lines are safe when the rc
+# files are read by a POSIX shell (e.g. `sh -lc`), which otherwise fails with
+# "source: not found". `.` is understood by bash, zsh, and dash alike.
+echo ". /etc/profile.d/proxy.sh" >> ~/.bashrc
+echo ". /etc/profile.d/proxy.sh" >> ~/.zshrc
 
-source /etc/profile.d/proxy.sh
+. /etc/profile.d/proxy.sh
 
 echo "✅ System-wide proxy configuration complete"
 
@@ -151,33 +123,7 @@ sudo -u pentester certutil -N -d sql:/home/pentester/.pki/nssdb --empty-password
 sudo -u pentester certutil -A -n "Testing Root CA" -t "C,," -i /app/certs/ca.crt -d sql:/home/pentester/.pki/nssdb
 echo "✅ CA added to browser trust store"
 
-echo "Starting tool server..."
-cd /app
-export PYTHONPATH=/app
-export STRIX_SANDBOX_MODE=true
-export TOOL_SERVER_TIMEOUT="${STRIX_SANDBOX_EXECUTION_TIMEOUT:-120}"
-TOOL_SERVER_LOG="/tmp/tool_server.log"
-
-sudo -E -u pentester \
-  /app/.venv/bin/python -m strix.runtime.tool_server \
-  --token="$TOOL_SERVER_TOKEN" \
-  --host=0.0.0.0 \
-  --port="$TOOL_SERVER_PORT" \
-  --timeout="$TOOL_SERVER_TIMEOUT" > "$TOOL_SERVER_LOG" 2>&1 &
-
-for i in {1..10}; do
-  if curl -s "http://127.0.0.1:$TOOL_SERVER_PORT/health" | grep -q '"status":"healthy"'; then
-    echo "✅ Tool server healthy on port $TOOL_SERVER_PORT"
-    break
-  fi
-  if [ $i -eq 10 ]; then
-    echo "ERROR: Tool server failed to become healthy"
-    echo "=== Tool server log ==="
-    cat "$TOOL_SERVER_LOG" 2>/dev/null || echo "(no log)"
-    exit 1
-  fi
-  sleep 1
-done
+mkdir -p /workspace/.agent-browser-screenshots
 
 echo "✅ Container ready"
 

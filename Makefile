@@ -1,4 +1,6 @@
-.PHONY: help install dev-install format lint type-check test test-cov clean pre-commit setup-dev
+.PHONY: help install dev-install format lint type-check security check-all clean pre-commit setup-dev dev viewer wheel tui-build tui-test tui-lint
+
+TUI_BINARY := build/sidecar/strix-tui$(if $(filter Windows_NT,$(OS)),.exe)
 
 help:
 	@echo "Available commands:"
@@ -8,18 +10,19 @@ help:
 	@echo ""
 	@echo "Code Quality:"
 	@echo "  format        - Format code with ruff"
-	@echo "  lint          - Lint code with ruff and pylint"
+	@echo "  lint          - Lint code with ruff"
 	@echo "  type-check    - Run type checking with mypy and pyright"
 	@echo "  security      - Run security checks with bandit"
 	@echo "  check-all     - Run all code quality checks"
 	@echo ""
-	@echo "Testing:"
-	@echo "  test          - Run tests with pytest"
-	@echo "  test-cov      - Run tests with coverage reporting"
-	@echo ""
 	@echo "Development:"
 	@echo "  pre-commit    - Run pre-commit hooks on all files"
+	@echo "  viewer        - Rebuild the local-viewer SPA (commit the output)"
+	@echo "  wheel         - Build a platform wheel with the bundled Go sidecar"
 	@echo "  clean         - Clean up cache files and artifacts"
+	@echo "  tui-build     - Build the Bubble Tea TUI"
+	@echo "  tui-test      - Test the Bubble Tea TUI"
+	@echo "  tui-lint      - Vet and format-check the Bubble Tea TUI"
 
 install:
 	uv sync --no-dev
@@ -40,8 +43,6 @@ format:
 lint:
 	@echo "🔍 Linting code with ruff..."
 	uv run ruff check . --fix
-	@echo "📝 Running additional linting with pylint..."
-	uv run pylint strix/ --score=no --reports=no
 	@echo "✅ Linting complete!"
 
 type-check:
@@ -59,17 +60,6 @@ security:
 check-all: format lint type-check security
 	@echo "✅ All code quality checks passed!"
 
-test:
-	@echo "🧪 Running tests..."
-	uv run pytest -v
-	@echo "✅ Tests complete!"
-
-test-cov:
-	@echo "🧪 Running tests with coverage..."
-	uv run pytest -v --cov=strix --cov-report=term-missing --cov-report=html
-	@echo "✅ Tests with coverage complete!"
-	@echo "📊 Coverage report generated in htmlcov/"
-
 pre-commit:
 	@echo "🔧 Running pre-commit hooks..."
 	uv run pre-commit run --all-files
@@ -78,13 +68,28 @@ pre-commit:
 clean:
 	@echo "🧹 Cleaning up cache files..."
 	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".mypy_cache" -exec rm -rf {} + 2>/dev/null || true
 	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name "htmlcov" -exec rm -rf {} + 2>/dev/null || true
 	find . -name "*.pyc" -delete 2>/dev/null || true
-	find . -name ".coverage" -delete 2>/dev/null || true
 	@echo "✅ Cleanup complete!"
 
-dev: format lint type-check test
+viewer:
+	@echo "🖥️  Building the local-viewer SPA..."
+	cd strix/interface/viewer/frontend && npm ci && npm run build
+	@echo "✅ Viewer built to strix/interface/viewer/static/ (commit the changes)."
+
+wheel:
+	uv build --wheel
+
+dev: format lint type-check
 	@echo "✅ Development cycle complete!"
+
+tui-build:
+	mkdir -p build/sidecar
+	cd strix/interface/tui && CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../../../$(TUI_BINARY) ./cmd/strix-tui
+
+tui-test:
+	cd strix/interface/tui && go test -race ./...
+
+tui-lint:
+	cd strix/interface/tui && test -z "$$(gofmt -l .)" && go vet ./...

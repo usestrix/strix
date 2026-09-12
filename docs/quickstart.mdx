@@ -28,12 +28,12 @@ description: "Install Strix and run your first security scan"
 Set your LLM provider:
 
 ```bash
-export STRIX_LLM="openai/gpt-5.4"
+export STRIX_LLM="openrouter/z-ai/glm-5.3"
 export LLM_API_KEY="your-api-key"
 ```
 
 <Tip>
-For best results, use `openai/gpt-5.4`, `anthropic/claude-opus-4-6`, or `openai/gpt-5.2`.
+For best results, use `openrouter/z-ai/glm-5.3` (the default pick), `openai/gpt-5.4`, `anthropic/claude-opus-4-6`, or `openai/gpt-5.2`.
 </Tip>
 
 ## Run Your First Scan
@@ -62,6 +62,9 @@ strix --target https://your-app.com
 
 # Multiple targets (white-box testing)
 strix -t https://github.com/org/repo -t https://your-app.com
+
+# Targets from a file, one target per non-empty, non-comment line
+strix --target-list ./targets.txt
 ```
 
 ## Next Steps

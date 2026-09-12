@@ -1,6 +1,6 @@
 [project]
 name = "strix-agent"
-version = "0.8.3"
+version = "1.6.2"
 description = "Open-source AI Hackers for your apps"
 readme = "README.md"
 license = "Apache-2.0"
@@ -33,54 +33,47 @@ classifiers = [
   "Programming Language :: Python :: 3.14",
 ]
 dependencies = [
-  "litellm[proxy]>=1.81.1,<1.82.0",
-  "tenacity>=9.0.0",
-  "pydantic[email]>=2.11.3",
+  "openai-agents[litellm]>=0.19.0,<0.20",
+  "openai>=2.45.0,<3",
+  "litellm",
+  "pydantic>=2.11.3",
+  "pydantic-settings>=2.13.0",
   "rich",
   "docker>=7.1.0",
-  "textual>=6.0.0",
-  "xmltodict>=0.13.0",
   "requests>=2.32.0",
   "cvss>=3.2",
-  "traceloop-sdk>=0.53.0",
-  "opentelemetry-exporter-otlp-proto-http>=1.40.0",
-  "scrubadub>=2.0.1",
-  "defusedxml>=0.7.1",
+  "caido-sdk-client>=0.2.0",
+  "markdown-it-py>=3.0.0",
+  "reportlab>=4.0",
+  "pypdf>=5.0",
+  # Cap <49: 49.x drops the universal2 macOS wheel (arm64-only), which breaks
+  # the Intel macOS (macos-x86_64) release build's `uv sync --frozen`.
+  "cryptography>=48.0.1,<49",
+  "pyyaml>=6.0",
 ]
+
+[project.optional-dependencies]
+vertex = ["google-auth>=2.0.0"]
+bedrock = ["boto3>=1.28.0"]
 
 [project.scripts]
 strix = "strix.interface.main:main"
-
-[project.optional-dependencies]
-vertex = ["google-cloud-aiplatform>=1.38"]
-sandbox = [
-  "fastapi",
-  "uvicorn",
-  "ipython>=9.3.0",
-  "openhands-aci>=0.3.0",
-  "playwright>=1.48.0",
-  "gql[requests]>=3.5.3",
-  "pyte>=0.8.1",
-  "libtmux>=0.46.2",
-  "numpydoc>=1.8.0",
-]
 
 [dependency-groups]
 dev = [
   "mypy>=1.16.0",
   "ruff>=0.11.13",
   "pyright>=1.1.401",
-  "pylint>=3.3.7",
   "bandit>=1.8.3",
-  "pytest>=8.4.0",
-  "pytest-asyncio>=1.0.0",
-  "pytest-cov>=6.1.1",
-  "pytest-mock>=3.14.1",
   "pre-commit>=4.2.0",
-  "black>=25.1.0",
-  "isort>=6.0.1",
   "pyinstaller>=6.17.0; python_version >= '3.12' and python_version < '3.15'",
+  "pytest>=8.3",
+  "pytest-asyncio>=0.24",
+  "types-requests>=2.32",
 ]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["hatchling"]
@@ -88,6 +81,22 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["strix"]
+# The prebuilt viewer bundle under strix/interface/viewer/static/ ships automatically
+# (hatchling includes non-.py files under the package). The Vite SOURCE lives
+# under the package dir too (strix/interface/viewer/frontend/) but must never ship in the wheel.
+exclude = [
+  "strix/interface/viewer/frontend",
+  "strix/interface/viewer/frontend/**",
+  # Go TUI SOURCE lives under the package dir but must never ship in the wheel;
+  # the compiled sidecar is force-included as strix/bin/strix-tui instead.
+  "strix/interface/tui/cmd/**",
+  "strix/interface/tui/internal/**",
+  "strix/interface/tui/go.mod",
+  "strix/interface/tui/go.sum",
+]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "scripts/tui_sidecar_hook.py"
 
 # ============================================================================
 # Type Checking Configuration
@@ -118,34 +127,23 @@ pretty = true
 [[tool.mypy.overrides]]
 module = [
     "litellm.*",
-    "tenacity.*",
-    "numpydoc.*",
     "rich.*",
-    "IPython.*",
-    "openhands_aci.*",
-    "playwright.*",
-    "uvicorn.*",
     "jinja2.*",
-    "pydantic_settings.*",
-    "jwt.*",
-    "httpx.*",
-    "gql.*",
-    "textual.*",
-    "pyte.*",
-    "libtmux.*",
-    "pytest.*",
     "cvss.*",
-    "opentelemetry.*",
-    "scrubadub.*",
-    "traceloop.*",
+    "docker.*",
+    "caido_sdk_client.*",
+    "pydantic_settings.*",
+    "reportlab.*",
+    "pypdf.*",
+    "yaml.*",
+    "pygments.*",
 ]
 ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
 
-# Relax strict rules for test files (pytest decorators are not fully typed)
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_decorators = false
-disallow_untyped_defs = false
 
 # ============================================================================
 # Ruff Configuration (Fast Python Linter & Formatter)
@@ -157,7 +155,6 @@ line-length = 100
 extend-exclude = [
     ".git",
     ".mypy_cache",
-    ".pytest_cache",
     ".ruff_cache",
     "__pycache__",
     "build",
@@ -193,7 +190,6 @@ select = [
     "PIE", # flake8-pie
     "T20", # flake8-print
     "PYI", # flake8-pyi
-    "PT",  # flake8-pytest-style
     "Q",   # flake8-quotes
     "RSE", # flake8-raise
     "RET", # flake8-return
@@ -231,21 +227,111 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**/*.py" = [
-    "S106",   # Possible hardcoded password
-    "S108",   # Possible insecure usage of temporary file/directory
-    "ARG001", # Unused function argument
-    "PLR2004", # Magic value used in comparison
-]
+# Test doubles use fixture tokens/passwords and match a callee signature whose
+# args they intentionally ignore.
+"tests/test_viewer_auth.py" = ["S105", "S106", "ARG001"]
+"tests/test_cloud_cli.py" = ["S105", "ARG001"]
+"tests/test_codex_auth.py" = ["S105", "S106", "SLF001"]
+# Hatchling loads the build hook by path, not as an importable package.
+"scripts/tui_sidecar_hook.py" = ["INP001"]
+# Stdlib HTTP handler overrides (do_GET/do_POST).
+"strix/interface/auth_cli.py" = ["N802"]
+"tests/test_codex_streaming.py" = ["N802"]
+"tests/test_disable_streaming.py" = ["N802"]
+"tests/test_tool_call_ids.py" = ["N802"]
+"tests/test_tool_call_limits.py" = ["N802", "SLF001"]
+"tests/test_stream_idle_timeout.py" = ["N802", "SLF001"]
+"tests/test_unknown_tool_recovery.py" = ["N802"]
+"tests/test_report_pdf.py" = ["S105", "S106"]
+# Fake MCP server matches the SDK's MCPServer signature; its args are unused.
+"tests/test_mcp_client.py" = ["S105", "S106", "ARG002"]
+# MCP connection request in a test carries a dummy bearer token.
+"tests/test_runner_root_prompt.py" = ["S106"]
+# Stdlib HTTP handler overrides (do_GET/do_POST) and lazy imports that avoid a
+# circular dependency with strix.telemetry / strix.interface.viewer.report_pdf.
+"strix/interface/viewer/server.py" = ["N802", "PLC0415"]
+"strix/interface/cloud/payment_proxy.py" = ["N802"]
+# Lazy telemetry import to avoid importing PostHog before the viewer starts.
+"strix/interface/viewer/cli.py" = ["PLC0415"]
+# Lazy imports inside functions to avoid circular dependency with
+# strix.telemetry / strix.report.dedupe / cvss.
+"strix/tools/notes/tools.py" = ["PLC0415", "TC002"]
+"strix/tools/finish/tool.py" = ["PLC0415", "TC002"]
+"strix/tools/reporting/tool.py" = ["PLC0415", "TC002"]
+# Lazy imports of strix.tools.mcp.client avoid a circular import (client imports
+# the session module at module load).
+"strix/tools/mcp/session.py" = ["PLC0415"]
+# call_mcp is a chain of guard clauses that each return an error string.
+"strix/tools/mcp/agent_tools.py" = ["PLR0911"]
 "strix/tools/**/*.py" = [
     "ARG001", # Unused function argument (tools may have unused args for interface consistency)
 ]
+# Custom Docker subclass duplicates parent body; some imports are for annotations.
+# Backend factories import their backend's deps lazily so deployments
+# that pick a different backend don't need every backend's libs installed.
+"strix/runtime/backends.py" = ["PLC0415"]
+"strix/runtime/docker_client.py" = [
+    "TC002",  # Manifest, Container imported for annotations
+    "TC003",  # uuid imported for annotation
+]
+# SDK function-tool wrappers: the SDK calls get_type_hints() at registration
+# time to derive the JSON schema, which evaluates annotations at runtime —
+# so RunContextWrapper / Tool / TResponseInputItem must be imported eagerly,
+# not under TYPE_CHECKING.
+"strix/tools/todo/tools.py" = ["TC002"]
+"strix/tools/thinking/tool.py" = ["TC002"]
+"strix/tools/web_search/tool.py" = ["TC002"]
+"strix/tools/proxy/tools.py" = ["TC002", "PLR0911"]
+# The generated Caido GraphQL schema is slow to import, so the SDK is imported
+# on first proxy call instead of at module scope (keeps it off the launch path).
+"strix/tools/proxy/caido_api.py" = ["PLC0415"]
+"strix/runtime/caido_bootstrap.py" = ["PLC0415"]
+"strix/tools/agents_graph/tools.py" = ["TC002"]
+"strix/agents/factory.py" = ["TC002"]
+# Entry point: ``Path`` is used at runtime by the typing of the
+# session_manager call; importing under TYPE_CHECKING would defer
+# resolution past where mypy needs it.
+"strix/core/runner.py" = ["TC003", "PLR0912", "PLR0915", "PLC0415"]
+# ReportState carries scan artifact/report fields and
+# a runtime ``Callable`` annotation on ``vulnerability_found_callback``.
+"strix/report/state.py" = ["TC003", "PLR0912", "PLR0915", "E501", "PERF401", "PLC0415"]
+"strix/report/usage.py" = ["PLC0415"]
+# LiteLLM and the Docker SDK are imported on first use, not at module scope:
+# both cost seconds to import and neither is needed until a model call is made
+# (or, for Docker, unless the Docker runtime backend is in use).
+"strix/core/execution.py" = ["PLC0415"]
+"strix/report/pricing.py" = ["PLC0415"]
+"strix/llm/compaction.py" = ["PLC0415"]
+"strix/llm/context_budget.py" = ["PLC0415"]
+# Lazy import of strix.config.models avoids a circular dependency between the
+# report pipeline and the config layer.
+"strix/report/dedupe.py" = ["PLC0415"]
+"strix/telemetry/logging.py" = ["PLC0415"]
+"strix/config/models.py" = ["PLC0415"]
+# Heavy inference deps (httpx, openai) imported lazily so auth-status checks
+# don't pull them in.
+"strix/config/codex.py" = ["PLC0415"]
+# Interface utility branches per scope-mode / target-type combination;
+# splitting would obscure the decision tree without simplifying it.
+"strix/interface/utils.py" = ["PLR0912", "BLE001", "PLC0415"]
+# CLI / TUI / main keep extensive lazy imports + broad exception
+# swallows for resilience around terminal-rendering errors.
+"strix/interface/cli.py" = ["BLE001", "PLC0415"]
+"strix/interface/scan_setup.py" = ["PLC0415"]
+"strix/interface/main.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
+"strix/interface/cli_args.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
+"strix/interface/environment.py" = ["BLE001", "PLC0415", "PLR0912", "PLR0915"]
+# The Go TUI runtime and backend controller import interface modules lazily so
+# the sidecar entry point stays fast and avoids circular imports.
+"strix/interface/interactive.py" = ["PLC0415"]
+"strix/interface/tui/runtime.py" = ["PLC0415"]
+"strix/interface/tui/backend/controller.py" = ["PLC0415"]
 
 [tool.ruff.lint.isort]
 force-single-line = false
 lines-after-imports = 2
 known-first-party = ["strix"]
-known-third-party = ["fastapi", "pydantic"]
+known-third-party = ["pydantic"]
 
 [tool.ruff.lint.pylint]
 max-args = 8
@@ -321,55 +407,15 @@ force_grid_wrap = 0
 use_parentheses = true
 ensure_newline_before_comments = true
 known_first_party = ["strix"]
-known_third_party = ["fastapi", "pydantic", "litellm", "tenacity"]
-
-# ============================================================================
-# Pytest Configuration
-# ============================================================================
-
-[tool.pytest.ini_options]
-minversion = "6.0"
-addopts = [
-    "--strict-markers",
-    "--strict-config",
-    "--cov=strix",
-    "--cov-report=term-missing",
-    "--cov-report=html",
-    "--cov-report=xml",
-]
-testpaths = ["tests"]
-python_files = ["test_*.py", "*_test.py"]
-python_functions = ["test_*"]
-python_classes = ["Test*"]
-asyncio_mode = "auto"
-
-[tool.coverage.run]
-source = ["strix"]
-omit = [
-    "*/tests/*",
-    "*/migrations/*",
-    "*/__pycache__/*"
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod",
-]
+known_third_party = ["pydantic", "litellm"]
 
 # ============================================================================
 # Bandit Configuration (Security Linting)
 # ============================================================================
 
 [tool.bandit]
-exclude_dirs = ["tests", "docs", "build", "dist"]
+# Tests are covered by ruff's flake8-bandit rules (see per-file-ignores above),
+# which is where fixture tokens and loopback URL opens are already waived.
+exclude_dirs = ["docs", "build", "dist", "tests"]
 skips = ["B101", "B601", "B404", "B603", "B607"]  # Skip assert, shell injection, subprocess import and partial path checks
 severity = "medium"

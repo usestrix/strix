@@ -1,0 +1,49 @@
+---
+title: "Local Web Viewer"
+description: "Browse a run in a local dashboard with strix view"
+---
+
+Every scan writes its results to disk as it runs. `strix view` serves those files in a local dashboard, for a live run or a finished one.
+
+```bash
+strix view                                    # the most recent run
+strix view my-run-name                        # a specific run under ./strix_runs
+strix view --host 0.0.0.0 --port 8080 --no-open
+```
+
+The UI ships prebuilt with Strix, so there is no extra install and no JavaScript build step. The dashboard reads the run files straight off disk. Nothing leaves your machine, and you do not need a cloud account.
+
+## Options
+
+<ParamField path="run" type="string">
+  Run name under `./strix_runs`. Defaults to the most recent run.
+</ParamField>
+
+<ParamField path="--host" type="string" default="127.0.0.1">
+  Host to bind to. Use `0.0.0.0` to reach the viewer from other machines.
+</ParamField>
+
+<ParamField path="--port" type="number" default="0">
+  Port to serve on. The default selects an available ephemeral port.
+</ParamField>
+
+<ParamField path="--no-open" type="boolean">
+  Do not open the browser automatically.
+</ParamField>
+
+## What Is In The Dashboard
+
+- **Overview** — run status, target, and a severity breakdown of everything found so far.
+- **Vulnerabilities** — each validated finding with its severity, details, and reproduction steps.
+- **Agent graph** — a live map of the multi-agent team, and what each agent is doing.
+- **Steering** — send instructions to a live scan to redirect the agents during the run. Steering works only in the dashboard the running scan opens. A standalone `strix view` has no live scan to steer.
+- **History** — browse past runs on this machine and move between them. Verify your email address in the dashboard to unlock the other runs.
+- **Reports** — generate a shareable report and send it by email. Verify your email address first.
+
+## Sharing The Link
+
+<Warning>
+  The token in the printed URL grants access to the run data, and to the steering of a live scan. Share it only with trusted users.
+</Warning>
+
+To reach the viewer from another machine, start it with `--host 0.0.0.0` and replace `0.0.0.0` in the printed URL with a reachable IP address or hostname. Restrict the port with your firewall. A request without the token-derived session cannot read run data.

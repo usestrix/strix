@@ -1,4 +1,6 @@
 import atexit
+import contextlib
+import logging
 import signal
 import sys
 import threading
@@ -10,14 +12,30 @@ from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.agents.StrixAgent import StrixAgent
-from strix.llm.config import LLMConfig
-from strix.telemetry.tracer import Tracer, set_global_tracer
+from strix.config import load_settings
+from strix.config.settings import DEFAULT_MAX_TURNS
+from strix.core.runner import run_strix_scan
+from strix.report.state import ReportState, set_global_report_state
+from strix.runtime import session_manager
 
 from .utils import (
     build_live_stats_text,
     format_vulnerability_report,
+    has_model_response,
+    read_workspace_files,
 )
+
+
+logger = logging.getLogger(__name__)
+
+
+def _resolve_sandbox_image() -> str:
+    image = load_settings().runtime.image
+    if not image:
+        raise RuntimeError(
+            "strix_image is not configured. Set it in ~/.strix/cli-config.json.",
+        )
+    return image
 
 
 async def run_cli(args: Any) -> None:  # noqa: PLR0915
@@ -67,37 +85,35 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     scan_mode = getattr(args, "scan_mode", "deep")
 
-    scan_config = {
+    scan_config: dict[str, Any] = {
         "scan_id": args.run_name,
         "targets": args.targets_info,
         "user_instructions": args.instruction or "",
         "run_name": args.run_name,
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
+        "scan_mode": scan_mode,
+        "non_interactive": bool(getattr(args, "non_interactive", False)),
+        "local_sources": getattr(args, "local_sources", None) or [],
+        "workspace_files": getattr(args, "workspace_files", None) or [],
+        "scope_mode": getattr(args, "scope_mode", "auto"),
+        "diff_base": getattr(args, "diff_base", None),
+        "resume_instruction": getattr(args, "user_explicit_instruction", None) or "",
     }
 
-    llm_config = LLMConfig(
-        scan_mode=scan_mode,
-        is_whitebox=bool(getattr(args, "local_sources", [])),
-    )
-    agent_config = {
-        "llm_config": llm_config,
-        "max_iterations": 300,
-    }
+    report_state = ReportState(args.run_name)
+    report_state.hydrate_from_run_dir()
+    report_state.set_scan_config(scan_config)
+    report_state.save_run_data()
 
-    if getattr(args, "local_sources", None):
-        agent_config["local_sources"] = args.local_sources
-
-    tracer = Tracer(args.run_name)
-    tracer.set_scan_config(scan_config)
-
-    def display_vulnerability(report: dict[str, Any]) -> None:
+    def display_vulnerability(report: dict[str, Any], *, updated: bool = False) -> None:
         report_id = report.get("id", "unknown")
 
         vuln_text = format_vulnerability_report(report)
 
+        suffix = " (updated)" if updated else ""
         vuln_panel = Panel(
             vuln_text,
-            title=f"[bold red]{report_id.upper()}",
+            title=f"[bold red]{report_id.upper()}{suffix}",
             title_align="left",
             border_style="red",
             padding=(1, 2),
@@ -106,16 +122,16 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         console.print(vuln_panel)
         console.print()
 
-    tracer.vulnerability_found_callback = display_vulnerability
+    report_state.vulnerability_found_callback = display_vulnerability
+    report_state.vulnerability_updated_callback = lambda report: display_vulnerability(
+        report, updated=True
+    )
 
     def cleanup_on_exit() -> None:
-        from strix.runtime import cleanup_runtime
-
-        tracer.cleanup()
-        cleanup_runtime()
+        report_state.cleanup()
 
     def signal_handler(_signum: int, _frame: Any) -> None:
-        tracer.cleanup()
+        report_state.cleanup(status="interrupted")
         sys.exit(1)
 
     atexit.register(cleanup_on_exit)
@@ -124,14 +140,20 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
     if hasattr(signal, "SIGHUP"):
         signal.signal(signal.SIGHUP, signal_handler)
 
-    set_global_tracer(tracer)
+    set_global_report_state(report_state)
+
+    startup_phase: list[str] = ["Starting up"]
 
     def create_live_status() -> Panel:
         status_text = Text()
         status_text.append("Penetration test in progress", style="bold #22c55e")
         status_text.append("\n\n")
 
-        stats_text = build_live_stats_text(tracer, agent_config)
+        if not has_model_response(report_state):
+            status_text.append(f"{startup_phase[0]}...", style="dim")
+            status_text.append("\n\n")
+
+        stats_text = build_live_stats_text(report_state)
         if stats_text:
             status_text.append(stats_text)
 
@@ -142,6 +164,9 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             border_style="#22c55e",
             padding=(1, 2),
         )
+
+    def _note_startup_phase(phase: str) -> None:
+        startup_phase[:] = [phase]
 
     try:
         console.print()
@@ -156,34 +181,41 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     try:
                         live.update(create_live_status())
                         time.sleep(2)
-                    except Exception:  # noqa: BLE001
+                    except Exception:
                         break
 
             update_thread = threading.Thread(target=update_status, daemon=True)
             update_thread.start()
 
             try:
-                agent = StrixAgent(agent_config)
-                result = await agent.execute_scan(scan_config)
-
-                if isinstance(result, dict) and not result.get("success", True):
-                    error_msg = result.get("error", "Unknown error")
-                    error_details = result.get("details")
-                    console.print()
-                    console.print(f"[bold red]Penetration test failed:[/] {error_msg}")
-                    if error_details:
-                        console.print(f"[dim]{error_details}[/]")
-                    console.print()
-                    sys.exit(1)
+                logger.info(
+                    "CLI launching scan: run_name=%s targets=%d interactive=%s",
+                    args.run_name,
+                    len(scan_config.get("targets") or []),
+                    bool(getattr(args, "interactive", False)),
+                )
+                await run_strix_scan(
+                    scan_config=scan_config,
+                    scan_id=args.run_name,
+                    image=_resolve_sandbox_image(),
+                    local_sources=getattr(args, "local_sources", None) or [],
+                    extra_files=read_workspace_files(getattr(args, "workspace_files", None)),
+                    interactive=bool(getattr(args, "interactive", False)),
+                    max_budget_usd=getattr(args, "max_budget_usd", None),
+                    max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
+                    status_sink=_note_startup_phase,
+                )
             finally:
                 stop_updates.set()
                 update_thread.join(timeout=1)
+                with contextlib.suppress(Exception):
+                    await session_manager.cleanup(args.run_name)
 
     except Exception as e:
         console.print(f"[bold red]Error during penetration test:[/] {e}")
         raise
 
-    if tracer.final_scan_result:
+    if report_state.final_scan_result:
         console.print()
 
         final_report_text = Text()
@@ -193,7 +225,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
             Text.assemble(
                 final_report_text,
                 "\n\n",
-                tracer.final_scan_result,
+                report_state.final_scan_result,
             ),
             title="[bold white]STRIX",
             title_align="left",

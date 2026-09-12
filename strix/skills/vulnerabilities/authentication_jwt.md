@@ -151,6 +151,16 @@ JWT/OIDC failures often enable token forgery, token confusion, cross-service acc
 9. Favor minimal PoCs that clearly show cross-context acceptance and durable access
 10. When in doubt, assume verification differs per stack (mobile vs web vs gateway) and test each
 
+## Tooling
+
+- `jwt_tool -t <url> -rh "Authorization: Bearer <token>" -M at` runs the
+  full attack matrix (alg=none, RS→HS confusion, kid injection, claim
+  edits) and reports which mutations the server still accepts.
+- `jwt_tool <token> -C -d <wordlist>` brute-forces HMAC secrets when an
+  HS-family signature is in use.
+- Use `jwt_tool` to mint a token under a key you control once you find an
+  acceptance path (kid/jku/x5u/jwk), then replay via `repeat_request`.
+
 ## Summary
 
 Verification must bind the token to the correct issuer, audience, key, and client context on every acceptance path. Any missing binding enables forgery or confusion.

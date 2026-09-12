@@ -1,0 +1,326 @@
+@import "tailwindcss";
+
+:root {
+  --font-geist-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+  --font-geist-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+    "Liberation Mono", "Courier New", monospace;
+}
+
+@theme inline {
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  background: #000000;
+  color: #ffffff;
+  font-family: var(--font-geist-sans);
+}
+
+/* Thin sidebar scrollbar */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Motion vocabulary --------------------- */
+
+/* Page transition: replayed on every view change via a keyed wrapper. */
+@keyframes page-in {
+  from {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0px);
+  }
+}
+.animate-page-in {
+  animation: page-in 150ms ease-out;
+}
+
+/* Plain fade. */
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+.animate-fade-in {
+  animation: fade-in 350ms ease-out;
+}
+
+/* Staggered card entrance for lists/grids (first four cascade). */
+@keyframes cardIn {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(8px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0) scale(1);
+  }
+}
+.animate-card-in {
+  opacity: 0;
+  animation: cardIn 300ms cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.animate-card-in:nth-child(1) {
+  animation-delay: 0ms;
+}
+.animate-card-in:nth-child(2) {
+  animation-delay: 50ms;
+}
+.animate-card-in:nth-child(3) {
+  animation-delay: 100ms;
+}
+.animate-card-in:nth-child(4) {
+  animation-delay: 150ms;
+}
+
+/* Shimmer sweep for progress indicators. */
+@keyframes shimmer {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(400%);
+  }
+}
+.animate-shimmer {
+  animation: shimmer 2s infinite;
+}
+
+/* Dialog enter/exit — mirrors shadcn's data-[state]:animate-in/animate-out
+   (fade-in-0/zoom-in-95 in, fade-out-0/zoom-out-95 out) driven off a
+   data-state attribute rather than a transition, so the enter always plays. */
+@keyframes dialog-overlay-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes dialog-overlay-out {
+  from {
+    opacity: 1;
+  }
+  to {
+    opacity: 0;
+  }
+}
+@keyframes dialog-panel-in {
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+@keyframes dialog-panel-out {
+  from {
+    opacity: 1;
+    transform: scale(1);
+  }
+  to {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+}
+.dialog-overlay[data-state="open"] {
+  animation: dialog-overlay-in 200ms ease;
+}
+.dialog-overlay[data-state="closed"] {
+  animation: dialog-overlay-out 200ms ease forwards;
+}
+.dialog-panel[data-state="open"] {
+  animation: dialog-panel-in 200ms ease;
+}
+.dialog-panel[data-state="closed"] {
+  animation: dialog-panel-out 200ms ease forwards;
+}
+
+/* Agent detail modal: fade only (no scale) and faster. Its panel holds the full
+   transcript, and animating a transform on that much DOM janks; fading the
+   overlay (the panel inherits its opacity) stays cheap and snappy. */
+.agent-modal[data-state="open"] {
+  animation: dialog-overlay-in 140ms ease;
+}
+.agent-modal[data-state="closed"] {
+  animation: dialog-overlay-out 140ms ease forwards;
+}
+
+/* Tab content transition. */
+@keyframes tab-in {
+  from {
+    opacity: 0;
+    filter: blur(4px);
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0px);
+  }
+}
+.animate-tab-in {
+  animation: tab-in 200ms ease-out;
+}
+
+/* Markdown prose styling */
+.prose-markdown {
+  font-size: 14px;
+  line-height: 1.7;
+  color: #999;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.prose-markdown p {
+  margin-bottom: 0.75em;
+}
+
+.prose-markdown p:last-child {
+  margin-bottom: 0;
+}
+
+.prose-markdown strong {
+  color: #ccc;
+  font-weight: 600;
+}
+
+.prose-markdown em {
+  font-style: italic;
+}
+
+.prose-markdown code {
+  background: #0a0a0a;
+  border: 1px solid #111;
+  border-radius: 4px;
+  padding: 0.15em 0.4em;
+  font-size: 0.9em;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #ccc;
+  font-variant-ligatures: none;
+}
+
+.prose-markdown pre {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin: 0;
+  font-variant-ligatures: none;
+}
+
+.prose-markdown pre code {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 13px;
+  color: inherit;
+}
+
+.prose-markdown ul,
+.prose-markdown ol {
+  padding-left: 1.5em;
+  margin-bottom: 0.75em;
+}
+
+.prose-markdown ul {
+  list-style-type: disc;
+}
+
+.prose-markdown ol {
+  list-style-type: decimal;
+}
+
+.prose-markdown li {
+  margin-bottom: 0.25em;
+}
+
+.prose-markdown li > ul,
+.prose-markdown li > ol {
+  padding-left: 1.5em;
+  margin-top: 0.25em;
+  margin-bottom: 0.25em;
+}
+
+.prose-markdown ol + ul {
+  padding-left: 3em;
+  margin-top: -0.5em;
+}
+
+.prose-markdown h1,
+.prose-markdown h2,
+.prose-markdown h3,
+.prose-markdown h4,
+.prose-markdown h5,
+.prose-markdown h6 {
+  color: #ddd;
+  font-weight: 600;
+  margin-top: 1em;
+  margin-bottom: 0.5em;
+}
+
+.prose-markdown a {
+  color: inherit;
+  text-decoration: none;
+  pointer-events: none;
+}
+
+.prose-markdown blockquote {
+  border-left: 3px solid #333;
+  padding-left: 1em;
+  color: #777;
+  margin: 0.75em 0;
+}
+
+.prose-markdown hr {
+  border: none;
+  border-top: 1px solid #222;
+  margin: 1em 0;
+}
+
+.prose-markdown > table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0.75em 0;
+}
+
+.prose-markdown > table th,
+.prose-markdown > table td {
+  border: 1px solid #333;
+  padding: 0.4em 0.75em;
+  text-align: left;
+  font-size: 13px;
+}
+
+.prose-markdown > table th {
+  background: #1a1a1a;
+  color: #ccc;
+  font-weight: 600;
+}

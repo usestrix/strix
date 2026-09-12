@@ -5,434 +5,267 @@ Strix Agent Interface
 
 import argparse
 import asyncio
-import logging
-import os
-import shutil
+import contextlib
 import sys
 from pathlib import Path
-from typing import Any
 
-import litellm
-from docker.errors import DockerException
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
 
-from strix.config import Config, apply_saved_config, save_current_config
-from strix.config.config import resolve_llm_config
-from strix.llm.utils import resolve_strix_model
-
-
-apply_saved_config()
-
-from strix.interface.cli import run_cli  # noqa: E402
-from strix.interface.tui import run_tui  # noqa: E402
-from strix.interface.utils import (  # noqa: E402
-    assign_workspace_subdirs,
-    build_final_stats_text,
-    check_docker_connection,
-    clone_repository,
-    collect_local_sources,
-    generate_run_name,
-    image_exists,
-    infer_target_type,
-    process_pull_line,
-    resolve_diff_scope_context,
-    rewrite_localhost_targets,
-    validate_config_file,
-    validate_llm_response,
+from strix.config import codex, load_settings, persist_current
+from strix.core.paths import run_dir_for
+from strix.interface.cli_args import parse_arguments
+from strix.interface.environment import (
+    check_docker_installed,
+    pull_docker_image,
+    validate_environment,
 )
-from strix.runtime.docker_runtime import HOST_GATEWAY_HOSTNAME  # noqa: E402
-from strix.telemetry import posthog  # noqa: E402
-from strix.telemetry.tracer import get_global_tracer  # noqa: E402
+from strix.interface.interactive import (
+    InteractiveSetupUnavailableError,
+    run_tui,
+)
+from strix.interface.scan_setup import (
+    ModelConnectionError,
+    preflight_model_connection,
+    prepare_run,
+    telemetry_start,
+)
+from strix.interface.update_check import (
+    is_binary_install,
+    notify_update,
+    prompt_update_if_available,
+    restart_after_update,
+    start_background_check,
+)
+from strix.interface.utils import (
+    build_final_stats_text,
+)
+from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
+from strix.telemetry import posthog, report_error, scarf, set_scan_phase
+from strix.telemetry.logging import configure_dependency_logging
 
 
-logging.getLogger().setLevel(logging.ERROR)
+BEDROCK_MODEL_PREFIX = "bedrock/"
+BEDROCK_MISSING_MODULE_ERROR = "No module named 'boto3'"
+BEDROCK_EXTRA_HINT = (
+    'Bedrock support is optional. Install it with: pipx install "strix-agent[bedrock]"'
+)
+VERTEX_MODEL_MARKER = "vertex"
+VERTEX_MISSING_MODULE_ERROR = "No module named 'google"
+VERTEX_EXTRA_HINT = (
+    'Vertex AI support is optional. Install it with: pipx install "strix-agent[vertex]"'
+)
 
 
-def validate_environment() -> None:  # noqa: PLR0912, PLR0915
+import logging  # noqa: E402
+
+
+logger = logging.getLogger(__name__)
+
+_ROOT_SUBCOMMAND_HELP = """
+Additional commands:
+  strix cloud ...          Use the managed Strix platform
+  strix auth ...           Manage model-subscription sign-in
+  strix view [RUN]         View a completed or running scan
+  strix completions SHELL  Generate zsh, bash, or fish tab completion
+"""
+
+
+def _exception_messages(exc: BaseException) -> tuple[str, ...]:
+    messages: list[str] = []
+    seen: set[int] = set()
+    stack: list[BaseException] = [exc]
+    while stack:
+        current = stack.pop()
+        if id(current) in seen:
+            continue
+        seen.add(id(current))
+        messages.append(str(current))
+        if current.__cause__ is not None:
+            stack.append(current.__cause__)
+        if current.__context__ is not None:
+            stack.append(current.__context__)
+    return tuple(messages)
+
+
+def _provider_import_hint(exc: BaseException, model: str) -> str | None:
+    """Return an install hint when *exc* is a missing provider dependency.
+
+    Bedrock and Vertex AI ship as optional extras: Bedrock needs ``boto3`` and
+    Vertex AI needs ``google-auth``. When either is absent, litellm may raise an
+    ``ImportError``/``ModuleNotFoundError`` directly or wrap it in a connection
+    error. Map the missing module back to the matching extra so the user knows
+    what to install. Returns ``None`` for any unrelated error.
+    """
+    model_name = model.lower()
+    messages = _exception_messages(exc)
+    if any(
+        BEDROCK_MISSING_MODULE_ERROR in message for message in messages
+    ) and model_name.startswith(BEDROCK_MODEL_PREFIX):
+        return BEDROCK_EXTRA_HINT
+    if (
+        any(VERTEX_MISSING_MODULE_ERROR in message for message in messages)
+        and VERTEX_MODEL_MARKER in model_name
+    ):
+        return VERTEX_EXTRA_HINT
+    return None
+
+
+def _subscription_error_hint(exc: BaseException) -> str | None:
+    """Return an actionable hint for a known ChatGPT-subscription error, or None."""
+    if not codex.subscription_model(load_settings().llm.model):
+        return None
+    joined = " ".join(_exception_messages(exc)).lower()
+    if "not supported when using codex with a chatgpt account" in joined:
+        return (
+            "This model isn't available on your ChatGPT subscription. "
+            "Set STRIX_LLM to a model your plan includes (e.g. chatgpt/gpt-5.4)."
+        )
+    if (
+        "error code: 401" in joined
+        or "http 401" in joined
+        or "unauthorized" in joined
+        or "invalid_grant" in joined
+    ):
+        return (
+            "Your ChatGPT sign-in has expired or was revoked. Sign in again:\n"
+            "  strix auth login chatgpt"
+        )
+    return None
+
+
+async def warm_up_llm(show_model_warning: bool = True) -> None:
+    from agents.models.interface import ModelTracing
+
+    from strix.config.models import (
+        RECOMMENDED_MODEL_NAMES,
+        configure_sdk_model_defaults,
+        is_known_openai_bare_model,
+        is_recommended_or_frontier_model,
+    )
+    from strix.core.inputs import make_model_settings
+
     console = Console()
-    missing_required_vars = []
-    missing_optional_vars = []
+    logger.info("Warming up LLM connection")
 
-    strix_llm = Config.get("strix_llm")
-    uses_strix_models = strix_llm and strix_llm.startswith("strix/")
-
-    if not strix_llm:
-        missing_required_vars.append("STRIX_LLM")
-
-    has_base_url = uses_strix_models or any(
-        [
-            Config.get("llm_api_base"),
-            Config.get("openai_api_base"),
-            Config.get("litellm_base_url"),
-            Config.get("ollama_api_base"),
-        ]
-    )
-
-    if not Config.get("llm_api_key"):
-        missing_optional_vars.append("LLM_API_KEY")
-
-    if not has_base_url:
-        missing_optional_vars.append("LLM_API_BASE")
-
-    if not Config.get("perplexity_api_key"):
-        missing_optional_vars.append("PERPLEXITY_API_KEY")
-
-    if not Config.get("strix_reasoning_effort"):
-        missing_optional_vars.append("STRIX_REASONING_EFFORT")
-
-    if missing_required_vars:
-        error_text = Text()
-        error_text.append("MISSING REQUIRED ENVIRONMENT VARIABLES", style="bold red")
-        error_text.append("\n\n", style="white")
-
-        for var in missing_required_vars:
-            error_text.append(f"• {var}", style="bold yellow")
-            error_text.append(" is not set\n", style="white")
-
-        if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="dim white")
-            for var in missing_optional_vars:
-                error_text.append(f"• {var}", style="dim yellow")
-                error_text.append(" is not set\n", style="dim white")
-
-        error_text.append("\nRequired environment variables:\n", style="white")
-        for var in missing_required_vars:
-            if var == "STRIX_LLM":
-                error_text.append("• ", style="white")
-                error_text.append("STRIX_LLM", style="bold cyan")
-                error_text.append(
-                    " - Model name to use with litellm (e.g., 'openai/gpt-5.4')\n",
-                    style="white",
-                )
-
-        if missing_optional_vars:
-            error_text.append("\nOptional environment variables:\n", style="white")
-            for var in missing_optional_vars:
-                if var == "LLM_API_KEY":
-                    error_text.append("• ", style="white")
-                    error_text.append("LLM_API_KEY", style="bold cyan")
-                    error_text.append(
-                        " - API key for the LLM provider "
-                        "(not needed for local models, Vertex AI, AWS, etc.)\n",
-                        style="white",
-                    )
-                elif var == "LLM_API_BASE":
-                    error_text.append("• ", style="white")
-                    error_text.append("LLM_API_BASE", style="bold cyan")
-                    error_text.append(
-                        " - Custom API base URL if using local models (e.g., Ollama, LMStudio)\n",
-                        style="white",
-                    )
-                elif var == "PERPLEXITY_API_KEY":
-                    error_text.append("• ", style="white")
-                    error_text.append("PERPLEXITY_API_KEY", style="bold cyan")
-                    error_text.append(
-                        " - API key for Perplexity AI web search (enables real-time research)\n",
-                        style="white",
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append("• ", style="white")
-                    error_text.append("STRIX_REASONING_EFFORT", style="bold cyan")
-                    error_text.append(
-                        " - Reasoning effort level: none, minimal, low, medium, high, xhigh "
-                        "(default: high)\n",
-                        style="white",
-                    )
-
-        error_text.append("\nExample setup:\n", style="white")
-        error_text.append("export STRIX_LLM='openai/gpt-5.4'\n", style="dim white")
-
-        if missing_optional_vars:
-            for var in missing_optional_vars:
-                if var == "LLM_API_KEY":
-                    error_text.append(
-                        "export LLM_API_KEY='your-api-key-here'  "
-                        "# not needed for local models, Vertex AI, AWS, etc.\n",
-                        style="dim white",
-                    )
-                elif var == "LLM_API_BASE":
-                    error_text.append(
-                        "export LLM_API_BASE='http://localhost:11434'  "
-                        "# needed for local models only\n",
-                        style="dim white",
-                    )
-                elif var == "PERPLEXITY_API_KEY":
-                    error_text.append(
-                        "export PERPLEXITY_API_KEY='your-perplexity-key-here'\n", style="dim white"
-                    )
-                elif var == "STRIX_REASONING_EFFORT":
-                    error_text.append(
-                        "export STRIX_REASONING_EFFORT='high'\n",
-                        style="dim white",
-                    )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-
-        console.print("\n")
-        console.print(panel)
-        console.print()
-        sys.exit(1)
-
-
-def check_docker_installed() -> None:
-    if shutil.which("docker") is None:
-        console = Console()
-        error_text = Text()
-        error_text.append("DOCKER NOT INSTALLED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("The 'docker' CLI was not found in your PATH.\n", style="white")
-        error_text.append(
-            "Please install Docker and ensure the 'docker' command is available.\n\n", style="white"
-        )
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n", panel, "\n")
-        sys.exit(1)
-
-
-async def warm_up_llm() -> None:
-    console = Console()
-
+    raw_model = ""
     try:
-        model_name, api_key, api_base = resolve_llm_config()
-        litellm_model, _ = resolve_strix_model(model_name)
-        litellm_model = litellm_model or model_name
-
-        test_messages = [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Reply with just 'OK'."},
-        ]
-
-        llm_timeout = int(Config.get("llm_timeout") or "300")
-
-        completion_kwargs: dict[str, Any] = {
-            "model": litellm_model,
-            "messages": test_messages,
-            "timeout": llm_timeout,
-        }
-        if api_key:
-            completion_kwargs["api_key"] = api_key
-        if api_base:
-            completion_kwargs["api_base"] = api_base
-
-        response = litellm.completion(**completion_kwargs)
-
-        validate_llm_response(response)
-
-    except Exception as e:  # noqa: BLE001
-        error_text = Text()
-        error_text.append("LLM CONNECTION FAILED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append("Could not establish connection to the language model.\n", style="white")
-        error_text.append("Please check your configuration and try again.\n", style="white")
-        error_text.append(f"\nError: {e}", style="dim white")
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-
-        console.print("\n")
-        console.print(panel)
-        console.print()
-        sys.exit(1)
-
-
-def get_version() -> str:
-    try:
-        from importlib.metadata import version
-
-        return version("strix-agent")
-    except Exception:  # noqa: BLE001
-        return "unknown"
-
-
-def parse_arguments() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(
-        description="Strix Multi-Agent Cybersecurity Penetration Testing Tool",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Web application penetration test
-  strix --target https://example.com
-
-  # GitHub repository analysis
-  strix --target https://github.com/user/repo
-  strix --target git@github.com:user/repo.git
-
-  # Local code analysis
-  strix --target ./my-project
-
-  # Domain penetration test
-  strix --target example.com
-
-  # IP address penetration test
-  strix --target 192.168.1.42
-
-  # Multiple targets (e.g., white-box testing with source and deployed app)
-  strix --target https://github.com/user/repo --target https://example.com
-  strix --target ./my-project --target https://staging.example.com --target https://prod.example.com
-
-  # Custom instructions (inline)
-  strix --target example.com --instruction "Focus on authentication vulnerabilities"
-
-  # Custom instructions (from file)
-  strix --target example.com --instruction-file ./instructions.txt
-  strix --target https://app.com --instruction-file /path/to/detailed_instructions.md
-        """,
-    )
-
-    parser.add_argument(
-        "-v",
-        "--version",
-        action="version",
-        version=f"strix {get_version()}",
-    )
-
-    parser.add_argument(
-        "-t",
-        "--target",
-        type=str,
-        required=True,
-        action="append",
-        help="Target to test (URL, repository, local directory path, domain name, or IP address). "
-        "Can be specified multiple times for multi-target scans.",
-    )
-    parser.add_argument(
-        "--instruction",
-        type=str,
-        help="Custom instructions for the penetration test. This can be "
-        "specific vulnerability types to focus on (e.g., 'Focus on IDOR and XSS'), "
-        "testing approaches (e.g., 'Perform thorough authentication testing'), "
-        "test credentials (e.g., 'Use the following credentials to access the app: "
-        "admin:password123'), "
-        "or areas of interest (e.g., 'Check login API endpoint for security issues').",
-    )
-
-    parser.add_argument(
-        "--instruction-file",
-        type=str,
-        help="Path to a file containing detailed custom instructions for the penetration test. "
-        "Use this option when you have lengthy or complex instructions saved in a file "
-        "(e.g., '--instruction-file ./detailed_instructions.txt').",
-    )
-
-    parser.add_argument(
-        "-n",
-        "--non-interactive",
-        action="store_true",
-        help=(
-            "Run in non-interactive mode (no TUI, exits on completion). "
-            "Default is interactive mode with TUI."
-        ),
-    )
-
-    parser.add_argument(
-        "-m",
-        "--scan-mode",
-        type=str,
-        choices=["quick", "standard", "deep"],
-        default="deep",
-        help=(
-            "Scan mode: "
-            "'quick' for fast CI/CD checks, "
-            "'standard' for routine testing, "
-            "'deep' for thorough security reviews (default). "
-            "Default: deep."
-        ),
-    )
-
-    parser.add_argument(
-        "--scope-mode",
-        type=str,
-        choices=["auto", "diff", "full"],
-        default="auto",
-        help=(
-            "Scope mode for code targets: "
-            "'auto' enables PR diff-scope in CI/headless runs, "
-            "'diff' forces changed-files scope, "
-            "'full' disables diff-scope."
-        ),
-    )
-
-    parser.add_argument(
-        "--diff-base",
-        type=str,
-        help=(
-            "Target branch or commit to compare against (e.g., origin/main). "
-            "Defaults to the repository's default branch."
-        ),
-    )
-
-    parser.add_argument(
-        "--config",
-        type=str,
-        help="Path to a custom config file (JSON) to use instead of ~/.strix/cli-config.json",
-    )
-
-    args = parser.parse_args()
-
-    if args.instruction and args.instruction_file:
-        parser.error(
-            "Cannot specify both --instruction and --instruction-file. Use one or the other."
-        )
-
-    if args.instruction_file:
-        instruction_path = Path(args.instruction_file)
-        try:
-            with instruction_path.open(encoding="utf-8") as f:
-                args.instruction = f.read().strip()
-                if not args.instruction:
-                    parser.error(f"Instruction file '{instruction_path}' is empty")
-        except Exception as e:  # noqa: BLE001
-            parser.error(f"Failed to read instruction file '{instruction_path}': {e}")
-
-    args.targets_info = []
-    for target in args.target:
-        try:
-            target_type, target_dict = infer_target_type(target)
-
-            if target_type == "local_code":
-                display_target = target_dict.get("target_path", target)
-            else:
-                display_target = target
-
-            args.targets_info.append(
-                {"type": target_type, "details": target_dict, "original": display_target}
+        settings = load_settings()
+        configure_sdk_model_defaults(settings)
+        llm = settings.llm
+        raw_model = (llm.model or "").strip()
+        if (
+            raw_model
+            and "/" not in raw_model
+            and not is_known_openai_bare_model(raw_model)
+            and not llm.api_base
+        ):
+            warn_text = Text()
+            warn_text.append("UNKNOWN MODEL NAME", style="bold yellow")
+            warn_text.append("\n\n", style="white")
+            warn_text.append(f"'{raw_model}'", style="bold cyan")
+            warn_text.append(
+                " is not a known OpenAI model. Bare names route to OpenAI by default.\n"
+                "If you meant a non-OpenAI provider, use the '",
+                style="white",
             )
-        except ValueError:
-            parser.error(f"Invalid target '{target}'")
+            warn_text.append("<provider>/<model>", style="bold cyan")
+            warn_text.append(
+                "' form, e.g. 'anthropic/claude-opus-4-7', 'deepseek/deepseek-v4-pro'.",
+                style="white",
+            )
+            console.print(
+                Panel(
+                    warn_text,
+                    title="[bold white]STRIX",
+                    title_align="left",
+                    border_style="yellow",
+                    padding=(1, 2),
+                ),
+            )
+            sys.exit(1)
 
-    assign_workspace_subdirs(args.targets_info)
-    rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
+        if show_model_warning and raw_model and not is_recommended_or_frontier_model(raw_model):
+            warn_text = Text()
+            warn_text.append("MODEL QUALITY WARNING", style="bold yellow")
+            warn_text.append("\n\n", style="white")
+            warn_text.append(f"'{raw_model}'", style="bold cyan")
+            warn_text.append(
+                " is not a recommended frontier model for Strix.\nSecurity scans work best with:\n",
+                style="white",
+            )
+            for recommended_model in RECOMMENDED_MODEL_NAMES:
+                warn_text.append(f"• {recommended_model}\n", style="bold cyan")
+            warn_text.append(
+                "\nYou can continue, but weaker models may miss vulnerabilities "
+                "or produce lower-quality findings.",
+                style="white",
+            )
+            console.print(
+                Panel(
+                    warn_text,
+                    title="[bold white]STRIX",
+                    title_align="left",
+                    border_style="yellow",
+                    padding=(1, 2),
+                ),
+            )
 
-    return args
+        await preflight_model_connection(raw_model, settings=settings)
+        logger.info("LLM warm-up succeeded for model %s", (llm.model or "").strip())
+
+        if settings.dedupe.model:
+            from strix.report.dedupe import resolve_dedupe_model
+
+            dedupe_model = settings.dedupe.model.strip()
+            raw_model = dedupe_model
+            deduper = resolve_dedupe_model(settings.dedupe, dedupe_model)
+            # A dedicated dedupe model may route to another provider, which must
+            # never receive the main endpoint's headers; it has its own
+            # DEDUPE_LLM_EXTRA_HEADERS.
+            deduper_settings = make_model_settings(
+                None,
+                model_name=dedupe_model,
+                request_timeout=llm.timeout,
+                prompt_cache=False,
+                extra_headers=settings.dedupe.extra_headers,
+                has_tools=False,
+            )
+            await asyncio.wait_for(
+                deduper.get_response(
+                    system_instructions="You are a helpful assistant.",
+                    input="Reply with just 'OK'.",
+                    model_settings=deduper_settings,
+                    tools=[],
+                    output_schema=None,
+                    handoffs=[],
+                    tracing=ModelTracing.DISABLED,
+                    previous_response_id=None,
+                    conversation_id=None,
+                    prompt=None,
+                ),
+                timeout=llm.timeout,
+            )
+            logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
+
+    except ModelConnectionError:
+        logger.debug("Model route warm-up failed", exc_info=True)
+        raise
+    except Exception as exc:
+        logger.debug("LLM warm-up failed", exc_info=True)
+        raise ModelConnectionError(raw_model, exc) from exc
 
 
 def display_completion_message(args: argparse.Namespace, results_path: Path) -> None:
+    from strix.report.state import get_global_report_state
+
     console = Console()
-    tracer = get_global_tracer()
+    report_state = get_global_report_state()
 
     scan_completed = False
-    if tracer and tracer.scan_results:
-        scan_completed = tracer.scan_results.get("scan_completed", False)
+    if report_state:
+        scan_completed = report_state.run_record.get("status") == "completed"
 
     completion_text = Text()
     if scan_completed:
@@ -451,9 +284,9 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
             target_text.append("\n        ")
             target_text.append(target_info["original"], style="white")
 
-    stats_text = build_final_stats_text(tracer)
+    stats_text = build_final_stats_text(report_state)
 
-    panel_parts = [completion_text, "\n\n", target_text]
+    panel_parts: list[Text | str] = [completion_text, "\n\n", target_text]
 
     if stats_text.plain:
         panel_parts.extend(["\n", stats_text])
@@ -464,6 +297,21 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     results_text.append("  ")
     results_text.append(str(results_path), style="#60a5fa")
     panel_parts.extend(["\n", results_text])
+
+    view_text = Text()
+    view_text.append("\n")
+    view_text.append("View", style="dim")
+    view_text.append("    ")
+    view_text.append(f"strix view {args.run_name}", style="#22c55e")
+    panel_parts.extend(["\n", view_text])
+
+    if not scan_completed:
+        resume_text = Text()
+        resume_text.append("\n")
+        resume_text.append("Resume", style="dim")
+        resume_text.append("  ")
+        resume_text.append(f"strix --resume {args.run_name}", style="#22c55e")
+        panel_parts.extend(["\n", resume_text])
 
     panel_content = Text.assemble(*panel_parts)
 
@@ -480,163 +328,208 @@ def display_completion_message(args: argparse.Namespace, results_path: Path) -> 
     console.print("\n")
     console.print(panel)
     console.print()
-    console.print("[#60a5fa]strix.ai[/]  [dim]·[/]  [#60a5fa]discord.gg/strix-ai[/]")
+    console.print(
+        "[#60a5fa]strix.ai[/]  [dim]·[/]  "
+        "[#60a5fa]docs.strix.ai[/]  [dim]·[/]  "
+        "[#60a5fa]discord.gg/strix-ai[/]"
+    )
+    if not args.non_interactive:
+        console.print(
+            "[dim]Run a pentest in Strix Cloud[/]  [#60a5fa]app.strix.ai[/]  [dim]·[/]  "
+            "[dim]Enterprise[/]  [#60a5fa]strix.ai/demo[/]"
+        )
     console.print()
+    if not args.non_interactive:
+        notify_update(console)
 
 
-def pull_docker_image() -> None:
+def _print_error_panel(title: str, message: str) -> None:
     console = Console()
-    client = check_docker_connection()
-
-    if image_exists(client, Config.get("strix_image")):  # type: ignore[arg-type]
-        return
-
-    console.print()
-    console.print(f"[dim]Pulling image[/] {Config.get('strix_image')}")
-    console.print("[dim yellow]This only happens on first run and may take a few minutes...[/]")
-    console.print()
-
-    with console.status("[bold cyan]Downloading image layers...", spinner="dots") as status:
-        try:
-            layers_info: dict[str, str] = {}
-            last_update = ""
-
-            for line in client.api.pull(Config.get("strix_image"), stream=True, decode=True):
-                last_update = process_pull_line(line, layers_info, status, last_update)
-
-        except DockerException as e:
-            console.print()
-            error_text = Text()
-            error_text.append("FAILED TO PULL IMAGE", style="bold red")
-            error_text.append("\n\n", style="white")
-            error_text.append(f"Could not download: {Config.get('strix_image')}\n", style="white")
-            error_text.append(str(e), style="dim red")
-
-            panel = Panel(
-                error_text,
-                title="[bold white]STRIX",
-                title_align="left",
-                border_style="red",
-                padding=(1, 2),
-            )
-            console.print(panel, "\n")
-            sys.exit(1)
-
-    success_text = Text()
-    success_text.append("Docker image ready", style="#22c55e")
-    console.print(success_text)
+    error_text = Text()
+    error_text.append(title, style="bold red")
+    error_text.append("\n\n", style="white")
+    error_text.append(message, style="white")
+    panel = Panel(
+        error_text,
+        title="[bold white]STRIX",
+        title_align="left",
+        border_style="red",
+        padding=(1, 2),
+    )
+    console.print("\n")
+    console.print(panel)
     console.print()
 
 
-def apply_config_override(config_path: str) -> None:
-    # Clear env vars that were automatically applied from the default config file
-    # so they don't leak into the custom config context.
-    for var_name in Config._applied_from_default:
-        os.environ.pop(var_name, None)
-    Config._applied_from_default = {}
+def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
+    console = Console()
+    error_text = Text()
+    sub_hint = _subscription_error_hint(exc)
+    if sub_hint is not None:
+        border_style = "yellow"
+        error_text.append("MODEL NOT AVAILABLE ON SUBSCRIPTION", style="bold yellow")
+        error_text.append("\n\n", style="white")
+        error_text.append(f"{sub_hint}\n", style="white")
+        error_text.append(f"\nDetails: {exc}", style="dim white")
+    else:
+        border_style = "red"
+        error_text.append("LLM CONNECTION FAILED", style="bold red")
+        error_text.append("\n\n", style="white")
+        error_text.append("Could not establish connection to the language model.\n", style="white")
+        error_text.append("Please check your configuration and try again.\n", style="white")
+        hint = _provider_import_hint(exc, model_name)
+        if hint is not None:
+            error_text.append(f"\n{hint}\n", style="bold yellow")
+        error_text.append(f"\nError: {exc}", style="dim white")
 
-    Config._config_file_override = validate_config_file(config_path)
-    apply_saved_config(force=True)
+    panel = Panel(
+        error_text,
+        title="[bold white]STRIX",
+        title_align="left",
+        border_style=border_style,
+        padding=(1, 2),
+    )
+    console.print("\n")
+    console.print(panel)
+    console.print()
 
 
-def persist_config() -> None:
-    if Config._config_file_override is None:
-        save_current_config()
+def _bootstrap_scan(args: argparse.Namespace) -> None:
+    """Warm up the model and prepare the run for a non-interactive scan.
+
+    Interactive launches skip this: the model preflight and run preparation
+    happen inside the TUI so the interface paints immediately instead of
+    waiting on a model round trip.
+    """
+    set_scan_phase("preflight")
+    try:
+        asyncio.run(warm_up_llm(show_model_warning=True))
+    except ModelConnectionError as exc:
+        report_error("model_connection_failed", exc)
+        _print_model_connection_error(exc, exc.model_name)
+        sys.exit(1)
+    persist_current()
+    try:
+        prepare_run(args)
+    except ValueError as e:
+        report_error("scan_preparation_failed", e)
+        _print_error_panel("SCAN PREPARATION FAILED", str(e))
+        sys.exit(1)
+    telemetry_start(args)
 
 
-def main() -> None:  # noqa: PLR0912, PLR0915
+def main() -> None:
+    configure_dependency_logging()
+
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
+    if len(sys.argv) == 2 and sys.argv[1] in ("-h", "--help"):
+        try:
+            parse_arguments()
+        except SystemExit as exc:
+            Console().print(_ROOT_SUBCOMMAND_HELP.strip(), markup=False)
+            raise SystemExit(exc.code) from None
+
+    # `strix view [<run>]` is a viewer-only subcommand, dispatched before the
+    # scan argument parser (which requires a target) and before any scan setup.
+    if len(sys.argv) > 1 and sys.argv[1] == "view":
+        from strix.interface.viewer.cli import run_view
+
+        run_view(sys.argv[2:])
+        return
+
+    # `strix auth …` manages model-subscription sign-in and exits; it needs no
+    # target, Docker, or scan setup.
+    if len(sys.argv) > 1 and sys.argv[1] == "auth":
+        from strix.interface.auth_cli import run_auth
+
+        sys.exit(run_auth(sys.argv[2:]))
+
+    # Generate native shell completion scripts before scan argument parsing.
+    if len(sys.argv) > 1 and sys.argv[1] in ("completion", "completions"):
+        from strix.interface.completions import run_completions
+
+        sys.exit(run_completions(sys.argv[2:]))
+
+    # `strix cloud …` drives the managed platform (app.strix.ai) and exits;
+    # it needs no target, Docker, or scan setup.
+    if len(sys.argv) > 1 and sys.argv[1] == "cloud":
+        from strix.interface.cloud import run_cloud
+
+        sys.exit(run_cloud(sys.argv[2:]))
+
+    start_import_warmup()
+
     args = parse_arguments()
 
-    if args.config:
-        apply_config_override(args.config)
+    start_background_check()
+    if not args.non_interactive and prompt_update_if_available(Console()):
+        if is_binary_install() and sys.platform != "win32":
+            restart_after_update()
+        sys.exit(0)
 
     check_docker_installed()
     pull_docker_image()
-
     validate_environment()
-    asyncio.run(warm_up_llm())
 
-    persist_config()
+    # Everything below imports the scan engine; do not race the warm-up thread.
+    wait_for_import_warmup()
 
-    args.run_name = generate_run_name(args.targets_info)
+    if args.non_interactive:
+        _bootstrap_scan(args)
 
-    for target_info in args.targets_info:
-        if target_info["type"] == "repository":
-            repo_url = target_info["details"]["target_repo"]
-            dest_name = target_info["details"].get("workspace_subdir")
-            cloned_path = clone_repository(repo_url, args.run_name, dest_name)
-            target_info["details"]["cloned_repo_path"] = cloned_path
-
-    args.local_sources = collect_local_sources(args.targets_info)
-    try:
-        diff_scope = resolve_diff_scope_context(
-            local_sources=args.local_sources,
-            scope_mode=args.scope_mode,
-            diff_base=args.diff_base,
-            non_interactive=args.non_interactive,
-        )
-    except ValueError as e:
-        console = Console()
-        error_text = Text()
-        error_text.append("DIFF SCOPE RESOLUTION FAILED", style="bold red")
-        error_text.append("\n\n", style="white")
-        error_text.append(str(e), style="white")
-
-        panel = Panel(
-            error_text,
-            title="[bold white]STRIX",
-            title_align="left",
-            border_style="red",
-            padding=(1, 2),
-        )
-        console.print("\n")
-        console.print(panel)
-        console.print()
-        sys.exit(1)
-
-    args.diff_scope = diff_scope.metadata
-    if diff_scope.instruction_block:
-        if args.instruction:
-            args.instruction = f"{diff_scope.instruction_block}\n\n{args.instruction}"
-        else:
-            args.instruction = diff_scope.instruction_block
-
-    is_whitebox = bool(args.local_sources)
-
-    posthog.start(
-        model=Config.get("strix_llm"),
-        scan_mode=args.scan_mode,
-        is_whitebox=is_whitebox,
-        interactive=not args.non_interactive,
-        has_instructions=bool(args.instruction),
-    )
+    from strix.report.state import get_global_report_state
 
     exit_reason = "user_exit"
     try:
         if args.non_interactive:
+            from strix.interface.cli import run_cli
+
             asyncio.run(run_cli(args))
+            # Headless runs have no user to quit: the agent either finished
+            # (already beaconed as finished_by_tool) or stopped on its own.
+            exit_reason = "agent_stopped"
         else:
             asyncio.run(run_tui(args))
+    except InteractiveSetupUnavailableError as exc:
+        exit_reason = "error"
+        report_error("interactive_setup_unavailable", exc)
+        _print_error_panel("INTERACTIVE SETUP UNAVAILABLE", str(exc))
+        sys.exit(1)
     except KeyboardInterrupt:
         exit_reason = "interrupted"
-    except Exception as e:
+    except Exception as exc:
         exit_reason = "error"
-        posthog.error("unhandled_exception", str(e))
+        report_error("unhandled_exception", exc)
         raise
     finally:
-        tracer = get_global_tracer()
-        if tracer:
-            posthog.end(tracer, exit_reason=exit_reason)
+        report_state = get_global_report_state()
+        if report_state:
+            status = {"interrupted": "interrupted", "error": "failed"}.get(
+                exit_reason,
+                "stopped",
+            )
+            report_state.cleanup(status=status)
+            # Best-effort beacons on the way out. They reach the network, so a
+            # second Ctrl-C lands here; abandon them rather than trading a clean
+            # exit for a traceback.
+            with contextlib.suppress(KeyboardInterrupt, Exception):
+                posthog.end(report_state, exit_reason=exit_reason)
+                scarf.end(report_state, exit_reason=exit_reason)
 
-    results_path = Path("strix_runs") / args.run_name
+    if not args.run_name:
+        # Setup mode where the user quit before starting a scan: nothing ran.
+        notify_update(Console())
+        return
+
+    results_path = run_dir_for(args.run_name)
+
     display_completion_message(args, results_path)
 
     if args.non_interactive:
-        tracer = get_global_tracer()
-        if tracer and tracer.vulnerability_reports:
+        report_state = get_global_report_state()
+        if report_state and report_state.vulnerability_reports:
             sys.exit(2)
 
 

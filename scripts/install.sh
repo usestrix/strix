@@ -4,7 +4,7 @@ set -euo pipefail
 
 APP=strix
 REPO="usestrix/strix"
-STRIX_IMAGE="ghcr.io/usestrix/strix-sandbox:0.1.13"
+STRIX_IMAGE="ghcr.io/usestrix/strix-sandbox:1.3.0"
 
 MUTED='\033[0;2m'
 RED='\033[0;31m'
@@ -41,7 +41,7 @@ fi
 
 combo="$os-$arch"
 case "$combo" in
-  linux-x86_64|macos-x86_64|macos-arm64|windows-x86_64)
+  linux-x86_64|linux-arm64|macos-x86_64|macos-arm64|windows-x86_64)
     ;;
   *)
     echo -e "${RED}Unsupported OS/Arch: $os/$arch${NC}"
@@ -345,6 +345,9 @@ echo ""
 echo -e "${MUTED}For more information visit ${NC}https://strix.ai"
 echo -e "${MUTED}Supported models ${NC}https://docs.strix.ai/llm-providers/overview"
 echo -e "${MUTED}Join our community ${NC}https://discord.gg/strix-ai"
+echo ""
+echo -e "${MUTED}Run a pentest in Strix Cloud ${NC}https://app.strix.ai"
+echo -e "${MUTED}Enterprise ${NC}https://strix.ai/demo"
 echo ""
 
 echo -e "${YELLOW}→${NC} Run ${MUTED}source ~/.$(basename $SHELL)rc${NC} or open a new terminal"

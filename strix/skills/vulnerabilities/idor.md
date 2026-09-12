@@ -47,6 +47,9 @@ Object-level authorization failures (BOLA/IDOR) lead to cross-account data expos
 **Parameter Analysis**
 - Pagination/cursors: `page[offset]`, `page[limit]`, `cursor`, `nextPageToken` (often reveal or accept cross-tenant/state)
 - Directory/list endpoints as seeders: search/list/suggest/export often leak object IDs for secondary exploitation
+- Find undocumented params with `arjun -u <url>` (GET) or `arjun -u <url> -m POST` —
+  surfaces hidden filters like `?include_deleted=1`, `?as_user=…`, `?owner_id=…`
+  that frequently widen the IDOR surface.
 
 **Enumeration Techniques**
 - Alternate types: `{"id":123}` vs `{"id":"123"}`, arrays vs scalars, objects vs scalars
@@ -187,6 +190,7 @@ query IDOR {
 - Soft-privatized data where content is already public
 - Idempotent metadata lookups that do not reveal sensitive content
 - Correct row-level checks enforced across all channels
+- Empty array / null returned for another user's resource — silent enforcement, not exposure; compare against the owner's view to confirm the data is actually missing rather than just hidden from the response shape
 
 ## Impact
 
