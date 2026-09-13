@@ -1,0 +1,11 @@
+{
+  "cli.description": "Strix - Agente Autónomo de Pruebas de Penetración de Seguridad con IA",
+  "cli.scan_started": "Iniciando escaneo en el objetivo: {target}",
+  "cli.scan_completed": "Escaneo completado para el objetivo: {target}",
+  "cli.vulnerabilities_found": "Se encontraron {count} vulnerabilidad(es)",
+  "report.title": "Informe Ejecutivo de Auditoría de Seguridad",
+  "report.description": "Descripción",
+  "report.evidence": "Evidencia",
+  "report.impact": "Impacto",
+  "report.remediation": "Pasos de Remediación"
+}
