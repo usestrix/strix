@@ -2407,3 +2407,146 @@ async def test_delete_tool_carries_the_caller_identity(report_state: ReportState
     assert history[0]["agent_id"] == "aaaa1111"
     assert history[0]["agent_name"] == "Recon Agent"
     assert "update_vulnerability_report" in delete_vulnerability_report.description
+
+
+# A medium-severity vector (5.3): it rates the seeded report without moving its severity.
+_CVSS_MEDIUM = {**_CVSS, "confidentiality": "L", "integrity": "N", "availability": "N"}
+
+
+def test_update_rejects_lowering_confidence_without_a_rationale(
+    report_state: ReportState,
+) -> None:
+    """A revision must not leave a non-high confidence with no rationale behind it."""
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Reachability is weaker than first thought.",
+        fields={"confidence": "medium"},
+    )
+
+    assert result["success"] is False
+    assert result["error"] == "Validation failed"
+    assert any("confidence_rationale is required" in e for e in result["errors"])
+    report = report_state.vulnerability_reports[0]
+    assert report["confidence"] == "low", "a rejected revision must not be applied"
+    assert "update_history" not in report
+
+
+def test_update_accepts_a_confidence_change_that_carries_its_rationale(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The sink was traced statically.",
+        fields={
+            "confidence": "medium",
+            "confidence_rationale": "Static trace only; the endpoint was not exercised.",
+        },
+    )
+
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    assert report["confidence"] == "medium"
+    assert report["confidence_rationale"].startswith("Static trace only")
+
+
+def test_update_raising_confidence_to_high_needs_no_rationale(report_state: ReportState) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="The write was reproduced.",
+        fields={"confidence": "high"},
+    )
+
+    assert result["success"] is True
+    assert report_state.vulnerability_reports[0]["confidence"] == "high"
+
+
+def test_update_rejects_a_severity_change_without_new_conditions(
+    report_state: ReportState,
+) -> None:
+    """A vector that moves the severity makes the old conditions stale, so it needs new ones."""
+    _seed_weak_report(report_state)
+    report_state.vulnerability_reports[0]["severity_change_conditions"] = (
+        "Unauthenticated exploitation would raise this."
+    )
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Confirmed unauthenticated write.",
+        fields={"cvss_breakdown": _CVSS},
+    )
+
+    assert result["success"] is False
+    assert any("severity_change_conditions is required" in e for e in result["errors"])
+    report = report_state.vulnerability_reports[0]
+    assert report["severity"] == "medium"
+    assert report["severity_change_conditions"].startswith("Unauthenticated exploitation")
+    assert "update_history" not in report
+
+
+def test_update_accepts_a_severity_change_that_carries_new_conditions(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Confirmed unauthenticated write.",
+        fields={
+            "cvss_breakdown": _CVSS,
+            "severity_change_conditions": "A guard before the write would remove the impact.",
+        },
+    )
+
+    assert result["success"] is True
+    assert result["severity"] == "critical"
+
+
+def test_update_with_a_vector_that_keeps_the_severity_needs_no_new_conditions(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Recorded the vector behind the existing rating.",
+        fields={"cvss_breakdown": _CVSS_MEDIUM},
+    )
+
+    assert result["success"] is True
+    assert result["severity"] == "medium"
+
+
+def test_update_keeps_accepting_unrelated_edits_on_a_report_filed_before_the_rules(
+    report_state: ReportState,
+) -> None:
+    """The seeded report predates the rationale rules; editing its prose must still work."""
+    _seed_weak_report(report_state)
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Clarified the impact.",
+        fields={"impact": "An attacker can overwrite uploaded files."},
+    )
+
+    assert result["success"] is True
+
+
+def test_update_does_not_apply_dynamic_rules_to_a_dependency_finding(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+    report_state.vulnerability_reports[0]["finding_class"] = "dependency_cve"
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Only a test script imports the package.",
+        fields={"confidence": "medium"},
+    )
+
+    assert result["success"] is True

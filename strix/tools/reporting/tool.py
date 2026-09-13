@@ -591,7 +591,7 @@ def _fit_revision_to_class(
     if offending:
         return _reject_cross_class_revision(report_id, matched_class, offending)
     if matched_class == "dynamic":
-        return None
+        return _reject_revision_breaking_analysis_rules(report_id, matched, changes)
     return _rate_dependency_revision(report_id, matched, changes)
 
 
@@ -618,6 +618,56 @@ def _read_revision(
             "error": "No fields to update - pass at least one field you want to replace",
         }
     return changes, None
+
+
+def _reject_revision_breaking_analysis_rules(
+    report_id: str, matched: dict[str, Any], changes: dict[str, Any]
+) -> dict[str, Any] | None:
+    """Reject a revision that would leave a dynamic finding failing its create-time rules.
+
+    ``ReportState.update_vulnerability_report`` drops a rationale whose rating the
+    revision replaces unless the revision supplies a new one. Each changed field
+    passes validation on its own, so a report can still end up with
+    ``confidence: low`` and no rationale, or a new severity with no
+    ``severity_change_conditions`` - both states ``create_vulnerability_report``
+    refuses.
+
+    Only obligations the revision itself creates are checked. A report filed
+    before these fields were required keeps accepting unrelated edits.
+    """
+    errors: list[str] = []
+    confidence = changes.get("confidence")
+    if (
+        confidence is not None
+        and confidence != matched.get("confidence")
+        and confidence != "high"
+        and not str(changes.get("confidence_rationale") or "").strip()
+    ):
+        errors.append(
+            f"confidence_rationale is required when revising confidence to {confidence!r} - "
+            "the rationale for the previous confidence no longer applies, so name the gap "
+            "behind the new one (e.g. static-only trace, unconfirmed reachability)"
+        )
+
+    severity = changes.get("severity")
+    if (
+        severity is not None
+        and severity != matched.get("severity")
+        and not str(changes.get("severity_change_conditions") or "").strip()
+    ):
+        errors.append(
+            f"severity_change_conditions is required when the revision moves severity to "
+            f"{severity!r} - the conditions for the previous severity no longer apply, so "
+            "state the one concrete piece of evidence that would move the new rating"
+        )
+    if not errors:
+        return None
+    return {
+        "success": False,
+        "error": "Validation failed",
+        "errors": errors,
+        "report_id": report_id,
+    }
 
 
 def _do_update(
