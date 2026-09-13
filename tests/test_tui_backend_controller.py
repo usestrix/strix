@@ -234,6 +234,33 @@ async def test_target_less_start_enters_live_view_and_waits_for_the_mount() -> N
 
 
 @pytest.mark.asyncio
+async def test_target_less_start_uses_explicit_cli_workspace_without_prompt(
+    tmp_path: Path,
+) -> None:
+    started = False
+
+    async def start(_verify: bool = True) -> None:
+        nonlocal started
+        started = True
+
+    workspace = tmp_path / "remediation"
+    workspace.mkdir()
+    runtime_args = args()
+    runtime_args.workspace_mount = str(workspace)
+    os.environ["STRIX_LLM"] = "anthropic/claude-sonnet-4"
+    os.environ["ANTHROPIC_API_KEY"] = "test-key"
+    loader._cached = None
+    controller = TuiController(runtime_args, on_start=start)
+
+    result = await controller.handle("setup.start", {"verify": False})
+
+    assert result == {"started": True}
+    assert started is True
+    assert controller.workspace_mount == str(workspace)
+    assert controller.pending_workspace_mount is None
+
+
+@pytest.mark.asyncio
 async def test_confirming_the_mount_starts_the_scan_without_a_target() -> None:
     started = False
 

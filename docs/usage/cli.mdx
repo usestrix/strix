@@ -17,7 +17,7 @@ strix (--target <target> | --target-list <path>) [options]
   When the target is an API spec, Strix copies it into the agent's workspace and authorizes the base URLs it declares (including those resolved from a Postman environment) as in-scope hosts - so the agent reads the contract and tests the full declared surface instead of discovering endpoints by crawling. Pair the spec with the deployed base URL (e.g. `--target ./openapi.yaml --target https://api.example.com`) so the agent has a reachable host to attack.
 
   <Note>
-    A local directory is mounted into the sandbox live and **writable**, so the agent edits your real files (`.git` excepted). Commit or stash first.
+    By default, a local directory is mounted into the sandbox live and **writable**, so the agent edits your real files (`.git` excepted). Commit or stash first, or use `--read-only-local-targets` with a separate `--workspace-mount` for immutable evidence.
   </Note>
 
   <Note>
@@ -42,6 +42,19 @@ strix (--target <target> | --target-list <path>) [options]
   scan starts. Repeat the option for more files. Write `PATH:DEST` to choose the
   destination inside `/workspace`. `DEST` defaults to the file name. See
   [Workspace files](/usage/instructions#workspace-files).
+</ParamField>
+
+<ParamField path="--read-only-local-targets" type="boolean">
+  Mount every local-code target read-only as immutable evidence. Backends that
+  cannot enforce read-only bind mounts reject the run instead of silently
+  making the target writable. Pair this option with `--workspace-mount` when
+  the agent should produce remediation changes.
+</ParamField>
+
+<ParamField path="--workspace-mount" type="string">
+  Mount an existing host directory as a writable working area separate from
+  scan targets. It grants no assessment scope. The path must not be the same as,
+  contain, or be contained by a read-only local target.
 </ParamField>
 
 <ParamField path="--scan-mode, -m" type="string" default="deep">
