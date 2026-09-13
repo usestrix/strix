@@ -2550,3 +2550,45 @@ def test_update_does_not_apply_dynamic_rules_to_a_dependency_finding(
     )
 
     assert result["success"] is True
+
+
+def test_update_keeps_a_rationale_resubmitted_unchanged_with_a_new_confidence(
+    report_state: ReportState,
+) -> None:
+    """Restating the stored rationale affirms it for the new rating; it must survive."""
+    _seed_weak_report(report_state)
+    report_state.vulnerability_reports[0]["confidence_rationale"] = "Static trace only."
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Reachability confirmed statically; still no runtime access.",
+        fields={"confidence": "medium", "confidence_rationale": "Static trace only."},
+    )
+
+    assert result["success"] is True
+    report = report_state.vulnerability_reports[0]
+    assert report["confidence"] == "medium"
+    assert report["confidence_rationale"] == "Static trace only.", (
+        "an explicitly resubmitted rationale must not be dropped as superseded"
+    )
+    assert "dropped_fields" not in report["update_history"][-1]
+
+
+def test_update_keeps_severity_conditions_resubmitted_unchanged_with_a_new_vector(
+    report_state: ReportState,
+) -> None:
+    _seed_weak_report(report_state)
+    conditions = "A guard before the write would remove the impact."
+    report_state.vulnerability_reports[0]["severity_change_conditions"] = conditions
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Confirmed unauthenticated write.",
+        fields={"cvss_breakdown": _CVSS, "severity_change_conditions": conditions},
+    )
+
+    assert result["success"] is True
+    assert result["severity"] == "critical"
+    report = report_state.vulnerability_reports[0]
+    assert report["severity_change_conditions"] == conditions
+    assert "dropped_fields" not in report["update_history"][-1]
