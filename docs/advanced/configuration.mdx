@@ -43,6 +43,34 @@ Configure Strix using environment variables or a config file.
   Timeout in seconds for memory compression operations (context summarization).
 </ParamField>
 
+## Context Management
+
+These settings are most useful for local models and other providers with tight context windows.
+
+<ParamField path="STRIX_CONTEXT_AUTO_COMPACT" default="true" type="boolean">
+  Automatically compact session history after context overflow errors when the provider error can be recognized.
+</ParamField>
+
+<ParamField path="STRIX_CONTEXT_BUFFER_TOKENS" default="20000" type="integer">
+  Token buffer reserved below the detected or configured context limit before compaction is attempted.
+</ParamField>
+
+<ParamField path="STRIX_CONTEXT_KEEP_TOKENS" default="8000" type="integer">
+  Approximate amount of recent context preserved verbatim when older session history is compacted.
+</ParamField>
+
+<ParamField path="STRIX_CONTEXT_FALLBACK_TOKENS" default="200000" type="integer">
+  Context limit used when the provider does not report a model-specific context window.
+</ParamField>
+
+<ParamField path="STRIX_CONTEXT_SUMMARY_TOKENS" default="4096" type="integer">
+  Maximum size of the memory-compression summary that replaces older session history.
+</ParamField>
+
+<ParamField path="STRIX_TOOL_OUTPUT_MAX_TOKENS" default="8000" type="integer">
+  Maximum tokens retained from large tool outputs before truncation. Lower this for memory-constrained local models.
+</ParamField>
+
 ### Dedicated deduplication model
 
 Finding deduplication is a cheap, structured classification task. By default it
