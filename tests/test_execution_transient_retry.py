@@ -36,6 +36,15 @@ def _status_error(status: int) -> APIStatusError:
     )
 
 
+def _openrouter_prompt_policy_rejection() -> BadRequestError:
+    return BadRequestError(
+        "OpenrouterException - Message: Invalid prompt: your prompt was flagged as "
+        "potentially violating our usage policy. Please try again with a different prompt",
+        response=httpx.Response(400, request=_request()),
+        body=None,
+    )
+
+
 def test_midstream_api_error_is_transient() -> None:
     assert execution._is_transient_model_error(_midstream_api_error()) is True
 
@@ -79,6 +88,12 @@ def test_content_guardrail_is_not_retried() -> None:
     assert execution._is_transient_model_error(guardrail) is False
 
 
+def test_openrouter_prompt_policy_rejection_has_dedicated_classification() -> None:
+    rejection = _openrouter_prompt_policy_rejection()
+    assert execution._is_openrouter_prompt_policy_rejection(rejection) is True
+    assert execution._is_transient_model_error(rejection) is False
+
+
 def test_client_errors_are_not_transient() -> None:
     bad_request = BadRequestError(
         "bad", response=httpx.Response(400, request=_request()), body=None
@@ -109,6 +124,8 @@ def _patch_fast_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
 async def _run_once(
     monkeypatch: pytest.MonkeyPatch,
     streams: list[_FakeStream],
+    *,
+    session: Any = None,
 ) -> Any:
     _patch_fast_backoff(monkeypatch)
     calls = {"n": 0}
@@ -131,7 +148,7 @@ async def _run_once(
         run_config=cast("RunConfig", object()),
         context={},
         max_turns=5,
-        session=None,
+        session=session,
         interactive=False,
         event_sink=None,
         hooks=None,
@@ -148,6 +165,69 @@ async def test_run_cycle_retries_transient_midstream_error(
 
     assert result is streams[1]
     assert attempts == 2
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_retries_openrouter_prompt_policy_rejection_three_times(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = [
+        _FakeStream(exc=_openrouter_prompt_policy_rejection())
+        for _ in range(execution._MAX_OPENROUTER_PROMPT_POLICY_RETRIES)
+    ]
+    streams.append(_FakeStream())
+
+    result, attempts, _coordinator = await _run_once(monkeypatch, streams)
+
+    assert result is streams[-1]
+    assert attempts == 4
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_gives_up_after_openrouter_prompt_policy_retry_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    streams = [
+        _FakeStream(exc=_openrouter_prompt_policy_rejection())
+        for _ in range(execution._MAX_OPENROUTER_PROMPT_POLICY_RETRIES + 1)
+    ]
+    with pytest.raises(BadRequestError):
+        await _run_once(monkeypatch, streams)
+
+
+@pytest.mark.asyncio
+async def test_openrouter_prompt_policy_retry_preserves_session_images(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Session:
+        async def get_items(self) -> list[Any]:
+            return []
+
+    image_strips = 0
+
+    async def _strip_images(_session: Any) -> bool:
+        nonlocal image_strips
+        image_strips += 1
+        return True
+
+    async def _no_compaction(*_args: Any, **_kwargs: Any) -> bool:
+        return False
+
+    async def _no_salvage(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    monkeypatch.setattr(execution, "strip_all_images_from_session", _strip_images)
+    monkeypatch.setattr(execution, "_compact_session", _no_compaction)
+    monkeypatch.setattr(execution, "_salvage_stream_to_session", _no_salvage)
+    streams = [
+        _FakeStream(exc=_openrouter_prompt_policy_rejection())
+        for _ in range(execution._MAX_OPENROUTER_PROMPT_POLICY_RETRIES + 1)
+    ]
+
+    with pytest.raises(BadRequestError):
+        await _run_once(monkeypatch, streams, session=_Session())
+
+    assert image_strips == 0
 
 
 @pytest.mark.asyncio
