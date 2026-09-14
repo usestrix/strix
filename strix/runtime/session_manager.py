@@ -289,7 +289,8 @@ async def create_or_reuse(
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
-    backend_name = load_settings().runtime.backend
+    runtime_settings = load_settings().runtime
+    backend_name = runtime_settings.backend
     backend = get_backend(backend_name)
 
     staging_dir: Path | None = None
@@ -359,6 +360,7 @@ async def create_or_reuse(
                     session,
                     host_url=host_caido_url,
                     container_url=container_caido_url,
+                    wait_timeout_s=runtime_settings.caido_boot_wait_s,
                 ),
                 name=f"caido-bootstrap-{scan_id}",
             )
