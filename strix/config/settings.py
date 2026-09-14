@@ -56,6 +56,7 @@ class LlmSettings(BaseSettings):
         default=False,
         alias="LLM_DISABLE_STREAMING",
     )
+    max_tokens: int | None = Field(default=None, gt=0, alias="STRIX_LLM_MAX_TOKENS")
     timeout: int = Field(default=300, alias="LLM_TIMEOUT")
     stream_idle_timeout: int = Field(default=300, ge=0, alias="LLM_STREAM_IDLE_TIMEOUT")
     max_tool_calls_per_turn: int = Field(
