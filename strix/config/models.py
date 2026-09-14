@@ -561,6 +561,16 @@ DEFAULT_MODEL_RETRY = ModelRetrySettings(
     ),
 )
 
+_RESPONSE_FAILED_EVENT_TYPE = "response.failed"
+_RESPONSE_FAILED_DEFAULT_MESSAGE = "Response failed"
+_RESPONSE_FAILED_STATUS_CODE = 500
+_RESPONSE_ERROR_ATTR = "error"
+_RESPONSE_ERROR_CODE_ATTR = "code"
+_RESPONSE_ERROR_MESSAGE_ATTR = "message"
+_RESPONSE_EVENT_TYPE_ATTR = "type"
+_RESPONSE_EVENT_RESPONSE_ATTR = "response"
+_LITELLM_RESPONSE_FAILED_PATCH_ATTR = "_strix_raises_response_failed"
+
 RECOMMENDED_MODEL_NAMES = (
     "zai/glm-5.3",
     "zai/glm-5.3-flash",
@@ -671,6 +681,7 @@ def _configure_litellm_compatibility() -> None:
 
     _register_litellm_cost_callback()
     _install_openrouter_stream_cost_capture()
+    _patch_litellm_response_failed_streaming_errors()
 
 
 def _install_openrouter_stream_cost_capture() -> None:
@@ -715,6 +726,64 @@ def _install_openrouter_stream_cost_capture() -> None:
     # time, so overriding the attribute is enough for the subclass to take
     # effect. (type: ignore — mypy rejects reassigning a class attribute.)
     litellm.OpenrouterConfig = _StrixOpenrouterConfig  # type: ignore[misc]
+
+
+def _patch_litellm_response_failed_streaming_errors() -> None:
+    """Make LiteLLM raise on Responses API ``response.failed`` stream events."""
+    try:
+        from litellm.responses.streaming_iterator import BaseResponsesAPIStreamingIterator
+    except Exception:  # noqa: BLE001
+        return
+
+    original_process_chunk = getattr(BaseResponsesAPIStreamingIterator, "_process_chunk", None)
+    if not callable(original_process_chunk):
+        return
+    if getattr(original_process_chunk, _LITELLM_RESPONSE_FAILED_PATCH_ATTR, False):
+        return
+
+    def _strix_process_chunk(self: Any, chunk: Any) -> Any:
+        result = original_process_chunk(self, chunk)
+        _raise_litellm_response_failed(result, self)
+        return result
+
+    setattr(_strix_process_chunk, _LITELLM_RESPONSE_FAILED_PATCH_ATTR, True)
+    BaseResponsesAPIStreamingIterator._process_chunk = _strix_process_chunk  # type: ignore[method-assign]
+
+
+def _raise_litellm_response_failed(chunk: Any, iterator: Any) -> None:
+    if _value(chunk, _RESPONSE_EVENT_TYPE_ATTR) != _RESPONSE_FAILED_EVENT_TYPE:
+        return
+
+    from litellm.exceptions import APIError
+
+    response = _value(chunk, _RESPONSE_EVENT_RESPONSE_ATTR)
+    error = _value(response, _RESPONSE_ERROR_ATTR)
+    message = _response_failed_message(error)
+    raise APIError(
+        status_code=_RESPONSE_FAILED_STATUS_CODE,
+        message=message,
+        llm_provider=str(getattr(iterator, "custom_llm_provider", "") or ""),
+        model=str(getattr(iterator, "model", "") or ""),
+    )
+
+
+def _response_failed_message(error: Any) -> str:
+    message = _value(error, _RESPONSE_ERROR_MESSAGE_ATTR)
+    if not isinstance(message, str) or not message:
+        message = str(error) if error else _RESPONSE_FAILED_DEFAULT_MESSAGE
+
+    code = _value(error, _RESPONSE_ERROR_CODE_ATTR)
+    if isinstance(code, str) and code and code not in message:
+        return f"{message} ({code})"
+    return message
+
+
+def _value(source: Any, key: str) -> Any:
+    if source is None:
+        return None
+    if isinstance(source, dict):
+        return source.get(key)
+    return getattr(source, key, None)
 
 
 OPENROUTER_ATTRIBUTION_HEADERS = {
