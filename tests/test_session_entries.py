@@ -21,8 +21,14 @@ from strix.runtime.session_manager import (
     build_extra_file_bind_mounts,
     build_extra_file_entries,
     build_manifest_entries,
+    build_sandbox_environment,
     extra_file_staging_dir,
 )
+
+
+EXPECTED_CAIDO_URL = "http://127.0.0.1:48080"
+EXPECTED_CA_BUNDLE = "/etc/ssl/certs/ca-certificates.crt"
+EXPECTED_NO_PROXY = "localhost,127.0.0.1"
 
 
 def _source(subdir: str, path: str, *, protect_metadata: bool = False) -> dict[str, Any]:
@@ -375,3 +381,18 @@ def test_only_bind_mount_capable_backends_are_registered_as_such() -> None:
     finally:
         _BACKENDS.pop("e2b", None)
         _BIND_MOUNT_BACKENDS.discard("e2b")
+
+
+def test_sandbox_environment_exports_proxy_and_ca_aliases() -> None:
+    env = build_sandbox_environment()
+
+    assert env["http_proxy"] == EXPECTED_CAIDO_URL
+    assert env["https_proxy"] == EXPECTED_CAIDO_URL
+    assert env["HTTP_PROXY"] == EXPECTED_CAIDO_URL
+    assert env["HTTPS_PROXY"] == EXPECTED_CAIDO_URL
+    assert env["ALL_PROXY"] == EXPECTED_CAIDO_URL
+    assert env["all_proxy"] == EXPECTED_CAIDO_URL
+    assert env["NO_PROXY"] == EXPECTED_NO_PROXY
+    assert env["no_proxy"] == EXPECTED_NO_PROXY
+    assert env["REQUESTS_CA_BUNDLE"] == EXPECTED_CA_BUNDLE
+    assert env["SSL_CERT_FILE"] == EXPECTED_CA_BUNDLE
