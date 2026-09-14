@@ -112,6 +112,10 @@ class RuntimeSettings(BaseSettings):
     backend: str = Field(default="docker", alias="STRIX_RUNTIME_BACKEND")
     # Max screenshot/image tool outputs kept live per agent context (0 = none).
     max_context_images: int = Field(default=3, ge=0, alias="STRIX_MAX_CONTEXT_IMAGES")
+    # Seconds a running agent may go without emitting a single run event before
+    # its turn is abandoned and, if it still does not recover, a waiting parent
+    # marks it failed (0 = never).
+    agent_stall_timeout: int = Field(default=1800, ge=0, alias="STRIX_AGENT_STALL_TIMEOUT")
 
 
 class TelemetrySettings(BaseSettings):
