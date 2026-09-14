@@ -29,7 +29,7 @@ from strix.core.inputs import child_initial_input
 from strix.core.sessions import (
     enforce_image_budget,
     open_agent_session,
-    replace_session_items,
+    recover_session_items,
     seed_initial_input,
     strip_all_images_from_session,
 )
@@ -163,11 +163,10 @@ async def _salvage_stream_to_session(
     except Exception:
         logger.exception("could not build salvage history for %s", agent_id)
         return
-    desired = list(pre_run_items) + replay
-    if len(desired) <= len(pre_run_items):
+    if not replay:
         return
     try:
-        await replace_session_items(session, desired)
+        await recover_session_items(session, pre_run_items, replay)
     except Exception:
         logger.exception("salvaging crashed run history failed for %s", agent_id)
 
