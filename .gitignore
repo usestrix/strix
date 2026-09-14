@@ -93,6 +93,8 @@ Thumbs.db
 schema.graphql
 
 .opencode/
+.atl/
+.codegraph/
 
 # Root-only local data and reference checkouts
 /.benchmarks/

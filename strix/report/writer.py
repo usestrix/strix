@@ -17,6 +17,7 @@ from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
 from strix.core.paths import run_record_path
+from strix.i18n import t
 
 
 if TYPE_CHECKING:
@@ -138,9 +139,10 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
 
 def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
     path = run_dir / "penetration_test_report.md"
+    timestamp = datetime.now(UTC).strftime("%Y-%m-%d %H:%M:%S UTC")
     with path.open("w", encoding="utf-8") as f:
-        f.write("# Security Penetration Test Report\n\n")
-        f.write(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
+        f.write(f"# {t('report.title')}\n\n")
+        f.write(f"**{t('report.generated')}** {timestamp}\n\n")
         f.write(f"{final_scan_result}\n")
     logger.info("Saved final penetration test report to: %s", path)
 
@@ -224,21 +226,21 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     lines: list[str] = [
         f"# {report.get('title', 'Untitled Vulnerability')}\n",
         f"**ID:** {report.get('id', 'unknown')}",
-        f"**Severity:** {report.get('severity', 'unknown').upper()}",
-        f"**Found:** {report.get('timestamp', 'unknown')}",
+        f"**{t('report.severity')}:** {report.get('severity', 'unknown').upper()}",
+        f"**{t('report.found')}:** {report.get('timestamp', 'unknown')}",
     ]
 
     dep_meta = report.get("dependency_metadata") or {}
     metadata: list[tuple[str, Any]] = [
-        ("Target", report.get("target")),
-        ("Package", dep_meta.get("package_name")),
-        ("Ecosystem", dep_meta.get("package_ecosystem")),
-        ("Installed Version", dep_meta.get("installed_version")),
-        ("Fixed Version", dep_meta.get("fixed_version")),
-        ("Introduced By", dep_meta.get("introduced_by")),
-        ("Dependency Chain", dep_meta.get("dependency_path")),
-        ("Endpoint", report.get("endpoint")),
-        ("Method", report.get("method")),
+        (t("report.target"), report.get("target")),
+        (t("report.package"), dep_meta.get("package_name")),
+        (t("report.ecosystem"), dep_meta.get("package_ecosystem")),
+        (t("report.installed_version"), dep_meta.get("installed_version")),
+        (t("report.fixed_version"), dep_meta.get("fixed_version")),
+        (t("report.introduced_by"), dep_meta.get("introduced_by")),
+        (t("report.dependency_chain"), dep_meta.get("dependency_path")),
+        (t("report.endpoint"), report.get("endpoint")),
+        (t("report.method"), report.get("method")),
         ("CVE", report.get("cve")),
         ("CWE", report.get("cwe")),
     ]
@@ -253,23 +255,23 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
     if report.get("confidence"):
         metadata.append(("Confidence", str(report["confidence"]).title()))
     if report.get("fix_effort"):
-        metadata.append(("Fix Effort", str(report["fix_effort"]).title()))
+        metadata.append((t("report.fix_effort"), str(report["fix_effort"]).title()))
     for label, value in metadata:
         if value:
             lines.append(f"**{label}:** {value}")
 
     lines.append("")
-    lines.append("## Description\n")
-    lines.append(report.get("description") or "No description provided.")
+    lines.append(f"## {t('report.description')}\n")
+    lines.append(report.get("description") or t("report.no_description"))
     lines.append("")
 
     if report.get("evidence"):
-        lines.append("## Evidence\n")
+        lines.append(f"## {t('report.evidence')}\n")
         lines.append(str(report["evidence"]))
         lines.append("")
 
     if report.get("impact"):
-        lines.append("## Impact\n")
+        lines.append(f"## {t('report.impact')}\n")
         lines.append(str(report["impact"]))
         lines.append("")
 
@@ -289,7 +291,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         lines.append("")
 
     if report.get("technical_analysis"):
-        lines.append("## Technical Analysis\n")
+        lines.append(f"## {t('report.technical_analysis')}\n")
         lines.append(str(report["technical_analysis"]))
         lines.append("")
 
@@ -299,7 +301,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         lines.append("")
 
     if report.get("poc_description") or report.get("poc_script_code"):
-        lines.append("## Proof of Concept\n")
+        lines.append(f"## {t('report.proof_of_concept')}\n")
         if report.get("poc_description"):
             lines.append(str(report["poc_description"]))
             lines.append("")
@@ -313,7 +315,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append("")
 
     if report.get("code_locations"):
-        lines.append("## Code Analysis\n")
+        lines.append(f"## {t('report.code_analysis')}\n")
         for i, loc in enumerate(report["code_locations"]):
             file_ref = loc.get("file", "unknown")
             line_ref = ""
@@ -322,7 +324,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
                     line_ref = f" (lines {loc['start_line']}-{loc['end_line']})"
                 else:
                     line_ref = f" (line {loc['start_line']})"
-            lines.append(f"**Location {i + 1}:** `{file_ref}`{line_ref}")
+            lines.append(f"**{t('report.location')} {i + 1}:** `{file_ref}`{line_ref}")
             if loc.get("label"):
                 lines.append(f"  {loc['label']}")
             if loc.get("snippet"):
@@ -332,7 +334,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
                 lines.extend(f"  {ln}" for ln in snippet.splitlines())
                 lines.append(f"  {fence}")
             if loc.get("fix_before") or loc.get("fix_after"):
-                lines.append("\n  **Suggested Fix:**")
+                lines.append(f"\n  **{t('report.suggested_fix')}:**")
                 lines.append("```diff")
                 if loc.get("fix_before"):
                     lines.extend(f"- {ln}" for ln in str(loc["fix_before"]).splitlines())
@@ -342,7 +344,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
             lines.append("")
 
     if report.get("remediation_steps"):
-        lines.append("## Remediation\n")
+        lines.append(f"## {t('report.remediation')}\n")
         lines.append(str(report["remediation_steps"]))
         lines.append("")
 
@@ -352,7 +354,7 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         lines.append("")
 
     if report.get("assumptions"):
-        lines.append("## Assumptions\n")
+        lines.append(f"## {t('report.assumptions')}\n")
         lines.append(str(report["assumptions"]))
         lines.append("")
 
