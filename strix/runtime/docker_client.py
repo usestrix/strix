@@ -125,6 +125,7 @@ def _apply_run_labels(create_kwargs: dict[str, Any]) -> None:
 
 class StrixDockerSandboxSession(DockerSandboxSession):
     sandbox_network: str = ""
+    backend_name: str = "docker"
 
     async def _resolve_exposed_port(self, port: int) -> ExposedPortEndpoint:
         try:
@@ -135,7 +136,7 @@ class StrixDockerSandboxSession(DockerSandboxSession):
                 exposed_ports=self.state.exposed_ports,
                 reason="backend_unavailable",
                 context={
-                    "backend": "docker",
+                    "backend": self.backend_name,
                     "detail": "container_reload_failed",
                     "network": self.sandbox_network,
                 },
@@ -152,7 +153,7 @@ class StrixDockerSandboxSession(DockerSandboxSession):
                 exposed_ports=self.state.exposed_ports,
                 reason="backend_unavailable",
                 context={
-                    "backend": "docker",
+                    "backend": self.backend_name,
                     "detail": "container_not_on_network",
                     "network": self.sandbox_network,
                 },
@@ -165,6 +166,8 @@ class StrixDockerSandboxClient(DockerSandboxClient):
     # Host directories to bind-mount into the container, set by the docker
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
     strix_bind_mounts: list[dict[str, Any]] | None = None
+    host_gateway: str = "host.docker.internal"
+    backend_name: str = "docker"
 
     async def _create_container(
         self,
@@ -230,6 +233,8 @@ class StrixDockerSandboxClient(DockerSandboxClient):
                 cap_add.append(cap)
 
         extra_hosts = create_kwargs.setdefault("extra_hosts", {})
+        host_gw = getattr(self, "host_gateway", "host.docker.internal")
+        extra_hosts[host_gw] = "host-gateway"
         extra_hosts["host.docker.internal"] = "host-gateway"
 
         _apply_sandbox_network(create_kwargs)
@@ -272,7 +277,9 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         inner = session._inner
         if network and isinstance(inner, DockerSandboxSession):
             inner.__class__ = StrixDockerSandboxSession
-            cast("StrixDockerSandboxSession", inner).sandbox_network = network
+            strix_inner = cast("StrixDockerSandboxSession", inner)
+            strix_inner.sandbox_network = network
+            strix_inner.backend_name = self.backend_name
         return session
 
     async def delete(self, session: SandboxSession) -> SandboxSession:

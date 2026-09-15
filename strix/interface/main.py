@@ -17,8 +17,8 @@ from strix.config import codex, load_settings, persist_current
 from strix.core.paths import run_dir_for
 from strix.interface.cli_args import parse_arguments
 from strix.interface.environment import (
-    check_docker_installed,
-    pull_docker_image,
+    check_runtime_installed,
+    pull_runtime_image,
     validate_environment,
 )
 from strix.interface.interactive import (
@@ -469,8 +469,8 @@ def main() -> None:
             restart_after_update()
         sys.exit(0)
 
-    check_docker_installed()
-    pull_docker_image()
+    check_runtime_installed()
+    pull_runtime_image()
     validate_environment()
 
     # Everything below imports the scan engine; do not race the warm-up thread.
