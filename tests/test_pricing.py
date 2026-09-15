@@ -121,3 +121,52 @@ def test_resolver_does_not_guess_between_differently_priced_providers() -> None:
     finally:
         litellm.model_cost = original
         resolve_litellm_model.cache_clear()
+
+
+def test_resolver_prefers_native_provider_over_aggregator() -> None:
+    # The same model re-listed by an aggregator (which sorts first) and by its
+    # first-party provider at the same price. The resolver must return the
+    # native listing, not the alphabetically first aggregator key.
+    original = litellm.model_cost
+    litellm.model_cost = {
+        "openrouter/x-ai/grok-4.5": {
+            "litellm_provider": "openrouter",
+            "input_cost_per_token": 2e-06,
+            "output_cost_per_token": 6e-06,
+        },
+        "xai/grok-4.5": {
+            "litellm_provider": "xai",
+            "input_cost_per_token": 2e-06,
+            "output_cost_per_token": 6e-06,
+        },
+    }
+    try:
+        resolve_litellm_model.cache_clear()
+        assert resolve_litellm_model("grok-4.5") == "xai/grok-4.5"
+    finally:
+        litellm.model_cost = original
+        resolve_litellm_model.cache_clear()
+
+
+def test_resolver_prefers_unique_native_provider_over_differently_priced_aggregators() -> None:
+    # A unique first-party listing wins even when aggregators price the model
+    # differently, where price consensus alone would give up and return None.
+    original = litellm.model_cost
+    litellm.model_cost = {
+        "deepinfra/x/example-model": {
+            "litellm_provider": "deepinfra",
+            "input_cost_per_token": 1e-06,
+            "output_cost_per_token": 2e-06,
+        },
+        "example/example-model": {
+            "litellm_provider": "example",
+            "input_cost_per_token": 5e-06,
+            "output_cost_per_token": 9e-06,
+        },
+    }
+    try:
+        resolve_litellm_model.cache_clear()
+        assert resolve_litellm_model("example-model") == "example/example-model"
+    finally:
+        litellm.model_cost = original
+        resolve_litellm_model.cache_clear()
