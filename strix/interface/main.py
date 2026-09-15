@@ -42,6 +42,7 @@ from strix.interface.utils import (
     build_final_stats_text,
 )
 from strix.llm.warmup import start_import_warmup, wait_for_import_warmup
+from strix.runtime.sdk_compat import assert_compatible_sdk_version
 from strix.telemetry import posthog, report_error, scarf, set_scan_phase
 from strix.telemetry.logging import configure_dependency_logging
 
@@ -420,6 +421,12 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
 
 def main() -> None:
     configure_dependency_logging()
+
+    # Fail loudly and immediately if the installed openai-agents SDK is
+    # outside the range Strix's sandbox runtime and agent tooling are built
+    # against (see strix/runtime/sdk_compat.py), rather than breaking
+    # unpredictably mid-scan.
+    assert_compatible_sdk_version()
 
     if sys.platform == "win32":
         asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())

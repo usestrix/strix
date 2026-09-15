@@ -28,7 +28,7 @@ from strix.tools.agents_graph.tools import (
 )
 from strix.tools.coverage.tools import list_coverage, record_coverage, update_coverage
 from strix.tools.finish.tool import finish_scan
-from strix.tools.load_skill.tool import load_skill
+from strix.tools.load_skill.tool import load_skill, search_skills
 from strix.tools.mcp import call_mcp, describe_mcp, list_mcps
 from strix.tools.notes.tools import (
     create_note,
@@ -47,6 +47,7 @@ from strix.tools.proxy.tools import (
     view_request,
     view_sitemap_entry,
 )
+from strix.tools.recon_ledger.tools import list_endpoints, record_endpoint, update_endpoint
 from strix.tools.reporting.tool import (
     create_dependency_report,
     create_vulnerability_report,
@@ -561,6 +562,7 @@ def _finish_tool_use_behavior(
 _BASE_TOOLS: tuple[Tool, ...] = (
     think,
     load_skill,
+    search_skills,
     create_todo,
     list_todos,
     update_todo,
@@ -575,6 +577,9 @@ _BASE_TOOLS: tuple[Tool, ...] = (
     record_coverage,
     update_coverage,
     list_coverage,
+    record_endpoint,
+    update_endpoint,
+    list_endpoints,
     get_threat_model,
     save_threat_model,
     amend_threat_model,
@@ -658,6 +663,7 @@ def build_strix_agent(
     system_prompt_context: dict[str, Any] | None = None,
     extra_tools: Sequence[Tool] | None = None,
     instructions_override: str | None = None,
+    model: str | None = None,
 ) -> SandboxAgent[Any]:
     """Build a SandboxAgent for either root or child use.
 
@@ -670,6 +676,12 @@ def build_strix_agent(
             registered via ``register_agent_tools``.
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
+        model: Per-agent model override. ``None`` (the default) leaves the
+            agent's own ``model`` unset, so it runs on the run-wide model
+            configured on ``RunConfig``. A non-``None`` value overrides that
+            for this agent only — every other agent in the scan is
+            unaffected. Used for deliberately spawning a "second opinion"
+            child on a different model; see ``strix.tools.agents_graph.tools.create_agent``.
     """
     if instructions_override is not None:
         instructions = instructions_override
@@ -715,7 +727,7 @@ def build_strix_agent(
         instructions=instructions,
         tools=tools,
         tool_use_behavior=_finish_tool_use_behavior,
-        model=None,
+        model=model,
         capabilities=[
             Filesystem(
                 configure_tools=_make_filesystem_configurator(
@@ -750,7 +762,7 @@ def make_child_factory(
     without the graph tool knowing about runner internals.
     """
 
-    def _factory(*, name: str, skills: list[str]) -> SandboxAgent[Any]:
+    def _factory(*, name: str, skills: list[str], model: str | None = None) -> SandboxAgent[Any]:
         return build_strix_agent(
             name=name,
             skills=skills,
@@ -762,6 +774,7 @@ def make_child_factory(
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=system_prompt_context,
+            model=model,
         )
 
     return _factory
