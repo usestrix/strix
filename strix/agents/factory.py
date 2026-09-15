@@ -7,6 +7,7 @@ import inspect
 import json
 import logging
 import re
+import shlex
 from typing import TYPE_CHECKING, Any
 
 from agents.agent import ToolsToFinalOutputResult
@@ -425,6 +426,76 @@ def _apply_shell_output_cap(parsed: dict[str, Any]) -> None:
     )
 
 
+_SLEEP_HINT = (
+    "\n\n[strix] To wait on a background job, prefer "
+    'write_stdin(session_id=..., chars="", yield_time_ms=...), which returns as '
+    "soon as there is new output or the process exits — better than a blind sleep."
+)
+
+
+_SLEEP_DURATION_RE = re.compile(r"^(\d+(?:\.\d+)?)([smhd]?)$")
+_SLEEP_UNIT_SECONDS = {"": 1, "s": 1, "m": 60, "h": 3600, "d": 86400}
+
+
+def _pure_sleep_seconds(cmd: Any) -> float | None:
+    """Total seconds a command sleeps, but only when it is *nothing but* a
+    ``sleep`` (``sleep 30``, ``sleep 1m 30s``). Returns ``None`` for anything
+    compound so an embedded sleep is never rewritten."""
+    if not isinstance(cmd, str):
+        return None
+    try:
+        tokens = shlex.split(cmd)
+    except ValueError:
+        return None
+    if len(tokens) < 2 or tokens[0] != "sleep":
+        return None
+    total = 0.0
+    for token in tokens[1:]:
+        match = _SLEEP_DURATION_RE.match(token)
+        if match is None:
+            return None
+        total += float(match.group(1)) * _SLEEP_UNIT_SECONDS[match.group(2)]
+    return total
+
+
+def _apply_sleep_guard(parsed: dict[str, Any]) -> bool:
+    """Clamp an absurd bare ``sleep`` to the configured cap. Returns ``True``
+    when the command is a pure sleep so the caller can append a hint."""
+    seconds = _pure_sleep_seconds(parsed.get("cmd"))
+    if seconds is None:
+        return False
+    cap = load_settings().shell_tools.max_sleep_seconds
+    if seconds > cap:
+        parsed["cmd"] = f"sleep {cap}"
+    return True
+
+
+def _normalize_exec_args(parsed: dict[str, Any]) -> bool:
+    """Apply Strix's ``exec_command`` defaults. Returns ``True`` when the
+    command is a bare sleep so the caller can append a hint."""
+    if "shell" not in parsed:
+        parsed["shell"] = "bash"
+    # Raise the yield above the SDK's 10s so a command returns in one call
+    # instead of getting backgrounded and then polled turn after turn. The agent
+    # asks for a longer yield itself when it expects a command to run longer.
+    if "yield_time_ms" not in parsed:
+        parsed["yield_time_ms"] = load_settings().shell_tools.exec_yield_ms
+    is_sleep = _apply_sleep_guard(parsed)
+    _apply_shell_output_cap(parsed)
+    return is_sleep
+
+
+def _normalize_write_stdin_args(parsed: dict[str, Any]) -> None:
+    """Apply Strix's ``write_stdin`` defaults."""
+    if isinstance(parsed.get("chars"), str):
+        parsed["chars"] = _decode_chars_escape(parsed["chars"])
+    # An empty ``chars`` is a poll, not input: yield long enough for a
+    # meaningful result unless the model asked for a specific wait.
+    if not parsed.get("chars") and "yield_time_ms" not in parsed:
+        parsed["yield_time_ms"] = load_settings().shell_tools.write_stdin_poll_yield_ms
+    _apply_shell_output_cap(parsed)
+
+
 def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
     invoke_tool = tool.on_invoke_tool
 
@@ -433,13 +504,12 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             parsed = json.loads(raw_input)
         except (json.JSONDecodeError, TypeError):
             parsed = None
+        is_sleep = False
         if isinstance(parsed, dict):
-            if "shell" not in parsed:
-                parsed["shell"] = "bash"
-            _apply_shell_output_cap(parsed)
+            is_sleep = _normalize_exec_args(parsed)
             raw_input = json.dumps(parsed)
         try:
-            return await invoke_tool(ctx, raw_input)
+            result = await invoke_tool(ctx, raw_input)
         except ValidationError as exc:
             return _format_validation_error(tool.name, exc)
         except InvalidManifestPathError as exc:
@@ -449,6 +519,9 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
                 "(or omitted to use the turn's cwd). "
                 f"Got: {rel!r}."
             )
+        if is_sleep and isinstance(result, str):
+            return result + _SLEEP_HINT
+        return result
 
     tool.on_invoke_tool = invoke
     return tool
@@ -463,9 +536,7 @@ def _wrap_write_stdin(tool: FunctionTool) -> FunctionTool:
         except json.JSONDecodeError:
             parsed = None
         if isinstance(parsed, dict):
-            if isinstance(parsed.get("chars"), str):
-                parsed["chars"] = _decode_chars_escape(parsed["chars"])
-            _apply_shell_output_cap(parsed)
+            _normalize_write_stdin_args(parsed)
             raw_input = json.dumps(parsed)
         try:
             return await invoke_tool(ctx, raw_input)

@@ -196,7 +196,19 @@ EFFICIENCY TACTICS:
   run them with `python3 script.py`. For one-off snippets, `python3 -c` or a
   here-document is acceptable, but avoid deeply nested quotes/parentheses — if
   a snippet needs complex quoting or is more than a few lines, write it to a
-  file first to prevent syntax errors.
+  file first to prevent syntax errors. Write scripts with `apply_patch`, not an
+  interactive blocking heredoc (`cat > exploit.py <<EOF`) driven through
+  `write_stdin`; then run the file as a normal one-shot command.
+- Don't blind-`sleep` to wait for a background job. Poll it with
+  `write_stdin(session_id=<id>, chars="", yield_time_ms=<ms>)`, which returns
+  the instant there is new output or the process exits, or give the original
+  `exec_command` a bigger `yield_time_ms` up front so it doesn't background.
+- When you expect a command to take a while (a scan like `nmap`/`nuclei`/`ffuf`,
+  a build, a long crawl), pass the time you expect to need as `yield_time_ms`
+  on the first `exec_command` — one call that waits beats a backgrounded
+  process you then poll for many turns. The shell yields at most 30s per call
+  (the default), so anything slower than that still backgrounds: harvest it
+  with one `write_stdin(chars="")` poll per 30s rather than many short ones.
 - Before importing a third-party Python library, make sure it is installed. The
   sandbox's `python3` runs inside a preconfigured virtualenv that ships
   `requests`, `httpx`, `beautifulsoup4` (bs4), `lxml`, `pyjwt`, and
