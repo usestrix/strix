@@ -127,24 +127,19 @@ _ARCHIVE_MAGIC_PREFIXES = (
 )
 
 
-# Whether `st_ctime_ns` belongs in the identity a source file is pinned to.
-#
-# On POSIX it is the inode-change time and a real tamper signal: a chmod or a
-# rename that leaves size and mtime untouched still moves it. On Windows the
-# value does not hold still for a file that was written moments ago. A path
-# `stat` can be served from cached directory metadata while `fstat` reads the
-# handle directly, and NTFS settles that metadata asynchronously, so the two
-# disagree by roughly 1-30 ms with nothing having touched the file. Comparing
-# it there rejects unchanged sources instead of catching tampering (#1258).
-_IDENTITY_INCLUDES_CTIME = os.name != "nt"
-
-
 def _stat_identity(info: os.stat_result) -> tuple[int, ...]:
-    """Fields that must not change between selecting a file and archiving it."""
-    identity: tuple[int, ...] = (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns)
-    if _IDENTITY_INCLUDES_CTIME:
-        identity = (*identity, info.st_ctime_ns)
-    return identity
+    """Fields that must not change between selecting a file and archiving it.
+
+    Both sides of the comparison must come from `fstat` on an open handle.
+    What `st_ctime_ns` means depends on how a file is stat'ed: on POSIX a path
+    stat and `fstat` both report the inode-change time, but on Windows a path
+    stat reports the creation time while `fstat` reports the last metadata
+    change. Pinning files with a path stat therefore rejected every file
+    modified after it was created (#1258). With handle stats on both sides the
+    two agree, and `st_ctime_ns` stays a tamper signal on every platform: a
+    chmod or a rename that leaves size and mtime alone still moves it.
+    """
+    return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
 @dataclass(frozen=True)
@@ -159,10 +154,7 @@ class SelectedFile:
 
     @property
     def identity(self) -> tuple[int, ...]:
-        identity: tuple[int, ...] = (self.device, self.inode, self.size, self.mtime_ns)
-        if _IDENTITY_INCLUDES_CTIME:
-            identity = (*identity, self.ctime_ns)
-        return identity
+        return (self.device, self.inode, self.size, self.mtime_ns, self.ctime_ns)
 
 
 @dataclass(frozen=True)
@@ -329,10 +321,21 @@ def select_source(
         if not stat.S_ISREG(info.st_mode):
             excluded["symlink_or_non_file"] += 1
             continue
-        if not include_archives and _has_archive_magic(path):
+        # Pin the file with the same kind of stat _write_archive checks it with.
+        handle_info, header = _inspect_regular_file(
+            path, archive_name, read_header=not include_archives
+        )
+        if not stat.S_ISREG(handle_info.st_mode) or (
+            handle_info.st_dev,
+            handle_info.st_ino,
+        ) != (info.st_dev, info.st_ino):
+            raise http.CloudError(
+                f"{archive_name} changed while the source was being selected; retry."
+            )
+        if not include_archives and _is_archive_header(header):
             excluded["nested_archive"] += 1
             continue
-        if info.st_size > MAX_FILE_BYTES:
+        if handle_info.st_size > MAX_FILE_BYTES:
             raise http.CloudError(
                 f"{archive_name} is larger than the 25 MB per-file limit; exclude it explicitly."
             )
@@ -340,14 +343,14 @@ def select_source(
             SelectedFile(
                 path=path,
                 archive_name=archive_name,
-                size=info.st_size,
-                device=info.st_dev,
-                inode=info.st_ino,
-                mtime_ns=info.st_mtime_ns,
-                ctime_ns=info.st_ctime_ns,
+                size=handle_info.st_size,
+                device=handle_info.st_dev,
+                inode=handle_info.st_ino,
+                mtime_ns=handle_info.st_mtime_ns,
+                ctime_ns=handle_info.st_ctime_ns,
             )
         )
-        total_bytes += info.st_size
+        total_bytes += handle_info.st_size
         if len(selected) > MAX_FILES:
             raise http.CloudError(
                 f"source contains more than {MAX_FILES:,} files; narrow --source or add exclusions."
@@ -669,10 +672,32 @@ def _has_archive_magic(path: Path) -> bool:
     try:
         descriptor = os.open(path, flags)
         with os.fdopen(descriptor, "rb") as stream:
-            header = stream.read(512)
+            header = stream.read(_ARCHIVE_HEADER_BYTES)
     except OSError:
         return False
+    return _is_archive_header(header)
+
+
+_ARCHIVE_HEADER_BYTES = 512
+
+
+def _is_archive_header(header: bytes) -> bool:
     return header.startswith(_ARCHIVE_MAGIC_PREFIXES) or header[257:262] == b"ustar"
+
+
+def _inspect_regular_file(
+    path: Path, archive_name: str, *, read_header: bool
+) -> tuple[os.stat_result, bytes]:
+    """Stat a file through its own handle, reading its header too if asked."""
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags)
+        with os.fdopen(descriptor, "rb") as stream:
+            info = os.fstat(stream.fileno())
+            header = stream.read(_ARCHIVE_HEADER_BYTES) if read_header else b""
+    except OSError as exc:
+        raise http.CloudError(f"could not safely read {archive_name}: {exc}") from exc
+    return info, header
 
 
 def _load_ignore_patterns(source: Path) -> list[str]:

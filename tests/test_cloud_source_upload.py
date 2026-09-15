@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import subprocess
+import time
 import zipfile
 from typing import TYPE_CHECKING, Any
 
@@ -698,42 +699,35 @@ def test_oversize_archive_names_largest_files_and_exclude_guidance(
     assert not list(tmp_path.glob("strix-source-*.zip"))
 
 
-class _CtimeDriftedStat:
-    """A stat result whose `st_ctime_ns` has moved and nothing else."""
+class _StatWith:
+    """A stat result with some of its fields replaced."""
 
-    def __init__(self, real: os.stat_result, ctime_ns: int) -> None:
+    def __init__(self, real: Any, **fields: int) -> None:
         self._real = real
-        self.st_ctime_ns = ctime_ns
+        self.__dict__.update(fields)
 
     def __getattr__(self, name: str) -> Any:
         return getattr(self._real, name)
 
 
-def _drift_ctime(monkeypatch: pytest.MonkeyPatch, delta_ns: int) -> None:
-    """Make every `fstat` in the archiver report a later ctime than selection saw."""
-    real_fstat = os.fstat
-
-    def drifted(fileno: int) -> Any:
-        info = real_fstat(fileno)
-        return _CtimeDriftedStat(info, info.st_ctime_ns + delta_ns)
-
-    monkeypatch.setattr(source_upload.os, "fstat", drifted)
-
-
-@pytest.mark.skipif(os.name != "nt", reason="Windows is where ctime drifts on its own")
-def test_archive_survives_a_windows_ctime_only_drift(
+def test_archive_accepts_a_path_stat_with_a_different_ctime(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An unchanged file must still archive when only `st_ctime_ns` moved.
+    """Selection must not pin files with what a path stat calls `st_ctime_ns`.
 
-    Windows serves a path `stat` from cached directory metadata and `fstat`
-    from the handle, and NTFS settles that metadata asynchronously, so the two
-    disagree for a short window after a write with nothing having touched the
-    file. That is not tampering and must not fail the upload.
+    On Windows a path stat reports the creation time there and `fstat` the last
+    metadata change, so for a file modified after it was created the two
+    differ for good (#1258). This reproduces that on any platform.
     """
     (tmp_path / "app.py").write_bytes(b"safe")
+    real_lstat = source_upload.Path.lstat
+
+    def lstat_reporting_creation_time(self: Path) -> Any:
+        info = real_lstat(self)
+        return _StatWith(info, st_ctime_ns=info.st_ctime_ns - 7 * 60 * 1_000_000_000)
+
+    monkeypatch.setattr(source_upload.Path, "lstat", lstat_reporting_creation_time)
     manifest = source_upload.select_source(tmp_path)
-    _drift_ctime(monkeypatch, 30_000_000)  # 30 ms, the worst drift observed
 
     source_upload._write_archive(tmp_path / "source.zip", manifest.files)
 
@@ -741,14 +735,57 @@ def test_archive_survives_a_windows_ctime_only_drift(
         assert archive.read("app.py") == b"safe"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX ctime is a real tamper signal")
-def test_archive_still_rejects_a_posix_ctime_change(
+@pytest.mark.skipif(os.name != "nt", reason="only Windows reports different ctimes")
+def test_archive_accepts_a_windows_file_modified_after_creation(tmp_path: Path) -> None:
+    source_path = tmp_path / "app.py"
+    source_path.write_bytes(b"safe")
+    time.sleep(0.1)
+    with source_path.open("ab") as stream:
+        stream.write(b" and sound")
+    with source_path.open("rb") as stream:
+        # the situation from #1258: the path and the handle disagree on ctime
+        assert os.fstat(stream.fileno()).st_ctime_ns != source_path.lstat().st_ctime_ns
+    manifest = source_upload.select_source(tmp_path)
+
+    source_upload._write_archive(tmp_path / "source.zip", manifest.files)
+
+    with zipfile.ZipFile(tmp_path / "source.zip") as archive:
+        assert archive.read("app.py") == b"safe and sound"
+
+
+def test_archive_rejects_a_metadata_only_change_after_selection(tmp_path: Path) -> None:
+    """A chmod leaves size and mtime alone but moves the handle ctime, on Windows too."""
+    source_path = tmp_path / "app.py"
+    source_path.write_bytes(b"safe")
+    manifest = source_upload.select_source(tmp_path)
+    time.sleep(0.1)  # step past the filesystem's timestamp resolution
+    source_path.chmod(0o444)
+    try:
+        with pytest.raises(
+            http.CloudError, match="changed while the source archive was being built"
+        ):
+            source_upload._write_archive(tmp_path / "source.zip", manifest.files)
+    finally:
+        source_path.chmod(0o644)
+
+
+def test_archive_rejects_a_metadata_change_during_the_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """On POSIX `st_ctime_ns` is inode-change time, so a move in it is a change."""
     (tmp_path / "app.py").write_bytes(b"safe")
     manifest = source_upload.select_source(tmp_path)
-    _drift_ctime(monkeypatch, 30_000_000)
+    real_fstat = os.fstat
+    calls = 0
+
+    def fstat_changing_after_the_first_call(fileno: int) -> Any:
+        nonlocal calls
+        calls += 1
+        info = real_fstat(fileno)
+        if calls == 1:
+            return info
+        return _StatWith(info, st_ctime_ns=info.st_ctime_ns + 1)
+
+    monkeypatch.setattr(source_upload.os, "fstat", fstat_changing_after_the_first_call)
 
     with pytest.raises(http.CloudError, match="changed while the source archive was being built"):
         source_upload._write_archive(tmp_path / "source.zip", manifest.files)
