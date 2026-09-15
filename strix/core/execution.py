@@ -20,6 +20,7 @@ from openai import (
 )
 
 from strix.config import codex
+from strix.config.models import ModelStreamTimeoutError
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -120,6 +121,7 @@ async def _compact_session(
 
 
 _MAX_TRANSIENT_MODEL_RETRIES = 5
+_MAX_STREAM_TIMEOUT_RETRIES = 2
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
 
@@ -658,6 +660,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     image_strips = 0
     compactions = 0
     model_retries = 0
+    stream_timeout_retries = 0
     while True:
         stream: Any = None
         pre_run_items: list[Any] = []
@@ -772,15 +775,27 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
-            if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
-                model_retries += 1
-                delay = _transient_model_retry_delay(model_retries)
+            is_stream_timeout = isinstance(exc, ModelStreamTimeoutError)
+            if is_stream_timeout:
+                retry_count = stream_timeout_retries
+                retry_limit = _MAX_STREAM_TIMEOUT_RETRIES
+            else:
+                retry_count = model_retries
+                retry_limit = _MAX_TRANSIENT_MODEL_RETRIES
+                stream_timeout_retries = 0
+            if retry_count < retry_limit and (is_stream_timeout or _is_transient_model_error(exc)):
+                retry_count += 1
+                if is_stream_timeout:
+                    stream_timeout_retries = retry_count
+                else:
+                    model_retries = retry_count
+                delay = _transient_model_retry_delay(retry_count)
                 logger.warning(
                     "transient model/provider error for %s; replaying turn "
                     "(attempt %d/%d, backoff %.1fs): %r",
                     agent_id,
-                    model_retries,
-                    _MAX_TRANSIENT_MODEL_RETRIES,
+                    retry_count,
+                    retry_limit,
                     delay,
                     exc,
                 )
