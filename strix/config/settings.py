@@ -9,6 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max"]
+ApiType = Literal["responses", "chat_completions"]
 
 DEFAULT_MAX_TURNS = 500
 
@@ -23,6 +24,11 @@ class LlmSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
     model: str | None = Field(default=None, alias="STRIX_LLM")
+    api_type: ApiType | None = Field(
+        default=None,
+        validation_alias=AliasChoices("STRIX_API_TYPE", "STRIX_FORCE_API"),
+        description="Force 'responses' or 'chat_completions' API path",
+    )
     api_key: str | None = Field(
         default=None,
         validation_alias=AliasChoices("LLM_API_KEY", "OPENAI_API_KEY"),

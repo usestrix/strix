@@ -632,9 +632,11 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     if llm.api_base:
         os.environ["OPENAI_BASE_URL"] = llm.api_base
         _configure_litellm_default("api_base", llm.api_base)
-        set_default_openai_api("chat_completions")
-    else:
-        set_default_openai_api("responses")
+    api_type = llm.api_type
+    if api_type is None:
+        api_type = "chat_completions" if llm.api_base else "responses"
+
+    set_default_openai_api(api_type)
     _configure_extra_headers(llm)
 
 
@@ -805,6 +807,10 @@ def _configure_litellm_default(name: str, value: str) -> None:
 def uses_chat_completions_tool_schema(model_name: str, settings: Settings) -> bool:
     """Return whether the resolved SDK route can only receive JSON function tools."""
     if codex.subscription_model(model_name):
+        return False
+    if settings.llm.api_type == "chat_completions":
+        return True
+    if settings.llm.api_type == "responses":
         return False
     model = model_name.strip().lower()
     if "/" in model and not model.startswith("openai/"):
