@@ -17,6 +17,7 @@ from agents.tool import CustomTool, FunctionTool, Tool
 from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
+from strix.agents.guardrails import check_destructive
 from strix.config import load_settings
 from strix.tools.agents_graph.tools import (
     agent_finish,
@@ -433,6 +434,10 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             parsed = json.loads(raw_input)
         except (json.JSONDecodeError, TypeError):
             parsed = None
+        if isinstance(parsed, dict) and "cmd" in parsed:
+            reason = check_destructive(parsed.get("cmd", ""))
+            if reason:
+                return f"[guardrail] blocked destructive command: {reason}"
         if isinstance(parsed, dict):
             if "shell" not in parsed:
                 parsed["shell"] = "bash"
