@@ -32,7 +32,7 @@ _NO_STREAM_EVENTS: list[Any] = []
 class _SdkRefusalStream:
     """A stream where the SDK itself raises ModelRefusalError, not a content item.
 
-    Some providers (observed with Gemini through LiteLTM) surface a content-
+    Some providers (observed with Gemini through LiteLLM) surface a content-
     filter refusal this way instead of the structured `refusal` content item
     that OpenAI-compatible providers use.
     """
