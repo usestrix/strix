@@ -9,7 +9,7 @@ from typing import Any, cast
 from unittest.mock import MagicMock
 
 import pytest
-from agents.exceptions import MaxTurnsExceeded
+from agents.exceptions import MaxTurnsExceeded, ModelRefusalError
 from agents.items import MessageOutputItem
 from agents.memory import SQLiteSession
 from agents.tool_context import ToolContext
@@ -27,6 +27,26 @@ from strix.tools.finish.tool import finish_scan
 
 
 _NO_STREAM_EVENTS: list[Any] = []
+
+
+class _SdkRefusalStream:
+    """A stream where the SDK itself raises ModelRefusalError, not a content item.
+
+    Some providers (observed with Gemini through LiteLTM) surface a content-
+    filter refusal this way instead of the structured `refusal` content item
+    that OpenAI-compatible providers use.
+    """
+
+    def __init__(self, refusal: str) -> None:
+        self.run_loop_exception: BaseException | None = ModelRefusalError(refusal)
+        self.new_items: list[Any] = []
+
+    async def stream_events(self) -> Any:
+        for event in _NO_STREAM_EVENTS:
+            yield event
+
+    def cancel(self, mode: str = "immediate") -> None:  # noqa: ARG002
+        return
 
 
 class _StructuredRefusalStream:
@@ -896,6 +916,48 @@ async def test_structured_provider_refusal_fails_noninteractive_child(
     assert coordinator.errors["child"] == refusal
     assert coordinator.pending_counts.get("root", 0) > 0
     session.close()
+
+
+@pytest.mark.asyncio
+async def test_sdk_model_refusal_fails_cleanly_without_a_traceback(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A ModelRefusalError raised by the SDK gets the same clear, non-retried
+    outcome as this module's own ProviderRefusalError, instead of falling
+    through to the generic crash path with a full traceback.
+    """
+    refusal = "Response withheld by the provider's content filter."
+    stream = _SdkRefusalStream(refusal)
+    monkeypatch.setattr(
+        "strix.core.execution.Runner.run_streamed", lambda *_args, **_kwargs: stream
+    )
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    with caplog.at_level("WARNING", logger="strix.core.execution"):
+        result = await execution._run_cycle(
+            MagicMock(),
+            coordinator,
+            "root",
+            input_data="task",
+            run_config=MagicMock(),
+            context={},
+            max_turns=5,
+            session=None,
+            interactive=True,
+            event_sink=None,
+            hooks=None,
+        )
+
+    assert result is None
+    assert coordinator.statuses["root"] == "failed"
+    assert coordinator.errors["root"] == refusal
+    assert any(
+        record.levelname == "WARNING" and refusal in record.getMessage()
+        for record in caplog.records
+    )
+    assert not any(record.exc_info for record in caplog.records)
 
 
 @pytest.mark.asyncio
