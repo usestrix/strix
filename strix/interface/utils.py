@@ -14,7 +14,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 
-import requests
+import certifi
+import urllib3
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -1131,51 +1132,78 @@ def _is_disallowed_probe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -
     )
 
 
-def _is_ssrf_safe_host(host: str) -> bool:
-    """Reject hosts that resolve to loopback/private/link-local/reserved addresses.
+def _resolve_pinned_probe_ip(hostname: str, port: int) -> str | None:
+    """Resolve `hostname` once and return an allowed literal IP to connect to.
 
-    `_is_http_git_repo` probes from the Strix host itself, so a target string an
-    attacker influences (e.g. a scan target read from a poisoned file, or a URL
-    forwarded by an automated pipeline) must not be able to make that probe reach
-    internal infrastructure.
+    The caller must open its connection to this exact IP rather than letting
+    the HTTP client re-resolve `hostname` itself. Checking the hostname and
+    then connecting to it separately (as a plain `requests.get(url)` call
+    would) leaves a DNS-rebinding gap: a malicious DNS server can answer the
+    validation lookup with a public IP and the connection's own lookup,
+    moments later, with a private one, since nothing pins the two lookups to
+    the same answer.
     """
-    host = host.strip("[]")
+    hostname = hostname.strip("[]")
     try:
-        ip = ipaddress.ip_address(host)
+        ip = ipaddress.ip_address(hostname)
     except ValueError:
         pass
     else:
-        return not _is_disallowed_probe_ip(ip)
+        return None if _is_disallowed_probe_ip(ip) else str(ip)
 
     try:
-        addr_infos = socket.getaddrinfo(host, None)
+        addr_infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
     except (OSError, UnicodeError):
-        return False
+        return None
 
-    resolved_ips = {info[4][0] for info in addr_infos}
-    if not resolved_ips:
-        return False
+    for _family, _socktype, _proto, _canon, sockaddr in addr_infos:
+        candidate = ipaddress.ip_address(sockaddr[0])
+        if not _is_disallowed_probe_ip(candidate):
+            return str(candidate)
 
-    return all(not _is_disallowed_probe_ip(ipaddress.ip_address(addr)) for addr in resolved_ips)
+    return None
 
 
 def _is_http_git_repo(url: str) -> bool:
-    hostname = urlparse(url).hostname
-    if not hostname or not _is_ssrf_safe_host(hostname):
+    parsed = urlparse(url)
+    hostname = parsed.hostname
+    if not hostname or parsed.scheme not in ("http", "https"):
         return False
 
-    check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    pinned_ip = _resolve_pinned_probe_ip(hostname, port)
+    if pinned_ip is None:
+        return False
+
+    request_path = f"{parsed.path.rstrip('/')}/info/refs?service=git-upload-pack"
+    headers = {"User-Agent": "git/2.43.0", "Host": hostname}
+
     try:
-        with requests.get(
-            check_url,
-            headers={"User-Agent": "git/2.43.0"},
-            timeout=10,
-            allow_redirects=False,
-        ) as resp:
-            if resp.status_code != 200:
-                return False
-            return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
-    except (requests.RequestException, ValueError):
+        pool: urllib3.HTTPConnectionPool
+        if parsed.scheme == "https":
+            pool = urllib3.HTTPSConnectionPool(
+                pinned_ip,
+                port,
+                server_hostname=hostname,
+                assert_hostname=hostname,
+                ca_certs=certifi.where(),
+                timeout=10,
+                retries=False,
+            )
+        else:
+            pool = urllib3.HTTPConnectionPool(pinned_ip, port, timeout=10, retries=False)
+
+        with pool:
+            resp = pool.request(
+                "GET", request_path, headers=headers, redirect=False, preload_content=False
+            )
+            try:
+                if resp.status != 200:
+                    return False
+                return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
+            finally:
+                resp.release_conn()
+    except (urllib3.exceptions.HTTPError, OSError, ValueError):
         return False
 
 
