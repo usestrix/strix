@@ -6,6 +6,7 @@ import pytest
 from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
 
+from strix.config import claude
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
     StrixProvider,
@@ -168,3 +169,39 @@ def test_routes_through_litellm_matches_the_provider(
     while isinstance(model, _NonStreamingModel | _TurnGuardModel):
         model = model._inner
     assert isinstance(model, LitellmModel) is litellm
+
+
+def _unwrap(model: object) -> object:
+    while isinstance(model, _NonStreamingModel | _TurnGuardModel):
+        model = model._inner
+    return model
+
+
+def test_claude_subscription_routes_to_anthropic_via_litellm() -> None:
+    # A ``claude/<model>`` STRIX_LLM builds a LiteLLM anthropic model (OAuth bearer),
+    # not the SDK's OpenAI client. Construction must not require being signed in.
+    model = _unwrap(StrixProvider().get_model("claude/opus-5"))
+    assert isinstance(model, LitellmModel)
+    assert model.model == "anthropic/opus-5"
+
+
+@pytest.mark.asyncio
+async def test_claude_oauth_model_refreshes_token_per_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(claude, "oauth_api_key", lambda: "sk-ant-oat-live")
+
+    captured: dict[str, object] = {}
+
+    async def _fake_super_fetch(self: LitellmModel, *_a: object, **_k: object) -> str:
+        captured["api_key"] = self.api_key
+        return "ok"
+
+    monkeypatch.setattr(LitellmModel, "_fetch_response", _fake_super_fetch)
+
+    model = _unwrap(StrixProvider().get_model("claude/opus-5"))
+    assert isinstance(model, LitellmModel)
+    result = await model._fetch_response()
+    # The bearer token is re-read from the OAuth store on every request.
+    assert result == "ok"
+    assert captured["api_key"] == "sk-ant-oat-live"

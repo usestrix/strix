@@ -36,7 +36,7 @@ from openai.types.responses import (
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
 
-from strix.config import codex
+from strix.config import claude, codex
 from strix.config.loader import load_settings
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
@@ -161,6 +161,25 @@ class _CodexResponsesModel(OpenAIResponsesModel):
                 result = close()
                 if inspect.isawaitable(result):
                     await result
+
+
+def _claude_oauth_model(slug: str) -> Model:
+    """A LiteLLM ``anthropic/`` model whose bearer token is re-read per request.
+
+    LiteLLM sends an ``sk-ant-oat…`` ``api_key`` as an OAuth bearer token with the
+    OAuth beta header. A Claude subscription token expires within the run, so the
+    token is refreshed on every request instead of being frozen at construction.
+    """
+    from agents.extensions.models.litellm_model import LitellmModel
+
+    class _ClaudeOAuthModel(LitellmModel):
+        async def _fetch_response(self, *args: Any, **kwargs: Any) -> Any:
+            # Refresh (and, if near expiry, rotate) the OAuth access token so long
+            # scans survive token expiry; the bearer is read from self.api_key.
+            self.api_key = claude.oauth_api_key()
+            return await super()._fetch_response(*args, **kwargs)
+
+    return _ClaudeOAuthModel(model=f"anthropic/{slug}", api_key=None)
 
 
 class _NonStreamingModel(Model):
@@ -520,6 +539,7 @@ class StrixProvider(MultiProvider):
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
         slug = codex.subscription_model(model_name)
+        claude_slug = claude.subscription_model(model_name)
         idle_timeout = float(llm.stream_idle_timeout)
         if slug:
             # The ChatGPT subscription backend is always streamed; it has no
@@ -530,6 +550,10 @@ class StrixProvider(MultiProvider):
                 codex.get_subscription_client(),
                 reasoning_effort=llm.reasoning_effort,
             )
+        elif claude_slug:
+            # The Claude subscription routes through LiteLLM's anthropic provider
+            # with an OAuth bearer token, refreshed per request.
+            model = _claude_oauth_model(claude_slug)
         else:
             model = super().get_model(model_name)
             if llm.disable_streaming:
