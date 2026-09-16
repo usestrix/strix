@@ -7,7 +7,7 @@ import os
 import sys
 from pathlib import Path
 
-from strix.config import apply_config_override
+from strix.config import apply_config_override, mark_run_scoped
 from strix.config.settings import DEFAULT_MAX_TURNS
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.interface.scan_setup import attach_workspace_mount, build_targets_info
@@ -201,6 +201,19 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "--reasoning-effort",
+        dest="reasoning_effort",
+        type=str,
+        choices=["none", "minimal", "low", "medium", "high", "xhigh", "max"],
+        default=None,
+        help=(
+            "Model reasoning effort for this run. Higher = more thinking tokens = "
+            "higher cost and (usually) deeper analysis. Overrides STRIX_REASONING_EFFORT "
+            "and the config file for this run. Default: the configured value (high)."
+        ),
+    )
+
+    parser.add_argument(
         "--scope-mode",
         type=str,
         choices=["auto", "diff", "full"],
@@ -313,6 +326,15 @@ Strix Cloud:
         os.environ["STRIX_MCP_ONLY"] = ",".join(args.mcp_server)
     if args.mcp_exclude:
         os.environ["STRIX_MCP_EXCLUDE"] = ",".join(args.mcp_exclude)
+
+    # Settings read STRIX_REASONING_EFFORT from the environment (env wins over the
+    # config file), so exporting it here makes the flag win for this run. Mark it
+    # run-scoped: persist_current() writes every settings env var it finds into
+    # cli-config.json, which would turn this one-run flag into the new default
+    # for every later scan.
+    if args.reasoning_effort:
+        os.environ["STRIX_REASONING_EFFORT"] = args.reasoning_effort
+        mark_run_scoped("STRIX_REASONING_EFFORT")
 
     if args.update:
         sys.exit(0 if self_update() else 1)

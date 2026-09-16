@@ -36,7 +36,26 @@ Configure Strix using environment variables or a config file.
 </ParamField>
 
 <ParamField path="STRIX_REASONING_EFFORT" default="high" type="string">
-  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Defaults to `medium` for quick scan mode.
+  Control thinking effort for reasoning models. Valid values: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, `max`. Higher = more thinking tokens = higher cost and (usually) deeper analysis. The `--reasoning-effort` CLI flag overrides this per run.
+</ParamField>
+
+### Cost / fan-out limits
+
+Every spawned agent re-pays the full system prompt on each of its turns and (by
+default) inherits a full copy of its parent's history, so unbounded agent fan-out
+is a large token-cost driver on a single target. These knobs let operators bound
+it. **All default to `0` (disabled) — out-of-the-box behavior is unchanged.**
+
+<ParamField path="STRIX_MAX_AGENTS" default="0" type="integer">
+  Maximum total agents in the graph (root included). When reached, `create_agent` refuses to spawn and tells the agent to reuse an existing agent, wait for running ones, or do the work itself. `0` = unlimited.
+</ParamField>
+
+<ParamField path="STRIX_MAX_AGENT_DEPTH" default="0" type="integer">
+  Maximum spawn depth. The root is depth 1; a child of the root is depth 2. `0` = unlimited.
+</ParamField>
+
+<ParamField path="STRIX_INHERIT_CONTEXT_MAX_TOKENS" default="0" type="integer">
+  Token cap on the parent history copied into a child spawned with `inherit_context=true`. The most-recent tail is kept; older turns are dropped with a marker. `0` = copy the full parent history.
 </ParamField>
 
 <ParamField path="STRIX_MEMORY_COMPRESSOR_TIMEOUT" default="30" type="integer">
