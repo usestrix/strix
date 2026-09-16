@@ -522,6 +522,7 @@ async def run_strix_scan(
                 interactive=interactive,
                 event_sink=event_sink,
                 hooks=hooks,
+                max_child_agents=settings.runtime.max_child_agents,
                 **kwargs,
             )
 
