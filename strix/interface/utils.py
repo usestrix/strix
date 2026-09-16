@@ -5,6 +5,7 @@ import os
 import re
 import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1119,12 +1120,60 @@ def resolve_diff_scope_context(
     )
 
 
+def _is_disallowed_probe_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    )
+
+
+def _is_ssrf_safe_host(host: str) -> bool:
+    """Reject hosts that resolve to loopback/private/link-local/reserved addresses.
+
+    `_is_http_git_repo` probes from the Strix host itself, so a target string an
+    attacker influences (e.g. a scan target read from a poisoned file, or a URL
+    forwarded by an automated pipeline) must not be able to make that probe reach
+    internal infrastructure.
+    """
+    host = host.strip("[]")
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        pass
+    else:
+        return not _is_disallowed_probe_ip(ip)
+
+    try:
+        addr_infos = socket.getaddrinfo(host, None)
+    except (OSError, UnicodeError):
+        return False
+
+    resolved_ips = {info[4][0] for info in addr_infos}
+    if not resolved_ips:
+        return False
+
+    return all(not _is_disallowed_probe_ip(ipaddress.ip_address(addr)) for addr in resolved_ips)
+
+
 def _is_http_git_repo(url: str) -> bool:
+    hostname = urlparse(url).hostname
+    if not hostname or not _is_ssrf_safe_host(hostname):
+        return False
+
     check_url = f"{url.rstrip('/')}/info/refs?service=git-upload-pack"
     try:
-        with requests.get(check_url, headers={"User-Agent": "git/2.43.0"}, timeout=10) as resp:
-            if resp.status_code >= 400:
-                return resp.status_code == 401
+        with requests.get(
+            check_url,
+            headers={"User-Agent": "git/2.43.0"},
+            timeout=10,
+            allow_redirects=False,
+        ) as resp:
+            if resp.status_code != 200:
+                return False
             return "x-git-upload-pack-advertisement" in resp.headers.get("Content-Type", "")
     except (requests.RequestException, ValueError):
         return False
