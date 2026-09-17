@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
+from strix.config.loader import load_settings
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
     OPENROUTER_ATTRIBUTION_HEADERS,
@@ -21,6 +22,7 @@ from strix.config.models import (
     routes_through_litellm,
 )
 from strix.core.sessions import scrub_images_from_items
+from strix.runtime.backends import backend_supports_bind_mounts
 
 
 if TYPE_CHECKING:
@@ -105,10 +107,24 @@ def _render_workspace_files(scan_config: dict[str, Any]) -> list[str]:
     ]
 
 
+def _describe_directory_mount() -> str:
+    backend_name = load_settings().runtime.backend
+    use_bind_mounts = (
+        backend_supports_bind_mounts(backend_name)
+        and not load_settings().runtime.require_mount_free
+    )
+    if use_bind_mounts:
+        return (
+            "this is the user's real directory, mounted live and writable — "
+            ".git/.agents/.codex are read-only"
+        )
+    return "this is a bounded snapshot of the user's directory, isolated from the live host system"
+
+
 def build_root_task(scan_config: dict[str, Any]) -> str:
     targets = scan_config.get("targets", []) or []
     diff_scope = scan_config.get("diff_scope") or {}
-    user_instructions = scan_config.get("user_instructions", "") or ""
+    user_instructions = (scan_config.get("user_instructions") or "").strip()
 
     sections: dict[str, list[str]] = {
         "Repositories": [],
@@ -120,8 +136,8 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
 
     for target in targets:
         ttype = target.get("type")
-        details = target.get("details") or {}
-        workspace_subdir = details.get("workspace_subdir")
+        details = target.get("details") or target.get("target_details") or {}
+        workspace_subdir = details.get("workspace_subdir") or target.get("workspace_subdir") or ""
         workspace_path = f"/workspace/{workspace_subdir}" if workspace_subdir else "/workspace"
 
         if ttype == "repository":
@@ -132,11 +148,8 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
             )
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
-            sections["Local Codebases"].append(
-                f"- {path} (available at: {workspace_path}; "
-                "this is the user's real directory, mounted live and writable — "
-                ".git/.agents/.codex are read-only)"
-            )
+            desc = _describe_directory_mount()
+            sections["Local Codebases"].append(f"- {path} (available at: {workspace_path}; {desc})")
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
         elif ttype == "ip_address":
@@ -155,12 +168,9 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
     if workspace_mount := scan_config.get("workspace_mount") or "":
         subdir = scan_config.get("workspace_subdir") or ""
         workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
+        desc = _describe_directory_mount()
         parts.append("\n\nWorking Directory:")
-        parts.append(
-            f"- {workspace_mount} (available at: {workspace_path}; "
-            "this is the user's real directory, mounted live and writable — "
-            ".git/.agents/.codex are read-only)"
-        )
+        parts.append(f"- {workspace_mount} (available at: {workspace_path}; {desc})")
         parts.append(
             "- No scan target was set. This directory is where you work, not a "
             "target to assess: the instructions below are the only source of "
