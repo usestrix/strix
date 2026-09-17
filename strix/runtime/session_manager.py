@@ -260,6 +260,20 @@ def _gitdir_from_pointer(git_file: Path) -> Path | None:
     return None
 
 
+def _refuse_bind_mounts(bind_mounts: list[dict[str, Any]]) -> None:
+    """Fail closed under ``STRIX_REQUIRE_MOUNT_FREE``.
+
+    Checks what is about to be handed to the backend rather than trusting the
+    transport selection above it, so a later change to that selection cannot
+    silently reintroduce a host mount.
+    """
+    if bind_mounts:
+        raise RuntimeError(
+            "STRIX_REQUIRE_MOUNT_FREE is set but the sandbox would bind-mount "
+            f"{len(bind_mounts)} host path(s); refusing to start the scan"
+        )
+
+
 async def create_or_reuse(
     scan_id: str,
     *,
@@ -278,6 +292,9 @@ async def create_or_reuse(
     regardless of backend: an in-memory ``File`` manifest entry on manifest
     backends, a read-only bind mount of a host-staged copy on bind-mount
     backends.
+
+    With ``STRIX_REQUIRE_MOUNT_FREE`` set, every backend takes the manifest
+    path: sources are uploaded as a snapshot and no host path is bind-mounted.
     """
 
     def report(phase: str) -> None:
@@ -289,11 +306,12 @@ async def create_or_reuse(
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
-    backend_name = load_settings().runtime.backend
+    runtime = load_settings().runtime
+    backend_name = runtime.backend
     backend = get_backend(backend_name)
 
     staging_dir: Path | None = None
-    if backend_supports_bind_mounts(backend_name):
+    if backend_supports_bind_mounts(backend_name) and not runtime.require_mount_free:
         bind_mounts = build_bind_mounts(local_sources)
         entries: dict[str | Path, BaseEntry] = {}
         if extra_files:
@@ -306,6 +324,9 @@ async def create_or_reuse(
         entries = build_manifest_entries(local_sources)
         if extra_files:
             entries.update(build_extra_file_entries(extra_files, local_sources))
+
+    if runtime.require_mount_free:
+        _refuse_bind_mounts(bind_mounts)
 
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
+from strix.config import load_settings
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
     OPENROUTER_ATTRIBUTION_HEADERS,
@@ -53,6 +54,19 @@ def _render_diff_scope(diff_scope: dict[str, Any]) -> list[str]:
         if deleted:
             parts.append(f"- {label}: {deleted} deleted file(s) are context-only")
     return parts
+
+
+def _local_dir_note() -> str:
+    """How a local directory reaches the sandbox, as told to the agent."""
+    if load_settings().runtime.require_mount_free:
+        return (
+            "this is a snapshot copied in at scan start, not the user's live "
+            "directory — edits here never reach the host"
+        )
+    return (
+        "this is the user's real directory, mounted live and writable — "
+        ".git/.agents/.codex are read-only"
+    )
 
 
 def _render_api_spec(details: dict[str, Any]) -> list[str]:
@@ -133,9 +147,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         elif ttype == "local_code":
             path = details.get("target_path", "unknown")
             sections["Local Codebases"].append(
-                f"- {path} (available at: {workspace_path}; "
-                "this is the user's real directory, mounted live and writable — "
-                ".git/.agents/.codex are read-only)"
+                f"- {path} (available at: {workspace_path}; {_local_dir_note()})"
             )
         elif ttype == "web_application":
             sections["URLs"].append(f"- {details.get('target_url', '')}")
@@ -156,11 +168,7 @@ def build_root_task(scan_config: dict[str, Any]) -> str:
         subdir = scan_config.get("workspace_subdir") or ""
         workspace_path = f"/workspace/{subdir}" if subdir else "/workspace"
         parts.append("\n\nWorking Directory:")
-        parts.append(
-            f"- {workspace_mount} (available at: {workspace_path}; "
-            "this is the user's real directory, mounted live and writable — "
-            ".git/.agents/.codex are read-only)"
-        )
+        parts.append(f"- {workspace_mount} (available at: {workspace_path}; {_local_dir_note()})")
         parts.append(
             "- No scan target was set. This directory is where you work, not a "
             "target to assess: the instructions below are the only source of "

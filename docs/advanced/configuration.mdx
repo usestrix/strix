@@ -144,6 +144,16 @@ When remote vars are set, Strix dual-writes telemetry to both local JSONL and th
   Runtime backend for the sandbox environment.
 </ParamField>
 
+<ParamField path="STRIX_REQUIRE_MOUNT_FREE" default="false" type="boolean">
+  Never bind-mount a host path into the sandbox. Local code targets and the
+  working directory are uploaded into the container as a snapshot taken at scan
+  start, at the same `/workspace/<name>` paths. The sandbox works on that copy:
+  its writes do not reach the host directory, later host edits are not seen, and
+  the copy is removed with the container. Expect a slower start on large trees.
+  If a host bind mount would still be required, the scan is refused before the
+  container is created.
+</ParamField>
+
 ## Sandbox Configuration
 
 <ParamField path="STRIX_SANDBOX_EXECUTION_TIMEOUT" default="120" type="integer">
