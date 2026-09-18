@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
 _DEFAULT_PATH: Path = Path.home() / ".strix" / "cli-config.json"
 _override: Path | None = None
 _cached: Settings | None = None
+# Env vars set for this process only (e.g. from a per-run CLI flag). They still
+# win over the config file while the run lasts, but persist_current() must not
+# write them back, or a one-off flag would silently become the new default.
+_run_scoped: set[str] = set()
 
 # Model, API key, and API base describe one provider connection. When the shell
 # changes any of them, the stored values of the others no longer belong together
@@ -60,6 +64,16 @@ def apply_config_override(path: Path) -> None:
     logger.info("config override applied: %s", path)
 
 
+def mark_run_scoped(*env_names: str) -> None:
+    """Exempt ``env_names`` from :func:`persist_current`.
+
+    For values that apply to the current run only. Without this, exporting a
+    per-run CLI flag into the environment makes it indistinguishable from a
+    setting the user chose to keep, and it lands in the config file.
+    """
+    _run_scoped.update(name.upper() for name in env_names)
+
+
 def persist_current() -> None:
     """Merge currently-set env vars into the active config file (0o600).
 
@@ -67,6 +81,9 @@ def persist_current() -> None:
     run that gets its settings from the file does not erase them. An env
     var set to the empty string clears the field from the file. A change to
     any linked LLM connection var drops the whole stored connection first.
+
+    Run-scoped vars (see :func:`mark_run_scoped`) are left out entirely: a
+    per-run override must neither be written nor clear what the file holds.
     """
     s = load_settings()
     target = _override or _DEFAULT_PATH
@@ -80,7 +97,9 @@ def persist_current() -> None:
         for finfo in type(sub_model).model_fields.values():
             aliases = [alias.upper() for alias in _aliases_for(finfo)]
             active = next((alias for alias in aliases if alias in os.environ), None)
-            if active is None:
+            # A run-scoped value belongs to this run only, so it neither
+            # overwrites nor clears the field the file already stores.
+            if active is None or active in _run_scoped:
                 continue
             for alias in aliases:
                 env_block.pop(alias, None)
