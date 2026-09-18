@@ -18,6 +18,7 @@ from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
+from strix.config.tool_call_arguments import describe_malformed_arguments
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -260,6 +261,10 @@ def _with_coerced_arguments(tool: FunctionTool) -> FunctionTool:
     nullish = tool.name.startswith(_QUERY_TOOL_PREFIXES)
 
     async def invoke(ctx: Any, raw_input: str) -> Any:
+        malformed = describe_malformed_arguments(tool.name, raw_input)
+        if malformed is not None:
+            logger.debug("Tool %s got malformed arguments; asking the model to re-issue", tool.name)
+            return malformed
         return await invoke_tool(ctx, _coerce_arguments(raw_input, schema, nullish=nullish))
 
     tool.on_invoke_tool = invoke
