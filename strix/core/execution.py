@@ -53,6 +53,32 @@ StreamEventSink = Callable[[str, Any], None]
 
 _INPUT_REJECTION_CODES = frozenset({400, 404, 422})
 _MAX_COMPACTIONS_PER_CYCLE = 2
+_STREAM_CANCEL_SETTLE_TIMEOUT_S = 1.0
+
+
+async def _cancel_and_settle_stream(stream: Any) -> None:
+    """Cancel an unfinished SDK stream and briefly wait for its run loop to unwind."""
+    if stream is None:
+        return
+    if not getattr(stream, "is_complete", False):
+        try:
+            stream.cancel(mode="immediate")
+        except Exception:
+            logger.exception("failed to cancel unfinished agent stream")
+
+    run_loop_task = getattr(stream, "run_loop_task", None)
+    if not isinstance(run_loop_task, asyncio.Task) or run_loop_task.done():
+        return
+    task = cast("asyncio.Task[Any]", run_loop_task)  # type: ignore[redundant-cast]
+    done, _pending = await asyncio.wait(
+        {task},
+        timeout=_STREAM_CANCEL_SETTLE_TIMEOUT_S,
+    )
+    if not done:
+        logger.warning(
+            "agent stream run loop did not settle within %.1fs after cancellation",
+            _STREAM_CANCEL_SETTLE_TIMEOUT_S,
+        )
 
 
 @cache
@@ -685,8 +711,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 session=session,
                 hooks=hooks,
             )
-            await coordinator.attach_stream(agent_id, stream)
             try:
+                await coordinator.attach_stream(agent_id, stream)
                 try:
                     async for event in stream.stream_events():
                         if event_sink is not None:
@@ -698,7 +724,11 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                         raise stream.run_loop_exception
                     if refusal := _structured_provider_refusal(stream):
                         raise ProviderRefusalError(refusal)
-                except (BudgetExceededError, BudgetPausedError, SubagentBudgetReservedError):
+                except (
+                    BudgetExceededError,
+                    BudgetPausedError,
+                    SubagentBudgetReservedError,
+                ):
                     raise
                 except RuntimeError as stream_exc:
                     if "after shutdown" not in str(stream_exc):
@@ -716,7 +746,10 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                         exc_info=True,
                     )
             finally:
-                await coordinator.detach_stream(agent_id, stream)
+                try:
+                    await _cancel_and_settle_stream(stream)
+                finally:
+                    await coordinator.detach_stream(agent_id, stream)
         except BudgetPausedError as exc:
             logger.info("agent %s paused at the scan budget limit: %s", agent_id, exc)
             await coordinator.pause_for_budget(agent_id)
