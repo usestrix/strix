@@ -10,9 +10,10 @@ import pytest
 
 from strix.report.writer import (
     atomic_write_text,
+    deduplicate_markdown_headings,
     read_run_record,
     render_vulnerability_md,
-    write_executive_report,
+    write_execution_report,
     write_run_record,
     write_vulnerabilities,
 )
@@ -239,6 +240,36 @@ def test_write_executive_report_writes_markdown(tmp_path: Path) -> None:
     assert "# Security Penetration Test Report" in content
     assert "Scan complete. No critical issues." in content
 
+
+def test_deduplicate_markdown_headings() -> None:
+    raw_markdown = (
+        "# Executive Summary\n"
+        "# Executive Summary\n"
+        "This is the summary content.\n\n"
+        "## Methodology\n"
+        "## Methodology\n"
+        "Testing approach details."
+    )
+    expected = (
+        "# Executive Summary\n"
+        "This is the summary content.\n\n"
+        "## Methodology\n"
+        "Testing approach details."
+    )
+    assert deduplicate_markdown_headings(raw_markdown) == expected
+
+
+def test_write_execution_report_deduplicates_headings(tmp_path: Path) -> None:
+    duplicate_scan_output = (
+        "# Executive Summary\n"
+        "# Executive Summary\n"
+        "Scan complete. No critical issues.\n"
+    )
+    write_execution_report(tmp_path, duplicate_scan_output)
+    content = (tmp_path / "penetration_test_report.md").read_text(encoding="utf-8")
+    assert content.count("# Executive Summary") == 1
+    assert "Scan complete. No critical issues." in content
+    
 
 def test_render_vulnerability_md_surfaces_calibration_metadata() -> None:
     """Confidence, the case against the finding, and retest status are part of
