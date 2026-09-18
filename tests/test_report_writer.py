@@ -246,6 +246,11 @@ def test_deduplicate_markdown_headings() -> None:
         "# Executive Summary\n"
         "# Executive Summary\n"
         "This is the summary content.\n\n"
+        "```bash\n"
+        "# bash comment inside fence\n"
+        "# bash comment inside fence\n"
+        "echo test\n"
+        "```\n\n"
         "## Methodology\n"
         "## Methodology\n"
         "Testing approach details."
@@ -253,6 +258,11 @@ def test_deduplicate_markdown_headings() -> None:
     expected = (
         "# Executive Summary\n"
         "This is the summary content.\n\n"
+        "```bash\n"
+        "# bash comment inside fence\n"
+        "# bash comment inside fence\n"
+        "echo test\n"
+        "```\n\n"
         "## Methodology\n"
         "Testing approach details."
     )
