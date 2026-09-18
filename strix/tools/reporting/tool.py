@@ -1123,12 +1123,7 @@ async def create_vulnerability_report(
             but unverified follow-on risks separate; do not use them to
             set CVSS metrics.
         target: Affected URL / domain / repository.
-        technical_analysis: The mechanism and root cause. For code findings,
-            if the checkout has git history, a quick ``git blame`` (quote the
-            paths) on the vulnerable line is worth weaving into the analysis:
-            who last touched it, when, and in which commit — as part of the
-            prose, not a separate section. Skip it if the line is uncommitted
-            or the command fails.
+        technical_analysis: The mechanism and root cause.
         poc_description: Step-by-step reproduction (steps only, no code).
         poc_script_code: Working PoC (Python preferred).
         remediation_steps: Specific, actionable fix (prose, no code).
@@ -1328,6 +1323,12 @@ async def create_vulnerability_report(
             A restrictive CSP that blocks inline script execution would
             reduce impact and lower the severity.
         fix_effort: "low"
+
+    Nice to have: for code findings, if the checkout has git history, a quick
+    ``git blame`` (quote the paths) on the vulnerable line is worth weaving into
+    ``technical_analysis`` — who last touched it, when, and in which commit, as
+    part of the prose, not a separate section. Skip it if the line is
+    uncommitted or the command fails.
     """
     (
         http_exchange_ids,

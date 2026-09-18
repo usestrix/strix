@@ -1089,12 +1089,13 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
     assert "reachab" in dep_desc.lower()
 
 
-def test_git_blame_hint_lives_only_in_technical_analysis() -> None:
-    summary, _, args = create_vulnerability_report.description.partition("Args:")
-    assert "blame" not in summary
-    field = args.split("technical_analysis:", 1)[1].split("poc_description:", 1)[0]
-    assert "git blame" in field
-    assert "not a separate section" in field
+def test_git_blame_hint_is_a_trailing_note() -> None:
+    desc = create_vulnerability_report.description
+    assert desc.count("blame") == 1
+    tail = desc[desc.index("Nice to have:") :]
+    assert "git blame" in tail
+    assert "technical_analysis" in tail
+    assert "Example" not in tail
     assert "blame" not in update_vulnerability_report.description
 
 
