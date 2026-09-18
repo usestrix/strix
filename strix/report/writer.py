@@ -136,13 +136,62 @@ def write_run_record(run_dir: Path, run_record: dict[str, Any]) -> None:
     )
 
 
-def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
+def deduplicate_markdown_headings(content: str) -> str:
+    """Removes duplicate markdown headings appearing consecutively, ignoring fenced code blocks."""
+    lines = content.splitlines()
+    cleaned: list[str] = []
+    prev_heading: str | None = None
+    in_fence = False
+    fence_char = ""
+    fence_len = 0
+
+    for line in lines:
+        stripped = line.strip()
+        
+        # Check for code fence start or end (``` or ~~~)
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            char = stripped[0]
+            count = len(stripped) - len(stripped.lstrip(char))
+            if not in_fence:
+                in_fence = True
+                fence_char = char
+                fence_len = count
+                prev_heading = None
+                cleaned.append(line)
+                continue
+            elif char == fence_char and count >= fence_len:
+                in_fence = False
+                prev_heading = None
+                cleaned.append(line)
+                continue
+
+        if in_fence:
+            cleaned.append(line)
+            continue
+
+        match = re.match(r"^(#{1,6})\s+(.*)$", stripped)
+        if match:
+            heading_key = f"{match.group(1)} {match.group(2).strip().lower()}"
+            if heading_key == prev_heading:
+                continue
+            prev_heading = heading_key
+        else:
+            if stripped:
+                prev_heading = None
+        cleaned.append(line)
+
+    return "\n".join(cleaned)
+
+
+def write_execution_report(run_dir: Path, final_scan_result: str) -> None:
     path = run_dir / "penetration_test_report.md"
+    cleaned_result = deduplicate_markdown_headings(final_scan_result)
     with path.open("w", encoding="utf-8") as f:
         f.write("# Security Penetration Test Report\n\n")
         f.write(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
-        f.write(f"{final_scan_result}\n")
+        f.write(f"{cleaned_result}\n")
     logger.info("Saved final penetration test report to: %s", path)
+
 
 
 def write_vulnerabilities(
