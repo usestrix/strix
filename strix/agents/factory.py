@@ -671,12 +671,6 @@ def build_strix_agent(
         instructions_override: Use this verbatim as the system prompt instead
             of rendering the built-in scan prompt.
     """
-    settings = load_settings()
-    if settings.llm.api_type == "chat_completions":
-        chat_completions_tools = True
-    elif settings.llm.api_type == "responses":
-        chat_completions_tools = False
-
     if instructions_override is not None:
         instructions = instructions_override
     else:
@@ -692,7 +686,9 @@ def build_strix_agent(
 
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
     if interactive:
+        # yielding to the user is only meaningful when one is attached
         agent_tools.append(respond_to_user)
+
     if is_root:
         tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
     else:
