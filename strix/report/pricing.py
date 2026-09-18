@@ -48,7 +48,10 @@ def resolve_litellm_model(model: str) -> str | None:
                 if isinstance(model_cost.get(key), dict)
             }
             if len(matches) == 1 or len(prices) == 1:
-                return matches[0]
+                # On a price tie, prefer the route whose model segment is exactly the
+                # bare name (the first-party route) over aggregator aliases like
+                # openrouter/x-ai/<model>; fall back to alphabetical order.
+                return min(matches, key=lambda key: (key.split("/", 1)[1] != name, key))
         return None  # noqa: TRY300
     except Exception:  # noqa: BLE001
         return None
