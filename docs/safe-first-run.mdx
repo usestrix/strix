@@ -1,0 +1,79 @@
+---
+title: "Try Strix safely"
+description: "A safe first-run example using a local, intentionally vulnerable demo app"
+---
+
+> **Safety first:** Only scan systems you own or are explicitly authorized to test. For your first Strix run, use a local demo target such as `127.0.0.1` or `localhost`.
+
+## Why use a local demo target?
+
+Strix is an autonomous penetration-testing tool. It can execute real requests, interact with the target, and validate findings with proofs-of-concept. A local, intentionally vulnerable app gives you a controlled environment to verify installation, credentials, scope, and output before testing anything real.
+
+## 1. Start a local vulnerable app
+
+This example uses OWASP Juice Shop, a well-known intentionally vulnerable web application.
+
+```bash
+docker run --rm --name strix-demo -p 3000:3000 bkimminich/juice-shop
+```
+
+Wait until the app is available at `http://127.0.0.1:3000`.
+
+## 2. Run Strix against the local target
+
+In another terminal:
+
+```bash
+export STRIX_LLM="openai/gpt-5.4"
+export LLM_API_KEY="your-api-key"
+
+strix --target http://127.0.0.1:3000
+```
+
+The first run may pull the sandbox Docker image. Results are saved under `strix_runs/<run-name>`.
+
+## 3. What to expect
+
+Strix will plan and execute tests against the local target, then summarize findings. A typical result includes:
+
+- Confirmed or suspected vulnerabilities, grouped by severity
+- Evidence and reproduction steps
+- Proof-of-concept artifacts where validation succeeded
+- Remediation guidance
+
+Because Juice Shop is intentionally vulnerable, you should expect findings. Treat this run as a way to become familiar with Strix's output and review workflow.
+
+## Minimal safe scope checklist
+
+Before running Strix, confirm:
+
+- The target is local-only, such as `http://127.0.0.1:3000`
+- You own the target or have explicit permission to test it
+- The target is isolated from production systems and real user data
+- You are not using production credentials or secrets
+- You can stop the container when finished
+
+To stop the demo app:
+
+```bash
+docker stop strix-demo
+```
+
+## How Strix differs
+
+| Dimension | Strix | DAST scanner | Template-based scanner | Manual pentest framework |
+|---|---|---|---|---|
+| Primary purpose | Authorized, agentic penetration testing | Web crawling and rule-based vulnerability detection | Known-issue/template matching | Human-driven exploitation and post-exploitation |
+| Workflow | Plans and executes tests based on target and scope | Spider plus rule requests | Bulk probing for known patterns | Operator selects and runs modules |
+| Typical output | Attack paths, evidence, reproduction steps, remediation guidance | Vulnerability list with request/response details | CVE or misconfiguration list | Exploit/session output |
+| Safety controls | Target/scope constraints and local demo guidance | Scope and auth configuration | Target lists and rate limits | Operator discipline |
+| Best first run | Local DVWA/Juice Shop-style target | Local or staging app | Local or staging app | Lab environment |
+
+Strix is not an indiscriminate scanner. It is designed for authorized security testing, and the safest first run is always against a local, disposable target.
+
+## Next steps
+
+- Review the generated report and evidence before acting on findings
+- Configure scope/target restrictions before testing a real application
+- See [configuration](/advanced/configuration) for available runtime settings
+- See [scan modes](/usage/scan-modes) if you want to control scan depth
