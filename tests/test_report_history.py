@@ -184,28 +184,23 @@ async def _update(report_id: str, **fields: Any) -> dict[str, Any]:
     return result
 
 
-def test_reporting_tools_expose_optional_git_attribution_guidance() -> None:
+def test_git_attribution_guidance_lives_only_in_technical_analysis() -> None:
     description = create_vulnerability_report.description
+    summary, _, args = description.partition("Args:")
+    assert "blame" not in summary
+    assert "Last modified by" not in summary
+    field = args.split("technical_analysis:", 1)[1].split("poc_description:", 1)[0]
     for instruction in (
         "exec_command",
-        "existing full-clone",
+        "git blame",
         "primary vulnerable line",
         "start_line",
         "Last modified by",
-        "technical_analysis",
-        "author-mail",
         "committer-time",
-        "using a tool (e.g. Python",
-        "timezone.utc",
-        "summary",
         "all-zero SHAs",
-        "errors/timeouts",
-        "never block",
     ):
-        assert instruction in description
-    assert "refresh or remove" in update_vulnerability_report.description
-    assert "Before filing a finding" in description
-    assert description.index("Local Git attribution") < description.index("When to file")
+        assert instruction in field
+    assert "blame" not in update_vulnerability_report.description
 
 
 @pytest.mark.parametrize(
@@ -228,7 +223,7 @@ async def test_prompted_blame_command_to_report_artifacts(
 
     # Execute the exact example exposed to the model, with quoted real paths.
     match = re.search(
-        r"GIT_NO_LAZY_FETCH=1 timeout 3s git.*?-- FILE",
+        r"timeout 3s git.*?-- FILE",
         create_vulnerability_report.description,
         re.DOTALL,
     )

@@ -927,29 +927,6 @@ async def create_vulnerability_report(
 ) -> str:
     """File a vulnerability report — one report per fully-verified finding.
 
-    **Local Git attribution (best effort)**: for a finding with a repository
-    file and valid line number, use ``exec_command`` in the existing full-clone
-    checkout. Identify the affected repository first; if ambiguous, skip
-    attribution. Blame the primary vulnerable line when known, otherwise the
-    ``start_line`` of the primary code location. Quote paths and use a short
-    timeout, for example::
-
-        GIT_NO_LAZY_FETCH=1 timeout 3s git -C REPO -c safe.directory=REPO \\
-            blame --line-porcelain --no-textconv -L LINE,LINE -- FILE
-
-    Add a **Last modified by** subsection to ``technical_analysis`` with the
-    file/line, author name (``author``), author email (``author-mail``), commit
-    SHA (first field), commit timestamp (``committer-time``, rendered in UTC),
-    and commit summary (``summary``), where available. Convert the Unix timestamp
-    using a tool (e.g. Python ``datetime`` with ``timezone.utc``), never mentally;
-    if conversion fails, keep the observed Unix timestamp. Use only observed
-    output; never invent attribution or imply the author introduced the flaw.
-    Skip all-zero SHAs (uncommitted lines), missing/invalid line numbers,
-    missing or renamed paths you cannot resolve, binary/generated files without
-    useful history, unavailable Git metadata, and command errors/timeouts.
-    Do not clone, fetch, or retry just for attribution; omit it and file the
-    finding normally when unavailable. It must never block scanning or reporting.
-
     **When to file**: you have a concrete vulnerability with a working
     proof-of-concept and you're 100% sure it's a real issue.
 
@@ -1146,13 +1123,17 @@ async def create_vulnerability_report(
             but unverified follow-on risks separate; do not use them to
             set CVSS metrics.
         target: Affected URL / domain / repository.
-        technical_analysis: The mechanism and root cause. Before filing a finding
-            with code locations, use ``exec_command`` to attempt local ``git blame``
-            on the primary vulnerable line (otherwise ``start_line``) in the correct
-            existing checkout, using the short timeout described above. Include the
-            observed author name/email, full commit SHA, UTC commit timestamp, and
-            summary under **Last modified by** here. If history is unavailable or
-            the command fails, omit attribution and file normally; never invent it.
+        technical_analysis: The mechanism and root cause. For source-backed
+            findings, optionally end with a **Last modified by** line from a
+            best-effort ``git blame`` of the primary vulnerable line (otherwise
+            ``start_line``) in the existing checkout, run with ``exec_command``::
+
+                timeout 3s git -C REPO -c safe.directory=REPO blame --porcelain -L LINE,LINE -- FILE
+
+            Report the author name/email, commit SHA, UTC commit time (convert
+            ``committer-time`` with a tool, not mentally), and summary. Use only
+            observed output. Skip all-zero SHAs, unresolvable paths, or command
+            errors and file normally without it.
         poc_description: Step-by-step reproduction (steps only, no code).
         poc_script_code: Working PoC (Python preferred).
         remediation_steps: Specific, actionable fix (prose, no code).
@@ -1470,8 +1451,6 @@ async def update_vulnerability_report(
       ``severity_change_conditions`` with a new ``cvss_breakdown``.
     - ``code_locations`` replaces the whole list. A location carrying
       ``fix_after`` needs ``fix_verification``.
-    - When changing a target or code location, refresh or remove any "Last modified
-      by" attribution in ``technical_analysis``; do not retain stale Git details.
 
     The report keeps its id, its original author, and its filing time. The
     revision is recorded in the report as update history, so state the
