@@ -85,6 +85,12 @@ fi
 
 filename="$APP-${specific_version}-${target}${archive_ext}"
 url="https://github.com/$REPO/releases/download/v${specific_version}/$filename"
+sums_name="SHA256SUMS"
+sums_url="https://github.com/$REPO/releases/download/v${specific_version}/$sums_name"
+bundle_name="strix-${target}.intoto.jsonl"
+bundle_url="https://github.com/$REPO/releases/download/v${specific_version}/$bundle_name"
+SIGNER_WORKFLOW="$REPO/.github/workflows/build-release.yml"
+CERT_IDENTITY_REGEXP="^https://github.com/${REPO}/.github/workflows/build-release.yml"
 
 print_message() {
     local level=$1
@@ -99,6 +105,9 @@ print_message() {
     echo -e "${color}${message}${NC}"
 }
 
+# Remove other copies of strix from PATH (pipx, leftover binaries) only after
+# a verified install has been written to INSTALL_DIR. Calling this earlier
+# would leave the user with no working Strix if checksum/provenance then fail.
 check_existing_installation() {
     local found_paths=()
     while IFS= read -r -d '' path; do
@@ -129,9 +138,129 @@ check_existing_installation() {
     fi
 }
 
-check_version() {
-    check_existing_installation
+abort_unverified() {
+    echo -e "${RED}✗ Refusing to install an unverified binary.${NC}"
+    if [[ -x "$INSTALL_DIR/strix" || -x "$INSTALL_DIR/strix.exe" ]]; then
+        echo -e "${MUTED}Existing Strix installation left unchanged.${NC}"
+    fi
+    echo -e "${RED}Re-run with: curl -sSL https://strix.ai/install | STRIX_INSTALL_SKIP_VERIFY=1 bash${NC}"
+    echo -e "${MUTED}(at your own risk)${NC}"
+    exit 1
+}
 
+# Fail-closed checksum check against the published SHA256SUMS manifest.
+# Same-origin only (detects corruption / single-asset swap). Exact field
+# match — do not grep the filename as a regex ('.' would be wild).
+verify_checksum() {
+    local file=$1
+
+    if [ -n "${STRIX_INSTALL_SKIP_VERIFY:-}" ]; then
+        echo -e "${YELLOW}⚠ STRIX_INSTALL_SKIP_VERIFY set — skipping checksum verification (at your own risk).${NC}"
+        return 0
+    fi
+
+    local sha_cmd=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha_cmd="sha256sum"
+    elif command -v shasum >/dev/null 2>&1; then
+        sha_cmd="shasum -a 256"
+    else
+        echo -e "${RED}✗ Neither 'sha256sum' nor 'shasum' is available; cannot verify integrity.${NC}"
+        abort_unverified
+    fi
+
+    if [ ! -s "$sums_name" ]; then
+        echo -e "${RED}✗ Missing checksum manifest ${sums_name}.${NC}"
+        abort_unverified
+    fi
+
+    echo -e "${MUTED}Verifying checksum...${NC}"
+
+    local expected
+    expected=$(awk -v file="$file" '
+        $2 == file || $2 == ("*" file) { print $1; exit }
+    ' "$sums_name")
+    if [ -z "$expected" ]; then
+        echo -e "${RED}✗ No SHA256SUMS entry for ${file}.${NC}"
+        abort_unverified
+    fi
+
+    local actual
+    actual=$($sha_cmd "$file" | awk '{print $1}')
+    if [ "$actual" != "$expected" ]; then
+        echo -e "${RED}✗ Checksum mismatch for ${file}.${NC}"
+        echo -e "${MUTED}Expected: ${NC}$expected"
+        echo -e "${MUTED}Actual:   ${NC}$actual"
+        abort_unverified
+    fi
+
+    echo -e "${GREEN}✓ Checksum verified${NC}"
+}
+
+gh_can_verify_attestation() {
+    command -v gh >/dev/null 2>&1 && gh attestation verify --help >/dev/null 2>&1
+}
+
+cosign_can_verify_attestation() {
+    command -v cosign >/dev/null 2>&1 && cosign verify-blob-attestation --help >/dev/null 2>&1
+}
+
+# Fail-closed provenance check. The bundle is signed Sigstore SLSA provenance
+# for this workflow; checksum verification (same-origin) is a separate step.
+# Prefer `gh attestation verify`; otherwise a local `cosign`. We do not
+# bootstrap cosign — current releases are ~140MB, which is too heavy for
+# curl|bash. Missing verifier or a failed check aborts before extract.
+verify_provenance() {
+    local file=$1
+    local bundle=$2
+
+    if [ -n "${STRIX_INSTALL_SKIP_VERIFY:-}" ]; then
+        echo -e "${YELLOW}⚠ STRIX_INSTALL_SKIP_VERIFY set — skipping provenance verification (at your own risk).${NC}"
+        return 0
+    fi
+
+    if [ ! -s "$bundle" ]; then
+        echo -e "${RED}✗ Missing provenance bundle ${bundle}.${NC}"
+        abort_unverified
+    fi
+
+    echo -e "${MUTED}Verifying Sigstore provenance...${NC}"
+
+    if gh_can_verify_attestation; then
+        if gh attestation verify "$file" \
+            --repo "$REPO" \
+            --bundle "$bundle" \
+            --signer-workflow "$SIGNER_WORKFLOW" \
+            --predicate-type "https://slsa.dev/provenance/v1" \
+            --deny-self-hosted-runners; then
+            echo -e "${GREEN}✓ Provenance verified${NC} ${MUTED}(gh)${NC}"
+            return 0
+        fi
+        echo -e "${RED}✗ gh attestation verify failed.${NC}"
+        abort_unverified
+    fi
+
+    if cosign_can_verify_attestation; then
+        if cosign verify-blob-attestation \
+            --bundle "$bundle" \
+            --new-bundle-format \
+            --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+            --certificate-identity-regexp "$CERT_IDENTITY_REGEXP" \
+            --type slsaprovenance1 \
+            "$file"; then
+            echo -e "${GREEN}✓ Provenance verified${NC} ${MUTED}(cosign)${NC}"
+            return 0
+        fi
+        echo -e "${RED}✗ cosign verify-blob-attestation failed.${NC}"
+        abort_unverified
+    fi
+
+    echo -e "${RED}✗ Neither a usable 'gh' nor 'cosign' was found; cannot verify provenance.${NC}"
+    echo -e "${MUTED}Install GitHub CLI (gh) or cosign, then re-run.${NC}"
+    abort_unverified
+}
+
+check_version() {
     if [[ -x "$INSTALL_DIR/strix" ]]; then
         installed_version=$("$INSTALL_DIR/strix" --version 2>/dev/null | awk '{print $2}' || echo "")
         if [[ "$installed_version" == "$specific_version" ]]; then
@@ -147,7 +276,20 @@ download_and_install() {
     print_message info "\n${CYAN}🦉 Installing Strix${NC} ${MUTED}version: ${NC}$specific_version"
     print_message info "${MUTED}Platform: ${NC}$target\n"
 
-    local tmp_dir=$(mktemp -d)
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+
+    # Never leave a half-written binary in INSTALL_DIR. Stage to *.new and only
+    # rename into place after a verified archive has been extracted. On any
+    # abort (including verification failure), remove the staging file and the
+    # download temp dir; the current install stays untouched.
+    cleanup_install_temps() {
+        cd / >/dev/null 2>&1 || true
+        rm -rf "$tmp_dir"
+        rm -f "$INSTALL_DIR/strix.new" "$INSTALL_DIR/strix.exe.new"
+    }
+    trap cleanup_install_temps EXIT
+
     cd "$tmp_dir"
 
     echo -e "${MUTED}Downloading...${NC}"
@@ -158,20 +300,41 @@ download_and_install() {
         exit 1
     fi
 
+    if [ -n "${STRIX_INSTALL_SKIP_VERIFY:-}" ]; then
+        echo -e "${YELLOW}⚠ STRIX_INSTALL_SKIP_VERIFY set — skipping checksum and provenance checks.${NC}"
+    else
+        echo -e "${MUTED}Downloading checksums...${NC}"
+        if ! curl -sfL -o "$sums_name" "$sums_url" || [ ! -s "$sums_name" ]; then
+            echo -e "${RED}✗ Failed to download checksum manifest.${NC}"
+            abort_unverified
+        fi
+        verify_checksum "$filename"
+
+        echo -e "${MUTED}Downloading provenance...${NC}"
+        if ! curl -sfL -o "$bundle_name" "$bundle_url" || [ ! -s "$bundle_name" ]; then
+            echo -e "${RED}✗ Failed to download provenance bundle.${NC}"
+            abort_unverified
+        fi
+        verify_provenance "$filename" "$bundle_name"
+    fi
+
     echo -e "${MUTED}Extracting...${NC}"
     if [ "$os" = "windows" ]; then
         unzip -q "$filename"
-        mv "strix-${specific_version}-${target}.exe" "$INSTALL_DIR/strix.exe"
+        mv "strix-${specific_version}-${target}.exe" "$INSTALL_DIR/strix.exe.new"
+        mv -f "$INSTALL_DIR/strix.exe.new" "$INSTALL_DIR/strix.exe"
     else
         tar -xzf "$filename"
-        mv "strix-${specific_version}-${target}" "$INSTALL_DIR/strix"
-        chmod 755 "$INSTALL_DIR/strix"
+        mv "strix-${specific_version}-${target}" "$INSTALL_DIR/strix.new"
+        chmod 755 "$INSTALL_DIR/strix.new"
+        mv -f "$INSTALL_DIR/strix.new" "$INSTALL_DIR/strix"
     fi
 
-    cd - > /dev/null
-    rm -rf "$tmp_dir"
+    trap - EXIT
+    cleanup_install_temps
 
     echo -e "${GREEN}✓ Strix installed to $INSTALL_DIR${NC}"
+    check_existing_installation
 }
 
 check_docker() {
