@@ -1123,17 +1123,12 @@ async def create_vulnerability_report(
             but unverified follow-on risks separate; do not use them to
             set CVSS metrics.
         target: Affected URL / domain / repository.
-        technical_analysis: The mechanism and root cause. For source-backed
-            findings, optionally end with a **Last modified by** line from a
-            best-effort ``git blame`` of the primary vulnerable line (otherwise
-            ``start_line``) in the existing checkout, run with ``exec_command``::
-
-                timeout 3s git -C REPO -c safe.directory=REPO blame --porcelain -L LINE,LINE -- FILE
-
-            Report the author name/email, commit SHA, UTC commit time (convert
-            ``committer-time`` with a tool, not mentally), and summary. Use only
-            observed output. Skip all-zero SHAs, unresolvable paths, or command
-            errors and file normally without it.
+        technical_analysis: The mechanism and root cause. For code findings,
+            if the checkout has git history, a quick ``git blame`` (quote the
+            paths) on the vulnerable line is worth weaving into the analysis:
+            who last touched it, when, and in which commit — as part of the
+            prose, not a separate section. Skip it if the line is uncommitted
+            or the command fails.
         poc_description: Step-by-step reproduction (steps only, no code).
         poc_script_code: Working PoC (Python preferred).
         remediation_steps: Specific, actionable fix (prose, no code).

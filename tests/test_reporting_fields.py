@@ -1089,6 +1089,15 @@ def test_tool_descriptions_include_formatting_guidance() -> None:
     assert "reachab" in dep_desc.lower()
 
 
+def test_git_blame_hint_lives_only_in_technical_analysis() -> None:
+    summary, _, args = create_vulnerability_report.description.partition("Args:")
+    assert "blame" not in summary
+    field = args.split("technical_analysis:", 1)[1].split("poc_description:", 1)[0]
+    assert "git blame" in field
+    assert "not a separate section" in field
+    assert "blame" not in update_vulnerability_report.description
+
+
 def test_vuln_tool_exposes_new_params() -> None:
     props = create_vulnerability_report.params_json_schema["properties"]
     for field in (
