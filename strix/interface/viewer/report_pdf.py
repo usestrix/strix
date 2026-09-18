@@ -5,7 +5,8 @@ severity grid, per-finding detail with colored severity badges) but is rendered
 entirely locally with reportlab, so it ships without a browser or heavy system
 deps and keeps the report on the user's machine.
 
-The PDF carries FULL finding detail, including proof-of-concept scripts, so it
+The PDF preserves the original scan findings and excludes subsequent local
+triage decisions. It carries FULL finding detail, including proof-of-concept scripts, so it
 is encrypted end to end with AES-256. The password is generated locally with a
 CSPRNG, shown only to the local browser, and never leaves the machine except in
 the user's own hands. Strix cannot read the delivered report.
@@ -419,11 +420,17 @@ def _cover(
         Spacer(1, 150),
         Paragraph("PENETRATION TEST REPORT", styles["badge_label"]),
         Spacer(1, 20),
-        Paragraph("Security Assessment", styles["cover_title"]),
+        Paragraph("Original scan report", styles["cover_title"]),
         Paragraph(_esc(target), styles["cover_org"]),
+        Spacer(1, 14),
+        Paragraph(
+            "Includes all detected findings. Subsequent local triage decisions, "
+            "including false-positive closures and notes, are excluded.",
+            styles["body"],
+        ),
         Spacer(1, 28),
         meta_table,
-        Spacer(1, 90),
+        Spacer(1, 50),
         confidential,
         PageBreak(),
     ]
@@ -610,7 +617,7 @@ def _overview_flowables(
         Spacer(1, 16),
         _severity_grid(styles, counts),
         Spacer(1, 10),
-        Paragraph(f"<b>{total}</b> total findings across this assessment.", styles["body"]),
+        Paragraph(f"<b>{total}</b> detected findings across this assessment.", styles["body"]),
     ]
     scan_results = record.get("scan_results")
     if not isinstance(scan_results, dict):
@@ -634,7 +641,7 @@ def _overview_flowables(
 
 
 def generate_report_pdf(run_dir: Path) -> bytes:
-    """Render a branded, full-detail PDF report for the run at ``run_dir``."""
+    """Render the original scan report, without applying the local triage overlay."""
     record = read_run_summary(run_dir)
     vulns = [v for v in read_vulnerabilities(run_dir) if isinstance(v, dict)]
     counts = severity_counts(vulns)
@@ -645,7 +652,7 @@ def generate_report_pdf(run_dir: Path) -> bytes:
     doc = SimpleDocTemplate(
         buffer,
         pagesize=A4,
-        title="Strix Security Report",
+        title="Strix Original Scan Report",
         author="Strix",
         leftMargin=20 * mm,
         rightMargin=20 * mm,
@@ -658,7 +665,7 @@ def generate_report_pdf(run_dir: Path) -> bytes:
     story.extend(_overview_flowables(styles, record, len(vulns), counts))
 
     story.append(PageBreak())
-    story.append(_section(styles, "Findings"))
+    story.append(_section(styles, "Detected findings"))
     story.append(Spacer(1, 16))
     if vulns:
         for index, vuln in enumerate(vulns, start=1):
@@ -693,7 +700,7 @@ def build_encrypted_report(run_dir: Path) -> tuple[bytes, str, str]:
     pdf_bytes = generate_report_pdf(run_dir)
     password = generate_password()
     encrypted = encrypt_pdf(pdf_bytes, password)
-    filename = f"strix-report-{run_name}.pdf"
+    filename = f"strix-original-scan-report-{run_name}.pdf"
     return encrypted, password, filename
 
 

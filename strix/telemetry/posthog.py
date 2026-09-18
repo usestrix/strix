@@ -91,6 +91,11 @@ def finding(severity: str, cwe: str | None = None, is_cve: bool = False) -> None
     )
 
 
+def finding_triage_changed(properties: dict[str, Any]) -> None:
+    """Send the allowlisted metadata built by the local review metrics module."""
+    _send("finding_triage_changed", properties)
+
+
 def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
     if report_state.posthog_scan_ended_sent:
         return

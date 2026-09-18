@@ -20,8 +20,8 @@ class CustomBuildHook(BuildHookInterface):  # type: ignore[type-arg]
     """
 
     def initialize(self, version: str, build_data: dict[str, Any]) -> None:
-        # Editable installs run from the checkout, where the TUI is started
-        # with ``go run``; there is nothing to bundle.
+        # Editable installs compile the checkout's TUI at startup;
+        # there is nothing to bundle.
         if version == "editable":
             return
 

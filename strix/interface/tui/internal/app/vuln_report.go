@@ -65,6 +65,9 @@ func vulnerabilityMarkdownReport(v map[string]any) string {
 		}
 	}
 	field("ID", render.StringValue(v["id"]))
+	field("Status", findingStatusLabel(v))
+	field("Reviewed", render.StringValue(v["status_changed_at"]))
+	field("Review reason", triageReasonLabel(render.StringValue(v["reason_code"])))
 	field("Severity", strings.ToUpper(render.StringValue(v["severity"])))
 	field("Found", render.StringValue(v["timestamp"]))
 	field("Agent", render.StringValue(v["agent_name"]))

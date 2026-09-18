@@ -34,6 +34,20 @@ if TYPE_CHECKING:
 
 
 _STOPPABLE_AGENT_STATUSES = frozenset({"running", "waiting", "budget_paused"})
+_TRIAGE_FIELDS = (
+    "status",
+    "triage_status",
+    "resolution_reason",
+    "reason_code",
+    "status_note",
+    "status_changed_at",
+    "status_changed_by",
+    "triage_revision",
+    "finding_digest",
+    "review_stale",
+    "can_triage",
+    "triage_error",
+)
 
 ChangeCallback = Callable[[], None]
 StartCallback = Callable[[], Awaitable[None]]
@@ -264,9 +278,29 @@ class TuiController:
             reports = (
                 self.report_state.vulnerability_reports if self.report_state is not None else []
             )[-MAX_TERMINAL_VULNERABILITIES:]
+            if self.report_state is not None and hasattr(self.report_state, "get_run_dir"):
+                from strix.report.triage import TriageError, read_triaged_vulnerabilities
+
+                try:
+                    reports = read_triaged_vulnerabilities(self.report_state.get_run_dir(), reports)
+                except TriageError as exc:
+                    # A broken sidecar must not hide evidence or stop the scan UI.
+                    reports = [
+                        {**report, "can_triage": False, "triage_error": str(exc)}
+                        for report in reports
+                    ]
             result: list[dict[str, Any]] = []
             for index, report in enumerate(reports):
-                projected = collection_item_projection(report)
+                projected = collection_item_projection(
+                    {key: value for key, value in report.items() if key != "triage_history"}
+                )
+                # The optional evidence projection may truncate a large finding;
+                # its small revision and write-capability fields must survive.
+                projected.update(
+                    terminal_projection(
+                        {key: report[key] for key in _TRIAGE_FIELDS if key in report}
+                    )
+                )
                 report_id = projected.get("id")
                 if not isinstance(report_id, str) or not report_id:
                     projected["id"] = f"vulnerability-{index}"
@@ -303,6 +337,7 @@ class TuiController:
             "agent.send_message": self._send_message,
             "agent.stop": self._stop_agent,
             "viewer.open": self._open_viewer,
+            "vulnerability.triage": self._triage_vulnerability,
             "app.quit": self._quit,
         }
         handler = handlers.get(command)
@@ -311,6 +346,47 @@ class TuiController:
         result = await handler(payload)
         self.notify_changed()
         return result
+
+    def triage_stamp(self) -> tuple[int, int] | None:
+        """Observe external decisions even while the scan has nothing to broadcast."""
+        if self.report_state is None or not hasattr(self.report_state, "get_run_dir"):
+            return None
+        from strix.report.triage import triage_stamp
+
+        return triage_stamp(self.report_state.get_run_dir())
+
+    async def _triage_vulnerability(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from strix.report.triage import TriageError, triage_finding
+
+        if self.report_state is None:
+            raise TriageError("unavailable", "Scan output is not ready")
+        finding_id = self._required_string(payload, "finding_id")
+        status = self._required_string(payload, "status")
+        if payload.get("resolution_reason") not in (None, "false_positive"):
+            raise TriageError("invalid_request", "Unsupported resolution reason")
+        revision = payload.get("expected_revision")
+        digest = payload.get("reviewed_digest")
+        if (
+            not isinstance(revision, int)
+            or isinstance(revision, bool)
+            or not isinstance(digest, str)
+        ):
+            raise TriageError("invalid_request", "Review revision and finding digest are required")
+        result = await asyncio.to_thread(
+            triage_finding,
+            self.report_state.get_run_dir(),
+            finding_id,
+            status=status,
+            expected_revision=revision,
+            reviewed_digest=digest,
+            reason_code=payload.get("reason_code", "unspecified"),
+            note=payload.get("note", ""),
+            surface="tui",
+        )
+        # The evidence travels in collection frames; keep the acknowledgement
+        # below the command-result size limit even for very large findings.
+        finding = {key: result["finding"].get(key) for key in ("id", *_TRIAGE_FIELDS)}
+        return {"changed": result["changed"], "finding": terminal_projection(finding)}
 
     async def _add_target(self, payload: dict[str, Any]) -> dict[str, Any]:
         self._require_setup_mutable()

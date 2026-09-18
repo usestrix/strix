@@ -28,7 +28,7 @@ func (m Model) vulnerabilityRows(width int) []vulnerabilityRow {
 	// Wrapped lines sit under the title rather than under the severity dot.
 	body := max(1, width-2)
 	rows := make([]vulnerabilityRow, 0, len(m.snapshot.Vulnerabilities))
-	for i := range m.snapshot.Vulnerabilities {
+	for _, i := range m.visibleFindingIndices() {
 		for line, text := range strings.Split(wrapBlock(m.vulnerabilityTitle(i), body), "\n") {
 			rows = append(rows, vulnerabilityRow{index: i, text: text, first: line == 0})
 		}
@@ -38,6 +38,9 @@ func (m Model) vulnerabilityRows(width int) []vulnerabilityRow {
 
 func (m Model) vulnerabilitiesView(width, height int) string {
 	rows := m.vulnerabilityRows(width)
+	if len(rows) == 0 {
+		return wrapBlock("No "+strings.ToLower(m.findingFilterLabel())+" findings.\nv: Open / Closed / All", width)
+	}
 	start := min(max(0, m.vulnOffset), max(0, len(rows)-1))
 	end := min(len(rows), start+height)
 	lines := make([]string, 0, max(0, end-start))
@@ -77,6 +80,12 @@ func (m Model) vulnerabilityTitle(index int) string {
 	title := render.StringValue(m.snapshot.Vulnerabilities[index]["title"])
 	if title == "" {
 		title = "Unknown Vulnerability"
+	}
+	if boolField(m.snapshot.Vulnerabilities[index], "review_stale") {
+		return "[Needs review] " + title
+	}
+	if findingStatus(m.snapshot.Vulnerabilities[index]) == "closed" {
+		return "[False positive] " + title
 	}
 	return title
 }
@@ -157,7 +166,18 @@ func (m Model) vulnerabilityPageItems() int {
 }
 
 func (m *Model) moveVulnerabilitySelection(delta int) {
-	m.selectedVuln = max(0, min(len(m.snapshot.Vulnerabilities)-1, m.selectedVuln+delta))
+	indices := m.visibleFindingIndices()
+	if len(indices) == 0 {
+		return
+	}
+	position := 0
+	for i, index := range indices {
+		if index == m.selectedVuln {
+			position = i
+			break
+		}
+	}
+	m.selectedVuln = indices[max(0, min(len(indices)-1, position+delta))]
 }
 
 // keepVulnerabilitySelectionInWindow pulls the selection to the nearest finding
@@ -192,7 +212,7 @@ func (m Model) modalView() string {
 	switch m.modal {
 	case modalHelp:
 		title := lipgloss.NewStyle().Bold(true).Foreground(green).Width(34).Align(lipgloss.Center).Render("Strix Help")
-		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nDrag      Select & copy text\nClick     Expand/collapse tool")
+		body := lipgloss.NewStyle().Foreground(textColor).Render("F1        Help\nF2        Findings\nCtrl+O    Open viewer\nCtrl+Q/C  Quit\nESC       Stop Agent\nEnter     Send / expand node\nCtrl+J    Newline in message\nTab       Switch panels\n↑/↓       Navigate tree\nf / r / u Review / reopen / undo (finding)\nv         Open / Closed / All (findings)\nDrag      Select & copy text\nClick     Expand/collapse tool")
 		content := title + "\n\n" + body
 		return lipgloss.NewStyle().Width(38).Border(lipgloss.RoundedBorder()).BorderForeground(green).Background(black).Padding(1, 2).Render(content)
 	case modalQuit:
@@ -212,6 +232,8 @@ func (m Model) modalView() string {
 			return ""
 		}
 		return m.vulnerabilityDetail()
+	case modalTriage:
+		return m.triageFormView()
 	}
 	return ""
 }
@@ -328,6 +350,14 @@ func vulnerabilityBody(v map[string]any) string {
 		}
 	}
 	field("Agent", render.StringValue(v["agent_name"]))
+	field("Status", findingStatusLabel(v))
+	field("Reviewed", render.StringValue(v["status_changed_at"]))
+	field("Reason", triageReasonLabel(render.StringValue(v["reason_code"])))
+	field("Note", render.StringValue(v["status_note"]))
+	field("Review unavailable", render.StringValue(v["triage_error"]))
+	if allowed, present := v["can_triage"]; present && allowed == false && v["triage_error"] == nil {
+		field("Review", "Read-only finding; decisions cannot be changed.")
+	}
 	field("Title", render.StringValue(v["title"]))
 	if sev := render.StringValue(v["severity"]); sev != "" {
 		b.WriteString("\n\n" + fieldStyle.Render("Severity: ") +
@@ -389,8 +419,9 @@ func (m *Model) resizeVulnerabilityViewport() {
 	width, height := m.vulnerabilityDialogSize()
 	innerWidth := max(1, width-8)               // border plus three cells of horizontal padding
 	m.vulnViewport.Width = max(1, innerWidth-2) // right padding and one-cell scrollbar
-	m.vulnViewport.Height = max(1, height-9)    // padding, one-row grid gutter, and two-row footer
-	m.vulnViewport.SetContent(wrapBlock(vulnerabilityBody(m.snapshot.Vulnerabilities[m.selectedVuln]), m.vulnViewport.Width))
+	m.vulnViewport.Height = max(1, height-11)   // action row, navigation and mutation outcome
+	body := vulnerabilityBody(m.snapshot.Vulnerabilities[m.selectedVuln])
+	m.vulnViewport.SetContent(wrapBlock(body, m.vulnViewport.Width))
 	m.vulnViewport.SetYOffset(m.vulnViewport.YOffset)
 }
 
@@ -430,13 +461,21 @@ func (m Model) vulnerabilityDetail() string {
 	}
 	// Stepping sits on the left behind the position, acting on the right.
 	right := strings.Join(acting, "  ")
-	left := strings.Join(stepping, "  ")
+	left := m.findingFilterLabel() + " (v)  " + strings.Join(stepping, "  ")
 	if total := len(m.snapshot.Vulnerabilities); total > 1 {
 		left = render.Dim().Render(fmt.Sprintf("%d/%d", m.selectedVuln+1, total)) + "  " + left
 	}
-	room := max(0, inner-lipgloss.Width(right))
-	buttonRow := rule + "\n" +
-		lipgloss.NewStyle().Width(room).Render(truncate(left, room)) + right
+	buttonRow := rule + "\n" + truncate(left, inner) + "\n" + wrapBlock(right, inner)
+	outcome := ""
+	if m.triageErrorID == m.selectedFindingID() {
+		outcome = m.triageError
+	}
+	if m.triagePending != nil && m.triagePending.findingID == m.selectedFindingID() {
+		outcome = "Saving…"
+	}
+	if outcome != "" {
+		buttonRow += "\n" + truncate(outcome, inner)
+	}
 	content := m.vulnerabilityScrollView() + "\n" + buttonRow
 	return lipgloss.NewStyle().Width(width-2).Height(height-2).Border(lipgloss.NormalBorder()).BorderForeground(lipgloss.Color("#262626")).Background(lipgloss.Color("#0a0a0a")).Padding(2, 3).Render(content)
 }
@@ -459,10 +498,13 @@ func (m *Model) showVulnerability(index int) {
 // The report's buttons. Prev and Next carry their arrows so a click test cannot
 // be fooled by the same word appearing in the body of a finding.
 const (
-	reportPrev = "‹ Prev"
-	reportNext = "Next ›"
-	reportCopy = "Copy"
-	reportDone = "Done"
+	reportPrev   = "‹ Prev"
+	reportNext   = "Next ›"
+	reportCopy   = "Copy"
+	reportDone   = "Done"
+	reportTriage = "False positive (f)"
+	reportReopen = "Reopen (r)"
+	reportUndo   = "Undo (u)"
 )
 
 // reportButtons is the row as it stands, left to right. Stepping is offered only
@@ -475,6 +517,16 @@ func (m Model) reportButtons() []string {
 	}
 	if next {
 		buttons = append(buttons, reportNext)
+	}
+	if boolField(m.selectedFinding(), "can_triage") {
+		if findingStatus(m.selectedFinding()) == "closed" {
+			buttons = append(buttons, reportReopen)
+		} else {
+			buttons = append(buttons, reportTriage)
+		}
+	}
+	if m.canUndoTriage() {
+		buttons = append(buttons, reportUndo)
 	}
 	return append(buttons, reportCopy, reportDone)
 }
@@ -507,7 +559,11 @@ func (m *Model) stepReportFocus(delta int) {
 // ends are not wrapped: a report is one of an ordered list, and rolling from the
 // last to the first hides that you reached the end.
 func (m Model) vulnerabilityNeighbors() (previous, next bool) {
-	return m.selectedVuln > 0, m.selectedVuln < len(m.snapshot.Vulnerabilities)-1
+	for _, index := range m.visibleFindingIndices() {
+		previous = previous || index < m.selectedVuln
+		next = next || index > m.selectedVuln
+	}
+	return
 }
 
 // reportButton renders one button of the report row. Copy reports the outcome of

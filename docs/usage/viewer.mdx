@@ -11,7 +11,7 @@ strix view my-run-name                        # a specific run under ./strix_run
 strix view --host 0.0.0.0 --port 8080 --no-open
 ```
 
-The UI ships prebuilt with Strix, so there is no extra install and no JavaScript build step. The dashboard reads the run files straight off disk. Nothing leaves your machine, and you do not need a cloud account.
+The UI ships prebuilt with Strix, so there is no extra install and no JavaScript build step. The dashboard reads the run files straight off disk. You do not need a cloud account to review or triage the launched run.
 
 ## Options
 
@@ -33,17 +33,29 @@ The UI ships prebuilt with Strix, so there is no extra install and no JavaScript
 
 ## What Is In The Dashboard
 
-- **Overview** — run status, target, and a severity breakdown of everything found so far.
-- **Vulnerabilities** — each validated finding with its severity, details, and reproduction steps.
+- **Overview** — run status, target, a severity breakdown of open findings, and counts of false positives and total findings detected.
+- **Vulnerabilities** — each validated finding with its severity, details, and reproduction steps. Mark incorrect findings as false positives, reopen them, and filter by **Open / Closed / All**.
 - **Agent graph** — a live map of the multi-agent team, and what each agent is doing.
 - **Steering** — send instructions to a live scan to redirect the agents during the run. Steering works only in the dashboard the running scan opens. A standalone `strix view` has no live scan to steer.
 - **History** — browse past runs on this machine and move between them. Verify your email address in the dashboard to unlock the other runs.
-- **Reports** — generate a shareable report and send it by email. Verify your email address first.
+- **Reports** — generate an **Original scan report** and send it by email. Verify your email address first. This PDF includes all detected findings and excludes subsequent local triage decisions and notes.
+
+## Marking False Positives
+
+At the bottom of a finding, choose **Mark as false positive** when it is incorrect or does not apply to your target. Choose an optional reason, add an optional note of up to 2,000 characters for future review, and select **Close issue**. The finding shows **Closed · False positive**. Use **Undo** or **Reopen** to reverse the decision.
+
+The **Open / Closed / All** filters keep closed findings available with their original severity and evidence. Counts distinguish open findings from false positives and the total detected. Closing an issue does not mean it was fixed.
+
+In the terminal UI, press **F2** to open findings, including on narrow terminals where the sidebar is hidden. In a finding, click **False positive (f)** or press **f** to open the native false-positive form; **r** reopens a closed issue, and **u** undoes a recent change. Use **Tab / Shift+Tab** to move through the optional reason, note and buttons, **Enter** to activate a button, and **Esc** to return. Press **v** in the finding detail or focused findings panel to cycle **Open / Closed / All**. If the selected filter is empty, **F2** opens **All** so closed issues remain accessible. No browser is required.
+
+Decisions apply to that finding in that run. They are saved locally in `triage.json`, survive restarts and scan resume, and are shared by the viewer and terminal UI. Closing and reopening work offline. They do not require an email address for the launched run. A separate scan starts with its own review state; material changes to a closed finding show **Needs review** and return it to the Open filter while preserving the previous decision.
+
+The original scan report, emailed PDF, raw finding files, and SARIF retain the scanner's findings. The PDF cover and filename identify it as the **Original scan report**; its counts describe detected findings, including those you later closed. Local decisions do not change the original scan's exit code or coverage assessment.
 
 ## Sharing The Link
 
 <Warning>
-  The token in the printed URL grants access to the run data, and to the steering of a live scan. Share it only with trusted users.
+  The token in the printed URL grants access to the run data, changes to local finding triage, and steering of a live scan. Share it only with trusted users.
 </Warning>
 
 To reach the viewer from another machine, start it with `--host 0.0.0.0` and replace `0.0.0.0` in the printed URL with a reachable IP address or hostname. Restrict the port with your firewall. A request without the token-derived session cannot read run data.

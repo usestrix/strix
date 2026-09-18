@@ -4,8 +4,8 @@ Design notes:
 - Uses only the standard library (no new runtime dependency). The workload is
   serving static files plus a handful of JSON reads off disk, so an async stack
   buys nothing here.
-- The browser polls the JSON endpoints (~1s) rather than using SSE: a finished
-  run stops polling, and short-lived polls survive sleep/network blips without
+- The browser polls the JSON endpoints rather than using SSE: finished runs
+  poll a small revision token, and short-lived polls survive sleep/network blips without
   server-side connection state, which suits a stdlib ThreadingHTTPServer.
 - All reads happen per-request straight from disk, so the same server serves a
   live in-progress run and a finished one identically; the SPA distinguishes
@@ -23,7 +23,7 @@ import webbrowser
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 from urllib.parse import parse_qs, unquote, urlencode, urlsplit
 
 from strix.core.paths import run_record_path
@@ -33,8 +33,13 @@ from strix.interface.viewer.transcript import (
     primary_target,
     read_report_markdown,
     read_run_summary,
-    read_vulnerabilities,
     severity_counts,
+)
+from strix.report.triage import (
+    TriageError,
+    read_triaged_vulnerabilities,
+    triage_finding,
+    triage_stamp,
 )
 
 
@@ -66,7 +71,7 @@ def _iter_run_dirs(base_dir: Path) -> list[Path]:
 def run_list_entry(run_dir: Path) -> dict[str, Any]:
     """Compact summary of a single run for the history list."""
     record = read_run_summary(run_dir)
-    return {
+    entry = {
         "name": record.get("run_name") or run_dir.name,
         "target": primary_target(record),
         "scan_mode": record.get("scan_mode"),
@@ -74,7 +79,20 @@ def run_list_entry(run_dir: Path) -> dict[str, Any]:
         "start_time": record.get("start_time"),
         "end_time": record.get("end_time"),
         "finished": bool(record.get("finished")),
-        "severity_counts": severity_counts(read_vulnerabilities(run_dir)),
+    }
+    try:
+        findings = read_triaged_vulnerabilities(run_dir)
+    except TriageError:
+        # Keep the run selectable without claiming its review counts are known.
+        # Its findings endpoint still reports the error and preserves the data.
+        return {**entry, "severity_counts": None}
+    active = [finding for finding in findings if finding.get("status") != "closed"]
+    return {
+        **entry,
+        "severity_counts": severity_counts(active),
+        "open_count": len(active),
+        "closed_count": len(findings) - len(active),
+        "detected_count": len(findings),
     }
 
 
@@ -163,6 +181,8 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                 # The browser closed the connection mid-response (e.g. it
                 # navigated away between polls). Not an error.
                 logger.debug("viewer client disconnected during %s", path)
+            except TriageError as exc:
+                self._send_triage_error(exc)
             except Exception:
                 # A bad request must never kill the worker thread.
                 logger.exception("viewer request failed: %s", path)
@@ -185,10 +205,14 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
                     self._handle_feedback()
                 elif path == "/api/agents/steer":
                     self._handle_steer()
+                elif path.startswith("/api/vulnerabilities/") and path.endswith("/triage"):
+                    self._handle_triage(path)
                 else:
                     self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
             except BrokenPipeError:
                 logger.debug("viewer client disconnected during POST %s", path)
+            except TriageError as exc:
+                self._send_triage_error(exc)
             except Exception:
                 # A bad request must never kill the worker thread.
                 logger.exception("viewer request failed: POST %s", path)
@@ -278,13 +302,123 @@ def _make_handler(state: _ViewerState) -> type[BaseHTTPRequestHandler]:
             if path == "/api/run":
                 self._send_json(HTTPStatus.OK, read_run_summary(run_dir))
             elif path == "/api/vulnerabilities":
-                self._send_json(HTTPStatus.OK, read_vulnerabilities(run_dir))
+                self._send_json(HTTPStatus.OK, read_triaged_vulnerabilities(run_dir))
+            elif path == "/api/triage/revision":
+                self._send_json(HTTPStatus.OK, {"revision": triage_stamp(run_dir)})
             elif path == "/api/report":
                 self._send_json(HTTPStatus.OK, {"markdown": read_report_markdown(run_dir)})
             elif path == "/api/transcript":
                 self._send_json(HTTPStatus.OK, build_run_state(run_dir))
             else:
                 self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown endpoint"})
+
+        def _handle_triage(self, path: str) -> None:
+            if not self._has_session():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden"})
+                return
+            # The capability cookie is host-scoped. An unrelated local server
+            # must not be able to exercise it using cross-origin browser writes.
+            origin = self.headers.get("Origin")
+            expected_origin = f"http://{self.headers.get('Host', '')}"
+            if origin != expected_origin or self.headers.get("Sec-Fetch-Site") not in (
+                None,
+                "same-origin",
+            ):
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "forbidden_origin"})
+                return
+            if self.headers.get_content_type() != "application/json":
+                self._send_json(HTTPStatus.UNSUPPORTED_MEDIA_TYPE, {"error": "invalid_request"})
+                return
+            run_dir = self._triage_run()
+            if run_dir is None:
+                return
+            finding_id = unquote(path.removeprefix("/api/vulnerabilities/").removesuffix("/triage"))
+            if not finding_id or "/" in finding_id or "\\" in finding_id:
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_request"})
+                return
+            body = self._read_triage_body()
+            if body is None:
+                return
+            result = triage_finding(
+                run_dir,
+                finding_id,
+                status=body["status"],
+                expected_revision=body["expected_revision"],
+                reviewed_digest=body["reviewed_digest"],
+                reason_code=body.get("reason_code", "unspecified"),
+                note=body.get("note", ""),
+                surface="viewer",
+            )
+            self._send_json(HTTPStatus.OK, result)
+
+        def _triage_run(self) -> Path | None:
+            query = parse_qs(urlsplit(self.path).query)
+            run_values = query.get("run", [])
+            run_param = run_values[0] if run_values else None
+            if len(run_values) > 1 or (
+                run_param is not None
+                and (run_param in {".", ".."} or "/" in run_param or "\\" in run_param)
+            ):
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown_run"})
+                return None
+            requested = state.base_dir / run_param if run_param else state.run_dir
+            if requested.is_symlink():
+                self._send_json(HTTPStatus.FORBIDDEN, {"error": "read_only"})
+                return None
+            run_dir = resolve_run_dir(state.base_dir, run_param, state.run_dir)
+            if run_dir is None:
+                self._send_json(HTTPStatus.NOT_FOUND, {"error": "unknown_run"})
+                return None
+            if run_dir.resolve() != state.run_dir.resolve() and not auth.is_verified():
+                self._send_json(HTTPStatus.UNAUTHORIZED, {"error": "unverified"})
+                return None
+            return run_dir
+
+        def _read_triage_body(self) -> dict[str, Any] | None:
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+            except ValueError:
+                length = -1
+            if not 0 < length <= 32768 or self.headers.get("Transfer-Encoding"):
+                self.close_connection = True
+                status = (
+                    HTTPStatus.REQUEST_ENTITY_TOO_LARGE
+                    if length > 32768
+                    else HTTPStatus.BAD_REQUEST
+                )
+                self._send_json(status, {"error": "invalid_request"})
+                return None
+            try:
+                body = json.loads(self.rfile.read(length))
+            except (ValueError, UnicodeDecodeError):
+                body = None
+            if not isinstance(body, dict):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_request"})
+                return None
+            body = cast("dict[str, Any]", body)
+            allowed = {"status", "expected_revision", "reviewed_digest", "reason_code", "note"}
+            if (
+                set(body) - allowed
+                or not {"status", "expected_revision", "reviewed_digest"}.issubset(body)
+                or not isinstance(body.get("status"), str)
+                or type(body.get("expected_revision")) is not int
+                or not isinstance(body.get("reviewed_digest"), str)
+                or not isinstance(body.get("reason_code", "unspecified"), str)
+                or not isinstance(body.get("note", ""), str)
+            ):
+                self._send_json(HTTPStatus.BAD_REQUEST, {"error": "invalid_request"})
+                return None
+            return body
+
+        def _send_triage_error(self, exc: TriageError) -> None:
+            status = {
+                "conflict": HTTPStatus.CONFLICT,
+                "invalid_request": HTTPStatus.BAD_REQUEST,
+                "unknown_finding": HTTPStatus.NOT_FOUND,
+                "invalid_triage": HTTPStatus.CONFLICT,
+                "read_only": HTTPStatus.FORBIDDEN,
+            }.get(exc.code, HTTPStatus.SERVICE_UNAVAILABLE)
+            self._send_json(status, {"error": exc.code, "message": str(exc)})
 
         def _handle_auth_status(self) -> None:
             # The cached verified email is only disclosed to a caller holding this

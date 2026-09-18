@@ -10,8 +10,25 @@ import (
 
 func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch key.String() {
+	case "v":
+		if m.focus == focusVulnerabilities {
+			m.findingFilter = (m.findingFilter + 1) % 3
+			m.selectVisibleFinding()
+			m.vulnOffset = 0
+			m.resizeViewport()
+			return m, nil
+		}
 	case "f1":
 		m.openModal(modalHelp)
+		return m, nil
+	case "f2":
+		if len(m.snapshot.Vulnerabilities) > 0 {
+			if len(m.visibleFindingIndices()) == 0 {
+				m.findingFilter = 2
+			}
+			m.selectVisibleFinding()
+			m.openModal(modalVulnerability)
+		}
 		return m, nil
 	case "ctrl+c", "ctrl+q":
 		// Nothing to lose on the start screen; quit without confirmation.
@@ -70,6 +87,9 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter", " ":
 		if m.focus == focusVulnerabilities && len(m.snapshot.Vulnerabilities) > 0 {
 			if key.String() == "enter" {
+				if !m.findingVisible(m.selectedVuln) {
+					return m, nil
+				}
 				m.openModal(modalVulnerability)
 				return m, nil
 			}
@@ -128,12 +148,16 @@ func (m Model) updateMain(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "home":
 		if m.focus == focusVulnerabilities && len(m.snapshot.Vulnerabilities) > 0 {
 			m.selectedVuln = 0
+			m.selectVisibleFinding()
 			m.ensureVulnerabilityVisible()
 			return m, nil
 		}
 	case "end":
 		if m.focus == focusVulnerabilities && len(m.snapshot.Vulnerabilities) > 0 {
 			m.selectedVuln = len(m.snapshot.Vulnerabilities) - 1
+			if indices := m.visibleFindingIndices(); len(indices) > 0 {
+				m.selectedVuln = indices[len(indices)-1]
+			}
 			m.ensureVulnerabilityVisible()
 			return m, nil
 		}
@@ -466,9 +490,15 @@ func (m Model) updateSetupMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 func (m Model) pressReportButton(button string) (tea.Model, tea.Cmd) {
 	switch button {
 	case reportPrev:
-		m.showVulnerability(m.selectedVuln - 1)
+		m.stepVulnerability(-1)
 	case reportNext:
-		m.showVulnerability(m.selectedVuln + 1)
+		m.stepVulnerability(1)
+	case reportTriage:
+		return m, m.openTriageForm()
+	case reportReopen:
+		return m, m.submitTriage("open", "unspecified", "")
+	case reportUndo:
+		return m, m.undoTriage()
 	case reportCopy:
 		m.reportFocus = reportCopy
 		return m, m.startVulnerabilityCopy()
@@ -479,6 +509,9 @@ func (m Model) pressReportButton(button string) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) updateModalMouse(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.modal == modalTriage {
+		return m.updateTriageMouse(msg)
+	}
 	if m.modal == modalVulnerability {
 		view := m.modalView()
 		left, top, _, _ := m.centeredViewBounds(view)
@@ -610,6 +643,9 @@ func clampCycle(value, length int) int {
 }
 
 func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.modal == modalTriage {
+		return m.updateTriageForm(key)
+	}
 	if m.modal == modalHelp {
 		if key.String() != "" {
 			m.closeModal()
@@ -622,9 +658,23 @@ func (m Model) updateModal(key tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.closeModal()
 		// The arrows step between reports directly; tab walks the button row.
 		case "left":
-			m.showVulnerability(m.selectedVuln - 1)
+			m.stepVulnerability(-1)
 		case "right":
-			m.showVulnerability(m.selectedVuln + 1)
+			m.stepVulnerability(1)
+		case "f":
+			return m, m.openTriageForm()
+		case "v":
+			m.findingFilter = (m.findingFilter + 1) % 3
+			m.selectVisibleFinding()
+			m.vulnOffset = 0
+			m.resizeVulnerabilityViewport()
+			return m, nil
+		case "r":
+			if findingStatus(m.selectedFinding()) == "closed" {
+				return m, m.submitTriage("open", "unspecified", "")
+			}
+		case "u":
+			return m, m.undoTriage()
 		case "tab":
 			m.stepReportFocus(1)
 		case "shift+tab":
@@ -706,6 +756,7 @@ func (m *Model) openModal(mode modalMode) {
 
 func (m *Model) closeModal() {
 	m.modal = modalNone
+	m.selectVisibleFinding()
 	if m.focus == focusInput {
 		m.input.Focus()
 	}

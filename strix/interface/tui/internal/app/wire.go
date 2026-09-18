@@ -76,6 +76,9 @@ func (m *Model) handleEnvelope(envelope protocol.Envelope) tea.Cmd {
 		if result.Command != expectedCommand || !m.client.Resolve(envelope.RequestID, result.Command) {
 			return nil
 		}
+		if result.Command == "vulnerability.triage" {
+			return m.handleTriageResult(result)
+		}
 		if !result.OK {
 			if result.Command == "collection.resync" {
 				if collection := m.resyncRequests[envelope.RequestID]; collection != "" {
@@ -240,7 +243,10 @@ func (m *Model) handleCollectionBootstrap(payload json.RawMessage) tea.Cmd {
 	} else if chunk.Collection == "events" {
 		m.snapshot.Events = assembly.events
 	} else {
+		selectedID := m.selectedFindingID()
+		m.preserveTriageUpdates(assembly.findings)
 		m.snapshot.Vulnerabilities = assembly.findings
+		m.restoreFindingSelection(selectedID)
 	}
 	m.collectionRevisions[chunk.Collection] = chunk.Revision
 	delete(m.collectionAssemblies, chunk.Collection)
@@ -379,6 +385,7 @@ func (m *Model) applyCollectionOperations(name string, operations []protocol.Col
 		return true
 	}
 
+	selectedID := m.selectedFindingID()
 	values := append([]map[string]any(nil), m.snapshot.Vulnerabilities...)
 	positions := make(map[string]int, len(values))
 	for index, finding := range values {
@@ -417,13 +424,14 @@ func (m *Model) applyCollectionOperations(name string, operations []protocol.Col
 		}
 		seen[id] = true
 		if index, exists := positions[id]; exists {
-			values[index] = finding
+			values[index] = keepNewerTriage(values[index], finding)
 		} else {
 			positions[id] = len(values)
 			values = append(values, finding)
 		}
 	}
 	m.snapshot.Vulnerabilities = values
+	m.restoreFindingSelection(selectedID)
 	return true
 }
 
@@ -443,6 +451,9 @@ func (m *Model) refreshAfterCollection(name string) tea.Cmd {
 		return nil
 	}
 	m.selectedVuln = min(m.selectedVuln, max(0, len(m.snapshot.Vulnerabilities)-1))
+	if m.modal == modalNone {
+		m.selectVisibleFinding()
+	}
 	m.ensureVulnerabilityVisible()
 	m.resizeVulnerabilityViewport()
 	return nil

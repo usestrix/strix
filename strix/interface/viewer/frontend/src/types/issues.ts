@@ -1,19 +1,29 @@
 export type VulnerabilitySeverity = "critical" | "high" | "medium" | "low";
-export type VulnerabilityStatus = "open" | "in_progress" | "snoozed" | "fixed" | "ignored";
+export type VulnerabilityStatus = "open" | "closed" | "in_progress" | "snoozed" | "fixed" | "ignored";
+export type TriageReason = "unspecified" | "incorrect_assumption" | "existing_protection" | "not_affected" | "expected_behavior" | "other";
+export const TRIAGE_REASONS: Record<TriageReason, string> = {
+  unspecified: "Select a reason",
+  incorrect_assumption: "Incorrect assumption",
+  existing_protection: "Existing protection prevents the reported exploit",
+  not_affected: "Code or dependency is not affected",
+  expected_behavior: "Expected behavior, not a vulnerability",
+  other: "Other",
+};
 export type FixEffort = "trivial" | "low" | "medium" | "high";
 
 export const ACTIVE_STATUSES: VulnerabilityStatus[] = ["open", "in_progress", "snoozed"];
-export const RESOLVED_STATUSES: VulnerabilityStatus[] = ["fixed", "ignored"];
+export const RESOLVED_STATUSES: VulnerabilityStatus[] = ["closed", "fixed", "ignored"];
 
 // Statuses worth retesting in a "retest all" — everything except ignored
 // (fixed issues are still re-verified; ignored issues are intentionally skipped).
 export const RETESTABLE_STATUSES: VulnerabilityStatus[] = ["open", "in_progress", "snoozed", "fixed"];
 
-export const ALL_STATUSES: VulnerabilityStatus[] = ["open", "in_progress", "snoozed", "fixed", "ignored"];
+export const ALL_STATUSES: VulnerabilityStatus[] = ["open", "closed", "in_progress", "snoozed", "fixed", "ignored"];
 
 export interface StatusCounts {
   all: number;
   open: number;
+  closed: number;
   in_progress: number;
   snoozed: number;
   fixed: number;
@@ -28,6 +38,12 @@ export interface StatusMeta {
 }
 
 export const STATUS_META: Record<VulnerabilityStatus, StatusMeta> = {
+  closed: {
+    label: "Closed · False positive",
+    color: "bg-gray-500/10 text-gray-300 border-gray-500/20",
+    dotColor: "bg-gray-400",
+    description: "Marked as a false positive in this run",
+  },
   open: {
     label: "Open",
     color: "bg-red-500/10 text-red-400 border-red-500/20",
@@ -100,6 +116,13 @@ export interface Vulnerability {
   potential_risk_saving: number | null;
   risk_saving_description: string | null;
   status: VulnerabilityStatus;
+  triage_status?: "open" | "closed";
+  resolution_reason?: "false_positive" | null;
+  reason_code?: TriageReason;
+  triage_revision?: number;
+  finding_digest?: string;
+  review_stale?: boolean;
+  can_triage?: boolean;
   severity: VulnerabilitySeverity;
   impact: string | null;
   endpoint: string | null;
@@ -176,6 +199,7 @@ export const SEVERITY_COLORS: Record<VulnerabilitySeverity, string> = {
 
 export const STATUS_COLORS: Record<VulnerabilityStatus, string> = {
   open: STATUS_META.open.color,
+  closed: STATUS_META.closed.color,
   in_progress: STATUS_META.in_progress.color,
   snoozed: STATUS_META.snoozed.color,
   fixed: STATUS_META.fixed.color,

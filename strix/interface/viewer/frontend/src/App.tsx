@@ -26,10 +26,12 @@ import {
   fetchAll,
   fetchAuthStatus,
   fetchCapabilities,
-  fetchRunSummary,
   fetchRuns,
-  fetchTranscript,
   fetchVulnerabilities,
+  fetchTriageRevision,
+  updateFindingTriage,
+  TriageRequestError,
+  type TriageUpdate,
   forgetAuth,
   parseMcpConnectionStatus,
   type AuthStatus,
@@ -67,6 +69,13 @@ export default function App() {
   // Whether this viewer can steer a live scan (true only inside the in-TUI
   // launcher that shares the running scan's coordinator + event loop).
   const [canSteer, setCanSteer] = useState(false);
+  const [issueFilter, setIssueFilter] = useState<"open" | "closed" | "all">("open");
+  const activeRunRef = useRef(activeRun);
+  activeRunRef.current = activeRun;
+  const dataVersionRef = useRef(0);
+  const mutationsPendingRef = useRef(0);
+  const uncertainWritesRef = useRef(new Set<string>());
+  const refreshCurrentRef = useRef<() => void>(() => {});
 
   const refreshAuth = useCallback(async () => {
     try {
@@ -95,77 +104,110 @@ export default function App() {
       });
   }, [refreshAuth, refreshRuns]);
 
-  // Live polling, scoped to the active run. Re-runs when the active run changes
-  // so switching to a past run (?run=<name>) reloads its data; a finished run
-  // does a single full fetch and stops.
-  const finishedRef = useRef(false);
+  // Finished runs only poll a small file revision token. Live scans, external
+  // triage edits and focus changes refresh the same authoritative projection.
   useEffect(() => {
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
-    finishedRef.current = false;
-
-    const schedule = () => {
-      timer = setTimeout(tick, POLL_MS);
-    };
+    let finished = false;
+    let lastStamp = "";
+    let forceRefresh = true;
+    let busy = false;
+    dataVersionRef.current += 1;
 
     const tick = async () => {
-      if (cancelled) return;
+      if (cancelled || busy) return;
+      if (timer) clearTimeout(timer);
+      busy = true;
+      const version = dataVersionRef.current;
       try {
-        const { summary, raw, finished } = await fetchRunSummary(activeRun);
-        if (cancelled) return;
-        if (finished && !finishedRef.current) {
-          finishedRef.current = true;
-          const full = await fetchAll(activeRun);
-          if (!cancelled) setRun(full);
-          return; // stop polling
-        }
-        const [transcript, vulnerabilities] = await Promise.all([
-          fetchTranscript(activeRun).catch(() => ({ agents: [], events: [] })),
-          fetchVulnerabilities(summary.runId, activeRun).catch(() => [] as Vulnerability[]),
-        ]);
-        if (cancelled) return;
-        setRun((prev) => ({
-          summary,
-          raw,
-          finished,
-          transcript,
-          vulnerabilities,
-          reportMarkdown: prev?.reportMarkdown ?? null,
-        }));
-        schedule();
+        if (mutationsPendingRef.current) return;
+        const stamp = await fetchTriageRevision(activeRun);
+        if (finished && stamp === lastStamp && !forceRefresh) return;
+        const full = await fetchAll(activeRun);
+        if (cancelled || version !== dataVersionRef.current || mutationsPendingRef.current) return;
+        finished = full.finished;
+        if (finished && lastStamp && stamp !== lastStamp) void refreshRuns();
+        lastStamp = stamp;
+        forceRefresh = false;
+        setRun(full);
+        setError(null);
       } catch (e) {
         if (cancelled) return;
         setError(e instanceof Error ? e.message : "Could not load run data.");
-        schedule();
+      } finally {
+        busy = false;
+        if (!cancelled) timer = setTimeout(tick, finished ? 1500 : POLL_MS);
       }
     };
-
-    (async () => {
-      try {
-        const full = await fetchAll(activeRun);
-        if (cancelled) return;
-        setRun(full);
-        if (full.finished) {
-          finishedRef.current = true;
-        } else {
-          schedule();
-        }
-      } catch (e) {
-        if (cancelled) return;
-        setError(e instanceof Error ? e.message : "Could not load run data.");
-        schedule();
-      }
-    })();
-
+    const refresh = () => { forceRefresh = true; void tick(); };
+    refreshCurrentRef.current = refresh;
+    window.addEventListener("focus", refresh);
+    void tick();
     return () => {
       cancelled = true;
       if (timer) clearTimeout(timer);
+      window.removeEventListener("focus", refresh);
     };
-  }, [activeRun]);
+  }, [activeRun, refreshRuns]);
 
+  const saveTriage = useCallback(async (finding: Vulnerability, update: TriageUpdate) => {
+    const requestedRun = activeRun;
+    const requestKey = JSON.stringify([requestedRun, finding.id]);
+    dataVersionRef.current += 1;
+    mutationsPendingRef.current += 1;
+    const applyFindings = (findings: Vulnerability[]) => {
+      if (activeRunRef.current === requestedRun) {
+        setRun((previous) => previous ? { ...previous, vulnerabilities: findings } : previous);
+      }
+    };
+    try {
+      if (uncertainWritesRef.current.has(requestKey)) {
+        const latest = await fetchVulnerabilities(finding.scan_id, requestedRun);
+        applyFindings(latest);
+        uncertainWritesRef.current.delete(requestKey);
+        const current = latest.find((item) => item.id === finding.id);
+        if (!current || current.triage_revision !== finding.triage_revision || current.finding_digest !== finding.finding_digest) {
+          throw new TriageRequestError("conflict", "The saved finding changed. Review its current state before trying again.");
+        }
+      }
+      const saved = await updateFindingTriage(finding, update, requestedRun);
+      if (activeRunRef.current === requestedRun) {
+        setRun((previous) => previous ? {
+          ...previous,
+          vulnerabilities: previous.vulnerabilities.map((item) => item.id === saved.id ? saved : item),
+        } : previous);
+      }
+      void refreshRuns();
+      return saved;
+    } catch (error) {
+      if (!(error instanceof TriageRequestError)) uncertainWritesRef.current.add(requestKey);
+      // A lost response can follow a successful write. Read the saved state
+      // before allowing another attempt, without automatically repeating it.
+      try {
+        const latest = await fetchVulnerabilities(finding.scan_id, requestedRun);
+        applyFindings(latest);
+        uncertainWritesRef.current.delete(requestKey);
+        const saved = latest.find((item) => item.id === finding.id);
+        if (!(error instanceof TriageRequestError) && saved &&
+            saved.triage_revision === (finding.triage_revision ?? 0) + 1 &&
+            saved.finding_digest === finding.finding_digest && saved.status === update.status &&
+            (update.status === "open" || (saved.reason_code === (update.reason_code ?? "unspecified") &&
+              (saved.status_note ?? "") === (update.note ?? "").trim()))) return saved;
+      } catch { /* Leave the current view intact if reconciliation also fails. */ }
+      if (error instanceof TriageRequestError) throw error;
+      throw new Error("Could not confirm the save. The latest saved state will refresh before you retry.");
+    } finally {
+      mutationsPendingRef.current -= 1;
+      dataVersionRef.current += 1;
+      if (activeRunRef.current === requestedRun) refreshCurrentRef.current();
+    }
+  }, [activeRun, refreshRuns]);
+
+  const openFindings = useMemo(() => run?.vulnerabilities.filter((finding) => finding.status !== "closed") ?? [], [run]);
   const counts = useMemo(
-    () => (run ? severityCounts(run.vulnerabilities) : null),
-    [run]
+    () => (run ? severityCounts(openFindings) : null),
+    [run, openFindings]
   );
   const selected = run?.vulnerabilities.find((v) => v.id === selectedId) ?? null;
   const agentCount = run?.transcript.agents.length ?? 0;
@@ -228,6 +270,7 @@ export default function App() {
     setSelectedId(null);
     setRun(null);
     setError(null);
+    setIssueFilter("open");
     // Reset the guard so the per-run default applies to the newly selected run.
     initialViewAppliedRef.current = false;
   }, []);
@@ -272,7 +315,7 @@ export default function App() {
           if (v === "history") openHistory();
           else userSetView(v);
         }}
-        issuesCount={run?.vulnerabilities.length ?? 0}
+        issuesCount={openFindings.length}
         agentCount={agentCount}
         mcpConnections={mcpConnections}
         mcpInUse={mcpInUse}
@@ -325,7 +368,7 @@ export default function App() {
         </div>
 
         <div className="max-w-[88rem] mx-auto px-3 sm:px-6 py-8 sm:py-12 space-y-6">
-          {error && !run && view !== "history" && view !== "email" && (
+          {error && view !== "history" && view !== "email" && (
             <div className="rounded-lg px-4 py-3 flex gap-3 items-start border border-red-500/30 bg-red-500/5">
               <AlertCircle className="w-5 h-5 flex-shrink-0 mt-0.5 text-red-400" aria-hidden="true" />
               <p className="text-sm text-red-300">{error}</p>
@@ -383,7 +426,7 @@ export default function App() {
                   Pentest Overview
                 </TabButton>
                 <TabButton active={view === "issues"} onClick={() => userSetView("issues")}>
-                  Issues{run.vulnerabilities.length > 0 ? ` (${run.vulnerabilities.length})` : ""}
+                  Issues{run.vulnerabilities.length > 0 ? ` (${openFindings.length} open)` : ""}
                 </TabButton>
                 {agentCount > 0 && (
                   <TabButton active={view === "agents"} onClick={() => userSetView("agents")}>
@@ -396,7 +439,8 @@ export default function App() {
                 <OverviewTab
                   summary={run.summary}
                   counts={counts}
-                  total={run.vulnerabilities.length}
+                  total={openFindings.length}
+                  detected={run.vulnerabilities.length}
                   reportMarkdown={run.reportMarkdown}
                   raw={run.raw}
                   finished={run.finished}
@@ -412,12 +456,14 @@ export default function App() {
                   >
                     <ArrowLeft className="w-4 h-4" /> Back to all findings
                   </button>
-                  <VulnerabilityDetail vulnerability={selected} />
+                  <VulnerabilityDetail vulnerability={{ ...selected, can_triage: selected.can_triage && !error }} onTriage={saveTriage} />
                 </div>
               ) : (
                 <FindingsList
                   vulnerabilities={run.vulnerabilities}
                   finished={run.finished}
+                  filter={issueFilter}
+                  onFilter={setIssueFilter}
                   onSelect={(id) => setSelectedId(id)}
                 />
               )}
@@ -550,16 +596,23 @@ function Meta({ label }: { label: string }) {
 function FindingsList({
   vulnerabilities,
   finished,
+  filter,
+  onFilter,
   onSelect,
 }: {
   vulnerabilities: Vulnerability[];
   finished: boolean;
+  filter: "open" | "closed" | "all";
+  onFilter: (filter: "open" | "closed" | "all") => void;
   onSelect: (id: string) => void;
 }) {
-  const sorted = [...vulnerabilities].sort(
+  const open = vulnerabilities.filter((finding) => finding.status !== "closed").length;
+  const closed = vulnerabilities.length - open;
+  const sorted = vulnerabilities.filter((finding) => filter === "all" ||
+    (filter === "closed" ? finding.status === "closed" : finding.status !== "closed")).sort(
     (a, b) => SEVERITY_ORDER.indexOf(a.severity) - SEVERITY_ORDER.indexOf(b.severity)
   );
-  if (sorted.length === 0) {
+  if (vulnerabilities.length === 0) {
     return (
       <div className="space-y-4">
         <div className="rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-8 text-center text-sm text-[#888]">
@@ -585,6 +638,22 @@ function FindingsList({
   }
   return (
     <div className="space-y-2">
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex gap-1 rounded-lg border border-[#333] p-1" aria-label="Finding status">
+          {(["open", "closed", "all"] as const).map((value) => (
+            <button type="button" key={value} aria-pressed={filter === value} onClick={() => onFilter(value)}
+              className={`rounded-md px-3 py-1.5 text-sm capitalize ${filter === value ? "bg-white/10 text-white" : "text-[#888] hover:text-white"}`}>
+              {value} ({value === "open" ? open : value === "closed" ? closed : vulnerabilities.length})
+            </button>
+          ))}
+        </div>
+        <p className="text-sm text-[#888]">{open} open · {closed} false positives · {vulnerabilities.length} found</p>
+      </div>
+      {sorted.length === 0 && (
+        <div className="rounded-xl border border-[#222] p-8 text-center text-sm text-[#aaa]">
+          {filter === "open" ? `No open findings. ${closed} marked as false positives.` : "No closed findings."}
+        </div>
+      )}
       {sorted.map((v) => (
         <button
           key={v.id}
@@ -598,6 +667,7 @@ function FindingsList({
               <span className="block text-xs text-[#666] font-mono truncate">{v.target}</span>
             )}
           </span>
+          {(v.status === "closed" || v.review_stale) && <span className="text-xs text-[#aaa]">{v.review_stale ? "Needs review" : "Closed · False positive"}</span>}
           <span
             className={`text-xs font-semibold px-2 py-0.5 rounded-full border capitalize ${SEVERITY_COLORS[v.severity]}`}
           >
@@ -646,13 +716,13 @@ function EmailReportCta({ onOpenEmail }: { onOpenEmail: () => void }) {
           <Mail className="h-4 w-4 text-emerald-400" aria-hidden="true" />
         </div>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white">Email an encrypted PDF report of this run</p>
+          <p className="text-sm font-semibold text-white">Email the original scan report as an encrypted PDF</p>
           <p className="mt-0.5 text-xs text-[#888]">
-            Encrypted with a key only you can see, email verified with a one-time code before sending.
+            Excludes subsequent triage. Encrypted with a key only you can see; email verified before sending.
           </p>
         </div>
         <span className="flex-shrink-0 rounded-lg bg-white px-3 py-1.5 text-xs font-semibold text-black transition-opacity group-hover:opacity-90">
-          Export report to PDF
+          Export original report
         </span>
       </div>
     </button>
@@ -663,6 +733,7 @@ function OverviewTab({
   summary,
   counts,
   total,
+  detected,
   reportMarkdown,
   raw,
   finished,
@@ -671,6 +742,7 @@ function OverviewTab({
   summary: ParsedRunSummary;
   counts: Record<VulnerabilitySeverity, number>;
   total: number;
+  detected: number;
   reportMarkdown: string | null;
   raw: Record<string, unknown>;
   finished: boolean;
@@ -693,8 +765,9 @@ function OverviewTab({
         <RunDetails raw={raw} durationSeconds={summary.durationSeconds} />
       </div>
 
-      {total > 0 && (
+      {detected > 0 && (
         <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
+          <p className="mb-3 text-sm text-[#aaa]">{total} open · {detected - total} false positives · {detected} found</p>
           <IssueSeveritySummary findings={{ total, ...counts }} />
         </div>
       )}
@@ -734,12 +807,14 @@ function OverviewTab({
 
       {sections.length > 0 ? (
         <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5 space-y-8">
+          <OriginalReportLabel />
           {sections.map((s) => (
             <ContentSection key={s.title} title={s.title} content={s.content} />
           ))}
         </div>
       ) : reportMarkdown ? (
         <div className="animate-card-in rounded-xl border border-[#222] bg-[rgba(255,255,255,0.02)] p-5">
+          <OriginalReportLabel />
           <ContentSection content={dedupeHeadings(reportMarkdown)} />
         </div>
       ) : (
@@ -750,6 +825,11 @@ function OverviewTab({
 
     </div>
   );
+}
+
+function OriginalReportLabel() {
+  return <div className="mb-5"><h2 className="text-base font-semibold text-white">Original scan report</h2>
+    <p className="mt-1 text-sm text-[#888]">Preserved as generated. Subsequent false-positive decisions are excluded; current triage counts appear above.</p></div>;
 }
 
 function TabButton({

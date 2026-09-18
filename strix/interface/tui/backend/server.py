@@ -20,6 +20,7 @@ from strix.interface.tui.backend.protocol import (
     ProtocolHandshakeError,
     envelope,
 )
+from strix.report.triage import TriageError
 
 
 if TYPE_CHECKING:
@@ -60,6 +61,7 @@ class TuiBackendServer:
         self._reader_task: asyncio.Task[None] | None = None
         self._broadcast_event = asyncio.Event()
         self._broadcast_task: asyncio.Task[None] | None = None
+        self._triage_watch_task: asyncio.Task[None] | None = None
         self._write_lock = asyncio.Lock()
         self._sync_lock = asyncio.Lock()
         self._state_revision = 0
@@ -89,10 +91,15 @@ class TuiBackendServer:
         self.activated = True
         self._reader_task = asyncio.create_task(self._read_loop())
         self._broadcast_task = asyncio.create_task(self._broadcast_loop())
+        self._triage_watch_task = asyncio.create_task(self._watch_triage())
         self.notify_changed()
 
     async def close(self) -> None:
-        tasks = [task for task in (self._reader_task, self._broadcast_task) if task is not None]
+        tasks = [
+            task
+            for task in (self._reader_task, self._broadcast_task, self._triage_watch_task)
+            if task is not None
+        ]
         for task in tasks:
             task.cancel()
         for task in tasks:
@@ -102,6 +109,7 @@ class TuiBackendServer:
                 await task
         self._reader_task = None
         self._broadcast_task = None
+        self._triage_watch_task = None
         self._close_socket()
 
     def _close_socket(self) -> None:
@@ -188,6 +196,8 @@ class TuiBackendServer:
 
     @staticmethod
     def _structured_error(exc: Exception) -> dict[str, object]:
+        if isinstance(exc, TriageError):
+            return {"code": exc.code, "message": str(exc), "retryable": False}
         if isinstance(exc, OSError):
             return {"code": "persistence_error", "message": str(exc), "retryable": True}
         if isinstance(exc, TypeError | ValueError | json.JSONDecodeError | UnicodeDecodeError):
@@ -529,3 +539,15 @@ class TuiBackendServer:
             self._close_socket()
         except (ConnectionError, OSError):
             self._close_socket()
+
+    async def _watch_triage(self) -> None:
+        previous: tuple[int, int] | None = None
+        while True:
+            await asyncio.sleep(0.5)
+            try:
+                current = self.controller.triage_stamp()
+            except (OSError, TriageError):
+                current = None
+            if current != previous:
+                previous = current
+                self.notify_changed()

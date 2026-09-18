@@ -266,7 +266,7 @@ func (m Model) viewInner() string {
 	} else if m.modal != modalNone {
 		// Only the vulnerability detail dims its backdrop (#000000 80%); Help,
 		// Quit and Stop are transparent.
-		main = m.overlay(main, m.modalView(), m.modal == modalVulnerability)
+		main = m.overlay(main, m.modalView(), m.modal == modalVulnerability || m.modal == modalTriage)
 	}
 	return m.toastOverlay(main)
 }
@@ -569,7 +569,7 @@ func (m Model) sidebarHeights() (statsHeight, vulnHeight, mcpHeight, agentHeight
 	statsRows := lipgloss.Height(lipgloss.NewStyle().Width(m.viewerContentWidth()).Render(m.statsView()))
 	statsHeight = min(15, statsRows+2)
 	if len(m.snapshot.Vulnerabilities) > 0 {
-		vulnHeight = min(12, len(m.vulnerabilityRows(m.vulnerabilityListWidth()))+2)
+		vulnHeight = min(12, max(3, len(m.vulnerabilityRows(m.vulnerabilityListWidth())))+2)
 	}
 	// One header line + one line per connection + the box border (2). Capped so a
 	// long roster cannot crowd out the agent tree; a roster past the cap scrolls
@@ -614,6 +614,15 @@ func (m Model) viewerView(width int) string {
 func (m Model) statsView() string {
 	w := lipgloss.NewStyle().Foreground(white)
 	var b strings.Builder
+	if total := len(m.snapshot.Vulnerabilities); total > 0 {
+		closed := 0
+		for _, finding := range m.snapshot.Vulnerabilities {
+			if findingStatus(finding) == "closed" {
+				closed++
+			}
+		}
+		b.WriteString(w.Render(fmt.Sprintf("%d open · %d false positives\n%d found · %s (v)\n", total-closed, closed, total, m.findingFilterLabel())))
+	}
 	if model := m.snapshot.Model; model != "" {
 		b.WriteString(w.Render(model))
 	}
@@ -825,6 +834,14 @@ func (m Model) statusView(width int) string {
 	}
 	if m.errorText != "" {
 		left = statusMessage(m.errorText, red, "", width-lipgloss.Width(right))
+	}
+	if len(m.snapshot.Vulnerabilities) > 0 {
+		hint := lipgloss.NewStyle().Foreground(textColor).Render("F2 findings")
+		if right == "" {
+			right = hint
+		} else {
+			right = hint + " · " + right
+		}
 	}
 	return composeStatusRow(left, right, width)
 }

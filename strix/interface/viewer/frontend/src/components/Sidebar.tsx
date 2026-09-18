@@ -264,7 +264,7 @@ export default function Sidebar({
             {finished && (
               <NavItem
                 icon={<Mail className="h-4 w-4" />}
-                label="Export report"
+                label="Export original report"
                 active={view === "email"}
                 onClick={onOpenEmail}
               />
