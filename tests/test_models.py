@@ -2,20 +2,27 @@
 
 from __future__ import annotations
 
+import litellm
 import pytest
 from agents.extensions.models.litellm_model import LitellmModel
 from agents.model_settings import ModelSettings
+from agents.models import _openai_shared
+from agents.models.openai_chatcompletions import OpenAIChatCompletionsModel
+from agents.models.openai_responses import OpenAIResponsesModel
 
 from strix.config.models import (
     RECOMMENDED_MODEL_NAMES,
     StrixProvider,
     _NonStreamingModel,
     _TurnGuardModel,
+    configure_sdk_model_defaults,
     is_recommended_or_frontier_model,
     request_timeout_extra_args,
     routes_through_litellm,
     supports_strict_tool_schemas,
+    uses_chat_completions_tool_schema,
 )
+from strix.config.settings import Settings
 
 
 @pytest.mark.parametrize("model_name", RECOMMENDED_MODEL_NAMES)
@@ -168,3 +175,46 @@ def test_routes_through_litellm_matches_the_provider(
     while isinstance(model, _NonStreamingModel | _TurnGuardModel):
         model = model._inner
     assert isinstance(model, LitellmModel) is litellm
+
+
+def test_api_type_override_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_LLM", "gpt-4")
+    monkeypatch.setenv("STRIX_API_TYPE", "chat_completions")
+    assert uses_chat_completions_tool_schema("gpt-4", Settings()) is True
+    monkeypatch.setenv("STRIX_LLM", "openai/gpt-4")
+    monkeypatch.setenv("STRIX_API_TYPE", "responses")
+    assert uses_chat_completions_tool_schema("openai/gpt-4", Settings()) is False
+    monkeypatch.setenv("STRIX_LLM", "anthropic/claude-sonnet-4-5")
+    assert uses_chat_completions_tool_schema("anthropic/claude-sonnet-4-5", Settings()) is True
+
+
+@pytest.mark.parametrize(
+    ("api_type", "expected"),
+    [
+        (None, OpenAIChatCompletionsModel),
+        ("chat_completions", OpenAIChatCompletionsModel),
+        ("responses", OpenAIResponsesModel),
+    ],
+)
+def test_api_type_overrides_the_api_base_route(
+    monkeypatch: pytest.MonkeyPatch, api_type: str | None, expected: type
+) -> None:
+    """``LLM_API_BASE`` defaults to chat completions. ``STRIX_API_TYPE`` must win."""
+    monkeypatch.setattr(_openai_shared, "_use_responses_by_default", True)
+    monkeypatch.setattr(_openai_shared, "_default_openai_client", None)
+    monkeypatch.setattr(_openai_shared, "_default_openai_key", None)
+    monkeypatch.setattr(litellm, "api_key", None)
+    monkeypatch.setattr(litellm, "api_base", None)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
+    monkeypatch.setenv("OPENAI_BASE_URL", "")
+    monkeypatch.setenv("STRIX_LLM", "gpt-5")
+    monkeypatch.setenv("LLM_API_KEY", "test-key")
+    monkeypatch.setenv("LLM_API_BASE", "https://gateway.example/v1")
+    monkeypatch.delenv("STRIX_API_TYPE", raising=False)
+    if api_type is not None:
+        monkeypatch.setenv("STRIX_API_TYPE", api_type)
+    configure_sdk_model_defaults(Settings())
+    model = StrixProvider().get_model("gpt-5")
+    while isinstance(model, _NonStreamingModel | _TurnGuardModel):
+        model = model._inner
+    assert isinstance(model, expected)

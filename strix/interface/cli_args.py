@@ -171,8 +171,9 @@ Strix Cloud:
         help="Place a file from this machine into the sandbox workspace before the scan "
         "starts, for example a wordlist, an API specification, or notes. Repeat the option "
         "for more files. DEST is the path inside /workspace and defaults to the file name "
-        "(for example '--workspace-file ./wordlist.txt:lists/wordlist.txt'). The file is "
-        "read-only inside the sandbox and lands outside every target directory.",
+        "(for example '--workspace-file ./wordlist.txt:lists/wordlist.txt'). Strix copies "
+        "the file into the sandbox, outside every target directory. The agent can edit the "
+        "copy. The file on this machine does not change.",
     )
 
     parser.add_argument(

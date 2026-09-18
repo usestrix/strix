@@ -91,7 +91,7 @@ Key flags:
 | `-n, --non-interactive` | Headless, exits on completion. Required for agents. |
 | `-m, --scan-mode` | `quick` (minutes) / `standard` (~30 min) / `deep` (hours, default). |
 | `--instruction` / `--instruction-file` | Credentials, focus areas, scope rules. |
-| `--workspace-file PATH[:DEST]` | Place a file from this machine into `/workspace` read-only before the scan, for a wordlist, a spec, or notes. Repeatable. |
+| `--workspace-file PATH[:DEST]` | Copy a file from this machine into `/workspace` before the scan, for a wordlist, a spec, or notes. Repeatable. |
 | `--max-budget USD` | Hard LLM spend cap; scan wraps up cleanly at the limit. |
 | `--max-turns N` | Per-agent turn cap (default 500). |
 | `--resume RUN_NAME` | Resume a prior run from `strix_runs/`, with its agent history and targets. Cannot be combined with `-t`. |

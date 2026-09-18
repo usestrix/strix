@@ -19,6 +19,12 @@ Configure Strix using environment variables or a config file.
   Custom API base URL. Also accepts `OPENAI_API_BASE`, `LITELLM_BASE_URL`, or `OLLAMA_API_BASE`.
 </ParamField>
 
+<ParamField path="STRIX_API_TYPE" type="string">
+  Select the OpenAI API path for the model: `responses` or `chat_completions`.
+  By default, a custom `LLM_API_BASE` uses chat completions. Set this variable
+  when your gateway requires the other API. Also accepts `STRIX_FORCE_API`.
+</ParamField>
+
 <ParamField path="LLM_EXTRA_HEADERS" type="string">
   Extra HTTP headers sent on every LLM request, as a JSON object (e.g.
   `{"X-Feature-Key":"value","X-Tenant":"acme"}`). Useful for OpenAI-compatible

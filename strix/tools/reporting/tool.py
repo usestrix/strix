@@ -1323,6 +1323,12 @@ async def create_vulnerability_report(
             A restrictive CSP that blocks inline script execution would
             reduce impact and lower the severity.
         fix_effort: "low"
+
+    Nice to have: for code findings, if the checkout has git history, a quick
+    ``git blame`` (quote the paths) on the vulnerable line is worth weaving into
+    ``technical_analysis`` — who last touched it, when, and in which commit, as
+    part of the prose, not a separate section. Skip it if the line is
+    uncommitted or the command fails.
     """
     (
         http_exchange_ids,
