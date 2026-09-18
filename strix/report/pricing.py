@@ -36,7 +36,12 @@ def resolve_litellm_model(model: str) -> str | None:
         if "/" in normalized:
             names.append(normalized.rsplit("/", 1)[-1])
         for name in names:
-            matches = sorted(key for key in model_cost if key.endswith(f"/{name}"))
+            # Prefer the direct provider (``xai/grok-4.5``) over resellers
+            # listing the same model (``openrouter/x-ai/grok-4.5``).
+            matches = sorted(
+                (key for key in model_cost if key.endswith(f"/{name}")),
+                key=lambda key: (key.count("/"), key),
+            )
             if not matches:
                 continue
             prices = {
