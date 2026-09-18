@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from typing import TYPE_CHECKING
 
@@ -46,8 +47,14 @@ self-scoped information leak. Low: verbose errors.
 """
 
 
+_GIT = shutil.which("git")
+
+pytestmark = pytest.mark.skipif(_GIT is None, reason="these tests need a git executable")
+
+
 def _git(repo: Path, *args: str) -> None:
-    subprocess.run(["/usr/bin/env", "git", *args], cwd=repo, check=True)  # noqa: S603
+    assert _GIT is not None
+    subprocess.run([_GIT, *args], cwd=repo, check=True)  # noqa: S603
 
 
 def _make_repo(tmp_path: Path, name: str = "repo") -> Path:
