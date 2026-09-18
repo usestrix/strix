@@ -687,7 +687,7 @@ def build_strix_agent(
     agent_tools = [*_EXTRA_TOOLS, *(extra_tools or [])]
     if interactive:
         # Yielding to the user is only meaningful when one is attached.
-        agent_tools.append(respond_to_user)        
+        agent_tools.append(respond_to_user)     
     if is_root:
         tools: list[Tool] = [*_BASE_TOOLS, *agent_tools, finish_scan]
     else:
