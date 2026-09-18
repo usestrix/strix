@@ -71,6 +71,7 @@ class GoTuiRuntime:
         self._error_noted_agents: set[str] = set()
         self.model_verified = False
         self._setup_preflight: asyncio.Task[None] | None = None
+        self._quit_task: asyncio.Task[None] | None = None
         self.controller = TuiController(
             args,
             live_view=self.live_view,
@@ -378,6 +379,21 @@ class GoTuiRuntime:
             await asyncio.sleep(0.5)
 
     async def quit(self) -> None:
+        """Stop the scan once, however many callers ask for it.
+
+        Ctrl+Q quits twice: the sidecar sends ``app.quit`` and exits in the
+        same batch, so the command handler and ``run``'s finally both land
+        here. A second cancel while the first is tearing the sandbox down
+        interrupts the docker delete and leaves the container running, so
+        callers after the first wait on the quit already in flight.
+        """
+        if self._quit_task is None:
+            self._quit_task = asyncio.create_task(self._quit_once())
+        # Shielded: awaiting a task hands it the waiter's own cancellation,
+        # which is what this guard exists to keep out of the teardown.
+        await asyncio.shield(self._quit_task)
+
+    async def _quit_once(self) -> None:
         self.controller.close_viewer()
         self.coordinator.mark_shutting_down()
         scan_task = self.scan_task
