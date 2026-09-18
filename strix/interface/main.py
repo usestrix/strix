@@ -6,6 +6,8 @@ Strix Agent Interface
 import argparse
 import asyncio
 import contextlib
+import os
+import signal
 import sys
 from pathlib import Path
 
@@ -418,7 +420,75 @@ def _bootstrap_scan(args: argparse.Namespace) -> None:
     telemetry_start(args)
 
 
+def _install_cleanup_sigterm_handler() -> None:
+    """Install a cleanup-aware SIGTERM fallback before the scan engine starts.
+
+    ``run_cli`` installs its own SIGINT/SIGTERM/SIGHUP handler once a report
+    state exists, but the interactive Go TUI installs none Python-side. Without
+    an early handler, a SIGTERM that arrives mid-setup or during an interactive
+    scan terminates the process by the default action, skipping report-state
+    cleanup. This fallback runs ``cleanup(status="interrupted")`` when a report
+    state exists, then exits; scan paths replace it with their own handler as
+    soon as it is safe to do so.
+    """
+
+    def _on_sigterm(_signum: int, _frame: object) -> None:
+        from strix.report.state import get_global_report_state
+
+        state = get_global_report_state()
+        if state is not None:
+            state.cleanup(status="interrupted")
+        sys.exit(1)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+
+def _enable_parent_death_signal() -> None:
+    """On Linux frozen binaries, ask the kernel to deliver SIGTERM when our parent dies.
+
+    Strix ships as a PyInstaller onefile binary: the process users see is an
+    outer bootloader that spawns the real Python app as a child. When a caller
+    stops a scan by killing the direct child -- e.g. ``subprocess.run(..., timeout=)``
+    sends SIGKILL, or a container/pipeline sends SIGKILL -- the bootloader dies
+    but the inner app cannot receive or forward that SIGKILL: it is reparented
+    to PID 1 and keeps scanning as an orphaned background process.
+
+    PR_SET_PDEATHSIG makes the kernel deliver SIGTERM to this process the moment
+    the bootloader dies, so the app's SIGTERM handler (cleanup + exit) runs
+    instead of leaking an orphaned scan. Only meaningful when running as the
+    inner process of a PyInstaller onefile binary; pip/source installs keep the
+    user's shell as their parent and must not be killed when that shell exits.
+    No-op outside Linux or when not frozen.
+    """
+    if sys.platform != "linux":
+        return
+    if not is_binary_install():
+        return
+    try:
+        import ctypes  # stdlib; late import keeps startup lean
+
+        libc = ctypes.CDLL(None, use_errno=True)
+        pr_set_pdeathsig = 1
+        parent_pid = os.getppid()
+        if libc.prctl(pr_set_pdeathsig, signal.SIGTERM) != 0:
+            logger.warning(
+                "prctl(PR_SET_PDEATHSIG, SIGTERM) failed: %s",
+                ctypes.get_errno(),
+            )
+            return
+        # The bootloader can die between spawning this process and the prctl
+        # above; the process is then reparented before the kernel snapshots the
+        # parent, and PDEATHSIG would watch the wrong parent. Deliver SIGTERM
+        # ourselves when that happened so the scan still cleans up and exits.
+        if os.getppid() != parent_pid:
+            os.kill(os.getpid(), signal.SIGTERM)
+    except Exception:
+        logger.debug("PR_SET_PDEATHSIG unavailable", exc_info=True)
+
+
 def main() -> None:
+    _install_cleanup_sigterm_handler()
+    _enable_parent_death_signal()
     configure_dependency_logging()
 
     if sys.platform == "win32":
