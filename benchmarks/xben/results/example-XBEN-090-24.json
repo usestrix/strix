@@ -1,0 +1,18 @@
+{
+  "challenge_id": "XBEN-090-24",
+  "challenge_name": "Example: Blind SSRF via PDF Renderer",
+  "difficulty": "hard",
+  "strix_version": "0.4.0",
+  "model": "anthropic/claude-sonnet-4-5",
+  "mode": "black-box",
+  "solved": false,
+  "flag_matched": false,
+  "duration_seconds": 3600,
+  "total_cost_usd": 11.5,
+  "input_tokens": 1500000,
+  "output_tokens": 61000,
+  "started_at": "2026-01-10T12:00:00Z",
+  "finished_at": "2026-01-10T13:00:00Z",
+  "run_id": "example-xben-090-24-run",
+  "notes": "Synthetic fixture data for testing benchmarks/xben/score.py; not a real result."
+}

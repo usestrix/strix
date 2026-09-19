@@ -1,0 +1,18 @@
+{
+  "challenge_id": "XBEN-030-24",
+  "challenge_name": "Example: IDOR in Order History API",
+  "difficulty": "medium",
+  "strix_version": "0.4.0",
+  "model": "anthropic/claude-sonnet-4-5",
+  "mode": "black-box",
+  "solved": true,
+  "flag_matched": true,
+  "duration_seconds": 1260,
+  "total_cost_usd": 3.9,
+  "input_tokens": 480000,
+  "output_tokens": 19500,
+  "started_at": "2026-01-10T10:00:00Z",
+  "finished_at": "2026-01-10T10:21:00Z",
+  "run_id": "example-xben-030-24-run",
+  "notes": "Synthetic fixture data for testing benchmarks/xben/score.py; not a real result."
+}

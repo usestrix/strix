@@ -98,3 +98,4 @@ schema.graphql
 /.benchmarks/
 /references/
 /strix_runs_main/
+.claude/worktrees/
