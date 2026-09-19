@@ -130,19 +130,56 @@ strix_runs/<run_name>/events.jsonl
 
 When remote vars are set, Strix dual-writes telemetry to both local JSONL and the remote OTEL endpoint.
 
-## Docker Configuration
+## Container Runtime Configuration
 
-<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.3.0" type="string">
-  Docker image to use for the sandbox container.
+Strix supports both **Docker** and **Podman** as sandbox runtime backends.
+
+<ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">
+  Runtime backend for the sandbox environment (`docker` or `podman`).
+</ParamField>
+
+<ParamField path="STRIX_RUNTIME_SOCKET" type="string">
+  Direct socket path or URL for the container runtime (e.g. `unix:///run/user/1000/podman/podman.sock`). Takes precedence over `DOCKER_HOST` and auto-detection.
 </ParamField>
 
 <ParamField path="DOCKER_HOST" type="string">
-  Docker daemon socket path. Use for remote Docker hosts or custom configurations.
+  Container daemon socket path. Used as fallback when `STRIX_RUNTIME_SOCKET` is unset.
 </ParamField>
 
-<ParamField path="STRIX_RUNTIME_BACKEND" default="docker" type="string">
-  Runtime backend for the sandbox environment.
+<ParamField path="STRIX_IMAGE" default="ghcr.io/usestrix/strix-sandbox:1.3.0" type="string">
+  Container image to use for the sandbox.
 </ParamField>
+
+### Using Podman
+
+To use Podman instead of Docker:
+
+```bash
+export STRIX_RUNTIME_BACKEND=podman
+strix --target https://example.com
+```
+
+Or point Strix at a specific Podman socket:
+
+```bash
+export STRIX_RUNTIME_SOCKET=unix:///run/user/1000/podman/podman.sock
+strix --target https://example.com
+```
+
+#### How Socket Detection Works
+
+When `STRIX_RUNTIME_BACKEND=podman` is set, Strix uses multi-layer socket fallthrough:
+1. `STRIX_RUNTIME_SOCKET` (environment variable or config file)
+2. `DOCKER_HOST` (environment variable)
+3. **Automatic socket detection**:
+   - **Linux rootless**: `$XDG_RUNTIME_DIR/podman/podman.sock`, `/run/user/<uid>/podman/podman.sock`, and `/tmp/podman-run-<uid>/podman/podman.sock`
+   - **Linux rootful**: `/run/podman/podman.sock` and `/var/run/podman/podman.sock`
+   - **macOS**: Queries active Podman machines via `podman machine inspect` (applehv, libkrun, qemu) and common machine socket paths under `~/.local/share/containers/podman/machine/`
+4. Falls back to standard Docker environment default (`docker.from_env()`) if no specific socket is reachable
+
+#### Host Gateway & Networking
+
+With Podman, Strix automatically uses `host.containers.internal` as the container-to-host gateway (mapping host-bound endpoints cleanly into Podman's built-in DNS), while retaining `host.docker.internal` compatibility.
 
 ## Sandbox Configuration
 

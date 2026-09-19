@@ -16,7 +16,11 @@ from agents.sandbox.entries import BaseEntry, LocalDir
 from agents.sandbox.manifest import Environment, Manifest
 
 from strix.config import load_settings
-from strix.runtime.backends import backend_supports_bind_mounts, get_backend
+from strix.runtime.backends import (
+    backend_supports_bind_mounts,
+    get_backend,
+    get_host_gateway,
+)
 from strix.runtime.caido_bootstrap import bootstrap_caido
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 
@@ -58,7 +62,10 @@ def _host_identity_env() -> dict[str, str]:
         return {}
     # Bind-mount ownership only needs mapping on Linux, where the container uid
     # must match the host's.
-    return {"STRIX_HOST_UID": str(os.getuid()), "STRIX_HOST_GID": str(os.getgid())}
+    return {
+        "STRIX_HOST_UID": str(os.getuid()),  # type: ignore[attr-defined]
+        "STRIX_HOST_GID": str(os.getgid()),  # type: ignore[attr-defined]
+    }
 
 
 def build_bind_mounts(local_sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -306,7 +313,7 @@ async def create_or_reuse(
         environment=Environment(
             value={
                 "PYTHONUNBUFFERED": "1",
-                "HOST_GATEWAY": "host.docker.internal",
+                "HOST_GATEWAY": get_host_gateway(backend_name),
                 **_host_identity_env(),
                 "http_proxy": container_caido_url,
                 "https_proxy": container_caido_url,

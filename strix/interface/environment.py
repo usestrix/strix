@@ -1,6 +1,7 @@
-"""Startup environment validation and Docker image management."""
+"""Startup environment validation and sandbox image management."""
 
 import logging
+import os
 import shutil
 import sys
 
@@ -10,7 +11,7 @@ from rich.text import Text
 
 from strix.config import IntegrationSettings, codex, load_settings
 from strix.interface.utils import (
-    check_docker_connection,
+    check_runtime_connection,
     image_exists,
     process_pull_line,
 )
@@ -163,16 +164,32 @@ def validate_environment() -> None:
     )
 
 
-def check_docker_installed() -> None:
-    if shutil.which("docker") is None:
-        logger.debug("Docker CLI not found in PATH")
+def check_runtime_installed() -> None:
+    backend = os.environ.get("STRIX_RUNTIME_BACKEND", "").strip()
+    if not backend:
+        try:
+            backend = getattr(load_settings().runtime, "backend", "docker")
+        except Exception:
+            backend = "docker"
+    backend = (backend or "docker").lower()
+    cli_name = "podman" if backend == "podman" else "docker"
+    display_name = "Podman" if backend == "podman" else "Docker"
+
+    if backend == "podman":
+        installed = shutil.which("podman") is not None or shutil.which("docker") is not None
+    else:
+        installed = shutil.which("docker") is not None
+
+    if not installed:
+        logger.debug("%s CLI not found in PATH", display_name)
         console = Console()
         error_text = Text()
-        error_text.append("DOCKER NOT INSTALLED", style="bold red")
+        error_text.append(f"{display_name.upper()} NOT INSTALLED", style="bold red")
         error_text.append("\n\n", style="white")
-        error_text.append("The 'docker' CLI was not found in your PATH.\n", style="white")
+        error_text.append(f"The '{cli_name}' CLI was not found in your PATH.\n", style="white")
         error_text.append(
-            "Please install Docker and ensure the 'docker' command is available.\n\n", style="white"
+            f"Please install {display_name} and ensure the '{cli_name}' command is available.\n\n",
+            style="white",
         )
 
         panel = Panel(
@@ -183,24 +200,32 @@ def check_docker_installed() -> None:
             padding=(1, 2),
         )
         console.print("\n", panel, "\n")
-        report_error("docker_not_installed")
+        report_error(f"{backend}_not_installed")
         sys.exit(1)
-    logger.debug("Docker CLI present")
+    logger.debug("%s CLI present", display_name)
 
 
-def pull_docker_image() -> None:
+def pull_runtime_image() -> None:
     from docker.errors import DockerException
 
     console = Console()
-    client = check_docker_connection()
+    backend = os.environ.get("STRIX_RUNTIME_BACKEND", "").strip()
+    if not backend:
+        try:
+            backend = getattr(load_settings().runtime, "backend", "docker")
+        except Exception:
+            backend = "docker"
+    backend = (backend or "docker").lower()
+    display_name = "Podman" if backend == "podman" else "Docker"
+    client = check_runtime_connection(backend)
 
     image = load_settings().runtime.image
 
     if image_exists(client, image):
-        logger.debug("Docker image already present locally: %s", image)
+        logger.debug("%s image already present locally: %s", display_name, image)
         return
 
-    logger.info("Pulling docker image: %s", image)
+    logger.info("Pulling %s image: %s", display_name.lower(), image)
     console.print()
     console.print(f"[dim]Pulling image[/] {image}")
     console.print("[dim yellow]This only happens on first run and may take a few minutes...[/]")
@@ -215,7 +240,7 @@ def pull_docker_image() -> None:
                 last_update = process_pull_line(line, layers_info, status, last_update)
 
         except DockerException as e:
-            logger.debug("Failed to pull docker image %s", image, exc_info=True)
+            logger.debug("Failed to pull %s image %s", display_name.lower(), image, exc_info=True)
             console.print()
             error_text = Text()
             error_text.append("FAILED TO PULL IMAGE", style="bold red")
@@ -234,8 +259,8 @@ def pull_docker_image() -> None:
             report_error("image_pull_failed", e)
             sys.exit(1)
 
-    logger.info("Docker image %s ready", image)
+    logger.info("%s image %s ready", display_name, image)
     success_text = Text()
-    success_text.append("Docker image ready", style="#22c55e")
+    success_text.append(f"{display_name} image ready", style="#22c55e")
     console.print(success_text)
     console.print()
