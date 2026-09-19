@@ -442,6 +442,10 @@ class ReportState:
             return None
 
         changed: dict[str, Any] = {}
+        # Every field the revision states, including one that repeats the stored
+        # value. Resubmitting a rationale unchanged affirms it still holds for the
+        # new rating, so it must not be dropped as superseded below.
+        supplied: set[str] = set()
         for key, raw_value in fields.items():
             if key not in UPDATABLE_REPORT_FIELDS or raw_value is None:
                 continue
@@ -452,6 +456,7 @@ class ReportState:
                     value = value.lower()
                 if not value:
                     continue
+            supplied.add(key)
             if report.get(key) == value:
                 continue
             changed[key] = value
@@ -461,7 +466,7 @@ class ReportState:
             for primary, dependents in _DEPENDENT_REPORT_FIELDS.items()
             if primary in changed
             for dependent in dependents
-            if dependent not in changed and report.get(dependent) not in (None, "", [], {})
+            if dependent not in supplied and report.get(dependent) not in (None, "", [], {})
         }
 
         if not changed and not superseded:
