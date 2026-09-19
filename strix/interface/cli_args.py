@@ -201,7 +201,7 @@ Strix Cloud:
         ),
     )
 
-        parser.add_argument(
+    parser.add_argument(
         "--subagent-model",
         dest="subagent_model",
         type=str,
@@ -210,7 +210,7 @@ Strix Cloud:
             "Model identifier to use for spawned subagents (e.g. claude-3-5-haiku, "
             "gpt-4o-mini). If not specified, subagents inherit the root agent model."
         ),
-        )
+    )
 
     parser.add_argument(
         "--scope-mode",
