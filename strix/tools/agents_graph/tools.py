@@ -12,7 +12,8 @@ from typing import Any, Literal, get_args
 
 from agents import RunContextWrapper, function_tool
 
-from strix.core.agents import Status, coordinator_from_context
+from strix.config import load_settings
+from strix.core.agents import AgentCoordinator, Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
 from strix.report.state import get_global_report_state
@@ -291,6 +292,16 @@ _WAIT_DEFAULT_TIMEOUT_S = 300
 # tool's own timeout fire first and return a clean result.
 _WAIT_HARD_CEILING_S = _WAIT_DEFAULT_TIMEOUT_S + 1
 _WAITED_TURN_KEY = "waited_llm_turn"
+# Headroom past the per-turn stall guard so a wedged agent gets to abandon and
+# replay its own turn before a waiting parent gives up on it.
+_STALL_REAP_GRACE_S = 300.0
+
+
+async def _reap_stalled_agents(coordinator: AgentCoordinator, me: str) -> list[dict[str, Any]]:
+    stall_timeout = float(load_settings().runtime.agent_stall_timeout)
+    if stall_timeout <= 0:
+        return []
+    return await coordinator.reap_stalled(stall_timeout + _STALL_REAP_GRACE_S, under=me)
 
 
 @function_tool(timeout=_WAIT_HARD_CEILING_S)
@@ -422,6 +433,8 @@ async def wait_for_agents(  # noqa: PLR0911
             default=str,
         )
 
+    stalled = await _reap_stalled_agents(coordinator, me)
+
     # Non-interactive agents cannot be woken once terminal, so with nobody
     # running or waiting there is no message left to wait for.
     if not await coordinator.active_agents_except(me):
@@ -431,6 +444,7 @@ async def wait_for_agents(  # noqa: PLR0911
                 "success": True,
                 "wait_outcome": "no_active_agents",
                 "reason": reason,
+                "stalled_agents": stalled,
                 "agents": [
                     {"agent_id": aid, "name": names.get(aid, aid), "status": status}
                     for aid, status in statuses.items()
@@ -452,13 +466,22 @@ async def wait_for_agents(  # noqa: PLR0911
         await asyncio.wait_for(coordinator.wait_for_message(me), timeout_seconds)
     except TimeoutError:
         await coordinator.mark_running(me)
+        stalled = await _reap_stalled_agents(coordinator, me)
         return json.dumps(
             {
                 "success": True,
                 "wait_outcome": "timeout",
                 "timeout_seconds": timeout_seconds,
                 "reason": reason,
-                "note": "No messages within timeout — continue work or call agent_finish.",
+                "stalled_agents": stalled,
+                "note": (
+                    "No messages within timeout — continue work or call agent_finish."
+                    if not stalled
+                    else "No messages within timeout. The agents in stalled_agents produced "
+                    "no output for too long and were marked failed; treat this list as "
+                    "their failure notice. Do not wait on them again — continue work, "
+                    "respawn what is still needed, or call agent_finish."
+                ),
             },
             ensure_ascii=False,
             default=str,
