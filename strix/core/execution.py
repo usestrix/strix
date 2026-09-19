@@ -11,7 +11,7 @@ from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
 from agents import RunConfig, Runner
-from agents.exceptions import AgentsException, MaxTurnsExceeded, UserError
+from agents.exceptions import AgentsException, MaxTurnsExceeded, ModelRefusalError, UserError
 from agents.sandbox.errors import ExecTransportError
 from openai import (
     APIConnectionError,
@@ -72,6 +72,20 @@ class ProviderRefusalError(AgentsException):
     """Raised when a provider returns a structured refusal instead of an exception."""
 
 
+def _refusal_text(exc: BaseException) -> str | None:
+    """The refusal text of a provider refusal, however the SDK surfaced it.
+
+    A refusal can reach here as this module's own `ProviderRefusalError`, built
+    from a structured `refusal` content item, or as the SDK's own
+    `ModelRefusalError`, which some providers (observed with Gemini through
+    LiteLLM) raise directly instead of returning refusal content. Both carry
+    the same information and deserve the same one-line, non-retryable outcome.
+    """
+    if isinstance(exc, ProviderRefusalError | ModelRefusalError):
+        return str(exc.refusal if isinstance(exc, ModelRefusalError) else exc)
+    return None
+
+
 def _structured_provider_refusal(result: Any) -> str | None:
     for item in getattr(result, "new_items", ()) or ():
         raw_item = getattr(item, "raw_item", None)
@@ -130,7 +144,9 @@ def _model_error_status_code(exc: BaseException) -> int | None:
 
 
 def _is_transient_model_error(exc: BaseException) -> bool:
-    if codex.is_content_guardrail_error(exc):
+    if codex.is_content_guardrail_error(exc) or isinstance(
+        exc, ProviderRefusalError | ModelRefusalError
+    ):
         return False
     if isinstance(
         exc, APITimeoutError | APIConnectionError | TimeoutError | ConnectionError | OSError
@@ -790,9 +806,9 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                 continue
             if session is not None:
                 await _salvage_stream_to_session(session, pre_run_items, stream, agent_id)
-            if isinstance(exc, ProviderRefusalError):
-                logger.warning("agent %s refused by the model provider: %s", agent_id, exc)
-                await coordinator.set_status(agent_id, "failed", error=str(exc))
+            if (refusal := _refusal_text(exc)) is not None:
+                logger.warning("agent %s refused by the model provider: %s", agent_id, refusal)
+                await coordinator.set_status(agent_id, "failed", error=refusal)
                 await notify_parent_on_terminal(coordinator, agent_id, "failed")
                 return None
             if isinstance(exc, MaxTurnsExceeded):
