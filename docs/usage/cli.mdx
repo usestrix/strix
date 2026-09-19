@@ -56,6 +56,13 @@ strix (--target <target> | --target-list <path>) [options]
   Target branch or commit to compare against (e.g., `origin/main`). Defaults to the repository's default branch.
 </ParamField>
 
+<ParamField path="--baseline-run" type="string">
+  Run name under `./strix_runs/` whose `vulnerabilities.json` should be used as
+  a known-findings baseline. Fresh findings that dedupe against the baseline are
+  rejected like same-run duplicates, so scheduled or post-fix scans can spend
+  budget on new issues instead of re-reporting known ones.
+</ParamField>
+
 <ParamField path="--non-interactive, -n" type="boolean">
   Run in headless mode without TUI. Ideal for CI/CD.
 </ParamField>
@@ -137,6 +144,9 @@ strix --target https://example.com --max-budget 25 --max-turns 300
 
 # Force diff-scope against a specific base ref
 strix -n --target ./ --scan-mode quick --scope-mode diff --diff-base origin/main
+
+# Suppress findings already reported by a prior run
+strix -n --target ./ --baseline-run scan-20260727-120000
 
 # Multi-target white-box testing
 strix -t https://github.com/org/app -t https://staging.example.com
