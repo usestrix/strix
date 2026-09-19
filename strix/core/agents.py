@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import tempfile
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -14,8 +15,6 @@ from strix.core.sessions import session_write_lock
 
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
-
     from agents.items import TResponseInputItem
     from agents.memory import Session
 
@@ -30,6 +29,11 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "stopped", "crashed"
 # position in the tree - decides whether waiting is bounded: only an agent waiting
 # on other agents is re-checked on a timer.
 WaitKind = Literal["user", "agents", "stalled"]
+CompactionResult = Literal["success", "unavailable", "failed"]
+COMPACTION_SUCCESS: CompactionResult = "success"
+COMPACTION_UNAVAILABLE: CompactionResult = "unavailable"
+COMPACTION_FAILED: CompactionResult = "failed"
+CompactCallback = Callable[[], Awaitable[bool]]
 
 
 @dataclass(slots=True)
@@ -45,6 +49,7 @@ class AgentRuntime:
     wake: asyncio.Event = field(default_factory=asyncio.Event)
     mailbox: list[dict[str, Any]] = field(default_factory=list)
     user_wake_required: bool = False
+    compact: CompactCallback | None = None
 
 
 class AgentCoordinator:
@@ -181,6 +186,7 @@ class AgentCoordinator:
         session: Session | None = None,
         task: asyncio.Task[Any] | None = None,
         interrupt_on_message: bool | None = None,
+        compact: CompactCallback | None = None,
         resumable: bool | None = None,
     ) -> None:
         async with self._lock:
@@ -191,6 +197,8 @@ class AgentCoordinator:
                 runtime.task = task
             if interrupt_on_message is not None:
                 runtime.interrupt_on_message = interrupt_on_message
+            if compact is not None:
+                runtime.compact = compact
             if resumable is not None:
                 runtime.resumable = resumable
 
@@ -339,6 +347,24 @@ class AgentCoordinator:
             stream.cancel(mode="immediate")
         await self._maybe_snapshot()
         return True
+
+    async def compact_agent_session(self, target_agent_id: str) -> CompactionResult:
+        """Run the compaction pipeline attached to one agent runtime."""
+        async with self._lock:
+            runtime = self.runtimes.get(target_agent_id)
+            compact = runtime.compact if runtime is not None else None
+        if compact is None:
+            logger.warning(
+                "agent.compact dropped target=%s because its runtime is not attached",
+                target_agent_id,
+            )
+            return COMPACTION_UNAVAILABLE
+        try:
+            compacted = await compact()
+        except Exception:
+            logger.exception("agent.compact failed target=%s", target_agent_id)
+            return COMPACTION_FAILED
+        return COMPACTION_SUCCESS if compacted else COMPACTION_UNAVAILABLE
 
     async def wait_for_message(self, agent_id: str, *, timeout: float | None = None) -> bool:
         """Wait until a message is ready for ``agent_id``; False on ``timeout``."""

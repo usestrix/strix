@@ -240,6 +240,11 @@ strix --target-list ./targets.txt
 
 See the [CLI reference](https://docs.strix.ai/usage/cli) for every option, including scan modes, diff scope, instruction files, and budgets.
 
+### Interactive Commands
+
+While using the default interactive TUI, send `/compact` to the selected agent to force
+provider-agnostic session compaction for long-running scans. `/compress` is supported as an alias.
+
 ### Headless Mode
 
 Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag - perfect for servers and automated jobs. The CLI prints real-time vulnerability findings and the final report before exiting. Exits with non-zero code when vulnerabilities are found.
