@@ -16,8 +16,11 @@ deltas:
 3. Add ``host.docker.internal`` → host-gateway to ``extra_hosts`` so the
    agent can reach host-served apps.
 
-Pinned to ``openai-agents==0.14.6``. Bumping the SDK requires
-re-merging the parent body. Track upstream for an injection hook.
+Verbatim copy last re-merged against ``openai-agents==0.19.0``. Bumping the
+SDK requires re-merging the parent body — see the compatibility checklist
+and version guard in ``strix/runtime/sdk_compat.py`` (also documented in
+``docs/adr/0001-openai-agents-sdk-coupling.md``) before upgrading. Track
+upstream for an injection hook.
 """
 
 from __future__ import annotations
@@ -175,7 +178,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         session_id: uuid.UUID | None = None,
     ) -> Container:
         # ----- BEGIN VERBATIM COPY of DockerSandboxClient._create_container -----
-        # SDK ref: src/agents/sandbox/sandboxes/docker.py:1434-1477 (v0.14.6).
+        # SDK ref: src/agents/sandbox/sandboxes/docker.py:1562-1605 (v0.19.0).
         if not self.image_exists(image):
             repo, tag = parse_repository_tag(image)
             self.docker_client.images.pull(repo, tag=tag or None, all_tags=False)

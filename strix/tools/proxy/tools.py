@@ -17,6 +17,7 @@ from agents import RunContextWrapper, function_tool
 from strix.runtime.caido_handle import CaidoBootstrapHandle
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy import caido_api
+from strix.tools.proxy.unproductive_tracker import record_response
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +49,18 @@ ScopeAction = Literal["get", "list", "create", "update", "delete"]
 # is not concurrency-safe (parallel calls raise "Transport is already
 # connected"). Serialize every host-side proxy call through this lock.
 _CAIDO_CALL_LOCK = asyncio.Lock()
+
+
+def _caller_agent_id(ctx: RunContextWrapper) -> str | None:
+    """Return the agent_id of the agent invoking this tool.
+
+    Mirrors ``strix/tools/coverage/tools.py``'s ``_caller_identity`` — same
+    ``ctx.context["agent_id"]`` lookup, minus the agent-name resolution this
+    module doesn't need.
+    """
+    inner: dict[str, Any] = ctx.context if isinstance(ctx.context, dict) else {}
+    raw_agent_id = inner.get("agent_id")
+    return raw_agent_id if isinstance(raw_agent_id, str) else None
 
 
 async def _ctx_client(ctx: RunContextWrapper) -> Client | None:
@@ -448,12 +461,12 @@ async def repeat_request(
                 ensure_ascii=False,
                 default=str,
             )
-        return _format_replay_tool_result(replay)
+        return _format_replay_tool_result(replay, agent_id=_caller_agent_id(ctx))
     except Exception as exc:  # noqa: BLE001
         return _err("repeat_request", exc)
 
 
-def _format_replay_tool_result(replay: dict[str, Any]) -> str:
+def _format_replay_tool_result(replay: dict[str, Any], *, agent_id: str | None = None) -> str:
     response = caido_api.parse_raw_response(replay.get("response_raw"))
     payload: dict[str, Any] = {
         "success": replay["status"] == "DONE",
@@ -464,6 +477,21 @@ def _format_replay_tool_result(replay: dict[str, Any]) -> str:
     }
     if replay.get("error"):
         payload["error"] = replay["error"]
+
+    if response is not None:
+        # Local, per-agent circuit breaker on unproductive requests (see
+        # unproductive_tracker.py) — distinct from the global $ budget and the
+        # per-turn tool-call-count limiter. Purely additive: never blocks or
+        # errors the call, just surfaces an actionable observation once an
+        # agent's own request stream shows a long run of dead ends.
+        warning = record_response(
+            agent_id,
+            response.get("status_code"),
+            response.get("length"),
+        )
+        if warning:
+            payload["strategy_warning"] = warning
+
     return json.dumps(payload, ensure_ascii=False, default=str)
 
 

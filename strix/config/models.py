@@ -891,6 +891,29 @@ def is_known_openai_bare_model(model_name: str) -> bool:
     return bool(entry and entry.get("litellm_provider") == "openai")
 
 
+def invalid_model_reason(model_name: str | None, *, api_base: str | None = None) -> str | None:
+    """Return why ``model_name`` is not a usable model string, or ``None`` if it is fine.
+
+    Mirrors the CLI's hard-fail check in ``warm_up_llm`` (``strix.interface.main``):
+    empty is always invalid, and a bare name (no ``<provider>/`` prefix) must be a
+    known OpenAI model unless a custom ``LLM_API_BASE``/``api_base`` is configured,
+    since that could plausibly serve any bare name. This is a structural check only
+    — it says nothing about whether the model is a *good* choice (see
+    ``is_recommended_or_frontier_model`` for that, which is a warning, not a
+    rejection).
+    """
+    name = (model_name or "").strip()
+    if not name:
+        return "model name is empty"
+    if "/" not in name and not is_known_openai_bare_model(name) and not api_base:
+        return (
+            f"'{name}' is not a known OpenAI model. Bare names route to OpenAI by "
+            "default. If you meant a non-OpenAI provider, use the '<provider>/<model>' "
+            "form, e.g. 'anthropic/claude-opus-4-7', 'deepseek/deepseek-v4-pro'."
+        )
+    return None
+
+
 _ANTHROPIC_MODEL_MARKERS = ("anthropic", "claude", "sonnet", "opus", "haiku")
 
 

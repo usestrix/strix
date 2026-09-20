@@ -11,6 +11,7 @@ from strix.skills import (
     load_skills,
     register_skill_dir,
     registered_skill_dirs,
+    search_skills,
     skill_search_dirs,
     validate_requested_skills,
 )
@@ -257,6 +258,41 @@ def test_resolve_skills_gates_source_aware_skills_on_whitebox() -> None:
     whitebox = _resolve_skills(requested=None, is_whitebox=True)
     assert "analysis/fix_verification" in whitebox
     assert "analysis/source_aware_discovery" in whitebox
+
+
+def test_search_skills_surfaces_matching_builtin_skill() -> None:
+    results = search_skills("graphql introspection", top_k=3)
+
+    assert results
+    assert results[0]["name"] == "graphql"
+    assert results[0]["category"] == "protocols"
+    assert "introspection" in results[0]["description"].lower()
+    assert results[0]["score"] > 0
+    scores = [r["score"] for r in results]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_search_skills_respects_top_k() -> None:
+    assert len(search_skills("authentication token security testing", top_k=2)) <= 2
+
+
+def test_search_skills_empty_query_returns_nothing() -> None:
+    assert search_skills("", top_k=5) == []
+
+
+def test_search_skills_finds_registered_skill(tmp_path: Path) -> None:
+    _write_skill(
+        tmp_path,
+        "extra",
+        "widget_lookup",
+        "---\nname: widget_lookup\ndescription: Widget lookup helper for gadget discovery\n"
+        "---\nwidget body about gadgets",
+    )
+    register_skill_dir(tmp_path)
+
+    results = search_skills("gadget discovery widget", top_k=5)
+
+    assert any(r["name"] == "widget_lookup" and r["category"] == "extra" for r in results)
 
 
 def test_new_skill_files_load() -> None:
