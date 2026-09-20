@@ -25,8 +25,15 @@ from strix.runtime.session_manager import (
 )
 
 
-def _source(subdir: str, path: str, *, protect_metadata: bool = False) -> dict[str, Any]:
-    return {"source_path": path, "workspace_subdir": subdir, "protect_metadata": protect_metadata}
+def _source(
+    subdir: str, path: str, *, protect_metadata: bool = False, read_only: bool = False
+) -> dict[str, Any]:
+    return {
+        "source_path": path,
+        "workspace_subdir": subdir,
+        "protect_metadata": protect_metadata,
+        "read_only": read_only,
+    }
 
 
 def test_source_becomes_writable_bind_mount(tmp_path: Path) -> None:
@@ -120,6 +127,16 @@ def test_clone_keeps_its_git_writable(tmp_path: Path) -> None:
     (tmp_path / ".git").mkdir()
     mounts = build_bind_mounts([_source("clone", str(tmp_path), protect_metadata=False)])
     assert [m["target"] for m in mounts] == ["/workspace/clone"]
+
+
+def test_read_only_source_is_one_read_only_mount(tmp_path: Path) -> None:
+    (tmp_path / ".git").mkdir()
+    mounts = build_bind_mounts(
+        [_source("image", str(tmp_path), protect_metadata=True, read_only=True)]
+    )
+    assert mounts == [
+        {"source": str(tmp_path.resolve()), "target": "/workspace/image", "read_only": True}
+    ]
 
 
 def test_multiple_sources_each_get_a_mount(tmp_path: Path) -> None:

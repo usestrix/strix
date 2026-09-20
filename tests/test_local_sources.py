@@ -30,7 +30,26 @@ def _local_target(target_path: str) -> dict[str, Any]:
 def test_collect_local_sources_protects_the_users_own_git() -> None:
     sources = collect_local_sources([_local_target("/code")])
     assert sources == [
-        {"source_path": "/code", "workspace_subdir": "repo", "protect_metadata": True}
+        {
+            "source_path": "/code",
+            "workspace_subdir": "repo",
+            "protect_metadata": True,
+            "read_only": False,
+        }
+    ]
+
+
+def test_collect_local_sources_forwards_read_only() -> None:
+    target = _local_target("/layout")
+    target["details"]["read_only"] = True
+    sources = collect_local_sources([target])
+    assert sources == [
+        {
+            "source_path": "/layout",
+            "workspace_subdir": "repo",
+            "protect_metadata": True,
+            "read_only": True,
+        }
     ]
 
 

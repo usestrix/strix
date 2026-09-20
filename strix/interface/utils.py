@@ -1323,6 +1323,7 @@ def collect_local_sources(targets_info: list[dict[str, Any]]) -> list[dict[str, 
                     "source_path": details["target_path"],
                     "workspace_subdir": workspace_subdir,
                     "protect_metadata": True,
+                    "read_only": bool(details.get("read_only")),
                 }
             )
 
