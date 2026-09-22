@@ -111,20 +111,8 @@ check_existing_installation() {
                 continue
             fi
 
-            if [[ -n "$path" ]]; then
-                echo -e "${MUTED}Found existing strix at: ${NC}$path"
-
-                if [[ "$path" == *".local/bin"* ]]; then
-                    echo -e "${MUTED}Removing old pipx installation...${NC}"
-                    if command -v pipx >/dev/null 2>&1; then
-                        pipx uninstall strix-agent 2>/dev/null || true
-                    fi
-                    rm -f "$path" 2>/dev/null || true
-                elif [[ -L "$path" || -f "$path" ]]; then
-                    echo -e "${MUTED}Removing old installation...${NC}"
-                    rm -f "$path" 2>/dev/null || true
-                fi
-            fi
+            echo -e "${YELLOW}Found another strix executable at: ${NC}$path"
+            echo -e "${MUTED}Leaving it unchanged; this installer only manages $INSTALL_DIR.${NC}"
         done
     fi
 }
@@ -297,14 +285,7 @@ verify_installation() {
     if [[ "$which_strix" != "$INSTALL_DIR/strix" && "$which_strix" != "$INSTALL_DIR/strix.exe" ]]; then
         if [[ -n "$which_strix" ]]; then
             echo -e "${YELLOW}⚠ Found conflicting strix at: ${NC}$which_strix"
-            echo -e "${MUTED}Attempting to remove...${NC}"
-
-            if rm -f "$which_strix" 2>/dev/null; then
-                echo -e "${GREEN}✓ Removed conflicting installation${NC}"
-            else
-                echo -e "${YELLOW}Could not remove automatically.${NC}"
-                echo -e "${MUTED}Please remove manually: ${NC}rm $which_strix"
-            fi
+            echo -e "${MUTED}Leaving it unchanged. Put $INSTALL_DIR first in PATH to use this installation.${NC}"
         fi
     fi
 
