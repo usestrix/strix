@@ -75,6 +75,11 @@ _RISK_SKILL_CATEGORY = "vulnerabilities"
 #: own words, so a new skill is merely matched strictly, never crashed on —
 #: but add an entry, because a false gap asserts something untrue in a report.
 _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
+    "account_takeover_forgot_password": (
+        "account takeover",
+        "password reset",
+        "forgot password",
+    ),
     "agentic_system_security": (
         "agentic",
         "agent tool",
@@ -98,8 +103,21 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
         "cross origin state",
     ),
     "business_logic": ("business logic", "logic flaw"),
+    "cache_poisoning": ("cache poisoning", "cache deception"),
+    "captcha_mfa_bypass": (
+        "captcha bypass",
+        "mfa bypass",
+        "two factor bypass",
+        "otp brute force",
+    ),
+    "clickjacking": ("clickjacking", "ui redressing", "frame ancestors"),
     "csrf": ("csrf", "cross site request forgery"),
     "header_injection": ("header injection", "host header", "crlf"),
+    "host_header_injection": (
+        "host header injection",
+        "host header attack",
+        "password reset poisoning",
+    ),
     "http_request_smuggling": ("request smuggling", "desync"),
     "idor": ("idor", "object level authorization", "bola", "direct object reference"),
     "information_disclosure": (
@@ -123,12 +141,25 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
     ),
     "prototype_pollution": ("prototype pollution",),
     "race_conditions": ("race condition", "toctou"),
+    "rag_vector_db_security": (
+        "vector database",
+        "rag poisoning",
+        "embedding inversion",
+        "retrieval augmented generation",
+    ),
     "rce": ("rce", "remote code execution", "code execution", "command injection"),
     "semantic_confusion": (
         "semantic confusion",
         "parser differential",
         "normalization",
         "validator sink mismatch",
+    ),
+    "shadow_api_spa_discovery": ("shadow api", "undocumented api", "spa api"),
+    "smart_contract_vulnerabilities": (
+        "smart contract",
+        "reentrancy",
+        "solidity vulnerability",
+        "evm exploit",
     ),
     "sql_injection": ("sql injection", "sqli"),
     "ssrf": ("ssrf", "server side request forgery"),

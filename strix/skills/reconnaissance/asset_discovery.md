@@ -31,6 +31,7 @@ CT logs record nearly every publicly-trusted certificate. Query by domain (match
 - **Censys / Shodan / Fofa** (API keys): search certs by `parsed.names`, `parsed.subject.organization`, or a specific `fingerprint_sha256`, then pivot to every host serving that cert.
 - Cross-check multiple indexes (`certspotter`, Google CT, `chaos`) — no single log is complete.
 - **Wildcards** (`*.corp.example.com`) reveal internal naming schemes even when individual hosts resolve privately; use them to seed targeted guesses (`grafana.corp`, `ci.corp`, `vault.corp`).
+- **Continuous CT-stream monitoring** — crt.sh/subfinder are point-in-time snapshots; a long-running scan (`deep`/multi-day engagement) benefits from tailing the live CT log stream so newly-issued certs for the target org surface within minutes instead of the next manual query. `go install github.com/g0ldencybersec/gungnir/cmd/gungnir@latest`, run it backgrounded with the target's domain/org pattern, and re-run `httpx`/`naabu` against anything new it emits.
 
 ### TLS Certificate SAN/CN
 

@@ -170,6 +170,10 @@ Keep a compact set tuned per context:
 
 ## Validation
 
+0. Before setting `confidence: "high"`, run the marker round-trip in the
+   `deterministic_verification` skill instead of relying on a screenshot or
+   "the alert fired" — quote the exact `agent-browser eval` command and its
+   literal output as evidence.
 1. Provide minimal payload and context (sink type) with before/after DOM or network evidence
 2. Demonstrate cross-browser execution where relevant or explain parser-specific behavior
 3. Show bypass of stated defenses (sanitizer settings, CSP/Trusted Types) with proof

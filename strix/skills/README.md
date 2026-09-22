@@ -54,6 +54,20 @@ Notable source-aware skills:
 Notable LLM security skills:
 - `llm_applications` (technologies): end-to-end OWASP 2026 LLM01-LLM10 coverage across models, RAG, vectors, agents, tools, outputs, supply chain, and resource controls
 - `llm_prompt_injection` (vulnerabilities): deep direct, indirect, multimodal, memory, and tool-result prompt-injection testing
+- `rag_vector_db_security` (vulnerabilities): embedding inversion, cross-tenant vector-index isolation, and retrieval-poisoned indirect injection
+
+**New domain/asset-type coverage:**
+- Web3 / smart contracts: `solidity_evm_smart_contracts` (technologies), `smart_contract_vulnerabilities` (vulnerabilities)
+- Mobile (static analysis only): `mobile_apk_ipa_static` (technologies)
+- Protocols: `saml`, `grpc`, `websocket`, `ldap`, `tls_network_layer` (protocols)
+- Identity: `okta` (technologies)
+- Frameworks: `laravel`, `aspnet`, `springboot`, `rails` (frameworks), `sharepoint` (technologies)
+- Infrastructure: `vmware_vcenter`, `iam_privilege_escalation` (cloud), `enterprise_vpn_appliances`, `cicd_pipeline_security` (custom), `oracle_database` (technologies)
+- Vulnerability classes: `cache_poisoning`, `clickjacking`, `captcha_mfa_bypass`, `host_header_injection`, `account_takeover_forgot_password`, `shadow_api_spa_discovery` (vulnerabilities)
+- Recon: `deep_osint` (reconnaissance), `supply_chain_attack_recon` (custom)
+- Frameworks: `wordpress` (frameworks) — added after a leaderboard-researcher OSINT pass surfaced it as a real gap
+- LLM automated probing: `garak`, `pyrit` (tooling) — automated probe/multi-turn-attack libraries that feed structured findings into `llm_applications`/`llm_prompt_injection`
+- `deterministic_verification` (analysis) — scripted, non-LLM-judgment confirmation for XSS execution (agent-browser marker round-trip) and injection oracles (paired-request diff); `xss.md`/`sql_injection.md`/`rce.md` point to it from their Validation sections
 
 ---
 
