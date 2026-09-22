@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any
 
 import pytest
+import requests
 
 
 if TYPE_CHECKING:
@@ -47,6 +48,45 @@ def test_parse_arguments_accepts_target_list_file(
         "web_application",
         "web_application",
     ]
+
+
+def test_parse_arguments_triage_targets_flag_reaches_triage(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--triage-targets should route through target_triage.triage_network_targets."""
+    target_list = tmp_path / "targets.txt"
+    target_list.write_text("https://test1.com/\nhttps://test2.com/\n", encoding="utf-8")
+    _stub_settings(monkeypatch)
+
+    class _FakeRaw:
+        def __init__(self, body: bytes) -> None:
+            self._body = body
+
+        def read(self, _n: int, decode_content: bool = True) -> bytes:
+            del decode_content
+            return self._body
+
+    class _FakeResponse:
+        def __init__(self, url: str) -> None:
+            self.status_code = 200
+            self.headers: dict[str, str] = {}
+            self.encoding = "utf-8"
+            self.raw = _FakeRaw(f"distinct unique body for {url}".encode())
+
+    def fake_get(url: str, **_kwargs: object) -> _FakeResponse:
+        return _FakeResponse(url)
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--target-list", str(target_list), "--triage-targets", "-n"],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert len(args.targets_info) == 2
+    assert all("triage" in t["details"] for t in args.targets_info)
 
 
 def test_parse_arguments_combines_target_and_target_list(

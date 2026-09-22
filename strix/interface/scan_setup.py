@@ -129,6 +129,14 @@ def build_targets_info(args: argparse.Namespace) -> None:
 
     args.targets_info = dedupe_local_targets(args.targets_info)
 
+    if getattr(args, "triage_targets", False):
+        from strix.interface.target_triage import triage_network_targets
+
+        args.targets_info = triage_network_targets(
+            args.targets_info,
+            drop_near_duplicates=getattr(args, "drop_similar_targets", False),
+        )
+
     assign_workspace_subdirs(args.targets_info)
     rewrite_localhost_targets(args.targets_info, HOST_GATEWAY_HOSTNAME)
 

@@ -145,6 +145,22 @@ Strix Cloud:
         "Can be specified multiple times and combined with --target.",
     )
     parser.add_argument(
+        "--triage-targets",
+        action="store_true",
+        help="Before scanning, make one best-effort HTTP GET per web_application target "
+        "(only when 2+ are given, e.g. via --target-list) to score reachability/WAF-presence "
+        "and flag near-duplicate targets by response-body similarity, then scan highest-signal "
+        "targets first. Off by default: this makes network requests to every target before the "
+        "scan starts. Annotates each target, never drops one, unless --drop-similar-targets is "
+        "also given.",
+    )
+    parser.add_argument(
+        "--drop-similar-targets",
+        action="store_true",
+        help="With --triage-targets, actually remove targets flagged as near-duplicates of a "
+        "higher-scored target instead of just reordering. No effect without --triage-targets.",
+    )
+    parser.add_argument(
         "--instruction",
         type=str,
         help="Custom instructions for the penetration test. This can be "
