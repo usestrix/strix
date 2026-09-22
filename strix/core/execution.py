@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
@@ -19,7 +19,7 @@ from openai import (
     APITimeoutError,
 )
 
-from strix.config import codex
+from strix.config import codex, load_settings
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -147,6 +147,38 @@ def _is_transient_model_error(exc: BaseException) -> bool:
 def _transient_model_retry_delay(attempt: int) -> float:
     delay = _TRANSIENT_MODEL_RETRY_BASE_DELAY_S * float(2 ** (attempt - 1))
     return min(delay, _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
+
+
+def _agent_stall_timeout() -> float:
+    return float(load_settings().runtime.agent_stall_timeout)
+
+
+async def _with_stall_guard(stream: Any, timeout: float, agent_id: str) -> AsyncIterator[Any]:
+    """Yield run events, abandoning the turn if none arrives for ``timeout`` seconds.
+
+    The model-stream idle guard only covers the model call itself. Everything
+    else the run loop awaits between events (tool transport, session writes,
+    a re-issued request that never opens) has no bound of its own, so a hang
+    there would keep the agent "running" forever.
+    """
+    events = stream.stream_events()
+    if timeout <= 0:
+        async for event in events:
+            yield event
+        return
+    iterator = events.__aiter__()
+    while True:
+        try:
+            event = await asyncio.wait_for(iterator.__anext__(), timeout)
+        except StopAsyncIteration:
+            return
+        except TimeoutError:
+            message = f"agent turn produced no event for {timeout:.0f}s"
+            logger.warning("%s for %s; abandoning the turn", message, agent_id)
+            with contextlib.suppress(Exception):
+                stream.cancel(mode="immediate")
+            raise TimeoutError(message) from None
+        yield event
 
 
 async def _salvage_stream_to_session(
@@ -658,6 +690,7 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
     image_strips = 0
     compactions = 0
     model_retries = 0
+    stall_timeout = _agent_stall_timeout()
     while True:
         stream: Any = None
         pre_run_items: list[Any] = []
@@ -688,7 +721,8 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
             await coordinator.attach_stream(agent_id, stream)
             try:
                 try:
-                    async for event in stream.stream_events():
+                    async for event in _with_stall_guard(stream, stall_timeout, agent_id):
+                        coordinator.touch(agent_id)
                         if event_sink is not None:
                             try:
                                 event_sink(agent_id, event)
