@@ -166,6 +166,40 @@ def test_resume_restores_a_target_less_workspace_mount(
     assert args.instruction == "audit the auth flow"
 
 
+def test_resume_with_scaffold_variants_does_not_crash(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """--resume + --scaffold-variants must convert the string to a list too.
+
+    Regression test: the conversion used to live only in the fresh-scan branch,
+    so a resumed run kept args.scaffold_variants as a raw comma-separated
+    string; cli.py's `list(...)` on that string then iterated it character by
+    character and crashed on the SCAFFOLD_PRESETS lookup.
+    """
+    work = tmp_path / "project"
+    work.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "pentest_abcd",
+        {
+            "run_name": "pentest_abcd",
+            "targets_info": [],
+            "local_sources": [],
+            "workspace_mount": str(work),
+        },
+    )
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--resume", "pentest_abcd", "--scaffold-variants", "injection,client-side"],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.scaffold_variants == ["injection", "client-side"]
+
+
 def test_resume_revalidates_persisted_workspace_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

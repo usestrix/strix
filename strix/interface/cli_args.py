@@ -357,6 +357,15 @@ Strix Cloud:
     # transcript shows as their opening message.
     args.user_instruction = args.instruction or None
 
+    if getattr(args, "scaffold_variants", None):
+        from strix.interface.scaffold_presets import validate_scaffold_variants
+
+        variant_names = [v.strip() for v in args.scaffold_variants.split(",") if v.strip()]
+        variant_error = validate_scaffold_variants(variant_names)
+        if variant_error:
+            parser.error(variant_error)
+        args.scaffold_variants = variant_names
+
     if args.resume:
         if args.target or args.target_list:
             parser.error(
@@ -390,15 +399,6 @@ Strix Cloud:
             build_targets_info(args)
         except ValueError as e:
             parser.error(str(e))
-
-        if getattr(args, "scaffold_variants", None):
-            from strix.interface.scaffold_presets import validate_scaffold_variants
-
-            variant_names = [v.strip() for v in args.scaffold_variants.split(",") if v.strip()]
-            variant_error = validate_scaffold_variants(variant_names)
-            if variant_error:
-                parser.error(variant_error)
-            args.scaffold_variants = variant_names
 
     return args
 
