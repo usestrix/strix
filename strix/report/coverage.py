@@ -116,7 +116,7 @@ _SKILL_PHRASINGS: dict[str, tuple[str, ...]] = {
     "host_header_injection": (
         "host header injection",
         "host header attack",
-        "password reset poisoning",
+        "host header poisoning",
     ),
     "http_request_smuggling": ("request smuggling", "desync"),
     "idor": ("idor", "object level authorization", "bola", "direct object reference"),

@@ -22,7 +22,7 @@ Pull every JS chunk the app loads (including lazy-loaded/code-split chunks, whic
 ```
 # Crawl and collect bundle URLs
 katana -u https://target.com -jc -d 3 -o urls.txt
-grep -E "\.js(\?|$)" urls.txt | sort -u
+grep -E "\.js(\?|$)" urls.txt | sort -u > js_urls.txt
 
 # Pull every chunk, extract route/API-looking strings
 for js in $(cat js_urls.txt); do curl -s "$js"; done > all_bundles.js

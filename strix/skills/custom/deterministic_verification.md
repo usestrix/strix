@@ -65,13 +65,24 @@ your reading of two response bodies side by side) report the verdict:
 
 **Boolean-based:**
 ```bash
+# 0. Control first: two requests with the SAME predicate must be identical.
+#    If they aren't, the page has per-request noise (CSRF token, timestamp,
+#    request ID, ads) and a raw full-body diff is not a valid oracle here —
+#    fall back to a narrower signal (byte length, row count, a specific
+#    extracted value) instead of diffing full bodies.
+curl -s "https://target.tld/item?id=1 AND 1=1" -o /tmp/true_a.html
+curl -s "https://target.tld/item?id=1 AND 1=1" -o /tmp/true_b.html
+diff /tmp/true_a.html /tmp/true_b.html || echo "NOISY PAGE - full-body diff unreliable, use byte length or a specific marker instead"
+
+# 1. Only once the control is clean, diff the actual true/false pair.
 curl -s "https://target.tld/item?id=1 AND 1=1" -o /tmp/true.html
 curl -s "https://target.tld/item?id=1 AND 1=2" -o /tmp/false.html
 diff /tmp/true.html /tmp/false.html && echo "IDENTICAL - no boolean oracle" || echo "DIFFERS - oracle confirmed"
 ```
-A real oracle differs on the injected predicate and is stable on repeat runs.
-If it differs but isn't reproducible (flaky diff across 2-3 repeats of the
-same pair), that's noise, not a finding — say so in `counterevidence` and set
+A real oracle differs on the injected predicate, holds the control-pair
+identical, and is stable on repeat runs. If the control pair itself differs,
+or the true/false diff isn't reproducible across 2-3 repeats of the same
+pair, that's noise, not a finding — say so in `counterevidence` and set
 `confidence: "low"`/`"medium"`, don't round up.
 
 **Time-based** (when boolean/error channels are blind):

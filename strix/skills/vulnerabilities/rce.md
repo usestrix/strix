@@ -212,10 +212,11 @@ pop graphic-context
 
 ## Validation
 
-0. For a time-based command-injection oracle, run the paired-request diff in
-   the `deterministic_verification` skill (repeat the timing measurement,
-   require the delay to hold consistently) rather than trusting one slow
-   request — and prefer an OAST callback over timing when one is reachable.
+0. For a time-based command-injection oracle, load the `deterministic_verification`
+   skill (`custom` category) alongside this one and run its paired-request
+   diff (repeat the timing measurement, require the delay to hold
+   consistently) rather than trusting one slow request — and prefer an OAST
+   callback over timing when one is reachable.
 1. Provide a minimal, reliable oracle (DNS/HTTP/timing) proving code execution
 2. Show command context (uid, gid, cwd, env) and controlled output
 3. Demonstrate persistence or file write under application constraints

@@ -127,7 +127,7 @@ Look for sensitive attributes readable by low-privilege/anonymous binds: `userPa
 
 ## Tooling
 
-`ldapsearch` (OpenLDAP client tools) is typically already available in the Kali-based sandbox; if not:
+`ldapsearch` (OpenLDAP client tools) is not installed by default in the sandbox (same as the AD/Kerberos tooling — the image ships only web-focused tools). Install it first:
 ```bash
 apt-get install -y ldap-utils
 ```

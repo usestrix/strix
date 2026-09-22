@@ -26,7 +26,12 @@ This skill covers the transport-layer surface beneath the application — cipher
 **Protocol & Cipher Enumeration**
 ```bash
 # on-demand install, not in the sandbox by default
-apt-get install -y testssl.sh 2>/dev/null || git clone --depth 1 https://github.com/drwetter/testssl.sh /opt/testssl && /opt/testssl/testssl.sh target:443
+if apt-get install -y testssl.sh 2>/dev/null; then
+    testssl.sh target:443
+else
+    git clone --depth 1 https://github.com/drwetter/testssl.sh /opt/testssl
+    /opt/testssl/testssl.sh target:443
+fi
 ```
 `testssl.sh` covers protocol versions, cipher suites, known TLS CVEs (Heartbleed, ROBOT, etc.), certificate details, and common misconfigurations in one pass — start here before manual probing.
 

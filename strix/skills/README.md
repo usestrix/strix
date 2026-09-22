@@ -67,7 +67,7 @@ Notable LLM security skills:
 - Recon: `deep_osint` (reconnaissance), `supply_chain_attack_recon` (custom)
 - Frameworks: `wordpress` (frameworks) — added after a leaderboard-researcher OSINT pass surfaced it as a real gap
 - LLM automated probing: `garak`, `pyrit` (tooling) — automated probe/multi-turn-attack libraries that feed structured findings into `llm_applications`/`llm_prompt_injection`
-- `deterministic_verification` (analysis) — scripted, non-LLM-judgment confirmation for XSS execution (agent-browser marker round-trip) and injection oracles (paired-request diff); `xss.md`/`sql_injection.md`/`rce.md` point to it from their Validation sections
+- `deterministic_verification` (custom) — scripted, non-LLM-judgment confirmation for XSS execution (agent-browser marker round-trip) and injection oracles (paired-request diff, with a control-pair check against non-deterministic page content); `xss.md`/`sql_injection.md`/`rce.md` point to it from their Validation sections as a skill to load alongside them
 
 ---
 

@@ -26,7 +26,7 @@ Laravel's convention-heavy defaults (signed cookies, Eloquent mass-assignment gu
 ```
 GET /nonexistent-route-to-trigger-500
 ```
-`APP_DEBUG=true` renders a full Whoops/Ignition stack trace: file paths, environment variables (sometimes including `APP_KEY` itself in the "Environment & Details" tab), loaded config, and — on Laravel <8.4.2 with Ignition <2.5.2 — a working RCE via the `/​_ignition/execute-solution` endpoint (CVE-2021-3129, phpggc `Monolog/RCE1` gadget through the log viewer).
+`APP_DEBUG=true` renders a full Whoops/Ignition stack trace: file paths, environment variables (sometimes including `APP_KEY` itself in the "Environment & Details" tab), loaded config, and — on Laravel <8.4.2 with Ignition <2.5.2 — a working RCE via the `/_ignition/execute-solution` endpoint (CVE-2021-3129, phpggc `Monolog/RCE1` gadget through the log viewer).
 
 **`.env` exposure**
 ```
@@ -111,7 +111,7 @@ Queued jobs are PHP-serialized (or JSON with `Illuminate\Contracts\Queue\ShouldQ
 ## Pro Tips
 
 1. `APP_KEY` recovery is the single highest-leverage step — check debug pages, `.env`, and git history before anything else.
-2. Ignition's exposed endpoint changed across versions (`/​_ignition/execute-solution` vs `/​_ignition/health-check`) — confirm the exact Laravel/Ignition version before assuming the CVE applies.
+2. Ignition's exposed endpoint changed across versions (`/_ignition/execute-solution` vs `/_ignition/health-check`) — confirm the exact Laravel/Ignition version before assuming the CVE applies.
 3. Mass assignment bugs hide in nested relationship saves (`$order->items()->create($request->item)`), not just the top-level model.
 4. `phpggc` (PHPGGC) is the go-to gadget-chain generator for the deserialization path — install via `pipx install phpggc` equivalent or `git clone` + composer if not already present.
 
