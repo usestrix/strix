@@ -6,7 +6,7 @@ import importlib
 import json
 import sys
 from types import SimpleNamespace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 import pytest
 import requests
@@ -73,6 +73,12 @@ def test_parse_arguments_triage_targets_flag_reaches_triage(
             self.encoding = "utf-8"
             self.raw = _FakeRaw(f"distinct unique body for {url}".encode())
 
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
     def fake_get(url: str, **_kwargs: object) -> _FakeResponse:
         return _FakeResponse(url)
 
@@ -87,6 +93,9 @@ def test_parse_arguments_triage_targets_flag_reaches_triage(
 
     assert len(args.targets_info) == 2
     assert all("triage" in t["details"] for t in args.targets_info)
+    # Not just "the key exists" - the fetch must have actually succeeded
+    # through default_fetcher's real requests.get(...) context-manager path.
+    assert all(t["details"]["triage"]["status"] == 200 for t in args.targets_info)
 
 
 def test_parse_arguments_combines_target_and_target_list(

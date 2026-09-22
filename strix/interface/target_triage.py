@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -37,6 +38,7 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT_S = 5.0
 _MAX_BODY_BYTES = 65536
+_MAX_CONCURRENT_FETCHES = 10
 _SIMHASH_BITS = 64
 _SIMHASH_NEAR_DUPLICATE_MAX_DISTANCE = 3
 _SHINGLE_SIZE = 4
@@ -66,29 +68,32 @@ class TargetFetcher(Protocol):
 def default_fetcher(url: str, *, timeout: float) -> tuple[int, dict[str, str], str] | None:
     """Best-effort single GET — never raises, returns ``None`` on any failure."""
     try:
-        resp = requests.get(
+        with requests.get(
             url,
             timeout=timeout,
             allow_redirects=True,
             stream=True,
             headers={"User-Agent": "Mozilla/5.0 (compatible; strix-triage/1.0)"},
-        )
-        body = resp.raw.read(_MAX_BODY_BYTES, decode_content=True)
-        text = body.decode(resp.encoding or "utf-8", errors="replace")
-        headers = {k.lower(): v for k, v in resp.headers.items()}
+        ) as resp:
+            body = resp.raw.read(_MAX_BODY_BYTES, decode_content=True)
+            text = body.decode(resp.encoding or "utf-8", errors="replace")
+            headers = {k.lower(): v for k, v in resp.headers.items()}
+            status = resp.status_code
     except Exception:  # noqa: BLE001 - triage is best-effort, never fatal to the scan
         logger.debug("target triage: fetch failed for %s", url, exc_info=True)
         return None
     else:
-        return resp.status_code, headers, text
+        return status, headers, text
 
 
 def _detect_waf(headers: dict[str, str]) -> str | None:
+    """Match a WAF/CDN signature. An empty ``needle`` means presence alone is the signal."""
     for header_name, needle in _WAF_SIGNATURES:
-        value = headers.get(header_name, "")
-        if not value and header_name in headers:
+        if header_name not in headers:
+            continue
+        if not needle:
             return header_name
-        if needle and needle in value.lower():
+        if needle in headers[header_name].lower():
             return f"{header_name}:{needle}"
     return None
 
@@ -96,11 +101,17 @@ def _detect_waf(headers: dict[str, str]) -> str | None:
 _TOKEN_RE = re.compile(r"[A-Za-z0-9_]+")
 
 
-def _simhash(text: str) -> int:
-    """64-bit SimHash over 4-token shingles of the body — near-identical pages hash close."""
+def _simhash(text: str) -> int | None:
+    """64-bit SimHash over 4-token shingles of the body — near-identical pages hash close.
+
+    Returns ``None`` for a tokenless body (empty/binary/no-content response) rather
+    than a fixed value: every tokenless body would otherwise hash identically and
+    get flagged as a near-duplicate of every other tokenless body, which is a false
+    signal, not a real content match.
+    """
     tokens = _TOKEN_RE.findall(text.lower())
     if not tokens:
-        return 0
+        return None
     shingle_count = max(1, len(tokens) - _SHINGLE_SIZE + 1)
     shingles = [" ".join(tokens[i : i + _SHINGLE_SIZE]) for i in range(shingle_count)]
     bit_weights = [0] * _SIMHASH_BITS
@@ -194,19 +205,22 @@ def triage_network_targets(
     if len(network_indices) < 2:
         return targets_info
 
-    signals: list[_Signal] = []
-    for index in network_indices:
+    def _fetch_one(index: int) -> _Signal:
         target = targets_info[index]
         url = target["details"]["target_url"]
         fetched = fetcher(url, timeout=timeout)
         if fetched is None:
-            signals.append(_Signal(index, target["original"], None, None, None, -1.0))
-            continue
+            return _Signal(index, target["original"], None, None, None, -1.0)
         status, headers, body = fetched
         waf = _detect_waf(headers)
         simhash = _simhash(body)
         score = _score_signal(status, waf, len(body))
-        signals.append(_Signal(index, target["original"], status, waf, simhash, score))
+        return _Signal(index, target["original"], status, waf, simhash, score)
+
+    # Concurrent, not serial: a fleet of hundreds of targets at ~5s/request each
+    # would otherwise delay scan startup by many minutes.
+    with ThreadPoolExecutor(max_workers=min(_MAX_CONCURRENT_FETCHES, len(network_indices))) as pool:
+        signals = list(pool.map(_fetch_one, network_indices))
 
     duplicate_of = _group_near_duplicates(signals)
     by_index = {s.index: s for s in signals}
