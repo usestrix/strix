@@ -69,6 +69,44 @@ def test_parse_arguments_combines_target_and_target_list(
     ]
 
 
+def test_parse_arguments_accepts_known_scaffold_variants(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "strix",
+            "-t",
+            "https://test1.com/",
+            "--scaffold-variants",
+            "injection,business-logic",
+            "-n",
+        ],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.scaffold_variants == ["injection", "business-logic"]
+
+
+def test_parse_arguments_rejects_unknown_scaffold_variant(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "-t", "https://test1.com/", "--scaffold-variants", "not-a-real-preset", "-n"],
+    )
+
+    with pytest.raises(SystemExit):
+        cli_main.parse_arguments()
+
+    assert "Unknown --scaffold-variants preset" in capsys.readouterr().err
+
+
 def test_parse_arguments_rejects_resume_with_target_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:

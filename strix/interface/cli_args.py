@@ -145,6 +145,19 @@ Strix Cloud:
         "Can be specified multiple times and combined with --target.",
     )
     parser.add_argument(
+        "--scaffold-variants",
+        type=str,
+        default=None,
+        metavar="PRESET1,PRESET2,...",
+        help="Run this many additional full sequential passes against the same target(s), each "
+        "biased toward a different vulnerability-class family (built-in presets: injection, "
+        "business-logic, infra-cloud, client-side), composing Strix's existing same-run-name "
+        "resume mechanism so passes share state and overlapping findings dedupe automatically. "
+        "Off by default (single normal pass). Multiplies total scan time/requests by the number "
+        "of variants given — real load against the target, size it accordingly. "
+        "Example: --scaffold-variants injection,business-logic,infra-cloud",
+    )
+    parser.add_argument(
         "--instruction",
         type=str,
         help="Custom instructions for the penetration test. This can be "
@@ -377,6 +390,15 @@ Strix Cloud:
             build_targets_info(args)
         except ValueError as e:
             parser.error(str(e))
+
+        if getattr(args, "scaffold_variants", None):
+            from strix.interface.scaffold_presets import validate_scaffold_variants
+
+            variant_names = [v.strip() for v in args.scaffold_variants.split(",") if v.strip()]
+            variant_error = validate_scaffold_variants(variant_names)
+            if variant_error:
+                parser.error(variant_error)
+            args.scaffold_variants = variant_names
 
     return args
 

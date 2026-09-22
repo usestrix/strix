@@ -194,17 +194,58 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
                     len(scan_config.get("targets") or []),
                     bool(getattr(args, "interactive", False)),
                 )
-                await run_strix_scan(
-                    scan_config=scan_config,
-                    scan_id=args.run_name,
-                    image=_resolve_sandbox_image(),
-                    local_sources=getattr(args, "local_sources", None) or [],
-                    extra_files=read_workspace_files(getattr(args, "workspace_files", None)),
-                    interactive=bool(getattr(args, "interactive", False)),
-                    max_budget_usd=getattr(args, "max_budget_usd", None),
-                    max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
-                    status_sink=_note_startup_phase,
-                )
+                scaffold_variants: list[str] = list(getattr(args, "scaffold_variants", None) or [])
+                if not scaffold_variants:
+                    await run_strix_scan(
+                        scan_config=scan_config,
+                        scan_id=args.run_name,
+                        image=_resolve_sandbox_image(),
+                        local_sources=getattr(args, "local_sources", None) or [],
+                        extra_files=read_workspace_files(getattr(args, "workspace_files", None)),
+                        interactive=bool(getattr(args, "interactive", False)),
+                        max_budget_usd=getattr(args, "max_budget_usd", None),
+                        max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
+                        status_sink=_note_startup_phase,
+                    )
+                else:
+                    from strix.interface.scaffold_presets import SCAFFOLD_PRESETS
+
+                    for i, variant in enumerate(scaffold_variants):
+                        pass_scan_config = dict(scan_config)
+                        framing = SCAFFOLD_PRESETS[variant]
+                        if i == 0:
+                            base_instructions = str(pass_scan_config.get("user_instructions") or "")
+                            pass_scan_config["user_instructions"] = (
+                                f"{framing}\n\n{base_instructions}".strip()
+                            )
+                        else:
+                            # Same run_name -> run_strix_scan resumes the prior pass's
+                            # agent graph; resume_instruction is the existing mechanism
+                            # for injecting a fresh instruction into a resumed root agent.
+                            pass_scan_config["resume_instruction"] = framing
+                        pass_label = f"Scaffold pass {i + 1}/{len(scaffold_variants)}: {variant}"
+                        _note_startup_phase(pass_label)
+                        logger.info(
+                            "CLI scaffold pass %d/%d: run_name=%s variant=%s",
+                            i + 1,
+                            len(scaffold_variants),
+                            args.run_name,
+                            variant,
+                        )
+                        pass_workspace_files = read_workspace_files(
+                            getattr(args, "workspace_files", None)
+                        )
+                        await run_strix_scan(
+                            scan_config=pass_scan_config,
+                            scan_id=args.run_name,
+                            image=_resolve_sandbox_image(),
+                            local_sources=getattr(args, "local_sources", None) or [],
+                            extra_files=pass_workspace_files,
+                            interactive=bool(getattr(args, "interactive", False)),
+                            max_budget_usd=getattr(args, "max_budget_usd", None),
+                            max_turns=getattr(args, "max_turns", DEFAULT_MAX_TURNS),
+                            status_sink=_note_startup_phase,
+                        )
             finally:
                 stop_updates.set()
                 update_thread.join(timeout=1)
