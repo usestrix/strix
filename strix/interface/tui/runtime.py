@@ -9,6 +9,7 @@ import logging
 import os
 import shutil
 import sys
+import tempfile
 from copy import deepcopy
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -26,6 +27,7 @@ from strix.interface.scan_setup import (
 from strix.interface.tui.backend import TuiBackendServer, TuiController
 from strix.interface.tui.backend.live_view import TuiLiveView
 from strix.interface.tui.sidecar import (
+    build_tui_source,
     check_return_code,
     child_environment,
     launch_tui_process,
@@ -45,6 +47,7 @@ if TYPE_CHECKING:
     import argparse
     import socket
     import subprocess
+    from typing import TextIO
 
 logger = logging.getLogger(__name__)
 
@@ -410,6 +413,19 @@ class GoTuiRuntime:
             with contextlib.suppress(asyncio.CancelledError):
                 await task
 
+    @staticmethod
+    async def _source_command(directory: str, env: dict[str, str], output: TextIO) -> list[str]:
+        # Compile before IPC starts: a cold build/toolchain download must not
+        # consume the sidecar's protocol-handshake timeout.
+        print(
+            "\x1b[2mCompiling the TUI from source (cached after the first run)...\x1b[0m",
+            file=output,
+            flush=True,
+        )
+        executable = Path(directory) / tui_executable()
+        await build_tui_source(tui_source_dir(), executable, env)
+        return [str(executable)]
+
     async def run(self) -> None:
         # Redirect the process's sys.stdout/sys.stderr while the TUI runs so
         # logging handlers created during the scan never paint over the Go
@@ -424,20 +440,15 @@ class GoTuiRuntime:
         sync_task: asyncio.Task[None] | None = None
         prepare_task: asyncio.Task[None] | None = None
         process: asyncio.subprocess.Process | subprocess.Popen[bytes] | None = None
+        build_directory: tempfile.TemporaryDirectory[str] | None = None
         try:
             env = child_environment()
             env["STRIX_VERSION"] = package_version()
             command = self.binary_command()
-            cwd = str(tui_source_dir()) if command[:2] == ["go", "run"] else None
-            if cwd is not None:
-                # go run compiles the sidecar when the build cache is cold, so
-                # tell the terminal why nothing is on screen yet.
-                print(
-                    "\x1b[2mCompiling the TUI from source (cached after the first run)...\x1b[0m",
-                    file=original_stdout,
-                    flush=True,
-                )
-            process, backend_socket = await launch_tui_process(command, env, cwd)
+            if command[:2] == ["go", "run"]:
+                build_directory = tempfile.TemporaryDirectory(prefix="strix-tui-")
+                command = await self._source_command(build_directory.name, env, original_stdout)
+            process, backend_socket = await launch_tui_process(command, env, None)
             await self.server.start(backend_socket)
             prepare_task = self._start_preparation()
             sync_task = asyncio.create_task(self.sync_state())
@@ -462,6 +473,8 @@ class GoTuiRuntime:
                 sys.stdout = original_stdout
                 sys.stderr = original_stderr
                 output_sink.close()
+                if build_directory is not None:
+                    build_directory.cleanup()
         # Mirror run_tui: surface the captured scan failure once the app has
         # exited cleanly so the CLI reports it instead of exiting 0.
         if self.scan_error is not None:

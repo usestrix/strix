@@ -13,6 +13,8 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import Any
 
+from strix.interface.terminal_text import sanitize_terminal_text
+
 
 _WINDOWS_AUTH_TIMEOUT = 10.0
 _PROCESS_EXIT_TIMEOUT = 5.0
@@ -120,6 +122,50 @@ async def terminate_process(
         with contextlib.suppress(ProcessLookupError):
             process.kill()
         await asyncio.wait_for(asyncio.shield(wait_task), _PROCESS_EXIT_TIMEOUT)
+
+
+async def build_tui_source(source: Path, output: Path, env: dict[str, str]) -> None:
+    """Compile before opening IPC so toolchain downloads cannot time out the handshake."""
+    command = ["go", "build", "-o", str(output), "./cmd/strix-tui"]
+    build_env = {**env, "GOTOOLCHAIN": "auto", "CGO_ENABLED": "0"}
+    process: asyncio.subprocess.Process | subprocess.Popen[bytes]
+    communication: asyncio.Task[tuple[bytes | None, bytes | None]]
+    if os.name == "nt":
+        # The Windows selector loop used by Strix does not support async subprocesses.
+        process = subprocess.Popen(  # noqa: S603
+            command,
+            cwd=str(source),
+            env=build_env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        communication = asyncio.create_task(asyncio.to_thread(process.communicate))
+    else:
+        process = await asyncio.create_subprocess_exec(
+            *command,
+            cwd=str(source),
+            env=build_env,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+        )
+        communication = asyncio.create_task(process.communicate())
+    try:
+        _, stderr = await asyncio.shield(communication)
+    except BaseException:
+        await terminate_process(process)
+        # In particular, wait for the Windows pipe reader before cleaning up the build.
+        with contextlib.suppress(Exception, asyncio.CancelledError):
+            await communication
+        raise
+    if process.returncode != 0:
+        detail = sanitize_terminal_text((stderr or b"").decode("utf-8", errors="replace")).strip()
+        raise RuntimeError(
+            "Could not compile the TUI. Go must be able to select the toolchain "
+            "required by go.mod and download any missing build dependencies."
+            + (f"\n{detail[-4000:]}" if detail else "")
+        )
 
 
 async def launch_tui_process(

@@ -192,9 +192,10 @@ export default function EmailReportView({
       <div className="flex items-center gap-2">
         <Mail className="h-5 w-5 text-[#888]" aria-hidden="true" />
         <h1 className="text-2xl font-semibold text-white">
-          {verifyOnly ? "Verify your email" : "Export report to PDF"}
+          {verifyOnly ? "Verify your email" : "Export original scan report"}
         </h1>
       </div>
+      {!verifyOnly && <p className="text-sm text-[#aaa]">This PDF preserves the original detected findings. Subsequent false-positive decisions and local triage notes are excluded.</p>}
 
       <div
         className="w-full rounded-2xl bg-[rgba(255,255,255,0.02)] p-6"
@@ -239,7 +240,7 @@ export default function EmailReportView({
               onClick={startFlow}
               className="w-full cursor-pointer rounded-lg bg-white px-4 py-2.5 text-sm font-semibold text-black transition-opacity hover:opacity-90"
             >
-              Export report
+              Export original report
             </button>
             {verified && auth?.email && (
               <p className="text-center text-xs text-[#666]">Sending to {auth.email}</p>

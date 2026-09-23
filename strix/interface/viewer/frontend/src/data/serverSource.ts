@@ -1,4 +1,4 @@
-import type { Vulnerability } from "@/types/issues";
+import type { TriageReason, Vulnerability } from "@/types/issues";
 import {
   parseRunJson,
   parseVulnerabilitiesJson,
@@ -84,7 +84,11 @@ export interface LoadedRun {
 
 async function getJson(path: string): Promise<unknown> {
   const res = await fetch(path, { cache: "no-store" });
-  if (!res.ok) throw new Error(`${path} responded ${res.status}`);
+  if (!res.ok) {
+    const data = await res.json().catch(() => null);
+    if (data?.error === "invalid_triage") throw new Error("The saved triage file could not be read. Findings have not been refreshed; repair the file before continuing.");
+    throw new Error(`Could not refresh run data (${res.status}).`);
+  }
   return res.json();
 }
 
@@ -113,6 +117,52 @@ export async function fetchVulnerabilities(
   return parseVulnerabilitiesJson(JSON.stringify(arr), runId);
 }
 
+export async function fetchTriageRevision(runName?: string | null): Promise<string> {
+  const data = await getJson("/api/triage/revision" + runQuery(runName)) as { revision: unknown };
+  return JSON.stringify(data.revision);
+}
+
+export interface TriageUpdate {
+  status: "open" | "closed";
+  reason_code?: TriageReason;
+  note?: string;
+}
+
+export class TriageRequestError extends Error {
+  constructor(public code: string, message: string) {
+    super(message);
+  }
+}
+
+export async function updateFindingTriage(
+  finding: Vulnerability,
+  update: TriageUpdate,
+  runName?: string | null,
+): Promise<Vulnerability> {
+  const { ok, data } = await postJson(
+    `/api/vulnerabilities/${encodeURIComponent(finding.id)}/triage` + runQuery(runName),
+    {
+      ...update,
+      expected_revision: finding.triage_revision ?? 0,
+      reviewed_digest: finding.finding_digest ?? "",
+    },
+  );
+  if (!ok || !data.finding || typeof data.finding !== "object") {
+    const code = String(data.error ?? "unavailable");
+    const messages: Record<string, string> = {
+      conflict: "This finding changed. Review the latest evidence and reopen the form before saving.",
+      invalid_triage: "The saved triage file could not be read. Fix it before changing this finding.",
+      read_only: "This run is read-only. Its findings cannot be changed.",
+      unknown_finding: "This finding is no longer available in the run.",
+      unverified: "Verify your email to access this historical run.",
+      forbidden: "Your viewer session has expired. Reopen the viewer using its authorized link.",
+      invalid_request: "The decision could not be saved. Check the form and try again.",
+    };
+    throw new TriageRequestError(code, messages[code] ?? "Could not save this decision. Try again.");
+  }
+  return parseVulnerabilitiesJson(JSON.stringify([data.finding]), finding.scan_id)[0];
+}
+
 export async function fetchReportMarkdown(runName?: string | null): Promise<string | null> {
   const obj = (await getJson("/api/report" + runQuery(runName))) as { markdown?: string };
   return obj?.markdown ?? null;
@@ -130,7 +180,7 @@ export async function fetchTranscript(runName?: string | null): Promise<Transcri
 export async function fetchAll(runName?: string | null): Promise<LoadedRun> {
   const { summary, raw, finished } = await fetchRunSummary(runName);
   const [vulnerabilities, reportMarkdown, transcript] = await Promise.all([
-    fetchVulnerabilities(summary.runId, runName).catch(() => [] as Vulnerability[]),
+    fetchVulnerabilities(summary.runId, runName),
     fetchReportMarkdown(runName).catch(() => null),
     fetchTranscript(runName).catch(() => ({ agents: [], events: [] }) as Transcript),
   ]);
@@ -160,7 +210,10 @@ export interface RunListEntry {
   start_time: string | null;
   end_time: string | null;
   finished: boolean;
-  severity_counts: RunSeverityCounts;
+  severity_counts: RunSeverityCounts | null;
+  open_count?: number;
+  closed_count?: number;
+  detected_count?: number;
 }
 
 export interface RunsPayload {
@@ -277,7 +330,7 @@ export async function sendReport(runName?: string | null): Promise<SendReportRes
     return {
       ok: true,
       password: String(data.password ?? ""),
-      filename: String(data.filename ?? "strix-report.pdf"),
+      filename: String(data.filename ?? "strix-original-scan-report.pdf"),
     };
   }
   return { ok: false, error: String(data.error ?? "unavailable") };

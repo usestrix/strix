@@ -17,7 +17,8 @@ We collect only very **basic** usage data including:
 **Scan Context:** Scan mode (quick/standard/deep), scan type (whitebox/blackbox)\
 **Model Usage:** Which LLM model is being used and whether it runs via an API key or a model subscription (not prompts or responses)\
 **Feature Usage:** Which built-in skills were used during a scan (reported once, at scan end)\
-**Aggregate Metrics:** Vulnerability counts by severity and weakness category (CWE)
+**Aggregate Metrics:** Vulnerability counts by severity and weakness category (CWE)\
+**Finding Triage:** Anonymous metadata about false-positive decisions and reopenings when telemetry is enabled; excludes notes and finding content.
 
 ### What We **Never** Collect
 

@@ -22,6 +22,7 @@ from strix.interface.viewer.report_pdf import (
     generate_password,
     generate_report_pdf,
 )
+from strix.report.triage import read_triaged_vulnerabilities, triage_finding
 
 
 if TYPE_CHECKING:
@@ -46,6 +47,7 @@ def _make_run(base: Path, name: str = "sample") -> Path:
     (run_dir / "run.json").write_text(json.dumps(record), encoding="utf-8")
     vulns = [
         {
+            "id": "vuln-0001",
             "title": "SQL Injection",
             "severity": "CRITICAL",
             "cvss": 9.8,
@@ -60,7 +62,7 @@ def _make_run(base: Path, name: str = "sample") -> Path:
             "endpoint": "/login",
             "method": "POST",
         },
-        {"title": "Informational note", "severity": "info"},
+        {"id": "vuln-0002", "title": "Informational note", "severity": "info"},
     ]
     (run_dir / "vulnerabilities.json").write_text(json.dumps(vulns), encoding="utf-8")
     return run_dir
@@ -75,6 +77,50 @@ def test_generate_report_pdf_has_pdf_header(tmp_path: Path) -> None:
     pdf = generate_report_pdf(run_dir)
     assert pdf.startswith(b"%PDF-")
     assert len(pdf) > 1000
+
+
+def test_generate_report_pdf_labels_original_scan_and_detected_counts(tmp_path: Path) -> None:
+    run_dir = _make_run(tmp_path)
+    pdf = generate_report_pdf(run_dir)
+    reader = PdfReader(BytesIO(pdf))
+    cover = reader.pages[0].extract_text()
+    text = " ".join(_pdf_text(pdf).split())
+
+    assert "Original scan report" in cover
+    assert "Subsequent local triage decisions" in cover
+    assert "false-positive closures and notes, are excluded." in " ".join(cover.split())
+    assert "2 detected findings across this assessment." in text
+    assert "Detected findings" in text
+    assert reader.metadata is not None
+    assert reader.metadata.title == "Strix Original Scan Report"
+
+
+def test_original_report_preserves_closed_findings_and_excludes_triage_notes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("strix.telemetry.triage.record_triage", lambda *_args, **_kwargs: None)
+    run_dir = _make_run(tmp_path)
+    original = _pdf_text(generate_report_pdf(run_dir))
+    for finding in read_triaged_vulnerabilities(run_dir):
+        triage_finding(
+            run_dir,
+            finding["id"],
+            status="closed",
+            expected_revision=finding["triage_revision"],
+            reviewed_digest=finding["finding_digest"],
+            reason_code="incorrect_assumption",
+            note="Private local review context must stay out of the original report.",
+            surface="viewer",
+        )
+
+    assert all(finding["status"] == "closed" for finding in read_triaged_vulnerabilities(run_dir))
+    exported = _pdf_text(generate_report_pdf(run_dir))
+    assert exported == original
+    assert "2 detected findings" in exported
+    assert "SQL Injection" in exported
+    assert "HTTP 500 with SQL error." in exported
+    assert "Informational note" in exported
+    assert "Private local review context" not in exported
 
 
 def test_generate_password_is_long_and_random() -> None:
@@ -108,7 +154,7 @@ def test_build_encrypted_report(tmp_path: Path) -> None:
     run_dir = _make_run(tmp_path, name="run-42")
     pdf_bytes, password, filename = build_encrypted_report(run_dir)
 
-    assert filename == "strix-report-run-42.pdf"
+    assert filename == "strix-original-scan-report-run-42.pdf"
     assert len(password) >= 20
     reader = PdfReader(BytesIO(pdf_bytes))
     assert reader.is_encrypted

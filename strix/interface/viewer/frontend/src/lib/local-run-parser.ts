@@ -3,6 +3,7 @@ import type {
   VulnerabilitySeverity,
   VulnerabilityStatus,
 } from "@/types/issues";
+import { TRIAGE_REASONS } from "@/types/issues";
 
 /**
  * Pure, dependency-free parsers that turn a Strix CLI local run
@@ -196,7 +197,7 @@ function parseOneVulnerability(
         ? (cweRaw.filter((c) => typeof c === "string" && c) as string[])
         : null;
 
-  const status: VulnerabilityStatus = "open";
+  const status: VulnerabilityStatus = raw.status === "closed" ? "closed" : "open";
 
   return {
     ...emptyVulnerabilityDefaults(),
@@ -206,6 +207,18 @@ function parseOneVulnerability(
     description: asStringOrNull(raw.description) ?? "",
     severity: coerceSeverity(raw.severity),
     status,
+    triage_status: raw.triage_status === "closed" ? "closed" : "open",
+    resolution_reason: raw.resolution_reason === "false_positive" ? "false_positive" : null,
+    reason_code: typeof raw.reason_code === "string" && Object.hasOwn(TRIAGE_REASONS, raw.reason_code)
+      ? raw.reason_code as Vulnerability["reason_code"] : "unspecified",
+    triage_revision: typeof raw.triage_revision === "number" && Number.isSafeInteger(raw.triage_revision)
+      ? raw.triage_revision : 0,
+    finding_digest: asStringOrNull(raw.finding_digest) ?? "",
+    review_stale: raw.review_stale === true,
+    can_triage: raw.can_triage === true && typeof raw.id === "string" && !!raw.id,
+    status_note: asStringOrNull(raw.status_note),
+    status_changed_at: asStringOrNull(raw.status_changed_at),
+    status_changed_by: asStringOrNull(raw.status_changed_by),
     created_at: toIsoTimestamp(raw.timestamp),
     cve: asStringOrNull(raw.cve),
     cvss: asNumberOrNull(raw.cvss),

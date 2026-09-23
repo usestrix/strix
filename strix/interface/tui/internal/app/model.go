@@ -64,6 +64,7 @@ const (
 	modalStop
 	modalConfirmMount
 	modalVulnerability
+	modalTriage
 )
 
 type focusMode int
@@ -134,6 +135,12 @@ type Model struct {
 	seenMessages           map[string]bool
 	vulnerabilityCopied    bool
 	vulnerabilityCopyError string
+	findingFilter          int
+	triage                 triageForm
+	triagePending          *triageRequest
+	triageUndo             *triageUndoState
+	triageError            string
+	triageErrorID          string
 }
 
 var (
@@ -335,6 +342,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeVulnerabilityViewport()
 		m.ensureAgentVisible()
 		m.ensureVulnerabilityVisible()
+		m.resizeTriageForm()
 	case wireErrMsg:
 		if !m.quitting {
 			m.errorText = "Backend disconnected: " + msg.err.Error()
@@ -354,6 +362,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmds = append(cmds, readWire(m.client))
 	case sentMsg:
 		if msg.err != nil {
+			if msg.command == "vulnerability.triage" {
+				if m.triagePending != nil {
+					m.triageErrorID = m.triagePending.findingID
+				}
+				m.triagePending = nil
+				m.triageError = msg.err.Error()
+			}
 			m.errorText = msg.err.Error()
 			if msg.command == "collection.resync" && msg.collection != "" {
 				m.resyncRequested[msg.collection] = false
@@ -407,6 +422,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	if m.modal == modalNone {
 		m.input, cmd = m.input.Update(msg)
+	} else if m.modal == modalTriage {
+		m.triage.note, cmd = m.triage.note.Update(msg)
 	}
 	cmds = append(cmds, cmd)
 	return m, tea.Batch(cmds...)
