@@ -7,7 +7,7 @@ import contextlib
 import logging
 import uuid
 from collections.abc import Callable
-from functools import cache
+from functools import cache, partial
 from typing import TYPE_CHECKING, Any, cast
 
 from agents import RunConfig, Runner
@@ -118,6 +118,16 @@ async def _compact_session(
         tools_text=_agent_tools_text(agent),
         force=force,
     )
+
+
+async def _force_compact_session(
+    agent: Any,
+    session: Session | None,
+    run_config: RunConfig,
+) -> bool:
+    if session is None:
+        return False
+    return await _compact_session(agent, session, run_config, force=True)
 
 
 _MAX_TRANSIENT_MODEL_RETRIES = 5
@@ -241,6 +251,7 @@ async def _run_agent_loop(
         agent_id,
         session=session,
         interrupt_on_message=interactive,
+        compact=partial(_force_compact_session, agent, session, run_config),
         resumable=interactive,
     )
     result: RunResultBase | None = None
