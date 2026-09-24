@@ -390,7 +390,7 @@ def _guard_event(
     event: TResponseStreamEvent, rewriter: TurnCallIdRewriter, limiter: TurnToolCallLimiter
 ) -> TResponseStreamEvent | None:
     if isinstance(event, ResponseOutputItemAddedEvent | ResponseOutputItemDoneEvent):
-        rewritten = rewriter.rewrite_item(event.item)
+        rewritten = rewriter.rewrite_item(event.item, event.output_index)
         if not limiter.allow(rewritten):
             return None
         if rewritten is not event.item:

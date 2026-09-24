@@ -20,6 +20,7 @@ from collections import defaultdict, deque
 from typing import Any
 from uuid import uuid4
 
+from agents.models.fake_id import FAKE_RESPONSES_ID
 from openai.types.responses import ResponseFunctionToolCall
 
 
@@ -109,9 +110,19 @@ class TurnCallIdRewriter:
         self._blank_remap: dict[str, str] = {}
         self._settled: set[str] = set()
 
-    def _rewrite_blank(self, item: ResponseFunctionToolCall) -> ResponseFunctionToolCall:
-        """Give a call with no id one, keyed by item id so parallel calls differ."""
-        key = item.id or ""
+    def _rewrite_blank(
+        self, item: ResponseFunctionToolCall, position: int | None
+    ) -> ResponseFunctionToolCall:
+        """Give a call with no id one that stays the same on every sighting.
+
+        A real item id tells parallel calls apart. Chat Completions routes give
+        every item the same placeholder id, so there the call's position in
+        the turn's output tells them apart instead.
+        """
+        if item.id and item.id != FAKE_RESPONSES_ID:
+            key = item.id
+        else:
+            key = f"{FAKE_RESPONSES_ID}#{position}"
         replacement = self._blank_remap.get(key)
         if replacement is None:
             replacement = new_call_id()
@@ -120,12 +131,13 @@ class TurnCallIdRewriter:
             self._settled.add(replacement)
         return item.model_copy(update={"call_id": replacement})
 
-    def rewrite_item(self, item: Any) -> Any:
+    def rewrite_item(self, item: Any, position: int | None = None) -> Any:
+        """Rewrite one item; ``position`` is its index in the turn's output."""
         if not isinstance(item, ResponseFunctionToolCall):
             return item
         original = item.call_id
         if not original:
-            return self._rewrite_blank(item)
+            return self._rewrite_blank(item, position)
         if original in self._settled:
             return item
         replacement = self._remap.get(original)
@@ -141,4 +153,4 @@ class TurnCallIdRewriter:
         return item.model_copy(update={"call_id": replacement})
 
     def rewrite_items(self, items: list[Any]) -> list[Any]:
-        return [self.rewrite_item(item) for item in items]
+        return [self.rewrite_item(item, position) for position, item in enumerate(items)]
