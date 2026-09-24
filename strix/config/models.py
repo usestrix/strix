@@ -40,7 +40,7 @@ from strix.config import codex
 from strix.config.loader import load_settings
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
-from strix.llm import request_log
+from strix.llm import chat_content_compat, request_log
 
 
 if TYPE_CHECKING:
@@ -664,6 +664,7 @@ def configure_sdk_model_defaults(settings: Settings) -> None:
     llm = settings.llm
     set_tracing_disabled(True)
     request_log.install()
+    chat_content_compat.install()
     if codex.subscription_model(llm.model):
         return
     _configure_litellm_compatibility()
