@@ -207,12 +207,14 @@ excludes = [
     'openhands-aci',
     'numpydoc',
 
-    # Google Cloud / Vertex AI
+    # Google Cloud SDKs. litellm only reaches these for legacy PaLM and Model
+    # Garden models, which need google-cloud-aiplatform and are not bundled.
+    # google.auth and google.oauth2 are deliberately NOT excluded: every
+    # vertex_ai/gemini-* call authenticates through them, and the `vertex`
+    # extra installs google-auth for exactly that (#1256).
     'google.cloud',
     'google.cloud.aiplatform',
     'google.api_core',
-    'google.auth',
-    'google.oauth2',
     'google.protobuf',
     'grpc',
     'grpcio',
