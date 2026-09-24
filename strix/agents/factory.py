@@ -660,6 +660,7 @@ def build_strix_agent(
     skills: list[str] | None = None,
     is_root: bool,
     scan_mode: str = "deep",
+    model: str | None = None,
     is_whitebox: bool = False,
     is_diff_scoped: bool = False,
     interactive: bool = False,
@@ -725,7 +726,7 @@ def build_strix_agent(
         instructions=instructions,
         tools=tools,
         tool_use_behavior=_finish_tool_use_behavior,
-        model=None,
+        model=model,
         capabilities=[
             Filesystem(
                 configure_tools=_make_filesystem_configurator(
@@ -752,6 +753,7 @@ def make_child_factory(
     chat_completions_tools: bool = False,
     strict_tool_schemas: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
+    subagent_model: str | None = None, 
 ) -> Any:
     """Return the runner-owned builder used by ``spawn_child_agent``.
 
@@ -765,6 +767,7 @@ def make_child_factory(
             name=name,
             skills=skills,
             is_root=False,
+            model=subagent_model,         
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,

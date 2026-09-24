@@ -85,11 +85,12 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
     scan_mode = getattr(args, "scan_mode", "deep")
 
-    scan_config: dict[str, Any] = {
+        scan_config: dict[str, Any] = {
         "scan_id": args.run_name,
         "targets": args.targets_info,
-        "user_instructions": args.instruction or "",
+        "user_instruction": args.instruction or "",
         "run_name": args.run_name,
+        "subagent_model": getattr(args, "subagent_model", None),
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scan_mode": scan_mode,
         "non_interactive": bool(getattr(args, "non_interactive", False)),
