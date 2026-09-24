@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -30,6 +31,24 @@ TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "stopped", "crashed"
 # position in the tree - decides whether waiting is bounded: only an agent waiting
 # on other agents is re-checked on a timer.
 WaitKind = Literal["user", "agents", "stalled"]
+
+_CHATGPT_TRANSCRIPT_TAGS = (
+    "analysis",
+    "assistant",
+    "channel",
+    "final",
+    "user",
+)
+_CHATGPT_TRANSCRIPT_TAG_ALTERNATION = "|".join(re.escape(tag) for tag in _CHATGPT_TRANSCRIPT_TAGS)
+_OPTIONAL_TAG_ATTRIBUTES_PATTERN = r"(?:\s+[^>]*)?"
+_CHATGPT_TRANSCRIPT_TAG_RE = re.compile(
+    rf"</?(?:{_CHATGPT_TRANSCRIPT_TAG_ALTERNATION}){_OPTIONAL_TAG_ATTRIBUTES_PATTERN}\s*/?>",
+    flags=re.IGNORECASE,
+)
+
+
+def _strip_chatgpt_transcript_tags(content: str) -> str:
+    return _CHATGPT_TRANSCRIPT_TAG_RE.sub("", content)
 
 
 @dataclass(slots=True)
@@ -413,7 +432,7 @@ class AgentCoordinator:
         await self._maybe_snapshot()
 
     async def cancel_descendants(self, agent_id: str) -> None:
-        tasks = []
+        tasks: list[asyncio.Task[Any]] = []
         async with self._lock:
             for aid in reversed(self._subtree_order_locked(agent_id)):
                 task = self.runtimes.get(aid, AgentRuntime()).task
@@ -481,6 +500,7 @@ class AgentCoordinator:
         content = str(message.get("content", ""))
         if sender == "user":
             return cast("TResponseInputItem", {"role": "user", "content": content})
+        content = _strip_chatgpt_transcript_tags(content)
         sender_name = self.names.get(sender, sender)
         msg_type = message.get("type", "information")
         priority = message.get("priority", "normal")
