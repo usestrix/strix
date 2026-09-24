@@ -39,6 +39,34 @@ def args() -> argparse.Namespace:
     )
 
 
+@pytest.mark.asyncio
+async def test_init_run_state_hydrates_selected_baseline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    baseline_name = "baseline-run"
+    baseline_report = {
+        "id": "vuln-0001",
+        "title": "Known SQL injection",
+        "severity": "high",
+    }
+    baseline_dir = tmp_path / "strix_runs" / baseline_name
+    baseline_dir.mkdir(parents=True)
+    (baseline_dir / "vulnerabilities.json").write_text(
+        json.dumps([baseline_report]),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    runtime_args = args()
+    runtime_args.baseline_run = baseline_name
+    runtime = GoTuiRuntime(runtime_args)
+
+    runtime.init_run_state()
+
+    assert runtime.report_state.get_dedupe_vulnerabilities() == [baseline_report]
+    assert runtime.report_state.get_existing_vulnerabilities() == []
+
+
 def test_binary_command_prefers_packaged_sidecar(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Any,
