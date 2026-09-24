@@ -10,7 +10,7 @@ from pydantic import AliasChoices, Field, ValidationError
 from pydantic.fields import FieldInfo
 
 from strix.config import loader
-from strix.config.settings import ContextSettings
+from strix.config.settings import ContextSettings, LlmSettings
 
 
 if TYPE_CHECKING:
@@ -28,6 +28,7 @@ _LLM_ENV_KEYS = [
     "OLLAMA_API_BASE",
     "STRIX_REASONING_EFFORT",
     "STRIX_FORCE_REQUIRED_TOOL_CHOICE",
+    "STRIX_LLM_MAX_TOKENS",
     "LLM_TIMEOUT",
     "PERPLEXITY_API_KEY",
     "EXA_API_KEY",
@@ -140,6 +141,10 @@ def test_tool_output_max_bytes_rejects_sub_notice_values() -> None:
 
 def test_tool_output_max_bytes_accepts_floor() -> None:
     assert ContextSettings(STRIX_TOOL_OUTPUT_MAX_BYTES=1024).tool_output_max_bytes == 1024
+
+
+def test_llm_max_tokens_env_alias() -> None:
+    assert LlmSettings(STRIX_LLM_MAX_TOKENS=12_000).max_tokens == 12_000
 
 
 # --------------------------------------------------------------------------- #
