@@ -255,6 +255,25 @@ async def warm_up_llm(show_model_warning: bool = True) -> None:
     except Exception as exc:
         logger.debug("LLM warm-up failed", exc_info=True)
         raise ModelConnectionError(raw_model, exc) from exc
+    finally:
+        # The scan runs under a different event loop, and pooled connections
+        # opened here would still be bound to this one. Close the shared
+        # clients now so the scan starts from fresh ones.
+        with contextlib.suppress(Exception):
+            from agents.models import openai_provider
+
+            http_client = openai_provider._http_client  # pyright: ignore[reportPrivateUsage]
+            openai_provider._http_client = None  # pyright: ignore[reportPrivateUsage]
+            if http_client is not None:
+                await http_client.aclose()
+        with contextlib.suppress(Exception):
+            await codex.reset_subscription_client()
+        # LiteLLM keys its client cache by event loop; this only releases the
+        # warm-up's sockets.
+        with contextlib.suppress(Exception):
+            import litellm
+
+            await litellm.close_litellm_async_clients()  # type: ignore[attr-defined,no-untyped-call]
 
 
 def display_completion_message(args: argparse.Namespace, results_path: Path) -> None:
