@@ -63,7 +63,7 @@ Target-specific workflows built on the same engine:
 
 - Python 3.12+, managed with `uv`. Install dev deps: `make dev-install`.
 - Lint/format/type-check/security, all in one: `make check-all` (ruff, mypy, bandit).
-- Tests: `uv run pytest`.
+- Tests: `make test` (or `uv run pytest`). Included in `make check-all`.
 - Run from source: `uv run strix --target <target>`.
 - Layout: `strix/agents` (agent graph + prompts), `strix/tools` (proxy, browser, terminal, scanners), `strix/runtime` (Docker sandbox), `strix/report` (findings, SARIF), `strix/skills` (internal knowledge packs the pentest agents load — different from the consumer skills in `skills/`), `strix/interface` (CLI/TUI), `containers/` (sandbox image).
 - Pre-commit hooks: `make pre-commit` (or `uv run pre-commit install`).
