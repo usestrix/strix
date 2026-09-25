@@ -11,8 +11,8 @@ import asyncio
 import json
 import logging
 import re
-from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any, cast
 
 from agents import RunContextWrapper, function_tool
 
@@ -21,6 +21,9 @@ from strix.tools.proxy.tools import existing_request_ids
 
 
 if TYPE_CHECKING:
+    from collections.abc import Mapping
+
+    from strix.fix.contracts import SourceIdentity
     from strix.report.state import ReportState
 
 
@@ -342,16 +345,11 @@ def _validate_fix_verification(
     if str(fix_verification or "").strip():
         return []
     return [
-        "fix_verification is REQUIRED when any code_location carries a 'fix_after' - "
-        "a suggestion a reviewer can click to apply must be verified first. State, in "
-        "order: (1) security closure - re-trace the source->sink path through the "
-        "PATCHED code and say why it is now blocked; (2) bypass review - re-read the "
-        "diff without your original rationale and name the equivalent sinks, sibling "
-        "call sites, and alternate malicious input classes you checked; (3) preserved "
-        "behavior - the legitimate inputs, APIs, and error semantics that still work; "
-        "(4) how each was checked (executed vs. reasoned), naming any unrun check as "
-        "an explicit gap. If you cannot make these statements, drop 'fix_after' and "
-        "leave the location informational."
+        "fix_verification is REQUIRED when any code_location carries a 'fix_after'. "
+        "Describe the checks you performed on this draft candidate. Separate executed "
+        "checks from reasoned checks and list every gap. This statement does not make "
+        "the candidate ready for automatic application. If the candidate fails a check, "
+        "revise it or remove 'fix_after'."
     ]
 
 
@@ -369,6 +367,100 @@ def _finding_class_of(report: dict[str, Any]) -> str:
     if report.get("dependency_metadata"):
         return "dependency_cve"
     return "dynamic"
+
+
+def _fix_source_context(
+    report_state: ReportState,
+) -> tuple[SourceIdentity | None, Path | None]:
+    from strix.fix.contracts import SourceIdentity, SourceIdentityKind
+
+    raw_context = report_state.get_repository_context()
+    if raw_context is None:
+        return None, None
+    context = cast("dict[str, object]", raw_context)
+    commit = context.get("commitSha")
+    if not isinstance(commit, str) or not commit:
+        return None, None
+    raw_targets = cast("object", report_state.run_record.get("targets_info"))
+    targets = cast("list[object]", raw_targets) if isinstance(raw_targets, list) else []
+    if len(targets) != 1:
+        return SourceIdentity(kind=SourceIdentityKind.COMMIT, value=commit), None
+    raw_target = targets[0]
+    target = cast("dict[str, object]", raw_target) if isinstance(raw_target, dict) else {}
+    raw_details = target.get("details")
+    details = cast("dict[str, object]", raw_details) if isinstance(raw_details, dict) else {}
+    repo_path = details.get("cloned_repo_path")
+    repository = context.get("repositoryUri")
+    return (
+        SourceIdentity(
+            kind=SourceIdentityKind.COMMIT,
+            value=commit,
+            repository=repository if isinstance(repository, str) else None,
+        ),
+        Path(repo_path) if isinstance(repo_path, str) and repo_path else None,
+    )
+
+
+def _build_fix_candidate(
+    report_state: ReportState,
+    report_fields: Mapping[str, object],
+) -> dict[str, object] | None:
+    from strix.fix.contracts import candidate_from_legacy_report
+    from strix.fix.locations import AnchorStatus, anchor_candidate
+
+    source_identity, repo_path = _fix_source_context(report_state)
+    candidate = candidate_from_legacy_report(report_fields, source_identity=source_identity)
+    if candidate is None:
+        return None
+    if repo_path is not None:
+        anchored, results = anchor_candidate(repo_path, candidate)
+        candidate = anchored
+        gaps = [
+            f"{result.location.file}: {result.status}"
+            for result in results
+            if result.status is not AnchorStatus.UNIQUE
+        ]
+        if gaps:
+            candidate = candidate.model_copy(update={"known_gaps": [*candidate.known_gaps, *gaps]})
+    return cast("dict[str, object]", candidate.model_dump(mode="json"))
+
+
+_FIX_CANDIDATE_FIELDS = frozenset(
+    {
+        "code_locations",
+        "remediation_steps",
+        "technical_analysis",
+        "poc_description",
+        "evidence",
+        "fix_verification",
+    }
+)
+
+
+def _refresh_fix_candidate(
+    report_state: ReportState,
+    report_id: str,
+    changes: dict[str, Any],
+) -> None:
+    if not _FIX_CANDIDATE_FIELDS.intersection(changes):
+        return
+    existing = next(
+        (
+            report
+            for report in report_state.get_existing_vulnerabilities()
+            if report.get("id") == report_id
+        ),
+        None,
+    )
+    if existing is None:
+        return
+    candidate = _build_fix_candidate(report_state, {**existing, **changes})
+    if candidate is not None:
+        changes["fix_candidate"] = candidate
+        changes["fix_preparation"] = {
+            "state": "stale",
+            "stop_reason": "The finding or draft candidate changed after preparation.",
+        }
 
 
 _UPDATE_TEXT_FIELDS = (
@@ -651,6 +743,7 @@ def _do_update(
     class_error = _fit_revision_to_class(report_state, report_id, changes)
     if class_error is not None:
         return class_error
+    _refresh_fix_candidate(report_state, report_id, changes)
 
     try:
         updated = report_state.update_vulnerability_report(
@@ -912,6 +1005,9 @@ async def _do_create(
             "fix_pr_body": fix_pr_body,
             "http_exchange_ids": normalized_http_exchange_ids,
         }
+        fix_candidate = _build_fix_candidate(report_state, report_fields)
+        if fix_candidate:
+            report_fields["fix_candidate"] = fix_candidate
 
         dedupe = await check_duplicate(candidate, existing)
         if dedupe.get("is_duplicate"):
@@ -1259,11 +1355,10 @@ async def create_vulnerability_report(
             ``update_vulnerability_report`` once the proxy responds.
             Keep IDs out of ``evidence`` and all other report text.
 
-            **How ``fix_before`` / ``fix_after`` work**: they're used as
-            literal GitHub/GitLab PR suggestion blocks. When a reviewer
-            accepts the suggestion, the platform replaces the **exact
-            lines from ``start_line`` to ``end_line``** with
-            ``fix_after``. Therefore:
+            **How ``fix_before`` / ``fix_after`` work**: they describe an
+            initial fix candidate. A later preparation stage applies,
+            tests, repairs, and independently verifies the candidate before
+            Strix can offer an automatic pull request. Therefore:
 
             1. ``fix_before`` must be a **VERBATIM** copy of the source
                at those lines — same whitespace, indentation, line
@@ -1284,9 +1379,9 @@ async def create_vulnerability_report(
             before SQL"``). Order primary fix first, supporting
             changes (imports, config) after.
 
-            **Informational vs actionable**:
+            **Informational vs candidate**:
             - With ``fix_before`` / ``fix_after``: actionable fix
-              (renders as a PR suggestion block).
+              candidate for the preparation stage.
             - Without them: informational context (e.g. showing the
               source of tainted data, or a sink that doesn't need
               direct editing).
@@ -1321,11 +1416,10 @@ async def create_vulnerability_report(
               that aren't part of the fix.
             - Duplicating the same change across multiple locations.
         fix_verification: REQUIRED whenever any ``code_locations`` entry
-            carries a ``fix_after``. A reviewer can apply that
-            suggestion with one click, so an unverified fix ships
-            straight into the codebase. Before writing this field, work
-            the gates **in order** and never trade an earlier one for a
-            later one:
+            carries a ``fix_after``. This field records the reporting
+            agent's checks on the draft candidate. It is not an independent
+            verification result. Before writing this field, work the gates
+            **in order**:
 
             1. **Security closure** — re-trace the source → sink path
                through the *patched* code and state why it is now
@@ -1344,11 +1438,9 @@ async def create_vulnerability_report(
 
             Then write what you did: the commands you ran and their
             results, and every gate you could only reason about rather
-            than execute, marked explicitly as a gap. Do not claim a
-            gate passed because it looks right. If a gate fails, revise
-            the patch or drop ``fix_after`` and leave the location
-            informational — never compensate for a failed security
-            closure with a smaller diff or extra prose.
+            than execute, marked explicitly as a gap. Do not claim that a
+            gate passed because the candidate looks correct. If a gate
+            fails, revise the candidate or drop ``fix_after``.
 
             Also use this field to record the narrowest-complete-change
             judgement: prefer the smallest repository-native fix that

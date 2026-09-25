@@ -129,14 +129,15 @@ def test_write_sarif_never_embeds_poc_script(tmp_path: Path) -> None:
     assert poc["description"] == "Send a crafted request to trigger the sink."
 
 
-def test_write_sarif_builds_fixes_from_code_location_fix_pairs(tmp_path: Path) -> None:
-    # A code location carrying fix_before/fix_after must surface as a SARIF
-    # fix (artifactChange/replacement) so consumers can offer a one-click fix.
+def test_write_sarif_builds_fixes_from_ready_preparation(tmp_path: Path) -> None:
+    # SARIF fixes are automatically applicable, so only a prepared result can
+    # expose the candidate as an artifactChange.
     write_sarif(
         tmp_path,
         [
             _finding(
                 remediation_steps="Use a parameterized query.",
+                fix_preparation={"state": "ready"},
                 code_locations=[
                     {
                         "file": "app.py",
@@ -157,6 +158,28 @@ def test_write_sarif_builds_fixes_from_code_location_fix_pairs(tmp_path: Path) -
     replacement = change["replacements"][0]
     assert replacement["deletedRegion"]["startLine"] == 4
     assert replacement["insertedContent"]["text"] == 'query = "SELECT * FROM u WHERE id=%s"'
+
+
+def test_write_sarif_hides_unprepared_fix_candidate(tmp_path: Path) -> None:
+    write_sarif(
+        tmp_path,
+        [
+            _finding(
+                code_locations=[
+                    {
+                        "file": "app.py",
+                        "start_line": 4,
+                        "end_line": 4,
+                        "fix_before": "unsafe(value)",
+                        "fix_after": "safe(value)",
+                    }
+                ],
+            )
+        ],
+    )
+
+    result = _read(tmp_path)["runs"][0]["results"][0]
+    assert "fixes" not in result
 
 
 def test_write_sarif_omits_fixes_without_fix_pairs(tmp_path: Path) -> None:

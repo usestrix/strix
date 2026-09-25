@@ -583,14 +583,14 @@ def _result_properties(
 
 
 def _build_fixes(report: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Build SARIF ``fixes`` from a finding's code-location fix pairs.
+    """Build SARIF ``fixes`` from a prepared finding.
 
-    Strix findings carry the suggested change inline on each code
-    location as ``fix_before`` + ``fix_after``. We map every location
-    that has both (and a safe repo-relative URI + start line) into a
-    SARIF ``artifactChange``, replacing the finding's region with the
-    fixed text. Returns None when no location carries a usable fix pair.
+    SARIF consumers can apply ``fixes`` automatically. Strix emits them only
+    after the preparation stage records a ``ready`` result.
     """
+    preparation = report.get("fix_preparation")
+    if not isinstance(preparation, dict) or preparation.get("state") != "ready":
+        return None
     raw_locations = report.get("code_locations")
     if not isinstance(raw_locations, list):
         return None
