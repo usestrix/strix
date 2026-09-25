@@ -12,6 +12,12 @@ the paired tool result into a ``tool`` message with an empty
 ``tool_call_id``, which strict providers reject the same way and with the
 same permanent outcome. Rewriting both blank and duplicate ids to fresh
 unique ones keeps the history valid for any provider.
+
+A tool call can also arrive with no function name, when the streamed deltas
+never carry one. Providers reject an assistant message whose tool call has an
+empty ``function.name`` just as permanently. Filling it in with a placeholder
+name keeps the request valid; the run loop then treats the call like any other
+hallucinated tool and hands the model a "tool not found" result to recover from.
 """
 
 from __future__ import annotations
@@ -22,6 +28,9 @@ from uuid import uuid4
 
 from agents.models.fake_id import FAKE_RESPONSES_ID
 from openai.types.responses import ResponseFunctionToolCall
+
+
+UNNAMED_TOOL = "unnamed_tool"
 
 
 def new_call_id() -> str:
@@ -70,6 +79,9 @@ def dedupe_history_call_ids(items: list[Any]) -> tuple[list[Any], bool]:
         call_id = item.get("call_id")
         key = _pairing_key(call_id)
         if kind == "function_call":
+            if not item.get("name"):
+                item = {**item, "name": UNNAMED_TOOL}  # noqa: PLW2901
+                changed = True
             effective = key
             if not effective or effective in used:
                 effective = new_call_id()
@@ -135,6 +147,8 @@ class TurnCallIdRewriter:
         """Rewrite one item; ``position`` is its index in the turn's output."""
         if not isinstance(item, ResponseFunctionToolCall):
             return item
+        if not item.name:
+            item = item.model_copy(update={"name": UNNAMED_TOOL})
         original = item.call_id
         if not original:
             return self._rewrite_blank(item, position)
