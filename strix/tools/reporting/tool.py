@@ -1952,6 +1952,11 @@ async def _do_create_dependency(  # noqa: PLR0912, PLR0915
     parsed_locations = _normalize_code_locations(code_locations)
     if parsed_locations:
         errors.extend(_validate_code_locations(parsed_locations))
+    elif code_locations:
+        errors.append(
+            "code_locations were dropped as unusable - every location needs a relative "
+            "'file' and an integer 'start_line'"
+        )
     errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
 
     reachability = (reachability or "unknown").strip().lower()
@@ -2232,7 +2237,7 @@ async def create_dependency_report(
             the evidence behind your ``reachability`` claim. List of dicts,
             same shape as ``create_vulnerability_report``::
 
-                {"file": "src/api/client.ts", "start_line": 14,
+                {"file": "src/api/client.ts", "start_line": 14, "end_line": 14,
                  "snippet": "const x = require('pkg')", "label": "imports it"}
 
             Cite the repo-relative ``file`` and the exact 1-based
