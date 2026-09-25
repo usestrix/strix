@@ -1253,9 +1253,9 @@ async def test_code_locations_reanchored_on_update(
 
 
 def test_find_anchor_picks_nearest_match() -> None:
-    file_lines = ["x = 1"] * 20
-    anchor = ["x = 1"]
-    assert reporting_tool._find_anchor(file_lines, anchor, 12) == 12
+    file_lines = ["a = 1", "b = 2"] * 20
+    anchor = ["a = 1", "b = 2"]
+    assert reporting_tool._find_anchor(file_lines, anchor, 23) == 23
 
 
 def test_find_anchor_dedented_multiline() -> None:
@@ -1266,9 +1266,137 @@ def test_find_anchor_dedented_multiline() -> None:
 
 def test_find_anchor_single_line_ambiguous_dedented() -> None:
     file_lines = ["}", "    }", "}"]
-    assert reporting_tool._find_anchor(file_lines, ["}"], 1) == 1
+    assert reporting_tool._find_anchor(file_lines, ["}"], 1) is None
     file_lines = ["    }", "    }"]
     assert reporting_tool._find_anchor(file_lines, ["}"], 1) is None
+    file_lines = ["x()", "    }", "end"]
+    assert reporting_tool._find_anchor(file_lines, ["}"], 1) == 2
+
+
+def test_code_locations_absolute_path_never_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An absolute ``file`` fails path validation downstream; re-anchoring
+    must skip it before any read so ``/dev/zero``-style paths can't hang
+    report creation."""
+    monkeypatch.setattr(reporting_tool, "_repo_workspace_roots", lambda: [tmp_path])
+    location = {
+        "file": "/dev/zero",
+        "start_line": 40,
+        "end_line": 42,
+        "snippet": "const x = 1",
+    }
+    reporting_tool._reanchor_code_locations([location])
+    assert location["start_line"] == 40
+    assert location["end_line"] == 42
+
+
+def test_code_locations_symlink_escape_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A symlink inside a checkout pointing outside the root is not followed."""
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\nconst x = 1\n")
+    root = tmp_path / "root"
+    root.mkdir()
+    (root / "link.ts").symlink_to(outside)
+    monkeypatch.setattr(reporting_tool, "_repo_workspace_roots", lambda: [root])
+    location = {
+        "file": "link.ts",
+        "start_line": 40,
+        "end_line": 40,
+        "snippet": "const x = 1",
+    }
+    reporting_tool._reanchor_code_locations([location])
+    assert location["start_line"] == 40
+
+
+def test_code_locations_ambiguous_across_roots_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Multi-target scan: the same relative path plus anchor in two repos is
+    ambiguous — the reported lines stay rather than picking the wrong repo."""
+    cases = (("repo-a", "const x = 1\nalpha\nbeta\n"), ("repo-b", "alpha\nbeta\nconst x = 1\n"))
+    for name, lines in cases:
+        source = tmp_path / name / "src" / "index.ts"
+        source.parent.mkdir(parents=True)
+        source.write_text(lines)
+    roots = [tmp_path / "repo-a", tmp_path / "repo-b"]
+    monkeypatch.setattr(reporting_tool, "_repo_workspace_roots", lambda: roots)
+    location = {
+        "file": "src/index.ts",
+        "start_line": 40,
+        "end_line": 40,
+        "snippet": "const x = 1",
+    }
+    reporting_tool._reanchor_code_locations([location])
+    assert location["start_line"] == 40
+
+
+def test_code_locations_single_root_match_reanchors(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The anchor existing in exactly one root disambiguates the repo."""
+    present = tmp_path / "repo-b" / "src" / "index.ts"
+    present.parent.mkdir(parents=True)
+    present.write_text("alpha\nbeta\nconst x = 1\n")
+    roots = [tmp_path / "repo-a", tmp_path / "repo-b"]
+    monkeypatch.setattr(reporting_tool, "_repo_workspace_roots", lambda: roots)
+    location = {
+        "file": "src/index.ts",
+        "start_line": 40,
+        "end_line": 40,
+        "snippet": "const x = 1",
+    }
+    reporting_tool._reanchor_code_locations([location])
+    assert location["start_line"] == 3
+    assert location["end_line"] == 3
+
+
+def test_code_locations_oversized_file_skipped(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "big.ts"
+    source.write_text("x" * (reporting_tool._MAX_ANCHOR_FILE_BYTES + 1))
+    monkeypatch.setattr(reporting_tool, "_repo_workspace_roots", lambda: [tmp_path])
+    location = {
+        "file": "big.ts",
+        "start_line": 40,
+        "end_line": 40,
+        "snippet": "const x = 1",
+    }
+    reporting_tool._reanchor_code_locations([location])
+    assert location["start_line"] == 40
+
+
+def test_repo_workspace_roots_include_host_checkouts(report_state: ReportState) -> None:
+    """OSS scans run the engine host-side where ``/workspace`` does not
+    exist; cloned and live-mounted repos resolve via their host paths."""
+    report_state.scan_config = {
+        "targets": [
+            {
+                "type": "repository",
+                "details": {
+                    "workspace_subdir": "repo-a",
+                    "cloned_repo_path": "/host/runs/x/repo-a",
+                },
+            },
+            {
+                "type": "local_code",
+                "details": {"workspace_subdir": "repo-b", "target_path": "/home/user/repo-b"},
+            },
+        ],
+        "workspace_mount": "/home/user/work",
+    }
+    roots = [str(p) for p in reporting_tool._repo_workspace_roots()]
+    assert roots == [
+        "/workspace",
+        "/workspace/repo-a",
+        "/host/runs/x/repo-a",
+        "/workspace/repo-b",
+        "/home/user/repo-b",
+        "/home/user/work",
+    ]
 
 
 def test_vuln_tool_exposes_fix_verification() -> None:

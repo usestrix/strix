@@ -110,12 +110,21 @@ def _validate_code_locations(locations: list[dict[str, Any]]) -> list[str]:
     return errors
 
 
-def _repo_workspace_roots() -> list[Path]:
-    """Workspace directories that hold checked-out repo / source targets.
+# Source files a location would point at are at most a few hundred KB; never
+# buffer anything larger (e.g. ``/dev/zero``-like reads or binary blobs).
+_MAX_ANCHOR_FILE_BYTES = 4 * 1024 * 1024
 
-    Sandbox targets land at ``/workspace/<workspace_subdir>``; ``/workspace``
-    itself covers root-level mounts. Best-effort: any lookup failure yields the
-    bare ``/workspace`` root.
+
+def _repo_workspace_roots() -> list[Path]:
+    """Directories under which a location's repo-relative ``file`` may resolve.
+
+    The agent sees checkouts at ``/workspace/<workspace_subdir>``, but this
+    tool runs wherever the engine does: inside the sandbox for embedded runs,
+    on the host for normal OSS Docker scans. ``/workspace`` only exists in
+    the former, so host-side checkouts are added too — ``cloned_repo_path``
+    for cloned repositories, ``target_path`` for live local-code mounts, and
+    the workspace mount. Best-effort: roots that do not exist on this
+    filesystem simply fail to read.
     """
     roots = ["/workspace"]
     try:
@@ -128,6 +137,13 @@ def _repo_workspace_roots() -> list[Path]:
             subdir = str(details.get("workspace_subdir") or "").strip("/")
             if subdir:
                 roots.append(f"/workspace/{subdir}")
+            for key in ("cloned_repo_path", "target_path"):
+                host_path = str(details.get(key) or "").strip()
+                if host_path:
+                    roots.append(host_path)
+        mount = str(config.get("workspace_mount") or "").strip()
+        if mount:
+            roots.append(mount)
     except Exception:  # noqa: BLE001 - opportunistic; never block a report on it
         logger.debug("Could not resolve workspace roots for code-location re-anchoring")
     return [Path(root) for root in dict.fromkeys(roots)]
@@ -139,9 +155,12 @@ def _find_anchor(file_lines: list[str], anchor_lines: list[str], reported: int) 
     Verbatim blocks (``fix_before``/``snippet``) are far more reliable than the
     agent's reported line numbers, so locating the block in the real file is
     the better source of truth. Trailing-whitespace differences are tolerated;
-    a dedented fallback applies to multi-line anchors or single lines found
-    exactly once (a lone generic line like ``}`` matches too many places to be
-    trusted otherwise).
+    a dedented fallback applies when the exact block is not found (agents
+    routinely shift leading whitespace when quoting code). A lone generic
+    line (``}``, ``import os``) can match many places, so a single-line
+    anchor only re-anchors when it appears exactly once in the file; a
+    repeated multi-line block keeps the match nearest the reported line and
+    unmatched blocks keep the reported range.
     """
     count = len(anchor_lines)
     if count == 0 or count > len(file_lines):
@@ -159,8 +178,8 @@ def _find_anchor(file_lines: list[str], anchor_lines: list[str], reported: int) 
             for i in range(len(file_lines) - count + 1)
             if [fl.lstrip() for fl in file_lines[i : i + count]] == dedented
         ]
-        if count == 1 and len(hits) != 1:
-            return None
+    if count == 1 and len(hits) != 1:
+        return None
     if not hits:
         return None
     return min(hits, key=lambda i: (abs(i + 1 - reported), i)) + 1
@@ -181,25 +200,43 @@ def _reanchor_code_locations(locations: list[dict[str, Any]] | None) -> None:
     for loc in locations:
         anchor = loc.get("fix_before") or loc.get("snippet")
         rel = str(loc.get("file") or "").strip()
-        if not anchor or not rel:
+        # Locations failing path validation are rejected downstream anyway;
+        # skip here so absolute paths and traversals never reach a read.
+        if not anchor or not rel or _validate_file_path(rel):
             continue
         if roots is None:
             roots = _repo_workspace_roots()
         reported = loc.get("start_line")
         reported = reported if isinstance(reported, int) and reported > 0 else 1
         anchor_lines = anchor.split("\n")
-        best: tuple[int, int] | None = None
+        found_lines: set[int] = set()
         for root in roots:
             try:
-                text = (root / rel).read_text(encoding="utf-8", errors="replace")
+                resolved_root = root.resolve()
+                candidate = (resolved_root / rel).resolve()
+                # A symlink inside a checkout must not escape the root, and
+                # oversized files are not source worth buffering.
+                if (
+                    not candidate.is_relative_to(resolved_root)
+                    or candidate.stat().st_size > _MAX_ANCHOR_FILE_BYTES
+                ):
+                    continue
+                text = candidate.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             found = _find_anchor(text.splitlines(), anchor_lines, reported)
-            if found is not None and (
-                best is None or abs(found - reported) < abs(best[0] - reported)
-            ):
-                best = (found, found + len(anchor_lines) - 1)
-        if best is None or best == (loc.get("start_line"), loc.get("end_line")):
+            if found is not None:
+                found_lines.add(found)
+        # The anchor must resolve to ONE position across every root. In a
+        # multi-target scan two repos can hold the same relative path and
+        # anchor text; picking the "nearest" hit there could store the other
+        # repo's range, so an ambiguous or absent match keeps the reported
+        # lines instead.
+        if len(found_lines) != 1:
+            continue
+        start = found_lines.pop()
+        best = (start, start + len(anchor_lines) - 1)
+        if best == (loc.get("start_line"), loc.get("end_line")):
             continue
         logger.info(
             "Re-anchored %s lines %s-%s -> %s-%s",
