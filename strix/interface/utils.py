@@ -1716,10 +1716,33 @@ def validate_config_file(config_path: str) -> Path:
 # sources, so a large file makes session bring-up slower.
 
 
+def _split_workspace_spec(spec: str) -> tuple[str, str | None]:
+    """Split ``PATH[:DEST]`` into ``(path, dest)``, ``dest`` is ``None`` if absent.
+
+    A Windows drive letter's colon (``C:\\path\\file``) is the only colon in a
+    bare path. ``rpartition`` still finds it, leaving a single-letter ``raw``
+    with the rest of the path in what would be ``dest``. That collides with a
+    real single-letter source that declares an absolute ``/workspace/...``
+    destination (``a:/workspace/input.txt``), so the drive-letter case is only
+    taken when ``dest`` is not one of those: the explicit form keeps its
+    existing meaning either way.
+    """
+    raw, sep, dest = spec.rpartition(":")
+    if not sep or not dest.strip():
+        return spec, None
+    if (
+        re.fullmatch(r"[A-Za-z]", raw)
+        and dest[:1] in ("\\", "/")
+        and not dest.startswith("/workspace/")
+    ):
+        return spec, None
+    return raw, dest
+
+
 def _workspace_file_dest(spec: str, source: Path) -> str:
     """Return the workspace-relative destination declared by ``spec``."""
-    _, sep, dest = spec.rpartition(":")
-    candidate = dest.strip() if sep and dest.strip() else source.name
+    _, dest = _split_workspace_spec(spec)
+    candidate = dest.strip() if dest and dest.strip() else source.name
     if candidate.startswith("/") or Path(candidate).is_absolute():
         if not candidate.startswith("/workspace/"):
             raise ValueError(
@@ -1749,8 +1772,7 @@ def resolve_workspace_files(specs: list[str] | None) -> list[dict[str, str]]:
     resolved: list[dict[str, str]] = []
     seen: dict[str, str] = {}
     for spec in specs or []:
-        raw, sep, dest = spec.rpartition(":")
-        source_text = raw if sep and dest.strip() else spec
+        source_text, _ = _split_workspace_spec(spec)
         source = Path(source_text.strip()).expanduser()
         if not source.is_file():
             raise ValueError(f"'{source}' is not an existing file")
