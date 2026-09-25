@@ -394,7 +394,7 @@ def get_subscription_client() -> AsyncOpenAI:
 async def reset_subscription_client() -> None:
     """Close the cached client so the next ``get_subscription_client`` builds a
     fresh one. Its pooled connections are bound to the event loop that opened them."""
-    global _subscription_client  # noqa: PLW0603
+    global _subscription_client
     client, _subscription_client = _subscription_client, None
     if client is not None:
         await client.close()

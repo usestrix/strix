@@ -98,17 +98,20 @@ class _KeepAliveHandler(BaseHTTPRequestHandler):
 async def _stream_turn(client: AsyncOpenAI) -> str:
     """One streamed scan turn. The SDK's model retry disables the OpenAI client's
     own retries, so a stale connection is not quietly replaced by a fresh one."""
-    stream = await client.with_options(max_retries=0).chat.completions.create(
-        model="gw-model",
-        messages=[{"role": "user", "content": "go"}],
-        stream=True,
-    )
-    text = ""
-    async for chunk in stream:
-        if chunk.choices and chunk.choices[0].delta.content:
-            text += chunk.choices[0].delta.content
-    await stream.close()
-    return text
+    try:
+        stream = await client.with_options(max_retries=0).chat.completions.create(
+            model="gw-model",
+            messages=[{"role": "user", "content": "go"}],
+            stream=True,
+        )
+        text = ""
+        async for chunk in stream:
+            if chunk.choices and chunk.choices[0].delta.content:
+                text += chunk.choices[0].delta.content
+        await stream.close()
+        return text
+    finally:
+        await client.close()
 
 
 @pytest.fixture
