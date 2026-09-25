@@ -306,6 +306,29 @@ async def build_git_manifest(
     return entries, summary.decode(errors="replace").strip(), None
 
 
+def _applied_hashes(workspace: Path, candidate: FixCandidateV1) -> dict[Path, str]:
+    """Content hashes of each edited file, captured right after the draft is applied."""
+    applied: dict[Path, str] = {}
+    for edit in candidate.draft_edits:
+        path = (workspace / edit.file).resolve()
+        applied[path] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return applied
+
+
+def _change_extends_draft(
+    workspace: Path,
+    applied_sha256: dict[Path, str],
+    manifest: list[FileManifestEntry],
+) -> bool:
+    """Whether the verified change set differs from the applied draft edits."""
+    final_changes = {
+        (workspace / entry.path).resolve(): entry.resulting_sha256 for entry in manifest
+    }
+    return set(final_changes) != set(applied_sha256) or any(
+        resulting != applied_sha256[resolved] for resolved, resulting in final_changes.items()
+    )
+
+
 async def _verify_source(context: PreparationContext) -> bool:
     identity = context.candidate.source_identity
     if identity is None:
@@ -429,6 +452,7 @@ async def prepare_fix(
             )
         context.candidate = anchored
         _apply_edits(workspace, context.candidate)
+        applied_sha256 = _applied_hashes(workspace, context.candidate)
 
         checks: list[CheckResult] = []
         reproduction: CheckResult | None = None
@@ -474,6 +498,8 @@ async def prepare_fix(
             for result in checks
             if not result.required and result.status is not CheckStatus.PASSED
         )
+        if _change_extends_draft(workspace, applied_sha256, manifest):
+            gaps.append("The verified change extends beyond the recorded draft edits.")
         if reproduction is None and not verifier.reproduction_executed:
             gaps.append("No executable security reproduction was available.")
         elif reproduction is not None and reproduction.status is CheckStatus.UNAVAILABLE:

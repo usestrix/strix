@@ -245,6 +245,30 @@ async def test_prepare_fix_returns_ready_with_manifest(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_prepare_fix_demotes_ready_when_repair_exceeds_draft(
+    tmp_path: Path,
+) -> None:
+    workspace, commit = _workspace(tmp_path)
+
+    async def widening_repair(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+    ) -> None:
+        (workspace / "hardening.py").write_text("HELPER = True\n", encoding="utf-8")
+
+    result = await prepare_fix(
+        _request(_candidate(commit)),
+        workspace,
+        repair=widening_repair,
+        verify=_verified,
+    )
+
+    assert result.state is PreparationState.READY_WITH_GAPS
+    assert any("beyond the recorded draft edits" in gap for gap in result.gaps)
+    assert result.candidate.digest() == result.candidate_digest
+
+
+@pytest.mark.asyncio
 async def test_prepare_fix_retries_failed_checks(tmp_path: Path) -> None:
     workspace, commit = _workspace(tmp_path)
     calls = 0
