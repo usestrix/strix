@@ -58,7 +58,9 @@ RUN apt-get update && \
     libcap2-bin \
     gdb \
     libnss3-tools \
-    chromium fonts-liberation
+    chromium fonts-liberation fonts-noto-core fonts-noto-color-emoji \
+    xvfb x11-utils xdotool dbus-x11 \
+    imagemagick
 
 
 RUN setcap cap_net_raw,cap_net_admin,cap_net_bind_service+eip $(which nmap)
@@ -114,8 +116,11 @@ RUN npm install -g retire@latest && \
     ln -sf ast-grep /home/pentester/.npm-global/lib/node_modules/@ast-grep/cli/sg
 
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
-ENV AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-ENV AGENT_BROWSER_ARGS="--disable-blink-features=AutomationControlled,--no-first-run,--no-default-browser-check,--lang=en-US"
+# Must match the installed Chromium major; the build asserts it below.
+ENV AGENT_BROWSER_USER_AGENT="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36"
+# AGENT_BROWSER_ARGS is comma-separated, so no flag value may contain a comma
+# (window geometry comes from the virtual display instead).
+ENV AGENT_BROWSER_ARGS="--disable-blink-features=AutomationControlled,--no-first-run,--no-default-browser-check,--lang=en-US,--password-store=basic,--use-mock-keychain,--disable-dev-shm-usage"
 ENV AGENT_BROWSER_SCREENSHOT_DIR=/workspace/.agent-browser-screenshots
 ENV AGENT_BROWSER_IDLE_TIMEOUT_MS=180000
 USER root
@@ -133,6 +138,29 @@ RUN set -eu; \
     env -i bash -lc 'test "${AGENT_BROWSER_IDLE_TIMEOUT_MS}" = "180000"'
 USER pentester
 RUN /home/pentester/.npm-global/bin/agent-browser doctor --offline --quick
+
+# `agent-browser --headed` exits 0 even when Chrome fails to launch, so assert
+# headed mode here. `--no-sandbox` is build-only: buildkit has no unprivileged
+# user namespaces. The stale X lock/socket must go or the runtime Xvfb refuses.
+RUN set -eu; \
+    chrome_major="$(chromium --version | grep -oE '[0-9]+' | head -1)"; \
+    printf '%s' "${AGENT_BROWSER_USER_AGENT}" | grep -q "Chrome/${chrome_major}\." || { \
+        echo "AGENT_BROWSER_USER_AGENT disagrees with installed Chromium ${chrome_major}"; exit 1; \
+    }; \
+    Xvfb :99 -screen 0 1280x800x24 -nolisten tcp >/tmp/xvfb-build.log 2>&1 & \
+    xvfb_pid=$!; \
+    for _ in $(seq 1 20); do xdpyinfo -display :99 >/dev/null 2>&1 && break; sleep 0.5; done; \
+    xdpyinfo -display :99 >/dev/null; \
+    DISPLAY=:99 agent-browser --headed --args "${AGENT_BROWSER_ARGS},--no-sandbox" \
+        open about:blank >/tmp/headed-check.log 2>&1 || true; \
+    if grep -qi 'Missing X server\|exited early' /tmp/headed-check.log; then \
+        echo "headed browser check failed:"; cat /tmp/headed-check.log; exit 1; \
+    fi; \
+    DISPLAY=:99 xwininfo -root -children | grep -qi chromium; \
+    agent-browser close >/dev/null 2>&1 || true; \
+    kill "${xvfb_pid}" 2>/dev/null || true; \
+    wait "${xvfb_pid}" 2>/dev/null || true; \
+    rm -rf /tmp/.X99-lock /tmp/.X11-unix/X99 /tmp/xvfb-build.log /tmp/headed-check.log
 
 RUN set -eux; \
     TS_PARSER_DIR="/home/pentester/.tree-sitter/parsers"; \
