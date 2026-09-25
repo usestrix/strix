@@ -466,6 +466,7 @@ def _refresh_fix_candidate(
     candidate = _build_fix_candidate(report_state, {**existing, **changes})
     if candidate is not None:
         changes["fix_candidate"] = candidate
+    if candidate is not None or existing.get("fix_candidate") or existing.get("fix_preparation"):
         changes["fix_preparation"] = {
             "state": "stale",
             "stop_reason": "The finding or draft candidate changed after preparation.",

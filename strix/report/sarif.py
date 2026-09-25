@@ -29,9 +29,9 @@ Design notes:
     like URIs, absolute paths, or traversal patterns are rejected rather
     than emitted as invalid code-scanning alerts.
   * Findings whose fix candidate completed verified preparation
-    (``fix_preparation.state == "ready"`` with a matching
-    ``candidate_digest``) are emitted as SARIF ``fixes`` so code-scanning
-    can render a one-click suggested change.
+    (``fix_preparation.state == "ready"`` with a ``candidate_digest``
+    matching the candidate the result carries) are emitted as SARIF
+    ``fixes`` so code-scanning can render a one-click suggested change.
   * Endpoint / target-only findings (typical of DAST) carry a SARIF
     ``logicalLocations`` entry so the finding keeps a meaningful anchor
     even without a source file + line.
@@ -591,14 +591,16 @@ def _build_fixes(report: dict[str, Any]) -> list[dict[str, Any]] | None:
     """Build SARIF ``fixes`` from a verified prepared finding.
 
     SARIF consumers can apply ``fixes`` automatically. Strix emits them only
-    when preparation recorded a ``ready`` result whose ``candidate_digest``
-    still matches the stored fix candidate — so the emitted replacements are
-    exactly what preparation verified, never a stale or diverged draft.
+    when preparation recorded a ``ready`` result. The result carries the
+    candidate preparation verified — after anchoring corrected its reported
+    lines — and its ``candidate_digest`` must match that candidate, so the
+    emitted replacements are exactly what preparation verified, never a
+    stale or diverged draft.
     """
     preparation = report.get("fix_preparation")
     if not isinstance(preparation, dict) or preparation.get("state") != "ready":
         return None
-    raw_candidate = report.get("fix_candidate")
+    raw_candidate = preparation.get("candidate") or report.get("fix_candidate")
     if not isinstance(raw_candidate, dict):
         return None
     try:

@@ -196,6 +196,7 @@ class FixPreparationResultV1(ContractModel):
     state: PreparationState
     stop_reason: str
     source_identity: SourceIdentity | None
+    candidate: FixCandidateV1
     candidate_digest: str
     final_file_manifest: list[FileManifestEntry] = []
     artifact_ref: str | None = None

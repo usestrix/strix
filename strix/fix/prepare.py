@@ -353,6 +353,7 @@ def _result(
         state=state,
         stop_reason=reason,
         source_identity=context.candidate.source_identity,
+        candidate=context.candidate,
         candidate_digest=context.candidate.digest(),
         final_file_manifest=manifest or [],
         artifact_ref=artifact_ref,

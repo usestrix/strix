@@ -183,6 +183,40 @@ def test_write_sarif_builds_fixes_from_ready_preparation(tmp_path: Path) -> None
     assert replacement["insertedContent"]["text"] == 'query = "SELECT * FROM u WHERE id=%s"'
 
 
+def test_write_sarif_emits_verified_candidate_from_preparation(tmp_path: Path) -> None:
+    # Preparation re-anchors the draft to the lines its block actually occupies,
+    # so the result carries the verified candidate and SARIF emits those lines
+    # rather than the stale positions the report's draft still records.
+    verified = _fix_candidate(
+        draft_edits=[
+            {
+                "file": "app.py",
+                "start_line": 9,
+                "end_line": 9,
+                "before": 'query = "SELECT * FROM u WHERE id=" + uid',
+                "after": 'query = "SELECT * FROM u WHERE id=%s"',
+            }
+        ]
+    )
+    write_sarif(
+        tmp_path,
+        [
+            _finding(
+                fix_candidate=_fix_candidate(),
+                fix_preparation={
+                    "state": "ready",
+                    "candidate": verified,
+                    "candidate_digest": FixCandidateV1.model_validate(verified).digest(),
+                },
+            )
+        ],
+    )
+    result = _read(tmp_path)["runs"][0]["results"][0]
+    replacement = result["fixes"][0]["artifactChanges"][0]["replacements"][0]
+    assert replacement["deletedRegion"]["startLine"] == 9
+    assert replacement["deletedRegion"]["endLine"] == 9
+
+
 def test_write_sarif_suppresses_fixes_when_prepared_candidate_diverged(
     tmp_path: Path,
 ) -> None:

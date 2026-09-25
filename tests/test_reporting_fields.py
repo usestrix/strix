@@ -1981,6 +1981,30 @@ def test_update_refuses_code_locations_it_cannot_use(report_state: ReportState) 
     assert any("start_line" in error for error in result["errors"])
 
 
+def test_update_marks_preparation_stale_when_candidate_cannot_be_rebuilt(
+    report_state: ReportState,
+) -> None:
+    """A revision whose locations cannot form a candidate still supersedes the
+    preparation recorded for the draft it replaced."""
+    _seed_weak_report(report_state)
+    report = report_state.vulnerability_reports[0]
+    candidate = {"security_invariant": "Parametrize the query.", "draft_edits": []}
+    report["fix_candidate"] = candidate
+    report["fix_preparation"] = {"state": "ready", "candidate_digest": "0" * 64}
+
+    result = _do_update(
+        report_id="vuln-0009",
+        update_reason="Repointing the finding to the validated handler.",
+        fields={"code_locations": [{"file": "./files.py", "start_line": 4, "end_line": 9}]},
+    )
+
+    assert result["success"] is True
+    assert report["code_locations"] == [{"file": "./files.py", "start_line": 4, "end_line": 9}]
+    assert report["fix_preparation"]["state"] == "stale"
+    assert "changed after preparation" in report["fix_preparation"]["stop_reason"]
+    assert report["fix_candidate"] == candidate
+
+
 def _seed_saved_report(report_state: ReportState) -> Path:
     """The weak report, written to disk the way a filed finding is."""
     _seed_weak_report(report_state)
