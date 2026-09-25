@@ -37,6 +37,7 @@
               "llm-providers/anthropic",
               "llm-providers/openrouter",
               "llm-providers/vercel-ai-gateway",
+              "llm-providers/cheaperinference",
               "llm-providers/vertex",
               "llm-providers/bedrock",
               "llm-providers/azure",
