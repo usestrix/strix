@@ -19,6 +19,8 @@ from strix.fix.contracts import (
     FixEdit,
     FixPreparationRequestV1,
     PreparationState,
+    RepairOutcome,
+    RepairStatus,
     ReproductionSpec,
     SourceIdentity,
     SourceIdentityKind,
@@ -67,6 +69,18 @@ def _candidate(
     *,
     reproduction: ReproductionSpec | None = None,
 ) -> FixCandidateV1:
+    if reproduction is None:
+        reproduction = ReproductionSpec(
+            instructions="Confirm that result returns safe.",
+            command=CommandSpec(
+                name="security reproduction",
+                argv=[
+                    sys.executable,
+                    "-c",
+                    "from app import result; assert result() == 'safe'",
+                ],
+            ),
+        )
     return FixCandidateV1(
         source_identity=SourceIdentity(kind=SourceIdentityKind.COMMIT, value=commit),
         security_invariant="Return a safe value.",
@@ -91,7 +105,7 @@ def _candidate(
     )
 
 
-def _request(candidate: FixCandidateV1, *, attempts: int = 2) -> FixPreparationRequestV1:
+def _request(candidate: FixCandidateV1, *, attempts: int = 4) -> FixPreparationRequestV1:
     return FixPreparationRequestV1(
         scan_id="scan-1",
         finding_id="finding-1",
@@ -113,8 +127,11 @@ def _request(candidate: FixCandidateV1, *, attempts: int = 2) -> FixPreparationR
 async def _noop_repair(
     _context: PreparationContext,
     _checks: list[CheckResult],
-) -> None:
-    return None
+) -> RepairOutcome:
+    return RepairOutcome(
+        status=RepairStatus.COMPLETE,
+        summary="The draft is ready for independent evaluation.",
+    )
 
 
 async def _verified(
@@ -245,7 +262,7 @@ async def test_prepare_fix_returns_ready_with_manifest(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_prepare_fix_demotes_ready_when_repair_exceeds_draft(
+async def test_prepare_fix_allows_verified_multi_file_repairs(
     tmp_path: Path,
 ) -> None:
     workspace, commit = _workspace(tmp_path)
@@ -253,8 +270,12 @@ async def test_prepare_fix_demotes_ready_when_repair_exceeds_draft(
     async def widening_repair(
         _context: PreparationContext,
         _checks: list[CheckResult],
-    ) -> None:
+    ) -> RepairOutcome:
         (workspace / "hardening.py").write_text("HELPER = True\n", encoding="utf-8")
+        return RepairOutcome(
+            status=RepairStatus.COMPLETE,
+            summary="Added the companion hardening module.",
+        )
 
     result = await prepare_fix(
         _request(_candidate(commit)),
@@ -263,44 +284,82 @@ async def test_prepare_fix_demotes_ready_when_repair_exceeds_draft(
         verify=_verified,
     )
 
-    assert result.state is PreparationState.READY_WITH_GAPS
-    assert any("beyond the recorded draft edits" in gap for gap in result.gaps)
+    assert result.state is PreparationState.READY
+    assert {entry.path for entry in result.final_file_manifest} == {
+        "app.py",
+        "hardening.py",
+    }
     assert result.candidate.digest() == result.candidate_digest
 
 
 @pytest.mark.asyncio
 async def test_prepare_fix_retries_failed_checks(tmp_path: Path) -> None:
     workspace, commit = _workspace(tmp_path)
-    calls = 0
+    compile_calls = 0
 
     async def runner(_workspace: Path, command: CommandSpec) -> CheckResult:
-        nonlocal calls
-        calls += 1
+        nonlocal compile_calls
+        if command.name == "compile":
+            compile_calls += 1
+        failed = command.name == "compile" and compile_calls == 1
         return CheckResult(
             name=command.name,
             argv=command.argv,
-            status=CheckStatus.FAILED if calls == 1 else CheckStatus.PASSED,
-            exit_code=1 if calls == 1 else 0,
+            status=CheckStatus.FAILED if failed else CheckStatus.PASSED,
+            exit_code=1 if failed else 0,
             duration_seconds=0,
             required=command.required,
+        )
+
+    repair_calls = 0
+
+    async def repair(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+    ) -> RepairOutcome:
+        nonlocal repair_calls
+        repair_calls += 1
+        if repair_calls == 2:
+            (workspace / "app.py").write_text(
+                "def result():\n    return 'safe'\n# retry\n",
+                encoding="utf-8",
+            )
+        return RepairOutcome(
+            status=RepairStatus.COMPLETE,
+            summary="Repair cycle complete.",
         )
 
     result = await prepare_fix(
         _request(_candidate(commit)),
         workspace,
-        repair=_noop_repair,
+        repair=repair,
         verify=_verified,
         command_runner=runner,
     )
 
     assert result.state is PreparationState.READY
     assert result.attempts == 2
-    assert calls == 2
+    assert compile_calls == 2
+    assert len(result.attempt_history) == 2
 
 
 @pytest.mark.asyncio
 async def test_prepare_fix_stops_at_repair_limit(tmp_path: Path) -> None:
     workspace, commit = _workspace(tmp_path)
+    repair_calls = 0
+
+    async def repair(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+    ) -> RepairOutcome:
+        nonlocal repair_calls
+        repair_calls += 1
+        with (workspace / "app.py").open("a", encoding="utf-8") as handle:
+            handle.write(f"# attempt {repair_calls}\n")
+        return RepairOutcome(
+            status=RepairStatus.COMPLETE,
+            summary="Repair cycle complete.",
+        )
 
     async def runner(_workspace: Path, command: CommandSpec) -> CheckResult:
         return CheckResult(
@@ -313,16 +372,154 @@ async def test_prepare_fix_stops_at_repair_limit(tmp_path: Path) -> None:
         )
 
     result = await prepare_fix(
-        _request(_candidate(commit), attempts=2),
+        _request(_candidate(commit), attempts=4),
         workspace,
-        repair=_noop_repair,
+        repair=repair,
         verify=_verified,
         command_runner=runner,
     )
 
-    assert result.state is PreparationState.FAILED
+    assert result.state is PreparationState.NEEDS_REVIEW
+    assert result.attempts == 4
+    assert len(result.attempt_history) == 4
+    assert "cycle limit" in result.stop_reason
+
+
+@pytest.mark.asyncio
+async def test_prepare_fix_feeds_verifier_rejection_into_next_repair(
+    tmp_path: Path,
+) -> None:
+    workspace, commit = _workspace(tmp_path)
+    repair_calls = 0
+    verifier_calls = 0
+
+    async def repair(
+        context: PreparationContext,
+        _checks: list[CheckResult],
+    ) -> RepairOutcome:
+        nonlocal repair_calls
+        repair_calls += 1
+        if repair_calls == 2:
+            assert context.feedback[0].verifier.gaps == ["Harden the sibling path."]
+            (workspace / "sibling.py").write_text("SAFE = True\n", encoding="utf-8")
+        return RepairOutcome(
+            status=RepairStatus.COMPLETE,
+            summary="Repair cycle complete.",
+        )
+
+    async def verify(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+        _reproduction: CheckResult | None,
+    ) -> VerifierResult:
+        nonlocal verifier_calls
+        verifier_calls += 1
+        if verifier_calls == 1:
+            return VerifierResult(
+                decision=VerificationDecision.REJECTED,
+                summary="A sibling path remains vulnerable.",
+                gaps=["Harden the sibling path."],
+            )
+        return await _verified(_context, _checks, _reproduction)
+
+    result = await prepare_fix(
+        _request(_candidate(commit)),
+        workspace,
+        repair=repair,
+        verify=verify,
+    )
+
+    assert result.state is PreparationState.READY
     assert result.attempts == 2
-    assert "repair limit" in result.stop_reason
+    assert result.attempt_history[0].verifier.decision is VerificationDecision.REJECTED
+    assert result.attempt_history[1].verifier.decision is VerificationDecision.VERIFIED
+
+
+@pytest.mark.asyncio
+async def test_prepare_fix_stops_after_repeated_repository_state(tmp_path: Path) -> None:
+    workspace, commit = _workspace(tmp_path)
+
+    async def rejected(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+        _reproduction: CheckResult | None,
+    ) -> VerifierResult:
+        return VerifierResult(
+            decision=VerificationDecision.REJECTED,
+            summary="The fix remains incomplete.",
+            gaps=["Change the implementation."],
+        )
+
+    result = await prepare_fix(
+        _request(_candidate(commit)),
+        workspace,
+        repair=_noop_repair,
+        verify=rejected,
+    )
+
+    assert result.state is PreparationState.NEEDS_REVIEW
+    assert result.attempts == 2
+    assert "no repository progress" in result.stop_reason
+
+
+@pytest.mark.asyncio
+async def test_prepare_fix_evaluates_budget_exhausted_patch(tmp_path: Path) -> None:
+    workspace, commit = _workspace(tmp_path)
+
+    async def exhausted(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+    ) -> RepairOutcome:
+        return RepairOutcome(
+            status=RepairStatus.BUDGET_EXHAUSTED,
+            summary="The repair agent reached its turn limit.",
+            turns_used=40,
+        )
+
+    result = await prepare_fix(
+        _request(_candidate(commit)),
+        workspace,
+        repair=exhausted,
+        verify=_verified,
+    )
+
+    assert result.state is PreparationState.READY
+    assert result.attempt_history[0].repair.status is RepairStatus.BUDGET_EXHAUSTED
+    assert result.attempt_history[0].repair.turns_used == 40
+
+
+@pytest.mark.asyncio
+async def test_prepare_fix_runs_repair_proposed_reproduction(tmp_path: Path) -> None:
+    workspace, commit = _workspace(tmp_path)
+    candidate = _candidate(commit).model_copy(update={"reproduction": None})
+
+    async def repair(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+    ) -> RepairOutcome:
+        return RepairOutcome(
+            status=RepairStatus.COMPLETE,
+            summary="The patch and reproduction are ready.",
+            reproduction_command=CommandSpec(
+                name="repair-proposed security reproduction",
+                argv=[
+                    sys.executable,
+                    "-c",
+                    "from app import result; assert result() == 'safe'",
+                ],
+            ),
+        )
+
+    result = await prepare_fix(
+        _request(candidate),
+        workspace,
+        repair=repair,
+        verify=_verified,
+    )
+
+    assert result.state is PreparationState.READY
+    assert result.security_reproduction is not None
+    assert result.security_reproduction.name == "repair-proposed security reproduction"
 
 
 @pytest.mark.asyncio

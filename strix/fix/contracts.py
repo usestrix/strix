@@ -47,6 +47,13 @@ class VerificationDecision(StrEnum):
     INCONCLUSIVE = "inconclusive"
 
 
+class RepairStatus(StrEnum):
+    COMPLETE = "complete"
+    BLOCKED = "blocked"
+    BUDGET_EXHAUSTED = "budget_exhausted"
+    INCOMPLETE = "incomplete"
+
+
 class SourceIdentity(ContractModel):
     kind: SourceIdentityKind
     value: str = Field(min_length=1)
@@ -154,7 +161,7 @@ class FixPreparationRequestV1(ContractModel):
     repository_id: str | None = None
     candidate: FixCandidateV1
     checks: list[CommandSpec] = []
-    max_repair_attempts: int = Field(default=2, ge=1, le=5)
+    max_repair_attempts: int = Field(default=4, ge=1, le=4)
     timeout_seconds: int = Field(default=1800, ge=30, le=14400)
     network_allowed: bool = False
     credentials_allowed: list[str] = []
@@ -181,6 +188,23 @@ class VerifierResult(ContractModel):
     gaps: list[str] = []
 
 
+class RepairOutcome(ContractModel):
+    status: RepairStatus
+    summary: str = Field(min_length=1)
+    gaps: list[str] = []
+    reproduction_command: CommandSpec | None = None
+    turns_used: int = Field(default=0, ge=0)
+
+
+class FixPreparationAttempt(ContractModel):
+    attempt: int = Field(ge=1)
+    repair: RepairOutcome
+    checks: list[CheckResult] = []
+    security_reproduction: CheckResult | None = None
+    verifier: VerifierResult
+    workspace_digest: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
 class FileManifestEntry(ContractModel):
     path: str
     operation: Literal["add", "modify", "delete"]
@@ -205,6 +229,7 @@ class FixPreparationResultV1(ContractModel):
     checks: list[CheckResult] = []
     security_reproduction: CheckResult | None = None
     verifier: VerifierResult | None = None
+    attempt_history: list[FixPreparationAttempt] = []
     gaps: list[str] = []
     attempts: int = Field(default=0, ge=0)
     elapsed_seconds: float = Field(default=0, ge=0)

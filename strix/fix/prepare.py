@@ -5,11 +5,12 @@ from __future__ import annotations
 import asyncio
 import functools
 import hashlib
+import json
 import os
 import subprocess
 import time
 from collections.abc import Awaitable, Callable, Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
 
@@ -19,9 +20,12 @@ from strix.fix.contracts import (
     CommandSpec,
     FileManifestEntry,
     FixCandidateV1,
+    FixPreparationAttempt,
     FixPreparationRequestV1,
     FixPreparationResultV1,
     PreparationState,
+    RepairOutcome,
+    RepairStatus,
     VerificationDecision,
     VerifierResult,
 )
@@ -39,9 +43,13 @@ CancellationCheck = Callable[[], bool]
 
 @dataclass(slots=True)
 class PreparationPolicy:
-    max_repair_attempts: int = 2
+    max_repair_attempts: int = 4
     timeout_seconds: int = 1800
     max_output_chars: int = 20000
+
+    def __post_init__(self) -> None:
+        if not 1 <= self.max_repair_attempts <= 4:
+            raise ValueError("max_repair_attempts must be between 1 and 4")
 
 
 @dataclass(slots=True)
@@ -50,11 +58,12 @@ class PreparationContext:
     workspace: Path
     candidate: FixCandidateV1
     attempt: int = 0
+    feedback: list[FixPreparationAttempt] = field(default_factory=list)
 
 
 RepairAgent = Callable[
     [PreparationContext, list[CheckResult]],
-    Awaitable[None],
+    Awaitable[RepairOutcome | None],
 ]
 IndependentVerifier = Callable[
     [PreparationContext, list[CheckResult], CheckResult | None],
@@ -306,27 +315,14 @@ async def build_git_manifest(
     return entries, summary.decode(errors="replace").strip(), None
 
 
-def _applied_hashes(workspace: Path, candidate: FixCandidateV1) -> dict[Path, str]:
-    """Content hashes of each edited file, captured right after the draft is applied."""
-    applied: dict[Path, str] = {}
-    for edit in candidate.draft_edits:
-        path = (workspace / edit.file).resolve()
-        applied[path] = hashlib.sha256(path.read_bytes()).hexdigest()
-    return applied
-
-
-def _change_extends_draft(
-    workspace: Path,
-    applied_sha256: dict[Path, str],
-    manifest: list[FileManifestEntry],
-) -> bool:
-    """Whether the verified change set differs from the applied draft edits."""
-    final_changes = {
-        (workspace / entry.path).resolve(): entry.resulting_sha256 for entry in manifest
-    }
-    return set(final_changes) != set(applied_sha256) or any(
-        resulting != applied_sha256[resolved] for resolved, resulting in final_changes.items()
-    )
+async def _workspace_digest(workspace: Path) -> str:
+    manifest, _, _ = await build_git_manifest(workspace)
+    payload = json.dumps(
+        [entry.model_dump(mode="json") for entry in manifest],
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()
 
 
 async def _verify_source(context: PreparationContext) -> bool:
@@ -371,6 +367,7 @@ def _result(
     manifest: list[FileManifestEntry] | None = None,
     diff_summary: str = "",
     artifact_ref: str | None = None,
+    attempt_history: list[FixPreparationAttempt] | None = None,
 ) -> FixPreparationResultV1:
     return FixPreparationResultV1(
         state=state,
@@ -385,13 +382,71 @@ def _result(
         checks=checks or [],
         security_reproduction=reproduction,
         verifier=verifier,
+        attempt_history=attempt_history or [],
         gaps=gaps or [],
         attempts=context.attempt,
         elapsed_seconds=time.monotonic() - started,
     )
 
 
-async def prepare_fix(
+def _repair_outcome(value: RepairOutcome | None) -> RepairOutcome:
+    if value is not None:
+        return value
+    return RepairOutcome(
+        status=RepairStatus.COMPLETE,
+        summary="The repair implementation returned control for independent evaluation.",
+    )
+
+
+def _required_checks_pass(checks: list[CheckResult]) -> bool:
+    required = [result for result in checks if result.required]
+    return bool(required) and all(result.status is CheckStatus.PASSED for result in required)
+
+
+def _verification_passes(
+    checks: list[CheckResult],
+    reproduction: CheckResult | None,
+    verifier: VerifierResult,
+) -> bool:
+    return (
+        _required_checks_pass(checks)
+        and reproduction is not None
+        and reproduction.status is CheckStatus.PASSED
+        and verifier.decision is VerificationDecision.VERIFIED
+        and verifier.security_invariant_closed
+        and verifier.reproduction_executed
+    )
+
+
+def _verification_gaps(
+    repair_outcome: RepairOutcome,
+    checks: list[CheckResult],
+    reproduction: CheckResult | None,
+    verifier: VerifierResult,
+) -> list[str]:
+    gaps = list(repair_outcome.gaps)
+    required = [result for result in checks if result.required]
+    if not required:
+        gaps.append("No required repository check was configured.")
+    gaps.extend(
+        f"{result.name}: required check {result.status}"
+        for result in required
+        if result.status is not CheckStatus.PASSED
+    )
+    gaps.extend(
+        f"{result.name}: optional check {result.status}"
+        for result in checks
+        if not result.required and result.status is not CheckStatus.PASSED
+    )
+    if reproduction is None:
+        gaps.append("No executable security reproduction was available.")
+    elif reproduction.status is not CheckStatus.PASSED:
+        gaps.append(f"{reproduction.name}: security reproduction {reproduction.status}")
+    gaps.extend(verifier.gaps)
+    return list(dict.fromkeys(gaps))
+
+
+async def prepare_fix(  # noqa: PLR0915
     request: FixPreparationRequestV1,
     workspace: Path,
     *,
@@ -417,7 +472,7 @@ async def prepare_fix(
             network_allowed=request.network_allowed,
         )
 
-    async def execute() -> FixPreparationResultV1:  # noqa: PLR0911, PLR0912
+    async def execute() -> FixPreparationResultV1:  # noqa: PLR0911
         if cancelled():
             raise PreparationCancelledError
         if not await source_verifier(context):
@@ -452,112 +507,144 @@ async def prepare_fix(
             )
         context.candidate = anchored
         _apply_edits(workspace, context.candidate)
-        applied_sha256 = _applied_hashes(workspace, context.candidate)
 
         checks: list[CheckResult] = []
         reproduction: CheckResult | None = None
+        verifier: VerifierResult | None = None
+        attempt_history: list[FixPreparationAttempt] = []
+        previous_workspace_digest: str | None = None
+        reproduction_command = (
+            context.candidate.reproduction.command
+            if context.candidate.reproduction is not None
+            else None
+        )
         for attempt in range(1, resolved_policy.max_repair_attempts + 1):
             context.attempt = attempt
             if cancelled():
                 raise PreparationCancelledError
-            await repair(context, checks)
+            repair_outcome = _repair_outcome(await repair(context, checks))
+            if repair_outcome.reproduction_command is not None:
+                reproduction_command = repair_outcome.reproduction_command
             checks = [await runner(workspace, check) for check in request.checks]
-            if context.candidate.reproduction and context.candidate.reproduction.command:
-                reproduction = await runner(
-                    workspace,
-                    context.candidate.reproduction.command,
+            reproduction = (
+                await runner(workspace, reproduction_command)
+                if reproduction_command is not None
+                else None
+            )
+            verifier = await verify(context, checks, reproduction)
+            workspace_digest = await _workspace_digest(workspace)
+            attempt_record = FixPreparationAttempt(
+                attempt=attempt,
+                repair=repair_outcome,
+                checks=checks,
+                security_reproduction=reproduction,
+                verifier=verifier,
+                workspace_digest=workspace_digest,
+            )
+            attempt_history.append(attempt_record)
+            context.feedback = list(attempt_history)
+            gaps = _verification_gaps(repair_outcome, checks, reproduction, verifier)
+            gaps = list(dict.fromkeys(gaps))
+
+            if _verification_passes(checks, reproduction, verifier):
+                manifest, summary, artifact_ref = await manifest_builder(workspace)
+                if not manifest:
+                    return _result(
+                        context,
+                        state=PreparationState.NEEDS_REVIEW,
+                        reason="The prepared workspace does not contain a source change.",
+                        checks=checks,
+                        reproduction=reproduction,
+                        verifier=verifier,
+                        gaps=[*gaps, "No prepared source change was produced."],
+                        attempt_history=attempt_history,
+                        started=started,
+                    )
+                if gaps:
+                    return _result(
+                        context,
+                        state=PreparationState.READY_WITH_GAPS,
+                        reason=("The fix passed available checks, but verification gaps remain."),
+                        checks=checks,
+                        reproduction=reproduction,
+                        verifier=verifier,
+                        gaps=gaps,
+                        manifest=manifest,
+                        diff_summary=summary,
+                        artifact_ref=artifact_ref,
+                        attempt_history=attempt_history,
+                        started=started,
+                    )
+                return _result(
+                    context,
+                    state=PreparationState.READY,
+                    reason="The fix passed required checks and independent verification.",
+                    checks=checks,
+                    reproduction=reproduction,
+                    verifier=verifier,
+                    manifest=manifest,
+                    diff_summary=summary,
+                    artifact_ref=artifact_ref,
+                    attempt_history=attempt_history,
+                    started=started,
                 )
 
-            failed = any(
-                result.required and result.status is CheckStatus.FAILED for result in checks
-            )
-            reproduction_failed = (
-                reproduction is not None and reproduction.status is CheckStatus.FAILED
-            )
-            if not failed and not reproduction_failed:
-                break
-        else:
-            return _result(
-                context,
-                state=PreparationState.FAILED,
-                reason="Required checks still fail after the repair limit.",
-                checks=checks,
-                reproduction=reproduction,
-                started=started,
-            )
+            if repair_outcome.status is RepairStatus.BLOCKED:
+                manifest, summary, artifact_ref = await manifest_builder(workspace)
+                return _result(
+                    context,
+                    state=PreparationState.BLOCKED,
+                    reason=repair_outcome.summary,
+                    checks=checks,
+                    reproduction=reproduction,
+                    verifier=verifier,
+                    gaps=gaps,
+                    manifest=manifest,
+                    diff_summary=summary,
+                    artifact_ref=artifact_ref,
+                    attempt_history=attempt_history,
+                    started=started,
+                )
 
-        verifier = await verify(context, checks, reproduction)
+            if previous_workspace_digest == workspace_digest:
+                manifest, summary, artifact_ref = await manifest_builder(workspace)
+                return _result(
+                    context,
+                    state=PreparationState.NEEDS_REVIEW,
+                    reason="The repair made no repository progress after verification feedback.",
+                    checks=checks,
+                    reproduction=reproduction,
+                    verifier=verifier,
+                    gaps=[*gaps, "Two repair cycles produced the same repository state."],
+                    manifest=manifest,
+                    diff_summary=summary,
+                    artifact_ref=artifact_ref,
+                    attempt_history=attempt_history,
+                    started=started,
+                )
+            previous_workspace_digest = workspace_digest
+
+        assert verifier is not None
         manifest, summary, artifact_ref = await manifest_builder(workspace)
-        gaps = [
-            result.name
-            for result in checks
-            if result.required and result.status is CheckStatus.UNAVAILABLE
-        ]
-        gaps.extend(
-            f"{result.name}: optional check {result.status}"
-            for result in checks
-            if not result.required and result.status is not CheckStatus.PASSED
-        )
-        if _change_extends_draft(workspace, applied_sha256, manifest):
-            gaps.append("The verified change extends beyond the recorded draft edits.")
-        if reproduction is None and not verifier.reproduction_executed:
-            gaps.append("No executable security reproduction was available.")
-        elif reproduction is not None and reproduction.status is CheckStatus.UNAVAILABLE:
-            gaps.append(reproduction.name)
-        gaps.extend(verifier.gaps)
-
-        if (
-            verifier.decision is not VerificationDecision.VERIFIED
-            or not verifier.security_invariant_closed
-        ):
-            return _result(
-                context,
-                state=PreparationState.NEEDS_REVIEW,
-                reason=verifier.summary,
-                checks=checks,
-                reproduction=reproduction,
-                verifier=verifier,
-                gaps=gaps,
-                manifest=manifest,
-                diff_summary=summary,
-                artifact_ref=artifact_ref,
-                started=started,
-            )
-        if not manifest:
-            return _result(
-                context,
-                state=PreparationState.NEEDS_REVIEW,
-                reason="The prepared workspace does not contain a source change.",
-                checks=checks,
-                reproduction=reproduction,
-                verifier=verifier,
-                gaps=[*gaps, "No prepared source change was produced."],
-                started=started,
-            )
-        if gaps:
-            return _result(
-                context,
-                state=PreparationState.READY_WITH_GAPS,
-                reason="The fix passed available checks, but required verification gaps remain.",
-                checks=checks,
-                reproduction=reproduction,
-                verifier=verifier,
-                gaps=gaps,
-                manifest=manifest,
-                diff_summary=summary,
-                artifact_ref=artifact_ref,
-                started=started,
-            )
         return _result(
             context,
-            state=PreparationState.READY,
-            reason="The fix passed required checks and independent verification.",
+            state=PreparationState.NEEDS_REVIEW,
+            reason="The fix did not satisfy verification within the repair cycle limit.",
             checks=checks,
             reproduction=reproduction,
             verifier=verifier,
+            gaps=[
+                *_verification_gaps(
+                    attempt_history[-1].repair,
+                    checks,
+                    reproduction,
+                    verifier,
+                ),
+            ],
             manifest=manifest,
             diff_summary=summary,
             artifact_ref=artifact_ref,
+            attempt_history=attempt_history,
             started=started,
         )
 
@@ -569,6 +656,7 @@ async def prepare_fix(
             context,
             state=PreparationState.FAILED,
             reason="Fix preparation was cancelled.",
+            attempt_history=context.feedback,
             started=started,
         )
     except TimeoutError:
@@ -576,5 +664,6 @@ async def prepare_fix(
             context,
             state=PreparationState.FAILED,
             reason="Fix preparation exceeded its time limit.",
+            attempt_history=context.feedback,
             started=started,
         )
