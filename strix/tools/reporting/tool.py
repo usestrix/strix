@@ -11,8 +11,8 @@ import asyncio
 import json
 import logging
 import re
-from pathlib import PurePosixPath
-from typing import TYPE_CHECKING, Any
+from pathlib import Path, PurePosixPath
+from typing import TYPE_CHECKING, Any, cast
 
 from agents import RunContextWrapper, function_tool
 
@@ -108,6 +108,108 @@ def _validate_code_locations(locations: list[dict[str, Any]]) -> list[str]:
         elif isinstance(start, int) and end < start:
             errors.append(f"code_locations[{i}]: end_line ({end}) must be >= start_line ({start})")
     return errors
+
+
+def _repo_workspace_roots() -> list[Path]:
+    """Workspace directories that hold checked-out repo / source targets.
+
+    Sandbox targets land at ``/workspace/<workspace_subdir>``; ``/workspace``
+    itself covers root-level mounts. Best-effort: any lookup failure yields the
+    bare ``/workspace`` root.
+    """
+    roots = ["/workspace"]
+    try:
+        from strix.report.state import get_global_report_state
+
+        state = get_global_report_state()
+        config: dict[str, Any] = (state.scan_config if state else None) or {}
+        for target in cast("list[dict[str, Any]]", config.get("targets") or []):
+            details: dict[str, Any] = target.get("details") or {}
+            subdir = str(details.get("workspace_subdir") or "").strip("/")
+            if subdir:
+                roots.append(f"/workspace/{subdir}")
+    except Exception:  # noqa: BLE001 - opportunistic; never block a report on it
+        logger.debug("Could not resolve workspace roots for code-location re-anchoring")
+    return [Path(root) for root in dict.fromkeys(roots)]
+
+
+def _find_anchor(file_lines: list[str], anchor_lines: list[str], reported: int) -> int | None:
+    """1-based line where ``anchor_lines`` sits in ``file_lines``, nearest ``reported``.
+
+    Verbatim blocks (``fix_before``/``snippet``) are far more reliable than the
+    agent's reported line numbers, so locating the block in the real file is
+    the better source of truth. Trailing-whitespace differences are tolerated;
+    a dedented fallback applies to multi-line anchors or single lines found
+    exactly once (a lone generic line like ``}`` matches too many places to be
+    trusted otherwise).
+    """
+    count = len(anchor_lines)
+    if count == 0 or count > len(file_lines):
+        return None
+    wanted = [ln.rstrip() for ln in anchor_lines]
+    hits = [
+        i
+        for i in range(len(file_lines) - count + 1)
+        if [fl.rstrip() for fl in file_lines[i : i + count]] == wanted
+    ]
+    if not hits:
+        dedented = [ln.lstrip() for ln in anchor_lines]
+        hits = [
+            i
+            for i in range(len(file_lines) - count + 1)
+            if [fl.lstrip() for fl in file_lines[i : i + count]] == dedented
+        ]
+        if count == 1 and len(hits) != 1:
+            return None
+    if not hits:
+        return None
+    return min(hits, key=lambda i: (abs(i + 1 - reported), i)) + 1
+
+
+def _reanchor_code_locations(locations: list[dict[str, Any]] | None) -> None:
+    """Correct ``start_line``/``end_line`` against the checked-out files.
+
+    Agents report line numbers from memory and routinely get them wrong while
+    copying the vulnerable code verbatim. When a location carries such a block
+    (``fix_before``, else ``snippet``), locating it in the real file yields a
+    trustworthy range; locations whose anchor is not found keep their reported
+    numbers.
+    """
+    if not locations:
+        return
+    roots: list[Path] | None = None
+    for loc in locations:
+        anchor = loc.get("fix_before") or loc.get("snippet")
+        rel = str(loc.get("file") or "").strip()
+        if not anchor or not rel:
+            continue
+        if roots is None:
+            roots = _repo_workspace_roots()
+        reported = loc.get("start_line")
+        reported = reported if isinstance(reported, int) and reported > 0 else 1
+        anchor_lines = anchor.split("\n")
+        best: tuple[int, int] | None = None
+        for root in roots:
+            try:
+                text = (root / rel).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+            found = _find_anchor(text.splitlines(), anchor_lines, reported)
+            if found is not None and (
+                best is None or abs(found - reported) < abs(best[0] - reported)
+            ):
+                best = (found, found + len(anchor_lines) - 1)
+        if best is None or best == (loc.get("start_line"), loc.get("end_line")):
+            continue
+        logger.info(
+            "Re-anchored %s lines %s-%s -> %s-%s",
+            rel,
+            loc.get("start_line"),
+            loc.get("end_line"),
+            best[0],
+            best[1],
+        )
+        loc["start_line"], loc["end_line"] = best
 
 
 def _extract_cve(cve: str) -> str:
@@ -444,6 +546,7 @@ def _collect_update_changes(  # noqa: PLR0912, PLR0915
     raw_locations = fields.get("code_locations")
     locations = _normalize_code_locations(raw_locations)
     if locations:
+        _reanchor_code_locations(locations)
         errors.extend(_validate_code_locations(locations))
         errors.extend(_validate_fix_verification(locations, changes.get("fix_verification")))
         changes["code_locations"] = locations
@@ -841,6 +944,7 @@ async def _do_create(
 
     parsed_locations = _normalize_code_locations(code_locations)
     if parsed_locations:
+        _reanchor_code_locations(parsed_locations)
         errors.extend(_validate_code_locations(parsed_locations))
     errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
     cve, cwe, identifier_errors = _validate_identifiers(cve, cwe)

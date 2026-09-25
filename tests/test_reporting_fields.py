@@ -1169,6 +1169,108 @@ async def test_informational_location_needs_no_verification(report_state: Report
     assert "fix_verification" not in report_state.vulnerability_reports[0]
 
 
+async def test_code_locations_reanchored_to_verbatim_block(
+    report_state: ReportState, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Agents report line numbers from memory; the verbatim block is the
+    trustworthy anchor, so mis-reported ranges are corrected against the
+    checked-out file."""
+    source = tmp_path / "server" / "routes" / "index.js"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "const a = 1\n"
+        "const b = 2\n"
+        "            let order = {\n"
+        "                residentId: req.body.residentId,\n"
+        "                numCredits: req.body.numCredits,\n"
+        "                price: req.body.price\n"
+        "            }\n"
+    )
+    monkeypatch.setattr(reporting_tool, "_repo_workspace_roots", lambda: [tmp_path])
+    result = await _create_with(
+        report_state,
+        code_locations=[
+            {
+                "file": "server/routes/index.js",
+                "start_line": 40,
+                "end_line": 46,
+                "fix_before": (
+                    "            let order = {\n"
+                    "                residentId: req.body.residentId,\n"
+                    "                numCredits: req.body.numCredits,\n"
+                    "                price: req.body.price\n"
+                    "            }"
+                ),
+            }
+        ],
+    )
+    assert result["success"] is True
+    loc = report_state.vulnerability_reports[0]["code_locations"][0]
+    assert loc["start_line"] == 3
+    assert loc["end_line"] == 7
+
+
+async def test_code_locations_kept_when_anchor_not_found(
+    report_state: ReportState, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = tmp_path / "app" / "views.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def show():\n    return 1\n")
+    monkeypatch.setattr(reporting_tool, "_repo_workspace_roots", lambda: [tmp_path])
+    result = await _create_with(report_state, code_locations=[_INFO_LOCATION])
+    assert result["success"] is True
+    loc = report_state.vulnerability_reports[0]["code_locations"][0]
+    assert loc["start_line"] == _INFO_LOCATION["start_line"]
+    assert loc["end_line"] == _INFO_LOCATION["end_line"]
+
+
+async def test_code_locations_reanchored_on_update(
+    report_state: ReportState, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = await _create_with(report_state)
+    report_id = result["report_id"]
+    source = tmp_path / "app" / "views.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("alpha\nbeta\ngamma\ndelta\n")
+    monkeypatch.setattr(reporting_tool, "_repo_workspace_roots", lambda: [tmp_path])
+    update = _do_update(
+        report_id=report_id,
+        update_reason="Pinpoint the vulnerable call.",
+        fields={
+            "code_locations": [
+                {
+                    "file": "app/views.py",
+                    "start_line": 99,
+                    "snippet": "beta",
+                }
+            ]
+        },
+    )
+    assert update["success"] is True
+    loc = report_state.vulnerability_reports[0]["code_locations"][0]
+    assert loc["start_line"] == 2
+    assert loc["end_line"] == 2
+
+
+def test_find_anchor_picks_nearest_match() -> None:
+    file_lines = ["x = 1"] * 20
+    anchor = ["x = 1"]
+    assert reporting_tool._find_anchor(file_lines, anchor, 12) == 12
+
+
+def test_find_anchor_dedented_multiline() -> None:
+    file_lines = ["def f():", "    inner()", "    other()", "end"]
+    anchor = ["inner()", "other()"]
+    assert reporting_tool._find_anchor(file_lines, anchor, 99) == 2
+
+
+def test_find_anchor_single_line_ambiguous_dedented() -> None:
+    file_lines = ["}", "    }", "}"]
+    assert reporting_tool._find_anchor(file_lines, ["}"], 1) == 1
+    file_lines = ["    }", "    }"]
+    assert reporting_tool._find_anchor(file_lines, ["}"], 1) is None
+
+
 def test_vuln_tool_exposes_fix_verification() -> None:
     assert "fix_verification" in create_vulnerability_report.params_json_schema["properties"]
 
