@@ -1883,7 +1883,7 @@ def _build_dependency_evidence(
     return evidence
 
 
-async def _do_create_dependency(  # noqa: PLR0912
+async def _do_create_dependency(  # noqa: PLR0912, PLR0915
     *,
     title: str,
     description: str,
@@ -1905,6 +1905,8 @@ async def _do_create_dependency(  # noqa: PLR0912
     manifest_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
     contextual_cvss_breakdown: dict[str, str] | None = None,
     contextual_cvss_reasoning: str | None = None,
     agent_id: str | None = None,
@@ -1946,6 +1948,11 @@ async def _do_create_dependency(  # noqa: PLR0912
     manifest_err = _validate_manifest_path(manifest_path)
     if manifest_err:
         errors.append(manifest_err)
+
+    parsed_locations = _normalize_code_locations(code_locations)
+    if parsed_locations:
+        errors.extend(_validate_code_locations(parsed_locations))
+    errors.extend(_validate_fix_verification(parsed_locations, fix_verification))
 
     reachability = (reachability or "unknown").strip().lower()
     if reachability not in _VALID_REACHABILITY:
@@ -2053,6 +2060,8 @@ async def _do_create_dependency(  # noqa: PLR0912
             cvss=cvss_score if advisory_cvss is not None else None,
             cve=parsed_cve,
             cwe=cwe,
+            code_locations=parsed_locations,
+            fix_verification=fix_verification,
             finding_class="dependency_cve",
             dependency_metadata=dependency_metadata,
             agent_id=agent_id if isinstance(agent_id, str) else None,
@@ -2107,6 +2116,8 @@ async def create_dependency_report(
     dependency_path: str | None = None,
     reachability: str = "unknown",
     reachability_evidence: str | None = None,
+    code_locations: list[dict[str, Any]] | None = None,
+    fix_verification: str | None = None,
     contextual_cvss_breakdown: dict[str, str] | None = None,
     contextual_cvss_reasoning: str | None = None,
 ) -> str:
@@ -2217,6 +2228,23 @@ async def create_dependency_report(
             is off in production), and say who controls the input. State
             it plainly when no entry point reaches the sink — that is the
             most useful result a reader can get.
+        code_locations: Where application code imports or calls the package —
+            the evidence behind your ``reachability`` claim. List of dicts,
+            same shape as ``create_vulnerability_report``::
+
+                {"file": "src/api/client.ts", "start_line": 14,
+                 "snippet": "const x = require('pkg')", "label": "imports it"}
+
+            Cite the repo-relative ``file`` and the exact 1-based
+            ``start_line`` where ``snippet`` actually sits — verify against
+            the real file, never guess. A location may also propose
+            the fix itself: ``fix_before`` (verbatim current code, e.g. the
+            manifest pin line) + ``fix_after`` (same lines with the fixed
+            version) — that combination requires ``fix_verification``.
+        fix_verification: Required whenever any ``code_locations`` entry
+            carries ``fix_after``. Same bar as a normal finding: security
+            closure, bypass review, preserved behavior, and how each was
+            checked.
         contextual_cvss_breakdown: **Required.** Full CVSS v3.1 rating of this
             CVE **in this codebase** — the same 8-metric object as
             ``create_vulnerability_report``'s ``cvss_breakdown``:
@@ -2277,6 +2305,8 @@ async def create_dependency_report(
         manifest_path=manifest_path,
         reachability=reachability,
         reachability_evidence=reachability_evidence,
+        code_locations=code_locations,
+        fix_verification=fix_verification,
         contextual_cvss_breakdown=contextual_cvss_breakdown,
         contextual_cvss_reasoning=contextual_cvss_reasoning,
         agent_id=agent_id,
