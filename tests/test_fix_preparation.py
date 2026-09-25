@@ -27,7 +27,13 @@ from strix.fix.contracts import (
     candidate_from_legacy_report,
 )
 from strix.fix.locations import AnchorStatus, anchor_location
-from strix.fix.prepare import PreparationContext, prepare_fix
+from strix.fix.prepare import (
+    PreparationContext,
+    _network_isolation_prefix,
+    build_git_manifest,
+    prepare_fix,
+    run_command,
+)
 
 
 if TYPE_CHECKING:
@@ -382,3 +388,149 @@ async def test_prepare_fix_rejects_wrong_source_commit(tmp_path: Path) -> None:
 
     assert result.state is PreparationState.STALE
     assert "source identity" in result.stop_reason
+
+
+def test_anchor_location_rejects_symlink_escape(tmp_path: Path) -> None:
+    outside = tmp_path / "outside.txt"
+    outside.write_text("target\n", encoding="utf-8")
+    root = tmp_path / "repo"
+    root.mkdir()
+    (root / "link.txt").symlink_to(outside)
+    location = CandidateLocation(
+        file="link.txt",
+        start_line=1,
+        end_line=1,
+        snippet="target",
+    )
+
+    assert anchor_location(root, location).status is AnchorStatus.MISSING
+
+
+def test_anchor_location_treats_unreadable_file_as_missing(tmp_path: Path) -> None:
+    (tmp_path / "blob.bin").write_bytes(b"\x89PNG\r\n\x1a\n\x00\xff\xfe")
+    location = CandidateLocation(
+        file="blob.bin",
+        start_line=1,
+        end_line=1,
+        snippet="blob",
+    )
+
+    assert anchor_location(tmp_path, location).status is AnchorStatus.MISSING
+
+
+@pytest.mark.asyncio
+async def test_prepare_fix_rejects_edit_escaping_workspace(tmp_path: Path) -> None:
+    workspace, _commit = _workspace(tmp_path)
+    outside = tmp_path / "outside.txt"
+    outside.write_text("target\n", encoding="utf-8")
+    (workspace / "link.txt").symlink_to(outside)
+    _git(workspace, "add", "link.txt")
+    _git(workspace, "commit", "-m", "add link")
+    commit = _git(workspace, "rev-parse", "HEAD")
+    candidate = FixCandidateV1(
+        source_identity=SourceIdentity(kind=SourceIdentityKind.COMMIT, value=commit),
+        security_invariant="Replace target.",
+        draft_edits=[
+            FixEdit(
+                file="link.txt",
+                start_line=1,
+                end_line=1,
+                before="target",
+                after="safe",
+            )
+        ],
+    )
+
+    result = await prepare_fix(
+        _request(candidate),
+        workspace,
+        repair=_noop_repair,
+        verify=_verified,
+    )
+
+    assert result.state is PreparationState.NEEDS_REVIEW
+    assert outside.read_text(encoding="utf-8") == "target\n"
+
+
+@pytest.mark.asyncio
+async def test_prepare_fix_rejects_dirty_workspace(tmp_path: Path) -> None:
+    workspace, commit = _workspace(tmp_path)
+    (workspace / "stray.txt").write_text("unrelated\n", encoding="utf-8")
+
+    result = await prepare_fix(
+        _request(_candidate(commit)),
+        workspace,
+        repair=_noop_repair,
+        verify=_verified,
+    )
+
+    assert result.state is PreparationState.STALE
+    assert "source identity" in result.stop_reason
+
+
+@pytest.mark.asyncio
+async def test_build_git_manifest_lists_files_inside_new_directory(tmp_path: Path) -> None:
+    workspace, _commit = _workspace(tmp_path)
+    package = workspace / "pkg"
+    package.mkdir()
+    (package / "mod.py").write_text("x = 1\n", encoding="utf-8")
+
+    entries, _summary, _artifact = await build_git_manifest(workspace)
+
+    paths = {entry.path for entry in entries}
+    assert "pkg/mod.py" in paths
+    entry = next(entry for entry in entries if entry.path == "pkg/mod.py")
+    assert entry.operation == "add"
+    assert entry.resulting_sha256 is not None
+
+
+@pytest.mark.asyncio
+async def test_run_command_drops_ambient_credentials(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_AMBIENT_TOKEN", "hunter2")
+    command = CommandSpec(
+        name="env probe",
+        argv=[
+            sys.executable,
+            "-c",
+            "import os; print(os.environ.get('STRIX_AMBIENT_TOKEN', '<absent>'))",
+        ],
+    )
+
+    sealed = await run_command(tmp_path, command, network_allowed=True)
+    assert sealed.status is CheckStatus.PASSED
+    assert "<absent>" in sealed.output
+
+    granted = await run_command(
+        tmp_path,
+        command,
+        credentials_allowed=["STRIX_AMBIENT_TOKEN"],
+        network_allowed=True,
+    )
+    assert granted.status is CheckStatus.PASSED
+    assert "hunter2" in granted.output
+
+
+@pytest.mark.asyncio
+async def test_run_command_blocks_egress_when_network_not_allowed(tmp_path: Path) -> None:
+    command = CommandSpec(
+        name="egress probe",
+        argv=[
+            sys.executable,
+            "-c",
+            (
+                "import socket, sys; s = socket.socket(); s.settimeout(3); "
+                "sys.exit(0 if s.connect_ex(('1.1.1.1', 53)) == 0 else 1)"
+            ),
+        ],
+    )
+
+    result = await run_command(tmp_path, command)
+
+    if _network_isolation_prefix() is None:
+        assert result.status is CheckStatus.UNAVAILABLE
+        assert "not run" in result.output
+    else:
+        assert result.status is CheckStatus.FAILED

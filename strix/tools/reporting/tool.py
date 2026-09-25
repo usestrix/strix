@@ -413,15 +413,24 @@ def _build_fix_candidate(
     if candidate is None:
         return None
     if repo_path is not None:
-        anchored, results = anchor_candidate(repo_path, candidate)
-        candidate = anchored
-        gaps = [
-            f"{result.location.file}: {result.status}"
-            for result in results
-            if result.status is not AnchorStatus.UNIQUE
-        ]
-        if gaps:
-            candidate = candidate.model_copy(update={"known_gaps": [*candidate.known_gaps, *gaps]})
+        try:
+            anchored, results = anchor_candidate(repo_path, candidate)
+        except Exception as exc:  # noqa: BLE001
+            # Anchoring must never block the finding from being stored.
+            candidate = candidate.model_copy(
+                update={"known_gaps": [*candidate.known_gaps, f"Candidate anchoring failed: {exc}"]}
+            )
+        else:
+            candidate = anchored
+            gaps = [
+                f"{result.location.file}: {result.status}"
+                for result in results
+                if result.status is not AnchorStatus.UNIQUE
+            ]
+            if gaps:
+                candidate = candidate.model_copy(
+                    update={"known_gaps": [*candidate.known_gaps, *gaps]}
+                )
     return cast("dict[str, object]", candidate.model_dump(mode="json"))
 
 

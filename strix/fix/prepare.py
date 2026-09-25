@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import hashlib
 import os
 import subprocess
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -62,7 +63,57 @@ IndependentVerifier = Callable[
 SourceVerifier = Callable[[PreparationContext], Awaitable[bool]]
 
 
-async def run_command(workspace: Path, command: CommandSpec) -> CheckResult:
+_COMMAND_ENV_ALLOWLIST = frozenset(
+    {
+        "HOME",
+        "LANG",
+        "LC_ALL",
+        "PATH",
+        "PYTHONHOME",
+        "PYTHONPATH",
+        "SYSTEMROOT",
+        "TEMP",
+        "TMP",
+        "TMPDIR",
+        "VIRTUAL_ENV",
+        "SystemRoot",
+    }
+)
+
+
+@functools.lru_cache(maxsize=1)
+def _network_isolation_prefix() -> tuple[str, ...] | None:
+    """Return a working ``unshare`` prefix that creates an empty network
+    namespace, or None when the platform cannot isolate egress."""
+    for prefix in (("unshare", "-Urn"), ("unshare", "-n")):
+        try:
+            probe = subprocess.run(  # noqa: S603
+                [*prefix, "true"],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+        if probe.returncode == 0:
+            return prefix
+    return None
+
+
+def _command_environment(credentials_allowed: Iterable[str]) -> dict[str, str]:
+    allowed = _COMMAND_ENV_ALLOWLIST | set(credentials_allowed)
+    env = {key: value for key, value in os.environ.items() if key in allowed}
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
+    return env
+
+
+async def run_command(
+    workspace: Path,
+    command: CommandSpec,
+    *,
+    credentials_allowed: Iterable[str] = (),
+    network_allowed: bool = False,
+) -> CheckResult:
     started = time.monotonic()
     cwd = (workspace / command.cwd).resolve()
     if not cwd.is_relative_to(workspace.resolve()) or not cwd.is_dir():
@@ -74,12 +125,25 @@ async def run_command(workspace: Path, command: CommandSpec) -> CheckResult:
             output="The command working directory is unavailable.",
             required=command.required,
         )
+    argv = list(command.argv)
+    if not network_allowed:
+        prefix = _network_isolation_prefix()
+        if prefix is None:
+            return CheckResult(
+                name=command.name,
+                argv=command.argv,
+                status=CheckStatus.UNAVAILABLE,
+                duration_seconds=time.monotonic() - started,
+                output="Network isolation is unavailable, so the command was not run.",
+                required=command.required,
+            )
+        argv = [*prefix, *argv]
     process: asyncio.subprocess.Process | None = None
     try:
         process = await asyncio.create_subprocess_exec(
-            *command.argv,
+            *argv,
             cwd=cwd,
-            env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
+            env=_command_environment(credentials_allowed),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
         )
@@ -123,8 +187,11 @@ def _apply_edits(workspace: Path, candidate: FixCandidateV1) -> None:
             (edit.start_line, edit.end_line, edit.before, edit.after)
         )
 
+    workspace_resolved = workspace.resolve()
     for file_path, edits in by_file.items():
-        path = workspace / file_path
+        path = (workspace / file_path).resolve()
+        if not path.is_relative_to(workspace_resolved):
+            raise ValueError(f"Draft edit path escapes the workspace: {file_path}")
         content = path.read_text(encoding="utf-8")
         lines = content.splitlines(keepends=True)
         newline = "\r\n" if "\r\n" in content else "\n"
@@ -148,6 +215,7 @@ async def build_git_manifest(
         "git",
         "status",
         "--porcelain=v1",
+        "--untracked-files=all",
         "-z",
         cwd=workspace,
         stdout=asyncio.subprocess.PIPE,
@@ -160,6 +228,7 @@ async def build_git_manifest(
     entries: list[FileManifestEntry] = []
     changed_files: list[str] = []
     records = [record for record in output.decode(errors="replace").split("\0") if record]
+    workspace_resolved = workspace.resolve()
     index = 0
     while index < len(records):
         record = records[index]
@@ -176,7 +245,31 @@ async def build_git_manifest(
             operation = "delete"
         else:
             operation = "modify"
-        resulting = hashlib.sha256(path.read_bytes()).hexdigest() if path.is_file() else None
+        resolved = path.resolve()
+        contained = resolved.is_relative_to(workspace_resolved)
+        if operation == "add" and contained and resolved.is_dir():
+            for child in sorted(resolved.rglob("*")):
+                child_resolved = child.resolve()
+                if (
+                    not child_resolved.is_file()
+                    or not child_resolved.is_relative_to(workspace_resolved)
+                    or ".git" in child.relative_to(resolved).parts
+                ):
+                    continue
+                entries.append(
+                    FileManifestEntry(
+                        path=child_resolved.relative_to(workspace_resolved).as_posix(),
+                        operation="add",
+                        resulting_sha256=hashlib.sha256(child_resolved.read_bytes()).hexdigest(),
+                    )
+                )
+            index += 1
+            continue
+        resulting = (
+            hashlib.sha256(resolved.read_bytes()).hexdigest()
+            if contained and resolved.is_file()
+            else None
+        )
         original: str | None = None
         if operation != "add":
             original_process = await asyncio.create_subprocess_exec(
@@ -215,18 +308,31 @@ async def build_git_manifest(
 
 async def _verify_source(context: PreparationContext) -> bool:
     identity = context.candidate.source_identity
-    if identity is None or identity.kind != "commit":
-        return identity is not None
-    process = await asyncio.create_subprocess_exec(
+    if identity is None:
+        return False
+    if identity.kind == "commit":
+        process = await asyncio.create_subprocess_exec(
+            "git",
+            "rev-parse",
+            "HEAD",
+            cwd=context.workspace,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+        )
+        output, _ = await process.communicate()
+        if process.returncode != 0 or output.decode().strip().lower() != identity.value:
+            return False
+    status_process = await asyncio.create_subprocess_exec(
         "git",
-        "rev-parse",
-        "HEAD",
+        "status",
+        "--porcelain=v1",
+        "-z",
         cwd=context.workspace,
         stdout=asyncio.subprocess.PIPE,
         stderr=subprocess.DEVNULL,
     )
-    output, _ = await process.communicate()
-    return process.returncode == 0 and output.decode().strip().lower() == identity.value
+    status_output, _ = await status_process.communicate()
+    return status_process.returncode == 0 and not status_output.strip(b"\x00")
 
 
 def _result(
@@ -279,6 +385,13 @@ async def prepare_fix(
         timeout_seconds=request.timeout_seconds,
     )
     context = PreparationContext(request=request, workspace=workspace, candidate=request.candidate)
+    runner: CommandRunner = command_runner
+    if runner is run_command:
+        runner = functools.partial(
+            run_command,
+            credentials_allowed=request.credentials_allowed,
+            network_allowed=request.network_allowed,
+        )
 
     async def execute() -> FixPreparationResultV1:  # noqa: PLR0911, PLR0912
         if cancelled():
@@ -323,9 +436,9 @@ async def prepare_fix(
             if cancelled():
                 raise PreparationCancelledError
             await repair(context, checks)
-            checks = [await command_runner(workspace, check) for check in request.checks]
+            checks = [await runner(workspace, check) for check in request.checks]
             if context.candidate.reproduction and context.candidate.reproduction.command:
-                reproduction = await command_runner(
+                reproduction = await runner(
                     workspace,
                     context.candidate.reproduction.command,
                 )
@@ -355,6 +468,11 @@ async def prepare_fix(
             for result in checks
             if result.required and result.status is CheckStatus.UNAVAILABLE
         ]
+        gaps.extend(
+            f"{result.name}: optional check {result.status}"
+            for result in checks
+            if not result.required and result.status is not CheckStatus.PASSED
+        )
         if reproduction is None and not verifier.reproduction_executed:
             gaps.append("No executable security reproduction was available.")
         elif reproduction is not None and reproduction.status is CheckStatus.UNAVAILABLE:

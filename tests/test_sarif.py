@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from strix.fix.contracts import FixCandidateV1
 from strix.report.sarif import write_sarif
 
 
@@ -129,15 +130,37 @@ def test_write_sarif_never_embeds_poc_script(tmp_path: Path) -> None:
     assert poc["description"] == "Send a crafted request to trigger the sink."
 
 
+def _fix_candidate(**overrides: Any) -> dict[str, Any]:
+    candidate: dict[str, Any] = {
+        "security_invariant": "Use a parameterized query.",
+        "draft_edits": [
+            {
+                "file": "app.py",
+                "start_line": 4,
+                "end_line": 4,
+                "before": 'query = "SELECT * FROM u WHERE id=" + uid',
+                "after": 'query = "SELECT * FROM u WHERE id=%s"',
+            }
+        ],
+    }
+    candidate.update(overrides)
+    return candidate
+
+
 def test_write_sarif_builds_fixes_from_ready_preparation(tmp_path: Path) -> None:
     # SARIF fixes are automatically applicable, so only a prepared result can
-    # expose the candidate as an artifactChange.
+    # expose the verified candidate as an artifactChange.
+    candidate = _fix_candidate()
     write_sarif(
         tmp_path,
         [
             _finding(
                 remediation_steps="Use a parameterized query.",
-                fix_preparation={"state": "ready"},
+                fix_candidate=candidate,
+                fix_preparation={
+                    "state": "ready",
+                    "candidate_digest": FixCandidateV1.model_validate(candidate).digest(),
+                },
                 code_locations=[
                     {
                         "file": "app.py",
@@ -158,6 +181,35 @@ def test_write_sarif_builds_fixes_from_ready_preparation(tmp_path: Path) -> None
     replacement = change["replacements"][0]
     assert replacement["deletedRegion"]["startLine"] == 4
     assert replacement["insertedContent"]["text"] == 'query = "SELECT * FROM u WHERE id=%s"'
+
+
+def test_write_sarif_suppresses_fixes_when_prepared_candidate_diverged(
+    tmp_path: Path,
+) -> None:
+    # A ready result whose digest no longer matches the recorded candidate
+    # means repair changed what was verified — emitting the draft would offer
+    # the wrong replacement, so SARIF stays silent.
+    write_sarif(
+        tmp_path,
+        [
+            _finding(
+                fix_candidate=_fix_candidate(),
+                fix_preparation={"state": "ready", "candidate_digest": "0" * 64},
+                code_locations=[
+                    {
+                        "file": "app.py",
+                        "start_line": 4,
+                        "end_line": 4,
+                        "fix_before": "unsafe(value)",
+                        "fix_after": "safe(value)",
+                    }
+                ],
+            )
+        ],
+    )
+
+    result = _read(tmp_path)["runs"][0]["results"][0]
+    assert "fixes" not in result
 
 
 def test_write_sarif_hides_unprepared_fix_candidate(tmp_path: Path) -> None:

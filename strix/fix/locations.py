@@ -45,14 +45,26 @@ def _find_blocks(content: str, block: str) -> tuple[int, ...]:
     )
 
 
+def _read_anchor_source(root: Path, file: str) -> str | None:
+    """Read a location's source, refusing symlinks that escape ``root`` and
+    files that cannot be decoded as UTF-8."""
+    resolved_root = root.resolve()
+    file_path = (root / file).resolve()
+    if not file_path.is_relative_to(resolved_root) or not file_path.is_file():
+        return None
+    try:
+        return file_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return None
+
+
 def anchor_location(
     root: Path,
     location: CandidateLocation | FixEdit,
 ) -> AnchorResult:
-    file_path = root / location.file
-    if not file_path.is_file():
+    content = _read_anchor_source(root, location.file)
+    if content is None:
         return AnchorResult(AnchorStatus.MISSING, location)
-    content = file_path.read_text(encoding="utf-8")
     block = location.before if isinstance(location, FixEdit) else location.snippet
     if not block:
         return AnchorResult(AnchorStatus.UNIQUE, location, (location.start_line,))
