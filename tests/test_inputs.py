@@ -2,13 +2,16 @@
 
 from __future__ import annotations
 
+import json
 from itertools import pairwise
 from typing import Any
 
 import litellm
 import pytest
 
+from strix.config import loader
 from strix.core.inputs import (
+    _trim_parent_history,
     build_root_task,
     build_scan_targets,
     build_scope_context,
@@ -60,6 +63,100 @@ def test_child_initial_input_no_consecutive_same_role(parent_history: list[Any])
 
     roles = [msg["role"] for msg in result]
     assert all(prev != nxt for prev, nxt in pairwise(roles))
+
+
+def test_child_initial_input_trims_inherited_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Cap (20 tokens ~= 80 chars) fits the newest item but not both.
+    monkeypatch.setenv("STRIX_INHERIT_CONTEXT_MAX_TOKENS", "20")
+    loader._cached = None
+    try:
+        history = [
+            {"role": "assistant", "content": "oldest work item that should be dropped"},
+            {"role": "assistant", "content": "newest work item that should be kept"},
+        ]
+        result = child_initial_input(**_child_kwargs(history))
+    finally:
+        loader._cached = None
+
+    content = result[0]["content"]
+    assert "newest work item that should be kept" in content
+    assert "oldest work item that should be dropped" not in content
+    assert "older inherited context dropped" in content
+
+
+def test_screenshot_does_not_evict_text_history(monkeypatch: pytest.MonkeyPatch) -> None:
+    # A screenshot is replaced by a short placeholder before the child ever sees
+    # it, so budgeting against the raw base64 would drop useful text turns to
+    # make room for bytes that are never sent.
+    monkeypatch.setenv("STRIX_INHERIT_CONTEXT_MAX_TOKENS", "200")
+    loader._cached = None
+    try:
+        history = [
+            {"role": "assistant", "content": "earlier finding worth inheriting"},
+            {
+                "role": "user",
+                "content": [
+                    {"type": "input_image", "image_url": "data:image/png;base64," + "A" * 20_000}
+                ],
+            },
+        ]
+        result = child_initial_input(**_child_kwargs(history))
+    finally:
+        loader._cached = None
+
+    content = result[0]["content"]
+    assert "earlier finding worth inheriting" in content
+    assert "screenshot omitted from inherited context" in content
+    assert "older inherited context dropped" not in content
+
+
+def test_trim_truncates_oversized_newest_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    # One item, larger than the whole budget: keeping it whole would mean the cap
+    # bounds nothing at all on the child's first request.
+    monkeypatch.setenv("STRIX_INHERIT_CONTEXT_MAX_TOKENS", "40")
+    loader._cached = None
+    try:
+        history = [{"role": "assistant", "content": "x" * 5000}]
+        trimmed = _trim_parent_history(history)
+    finally:
+        loader._cached = None
+
+    assert len(trimmed) == 1
+    assert len(json.dumps(trimmed[0], ensure_ascii=False)) <= 40 * 4
+    assert "truncated to bound token cost" in trimmed[0]["content"]
+
+
+def test_trim_falls_back_to_marker_when_budget_tiny(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("STRIX_INHERIT_CONTEXT_MAX_TOKENS", "1")
+    loader._cached = None
+    try:
+        history = [{"role": "assistant", "content": "x" * 5000}]
+        trimmed = _trim_parent_history(history)
+    finally:
+        loader._cached = None
+
+    assert len(trimmed) == 1
+    assert "x" * 100 not in trimmed[0]["content"]
+
+
+def test_child_initial_input_keeps_full_history_when_cap_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("STRIX_INHERIT_CONTEXT_MAX_TOKENS", "0")
+    loader._cached = None
+    try:
+        history = [
+            {"role": "assistant", "content": "first item kept"},
+            {"role": "assistant", "content": "second item kept"},
+        ]
+        result = child_initial_input(**_child_kwargs(history))
+    finally:
+        loader._cached = None
+
+    content = result[0]["content"]
+    assert "first item kept" in content
+    assert "second item kept" in content
+    assert "older inherited context dropped" not in content
 
 
 def _cache_points(model_name: str) -> Any:

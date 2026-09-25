@@ -63,6 +63,9 @@ class AgentCoordinator:
         self.runtimes: dict[str, AgentRuntime] = {}
         self._parent_notified: set[str] = set()
         self._lock = asyncio.Lock()
+        # Slots claimed by a spawn that has not registered its child yet. Counted
+        # alongside live agents so a concurrent fan-out cannot overshoot the cap.
+        self._reserved_slots = 0
         self._snapshot_path: Path | None = None
         self.is_shutting_down = False
         self._budget_stopped = False
@@ -464,6 +467,49 @@ class AgentCoordinator:
                 for aid, status in self.statuses.items()
                 if aid != agent_id and status in {"running", "waiting"}
             ]
+
+    async def agent_count(self) -> int:
+        """Total agents in the graph (root included), across every status."""
+        async with self._lock:
+            return len(self.parent_of)
+
+    async def depth_of(self, agent_id: str) -> int:
+        """1-based spawn depth of ``agent_id`` (root = 1).
+
+        Walks parent links defensively: an unknown id or a cycle stops the walk
+        rather than looping forever.
+        """
+        async with self._lock:
+            depth = 0
+            seen: set[str] = set()
+            current: str | None = agent_id
+            while current is not None and current in self.parent_of and current not in seen:
+                seen.add(current)
+                depth += 1
+                current = self.parent_of.get(current)
+            return max(depth, 1)
+
+    async def try_reserve_agent_slot(self, max_agents: int) -> bool:
+        """Atomically claim one slot under ``max_agents``; ``0`` means unlimited.
+
+        Reading :meth:`agent_count` and then spawning is check-then-act: two
+        parents asking for the last slot concurrently both see room before
+        either child registers, and the graph overshoots the cap. Counting
+        outstanding reservations with the live agents under the same lock
+        closes that window. Release the slot with
+        :meth:`release_agent_slot` once the child is registered or the spawn
+        has failed.
+        """
+        async with self._lock:
+            if max_agents and len(self.parent_of) + self._reserved_slots >= max_agents:
+                return False
+            self._reserved_slots += 1
+            return True
+
+    async def release_agent_slot(self) -> None:
+        """Give back a slot claimed by :meth:`try_reserve_agent_slot`."""
+        async with self._lock:
+            self._reserved_slots = max(self._reserved_slots - 1, 0)
 
     async def graph_snapshot(
         self,

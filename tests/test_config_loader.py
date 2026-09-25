@@ -406,6 +406,47 @@ def test_persist_current_replaces_corrupt_file(
     assert json.loads(target.read_text(encoding="utf-8")) == {"env": {"STRIX_LLM": "env-model"}}
 
 
+def test_persist_current_skips_run_scoped_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A per-run flag exports its env var so it wins for this run; persisting it
+    # would silently make it the default for every later run.
+    monkeypatch.setenv("STRIX_LLM", "persisted-model")
+    monkeypatch.setenv("STRIX_REASONING_EFFORT", "max")
+    monkeypatch.setattr(loader, "_run_scoped", set())
+    loader.mark_run_scoped("STRIX_REASONING_EFFORT")
+    target = tmp_path / "cli-config.json"
+    loader.apply_config_override(target)
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "env": {"STRIX_LLM": "persisted-model"}
+    }
+
+
+def test_run_scoped_env_does_not_clear_stored_value(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The per-run override must leave the user's stored preference alone, not
+    # just avoid overwriting it with the run's value.
+    target = tmp_path / "cli-config.json"
+    target.write_text(
+        json.dumps({"env": {"STRIX_REASONING_EFFORT": "low"}}),
+        encoding="utf-8",
+    )
+    loader.apply_config_override(target)
+    monkeypatch.setenv("STRIX_REASONING_EFFORT", "max")
+    monkeypatch.setattr(loader, "_run_scoped", set())
+    loader.mark_run_scoped("STRIX_REASONING_EFFORT")
+
+    loader.persist_current()
+
+    assert json.loads(target.read_text(encoding="utf-8")) == {
+        "env": {"STRIX_REASONING_EFFORT": "low"}
+    }
+
+
 def test_persist_current_sets_0600_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("STRIX_LLM", "persisted-model")
     target = tmp_path / "cli-config.json"
