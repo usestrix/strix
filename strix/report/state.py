@@ -93,6 +93,8 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "http_exchange_ids",
         "fix_verification",
         "fix_pr_body",
+        "fix_candidate",
+        "fix_preparation",
     }
 )
 
@@ -357,6 +359,8 @@ class ReportState:
         fix_pr_body: str | None = None,
         finding_class: str | None = None,
         dependency_metadata: dict[str, str] | None = None,
+        fix_candidate: dict[str, Any] | None = None,
+        fix_preparation: dict[str, Any] | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
     ) -> str:
@@ -420,6 +424,10 @@ class ReportState:
         report["finding_class"] = (finding_class or "dynamic").strip().lower()
         if dependency_metadata:
             report["dependency_metadata"] = dependency_metadata
+        if fix_candidate:
+            report["fix_candidate"] = fix_candidate
+        if fix_preparation:
+            report["fix_preparation"] = fix_preparation
         if agent_id:
             report["agent_id"] = agent_id
         if agent_name:
@@ -913,6 +921,9 @@ class ReportState:
                 context["ref"] = f"refs/heads/{branch}"
         return context
 
+    def get_repository_context(self) -> dict[str, Any] | None:
+        return self._derive_repository_context()
+
     def _sync_llm_usage_record(self) -> None:
         self.run_record["llm_usage"] = self._build_llm_usage_record()
 
@@ -933,6 +944,7 @@ def openrouter_stream_cost(usage: Any) -> float | None:
     """
     if not isinstance(usage, dict):
         return None
+
     total = 0.0
     cost = usage.get("cost")
     if isinstance(cost, int | float) and cost > 0:
