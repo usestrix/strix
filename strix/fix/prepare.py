@@ -446,6 +446,50 @@ def _verification_gaps(
     return list(dict.fromkeys(gaps))
 
 
+def _verification_fingerprint(
+    repair_outcome: RepairOutcome,
+    checks: list[CheckResult],
+    reproduction: CheckResult | None,
+    verifier: VerifierResult,
+) -> str:
+    payload = {
+        "repair": {
+            "status": repair_outcome.status,
+            "gaps": repair_outcome.gaps,
+        },
+        "checks": [
+            {
+                "name": result.name,
+                "argv": result.argv,
+                "status": result.status,
+                "exit_code": result.exit_code,
+                "output": result.output,
+                "required": result.required,
+            }
+            for result in checks
+        ],
+        "reproduction": (
+            {
+                "name": reproduction.name,
+                "argv": reproduction.argv,
+                "status": reproduction.status,
+                "exit_code": reproduction.exit_code,
+                "output": reproduction.output,
+            }
+            if reproduction is not None
+            else None
+        ),
+        "verifier": {
+            "decision": verifier.decision,
+            "security_invariant_closed": verifier.security_invariant_closed,
+            "reproduction_executed": verifier.reproduction_executed,
+            "gaps": verifier.gaps,
+        },
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
 async def prepare_fix(  # noqa: PLR0915
     request: FixPreparationRequestV1,
     workspace: Path,
@@ -513,6 +557,7 @@ async def prepare_fix(  # noqa: PLR0915
         verifier: VerifierResult | None = None
         attempt_history: list[FixPreparationAttempt] = []
         previous_workspace_digest: str | None = None
+        previous_verification_fingerprint: str | None = None
         reproduction_command = (
             context.candidate.reproduction.command
             if context.candidate.reproduction is not None
@@ -545,6 +590,12 @@ async def prepare_fix(  # noqa: PLR0915
             context.feedback = list(attempt_history)
             gaps = _verification_gaps(repair_outcome, checks, reproduction, verifier)
             gaps = list(dict.fromkeys(gaps))
+            verification_fingerprint = _verification_fingerprint(
+                repair_outcome,
+                checks,
+                reproduction,
+                verifier,
+            )
 
             if repair_outcome.status is RepairStatus.BLOCKED:
                 manifest, summary, artifact_ref = await manifest_builder(workspace)
@@ -606,7 +657,10 @@ async def prepare_fix(  # noqa: PLR0915
                     started=started,
                 )
 
-            if previous_workspace_digest == workspace_digest:
+            if (
+                previous_workspace_digest == workspace_digest
+                and previous_verification_fingerprint == verification_fingerprint
+            ):
                 manifest, summary, artifact_ref = await manifest_builder(workspace)
                 return _result(
                     context,
@@ -623,6 +677,7 @@ async def prepare_fix(  # noqa: PLR0915
                     started=started,
                 )
             previous_workspace_digest = workspace_digest
+            previous_verification_fingerprint = verification_fingerprint
 
         assert verifier is not None
         manifest, summary, artifact_ref = await manifest_builder(workspace)

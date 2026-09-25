@@ -463,6 +463,58 @@ async def test_prepare_fix_stops_after_repeated_repository_state(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_prepare_fix_retries_when_unchanged_state_has_new_feedback(
+    tmp_path: Path,
+) -> None:
+    workspace, commit = _workspace(tmp_path)
+    verifier_calls = 0
+
+    async def repair(
+        context: PreparationContext,
+        _checks: list[CheckResult],
+    ) -> RepairOutcome:
+        if context.attempt == 3:
+            with (workspace / "app.py").open("a", encoding="utf-8") as handle:
+                handle.write("# deployment invariant\n")
+        return RepairOutcome(
+            status=RepairStatus.COMPLETE,
+            summary="Repair cycle complete.",
+        )
+
+    async def verify(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+        _reproduction: CheckResult | None,
+    ) -> VerifierResult:
+        nonlocal verifier_calls
+        verifier_calls += 1
+        if verifier_calls == 1:
+            return VerifierResult(
+                decision=VerificationDecision.REJECTED,
+                summary="The source guard is incomplete.",
+                gaps=["Inspect the deployment configuration."],
+            )
+        if verifier_calls == 2:
+            return VerifierResult(
+                decision=VerificationDecision.REJECTED,
+                summary="The deployment invariant is not enforced.",
+                gaps=["Set and enforce the production environment marker."],
+            )
+        return await _verified(_context, _checks, _reproduction)
+
+    result = await prepare_fix(
+        _request(_candidate(commit), attempts=4),
+        workspace,
+        repair=repair,
+        verify=verify,
+    )
+
+    assert result.state is PreparationState.READY
+    assert result.attempts == 3
+    assert len(result.attempt_history) == 3
+
+
+@pytest.mark.asyncio
 async def test_prepare_fix_evaluates_budget_exhausted_patch(tmp_path: Path) -> None:
     workspace, commit = _workspace(tmp_path)
 
