@@ -489,6 +489,31 @@ async def test_prepare_fix_evaluates_budget_exhausted_patch(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_prepare_fix_preserves_explicit_blocked_outcome(tmp_path: Path) -> None:
+    workspace, commit = _workspace(tmp_path)
+
+    async def blocked(
+        _context: PreparationContext,
+        _checks: list[CheckResult],
+    ) -> RepairOutcome:
+        return RepairOutcome(
+            status=RepairStatus.BLOCKED,
+            summary="The repair requires an unavailable generated source file.",
+        )
+
+    result = await prepare_fix(
+        _request(_candidate(commit)),
+        workspace,
+        repair=blocked,
+        verify=_verified,
+    )
+
+    assert result.state is PreparationState.BLOCKED
+    assert result.stop_reason == "The repair requires an unavailable generated source file."
+    assert result.attempts == 1
+
+
+@pytest.mark.asyncio
 async def test_prepare_fix_runs_repair_proposed_reproduction(tmp_path: Path) -> None:
     workspace, commit = _workspace(tmp_path)
     candidate = _candidate(commit).model_copy(update={"reproduction": None})

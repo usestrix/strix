@@ -546,6 +546,23 @@ async def prepare_fix(  # noqa: PLR0915
             gaps = _verification_gaps(repair_outcome, checks, reproduction, verifier)
             gaps = list(dict.fromkeys(gaps))
 
+            if repair_outcome.status is RepairStatus.BLOCKED:
+                manifest, summary, artifact_ref = await manifest_builder(workspace)
+                return _result(
+                    context,
+                    state=PreparationState.BLOCKED,
+                    reason=repair_outcome.summary,
+                    checks=checks,
+                    reproduction=reproduction,
+                    verifier=verifier,
+                    gaps=gaps,
+                    manifest=manifest,
+                    diff_summary=summary,
+                    artifact_ref=artifact_ref,
+                    attempt_history=attempt_history,
+                    started=started,
+                )
+
             if _verification_passes(checks, reproduction, verifier):
                 manifest, summary, artifact_ref = await manifest_builder(workspace)
                 if not manifest:
@@ -582,23 +599,6 @@ async def prepare_fix(  # noqa: PLR0915
                     checks=checks,
                     reproduction=reproduction,
                     verifier=verifier,
-                    manifest=manifest,
-                    diff_summary=summary,
-                    artifact_ref=artifact_ref,
-                    attempt_history=attempt_history,
-                    started=started,
-                )
-
-            if repair_outcome.status is RepairStatus.BLOCKED:
-                manifest, summary, artifact_ref = await manifest_builder(workspace)
-                return _result(
-                    context,
-                    state=PreparationState.BLOCKED,
-                    reason=repair_outcome.summary,
-                    checks=checks,
-                    reproduction=reproduction,
-                    verifier=verifier,
-                    gaps=gaps,
                     manifest=manifest,
                     diff_summary=summary,
                     artifact_ref=artifact_ref,
