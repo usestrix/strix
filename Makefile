@@ -46,8 +46,11 @@ lint:
 	@echo "✅ Linting complete!"
 
 type-check:
-	@echo "🔍 Type checking with mypy..."
-	uv run mypy strix/
+	@echo "🔍 Type checking with mypy (linux, darwin, win32)..."
+	@for platform in linux darwin win32; do \
+		echo "  → $$platform"; \
+		uv run mypy --platform $$platform strix/ || exit 1; \
+	done
 	@echo "🔍 Type checking with pyright..."
 	uv run pyright strix/
 	@echo "✅ Type checking complete!"
