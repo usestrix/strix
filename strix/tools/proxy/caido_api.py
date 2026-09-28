@@ -7,6 +7,7 @@ import json
 import os
 import time
 import urllib.request
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
@@ -39,6 +40,9 @@ SitemapDepth = Literal["DIRECT", "ALL"]
 _SITEMAP_PAGE_SIZE = 30
 
 _DEFAULT_CAIDO_URL = "http://127.0.0.1:48080"
+# Written inside the sandbox for this run only. The host does not persist it,
+# and the PAT never lands here.
+ACCESS_TOKEN_PATH = "/workspace/.caido-access-token"  # noqa: S105
 _CLIENT_CACHE: dict[str, Client] = {}
 _CLIENT_LOCK = asyncio.Lock()
 _REQ_FIELD_MAP: dict[SortBy, tuple[str, str]] = {
@@ -65,6 +69,15 @@ def _graphql_url() -> str:
     return f"{base_url}/graphql"
 
 
+def _access_token() -> str | None:
+    """Return the run's account access token, when the host published one."""
+    try:
+        token = Path(ACCESS_TOKEN_PATH).read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return token or None
+
+
 def _login_as_guest() -> str:
     body = json.dumps({"query": "mutation { loginAsGuest { token { accessToken } } }"}).encode(
         "utf-8"
@@ -83,7 +96,9 @@ def _login_as_guest() -> str:
 async def _new_client() -> Client:
     from caido_sdk_client import Client, TokenAuthOptions
 
-    token = await asyncio.to_thread(_login_as_guest)
+    token = _access_token()
+    if token is None:
+        token = await asyncio.to_thread(_login_as_guest)
     client = Client(caido_url(), auth=TokenAuthOptions(token=token))
     await client.connect()
     return client

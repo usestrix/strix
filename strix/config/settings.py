@@ -164,6 +164,20 @@ class IntegrationSettings(BaseSettings):
     )
 
 
+class CaidoSettings(BaseSettings):
+    """Opt-in Caido account login for the ephemeral in-container sidecar."""
+
+    model_config = _BASE_CONFIG
+
+    login: bool = Field(default=False, alias="CAIDO_LOGIN")
+    pat: str | None = Field(default=None, alias="CAIDO_PAT", repr=False)
+    registration_key: str | None = Field(
+        default=None,
+        alias="CAIDO_REGISTRATION_KEY",
+        repr=False,
+    )
+
+
 class ViewerSettings(BaseSettings):
     model_config = _BASE_CONFIG
 
@@ -182,4 +196,5 @@ class Settings(BaseSettings):
     context: ContextSettings = Field(default_factory=ContextSettings)
     telemetry: TelemetrySettings = Field(default_factory=TelemetrySettings)
     integrations: IntegrationSettings = Field(default_factory=IntegrationSettings)
+    caido: CaidoSettings = Field(default_factory=CaidoSettings)
     viewer: ViewerSettings = Field(default_factory=ViewerSettings)

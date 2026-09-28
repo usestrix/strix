@@ -38,11 +38,19 @@ if [ -n "${STRIX_CAIDO_ALLOWED_DOMAINS:-}" ]; then
   done
 fi
 
+# Set by the host only when CAIDO_LOGIN is on. Each container is a new
+# instance, so the key claims this run. Guest runs leave it unset.
+CAIDO_REGISTRATION_ARGS=()
+if [ -n "${CAIDO_REGISTRATION_KEY:-}" ]; then
+  CAIDO_REGISTRATION_ARGS+=(--registration-key "$CAIDO_REGISTRATION_KEY")
+fi
+
 caido-cli --listen 0.0.0.0:${CAIDO_PORT} \
           --allow-guests \
           --no-logging \
           --no-open \
           "${CAIDO_UI_DOMAIN_ARGS[@]}" \
+          "${CAIDO_REGISTRATION_ARGS[@]}" \
           --import-ca-cert /app/certs/ca.p12 \
           --import-ca-cert-pass "" > "$CAIDO_LOG" 2>&1 &
 
@@ -77,7 +85,7 @@ fi
 
 sleep 2
 
-echo "Caido is up — host bootstraps the guest token + project via the Python SDK."
+echo "Caido is up — host bootstraps the client and project via the Python SDK."
 
 echo "Configuring system-wide proxy settings..."
 
