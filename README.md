@@ -306,6 +306,15 @@ export STRIX_LLM="chatgpt/gpt-5.4"   # chatgpt/<model> runs on the subscription
 strix auth status                    # show the active sign-in, or logout to forget it
 ```
 
+#### Sign in with OrcaRouter
+
+Use an [OrcaRouter](https://www.orcarouter.ai) API key, or sign in with your OrcaRouter account instead of copying one:
+
+```bash
+strix auth login orcarouter                   # browser sign-in (add --manual to paste a code)
+export STRIX_LLM="orcarouter/openai/gpt-5.5"  # or: export ORCAROUTER_API_KEY="sk-orca-..."
+```
+
 #### Use the managed platform: `strix cloud`
 
 Run scans on [app.strix.ai](https://app.strix.ai) from the terminal, without Docker or an LLM key:
