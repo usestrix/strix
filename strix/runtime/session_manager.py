@@ -64,8 +64,9 @@ def _host_identity_env() -> dict[str, str]:
 def _registration_key_env(caido: CaidoSettings) -> dict[str, str]:
     """Pass the registration key only when login is on.
 
-    ``CAIDO_PAT`` stays on the host. The entrypoint claims this ephemeral
-    instance when the key is present.
+    ``CAIDO_PAT`` stays on the host. ``caido-cli`` reads
+    ``CAIDO_REGISTRATION_KEY`` from the container environment and claims this
+    ephemeral instance.
     """
     if not caido.login or not caido.registration_key:
         return {}
@@ -373,16 +374,6 @@ async def create_or_reuse(
             name=f"caido-bootstrap-{scan_id}",
         )
     )
-    if settings.caido:
-        # Guest bootstrap stays concurrent with scan start. Account login
-        # has to finish here: a failure must fail the scan, not surface
-        # later as a missing proxy client.
-        try:
-            await caido_client.get()
-        except BaseException:
-            await caido_client.aclose()
-            await _discard_session(client, session)
-            raise
 
     bundle = {
         "client": client,

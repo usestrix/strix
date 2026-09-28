@@ -103,7 +103,7 @@ class _RunTokenCache:
         access_token = token.access_token.strip()
         if not access_token:
             raise RuntimeError("Caido login returned no access token")
-        await self._session.write(Path(ACCESS_TOKEN_PATH), io.BytesIO(token.encode()))
+        await self._session.write(Path(ACCESS_TOKEN_PATH), io.BytesIO(access_token.encode()))
 
     async def clear(self) -> None:
         return None
