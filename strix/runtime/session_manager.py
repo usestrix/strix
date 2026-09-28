@@ -312,8 +312,8 @@ async def create_or_reuse(
     # Caido runs as an in-container sidecar; HTTP(S) traffic from any
     # process started via ``session.exec`` (the SDK's Shell tool, etc.)
     # picks up these env vars automatically. ``NO_PROXY`` keeps the
-    # agent-browser CDP daemon's localhost traffic from looping back
-    # through Caido.
+    # agent-browser CDP daemon's localhost traffic, and ``caido-cli``'s
+    # calls to ``api.caido.io``, from looping back through Caido.
     container_caido_url = f"http://127.0.0.1:{_CONTAINER_CAIDO_PORT}"
     manifest = Manifest(
         entries=entries,
@@ -325,7 +325,7 @@ async def create_or_reuse(
                 "http_proxy": container_caido_url,
                 "https_proxy": container_caido_url,
                 "ALL_PROXY": container_caido_url,
-                "NO_PROXY": "localhost,127.0.0.1",
+                "NO_PROXY": "localhost,127.0.0.1,api.caido.io",
                 **_registration_key_env(settings.caido),
             },
         ),

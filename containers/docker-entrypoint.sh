@@ -87,7 +87,7 @@ export https_proxy=http://127.0.0.1:${CAIDO_PORT}
 export HTTP_PROXY=http://127.0.0.1:${CAIDO_PORT}
 export HTTPS_PROXY=http://127.0.0.1:${CAIDO_PORT}
 export ALL_PROXY=http://127.0.0.1:${CAIDO_PORT}
-export NO_PROXY=localhost,127.0.0.1
+export NO_PROXY=localhost,127.0.0.1,api.caido.io
 export REQUESTS_CA_BUNDLE=/etc/ssl/certs/ca-certificates.crt
 export SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt
 EOF
@@ -98,7 +98,7 @@ https_proxy=http://127.0.0.1:${CAIDO_PORT}
 HTTP_PROXY=http://127.0.0.1:${CAIDO_PORT}
 HTTPS_PROXY=http://127.0.0.1:${CAIDO_PORT}
 ALL_PROXY=http://127.0.0.1:${CAIDO_PORT}
-NO_PROXY=localhost,127.0.0.1
+NO_PROXY=localhost,127.0.0.1,api.caido.io
 EOF
 
 cat << EOF | sudo tee /etc/wgetrc
