@@ -654,3 +654,10 @@ def test_401_hint_flags_the_signed_in_key_for_reauth() -> None:
 def test_error_hint_ignores_other_providers() -> None:
     exc = RuntimeError("Error code: 401")
     assert _orcarouter_error_hint(exc, "openrouter/z-ai/glm-5.3") is None
+
+
+def test_usage_lists_both_providers_verbatim(capsys: pytest.CaptureFixture[str]) -> None:
+    assert auth_cli.run_auth(["--help"]) == 0
+    out = capsys.readouterr().out
+    assert "strix auth login orcarouter [--manual]" in out
+    assert "strix auth status [chatgpt|orcarouter]" in out

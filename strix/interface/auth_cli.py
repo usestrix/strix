@@ -58,7 +58,7 @@ def run_auth(argv: list[str]) -> int:
     rest = argv[1:]
 
     if subcommand in ("-h", "--help", "help"):
-        console.print(_USAGE)
+        console.print(_USAGE, markup=False)
         return 0
 
     handlers: dict[str, Callable[[], int]] = {
@@ -71,7 +71,7 @@ def run_auth(argv: list[str]) -> int:
         return handler()
 
     console.print(f"[red]Unknown auth command:[/] {subcommand}\n")
-    console.print(_USAGE)
+    console.print(_USAGE, markup=False)
     return 2
 
 
@@ -482,7 +482,7 @@ def _status_command(console: Console, argv: list[str]) -> int:
         return _orcarouter_status(console)
     if provider is not None and provider not in _ACCEPTED_PROVIDERS:
         console.print(f"[red]Unknown provider:[/] {provider}\n")
-        console.print(_USAGE)
+        console.print(_USAGE, markup=False)
         return 2
     code = _status(console)
     if provider is None and orcarouter.read_record() is not None:
@@ -500,7 +500,7 @@ def _logout_command(console: Console, argv: list[str]) -> int:
         return 0
     if provider is not None and provider not in _ACCEPTED_PROVIDERS:
         console.print(f"[red]Unknown provider:[/] {provider}\n")
-        console.print(_USAGE)
+        console.print(_USAGE, markup=False)
         return 2
     return _logout(console)
 
