@@ -13,7 +13,7 @@ import json
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, HTTPServer
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import pytest
 from agents.model_settings import ModelSettings
@@ -27,10 +27,50 @@ from strix.config.models import StrixProvider, _TurnGuardModel, _with_idle_timeo
 
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncIterator, Iterator
+    from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 
 
 _STALL_SECONDS = 30.0
+
+
+class _ClosableBlockingStream:
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.closed = False
+
+    def __aiter__(self) -> _ClosableBlockingStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        self.started.set()
+        await asyncio.Event().wait()
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _OneEventClosableStream(_ClosableBlockingStream):
+    def __init__(self) -> None:
+        super().__init__()
+        self._sent = False
+
+    async def __anext__(self) -> Any:
+        if not self._sent:
+            self._sent = True
+            return "event"
+        return await super().__anext__()
+
+
+class _StreamModel(Model):
+    def __init__(self, stream: _OneEventClosableStream) -> None:
+        self.stream = stream
+
+    async def get_response(self, *args: Any, **kwargs: Any) -> Any:
+        raise NotImplementedError
+
+    def stream_response(self, *_args: Any, **_kwargs: Any) -> Any:
+        return self.stream
 
 
 def _chunk(text: str) -> bytes:
@@ -127,6 +167,47 @@ async def test_events_keep_flowing_while_the_stream_is_alive() -> None:
     seen: list[Any] = [event async for event in _with_idle_timeout(_live(), 1.0)]
 
     assert seen == [f"event-{i}" for i in range(5)]
+
+
+@pytest.mark.asyncio
+async def test_consumer_cancellation_closes_the_inner_stream() -> None:
+    stream = _ClosableBlockingStream()
+    task = asyncio.create_task(
+        anext(_with_idle_timeout(stream, 60.0)),
+    )
+    await asyncio.wait_for(stream.started.wait(), timeout=1.0)
+
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+    assert stream.closed is True
+
+
+@pytest.mark.asyncio
+async def test_closing_guarded_model_stream_closes_provider_stream_immediately() -> None:
+    provider_stream = _OneEventClosableStream()
+    model = _TurnGuardModel(_StreamModel(provider_stream), stream_idle_timeout=60.0)
+    guarded_stream = cast(
+        "AsyncGenerator[Any]",
+        model.stream_response(
+            None,
+            "go",
+            ModelSettings(),
+            [],
+            None,
+            [],
+            ModelTracing.DISABLED,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        ),
+    )
+
+    assert await anext(guarded_stream) == "event"
+    await guarded_stream.aclose()
+
+    assert provider_stream.closed is True
 
 
 @pytest.fixture
