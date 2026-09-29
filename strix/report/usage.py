@@ -6,11 +6,24 @@ import logging
 from typing import Any
 
 from agents.usage import Usage, deserialize_usage, serialize_usage
+from pydantic import BaseModel, TypeAdapter, ValidationError
 
 from strix.report.pricing import resolve_litellm_model
 
 
 logger = logging.getLogger(__name__)
+
+
+class ProviderUsage(BaseModel):
+    """Running totals for one upstream provider OpenRouter routed calls to."""
+
+    requests: int = 0
+    input_tokens: int = 0
+    cached_tokens: int = 0
+    cost: float = 0.0
+
+
+_PROVIDER_USAGE = TypeAdapter(dict[str, ProviderUsage])
 
 
 class LLMUsageLedger:
@@ -23,6 +36,8 @@ class LLMUsageLedger:
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
+        # Keyed by upstream provider name, e.g. "Z.AI" or "DeepInfra".
+        self._providers: dict[str, ProviderUsage] = {}
         # When True, tokens are still tracked but cost stays $0 — the run is on a
         # model subscription, so there is no metered per-token charge to report.
         self.zero_cost = False
@@ -62,6 +77,16 @@ class LLMUsageLedger:
             self._observed_cost += float(cost)
             self._has_observed_cost = True
 
+    def record_provider(
+        self, provider: str, *, input_tokens: int, cached_tokens: int, cost: float
+    ) -> None:
+        tally = self._providers.setdefault(provider, ProviderUsage())
+        tally.requests += 1
+        tally.input_tokens += input_tokens
+        tally.cached_tokens += cached_tokens
+        if not self.zero_cost:
+            tally.cost = _round_cost(tally.cost + cost)
+
     @property
     def total_cost(self) -> float:
         if self.zero_cost:
@@ -71,6 +96,7 @@ class LLMUsageLedger:
     def to_record(self) -> dict[str, Any]:
         record = serialize_usage(self._total_usage)
         record["cost"] = self.total_cost
+        record["providers"] = {name: tally.model_dump() for name, tally in self._providers.items()}
         record["agents"] = []
 
         agent_tokens = {aid: _resolve_total_tokens(u) for aid, u in self._agent_usage.items()}
@@ -102,9 +128,15 @@ class LLMUsageLedger:
         self._observed_cost = 0.0
         self._estimated_cost = 0.0
         self._has_observed_cost = False
+        self._providers = {}
 
         if not isinstance(raw_usage, dict):
             return
+
+        try:
+            self._providers = _PROVIDER_USAGE.validate_python(raw_usage.get("providers") or {})
+        except ValidationError:
+            logger.exception("Failed to hydrate llm_usage providers from run.json")
 
         try:
             self._total_usage = deserialize_usage(raw_usage)

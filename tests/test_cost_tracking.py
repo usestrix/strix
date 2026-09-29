@@ -21,6 +21,7 @@ from strix.report.state import (
     set_global_report_state,
     streamed_openrouter_costs,
 )
+from strix.report.usage import LLMUsageLedger
 
 
 @pytest.fixture(autouse=True)
@@ -257,3 +258,47 @@ def test_openrouter_stream_handler_records_cost() -> None:
     assert streamed_openrouter_costs.take(SimpleNamespace(id="gen-stream")) == pytest.approx(
         0.0035055
     )
+
+
+def test_openrouter_stream_handler_tallies_provider() -> None:
+    _install_openrouter_stream_cost_capture()
+    config = ProviderConfigManager.get_provider_chat_config(
+        model="z-ai/glm-5.3", provider=LlmProviders.OPENROUTER
+    )
+    assert config is not None
+    handler = config.get_model_response_iterator(streaming_response=iter([]), sync_stream=True)
+    report_state = MagicMock()
+    usage = {
+        "prompt_tokens": 1000,
+        "completion_tokens": 10,
+        "cost": 0.002,
+        "prompt_tokens_details": {"cached_tokens": 900},
+    }
+    with patch("strix.report.state.get_global_report_state", return_value=report_state):
+        handler.chunk_parser(
+            {
+                "id": "gen-a",
+                "created": 1,
+                "model": "z-ai/glm-5.3",
+                "provider": "Together",
+                "choices": [{"index": 0, "delta": {"content": None}}],
+                "usage": usage,
+            }
+        )
+
+    report_state.record_llm_provider.assert_called_once_with(
+        "Together", input_tokens=1000, cached_tokens=900, cost=0.002
+    )
+
+
+def test_provider_tally_survives_run_record_round_trip() -> None:
+    ledger = LLMUsageLedger()
+    ledger.record_provider("Together", input_tokens=1000, cached_tokens=900, cost=0.002)
+    ledger.record_provider("Together", input_tokens=500, cached_tokens=0, cost=0.001)
+
+    restored = LLMUsageLedger()
+    restored.hydrate(ledger.to_record())
+
+    assert restored.to_record()["providers"] == {
+        "Together": {"requests": 2, "input_tokens": 1500, "cached_tokens": 900, "cost": 0.003}
+    }

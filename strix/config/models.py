@@ -736,14 +736,16 @@ def _install_openrouter_stream_cost_capture() -> None:
         OpenrouterConfig,
     )
 
-    from strix.report.state import streamed_openrouter_costs
+    from strix.report.state import record_openrouter_provider, streamed_openrouter_costs
 
     class _StrixOpenRouterStreamingHandler(OpenRouterChatCompletionStreamingHandler):
         def chunk_parser(self, chunk: dict[str, Any]) -> Any:
             stream = super().chunk_parser(chunk)
-            streamed_openrouter_costs.remember(
-                chunk.get("id") or getattr(stream, "id", None), chunk.get("usage")
-            )
+            usage = chunk.get("usage")
+            response_id = chunk.get("id") or getattr(stream, "id", None)
+            streamed_openrouter_costs.remember(response_id, usage)
+            if usage:
+                record_openrouter_provider(chunk.get("provider"), usage)
             return stream
 
     class _StrixOpenrouterConfig(OpenrouterConfig):
