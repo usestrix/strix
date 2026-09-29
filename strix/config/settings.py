@@ -69,6 +69,21 @@ class LlmSettings(BaseSettings):
         ge=0,
         alias="LLM_MAX_TOOL_CALLS_PER_TURN",
     )
+    # 0 means unlimited: every in-flight request starts immediately, which is
+    # the historical behavior. A positive value is a process-wide cap shared by
+    # every agent, including retries and the dedupe judge.
+    max_concurrent_requests: int = Field(
+        default=0,
+        ge=0,
+        alias="LLM_MAX_CONCURRENT_REQUESTS",
+    )
+    # 0 means no spacing. A positive value is the minimum gap between the starts
+    # of successive LLM requests, measured after a concurrency slot is acquired.
+    request_delay: float = Field(
+        default=0.0,
+        ge=0,
+        alias="LLM_REQUEST_DELAY",
+    )
 
 
 class DedupeSettings(BaseSettings):
