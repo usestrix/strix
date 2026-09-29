@@ -7,6 +7,7 @@ from typing import Any
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
+from strix.i18n import get_language_directive
 from strix.skills import get_available_skills, load_skills, skill_search_dirs
 from strix.utils.resource_paths import get_strix_resource_path
 
@@ -103,12 +104,15 @@ def render_system_prompt(
         skill_content = load_skills(skills_to_load)
         env.globals["get_skill"] = lambda name: skill_content.get(name, "")
 
+        language_directive = get_language_directive()
+
         rendered = env.get_template("system_prompt.jinja").render(
             loaded_skill_names=list(skill_content.keys()),
             available_skills=get_available_skills(),
             interactive=interactive,
             is_root=is_root,
             system_prompt_context=system_prompt_context or {},
+            language_directive=language_directive,
             **skill_content,
         )
     except Exception:
