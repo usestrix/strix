@@ -58,6 +58,10 @@ class LlmSettings(BaseSettings):
         default=True,
         alias="STRIX_PROMPT_CACHE",
     )
+    # Providers cache prompts in fixed-size token blocks, so a fully cached prompt
+    # reads back rounded down to a multiple of this. 64 is what the GLM calls in
+    # local runs showed; it's a per-deployment setting (vLLM defaults to 16).
+    cache_block_tokens: int = Field(default=64, ge=1, alias="STRIX_CACHE_BLOCK_TOKENS")
     disable_streaming: bool = Field(
         default=False,
         alias="LLM_DISABLE_STREAMING",

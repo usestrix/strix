@@ -287,18 +287,57 @@ def test_openrouter_stream_handler_tallies_provider() -> None:
         )
 
     report_state.record_llm_provider.assert_called_once_with(
-        "Together", input_tokens=1000, cached_tokens=900, cost=0.002
+        "Together", agent_id=None, input_tokens=1000, cached_tokens=900, cost=0.002
     )
 
 
 def test_provider_tally_survives_run_record_round_trip() -> None:
     ledger = LLMUsageLedger()
-    ledger.record_provider("Together", input_tokens=1000, cached_tokens=900, cost=0.002)
-    ledger.record_provider("Together", input_tokens=500, cached_tokens=0, cost=0.001)
+    for input_tokens, cached_tokens, cost in [(1000, 900, 0.002), (500, 0, 0.001)]:
+        ledger.record_provider(
+            "Together",
+            agent_id=None,
+            input_tokens=input_tokens,
+            cached_tokens=cached_tokens,
+            cost=cost,
+            cache_block_tokens=64,
+        )
 
     restored = LLMUsageLedger()
     restored.hydrate(ledger.to_record())
 
     assert restored.to_record()["providers"] == {
-        "Together": {"requests": 2, "input_tokens": 1500, "cached_tokens": 900, "cost": 0.003}
+        "Together": {
+            "requests": 2,
+            "input_tokens": 1500,
+            "cached_tokens": 900,
+            "cost": 0.003,
+            "cache_misses": 0,
+            "missed_tokens": 0,
+        }
     }
+
+
+def test_provider_tally_counts_cache_misses_per_agent() -> None:
+    ledger = LLMUsageLedger()
+    calls = [
+        ("Z.AI", "a1", 1000, 0),  # first call: nothing to miss
+        ("Z.AI", "a1", 1200, 960),  # previous 1000 cached, rounded down to 64s
+        ("DeepInfra", "a1", 1500, 200),  # 1152 of the previous 1200 due, 952 lost
+        ("Z.AI", "a2", 800, 0),  # another agent's first call
+        ("Z.AI", "a1", 600, 0),  # prompt shrank: compaction, not a miss
+    ]
+    for provider, agent_id, input_tokens, cached_tokens in calls:
+        ledger.record_provider(
+            provider,
+            agent_id=agent_id,
+            input_tokens=input_tokens,
+            cached_tokens=cached_tokens,
+            cost=0.0,
+            cache_block_tokens=64,
+        )
+
+    providers = ledger.to_record()["providers"]
+    assert providers["DeepInfra"]["cache_misses"] == 1
+    assert providers["DeepInfra"]["missed_tokens"] == 952
+    assert providers["Z.AI"]["cache_misses"] == 0

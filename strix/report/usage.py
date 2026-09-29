@@ -21,6 +21,10 @@ class ProviderUsage(BaseModel):
     input_tokens: int = 0
     cached_tokens: int = 0
     cost: float = 0.0
+    # Calls that didn't find the agent's whole previous prompt cached, and the
+    # previous-prompt tokens they had to pay for again.
+    cache_misses: int = 0
+    missed_tokens: int = 0
 
 
 _PROVIDER_USAGE = TypeAdapter(dict[str, ProviderUsage])
@@ -38,6 +42,8 @@ class LLMUsageLedger:
         self._has_observed_cost = False
         # Keyed by upstream provider name, e.g. "Z.AI" or "DeepInfra".
         self._providers: dict[str, ProviderUsage] = {}
+        # Each agent's last prompt size, which its next call should find cached.
+        self._last_input_tokens: dict[str, int] = {}
         # When True, tokens are still tracked but cost stays $0 — the run is on a
         # model subscription, so there is no metered per-token charge to report.
         self.zero_cost = False
@@ -78,12 +84,30 @@ class LLMUsageLedger:
             self._has_observed_cost = True
 
     def record_provider(
-        self, provider: str, *, input_tokens: int, cached_tokens: int, cost: float
+        self,
+        provider: str,
+        *,
+        agent_id: str | None,
+        input_tokens: int,
+        cached_tokens: int,
+        cost: float,
+        cache_block_tokens: int,
     ) -> None:
         tally = self._providers.setdefault(provider, ProviderUsage())
         tally.requests += 1
         tally.input_tokens += input_tokens
         tally.cached_tokens += cached_tokens
+        if agent_id:
+            previous = self._last_input_tokens.get(agent_id, 0)
+            # The previous prompt is a prefix of this one, so every full block of it
+            # should read back cached. A shrinking prompt means compaction rewrote
+            # it, so a miss is expected.
+            expected = previous - (previous % cache_block_tokens)
+            missed = expected - cached_tokens
+            if input_tokens >= previous and missed > 0:
+                tally.cache_misses += 1
+                tally.missed_tokens += missed
+            self._last_input_tokens[agent_id] = input_tokens
         if not self.zero_cost:
             tally.cost = _round_cost(tally.cost + cost)
 

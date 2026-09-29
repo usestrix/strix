@@ -658,10 +658,21 @@ class ReportState:
         self._llm_usage.record_observed_cost(cost)
 
     def record_llm_provider(
-        self, provider: str, *, input_tokens: int, cached_tokens: int, cost: float
+        self,
+        provider: str,
+        *,
+        agent_id: str | None,
+        input_tokens: int,
+        cached_tokens: int,
+        cost: float,
     ) -> None:
         self._llm_usage.record_provider(
-            provider, input_tokens=input_tokens, cached_tokens=cached_tokens, cost=cost
+            provider,
+            agent_id=agent_id,
+            input_tokens=input_tokens,
+            cached_tokens=cached_tokens,
+            cost=cost,
+            cache_block_tokens=load_settings().llm.cache_block_tokens,
         )
 
     def get_process_llm_providers(self) -> dict[str, dict[str, float]]:
@@ -1014,12 +1025,16 @@ def record_openrouter_provider(provider: Any, usage: Any) -> None:
     OpenRouter spreads one model across many providers whose prices, quantization
     and prompt caching differ, so this is what shows where a scan's tokens went.
     """
+    # Deferred: request_log pulls in the agents SDK, which strix.report must not import.
+    from strix.llm.request_log import current_call_context
+
     report_state = get_global_report_state()
     if report_state is None or not isinstance(usage, dict):
         return
     details = usage.get("prompt_tokens_details")
     report_state.record_llm_provider(
         provider if isinstance(provider, str) and provider else "unknown",
+        agent_id=current_call_context().agent_id,
         input_tokens=int(_number(usage.get("prompt_tokens"))),
         cached_tokens=int(_number(details.get("cached_tokens")))
         if isinstance(details, dict)
