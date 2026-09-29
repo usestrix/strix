@@ -36,7 +36,7 @@ from openai.types.responses import (
 from openai.types.responses.response_usage import ResponseUsage
 from openai.types.shared import Reasoning
 
-from strix.config import codex
+from strix.config import codex, orcarouter
 from strix.config.loader import load_settings
 from strix.config.tool_call_ids import TurnCallIdRewriter, dedupe_input
 from strix.config.tool_call_limits import TurnToolCallLimiter
@@ -516,7 +516,21 @@ class StrixProvider(MultiProvider):
             )
         if prefix == "ollama" and stripped_model_name:
             return self._get_fallback_provider("litellm"), f"ollama_chat/{stripped_model_name}"
+        if prefix.lower() == orcarouter.PROVIDER and stripped_model_name:
+            return self._orcarouter_provider(), orcarouter.litellm_model_name(stripped_model_name)
         return self._get_fallback_provider("litellm"), original_model_name
+
+    def _orcarouter_provider(self) -> ModelProvider:
+        """OrcaRouter's OpenAI-compatible API, with a key from either sign-in method."""
+        if self._override_api_key:
+            api_key = self._override_api_key
+        else:
+            credential = orcarouter.resolve_credential(load_settings().llm.api_key)
+            orcarouter.remember_active(credential)
+            api_key = credential.key
+        return _CredentialedLitellmProvider(
+            api_key, self._override_base_url or orcarouter.api_base()
+        )
 
     def get_model(self, model_name: str | None) -> Model:
         llm = load_settings().llm
@@ -542,11 +556,15 @@ class StrixProvider(MultiProvider):
             if _routes_via_litellm(model):
                 # LiteLLM's callbacks log every reply; only a cancelled attempt
                 # (stream idle timeout, abandoned turn) escapes them.
+                is_orcarouter = orcarouter.route_model(resolved_name) is not None
                 model = request_log.RequestLoggingModel(
                     model,
                     model_name=resolved_name,
-                    provider=_litellm_provider(resolved_name),
-                    base_url=self._override_base_url or llm.api_base,
+                    provider=(
+                        orcarouter.PROVIDER if is_orcarouter else _litellm_provider(resolved_name)
+                    ),
+                    base_url=self._override_base_url
+                    or (orcarouter.api_base() if is_orcarouter else llm.api_base),
                     route="litellm",
                     abandoned_only=True,
                 )

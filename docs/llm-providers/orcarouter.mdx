@@ -1,0 +1,59 @@
+---
+title: "OrcaRouter"
+description: "Configure Strix with models via OrcaRouter"
+---
+
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible gateway to models from OpenAI, Anthropic, Google, DeepSeek, and others through a single API key.
+
+## Setup
+
+Use the `orcarouter/<model id>` format and pick one of two ways to authenticate.
+
+### API key
+
+```bash
+export STRIX_LLM="orcarouter/openai/gpt-5.5"
+export ORCAROUTER_API_KEY="sk-orca-..."
+```
+
+`LLM_API_KEY` works too, like every other provider.
+
+### Sign in with your OrcaRouter account
+
+No key to copy: Strix opens the OrcaRouter consent screen in your browser (OAuth 2.0 with PKCE) and stores the API key it issues in `~/.strix/subscription-auth.json`.
+
+```bash
+strix auth login orcarouter              # approve in the browser
+export STRIX_LLM="orcarouter/openai/gpt-5.5"
+strix auth status orcarouter             # show which credential is in use
+```
+
+On a machine where the browser can't reach back to the terminal (SSH, containers), add `--manual`: OrcaRouter shows a code on the consent screen and you paste it into the terminal.
+
+The issued key has no expiry and is reused on every run until you revoke it at [Authorized apps](https://www.orcarouter.ai/console/authorized-apps). If OrcaRouter rejects it, Strix asks you to run `strix auth login orcarouter` again. `strix auth logout orcarouter` removes the stored key from this machine.
+
+When more than one credential is present, Strix uses `ORCAROUTER_API_KEY` first, then the signed-in key, then `LLM_API_KEY`.
+
+## Available Models
+
+Any chat model in the [OrcaRouter catalog](https://api.orcarouter.ai/v1/models) works as `orcarouter/<model id>`:
+
+| Model | Configuration |
+|-------|---------------|
+| GPT-5.5 | `orcarouter/openai/gpt-5.5` |
+| Claude Opus 4.8 | `orcarouter/anthropic/claude-opus-4.8` |
+| Gemini 3.5 Flash | `orcarouter/google/gemini-3.5-flash` |
+| DeepSeek V4 Pro | `orcarouter/deepseek/deepseek-v4-pro` |
+| Adaptive routing | `orcarouter/orcarouter/auto` |
+
+`orcarouter/auto` picks an upstream model per request. For agentic scans, pin a model with tool-calling support.
+
+## Get API Key
+
+1. Go to [orcarouter.ai](https://www.orcarouter.ai)
+2. Sign in and open the console
+3. Create a new API key
+
+## Self-hosted gateways
+
+`ORCA_BASE_URL` points both sign-in and inference at one origin. `ORCA_AUTH_BASE_URL` and `ORCA_API_BASE_URL` (including `/v1`) override each side separately and take precedence. Remote origins must use `https://`.
