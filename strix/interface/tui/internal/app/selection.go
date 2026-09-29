@@ -207,7 +207,7 @@ func (m *Model) toggleEventAtLine(line int) {
 
 func (m Model) selectedText() string {
 	fromLine, fromCol, toLine, toCol := m.selection.bounds()
-	source := render.AnimateSpinners(m.viewportContent, 0)
+	source := render.StopSpinners(m.viewportContent)
 	if m.selection.region == regionInput {
 		source = m.inputText()
 	}
