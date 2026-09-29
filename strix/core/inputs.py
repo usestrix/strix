@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 from agents.model_settings import ModelSettings
 from openai.types.shared import Reasoning
 
+from strix.config import load_settings
 from strix.config.models import (
     DEFAULT_MODEL_RETRY,
     OPENROUTER_ATTRIBUTION_HEADERS,
@@ -21,6 +22,68 @@ from strix.config.models import (
     routes_through_litellm,
 )
 from strix.core.sessions import scrub_images_from_items
+
+
+# Rough tokens→chars factor for bounding inherited context without a model-bound
+# tokenizer. ~4 chars/token is the usual estimate; kept conservative so the cap
+# never lets more through than intended.
+_CHARS_PER_TOKEN = 4
+_HISTORY_TRUNCATED_MARKER = {
+    "role": "user",
+    "content": "[... older inherited context dropped to bound token cost ...]",
+}
+_OVERSIZED_ITEM_NOTE = "[... newest inherited item truncated to bound token cost ...]\n"
+
+
+def _fit_oversized_item(item: Any, char_budget: int) -> dict[str, str]:
+    """Render ``item`` as a text message cut down to ``char_budget``.
+
+    Used only when the single newest item is larger than the whole budget:
+    keeping it whole would blow the cap on the child's very first request and
+    can overflow the provider's context window. Nothing else survives the trim
+    in that case, so rendering it as one text message cannot orphan a tool call
+    from its output.
+    """
+    body = json.dumps(item, ensure_ascii=False, default=str)
+    while body:
+        summary = {"role": "user", "content": f"{_OVERSIZED_ITEM_NOTE}{body}"}
+        overshoot = len(json.dumps(summary, ensure_ascii=False)) - char_budget
+        if overshoot <= 0:
+            return summary
+        body = body[: max(len(body) - overshoot, 0)]
+    # Budget too small to hold even a snippet; the marker alone is the most that
+    # can be said about the dropped item.
+    return dict(_HISTORY_TRUNCATED_MARKER)
+
+
+def _trim_parent_history(parent_history: list[Any]) -> list[Any]:
+    """Keep the most-recent tail of ``parent_history`` within the configured cap.
+
+    A child inheriting its parent's whole history re-pays for it on every one of
+    its own turns, so an unbounded copy multiplies token cost across the fan-out.
+    ``STRIX_INHERIT_CONTEXT_MAX_TOKENS`` bounds it; ``0`` keeps the full history.
+    """
+    max_tokens = load_settings().agent_graph.inherit_context_max_tokens
+    if max_tokens <= 0 or not parent_history:
+        return parent_history
+
+    char_budget = max_tokens * _CHARS_PER_TOKEN
+    kept: list[Any] = []
+    used = 0
+    for item in reversed(parent_history):
+        size = len(json.dumps(item, ensure_ascii=False, default=str))
+        if used + size > char_budget:
+            # ``kept`` is empty only on the newest item, i.e. that one item is
+            # over budget all by itself. Truncate it rather than keeping it
+            # whole — otherwise the cap silently fails to bound anything.
+            kept.append(
+                _HISTORY_TRUNCATED_MARKER if kept else _fit_oversized_item(item, char_budget)
+            )
+            break
+        kept.append(item)
+        used += size
+    kept.reverse()
+    return kept
 
 
 if TYPE_CHECKING:
@@ -351,9 +414,13 @@ def child_initial_input(
     user messages.
     """
     parts: list[str] = []
+    # Scrub first, then measure: a screenshot's base64 block is replaced by a
+    # short placeholder, so budgeting against the raw block would let one image
+    # evict every useful text turn behind it for size the child never pays.
+    parent_history = _trim_parent_history(scrub_images_from_items(parent_history))
     if parent_history:
         rendered = json.dumps(
-            scrub_images_from_items(parent_history),
+            parent_history,
             ensure_ascii=False,
             default=str,
         )
