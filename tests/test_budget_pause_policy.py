@@ -397,6 +397,36 @@ async def test_parked_wait_returns_on_stop_signals() -> None:
 
 
 @pytest.mark.asyncio
+async def test_park_never_overwrites_a_stop_that_landed_first() -> None:
+    coordinator = AgentCoordinator()
+    coordinator.set_budget_policy("pause")
+    await coordinator.register("a", "strix", parent_id=None)
+
+    parked_epoch = coordinator.resume_epoch
+    await coordinator.request_stop("a")
+    assert await coordinator.park_for_budget("a") is False
+    assert coordinator.statuses["a"] == "stopped"
+
+    await asyncio.wait_for(
+        coordinator.wait_for_budget_resume("a", parked_epoch=parked_epoch), timeout=1.0
+    )
+    assert coordinator.statuses["a"] == "stopped"
+
+
+@pytest.mark.asyncio
+async def test_parked_children_keep_the_scan_open() -> None:
+    coordinator = AgentCoordinator()
+    coordinator.set_budget_policy("pause")
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "recon", parent_id="root")
+    assert await coordinator.park_for_budget("child") is True
+
+    active = await coordinator.active_agents_except("root")
+    assert [a["agent_id"] for a in active] == ["child"]
+    assert active[0]["status"] == "budget_paused"
+
+
+@pytest.mark.asyncio
 async def test_resume_budget_replaces_the_limit_and_validates_it() -> None:
     hooks = ReportUsageHooks(model="m", max_budget_usd=10.0, budget_policy="pause")
     coordinator = AgentCoordinator()

@@ -12,14 +12,11 @@ from typing import Any, Literal, get_args
 
 from agents import RunContextWrapper, function_tool
 
-from strix.core.agents import Status, coordinator_from_context
+from strix.core.agents import ACTIVE_STATUSES, Status, coordinator_from_context
 from strix.core.execution import notify_parent_on_terminal
 from strix.core.hooks import LLM_TURN_KEY
 from strix.report.state import get_global_report_state
 from strix.skills import validate_requested_skills
-
-
-_ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting", "budget_paused"})
 
 
 logger = logging.getLogger(__name__)
@@ -810,7 +807,7 @@ async def stop_agent(
         )
 
     current_status = statuses[target_agent_id]
-    if current_status not in _ACTIVE_STATUSES:
+    if current_status not in ACTIVE_STATUSES:
         return json.dumps(
             {
                 "success": False,
