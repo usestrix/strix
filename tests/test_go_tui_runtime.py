@@ -925,6 +925,28 @@ async def test_agent_state_sync_uses_latest_graph_snapshot_shape() -> None:
 
 
 @pytest.mark.asyncio
+async def test_tool_output_carries_the_status_it_parked_the_agent_in() -> None:
+    runtime = GoTuiRuntime(args())
+    await runtime.coordinator.register("root", "Strix", parent_id=None)
+    await runtime._sync_agent_state()
+    notified: list[str] = []
+    runtime.controller._on_change = lambda: notified.append(
+        runtime.live_view.agents["root"]["status"]
+    )
+
+    await runtime.coordinator.park_waiting("root", wait_kind="agents")
+    output = SimpleNamespace(
+        type="tool_call_output_item",
+        raw_item={"call_id": "call-1", "type": "function_call_output"},
+        output=json.dumps({"success": True, "wait_outcome": "waiting"}),
+    )
+    runtime.capture_event("root", SimpleNamespace(type="run_item_stream_event", item=output))
+    await asyncio.gather(*runtime._output_syncs)
+
+    assert notified == ["waiting"]
+
+
+@pytest.mark.asyncio
 async def test_agent_state_sync_projects_completed_report() -> None:
     runtime = GoTuiRuntime(args())
     runtime.report_state = cast("Any", SimpleNamespace(run_record={"status": "completed"}))

@@ -69,6 +69,7 @@ class GoTuiRuntime:
         self.scan_error: BaseException | None = None
         self._last_sync_fingerprint = ""
         self._error_noted_agents: set[str] = set()
+        self._output_syncs: set[asyncio.Task[None]] = set()
         self.model_verified = False
         self._setup_preflight: asyncio.Task[None] | None = None
         self.controller = TuiController(
@@ -273,6 +274,18 @@ class GoTuiRuntime:
 
     def capture_event(self, agent_id: str, event: Any) -> None:
         self.live_view.ingest_sdk_event(agent_id, event)
+        if getattr(getattr(event, "item", None), "type", "") == "tool_call_output_item":
+            # A tool that parks its agent has already set the agent's status by
+            # the time it returns; sync it now so both reach the TUI together.
+            task = asyncio.get_running_loop().create_task(self._sync_and_notify())
+            self._output_syncs.add(task)
+            task.add_done_callback(self._output_syncs.discard)
+            return
+        self.controller.notify_changed()
+
+    async def _sync_and_notify(self) -> None:
+        with contextlib.suppress(Exception):
+            await self._sync_agent_state()
         self.controller.notify_changed()
 
     def capture_mcp_status(self, roster: list[dict[str, Any]]) -> None:
