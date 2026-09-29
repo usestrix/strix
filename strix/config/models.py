@@ -627,6 +627,7 @@ RECOMMENDED_MODEL_NAMES = (
     "gemini/gemini-3.6-flash",
     "deepseek/deepseek-v4-pro",
     "deepseek/deepseek-v4-flash",
+    "deepseek/deepseek-flash",
     "dashscope/qwen3.8-max",
     "dashscope/qwen3.7-max-2026-06-08",
     "moonshot/kimi-k3",
