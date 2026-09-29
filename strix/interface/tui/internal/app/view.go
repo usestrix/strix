@@ -28,15 +28,16 @@ type renderedBlock struct {
 	version    int
 	width      int
 	expanded   bool
+	live       bool
 	wrapped    string
 	expandable bool
 	height     int
 }
 
-func (m *Model) renderEvent(event protocol.Event, width int) renderedBlock {
+func (m *Model) renderEvent(event protocol.Event, width int, live bool) renderedBlock {
 	expanded := m.expandedEvents[event.ID]
 	if cached, ok := m.blockCache[event.ID]; ok &&
-		cached.version == event.Version && cached.width == width && cached.expanded == expanded {
+		cached.version == event.Version && cached.width == width && cached.expanded == expanded && cached.live == live {
 		return cached
 	}
 	var block string
@@ -48,7 +49,10 @@ func (m *Model) renderEvent(event protocol.Event, width int) renderedBlock {
 		name := render.StringValue(event.Data["tool_name"])
 		block, expandable = render.CollapseTool(render.Tool(event.Data), name, expanded)
 	}
-	entry := renderedBlock{version: event.Version, width: width, expanded: expanded, expandable: expandable}
+	if !live {
+		block = render.StopSpinners(block)
+	}
+	entry := renderedBlock{version: event.Version, width: width, expanded: expanded, live: live, expandable: expandable}
 	if block != "" {
 		entry.wrapped = wrapBlock(block, width)
 		entry.height = strings.Count(entry.wrapped, "\n") + 1
@@ -96,6 +100,15 @@ func (m *Model) chatContent() string {
 	// to width-2 and indent every line by one cell.
 	contentWidth := max(1, m.viewport.Width-2)
 	render.SetImageWidth(contentWidth - 2)
+	// A parked agent is waiting on its latest tool call.
+	parkedOn := ""
+	if m.snapshot.Agents[m.selectedAgent].Status == "waiting" {
+		for _, event := range events {
+			if event.AgentID == agentID && event.Type == "tool" {
+				parkedOn = event.ID
+			}
+		}
+	}
 	var blocks []string
 	var spans []eventSpan
 	line := 0
@@ -103,7 +116,7 @@ func (m *Model) chatContent() string {
 		if event.AgentID != agentID {
 			continue
 		}
-		entry := m.renderEvent(event, contentWidth)
+		entry := m.renderEvent(event, contentWidth, event.ID == parkedOn)
 		if entry.wrapped == "" {
 			continue
 		}
@@ -437,6 +450,7 @@ type chatPaneKey struct {
 	width, height int
 	border        lipgloss.Color
 	selection     selectionState
+	spinnerFrame  int
 }
 
 // chatPane memoizes the bordered trace: slicing, scrollbar padding and border
@@ -450,12 +464,18 @@ var chatPane struct {
 }
 
 func (m Model) renderChatPane(width, height int, border lipgloss.Color) string {
-	key := chatPaneKey{offset: m.viewport.YOffset, width: width, height: height, border: border, selection: m.selection}
+	visible := visibleContent(m.viewportContent, m.viewport.YOffset, height)
+	// Only a trace with a spinner on screen changes with the tick.
+	spinnerFrame := 0
+	if strings.Contains(visible, render.SpinnerMarker) {
+		spinnerFrame = m.sweepFrame / 2
+	}
+	key := chatPaneKey{offset: m.viewport.YOffset, width: width, height: height, border: border, selection: m.selection, spinnerFrame: spinnerFrame}
 	if chatPane.out != "" && chatPane.key == key && chatPane.content == m.viewportContent {
 		return chatPane.out
 	}
 	trace := withVerticalScrollbar(
-		m.highlightSelection(visibleContent(m.viewportContent, m.viewport.YOffset, height), m.viewport.YOffset),
+		render.AnimateSpinners(m.highlightSelection(visible, m.viewport.YOffset), spinnerFrame),
 		width,
 		height,
 		m.viewport.TotalLineCount(),
