@@ -26,7 +26,7 @@ from strix.config.models import (
     uses_chat_completions_tool_schema,
 )
 from strix.config.settings import DEFAULT_MAX_TURNS
-from strix.core.agents import AgentCoordinator
+from strix.core.agents import AgentCoordinator, BudgetPolicy
 from strix.core.execution import (
     respawn_subagents,
     run_agent_loop,
@@ -189,6 +189,7 @@ async def run_strix_scan(
     interactive: bool = False,
     max_turns: int = DEFAULT_MAX_TURNS,
     max_budget_usd: float | None = None,
+    budget_policy: BudgetPolicy = "stop",
     model: str | None = None,
     cleanup_on_exit: bool = True,
     event_sink: StreamEventSink | None = None,
@@ -208,6 +209,12 @@ async def run_strix_scan(
     ``extra_system_prompt_context`` is merged into the root agent's scan
     context before prompt rendering. Child agents keep the standard scan prompt
     and context.
+    ``budget_policy`` decides what happens when the LLM spend reaches
+    ``max_budget_usd``: ``"stop"`` warns the agents as the limit approaches and
+    ends the scan at it; ``"pause"`` tells the agents nothing and parks every
+    agent before its next LLM call until the caller resumes the scan through
+    ``coordinator.resume_budget()`` (optionally with a higher limit) or cancels
+    it. ``coordinator.pause_budget()`` parks a running scan the same way.
     ``mcp_connection_requests`` supplies the run's MCP connections from any
     source: when given, the engine connects those requests; when ``None`` (the
     command-line default) it reads ``~/.strix/mcp-servers.json`` itself. Either
@@ -256,9 +263,12 @@ async def run_strix_scan(
     if not strict_tool_schemas:
         logger.info("Sending non-strict tool schemas: %s caps strict tools", resolved_model)
 
+    if budget_policy not in ("stop", "pause"):
+        raise ValueError(f"unknown budget_policy: {budget_policy!r}")
     if coordinator is None:
         coordinator = AgentCoordinator()
     coordinator.set_snapshot_path(agents_path)
+    coordinator.set_budget_policy(budget_policy)
 
     from strix.tools.coverage.tools import hydrate_coverage_from_disk
     from strix.tools.notes.tools import hydrate_notes_from_disk
@@ -289,11 +299,17 @@ async def run_strix_scan(
                 report_state.get_total_llm_cost(),
                 max_budget_usd,
                 interactive=interactive,
+                budget_policy=budget_policy,
             )
+            # Under the pause policy the hooks re-park at the first call if the
+            # spend is still at the limit, so a restored pause flag would only
+            # hold agents back after the limit was raised.
             await coordinator.reset_budget_stops(
                 budget_stopped=budget_stopped,
                 reserve_stopped=reserve_stopped,
-                budget_paused=interactive and coordinator.budget_paused,
+                budget_paused=(
+                    interactive and budget_policy != "pause" and coordinator.budget_paused
+                ),
             )
         for aid, parent in coordinator.parent_of.items():
             if parent is None:
@@ -372,8 +388,10 @@ async def run_strix_scan(
             max_budget_usd=max_budget_usd,
             max_turns=max_turns,
             interactive=interactive,
+            budget_policy=budget_policy,
         )
-        if interactive:
+        coordinator.set_budget_limit_setter(hooks.set_max_budget_usd)
+        if interactive and budget_policy != "pause":
             coordinator.set_budget_extender(hooks.extend_budget)
 
         scope_context = build_scope_context(scan_config)

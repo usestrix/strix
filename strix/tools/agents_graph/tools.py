@@ -19,7 +19,7 @@ from strix.report.state import get_global_report_state
 from strix.skills import validate_requested_skills
 
 
-_ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting"})
+_ACTIVE_STATUSES: frozenset[str] = frozenset({"running", "waiting", "budget_paused"})
 
 
 logger = logging.getLogger(__name__)
@@ -816,7 +816,7 @@ async def stop_agent(
                 "success": False,
                 "error": (
                     f"Agent {target_agent_id} is already '{current_status}'; "
-                    "stop_agent only acts on running/waiting agents — use "
+                    "stop_agent only acts on running/waiting/paused agents — use "
                     "view_agent_graph to find still-active descendants and "
                     "stop them individually, or send_message_to_agent if you "
                     "want to wake this one with new instructions"

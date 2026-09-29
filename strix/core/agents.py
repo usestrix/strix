@@ -24,6 +24,8 @@ logger = logging.getLogger(__name__)
 
 Status = Literal["running", "waiting", "completed", "stopped", "crashed", "failed", "budget_paused"]
 
+BudgetPolicy = Literal["stop", "pause"]
+
 TERMINAL_STATUSES: frozenset[str] = frozenset({"completed", "stopped", "crashed", "failed"})
 
 # Why an agent parked. The user can message any agent, so this - not the agent's
@@ -68,7 +70,10 @@ class AgentCoordinator:
         self._budget_stopped = False
         self._reserve_stopped = False
         self._budget_paused = False
+        self._resume_epoch = 0
+        self._budget_policy: BudgetPolicy = "stop"
         self._extend_budget: Callable[[], None] | None = None
+        self._set_budget_limit: Callable[[float | None], None] | None = None
 
     def set_snapshot_path(self, path: Path) -> None:
         self._snapshot_path = path
@@ -95,15 +100,89 @@ class AgentCoordinator:
     def budget_paused(self) -> bool:
         return self._budget_paused
 
+    @property
+    def resume_epoch(self) -> int:
+        """Bumped by every ``resume_budget``; an agent parks against the value it read."""
+        return self._resume_epoch
+
+    @property
+    def budget_policy(self) -> BudgetPolicy:
+        return self._budget_policy
+
+    def set_budget_policy(self, policy: BudgetPolicy) -> None:
+        self._budget_policy = policy
+
     def set_budget_extender(self, extend: Callable[[], None]) -> None:
         self._extend_budget = extend
+
+    def set_budget_limit_setter(self, setter: Callable[[float | None], None]) -> None:
+        self._set_budget_limit = setter
 
     async def pause_for_budget(self, agent_id: str) -> None:
         async with self._lock:
             self._budget_paused = True
         await self.set_status(agent_id, "budget_paused")
 
+    async def park_for_budget(self, agent_id: str) -> None:
+        """Record that ``agent_id`` parked before an LLM call (pause policy)."""
+        await self.set_status(agent_id, "budget_paused")
+
+    async def pause_budget(self) -> None:
+        """Operator pause: every agent parks before its next LLM call.
+
+        Agents mid-call or mid-tool finish that step first, so their spend still
+        lands; nothing is cancelled.
+        """
+        async with self._lock:
+            self._budget_paused = True
+        logger.info("scan paused by the operator")
+        await self._maybe_snapshot()
+
+    async def resume_budget(self, *, max_budget_usd: float | None = None) -> list[str]:
+        """Lift the pause and wake every parked agent; returns the woken agent ids.
+
+        With ``max_budget_usd`` the scan's limit is replaced first (``None`` keeps
+        the current one). Agents continue with the LLM call they parked on; no
+        message is added to any session. An agent that parks again on its next
+        call (the new limit is already spent) is not an error.
+        """
+        if max_budget_usd is not None and self._set_budget_limit is not None:
+            self._set_budget_limit(max_budget_usd)
+        async with self._lock:
+            self._budget_paused = False
+            self._resume_epoch += 1
+            woken = [aid for aid, status in self.statuses.items() if status == "budget_paused"]
+            for aid in woken:
+                self.runtimes.setdefault(aid, AgentRuntime()).wake.set()
+        logger.info("scan resumed; woke %d parked agent(s)", len(woken))
+        await self._maybe_snapshot()
+        return woken
+
+    async def wait_for_budget_resume(self, agent_id: str, *, parked_epoch: int) -> None:
+        """Block until a resume newer than ``parked_epoch``, a scan-wide stop, or
+        the agent itself being stopped while parked.
+
+        ``parked_epoch`` is the ``resume_epoch`` the agent read when it decided to
+        park, so a resume that lands between that decision and this wait is not
+        missed. ``agent_id`` is ``running`` again on return unless it was stopped.
+        """
+        while True:
+            async with self._lock:
+                runtime = self.runtimes.setdefault(agent_id, AgentRuntime())
+                if (
+                    self._budget_stopped
+                    or self._resume_epoch != parked_epoch
+                    or self.statuses.get(agent_id) != "budget_paused"
+                ):
+                    break
+                wake = runtime.wake
+                wake.clear()
+            await wake.wait()
+        if not self._budget_stopped and self.statuses.get(agent_id) == "budget_paused":
+            await self.set_status(agent_id, "running")
+
     async def resume_from_budget_pause(self, *, exclude: str | None = None) -> None:
+        """Legacy interactive resume: extend by the original budget and nudge agents."""
         async with self._lock:
             if not self._budget_paused:
                 return
@@ -308,7 +387,7 @@ class AgentCoordinator:
         unknown, or it is terminal and its loop does not park for wake-ups.
         """
         from_user = message.get("from") == "user"
-        if from_user and self._budget_paused:
+        if from_user and self._budget_paused and self._budget_policy != "pause":
             await self.resume_from_budget_pause(exclude=target_agent_id)
         async with self._lock:
             if target_agent_id not in self.statuses:
