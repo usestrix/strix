@@ -1050,6 +1050,17 @@ def litellm_cost_callback(
     _end_time: Any = None,
 ) -> None:
     """LiteLLM ``success_callback`` adapter; forwards observed cost to the active scan."""
+    # Function callbacks run for each streamed chunk as well as the assembled
+    # response. Every chunk can carry the same request-level cost header; only
+    # the completed stream should be charged to the scan.
+    callback_kwargs = cast("dict[str, Any]", kwargs) if isinstance(kwargs, dict) else {}
+    if (
+        callback_kwargs.get("stream")
+        and callback_kwargs.get("complete_streaming_response") is None
+        and callback_kwargs.get("async_complete_streaming_response") is None
+    ):
+        return
+
     cost: float | None = None
     raw = kwargs.get("response_cost") if isinstance(kwargs, dict) else None
     if isinstance(raw, int | float) and raw > 0:
