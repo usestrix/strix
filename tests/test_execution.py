@@ -701,6 +701,92 @@ async def test_send_queues_without_session_and_drains_on_consume(tmp_path: Any) 
 
 
 @pytest.mark.asyncio
+async def test_consume_pending_restores_mailbox_on_session_write_failure(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    Regression test for https://github.com/usestrix/strix/issues/1107
+
+    If session.add_items fails, the drained message must not be lost: it should
+    be restored to the mailbox (so a retry can pick it up) rather than reported
+    as delivered via a positive count.
+    """
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
+
+    assert await coordinator.send("root", {"from": "user", "content": "hello"}) is True
+
+    async def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("db is locked")
+
+    monkeypatch.setattr(session, "add_items", _boom)
+
+    count, items = await coordinator.consume_pending("root", include_items=True)
+    assert (count, items) == (0, [])
+
+    runtime = coordinator.runtimes["root"]
+    assert runtime.mailbox == [{"from": "user", "content": "hello"}]
+    assert coordinator.pending_counts["root"] == 1
+
+    monkeypatch.undo()
+    count, items = await coordinator.consume_pending("root", include_items=True)
+    assert count == 1
+    assert items[0]["content"] == "hello"
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_consume_pending_restore_preserves_arrival_order(
+    tmp_path: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """
+    A message that arrives while the failed write is being restored must stay ordered
+    after the message that was already draining, not before it. Regression for
+    https://github.com/usestrix/strix/pull/1161#pullrequestreview (itzzdev09's flagged
+    scenario 3): restoring via mailbox[0:0] = queued, not append, is what preserves this.
+    """
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=session)
+
+    assert await coordinator.send("root", {"from": "user", "content": "first"}) is True
+
+    async def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise RuntimeError("db is locked")
+
+    monkeypatch.setattr(session, "add_items", _boom)
+    await coordinator.consume_pending("root", include_items=True)
+    monkeypatch.undo()
+
+    assert await coordinator.send("root", {"from": "user", "content": "second"}) is True
+
+    count, items = await coordinator.consume_pending("root", include_items=True)
+    assert count == 2
+    assert [item["content"] for item in items] == ["first", "second"]
+    session.close()
+
+
+@pytest.mark.asyncio
+async def test_consume_pending_reports_zero_when_no_session_attached() -> None:
+    """
+    Regression for a gap flagged alongside #1107: an agent with no SDK session attached
+    already logs that queued messages were not persisted, but used to still report them
+    as delivered via a positive count. The messages are genuinely dropped here (there is
+    no session to retry against), so the return value must say so.
+    """
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+
+    assert await coordinator.send("root", {"from": "user", "content": "hello"}) is True
+
+    count, items = await coordinator.consume_pending("root", include_items=True)
+    assert (count, items) == (0, [])
+
+
+@pytest.mark.asyncio
 async def test_error_parked_agent_only_released_by_user_message(tmp_path: Any) -> None:
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
@@ -1076,6 +1162,7 @@ async def test_interactive_recovery_exhaustion_parks_instead_of_crashing(
 
 @pytest.mark.asyncio
 async def test_interactive_subagent_exhaustion_tells_its_parent(
+    tmp_path: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """A parked child must report up so its parent stops waiting on it.
@@ -1087,6 +1174,8 @@ async def test_interactive_subagent_exhaustion_tells_its_parent(
     coordinator = AgentCoordinator()
     await coordinator.register("root", "strix", parent_id=None)
     await coordinator.register("child", "recon", parent_id="root")
+    root_session = SQLiteSession("root", tmp_path / "agents.db")
+    await coordinator.attach_runtime("root", session=root_session)
     calls: list[Any] = []
     monkeypatch.setattr(
         execution,
@@ -1102,6 +1191,7 @@ async def test_interactive_subagent_exhaustion_tells_its_parent(
     notice = str(items[0])
     assert "child" in notice
     assert "parked" in notice
+    root_session.close()
 
 
 @pytest.mark.asyncio
