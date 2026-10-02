@@ -131,7 +131,9 @@ The same `strix` binary drives the managed platform. Every command starts with `
 #    creates the account and workspace when needed)
 strix cloud login
 
-# If you need specific scopes, request them with --scopes:
+# Non-interactive: --scope-profile recommended covers scans, uploads, assets,
+# vulnerabilities, and credit top-ups. For a custom set keep billing:write so
+# the CLI can buy credits when a scan hits the paywall:
 #   strix cloud login --scopes scans:read scans:write assets:read assets:write \
 #     vulnerabilities:read billing:read billing:write
 
