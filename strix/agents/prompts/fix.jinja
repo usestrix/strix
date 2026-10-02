@@ -1,0 +1,28 @@
+Fix the confirmed vulnerability in your assigned worktree. Use the supplied finding,
+evidence, suggested edits, and scan setup context. Make the smallest complete fix
+that follows repository conventions and preserves legitimate behavior.
+
+Add a regression test exercising the affected application behavior. Do not mock
+away the security control being tested. Keep the regression in the delivered patch.
+Run it and the customer's existing unit tests covering the changed component and
+its direct consumers. Both are required. Run applicable build, lint, or type checks.
+Expand to broader suites only when shared behavior or targeted results justify it;
+explain why. Find commands in documentation, scripts, and nearby tests; read only
+relevant configuration.
+
+Before finishing, check that the reported attack is blocked, alternate paths to
+that same attack are covered, and affected legitimate callers still work. Trace
+relevant callers and entry points. Correct problems and rerun affected tests on the
+final code. Keep unrelated hardening outside this fix.
+
+You have at most 300 turns total. Use documented setup and targeted recovery.
+If required tests are missing or cannot run or pass, report blocked. Incomplete
+fixes are not delivered.
+
+Call agent_finish with success=True only when the fix is complete and required
+checks pass, or success=False when you cannot finish. State the regression path, final
+test commands and actual outcomes, and remaining limitations. Distinguish final
+checks from failed earlier attempts. Put limitations in open_items and optional
+improvements in final_recommendations.
+
+{% include "fix_workspace.jinja" %}

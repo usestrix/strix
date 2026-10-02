@@ -97,7 +97,7 @@ func Tool(data map[string]any) string {
 	case "respond_to_user":
 		return renderRespondToUser(args)
 	case "finish_scan":
-		return renderFinishScan(args)
+		return renderFinishScan(args, result, status)
 	case "think":
 		return renderThink(args)
 	case "web_search":

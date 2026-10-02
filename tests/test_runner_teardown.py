@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import types
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pytest
 from agents import ModelSettings
 
 import strix.tools.notes.tools as notes_tools
 import strix.tools.todo.tools as todo_tools
-from strix.core import runner
+from strix.core import execution, runner
 from strix.core.agents import AgentCoordinator
 from strix.runtime import session_manager
+from tests.test_fix_reliability import LocalSandbox
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 def _wire_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
@@ -28,7 +34,11 @@ def _wire_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Any) -> None:
     monkeypatch.setattr(notes_tools, "hydrate_notes_from_disk", lambda _d: None)
 
     async def _create_or_reuse(*_a: Any, **_k: Any) -> dict[str, Any]:
-        return {"client": object(), "session": object(), "caido_client": None}
+        return {
+            "client": object(),
+            "session": LocalSandbox(tmp_path / "sandbox"),
+            "caido_client": None,
+        }
 
     async def _cleanup(*_a: Any, **_k: Any) -> None:
         return None
@@ -91,3 +101,185 @@ async def test_a_live_child_is_settled_before_sessions_close(
     task = child_task["t"]
     assert task.done(), "the child task was left running past scan teardown"
     assert task.cancelled(), "the child was not cancelled cleanly on a finish"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "interactive,local_branches,is_resume",
+    [
+        (interactive, local_branches, resume)
+        for interactive in (False, True)
+        for local_branches in (False, True)
+        for resume in ((False, True) if interactive else (False,))
+    ],
+)
+async def test_assessment_publishes_before_fixes_end_and_sandbox_teardown(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    interactive: bool,
+    local_branches: bool,
+    is_resume: bool,
+) -> None:
+    _wire_runner(monkeypatch, tmp_path)
+    events: list[str] = []
+
+    class State:
+        defer_completion = False
+
+        def __init__(self) -> None:
+            self.scan_results = {"scan_completed": True}
+
+        def get_existing_vulnerabilities(self) -> list[Any]:
+            return []
+
+        def get_total_llm_cost(self) -> float:
+            return 0.0
+
+        def save_run_data(self, **_: Any) -> None:
+            events.append("save")
+
+    class Fixes:
+        def __init__(self, **options: Any) -> None:
+            assert (options["sink"] is not None) is not local_branches
+
+        def start(self, *_: Any) -> None:
+            events.append("fixes listening")
+
+        async def wait(self) -> tuple[list[Any], list[Any]]:
+            events.append("fixes finished")
+            return [], []
+
+        async def close(self) -> None:
+            events.append("fixes closed")
+
+    async def assessment(_: Any) -> None:
+        events.append("assessment published")
+
+    async def platform_fix_sink(*_: Any) -> bool:
+        return True
+
+    async def root(**kwargs: Any) -> types.SimpleNamespace:
+        assert kwargs["interactive"] is interactive
+        assert kwargs["return_on_completion"] is True
+        return types.SimpleNamespace(final_output={"scan_completed": True})
+
+    async def cleanup(*_: Any) -> None:
+        events.append("sandbox deleted")
+
+    if is_resume:
+        coordinator = AgentCoordinator()
+        await coordinator.register("root", "Root Agent", parent_id=None)
+        await coordinator.set_status("root", "completed")
+        (tmp_path / "agents.json").write_text(json.dumps(await coordinator.snapshot()))
+        (tmp_path / "agents.db").touch()
+
+        async def unexpected_cycle(*_args: Any, **_kwargs: Any) -> None:
+            raise AssertionError("Resume must finish pending fixes without restarting root")
+
+        monkeypatch.setattr(execution, "_run_until_lifecycle", unexpected_cycle)
+
+    monkeypatch.setattr(runner, "get_global_report_state", State)
+    monkeypatch.setattr(runner, "ScanFixes", Fixes)
+    if not is_resume:
+        monkeypatch.setattr(runner, "run_agent_loop", root)
+    monkeypatch.setattr(session_manager, "cleanup", cleanup)
+    await runner.run_strix_scan(
+        scan_config={
+            "targets": [],
+            "scan_mode": "deep",
+        },
+        scan_id="scan",
+        image="image",
+        local_sources=[{"source_path": str(tmp_path)}],
+        assessment_sink=assessment,
+        fix_sink=None if local_branches else platform_fix_sink,
+        interactive=interactive,
+    )
+    assert events.index("assessment published") < events.index("fixes finished")
+    assert events.index("fixes finished") < events.index("sandbox deleted")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("interactive", [False, True])
+@pytest.mark.parametrize("is_resume", [False, True])
+@pytest.mark.parametrize(
+    "fix_config",
+    [
+        {"auto_fix_enabled": False},
+        {"mode": "pr_review"},
+        {
+            "mode": "pr_review",
+            "auto_fix_enabled": True,
+        },
+    ],
+)
+async def test_disabled_auto_fix_skips_fix_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    interactive: bool,
+    is_resume: bool,
+    fix_config: dict[str, Any],
+) -> None:
+    _wire_runner(monkeypatch, tmp_path)
+    events: list[str] = []
+
+    class State:
+        defer_completion = False
+
+        def __init__(self) -> None:
+            self.scan_results = {"scan_completed": True}
+
+        def get_existing_vulnerabilities(self) -> list[Any]:
+            return []
+
+        def get_total_llm_cost(self) -> float:
+            return 0.0
+
+        def save_run_data(self, **_: Any) -> None:
+            events.append("save")
+
+    class Fixes:
+        def __init__(self, **_: Any) -> None:
+            raise AssertionError("ScanFixes must not be constructed")
+
+    async def assessment(_: Any) -> None:
+        events.append("assessment published")
+
+    async def root(**kwargs: Any) -> types.SimpleNamespace:
+        assert kwargs["return_on_completion"] is False
+        return types.SimpleNamespace(final_output={"scan_completed": True})
+
+    if is_resume:
+        coordinator = AgentCoordinator()
+        await coordinator.register("root", "Root Agent", parent_id=None)
+        await coordinator.set_status("root", "completed")
+        await coordinator.register("repair", "Fix agent", parent_id="root", skills=["fix_task"])
+        await coordinator.register(
+            "reviewer", "Independent fix verifier", parent_id="repair", skills=["fix_task"]
+        )
+        (tmp_path / "agents.json").write_text(json.dumps(await coordinator.snapshot()))
+        (tmp_path / "agents.db").touch()
+
+        async def unexpected_child(**_: Any) -> None:
+            events.append("fix agent resumed")
+            raise AssertionError("Disabled fixes must not respawn repair or reviewer agents")
+
+        monkeypatch.setattr(execution, "spawn_child_agent", unexpected_child)
+
+    monkeypatch.setattr(runner, "get_global_report_state", State)
+    monkeypatch.setattr(runner, "ScanFixes", Fixes)
+    monkeypatch.setattr(runner, "run_agent_loop", root)
+    await runner.run_strix_scan(
+        scan_config={
+            "targets": [],
+            "scan_mode": "deep",
+            **fix_config,
+        },
+        scan_id="scan",
+        image="image",
+        local_sources=[{"source_path": str(tmp_path)}],
+        assessment_sink=assessment,
+        interactive=interactive,
+    )
+
+    assert events == ["assessment published", "save"]

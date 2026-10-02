@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING
 
 import pytest
 
-from strix.utils.secret_files import SECRET_FILE_MODE, write_secret_text
+from strix.utils.secret_files import SECRET_FILE_MODE, open_secret_file, write_secret_text
 
 
 if TYPE_CHECKING:
@@ -63,3 +63,31 @@ def test_overwriting_an_existing_record_keeps_it_restricted(tmp_path: Path) -> N
     assert json.loads(target.read_text(encoding="utf-8"))["v"] == 2
     if sys.platform != "win32":
         assert stat.S_IMODE(target.stat().st_mode) == SECRET_FILE_MODE
+
+
+@posix_only
+def test_stream_is_private_before_writing_and_atomic_on_completion(tmp_path: Path) -> None:
+    target = tmp_path / "shared" / "result.zip"
+    target.parent.mkdir(mode=0o777)
+    previous = os.umask(0)
+    try:
+        with open_secret_file(target) as stream:
+            assert stat.S_IMODE(os.fstat(stream.fileno()).st_mode) == SECRET_FILE_MODE
+            assert not target.exists()
+            stream.write(b"private customer source\x00\xff")
+            stream.flush()
+            assert not target.exists()
+        assert target.read_bytes() == b"private customer source\x00\xff"
+        assert stat.S_IMODE(target.stat().st_mode) == SECRET_FILE_MODE
+    finally:
+        os.umask(previous)
+
+
+def test_failed_stream_preserves_previous_result_and_removes_partial_file(tmp_path: Path) -> None:
+    target = tmp_path / "result.zip"
+    write_secret_text(target, "previous result")
+    with pytest.raises(RuntimeError, match="interrupted write"), open_secret_file(target) as stream:
+        stream.write(b"partial customer source")
+        raise RuntimeError("interrupted write")
+    assert target.read_text() == "previous result"
+    assert list(tmp_path.iterdir()) == [target]

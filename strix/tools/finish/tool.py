@@ -79,6 +79,9 @@ def _do_finish(
             "message": "Scan completed successfully",
             "vulnerabilities_found": vuln_count,
         }
+        if report_state.defer_completion:
+            result["fixes_pending"] = True
+            result["message"] = "Assessment complete; fixes are still being prepared."
         result.update(coverage_summary)
         return result
 
@@ -152,7 +155,11 @@ async def finish_scan(
     2. Writes the four narrative sections to the scan record.
     3. Marks the scan completed and stops execution.
 
-    **This is a terminal action, not a status probe.** Whatever you pass
+    Fix agents (marked fix_task) may still be running. This publishes the
+    completed assessment; the runner waits for fixes before sandbox cleanup.
+    Never stop or poll Fix agents merely to publish the assessment.
+
+    **This is a terminal action for assessment, not a status probe.** Whatever you pass
     is persisted VERBATIM as the final, customer-facing report and then
     execution stops. There is no draft mode and no second chance: never
     submit placeholder, provisional, or "checking if done" text in any
@@ -164,7 +171,7 @@ async def finish_scan(
     **Pre-flight checklist (mandatory — do not skip):**
 
     1. **Call ``view_agent_graph`` first.** Inspect every entry in the
-       summary. If ANY agent is in ``running`` / ``waiting`` state,
+       summary. If any assessment agent is in ``running`` / ``waiting`` state,
        you MUST NOT call ``finish_scan`` yet —
        wrap them up first via ``send_message_to_agent`` (ask them to
        finish), ``wait_for_agents`` (block until their report
@@ -317,6 +324,11 @@ async def finish_scan(
     parent_id = inner.get("parent_id")
     if coordinator is not None and parent_id is None and me is not None:
         active_agents = await coordinator.active_agents_except(me)
+        active_agents = [
+            entry
+            for entry in active_agents
+            if "fix_task" not in coordinator.metadata.get(entry["agent_id"], {}).get("skills", [])
+        ]
         if active_agents and coordinator.reserve_stopped:
             active_agents = []
     else:

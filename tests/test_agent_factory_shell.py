@@ -11,6 +11,7 @@ from agents.tool import CustomTool, FunctionTool
 
 from strix.agents import factory
 from strix.config import load_settings
+from strix.tools.thinking.tool import think
 
 
 def _capturing_exec_tool(captured: dict[str, str]) -> FunctionTool:
@@ -115,3 +116,31 @@ def test_function_tools_are_result_bounded() -> None:
     by_name = {t.name: t for t in agent.tools}
 
     assert getattr(by_name["think"], "_strix_bounded", False) is True
+
+
+def test_specialized_tools_do_not_inherit_scan_or_registered_tools(monkeypatch) -> None:
+    extra = _capturing_exec_tool({})
+    extra.name = "scan_extension"
+    monkeypatch.setattr(factory, "_EXTRA_TOOLS", [extra])
+    default = factory.build_strix_agent(is_root=False)
+    specialized = factory.build_strix_agent(is_root=False, base_tools=[think])
+    default_names = {tool.name for tool in default.tools}
+    specialized_names = {tool.name for tool in specialized.tools}
+
+    assert {"scan_extension", "create_agent", "record_coverage"} <= default_names
+    assert {"think", "agent_finish"} <= specialized_names
+    assert (
+        not {"scan_extension", "create_agent", "record_coverage", "finish_scan"} & specialized_names
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "command", ["pkill -f server", "sudo killall node", "kill $(lsof -ti:3007)", "/bin/kill -9 123"]
+)
+async def test_shared_process_cleanup_is_rejected_before_execution(command):
+    captured = {}
+    wrapped = factory._wrap_exec_command(_capturing_exec_tool(captured))
+    result = await wrapped.on_invoke_tool(None, json.dumps({"cmd": command}))
+    assert "stop_process" in result
+    assert not captured

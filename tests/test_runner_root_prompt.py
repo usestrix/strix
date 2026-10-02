@@ -25,6 +25,7 @@ from strix.core.agents import AgentCoordinator
 from strix.core.inputs import make_model_settings
 from strix.runtime import session_manager
 from strix.tools.mcp import BearerAuth, McpConnectionConfig, McpConnectionRequest
+from tests.test_fix_reliability import LocalSandbox
 
 
 def _make_rate_limit_error() -> RateLimitError:
@@ -71,7 +72,11 @@ def _patch_engine_scaffold(
     monkeypatch.setattr(notes_tools, "hydrate_notes_from_disk", lambda _state_dir: None)
 
     async def _create_or_reuse(*_args: Any, **_kwargs: Any) -> dict[str, Any]:
-        return {"client": object(), "session": object(), "caido_client": None}
+        return {
+            "client": object(),
+            "session": LocalSandbox(tmp_path / "sandbox"),
+            "caido_client": None,
+        }
 
     async def _cleanup(*_args: Any, **_kwargs: Any) -> None:
         return None

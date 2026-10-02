@@ -93,6 +93,7 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
         "diff_scope": getattr(args, "diff_scope", {"active": False}),
         "scan_mode": scan_mode,
         "non_interactive": bool(getattr(args, "non_interactive", False)),
+        "auto_fix_enabled": bool(args.auto_fix),
         "local_sources": getattr(args, "local_sources", None) or [],
         "workspace_files": getattr(args, "workspace_files", None) or [],
         "scope_mode": getattr(args, "scope_mode", "auto"),
@@ -257,3 +258,32 @@ async def run_cli(args: Any) -> None:  # noqa: PLR0915
 
         console.print(final_report_panel)
         console.print()
+        fix_branches = (report_state.scan_results or {}).get("fix_branches") or []
+        fix_branch_errors = (report_state.scan_results or {}).get("fix_branch_errors") or []
+        if fix_branches:
+            lines = [
+                f"{item['title']}\n  {item['branch']}\n  {item['source_path']}"
+                for item in fix_branches
+            ]
+            console.print(
+                Panel(
+                    "\n\n".join(lines),
+                    title="[bold white]Prepared fix branches",
+                    title_align="left",
+                    border_style="#60a5fa",
+                    padding=(1, 2),
+                )
+            )
+            console.print()
+        if fix_branch_errors:
+            lines = [f"{item['title']}: {item['error']}" for item in fix_branch_errors]
+            console.print(
+                Panel(
+                    "\n".join(lines),
+                    title="[bold white]Fix branch errors",
+                    title_align="left",
+                    border_style="#ef4444",
+                    padding=(1, 2),
+                )
+            )
+            console.print()

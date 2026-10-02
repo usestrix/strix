@@ -80,6 +80,7 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "assumptions",
         "counterevidence",
         "confidence",
+        "validation_status",
         "confidence_rationale",
         "severity_change_conditions",
         "fix_effort",
@@ -93,6 +94,8 @@ UPDATABLE_REPORT_FIELDS = frozenset(
         "http_exchange_ids",
         "fix_verification",
         "fix_pr_body",
+        "fix_candidate",
+        "fix_preparation",
     }
 )
 
@@ -236,6 +239,8 @@ class ReportState:
         self._saved_vuln_ids: set[str] = set()
 
         self.caido_url: str | None = None
+        self.defer_completion = False
+        self.finding_persisted_callback: Callable[[dict[str, Any]], None] | None = None
         self.vulnerability_found_callback: Callable[[dict[str, Any]], None] | None = None
         self.vulnerability_updated_callback: Callable[[dict[str, Any]], None] | None = None
         self.vulnerability_deleted_callback: Callable[[dict[str, Any]], None] | None = None
@@ -355,8 +360,11 @@ class ReportState:
         http_exchange_ids: list[str] | None = None,
         fix_verification: str | None = None,
         fix_pr_body: str | None = None,
+        validation_status: str = "unconfirmed",
         finding_class: str | None = None,
         dependency_metadata: dict[str, str] | None = None,
+        fix_candidate: dict[str, Any] | None = None,
+        fix_preparation: dict[str, Any] | None = None,
         agent_id: str | None = None,
         agent_name: str | None = None,
     ) -> str:
@@ -417,9 +425,14 @@ class ReportState:
             report["fix_verification"] = fix_verification.strip()
         if fix_pr_body:
             report["fix_pr_body"] = fix_pr_body.strip()
+        report["validation_status"] = validation_status
         report["finding_class"] = (finding_class or "dynamic").strip().lower()
         if dependency_metadata:
             report["dependency_metadata"] = dependency_metadata
+        if fix_candidate:
+            report["fix_candidate"] = fix_candidate
+        if fix_preparation:
+            report["fix_preparation"] = fix_preparation
         if agent_id:
             report["agent_id"] = agent_id
         if agent_name:
@@ -434,6 +447,7 @@ class ReportState:
         scarf.finding(severity, cwe=cwe, is_cve=bool(cve))
 
         self.save_run_data()
+        self.notify_finding_persisted(report)
         return report_id
 
     def _deleted_vulnerability_reports(self) -> list[dict[str, Any]]:
@@ -479,7 +493,7 @@ class ReportState:
 
         changed: dict[str, Any] = {}
         for key, raw_value in fields.items():
-            if key not in UPDATABLE_REPORT_FIELDS or raw_value is None:
+            if key not in UPDATABLE_REPORT_FIELDS or (raw_value is None and key != "fix_candidate"):
                 continue
             value = raw_value
             if isinstance(value, str):
@@ -550,6 +564,7 @@ class ReportState:
         )
 
         self.save_run_data()
+        self.notify_finding_persisted(report)
         return report
 
     def delete_vulnerability_report(
@@ -632,7 +647,13 @@ class ReportState:
             logger.exception("could not remove %s", md_path)
 
         logger.info("Deleted vulnerability report %s - %s", report_id, report.get("title"))
+        self.notify_finding_persisted(report)
         return report
+
+    def notify_finding_persisted(self, report: dict[str, Any]) -> None:
+        """Called only after hosted persistence and local report saving succeed."""
+        if self.finding_persisted_callback:
+            self.finding_persisted_callback(report)
 
     def get_existing_vulnerabilities(self) -> list[dict[str, Any]]:
         return list(self.vulnerability_reports)
@@ -732,9 +753,11 @@ class ReportState:
         self.run_record["scan_results"] = self.scan_results
 
         logger.info("Updated scan final fields")
-        self.save_run_data(mark_complete=True)
-        posthog.end(self, exit_reason="finished_by_tool")
-        scarf.end(self, exit_reason="finished_by_tool")
+        self.run_record["assessment_completed_at"] = datetime.now(UTC).isoformat()
+        self.save_run_data(mark_complete=not self.defer_completion)
+        if not self.defer_completion:
+            posthog.end(self, exit_reason="finished_by_tool")
+            scarf.end(self, exit_reason="finished_by_tool")
 
     def record_mcp_connections(self, names: list[str]) -> None:
         """Note the MCP servers this run connected, and persist it.
@@ -913,7 +936,7 @@ class ReportState:
         repo_targets = [
             target
             for target in targets
-            if isinstance(target, dict) and target.get("type") == "repository"
+            if isinstance(target, dict) and target.get("type") in {"repository", "local_code"}
         ]
         # Provenance binds the whole run to one repo; with multiple repo targets
         # that's ambiguous, so omit it rather than mis-attributing later repos'
@@ -925,6 +948,8 @@ class ReportState:
         if not isinstance(details, dict):
             return None
         uri = details.get("target_repo")
+        if target.get("type") == "local_code" and details.get("target_path"):
+            uri = Path(details["target_path"]).resolve().as_uri()
         if not isinstance(uri, str) or not uri.strip():
             return None
 
@@ -932,7 +957,7 @@ class ReportState:
         full_name = _parse_repo_full_name(uri)
         if full_name:
             context["repositoryFullName"] = full_name
-        cloned = details.get("cloned_repo_path")
+        cloned = details.get("cloned_repo_path") or details.get("target_path")
         if isinstance(cloned, str) and cloned.strip():
             commit, branch = _git_head(cloned.strip())
             if commit:
@@ -941,6 +966,9 @@ class ReportState:
                 context["branch"] = branch
                 context["ref"] = f"refs/heads/{branch}"
         return context
+
+    def get_repository_context(self) -> dict[str, Any] | None:
+        return self._derive_repository_context()
 
     def _sync_llm_usage_record(self) -> None:
         self.run_record["llm_usage"] = self._build_llm_usage_record()
@@ -962,6 +990,7 @@ def openrouter_stream_cost(usage: Any) -> float | None:
     """
     if not isinstance(usage, dict):
         return None
+
     total = 0.0
     cost = usage.get("cost")
     if isinstance(cost, int | float) and cost > 0:

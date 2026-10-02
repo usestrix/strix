@@ -255,6 +255,7 @@ def _persist_run_record(args: argparse.Namespace) -> None:
         # transcript replays this as the user's opening message.
         "user_instruction": getattr(args, "user_instruction", None),
         "non_interactive": args.non_interactive,
+        "auto_fix": args.auto_fix,
         "local_sources": getattr(args, "local_sources", []),
         # Persisted so --resume places the same workspace files again.
         "workspace_files": getattr(args, "workspace_files", []),

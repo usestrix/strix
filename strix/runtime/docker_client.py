@@ -59,7 +59,11 @@ def _sandbox_network() -> str | None:
     return value or None
 
 
-def _apply_sandbox_network(create_kwargs: dict[str, Any]) -> None:
+def _apply_sandbox_network(create_kwargs: dict[str, Any], *, network_allowed: bool = True) -> None:
+    if not network_allowed:
+        create_kwargs["network_mode"] = "none"
+        create_kwargs.pop("ports", None)
+        return
     network = _sandbox_network()
     if network:
         create_kwargs["network"] = network
@@ -162,6 +166,7 @@ class StrixDockerSandboxSession(DockerSandboxSession):
 
 
 class StrixDockerSandboxClient(DockerSandboxClient):
+    network_allowed: bool = True
     # Host directories to bind-mount into the container, set by the docker
     # backend before ``create()``. Each item is ``{source, target, read_only}``.
     strix_bind_mounts: list[dict[str, Any]] | None = None
@@ -232,7 +237,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
         extra_hosts = create_kwargs.setdefault("extra_hosts", {})
         extra_hosts["host.docker.internal"] = "host-gateway"
 
-        _apply_sandbox_network(create_kwargs)
+        _apply_sandbox_network(create_kwargs, network_allowed=self.network_allowed)
         _apply_resource_limits(create_kwargs)
         _apply_log_limits(create_kwargs)
         _apply_run_labels(create_kwargs)
@@ -268,7 +273,7 @@ class StrixDockerSandboxClient(DockerSandboxClient):
 
     async def create(self, **kwargs: Any) -> SandboxSession:
         session = await super().create(**kwargs)
-        network = _sandbox_network()
+        network = _sandbox_network() if self.network_allowed else None
         inner = session._inner
         if network and isinstance(inner, DockerSandboxSession):
             inner.__class__ = StrixDockerSandboxSession

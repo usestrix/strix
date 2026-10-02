@@ -616,6 +616,7 @@ async def agent_finish(
     success: bool = True,
     report_to_parent: bool = True,
     final_recommendations: list[str] | None = None,
+    outcome: str | None = None,
 ) -> str:
     """Subagent termination — post a completion report to the parent.
 
@@ -666,8 +667,12 @@ async def agent_finish(
         final_recommendations: Optional next-step suggestions for the
             parent (e.g., "prioritize testing X", "spawn an agent to
             cover Y").
+        outcome: Optional assignment-specific outcome, when requested by the caller.
     """
     inner = _ctx(ctx)
+    allowed_outcomes = inner.get("completion_outcomes")
+    if allowed_outcomes is not None and outcome not in allowed_outcomes:
+        return json.dumps({"success": False, "error": f"Choose an outcome: {allowed_outcomes}"})
     coordinator = coordinator_from_context(inner)
     me = inner.get("agent_id")
     if coordinator is None or me is None:
@@ -689,6 +694,12 @@ async def agent_finish(
             ensure_ascii=False,
             default=str,
         )
+
+    before_finish = inner.get("before_agent_finish")
+    if before_finish is not None:
+        error = await before_finish(success)
+        if error:
+            return json.dumps({"success": False, "error": error})
 
     filed_reports = _filed_reports_by(me)
     filed_report_ids = [str(r.get("id")) for r in filed_reports]
@@ -742,6 +753,10 @@ async def agent_finish(
             "parent_notified": parent_notified,
             "agent_id": me,
             "summary": result_summary,
+            "outcome": outcome,
+            "task_success": success,
+            "open_items": list(open_items or []),
+            "recommendations": list(final_recommendations or []),
             "filed_report_ids": filed_report_ids,
             "findings_count": len(findings or []),
             "open_items_count": len(open_items or []),

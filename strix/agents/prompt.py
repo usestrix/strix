@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, cast
 
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
@@ -19,6 +19,16 @@ _PROMPT_DIRNAME = "prompts"
 # Marks where the system prompt is split so the part before it can be cached.
 # Removed before the prompt is sent.
 CACHE_POINT = "<cache_point>"
+
+
+def render_fix_prompt(*, workspace_root: str, review: bool = False) -> str:
+    """Render a fix assignment without loading scan-only skills."""
+    env = Environment(
+        loader=FileSystemLoader(get_strix_resource_path("agents", _PROMPT_DIRNAME)),
+        autoescape=select_autoescape(enabled_extensions=(), default_for_string=False),
+    )
+    template = "fix_review.jinja" if review else "fix.jinja"
+    return str(env.get_template(template).render(workspace_root=workspace_root))
 
 
 def _resolve_skills(
@@ -83,6 +93,7 @@ def render_system_prompt(
     is_root: bool = False,
     is_diff_scoped: bool = False,
     interactive: bool = False,
+    auto_fix: bool = True,
     system_prompt_context: dict[str, Any] | None = None,
     include_scope: bool = True,
 ) -> str:
@@ -120,7 +131,11 @@ def render_system_prompt(
             is_diff_scoped=is_diff_scoped,
         )
         skill_content = load_skills(skills_to_load)
-        env.globals["get_skill"] = lambda name: skill_content.get(name, "")
+
+        def get_skill(name: str) -> str:
+            return skill_content.get(name, "")
+
+        cast("dict[str, Any]", env.globals)["get_skill"] = get_skill
 
         # Skills every agent of this kind loads come first, so siblings share them
         # as a cached prefix; the ones the caller asked for vary and go after.
@@ -129,6 +144,7 @@ def render_system_prompt(
             requested_skill_names=[name for name in skill_content if name not in shared],
             available_skills=get_available_skills(),
             interactive=interactive,
+            auto_fix=auto_fix,
             is_root=is_root,
             system_prompt_context=system_prompt_context or {},
             include_scope=include_scope,

@@ -5,10 +5,11 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock
 
 import pytest
+from agents import RunConfig
 from agents.exceptions import MaxTurnsExceeded
 from agents.items import MessageOutputItem
 from agents.memory import SQLiteSession
@@ -19,11 +20,16 @@ from strix.core import execution
 from strix.core.agents import AgentCoordinator
 from strix.core.execution import (
     _notify_root_on_budget_reserve,
+    _start_child_runner,
     notify_parent_on_terminal,
 )
 from strix.core.sessions import seed_initial_input
 from strix.tools.agents_graph.tools import agent_finish, stop_agent
 from strix.tools.finish.tool import finish_scan
+
+
+if TYPE_CHECKING:
+    from pathlib import Path
 
 
 _NO_STREAM_EVENTS: list[Any] = []
@@ -141,6 +147,85 @@ async def test_concurrent_reserve_claims_yield_single_root() -> None:
 
     assert results.count("root") == 1
     assert all(r is None for r in results if r != "root")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_native_child_is_always_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "fix", parent_id="root")
+    started = asyncio.Event()
+
+    async def run_forever(**_kwargs: Any) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(execution, "run_agent_loop", run_forever)
+    sessions: list[SQLiteSession] = []
+    await _start_child_runner(
+        parent_ctx={"agent_id": "root", "parent_id": None},
+        coordinator=coordinator,
+        agents_db_path=tmp_path / "agents.sqlite",
+        sessions_to_close=sessions,
+        run_config=RunConfig(tracing_disabled=True),
+        max_turns=10,
+        interactive=False,
+        child_agent=MagicMock(),
+        child_id="child",
+        name="fix",
+        parent_id="root",
+        task="repair",
+        initial_input=[],
+    )
+    await started.wait()
+    task = coordinator.runtimes["child"].task
+    assert task is not None
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert coordinator.statuses["child"] == "stopped"
+    for session in sessions:
+        session.close()
+
+
+@pytest.mark.asyncio
+async def test_crashed_native_child_is_always_terminal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "strix", parent_id=None)
+    await coordinator.register("child", "fix", parent_id="root")
+
+    async def crash(**_kwargs: Any) -> None:
+        raise RuntimeError("repair crashed")
+
+    monkeypatch.setattr(execution, "run_agent_loop", crash)
+    sessions: list[SQLiteSession] = []
+    await _start_child_runner(
+        parent_ctx={"agent_id": "root", "parent_id": None},
+        coordinator=coordinator,
+        agents_db_path=tmp_path / "agents.sqlite",
+        sessions_to_close=sessions,
+        run_config=RunConfig(tracing_disabled=True),
+        max_turns=10,
+        interactive=False,
+        child_agent=MagicMock(),
+        child_id="child",
+        name="fix",
+        parent_id="root",
+        task="repair",
+        initial_input=[],
+    )
+    task = coordinator.runtimes["child"].task
+    assert task is not None
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert coordinator.statuses["child"] == "crashed"
+    assert coordinator.errors["child"] == "repair crashed"
+    for session in sessions:
+        session.close()
 
 
 @pytest.mark.asyncio
@@ -969,6 +1054,157 @@ async def test_run_agent_loop_seeds_identity_before_first_cycle(
     stored = await session.get_items()
     assert any("recon" in str(cast("dict[str, Any]", i).get("content", "")) for i in stored)
     session.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("start_parked", [False, True])
+async def test_completed_interactive_assessment_resumes_without_another_cycle(
+    monkeypatch: pytest.MonkeyPatch, start_parked: bool
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "Strix", parent_id=None)
+    await coordinator.set_status("root", "completed")
+    restored = AgentCoordinator()
+    await restored.restore(await coordinator.snapshot())
+
+    async def unexpected_cycle(*_args: Any, **_kwargs: Any) -> None:
+        raise AssertionError("A completed assessment must not call the model on resume")
+
+    monkeypatch.setattr(execution, "_run_until_lifecycle", unexpected_cycle)
+    result = await execution.run_agent_loop(
+        agent=MagicMock(),
+        initial_input=[],
+        run_config=MagicMock(),
+        context={"agent_id": "root", "parent_id": None},
+        max_turns=5,
+        coordinator=restored,
+        agent_id="root",
+        interactive=True,
+        start_parked=start_parked,
+        return_on_completion=True,
+    )
+    assert result is None
+    assert restored.statuses["root"] == "completed"
+    assert not await restored.send("root", {"from": "user", "content": "too late"})
+
+
+@pytest.mark.asyncio
+async def test_interactive_completion_returns_for_finalization_but_waiting_can_resume(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "Strix", parent_id=None)
+    parked = asyncio.Event()
+    calls = []
+
+    async def cycle(*_args: Any, **kwargs: Any) -> Any:
+        assert kwargs["interactive"] is True
+        calls.append(kwargs["initial_input"])
+        await coordinator.set_status("root", "waiting" if len(calls) == 1 else "completed")
+        parked.set()
+        return MagicMock(final_output={"scan_completed": len(calls) == 2})
+
+    monkeypatch.setattr(execution, "_run_until_lifecycle", cycle)
+    task = asyncio.create_task(
+        execution.run_agent_loop(
+            agent=MagicMock(),
+            initial_input="task",
+            run_config=MagicMock(),
+            context={"agent_id": "root", "parent_id": None},
+            max_turns=5,
+            coordinator=coordinator,
+            agent_id="root",
+            interactive=True,
+            return_on_completion=True,
+        )
+    )
+    try:
+        await asyncio.wait_for(parked.wait(), timeout=2)
+        assert not task.done()
+        assert await coordinator.send("root", {"from": "user", "content": "continue"})
+        result = await asyncio.wait_for(task, timeout=2)
+        assert result.final_output == {"scan_completed": True}
+        assert calls == ["task", []]
+        assert not await coordinator.send("root", {"from": "user", "content": "too late"})
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_cancelled_interactive_assessment_does_not_return_as_completed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "Strix", parent_id=None)
+    waiting = asyncio.Event()
+
+    async def cycle(*_args: Any, **_kwargs: Any) -> None:
+        await coordinator.set_status("root", "waiting")
+
+    async def wait(*_args: Any, **_kwargs: Any) -> bool:
+        waiting.set()
+        await asyncio.Event().wait()
+        return True
+
+    monkeypatch.setattr(execution, "_run_until_lifecycle", cycle)
+    monkeypatch.setattr(coordinator, "wait_for_message", wait)
+    task = asyncio.create_task(
+        execution.run_agent_loop(
+            agent=MagicMock(),
+            initial_input="task",
+            run_config=MagicMock(),
+            context={"agent_id": "root", "parent_id": None},
+            max_turns=5,
+            coordinator=coordinator,
+            agent_id="root",
+            interactive=True,
+            return_on_completion=True,
+        )
+    )
+    await asyncio.wait_for(waiting.wait(), timeout=2)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
+@pytest.mark.asyncio
+async def test_default_interactive_completion_still_parks_for_messages(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    coordinator = AgentCoordinator()
+    await coordinator.register("root", "Strix", parent_id=None)
+    waiting = asyncio.Event()
+    result = MagicMock(final_output={"scan_completed": True})
+
+    async def cycle(*_args: Any, **_kwargs: Any) -> Any:
+        await coordinator.set_status("root", "completed")
+        return result
+
+    async def wait(*_args: Any, **_kwargs: Any) -> bool:
+        waiting.set()
+        await asyncio.Event().wait()
+        return True
+
+    monkeypatch.setattr(execution, "_run_until_lifecycle", cycle)
+    monkeypatch.setattr(coordinator, "wait_for_message", wait)
+    task = asyncio.create_task(
+        execution.run_agent_loop(
+            agent=MagicMock(),
+            initial_input="task",
+            run_config=MagicMock(),
+            context={"agent_id": "root", "parent_id": None},
+            max_turns=5,
+            coordinator=coordinator,
+            agent_id="root",
+            interactive=True,
+        )
+    )
+    await asyncio.wait_for(waiting.wait(), timeout=2)
+    assert not task.done()
+    assert (await coordinator.reachability("root"))[0]
+    task.cancel()
+    assert await task is result
 
 
 def _scripted_cycle(

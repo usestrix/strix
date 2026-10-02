@@ -332,7 +332,10 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
                 lines.extend(f"  {ln}" for ln in snippet.splitlines())
                 lines.append(f"  {fence}")
             if loc.get("fix_before") or loc.get("fix_after"):
-                lines.append("\n  **Suggested Fix:**")
+                preparation = report.get("fix_preparation")
+                prepared = isinstance(preparation, dict) and preparation.get("state") == "ready"
+                label = "Prepared Fix" if prepared else "Draft Fix Candidate"
+                lines.append(f"\n  **{label}:**")
                 lines.append("```diff")
                 if loc.get("fix_before"):
                     lines.extend(f"- {ln}" for ln in str(loc["fix_before"]).splitlines())
@@ -347,8 +350,17 @@ def render_vulnerability_md(report: dict[str, Any]) -> str:  # noqa: PLR0912, PL
         lines.append("")
 
     if report.get("fix_verification"):
-        lines.append("## Fix Verification\n")
+        lines.append("## Reported Candidate Checks\n")
         lines.append(str(report["fix_verification"]))
+        lines.append("")
+
+    if isinstance(report.get("fix_preparation"), dict):
+        preparation = report["fix_preparation"]
+        lines.append("## Fix Preparation\n")
+        lines.append(f"State: `{preparation.get('state', 'unknown')}`")
+        if preparation.get("stop_reason"):
+            lines.append("")
+            lines.append(str(preparation["stop_reason"]))
         lines.append("")
 
     if report.get("assumptions"):

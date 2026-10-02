@@ -128,3 +128,30 @@ def test_disabling_strict_leaves_shared_tools_untouched() -> None:
     agent = factory.build_strix_agent(is_root=True)
 
     assert any(t.strict_json_schema for t in agent.tools if isinstance(t, FunctionTool))
+
+
+def _report_tool_props(agent: Any) -> list[dict[str, Any]]:
+    return [
+        t.params_json_schema["properties"]
+        for t in agent.tools
+        if isinstance(t, FunctionTool)
+        and t.name in {"create_vulnerability_report", "update_vulnerability_report"}
+    ]
+
+
+def test_auto_fix_off_hides_fix_agent_guidance() -> None:
+    """Scans without Fix agents never see the field or guidance that assumes them."""
+    off = factory.build_strix_agent(is_root=True, auto_fix=False)
+    on = factory.build_strix_agent(is_root=True)
+
+    assert len(_report_tool_props(off)) == 2
+    assert all("validation_status" not in props for props in _report_tool_props(off))
+    assert all("validation_status" in props for props in _report_tool_props(on))
+
+    def agent_text(agent: Any) -> str:
+        descriptions = [t.description for t in agent.tools if isinstance(t, FunctionTool)]
+        return "\n".join([agent.instructions, *descriptions])
+
+    for phrase in ("validation_status", "Fix child", "Fix agent"):
+        assert phrase not in agent_text(off)
+        assert phrase in agent_text(on)

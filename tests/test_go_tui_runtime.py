@@ -959,6 +959,40 @@ async def test_agent_state_sync_projects_completed_report() -> None:
 
 
 @pytest.mark.asyncio
+async def test_fix_result_is_visible_in_the_live_assessment_transcript() -> None:
+    runtime = GoTuiRuntime(args())
+    await runtime.coordinator.register("root", "Strix", parent_id=None)
+    await runtime._sync_agent_state()
+    runtime._show_fix_result("Prepared fix branch: strix/fix-export in /workspace/repo")
+    runtime._show_fix_result("Fix unavailable: independent review rejected it", "error")
+    transcript = str(runtime.live_view.events_for_agent("root"))
+    assert "strix/fix-export" in transcript
+    assert "/workspace/repo" in transcript
+    assert "independent review rejected it" in transcript
+
+
+@pytest.mark.asyncio
+async def test_agent_state_sync_waits_for_fixes_before_showing_completion() -> None:
+    runtime = GoTuiRuntime(args())
+    runtime.report_state = cast(
+        "Any",
+        SimpleNamespace(
+            run_record={"status": "running"},
+            scan_results={"scan_completed": True},
+            defer_completion=True,
+        ),
+    )
+    await runtime.coordinator.register("root", "Strix", parent_id=None)
+    await runtime.coordinator.set_status("root", "completed")
+    await runtime._sync_agent_state()
+    assert runtime.controller.scan_state == "preparing_fixes"
+    assert runtime.controller.error is None
+    runtime.report_state.run_record["status"] = "completed"
+    await runtime._sync_agent_state()
+    assert runtime.controller.scan_state == "completed"
+
+
+@pytest.mark.asyncio
 async def test_agent_state_sync_does_not_mask_root_failure_with_completed_report() -> None:
     runtime = GoTuiRuntime(args())
     runtime.report_state = cast("Any", SimpleNamespace(run_record={"status": "completed"}))

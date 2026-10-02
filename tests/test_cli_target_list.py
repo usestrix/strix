@@ -69,6 +69,29 @@ def test_parse_arguments_combines_target_and_target_list(
     ]
 
 
+@pytest.mark.parametrize(
+    ("extra", "expected"),
+    [
+        ([], True),
+        (["--auto-fix"], True),
+        (["--no-auto-fix"], False),
+    ],
+)
+def test_parse_arguments_controls_automatic_fixes(
+    monkeypatch: pytest.MonkeyPatch, extra: list[str], expected: bool
+) -> None:
+    _stub_settings(monkeypatch)
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["strix", "--target", "https://example.com", "--non-interactive", *extra],
+    )
+
+    args = cli_main.parse_arguments()
+
+    assert args.auto_fix is expected
+
+
 def test_parse_arguments_rejects_resume_with_target_list(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -126,6 +149,32 @@ def test_resume_restores_a_target_less_workspace_mount(
         {"source_path": str(work), "workspace_subdir": "project", "protect_metadata": True}
     ]
     assert args.instruction == "audit the auth flow"
+
+
+def test_resume_restores_disabled_automatic_fixes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    work = tmp_path / "project"
+    work.mkdir()
+    monkeypatch.chdir(tmp_path)
+    _write_run_record(
+        tmp_path / "strix_runs",
+        "pentest_abcd",
+        {
+            "run_name": "pentest_abcd",
+            "targets_info": [],
+            "local_sources": [],
+            "workspace_mount": str(work),
+            "instruction": "audit the auth flow",
+            "scan_mode": "deep",
+            "auto_fix": False,
+        },
+    )
+    monkeypatch.setattr(sys, "argv", ["strix", "--resume", "pentest_abcd"])
+
+    args = cli_main.parse_arguments()
+
+    assert args.auto_fix is False
 
 
 def test_resume_revalidates_persisted_workspace_files(

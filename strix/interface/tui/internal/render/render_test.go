@@ -33,6 +33,16 @@ func TestChatUserMessage(t *testing.T) {
 	requireContains(t, out, "You:", "hello", "world")
 }
 
+func TestFinishScanDoesNotClaimPendingFixesAreComplete(t *testing.T) {
+	for _, result := range []any{map[string]any{"fixes_pending": true}, `{"fixes_pending":true}`} {
+		out := Tool(tool("finish_scan", map[string]any{"executive_summary": "Assessment"}, result, "completed"))
+		requireContains(t, out, "Assessment complete", "Fixes in progress")
+		if strings.Contains(out, "Penetration test completed") {
+			t.Fatalf("pending fixes rendered as complete: %s", out)
+		}
+	}
+}
+
 func TestChatAssistantMarkdown(t *testing.T) {
 	out := Chat(map[string]any{"role": "assistant", "content": "# Heading\n\nSome **bold** text"})
 	requireContains(t, out, "Heading", "bold")

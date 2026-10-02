@@ -28,9 +28,10 @@ Design notes:
   * File locations must be repo-relative POSIX paths. Paths that look
     like URIs, absolute paths, or traversal patterns are rejected rather
     than emitted as invalid code-scanning alerts.
-  * Findings with a fix suggestion (``code_locations[].fix_before`` +
-    ``fix_after``) are emitted as SARIF ``fixes`` so code-scanning can
-    render a one-click suggested change.
+  * Findings whose fix candidate completed verified preparation
+    (``fix_preparation.state == "ready"`` with a ``candidate_digest``
+    matching the candidate the result carries) are emitted as SARIF
+    ``fixes`` so code-scanning can render a one-click suggested change.
   * Endpoint / target-only findings (typical of DAST) carry a SARIF
     ``logicalLocations`` entry so the finding keeps a meaningful anchor
     even without a source file + line.
@@ -55,6 +56,10 @@ import os
 import re
 from pathlib import Path, PurePosixPath
 from typing import Any, cast
+
+from pydantic import ValidationError
+
+from strix.fix.contracts import FixCandidateV1
 
 
 logger = logging.getLogger(__name__)
@@ -583,46 +588,44 @@ def _result_properties(
 
 
 def _build_fixes(report: dict[str, Any]) -> list[dict[str, Any]] | None:
-    """Build SARIF ``fixes`` from a finding's code-location fix pairs.
+    """Build SARIF ``fixes`` from a verified prepared finding.
 
-    Strix findings carry the suggested change inline on each code
-    location as ``fix_before`` + ``fix_after``. We map every location
-    that has both (and a safe repo-relative URI + start line) into a
-    SARIF ``artifactChange``, replacing the finding's region with the
-    fixed text. Returns None when no location carries a usable fix pair.
+    SARIF consumers can apply ``fixes`` automatically. Strix emits them only
+    when preparation recorded a ``ready`` result. The result carries the
+    candidate preparation verified — after anchoring corrected its reported
+    lines — and its ``candidate_digest`` must match that candidate, so the
+    emitted replacements are exactly what preparation verified, never a
+    stale or diverged draft.
     """
-    raw_locations = report.get("code_locations")
-    if not isinstance(raw_locations, list):
+    preparation = report.get("fix_preparation")
+    if not isinstance(preparation, dict) or preparation.get("state") != "ready":
+        return None
+    raw_candidate = preparation.get("candidate") or report.get("fix_candidate")
+    if not isinstance(raw_candidate, dict):
+        return None
+    try:
+        candidate = FixCandidateV1.model_validate(raw_candidate)
+    except ValidationError:
+        return None
+    if preparation.get("candidate_digest") != candidate.digest():
         return None
 
     artifact_changes: list[dict[str, Any]] = []
-    for location in raw_locations:
-        if not isinstance(location, dict):
-            continue
-        file_path = _string_value(location.get("file"))
-        fix_before = _string_value(location.get("fix_before"))
-        fix_after = _string_value(location.get("fix_after"))
-        start_line = location.get("start_line")
-        if not (file_path and fix_before and fix_after):
-            continue
-        if type(start_line) is not int or start_line < 1:
-            continue
-        uri = _sarif_uri(file_path)
+    for edit in candidate.draft_edits:
+        uri = _sarif_uri(edit.file)
         if uri is None:
             continue
-
-        deleted_region: dict[str, Any] = {"startLine": start_line}
-        end_line = location.get("end_line")
-        if type(end_line) is int and end_line >= start_line:
-            deleted_region["endLine"] = end_line
-
+        deleted_region: dict[str, Any] = {
+            "startLine": edit.start_line,
+            "endLine": edit.end_line,
+        }
         artifact_changes.append(
             {
                 "artifactLocation": {"uri": uri},
                 "replacements": [
                     {
                         "deletedRegion": deleted_region,
-                        "insertedContent": {"text": fix_after},
+                        "insertedContent": {"text": edit.after},
                     }
                 ],
             }

@@ -262,6 +262,7 @@ async def create_or_reuse(
     local_sources: list[dict[str, Any]],
     extra_files: list[dict[str, Any]] | None = None,
     status_sink: StatusSink | None = None,
+    network_allowed: bool = True,
 ) -> dict[str, Any]:
     """Return the existing session bundle for ``scan_id`` or create a new one.
 
@@ -280,11 +281,15 @@ async def create_or_reuse(
 
     cached = _SESSION_CACHE.get(scan_id)
     if cached is not None:
+        if cached.get("network_allowed", True) != network_allowed:
+            raise ValueError("Cannot reuse a sandbox with a different network policy.")
         logger.info("Reusing existing sandbox session for scan %s", scan_id)
         return cached
 
     backend_name = load_settings().runtime.backend
     backend = get_backend(backend_name)
+    if not network_allowed and backend_name != "docker":
+        raise ValueError("Network isolation is only supported by the Docker backend.")
 
     if backend_supports_bind_mounts(backend_name):
         bind_mounts = build_bind_mounts(local_sources)
@@ -327,8 +332,9 @@ async def create_or_reuse(
     client, session = await backend(
         image=image,
         manifest=manifest,
-        exposed_ports=(_CONTAINER_CAIDO_PORT,),
+        exposed_ports=(_CONTAINER_CAIDO_PORT,) if network_allowed else (),
         bind_mounts=bind_mounts,
+        **({"network_allowed": False} if not network_allowed else {}),
     )
 
     if extra_file_archive is not None:
@@ -338,6 +344,17 @@ async def create_or_reuse(
         except BaseException:
             await _discard_session(client, session)
             raise
+
+    if not network_allowed:
+        # Offline command sandboxes have no reachable proxy endpoint to bootstrap.
+        bundle = {
+            "client": client,
+            "session": session,
+            "caido_client": None,
+            "network_allowed": False,
+        }
+        _SESSION_CACHE[scan_id] = bundle
+        return bundle
 
     report("Setting up the proxy")
     caido_endpoint = await session.resolve_exposed_port(_CONTAINER_CAIDO_PORT)
@@ -364,6 +381,7 @@ async def create_or_reuse(
         "client": client,
         "session": session,
         "caido_client": caido_client,
+        "network_allowed": True,
     }
     _SESSION_CACHE[scan_id] = bundle
     logger.info("Sandbox session for scan %s ready and cached", scan_id)

@@ -264,4 +264,4 @@ def test_render_vulnerability_md_surfaces_calibration_metadata() -> None:
     assert "Egress appears filtered at the network layer." in md
     assert "## Confidence Rationale" in md
     assert "## What Would Change This Severity" in md
-    assert "## Fix Verification" in md
+    assert "## Reported Candidate Checks" in md

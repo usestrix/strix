@@ -8,7 +8,7 @@ import io
 import json
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -44,6 +44,7 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.fix.scan import FixSink, ScanFixes
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
 from strix.telemetry import set_scan_phase
@@ -152,6 +153,7 @@ def _compose_root_instructions_override(
     is_whitebox: bool,
     is_diff_scoped: bool,
     interactive: bool,
+    auto_fix: bool,
     system_prompt_context: dict[str, Any],
 ) -> str | None:
     if root_instructions_override is None:
@@ -164,6 +166,7 @@ def _compose_root_instructions_override(
         is_root=True,
         is_diff_scoped=is_diff_scoped,
         interactive=interactive,
+        auto_fix=auto_fix,
         system_prompt_context=system_prompt_context,
         include_scope=False,
     )
@@ -199,6 +202,8 @@ async def run_strix_scan(
     status_sink: StatusSink | None = None,
     mcp_connection_requests: list[McpConnectionRequest] | None = None,
     mcp_status_sink: McpStatusSink | None = None,
+    fix_sink: FixSink | None = None,
+    assessment_sink: Callable[[dict[str, Any]], Awaitable[None]] | None = None,
 ) -> RunResultBase | None:
     """Run or resume one Strix scan against a sandbox.
 
@@ -361,6 +366,7 @@ async def run_strix_scan(
 
     sessions_to_close: list[SQLiteSession] = []
     mcp_registry: McpRegistry | None = None
+    fixes: ScanFixes | None = None
 
     try:
         targets = scan_config.get("targets") or []
@@ -378,11 +384,16 @@ async def run_strix_scan(
             prompt_cache=settings.llm.prompt_cache,
             extra_headers=settings.llm.extra_headers,
         )
+        from strix.runtime.agent_session import AgentSandboxSession
+
+        root_sandbox = AgentSandboxSession(
+            sandbox_session, sandbox_session.state.manifest.root, root_id
+        )
         run_config = RunConfig(
             model=resolved_model,
             model_provider=StrixProvider(),
             model_settings=model_settings,
-            sandbox=SandboxRunConfig(client=bundle["client"], session=bundle["session"]),
+            sandbox=SandboxRunConfig(client=bundle["client"], session=root_sandbox),
             trace_include_sensitive_data=False,
             # A hallucinated tool name is a recoverable model mistake, not a scan-ending
             # error: hand it back as a tool result so the agent can correct itself.
@@ -461,6 +472,14 @@ async def run_strix_scan(
         except Exception:
             logger.exception("Failed to configure user MCP servers; continuing without them")
 
+        report_state = get_global_report_state()
+        auto_fix = bool(
+            scan_config.get("auto_fix_enabled", True) is not False
+            and scan_config.get("mode") != "pr_review"
+            and report_state is not None
+            and local_sources
+        )
+
         root_context = _merge_root_prompt_context(scope_context, extra_system_prompt_context)
         root_instructions = _compose_root_instructions_override(
             root_instructions_override,
@@ -469,6 +488,7 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            auto_fix=auto_fix,
             system_prompt_context=root_context,
         )
 
@@ -480,6 +500,7 @@ async def run_strix_scan(
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            auto_fix=auto_fix,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=root_context,
@@ -495,18 +516,33 @@ async def run_strix_scan(
                 skills=skills,
             )
 
+        if auto_fix and report_state is not None and local_sources:
+            fixes = ScanFixes(
+                session=sandbox_session,
+                coordinator=coordinator,
+                scan_id=scan_id,
+                state_dir=state_dir,
+                local_sources=local_sources,
+                hooks=hooks,
+                report_state=report_state,
+                event_sink=event_sink,
+                sink=fix_sink,
+            )
+            report_state.defer_completion = True
+
         child_agent_builder = make_child_factory(
             scan_mode=scan_mode,
             is_whitebox=is_whitebox,
             is_diff_scoped=is_diff_scoped,
             interactive=interactive,
+            auto_fix=auto_fix,
             chat_completions_tools=chat_completions_tools,
             strict_tool_schemas=strict_tool_schemas,
             system_prompt_context=scope_context,
         )
 
-        async def spawn_child_agent(**kwargs: Any) -> dict[str, Any]:
-            return await start_child_agent(
+        async def native_child(**kwargs: Any) -> dict[str, Any]:
+            options = dict(  # noqa: C408 - merge native defaults with task-specific options
                 coordinator=coordinator,
                 factory=child_agent_builder,
                 agents_db_path=agents_db,
@@ -516,18 +552,18 @@ async def run_strix_scan(
                 interactive=interactive,
                 event_sink=event_sink,
                 hooks=hooks,
-                **kwargs,
             )
+            return await start_child_agent(**{**options, **kwargs})
 
         context: dict[str, Any] = {
             "coordinator": coordinator,
-            "sandbox_session": bundle["session"],
+            "sandbox_session": root_sandbox,
             "caido_client": bundle["caido_client"],
             "mcp_registry": mcp_registry,
             "agent_id": root_id,
             "parent_id": None,
             "interactive": interactive,
-            "spawn_child_agent": spawn_child_agent,
+            "spawn_child_agent": native_child,
             "scan_targets": build_scan_targets(scan_config),
             "max_context_images": settings.runtime.max_context_images,
         }
@@ -536,6 +572,8 @@ async def run_strix_scan(
         sessions_to_close.append(root_session)
         await coordinator.attach_runtime(root_id, session=root_session)
 
+        if fixes is not None:
+            fixes.start(native_child, context)
         if is_resume:
             await respawn_subagents(
                 coordinator=coordinator,
@@ -588,7 +626,13 @@ async def run_strix_scan(
             agent_id=root_id,
             interactive=interactive,
             session=root_session,
-            start_parked=bool(interactive and is_resume and root_status != "running"),
+            return_on_completion=fixes is not None,
+            start_parked=bool(
+                interactive
+                and is_resume
+                and root_status != "running"
+                and not (fixes is not None and root_status == "completed")
+            ),
             event_sink=event_sink,
             hooks=hooks,
         )
@@ -598,7 +642,10 @@ async def run_strix_scan(
             if isinstance(final, str):
                 try:
                     parsed = json.loads(final)
-                    scan_completed = bool(isinstance(parsed, dict) and parsed.get("scan_completed"))
+                    scan_completed = bool(
+                        isinstance(parsed, dict)
+                        and (parsed.get("scan_completed") or parsed.get("review_completed"))
+                    )
                 except (ValueError, TypeError):
                     scan_completed = False
             elif isinstance(final, dict):
@@ -612,6 +659,18 @@ async def run_strix_scan(
                     scan_id,
                     str(final)[:300],
                 )
+        if report_state is not None and report_state.scan_results:
+            if assessment_sink is not None:
+                try:
+                    await assessment_sink(report_state.scan_results)
+                except Exception:
+                    logger.exception("Could not publish assessment before fix completion")
+            if fixes is not None:
+                report("Assessment complete · Fixes in progress")
+                fix_branches, fix_branch_errors = await fixes.wait()
+                report_state.scan_results["fix_branches"] = fix_branches
+                report_state.scan_results["fix_branch_errors"] = fix_branch_errors
+            report_state.save_run_data(mark_complete=True)
         return result  # noqa: TRY300
     except BudgetExceededError as exc:
         logger.info("Scan %s stopped: %s", scan_id, exc)
@@ -646,6 +705,12 @@ async def run_strix_scan(
                 await coordinator.set_status(root_id, "failed")
         raise
     finally:
+        if fixes is not None:
+            await fixes.close()
+        report_state = get_global_report_state()
+        if report_state is not None:
+            report_state.defer_completion = False
+            report_state.finding_persisted_callback = None
         configure_spill_writer(None)
         # Settle descendants before closing sessions: on a clean finish a child
         # can still be mid-turn, and closing its session underneath it crashes it.

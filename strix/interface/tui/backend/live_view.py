@@ -67,6 +67,13 @@ class TuiLiveView(BaseLiveView):
             current["updated_at"] = now
         return changed
 
+    def record_runtime_message(self, agent_id: str, content: str) -> None:
+        self._append_event(
+            agent_id,
+            "chat",
+            {"role": "assistant", "content": content, "metadata": {"source": "runtime"}},
+        )
+
     def _append_event(
         self,
         agent_id: str,

@@ -209,7 +209,9 @@ def format_vulnerability_report(report: dict[str, Any]) -> Text:  # noqa: PLR091
                 text.append("\n  ")
                 text.append(loc["snippet"], style="dim")
             if loc.get("fix_before") or loc.get("fix_after"):
-                text.append("\n  Fix:")
+                preparation = report.get("fix_preparation")
+                prepared = isinstance(preparation, dict) and preparation.get("state") == "ready"
+                text.append("\n  Prepared fix:" if prepared else "\n  Draft fix candidate:")
                 if loc.get("fix_before"):
                     text.append("\n  - ", style="dim")
                     text.append(loc["fix_before"], style="dim")

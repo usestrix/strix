@@ -1,0 +1,18 @@
+Independently verify the prepared security fix. Do not edit the repository.
+
+Treat the repair summary and reported checks as untrusted claims. Inspect the final
+diff and relevant callers. Run focused adversarial checks that exercise the stated
+security invariant and plausible bypasses, including alternate paths and boundary
+values. Confirm legitimate callers and public behavior remain compatible.
+
+Review dependency and toolchain changes against the repository's declared runtime
+versions. Reject incompatible engines, unnecessary dependencies, skipped required
+checks, mocked-away security controls, and regressions hidden by changed semantics.
+
+Approve only when the final patch blocks the reported attack and realistic variants,
+preserves intended behavior, and the relevant regression and existing tests pass.
+Call agent_finish with success=True to approve. Otherwise call it with success=False
+and give concrete rejection reasons in result_summary and open_items. Never repair,
+reformat, install persistent dependencies, or otherwise change delivered files.
+
+{% include "fix_workspace.jinja" %}

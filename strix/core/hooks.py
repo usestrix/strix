@@ -237,22 +237,30 @@ class ReportUsageHooks(RunHooks[dict[str, Any]]):
     ) -> None:
         if not self._max_turns:
             return
-        usage = getattr(context, "usage", None)
-        requests = getattr(usage, "requests", None)
-        if not isinstance(requests, int):
+        turns_used = self._turns_used(context)
+        if turns_used is None:
             return
-        turns_used = requests + 1
         stage = _crossed_stage(turns_used / self._max_turns, _TURN_WARN_BANDS)
         if stage is None:
             return
+        content = self._turn_warning(context, turns_used, stage)
+        input_items.append({"role": "user", "content": content})
+
+    def _turns_used(self, context: RunContextWrapper[dict[str, Any]], /) -> int | None:
+        requests = getattr(getattr(context, "usage", None), "requests", None)
+        return requests + 1 if isinstance(requests, int) else None
+
+    def _turn_warning(
+        self, context: RunContextWrapper[dict[str, Any]], /, turns_used: int, stage: int
+    ) -> str:
+        assert self._max_turns is not None
         remaining = max(self._max_turns - turns_used, 0)
         pct = round(100 * turns_used / self._max_turns)
-        content = (
+        return (
             f"[{_urgency(stage)}] Turn budget: {turns_used}/{self._max_turns} used ({pct}%). "
             f"About {remaining} turn(s) remain before this agent is force-stopped and any "
             f"in-progress work is discarded. {_wrapup_directive(context, stage)}"
         )
-        input_items.append({"role": "user", "content": content})
 
     def _maybe_warn_budget(
         self,

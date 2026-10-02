@@ -6,7 +6,8 @@ import asyncio
 import contextlib
 import logging
 import uuid
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
+from dataclasses import replace
 from functools import cache
 from typing import TYPE_CHECKING, Any, cast
 
@@ -20,6 +21,7 @@ from openai import (
 )
 
 from strix.config import codex
+from strix.core.agents import TERMINAL_STATUSES, Status
 from strix.core.hooks import (
     BudgetExceededError,
     BudgetPausedError,
@@ -35,6 +37,7 @@ from strix.core.sessions import (
 )
 from strix.llm import request_log
 from strix.llm.compaction import is_context_overflow, maybe_compact
+from strix.runtime.agent_session import AgentSandboxSession
 
 
 if TYPE_CHECKING:
@@ -45,7 +48,7 @@ if TYPE_CHECKING:
     from agents.memory import Session, SQLiteSession
     from agents.result import RunResultBase
 
-    from strix.core.agents import AgentCoordinator, Status
+    from strix.core.agents import AgentCoordinator
 
 
 logger = logging.getLogger(__name__)
@@ -196,6 +199,7 @@ async def run_agent_loop(
     interactive: bool,
     session: Session | None = None,
     start_parked: bool = False,
+    return_on_completion: bool = False,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
 ) -> RunResultBase | None:
@@ -215,6 +219,7 @@ async def run_agent_loop(
             interactive=interactive,
             session=session,
             start_parked=start_parked,
+            return_on_completion=return_on_completion,
             event_sink=event_sink,
             hooks=hooks,
         )
@@ -222,7 +227,7 @@ async def run_agent_loop(
         request_log.reset_call_context(token)
 
 
-async def _run_agent_loop(
+async def _run_agent_loop(  # noqa: PLR0912 - interactive completion and cancellation differ
     *,
     agent: Any,
     initial_input: Any,
@@ -234,6 +239,7 @@ async def _run_agent_loop(
     interactive: bool,
     session: Session | None,
     start_parked: bool,
+    return_on_completion: bool,
     event_sink: StreamEventSink | None,
     hooks: RunHooks[dict[str, Any]] | None,
 ) -> RunResultBase | None:
@@ -244,6 +250,16 @@ async def _run_agent_loop(
         resumable=interactive,
     )
     result: RunResultBase | None = None
+
+    if (
+        interactive
+        and return_on_completion
+        and await _agent_status(coordinator, agent_id) == "completed"
+    ):
+        # A restored assessment can already be final while fixes are pending.
+        # Finalize it without another model cycle or reopening the report.
+        await coordinator.attach_runtime(agent_id, resumable=False)
+        return result
 
     first_cycle_input = await _seed_and_prepare_first_input(
         session, initial_input, start_parked=start_parked
@@ -281,10 +297,17 @@ async def _run_agent_loop(
         return result
 
     while True:
+        if return_on_completion and await _agent_status(coordinator, agent_id) == "completed":
+            # The assessment is final. Let the caller await fixes and publish
+            # branches while the interactive UI remains open to display them.
+            await coordinator.attach_runtime(agent_id, resumable=False)
+            return result
         timeout = await _plain_waiting_timeout(coordinator, agent_id)
         try:
             woke = await coordinator.wait_for_message(agent_id, timeout=timeout)
         except asyncio.CancelledError:
+            if return_on_completion:
+                raise
             return result
 
         if coordinator.budget_stopped:
@@ -356,12 +379,15 @@ async def spawn_child_agent(
     parent_history: list[Any],
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
+    on_complete: Callable[[Any, Any], Awaitable[None]] | None = None,
+    child_id: str | None = None,
 ) -> dict[str, Any]:
     parent_id = parent_ctx.get("agent_id")
     if not isinstance(parent_id, str):
         raise TypeError("Parent agent_id missing from context")
 
-    child_id = uuid.uuid4().hex[:8]
+    resuming = child_id is not None
+    child_id = child_id or uuid.uuid4().hex[:8]
     child_agent = factory(name=name, skills=skills)
     await coordinator.register(
         child_id,
@@ -384,7 +410,9 @@ async def spawn_child_agent(
         name=name,
         parent_id=parent_id,
         task=task,
-        initial_input=child_initial_input(
+        initial_input=[]
+        if resuming
+        else child_initial_input(
             name=name,
             child_id=child_id,
             parent_id=parent_id,
@@ -393,6 +421,7 @@ async def spawn_child_agent(
         ),
         event_sink=event_sink,
         hooks=hooks,
+        on_complete=on_complete,
     )
 
     return {
@@ -425,6 +454,8 @@ async def respawn_subagents(
         ]
         candidates: list[tuple[str, str, str | None, dict[str, Any]]] = []
         for aid, status, md in agents_snapshot:
+            if "fix_task" in md.get("skills", []):
+                continue  # Fix tasks restore their own workspace, prompt and turn allowance.
             if not interactive and status not in {"running", "waiting"}:
                 continue
             if coordinator.parent_of.get(aid) is None or aid == root_id:
@@ -1068,6 +1099,7 @@ async def _start_child_runner(
     start_parked: bool = False,
     event_sink: StreamEventSink | None = None,
     hooks: RunHooks[dict[str, Any]] | None = None,
+    on_complete: Callable[[Any, Any], Awaitable[None]] | None = None,
 ) -> None:
     session = open_agent_session(child_id, agents_db_path)
     sessions_to_close.append(session)
@@ -1077,6 +1109,14 @@ async def _start_child_runner(
     child_ctx["agent_id"] = child_id
     child_ctx["parent_id"] = parent_id
     child_ctx["task"] = task
+    if run_config.sandbox and run_config.sandbox.session:
+        sandbox = run_config.sandbox.session
+        # Fix tasks already supply their worktree and process scope. Normal children
+        # receive their own scope while keeping the shared assessment directory.
+        if not parent_ctx.get("before_agent_finish"):
+            sandbox = AgentSandboxSession(sandbox, sandbox.state.manifest.root, child_id)
+        child_ctx["sandbox_session"] = sandbox
+        run_config = replace(run_config, sandbox=replace(run_config.sandbox, session=sandbox))
 
     async def _child_loop() -> None:
         # A budget stop is a clean scan-wide shutdown, not a child failure: the
@@ -1084,8 +1124,11 @@ async def _start_child_runner(
         # ``_run_cycle``. Swallow it here so the detached task does not surface a
         # spurious "Task exception was never retrieved" warning. The root agent
         # hits the same limit on its next call and tears the scan down.
+        result = None
+        terminal_status: Status = "completed"
+        terminal_error = None
         try:
-            await run_agent_loop(
+            result = await run_agent_loop(
                 agent=child_agent,
                 initial_input=initial_input,
                 run_config=run_config,
@@ -1099,13 +1142,49 @@ async def _start_child_runner(
                 event_sink=event_sink,
                 hooks=hooks,
             )
+        except asyncio.CancelledError:
+            terminal_status = "stopped"
+            raise
         except BudgetExceededError:
+            terminal_status = "stopped"
             logger.info("child %s stopped after reaching the scan budget limit", child_id)
         except SubagentBudgetReservedError:
+            terminal_status = "stopped"
             logger.info("child %s stopped at the sub-agent budget reserve", child_id)
+        except Exception as error:
+            terminal_status = "crashed"
+            terminal_error = request_log.failure_text(error)
+            raise
         finally:
-            if not coordinator.is_shutting_down:
-                await _notify_parent_on_exit(coordinator, child_id)
+            try:
+                if on_complete is not None:
+                    try:
+                        await on_complete(result, session)
+                    except asyncio.CancelledError:
+                        terminal_status = "stopped"
+                        raise
+                    except Exception:
+                        logger.exception("child %s completion delivery failed", child_id)
+            finally:
+                await _settle_child_exit(
+                    coordinator,
+                    child_id,
+                    terminal_status,
+                    terminal_error,
+                )
 
     task_handle = asyncio.create_task(_child_loop(), name=f"agent-{name}-{child_id}")
     await coordinator.attach_runtime(child_id, task=task_handle)
+
+
+async def _settle_child_exit(
+    coordinator: AgentCoordinator,
+    child_id: str,
+    terminal_status: Status,
+    terminal_error: str | None,
+) -> None:
+    status = await _agent_status(coordinator, child_id)
+    if status not in TERMINAL_STATUSES:
+        await coordinator.set_status(child_id, terminal_status, error=terminal_error)
+    if not coordinator.is_shutting_down:
+        await _notify_parent_on_exit(coordinator, child_id)

@@ -80,6 +80,8 @@ func (m *Model) chatContent() string {
 			return centeredPlaceholder("Scan completed", m.viewport.Width, m.viewport.Height)
 		case "preparing":
 			return centeredPlaceholder("Preparing scan...", m.viewport.Width, m.viewport.Height)
+		case "preparing_fixes":
+			return centeredPlaceholder("Assessment complete · Fixes in progress", m.viewport.Width, m.viewport.Height)
 		default:
 			return centeredPlaceholder("Loading...", m.viewport.Width, m.viewport.Height)
 		}
@@ -827,6 +829,11 @@ func (m Model) statusView(width int) string {
 			}
 			left = statusMessage(msg, red, " · Send message to resume", width)
 		}
+	}
+	if m.snapshot.ScanState == "preparing_fixes" {
+		left = lipgloss.NewStyle().Foreground(amber).Render("Assessment complete · Fixes in progress")
+	} else if m.snapshot.ScanState == "completed" {
+		left = lipgloss.NewStyle().Foreground(mid).Render("Scan completed")
 	}
 	if m.errorText != "" {
 		left = statusMessage(m.errorText, red, "", width-lipgloss.Width(right))

@@ -187,6 +187,16 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "--auto-fix",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help=(
+            "Prepare verified local fix branches for confirmed source findings. "
+            "Use --no-auto-fix to disable this behavior. Default: enabled."
+        ),
+    )
+
+    parser.add_argument(
         "-m",
         "--scan-mode",
         type=str,
@@ -378,6 +388,8 @@ Strix Cloud:
         except ValueError as e:
             parser.error(str(e))
 
+    if args.auto_fix is None:
+        args.auto_fix = True
     return args
 
 
@@ -429,6 +441,8 @@ def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser
 
     if args.instruction is None:
         args.instruction = state.get("instruction")
+    if args.auto_fix is None:
+        args.auto_fix = state.get("auto_fix", True) is not False
     if not getattr(args, "user_instruction", None):
         args.user_instruction = state.get("user_instruction") or None
     args.local_sources = collect_local_sources(args.targets_info)

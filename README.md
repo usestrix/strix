@@ -240,6 +240,21 @@ strix --target-list ./targets.txt
 
 See the [CLI reference](https://docs.strix.ai/usage/cli) for every option, including scan modes, diff scope, instruction files, and budgets.
 
+### Prepare a fix
+
+Repair a saved source finding, run relevant customer unit tests and a new regression
+test, and independently review the patch with the OSS agents:
+
+```bash
+strix fix --repo ./repo --finding strix_runs/my-scan/vulnerabilities.json \
+  --finding-id vuln-0001 --output ./fix-result/result.json
+```
+
+The workflow runs in an isolated sandbox and leaves source edits in the generated
+patch. Results include the reviewer assessment, command history, and any remaining
+work. See the [fix preparation guide](docs/fix-preparation.md) for requirements,
+outputs, and automation.
+
 ### Headless Mode
 
 Run Strix programmatically without interactive UI using the `-n/--non-interactive` flag - perfect for servers and automated jobs. The CLI prints real-time vulnerability findings and the final report before exiting. Exits with non-zero code when vulnerabilities are found.

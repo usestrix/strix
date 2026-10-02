@@ -1104,6 +1104,7 @@ func TestTerminalSnapshotWithoutAgentsDoesNotKeepLoading(t *testing.T) {
 		{state: "stopped", want: "Scan stopped"},
 		{state: "completed", want: "Scan completed"},
 		{state: "preparing", want: "Preparing scan..."},
+		{state: "preparing_fixes", want: "Fixes in progress"},
 	}
 
 	for _, tt := range tests {
@@ -1123,6 +1124,16 @@ func TestTerminalSnapshotWithoutAgentsDoesNotKeepLoading(t *testing.T) {
 				t.Fatalf("failure detail was not rendered: %s", content)
 			}
 		})
+	}
+}
+
+func TestCompletedRootShowsPendingFixStatus(t *testing.T) {
+	model := New(nil)
+	model.snapshot.ScanState = "preparing_fixes"
+	model.snapshot.Agents = []protocol.Agent{{ID: "root", Status: "completed"}}
+	out := model.statusView(100)
+	if !strings.Contains(out, "Fixes in progress") || strings.Contains(out, "Agent completed") {
+		t.Fatalf("premature completion status: %s", out)
 	}
 }
 

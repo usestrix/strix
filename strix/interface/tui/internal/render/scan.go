@@ -1,6 +1,7 @@
 package render
 
 import (
+	"encoding/json"
 	"strings"
 )
 
@@ -8,9 +9,21 @@ import (
 // Finish scan (finish_renderer.py)
 // ---------------------------------------------------------------------------
 
-func renderFinishScan(args map[string]any) string {
+func renderFinishScan(args map[string]any, result any, status string) string {
 	var b strings.Builder
-	b.WriteString(Col(Green).Render("◆ ") + Bold(Green).Render("Penetration test completed"))
+	label := "Penetration test completed"
+	resultMap, _ := resultMapOf(result)
+	if raw, ok := result.(string); ok {
+		_ = json.Unmarshal([]byte(raw), &resultMap)
+	}
+	if status != "completed" {
+		label = "Finalizing assessment"
+	} else if truthy(resultMap["fixes_pending"]) {
+		label = "Assessment complete · Fixes in progress"
+	} else if success, ok := resultMap["success"].(bool); ok && !success {
+		label = "Assessment not completed"
+	}
+	b.WriteString(Col(Green).Render("◆ ") + Bold(Green).Render(label))
 	section := func(label, value string) {
 		if value != "" {
 			b.WriteString("\n\n" + Bold(Field).Render(label) + "\n" + value)
