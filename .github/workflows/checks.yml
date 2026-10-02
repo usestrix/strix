@@ -1,0 +1,152 @@
+name: Checks
+
+# Pull-request validation for #1260. None of these jobs change files, and none
+# are required yet: the issue's rollout is to land the checks, clear any
+# baseline failure, and only then mark each green check required.
+#
+# Type checking is not covered here; a per-platform mypy workflow is proposed
+# separately in #1301.
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ruff:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      # `uv run` uses the ruff pinned in uv.lock, not the older rev in
+      # .pre-commit-config.yaml, so this matches `make lint` minus --fix.
+      - name: ruff check
+        run: uv run ruff check .
+
+      - name: ruff format --check
+        run: uv run ruff format --check .
+
+  bandit:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: bandit
+        run: uv run bandit -r strix/ -c pyproject.toml
+
+  pytest:
+    name: pytest (python ${{ matrix.python-version }})
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Every version pyproject.toml classifies as supported.
+        python-version:
+          - '3.12'
+          - '3.13'
+          - '3.14'
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065  # v5.6.0
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5.4.2
+
+      - name: Install dependencies
+        run: uv sync --frozen --python ${{ matrix.python-version }}
+
+      - name: pytest
+        run: uv run --python ${{ matrix.python-version }} pytest -q
+
+  tui:
+    name: TUI (gofmt, vet, test)
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: strix/interface/tui
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@44694675825211faa026b3c33043df3e48a5fa00  # v6.0.0
+        with:
+          go-version-file: strix/interface/tui/go.mod
+          cache-dependency-path: strix/interface/tui/go.sum
+
+      # Same commands as `make tui-lint` and `make tui-test`.
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test -race ./...
+
+  viewer:
+    name: viewer build
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: strix/interface/viewer/frontend
+
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7.0.0
+        with:
+          node-version: '24'
+
+      # Build only. Whether the committed output under static/ must match a
+      # fresh build is a separate policy, so this does not diff against it.
+      - name: npm ci
+        run: npm ci --no-audit --no-fund
+
+      - name: npm run build
+        run: npm run build
