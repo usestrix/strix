@@ -32,6 +32,10 @@ jobs:
             wheel-platform: win_amd64
 
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4.4.0
@@ -92,12 +96,46 @@ jobs:
             tar -C dist/release -czvf "dist/release/strix-${VERSION}-${{ matrix.target }}.tar.gz" "strix-${VERSION}-${{ matrix.target }}"
           fi
 
+      # Sigstore keyless provenance (GitHub OIDC). Attest the published archive
+      # and wheel on the runner that built them so the installer can pin
+      # usestrix/strix/.github/workflows/build-release.yml. The bundle is also
+      # copied into dist/release/ so it ships as a release asset for manual /
+      # offline verification (#1267).
+      - name: Attest Unix archive and wheel
+        id: attest-unix
+        if: runner.os != 'Windows'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: |
+            dist/release/*.tar.gz
+            dist/*.whl
+
+      - name: Attest Windows archive and wheel
+        id: attest-windows
+        if: runner.os == 'Windows'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: |
+            dist/release/*.zip
+            dist/*.whl
+
+      - name: Publish attestation bundle
+        shell: bash
+        env:
+          # Only one of the attest steps runs; the other output is empty.
+          BUNDLE_PATH: ${{ steps.attest-unix.outputs.bundle-path }}${{ steps.attest-windows.outputs.bundle-path }}
+        run: |
+          test -n "$BUNDLE_PATH"
+          test -f "$BUNDLE_PATH"
+          cp "$BUNDLE_PATH" "dist/release/strix-${{ matrix.target }}.intoto.jsonl"
+
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
         with:
           name: strix-${{ matrix.target }}
           path: |
             dist/release/*.tar.gz
             dist/release/*.zip
+            dist/release/*.intoto.jsonl
             dist/*.whl
           if-no-files-found: error
 
@@ -106,6 +144,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      id-token: write
+      attestations: write
 
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4.3.0
@@ -113,9 +153,65 @@ jobs:
           path: release
           merge-multiple: true
 
+      # Same-origin integrity manifest for product assets (archives + wheels).
+      # Provenance bundles are published alongside the release but excluded here
+      # so SHA256SUMS stays a stable product-byte list the installer greps.
+      - name: Generate SHA256SUMS
+        working-directory: release
+        shell: bash
+        run: |
+          : > SHA256SUMS
+          while IFS= read -r -d '' f; do
+            ( cd "$(dirname "$f")" && sha256sum "$(basename "$f")" )
+          done < <(find . -type f ! -name SHA256SUMS ! -name '*.intoto.jsonl' -print0 | sort -z) >> SHA256SUMS
+          echo "=== SHA256SUMS ==="
+          cat SHA256SUMS
+
+      - name: Attest SHA256SUMS
+        id: attest-sums
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6  # v4.2.2
+        with:
+          subject-path: release/SHA256SUMS
+
+      - name: Publish SHA256SUMS attestation bundle
+        shell: bash
+        env:
+          BUNDLE_PATH: ${{ steps.attest-sums.outputs.bundle-path }}
+        run: |
+          test -n "$BUNDLE_PATH"
+          test -f "$BUNDLE_PATH"
+          cp "$BUNDLE_PATH" release/SHA256SUMS.intoto.jsonl
+
       - name: Create Release
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65  # v2.6.2
         with:
           prerelease: ${{ !startsWith(github.ref, 'refs/tags/') }}
           generate_release_notes: true
+          # Prepended to the generated changelog. Keep in sync with
+          # docs/quickstart.mdx "Verify a downloaded release".
+          body: |
+            ## Verify this release
+
+            After downloading your platform archive from this release:
+
+            ```bash
+            # Example for linux-x86_64 — set ARCHIVE to the asset you downloaded.
+            TARGET=linux-x86_64
+            ARCHIVE=strix-VERSION-${TARGET}.tar.gz   # VERSION without the leading v
+
+            curl -fsSLO "https://github.com/usestrix/strix/releases/download/${{ github.ref_name }}/SHA256SUMS"
+            curl -fsSLO "https://github.com/usestrix/strix/releases/download/${{ github.ref_name }}/strix-${TARGET}.intoto.jsonl"
+
+            sha256sum -c --ignore-missing SHA256SUMS
+
+            gh attestation verify "${ARCHIVE}" \
+              --repo usestrix/strix \
+              --bundle "strix-${TARGET}.intoto.jsonl" \
+              --signer-workflow usestrix/strix/.github/workflows/build-release.yml \
+              --predicate-type https://slsa.dev/provenance/v1 \
+              --deny-self-hosted-runners
+            ```
+
+            Full instructions (including `cosign`): https://docs.strix.ai/quickstart#verify-a-downloaded-release
+          # Includes SHA256SUMS and *.intoto.jsonl provenance bundles.
           files: release/**
