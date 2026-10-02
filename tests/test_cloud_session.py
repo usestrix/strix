@@ -163,4 +163,12 @@ def test_cli_device_identity_is_stable_and_privacy_safe(
     second = platform_identity.read_or_create_identity(device_name="  Build   laptop  ")
     assert second["client_instance_id"] == first["client_instance_id"]
     assert second["device_name"] == "Build laptop"
-    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_cli_identity_file_is_owner_only(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, assert_secret_file_permissions: Any
+) -> None:
+    path = tmp_path / "cli-identity.json"
+    monkeypatch.setattr(platform_identity, "IDENTITY_PATH", path)
+    platform_identity.read_or_create_identity()
+    assert_secret_file_permissions(path)
