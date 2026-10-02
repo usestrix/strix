@@ -880,7 +880,11 @@ func TestRunningViewerShowsCompleteWrappedURL(t *testing.T) {
 	if !strings.Contains(view, "Viewer running") {
 		t.Fatalf("viewer status is missing: %s", view)
 	}
-	urlLines := strings.Split(strings.SplitN(view, "\n", 2)[1], "\n")
+	lines := strings.Split(strings.SplitN(view, "\n", 2)[1], "\n")
+	if actions := lines[len(lines)-1]; !strings.Contains(actions, viewerOpenLabel) || !strings.Contains(actions, viewerCopyLabel) {
+		t.Fatalf("viewer actions are missing: %s", view)
+	}
+	urlLines := lines[:len(lines)-1]
 	for i := range urlLines {
 		urlLines[i] = strings.TrimRight(urlLines[i], " ")
 	}
@@ -889,6 +893,174 @@ func TestRunningViewerShowsCompleteWrappedURL(t *testing.T) {
 	}
 	if want := strings.Count(model.viewerView(model.viewerContentWidth()), "\n") + 3; model.viewerHeight() != want {
 		t.Fatalf("viewer height = %d, want %d", model.viewerHeight(), want)
+	}
+}
+
+func TestRunningViewerButtonsCopyOrOpenWithoutCollapsing(t *testing.T) {
+	originalWriteClipboard := writeClipboard
+	t.Cleanup(func() { writeClipboard = originalWriteClipboard })
+	copied := ""
+	writeClipboard = func(value string) error {
+		copied = value
+		return nil
+	}
+
+	model, connection := newCommandTestModel(t)
+	model.width, model.height = 130, 30
+	url := "  http://127.0.0.1:43123/?token=abcdefghijklmnopqrstuvwxyz0123456789  "
+	model.snapshot.ViewerStatus = "running"
+	model.snapshot.ViewerURL = &url
+	_, sidebarWidth, chatWidth, _ := model.layout()
+	panel := model.viewerPanel(sidebarWidth)
+	openX, openY := -1, -1
+	copyX, copyY := -1, -1
+	for row, line := range strings.Split(panel, "\n") {
+		plain := ansi.Strip(line)
+		if index := strings.Index(plain, viewerOpenLabel); index >= 0 {
+			openX = chatWidth + 1 + ansi.StringWidth(plain[:index])
+			openY = row
+		}
+		if index := strings.Index(plain, viewerCopyLabel); index >= 0 {
+			copyX = chatWidth + 1 + ansi.StringWidth(plain[:index])
+			copyY = row
+		}
+	}
+	if openX < 0 || copyX < 0 {
+		t.Fatalf("viewer buttons were not rendered: %s", ansi.Strip(panel))
+	}
+
+	updated, cmd := model.updateMouse(tea.MouseMsg{
+		X: copyX, Y: copyY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	model = updated.(Model)
+	if cmd == nil {
+		t.Fatal("clicking Copy produced no command")
+	}
+	msg := cmd()
+	if copied != strings.TrimSpace(url) {
+		t.Fatalf("copied viewer URL = %q, want %q", copied, strings.TrimSpace(url))
+	}
+	if connection.Len() != 0 {
+		t.Fatal("clicking Copy also sent viewer.open")
+	}
+	if model.viewerCollapsed {
+		t.Fatal("clicking Copy collapsed the viewer")
+	}
+	updated, _ = model.Update(msg)
+	model = updated.(Model)
+	if toast := model.toast; toast != "Copied to clipboard" {
+		t.Fatalf("copy toast = %q", toast)
+	}
+
+	updated, cmd = model.updateMouse(tea.MouseMsg{
+		X: openX, Y: openY, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	model = updated.(Model)
+	if model.viewerCollapsed {
+		t.Fatal("clicking Open collapsed the viewer")
+	}
+	if envelope := commandFromCmd(t, cmd, connection); envelope.Type != "viewer.open" {
+		t.Fatalf("Open command = %q", envelope.Type)
+	}
+}
+
+func TestRunningViewerWithoutURLHasNoCopyAction(t *testing.T) {
+	model := New(nil)
+	model.snapshot.ViewerStatus = "running"
+	if view := ansi.Strip(model.viewerView(20)); strings.Contains(view, viewerCopyLabel) {
+		t.Fatalf("viewer without a URL rendered Copy: %s", view)
+	}
+	if cmd := model.startViewerCopy(); cmd != nil {
+		t.Fatal("viewer without a URL produced a copy command")
+	}
+}
+
+func TestRunningViewerBodyCollapsesAndExpands(t *testing.T) {
+	model := New(nil)
+	model.width, model.height = 130, 30
+	url := "http://127.0.0.1:43123/?token=test"
+	model.snapshot.ViewerStatus = "running"
+	model.snapshot.ViewerURL = &url
+	expandedHeight := model.viewerHeight()
+	_, _, chatWidth, _ := model.layout()
+
+	updated, cmd := model.updateMouse(tea.MouseMsg{
+		X: chatWidth + 2, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	model = updated.(Model)
+	if cmd != nil || !model.viewerCollapsed {
+		t.Fatalf("clicking the viewer body did not collapse it: collapsed=%v cmd=%v", model.viewerCollapsed, cmd)
+	}
+	if model.viewerHeight() >= expandedHeight {
+		t.Fatalf("collapsed viewer height = %d, expanded height = %d", model.viewerHeight(), expandedHeight)
+	}
+	collapsed := ansi.Strip(model.viewerView(model.viewerContentWidth()))
+	if !strings.Contains(collapsed, "Viewer running") || strings.Contains(collapsed, url) || strings.Contains(collapsed, viewerCopyLabel) {
+		t.Fatalf("collapsed viewer rendered unexpected content: %s", collapsed)
+	}
+
+	updated, cmd = model.updateMouse(tea.MouseMsg{
+		X: chatWidth + 2, Y: 1, Button: tea.MouseButtonLeft, Action: tea.MouseActionPress,
+	})
+	model = updated.(Model)
+	if cmd != nil || model.viewerCollapsed {
+		t.Fatalf("clicking the collapsed viewer did not expand it: collapsed=%v cmd=%v", model.viewerCollapsed, cmd)
+	}
+	if model.viewerHeight() != expandedHeight {
+		t.Fatalf("re-expanded viewer height = %d, want %d", model.viewerHeight(), expandedHeight)
+	}
+}
+
+func TestSystemClipboardUsesRemoteAndTmuxBackends(t *testing.T) {
+	originalNative := writeNativeClipboard
+	originalTerminal := writeTerminalClipboard
+	originalTmux := writeTmuxClipboard
+	t.Cleanup(func() {
+		writeNativeClipboard = originalNative
+		writeTerminalClipboard = originalTerminal
+		writeTmuxClipboard = originalTmux
+	})
+
+	nativeCalls, terminalCalls, tmuxCalls := 0, 0, 0
+	writeNativeClipboard = func(string) error {
+		nativeCalls++
+		return nil
+	}
+	writeTerminalClipboard = func(string) error {
+		terminalCalls++
+		return nil
+	}
+	writeTmuxClipboard = func(string) error {
+		tmuxCalls++
+		return nil
+	}
+
+	t.Setenv("SSH_CONNECTION", "")
+	t.Setenv("SSH_CLIENT", "")
+	t.Setenv("SSH_TTY", "")
+	t.Setenv("TMUX", "/tmp/tmux.sock,1,0")
+	if err := writeSystemClipboard("local URL"); err != nil {
+		t.Fatal(err)
+	}
+	if nativeCalls != 1 || terminalCalls != 0 || tmuxCalls != 0 {
+		t.Fatalf("local copy calls: native=%d terminal=%d tmux=%d", nativeCalls, terminalCalls, tmuxCalls)
+	}
+
+	t.Setenv("SSH_CONNECTION", "client 123 server 22")
+	t.Setenv("TMUX", "")
+	if err := writeSystemClipboard("remote URL"); err != nil {
+		t.Fatal(err)
+	}
+	if nativeCalls != 1 || terminalCalls != 1 || tmuxCalls != 0 {
+		t.Fatalf("SSH copy calls: native=%d terminal=%d tmux=%d", nativeCalls, terminalCalls, tmuxCalls)
+	}
+
+	t.Setenv("TMUX", "/tmp/tmux.sock,1,0")
+	if err := writeSystemClipboard("tmux URL"); err != nil {
+		t.Fatal(err)
+	}
+	if nativeCalls != 1 || terminalCalls != 1 || tmuxCalls != 1 {
+		t.Fatalf("tmux copy calls: native=%d terminal=%d tmux=%d", nativeCalls, terminalCalls, tmuxCalls)
 	}
 }
 
