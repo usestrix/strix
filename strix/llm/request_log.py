@@ -30,7 +30,7 @@ import logging
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import asdict, dataclass, replace
 from datetime import UTC, date, datetime
@@ -864,6 +864,84 @@ def _dispatch(
 _litellm_logger: Any | None = None
 
 
+class LlmRequestGate:
+    """Process-wide limit on in-flight LLM requests, plus an optional start gap.
+
+    The defaults (unlimited concurrency, no delay) acquire nothing and sleep
+    nothing, so an unconfigured scan behaves exactly as before. A positive
+    concurrency cap is one semaphore for every route — agent turns, retries,
+    compaction, and the dedupe judge — because provider rate limits are
+    account-wide, not per agent. The delay is measured from the previous
+    request's start and only begins once a concurrency slot is held, so a
+    waiting caller cannot start inside another caller's gap.
+    """
+
+    def __init__(self, *, max_concurrent: int = 0, delay: float = 0.0) -> None:
+        self.max_concurrent = max_concurrent
+        self.delay = delay
+        self._semaphore = asyncio.Semaphore(max_concurrent) if max_concurrent > 0 else None
+        self._spacing = asyncio.Lock()
+        self._next_start = 0.0
+
+    @contextlib.asynccontextmanager
+    async def slot(self) -> AsyncGenerator[None]:
+        if self._semaphore is None:
+            async with self._spacing_delay():
+                yield
+            return
+        async with self._semaphore, self._spacing_delay():
+            yield
+
+    @contextlib.asynccontextmanager
+    async def _spacing_delay(self) -> AsyncGenerator[None]:
+        if self.delay <= 0:
+            yield
+            return
+        async with self._spacing:
+            remaining = self._next_start - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+            self._next_start = time.monotonic() + self.delay
+        yield
+
+
+_request_gate: LlmRequestGate | None = None
+
+
+def request_gate() -> LlmRequestGate:
+    """The gate currently applied to model calls.
+
+    Built from settings on first use. :func:`configure_request_pacing` replaces
+    it when a scan starts, so a config reload is picked up without restarting
+    the process.
+    """
+    if _request_gate is None:
+        configure_request_pacing()
+    assert _request_gate is not None
+    return _request_gate
+
+
+def configure_request_pacing(
+    *, max_concurrent: int | None = None, delay: float | None = None
+) -> LlmRequestGate:
+    """Install the process-wide request gate from explicit values or settings.
+
+    Callers already waiting on a previous gate keep that gate; only requests
+    that have not yet acquired a slot observe the replacement.
+    """
+    global _request_gate  # noqa: PLW0603
+    if max_concurrent is None or delay is None:
+        from strix.config.loader import load_settings
+
+        llm = load_settings().llm
+        if max_concurrent is None:
+            max_concurrent = llm.max_concurrent_requests
+        if delay is None:
+            delay = llm.request_delay
+    _request_gate = LlmRequestGate(max_concurrent=max_concurrent, delay=delay)
+    return _request_gate
+
+
 def install() -> None:
     """Attach the LiteLLM capture (idempotent), the native-route reply capture
     and the default log-line sink."""
@@ -871,6 +949,7 @@ def install() -> None:
     if _log_line_sink not in _sinks:
         _sinks.insert(0, _log_line_sink)
     _observe_sdk_shared_http_client()
+    configure_request_pacing()
     if _litellm_logger is not None:
         return
     import litellm
@@ -1165,18 +1244,19 @@ class RequestLoggingModel(Model):
         reply = HttpReply()
         token = _http_reply.set(reply)
         try:
-            response = await self._inner.get_response(
-                system_instructions,
-                input,
-                model_settings,
-                tools,
-                output_schema,
-                handoffs,
-                tracing,
-                previous_response_id=previous_response_id,
-                conversation_id=conversation_id,
-                prompt=prompt,
-            )
+            async with request_gate().slot():
+                response = await self._inner.get_response(
+                    system_instructions,
+                    input,
+                    model_settings,
+                    tools,
+                    output_schema,
+                    handoffs,
+                    tracing,
+                    previous_response_id=previous_response_id,
+                    conversation_id=conversation_id,
+                    prompt=prompt,
+                )
         except BaseException as exc:
             if self._should_emit(exc):
                 emit(
@@ -1206,6 +1286,42 @@ class RequestLoggingModel(Model):
                 )
             )
         return response
+
+    async def _paced_stream(
+        self,
+        system_instructions: str | None,
+        input: str | list[TResponseInputItem],  # noqa: A002
+        model_settings: ModelSettings,
+        tools: list[Tool],
+        output_schema: AgentOutputSchemaBase | None,
+        handoffs: list[Handoff],
+        tracing: ModelTracing,
+        *,
+        previous_response_id: str | None,
+        conversation_id: str | None,
+        prompt: ResponsePromptParam | None,
+    ) -> AsyncIterator[TResponseStreamEvent]:
+        """Yield the inner stream while holding one global request slot.
+
+        The slot lives in this generator, not the caller's ``async for``.
+        Closing or cancelling the outer generator closes this one too, so the
+        slot is released when the stream ends, fails, or is abandoned — not
+        when the first event is handed back.
+        """
+        async with request_gate().slot():
+            async for event in self._inner.stream_response(
+                system_instructions,
+                input,
+                model_settings,
+                tools,
+                output_schema,
+                handoffs,
+                tracing,
+                previous_response_id=previous_response_id,
+                conversation_id=conversation_id,
+                prompt=prompt,
+            ):
+                yield event
 
     async def stream_response(
         self,
@@ -1241,7 +1357,7 @@ class RequestLoggingModel(Model):
         reply = HttpReply()
         token = _http_reply.set(reply)
         try:
-            async for event in self._inner.stream_response(
+            async for event in self._paced_stream(
                 system_instructions,
                 input,
                 model_settings,
@@ -1388,12 +1504,14 @@ __all__ = [
     "ERROR_MESSAGE_MAX_CHARS",
     "LlmCallContext",
     "LlmRequestEvent",
+    "LlmRequestGate",
     "LlmRequestSink",
     "RequestLoggingModel",
     "api_host",
     "bind_call_context",
     "bound_details",
     "clean_error_message",
+    "configure_request_pacing",
     "current_call_context",
     "emit",
     "event_from_litellm",
@@ -1404,6 +1522,7 @@ __all__ = [
     "json_text",
     "merge_details",
     "register_sink",
+    "request_gate",
     "request_id_from_headers",
     "request_id_from_reply",
     "request_id_from_text",
