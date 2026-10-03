@@ -91,7 +91,12 @@ def _patch_engine_scaffold(
         return object()
 
     monkeypatch.setattr(runner, "build_strix_agent", _build_strix_agent)
-    monkeypatch.setattr(runner, "make_child_factory", lambda **_kwargs: lambda **_k: object())
+
+    def _make_child_factory(**kwargs: Any) -> Any:
+        captured["child_factory_kwargs"] = kwargs
+        return lambda **_k: object()
+
+    monkeypatch.setattr(runner, "make_child_factory", _make_child_factory)
     monkeypatch.setattr(runner, "open_agent_session", lambda _root_id, _db: object())
 
     async def _raise_rate_limit(*_args: Any, **kwargs: Any) -> None:
@@ -225,6 +230,8 @@ async def test_mcp_available_flag_set_when_a_connection_attaches(
     assert kwargs["system_prompt_context"]["mcp_connections"] == [
         {"name": "fs", "purpose": "local files", "tool_count": 0}
     ]
+    child_context = captured["child_factory_kwargs"]["system_prompt_context"]
+    assert child_context["mcp_available"] is True
 
 
 @pytest.mark.asyncio
@@ -249,6 +256,8 @@ async def test_mcp_available_flag_absent_without_a_connection(
     kwargs = captured["kwargs"]
     assert "mcp_available" not in kwargs["system_prompt_context"]
     assert "mcp_connections" not in kwargs["system_prompt_context"]
+    child_context = captured["child_factory_kwargs"]["system_prompt_context"]
+    assert "mcp_available" not in child_context
 
 
 @pytest.mark.asyncio
