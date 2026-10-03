@@ -315,6 +315,7 @@ def test_a_large_bundle_stays_one_archive() -> None:
 @dataclass
 class _RuntimeSettings:
     backend: str
+    caido_boot_wait_s: int = 300
 
 
 @dataclass
