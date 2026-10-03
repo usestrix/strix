@@ -658,6 +658,9 @@ async def list_sitemap_with_client(
         )
         data = raw.get("sitemapDescendantEntries") or {}
     else:
+        # Caido's sitemapRootEntries scopeId is an i32 ID; an empty string
+        # from the agent is rejected, so omit it (null) instead.
+        scope_id = (scope_id or "").strip() or None
         raw = await client.graphql.query(
             _SITEMAP_ROOTS_QUERY,
             variables={"scopeId": scope_id},
