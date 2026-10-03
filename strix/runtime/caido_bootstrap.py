@@ -13,7 +13,7 @@ import asyncio
 import contextlib
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 
 if TYPE_CHECKING:
@@ -27,6 +27,68 @@ logger = logging.getLogger(__name__)
 _LOGIN_AS_GUEST_BODY = (
     '{"query":"mutation LoginAsGuest { loginAsGuest { token { accessToken } } }"}'
 )
+
+_PERMANENT_EXIT_CODES = frozenset({
+    2,  # curl: failed to initialize / bad command-line syntax
+    3,  # curl: malformed URL
+    126,  # command invoked cannot execute (permission denied)
+    127,  # command not found (curl is not installed in the sandbox image)
+})
+
+
+def _is_permanent_transport_error(exc: BaseException) -> bool:
+    """Return True if the sandbox transport has failed permanently and cannot recover."""
+    if isinstance(exc, asyncio.CancelledError):
+        return True
+
+    if getattr(exc, "retryable", None) is False:
+        return True
+
+    try:
+        from agents.sandbox.errors import ExecTransportError, WorkspaceStopError
+
+        if isinstance(exc, WorkspaceStopError):
+            return True
+        if isinstance(exc, ExecTransportError) and not exc.context.get("retry_safe", False):
+            return True
+    except ImportError:
+        pass
+
+    try:
+        from docker import errors as docker_errors  # type: ignore[import-untyped, unused-ignore]
+
+        if isinstance(exc, (docker_errors.NotFound, docker_errors.APIError)):
+            return True
+    except ImportError:
+        pass
+
+    return False
+
+
+def _extract_access_token(payload: Any) -> str | None:
+    if not isinstance(payload, dict):
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    login = data.get("loginAsGuest")
+    if not isinstance(login, dict):
+        return None
+    token_obj = login.get("token")
+    if not isinstance(token_obj, dict):
+        return None
+    token = token_obj.get("accessToken")
+    if isinstance(token, str) and token.strip():
+        return token.strip()
+    return None
+
+
+def _format_stderr(raw_stderr: Any, max_len: int = 200) -> str:
+    if isinstance(raw_stderr, (bytes, bytearray)):
+        return raw_stderr.decode("utf-8", errors="replace")[:max_len]
+    if raw_stderr is not None:
+        return str(raw_stderr)[:max_len]
+    return ""
 
 
 async def _login_as_guest(
@@ -43,34 +105,44 @@ async def _login_as_guest(
     """
     last_err: str | None = None
     for i in range(1, attempts + 1):
-        result = await session.exec(
-            "curl",
-            "-fsS",
-            "-X",
-            "POST",
-            "-H",
-            "Content-Type: application/json",
-            "-d",
-            _LOGIN_AS_GUEST_BODY,
-            f"{container_url}/graphql",
-            timeout=15,
-        )
+        try:
+            result = await session.exec(
+                "curl",
+                "-fsS",
+                "-X",
+                "POST",
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                _LOGIN_AS_GUEST_BODY,
+                f"{container_url}/graphql",
+                timeout=15,
+            )
+        except Exception as exc:
+            if _is_permanent_transport_error(exc):
+                raise RuntimeError(
+                    f"loginAsGuest failed permanently: session.exec failed: {exc}"
+                ) from exc
+            last_err = f"session.exec failed: {exc}"
+            logger.debug("loginAsGuest attempt %d/%d failed: %s", i, attempts, last_err)
+            await asyncio.sleep(min(2.0 * i, 8.0))
+            continue
+
         if result.ok():
             try:
                 payload = json.loads(result.stdout)
-                token = (
-                    payload.get("data", {})
-                    .get("loginAsGuest", {})
-                    .get("token", {})
-                    .get("accessToken")
-                )
+                token = _extract_access_token(payload)
                 if token:
-                    return str(token)
+                    return token
                 last_err = f"loginAsGuest returned no token: {payload}"
-            except json.JSONDecodeError as exc:
+            except (json.JSONDecodeError, AttributeError, TypeError) as exc:
                 last_err = f"unparseable response: {exc}: {result.stdout!r}"
         else:
-            stderr = result.stderr.decode("utf-8", errors="replace")[:200]
+            stderr = _format_stderr(result.stderr)
+            if result.exit_code in _PERMANENT_EXIT_CODES:
+                raise RuntimeError(
+                    f"loginAsGuest failed permanently: curl exit {result.exit_code}: {stderr}"
+                )
             last_err = f"curl exit {result.exit_code}: {stderr}"
         logger.debug("loginAsGuest attempt %d/%d failed: %s", i, attempts, last_err)
         await asyncio.sleep(min(2.0 * i, 8.0))
