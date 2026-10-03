@@ -1,0 +1,45 @@
+# A hand-authored bug-bounty program policy (the offline, no-token path).
+# Paste a program's published scope + rules here when you cannot or do not want to
+# pull them live from the platform API.
+platform: hackerone
+handle: acme
+name: Acme Security (manual)
+url: https://hackerone.com/acme
+managed_by: HackerOne
+
+in_scope:
+  - identifier: "*.acme.com"
+    asset_type: wildcard
+    eligible_for_bounty: true
+    instruction: Primary web surface
+  - identifier: "https://api.acme.com/v2"
+    asset_type: api
+    eligible_for_bounty: true
+  - identifier: "198.51.100.0/24"
+    asset_type: cidr
+    eligible_for_bounty: true
+
+out_of_scope:
+  - identifier: "blog.acme.com"
+    asset_type: domain
+  - identifier: "https://acme.com/corporate"
+    asset_type: url
+
+roe:
+  automated_testing_allowed: true
+  state_changing_poc_allowed: false
+  rate_limit_rps: 5
+  prohibited_actions:
+    - Denial of service / stress testing
+    - Social engineering of staff or users
+    - Physical attacks
+  eligible_vuln_types:
+    - SQL injection
+    - IDOR / broken access control
+    - SSRF
+  ineligible_vuln_types:
+    - Self-XSS
+    - Missing SPF/DMARC records
+    - Rate limiting on non-authentication endpoints
+  pii_handling: Stop at proof of access; do not download or retain real user data.
+  safe_harbor: true

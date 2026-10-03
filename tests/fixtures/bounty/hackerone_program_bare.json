@@ -1,0 +1,37 @@
+{
+  "id": "1337",
+  "type": "program",
+  "attributes": {
+    "handle": "acme",
+    "name": "Acme Security",
+    "policy": "Test within scope only.",
+    "submission_state": "open"
+  },
+  "relationships": {
+    "structured_scopes": {
+      "data": [
+        {
+          "id": "1",
+          "type": "structured-scope",
+          "attributes": {
+            "asset_type": "URL",
+            "asset_identifier": "*.acme.com",
+            "eligible_for_submission": true,
+            "eligible_for_bounty": true,
+            "instruction": "Main surface"
+          }
+        },
+        {
+          "id": "2",
+          "type": "structured-scope",
+          "attributes": {
+            "asset_type": "URL",
+            "asset_identifier": "excluded.acme.com",
+            "eligible_for_submission": false,
+            "eligible_for_bounty": false
+          }
+        }
+      ]
+    }
+  }
+}

@@ -45,7 +45,9 @@ def _resolve_skills(
        (always — closure discipline and severity rubric apply to every
        agent that can open or close a candidate, or file a report).
     6. ``coordination/root_agent`` for the root agent only — orchestration
-       guidance for delegating to specialist subagents.
+       guidance for delegating to specialist subagents; plus Strix 2's
+       ``coordination/strix2_domains`` (domain delegation under scope + the
+       two-tier discipline), loaded from the registered ``skills2`` dir.
     7. Whitebox-specific skills if applicable, including
        ``analysis/fix_verification`` (only whitebox agents can attach an
        applyable ``fix_after``) and ``analysis/source_aware_discovery``.
@@ -60,6 +62,10 @@ def _resolve_skills(
     ordered.append("analysis/severity_calibration")
     if is_root:
         ordered.append("coordination/root_agent")
+        # Strix 2: root-agent guidance for delegating cloud/network/infra/api to
+        # domain specialists under the scope + two-tier discipline. Loaded from the
+        # registered strix/skills2 dir; a no-op (logged + skipped) if not present.
+        ordered.append("coordination/strix2_domains")
     if is_whitebox:
         ordered.append("coordination/source_aware_whitebox")
         ordered.append("custom/source_aware_sast")

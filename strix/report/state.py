@@ -887,8 +887,25 @@ class ReportState:
                 repository_context=self._sarif_repository_context(),
                 coverage=coverage,
             )
+            # Strix 2: fold the finding-annotation sidecar's ATT&CK/CIS/domain tags
+            # into the SARIF that was just written. No-op without annotations, so
+            # upstream-only runs are unaffected; isolated so a failure never breaks
+            # the base SARIF already on disk.
+            from strix.findings2.sarif_enrich import enrich_run_sarif
+
+            enrich_run_sarif(run_dir)
         except Exception:
             logger.exception("SARIF emit failed (non-fatal; CSV/MD unaffected)")
+
+        # Strix 2 bounty mode: write submission-ready artifacts (program, dedupe,
+        # per-finding write-ups) when a bounty program is active for the run. No-op
+        # otherwise, and isolated so a failure never breaks the core report path.
+        try:
+            from strix.bounty.report import write_bounty_artifacts
+
+            write_bounty_artifacts(run_dir, self.vulnerability_reports)
+        except Exception:
+            logger.exception("bounty artifact write failed (non-fatal)")
 
         write_run_record(run_dir, self.run_record)
 

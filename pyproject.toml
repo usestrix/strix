@@ -261,6 +261,10 @@ ignore = [
 # Lazy imports of strix.tools.mcp.client avoid a circular import (client imports
 # the session module at module load).
 "strix/tools/mcp/session.py" = ["PLC0415"]
+# httpx is imported lazily inside the bounty loaders' live-fetch functions so the
+# offline / fixture path (and merely importing the loaders) never drags it in.
+"strix/bounty/loaders/hackerone.py" = ["PLC0415"]
+"strix/bounty/loaders/bugcrowd.py" = ["PLC0415"]
 # call_mcp is a chain of guard clauses that each return an error string.
 "strix/tools/mcp/agent_tools.py" = ["PLR0911"]
 "strix/tools/**/*.py" = [

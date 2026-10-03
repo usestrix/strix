@@ -1,0 +1,71 @@
+{
+  "data": {
+    "id": "1337",
+    "type": "program",
+    "attributes": {
+      "handle": "acme",
+      "name": "Acme Security",
+      "policy": "Please respect our rate limits. Do not run automated scanners against production without coordination.",
+      "submission_state": "open"
+    },
+    "relationships": {
+      "structured_scopes": {
+        "data": [
+          {
+            "id": "1",
+            "type": "structured-scope",
+            "attributes": {
+              "asset_type": "WILDCARD",
+              "asset_identifier": "*.acme.com",
+              "eligible_for_submission": true,
+              "eligible_for_bounty": true,
+              "instruction": "Primary web surface"
+            }
+          },
+          {
+            "id": "2",
+            "type": "structured-scope",
+            "attributes": {
+              "asset_type": "URL",
+              "asset_identifier": "https://api.acme.com/v2",
+              "eligible_for_submission": true,
+              "eligible_for_bounty": true,
+              "instruction": "Public API"
+            }
+          },
+          {
+            "id": "3",
+            "type": "structured-scope",
+            "attributes": {
+              "asset_type": "CIDR",
+              "asset_identifier": "198.51.100.0/24",
+              "eligible_for_submission": true,
+              "eligible_for_bounty": true
+            }
+          },
+          {
+            "id": "4",
+            "type": "structured-scope",
+            "attributes": {
+              "asset_type": "GOOGLE_PLAY_APP_ID",
+              "asset_identifier": "com.acme.app",
+              "eligible_for_submission": true,
+              "eligible_for_bounty": true
+            }
+          },
+          {
+            "id": "5",
+            "type": "structured-scope",
+            "attributes": {
+              "asset_type": "WILDCARD",
+              "asset_identifier": "blog.acme.com",
+              "eligible_for_submission": false,
+              "eligible_for_bounty": false,
+              "instruction": "Hosted WordPress — out of scope"
+            }
+          }
+        ]
+      }
+    }
+  }
+}

@@ -237,6 +237,66 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "--scope-config",
+        type=str,
+        metavar="PATH",
+        help="Path to a scope.yaml authorized-scope policy to use instead of ./scope.yaml. "
+        "When set, out-of-scope targets are refused at tool boundaries.",
+    )
+
+    parser.add_argument(
+        "--allow-intrusive",
+        dest="allow_intrusive",
+        action="store_true",
+        help="Permit intrusive, state-changing actions (cloud writes/deletes, exploitation that "
+        "modifies the target) against in-scope targets. Off by default; requires explicit "
+        "authorization. Logged when used.",
+    )
+
+    parser.add_argument(
+        "--bounty-program",
+        dest="bounty_program",
+        metavar="SPEC",
+        help="Run as a scoped bug-bounty engagement. SPEC is a saved program file "
+        "(.json/.yaml) or 'hackerone:<handle>' / 'bugcrowd:<code>' to pull live (needs "
+        "HACKERONE_API_USERNAME+HACKERONE_API_TOKEN or BUGCROWD_API_TOKEN). The program's "
+        "scope is compiled into the authorized scope (overriding --scope-config) and its "
+        "rules of engagement are enforced; findings get submission-ready write-ups.",
+    )
+    parser.add_argument(
+        "--bounty-roe",
+        dest="bounty_roe",
+        metavar="PATH",
+        help="A rules-of-engagement file (.json/.yaml) overlaid on the program's rules "
+        "(rate limit, prohibited actions, ineligible bug types, whether automated testing "
+        "is allowed) — the machine-readable ROE the platform APIs do not expose.",
+    )
+    parser.add_argument(
+        "--bounty-known-reports",
+        dest="bounty_known_reports",
+        metavar="PATH",
+        help="A JSON file of known/disclosed reports (Hacktivity / Crowdstream export) to "
+        "dedupe against so the run targets novel issues.",
+    )
+    parser.add_argument(
+        "--bounty-automated-policy",
+        dest="bounty_automated_policy",
+        choices=["refuse", "recon_only", "warn_and_proceed"],
+        default="refuse",
+        help="What to do when the program prohibits automated testing: 'refuse' (default, "
+        "safe), 'recon_only' (map + dedupe + plan, no active tools), or 'warn_and_proceed' "
+        "(run anyway — a deliberate, logged override).",
+    )
+    parser.add_argument(
+        "--bounty-intrusive-policy",
+        dest="bounty_intrusive_policy",
+        choices=["auto", "never"],
+        default="auto",
+        help="Intrusive posture in bounty mode: 'auto' (default) permits state-changing "
+        "proofs only when the program allows them; 'never' forbids them regardless.",
+    )
+
+    parser.add_argument(
         "--mcp-server",
         dest="mcp_server",
         action="append",
@@ -315,6 +375,24 @@ Strix Cloud:
     if args.mcp_exclude:
         os.environ["STRIX_MCP_EXCLUDE"] = ",".join(args.mcp_exclude)
 
+    # Strix 2 scope enforcement: the scope loader reads STRIX_SCOPE_CONFIG, and
+    # load_active_policy reads STRIX_ALLOW_INTRUSIVE, so setting them here makes
+    # the flags win over the defaults.
+    if getattr(args, "scope_config", None):
+        scope_config_path = Path(args.scope_config).expanduser()
+        if not scope_config_path.is_file():
+            parser.error(f"--scope-config file not found: {args.scope_config}")
+        os.environ["STRIX_SCOPE_CONFIG"] = str(scope_config_path)
+    if getattr(args, "allow_intrusive", False):
+        os.environ["STRIX_ALLOW_INTRUSIVE"] = "1"
+
+    # Strix 2 bug-bounty mode: load + gate + compile the program, wiring the scope
+    # and the STRIX2_BOUNTY_* env the run rehydrates from. Runs before the scan so an
+    # ROE refusal stops cleanly. Skipped on --resume (the prior run is already wired).
+    args.bounty_preamble = None
+    if getattr(args, "bounty_program", None) and not args.resume:
+        _bootstrap_bounty(args, parser)
+
     if args.update:
         sys.exit(0 if self_update() else 1)
 
@@ -337,6 +415,12 @@ Strix Cloud:
         args.workspace_files = resolve_workspace_files(getattr(args, "workspace_file", None))
     except ValueError as error:
         parser.error(f"--workspace-file: {error}")
+
+    # Prepend the bounty engagement brief to the agent's instruction (after any
+    # --instruction/--instruction-file resolution, so neither clobbers it).
+    if getattr(args, "bounty_preamble", None):
+        extra = args.instruction or ""
+        args.instruction = args.bounty_preamble + (f"\n\n{extra}" if extra else "")
 
     args.user_explicit_instruction = args.instruction if args.resume else None
     # What the user actually asked for, kept apart from args.instruction because
@@ -379,6 +463,37 @@ Strix Cloud:
             parser.error(str(e))
 
     return args
+
+
+def _bootstrap_bounty(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
+    """Load + gate + compile the bounty program, wiring the run (or stopping it)."""
+    from strix.bounty.bootstrap import BountyBootstrapError, bootstrap_bounty
+
+    try:
+        result = bootstrap_bounty(
+            args.bounty_program,
+            roe_path=args.bounty_roe,
+            known_reports_path=args.bounty_known_reports,
+            automated_policy=args.bounty_automated_policy,
+            intrusive_policy=args.bounty_intrusive_policy,
+            allow_intrusive=getattr(args, "allow_intrusive", False),
+        )
+    except BountyBootstrapError as exc:
+        parser.error(f"--bounty-program: {exc}")
+
+    for warning in result.warnings:
+        sys.stderr.write(f"[bounty] {warning}\n")
+    if not result.proceed:
+        sys.stderr.write(
+            "[bounty] Not starting the automated engine for this program. Re-run with "
+            "--bounty-automated-policy recon_only (map + plan) or warn_and_proceed to override.\n"
+        )
+        sys.exit(1)
+    args.bounty_preamble = result.preamble
+    sys.stderr.write(
+        f"[bounty] Engagement wired: {result.program.platform}/{result.program.handle} — "
+        f"scope compiled, mode={result.gate.mode}. Artifacts in {result.bounty_dir}\n"
+    )
 
 
 def _load_resume_state(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:

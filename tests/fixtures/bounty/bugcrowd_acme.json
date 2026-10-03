@@ -1,0 +1,32 @@
+{
+  "program": {
+    "code": "acme-bb",
+    "name": "Acme Bug Bounty"
+  },
+  "targets": [
+    {
+      "name": "*.acme.com",
+      "category": "website",
+      "in_scope": true,
+      "eligible_for_bounty": true
+    },
+    {
+      "name": "https://api.acme.com/v2",
+      "category": "api",
+      "in_scope": true,
+      "eligible_for_bounty": true
+    },
+    {
+      "name": "com.acme.app",
+      "category": "android",
+      "in_scope": true,
+      "eligible_for_bounty": true
+    },
+    {
+      "name": "blog.acme.com",
+      "category": "website",
+      "in_scope": false,
+      "eligible_for_bounty": false
+    }
+  ]
+}

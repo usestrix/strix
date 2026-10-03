@@ -1,0 +1,25 @@
+{
+  "data": [
+    {
+      "id": "r1",
+      "type": "hacktivity-document",
+      "attributes": {
+        "title": "SQL injection in the product search endpoint",
+        "state": "Resolved",
+        "severity_rating": "high",
+        "report_url": "https://hackerone.com/reports/111111",
+        "disclosed_at": "2025-02-01T00:00:00Z"
+      }
+    },
+    {
+      "id": "r2",
+      "type": "hacktivity-document",
+      "attributes": {
+        "title": "Stored XSS via user profile display name",
+        "state": "Resolved",
+        "severity_rating": "medium",
+        "report_url": "https://hackerone.com/reports/222222"
+      }
+    }
+  ]
+}
