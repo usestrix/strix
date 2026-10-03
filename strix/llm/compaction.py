@@ -18,6 +18,7 @@ from agents.models.interface import ModelTracing
 from openai.types.responses import ResponseOutputMessage, ResponseOutputText
 
 from strix.config import load_settings
+from strix.config.claude_bridge import ClaudeStreamError
 from strix.config.models import StrixProvider
 from strix.core.inputs import make_model_settings
 from strix.core.sessions import replace_session_items, session_write_lock
@@ -75,21 +76,29 @@ def _overflow_error_types() -> tuple[type[BaseException], type[BaseException]]:
     return ContextWindowExceededError, BadRequestError
 
 
+def _matches_overflow_message(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    if any(x in msg for x in _OVERFLOW_EXCLUSIONS):
+        return False
+    return any(x in msg for x in _OVERFLOW_MARKERS)
+
+
 def is_context_overflow(exc: BaseException) -> bool:
     """Whether ``exc`` is a model context-window-overflow error.
 
     LiteLLM types most providers' overflow as ContextWindowExceededError, but its
     OpenRouter branch raises a plain BadRequestError, so for that we fall back to
-    matching the provider message.
+    matching the provider message. The Claude Code backend never reaches LiteLLM
+    and reports the CLI's own error, so its 400 is matched the same way; without
+    that, compact-and-retry recovery is simply absent on that route.
     """
     context_window_exceeded, bad_request = _overflow_error_types()
     if isinstance(exc, context_window_exceeded):
         return True
     if isinstance(exc, bad_request):
-        msg = str(exc).lower()
-        if any(x in msg for x in _OVERFLOW_EXCLUSIONS):
-            return False
-        return any(x in msg for x in _OVERFLOW_MARKERS)
+        return _matches_overflow_message(exc)
+    if isinstance(exc, ClaudeStreamError) and exc.status_code in (None, 400, 413):
+        return _matches_overflow_message(exc)
     return False
 
 

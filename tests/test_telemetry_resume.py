@@ -57,11 +57,13 @@ def test_scan_ended_reports_resumed_usage_delta(
     monkeypatch.setattr(telemetry, "_send", lambda _event, props: _capture(sent, props))
     telemetry.end(resumed)
 
+    # Resume still reports the request-count delta (3, not the cumulative 13); token
+    # counts and cost are deliberately no longer sent.
     assert sent[0]["llm_requests"] == 3
-    assert sent[0]["llm_input_tokens"] == 300
-    assert sent[0]["llm_output_tokens"] == 50
-    assert sent[0]["llm_tokens"] == 350
-    assert sent[0]["llm_cost"] == pytest.approx(0.75)
+    assert "llm_tokens" not in sent[0]
+    assert "llm_input_tokens" not in sent[0]
+    assert "llm_output_tokens" not in sent[0]
+    assert "llm_cost" not in sent[0]
     assert 0 <= sent[0]["duration_seconds"] <= 2
 
 
@@ -83,7 +85,7 @@ def test_scan_ended_reports_all_fresh_run_usage(
     telemetry.end(state)
 
     assert sent[0]["llm_requests"] == 3
-    assert sent[0]["llm_input_tokens"] == 300
-    assert sent[0]["llm_output_tokens"] == 50
-    assert sent[0]["llm_tokens"] == 350
-    assert sent[0]["llm_cost"] == pytest.approx(0.75)
+    assert "llm_tokens" not in sent[0]
+    assert "llm_input_tokens" not in sent[0]
+    assert "llm_output_tokens" not in sent[0]
+    assert "llm_cost" not in sent[0]

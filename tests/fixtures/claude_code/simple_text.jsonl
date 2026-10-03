@@ -1,0 +1,4 @@
+{"type":"system","subtype":"init","session_id":"s1","model":"claude-opus-4-8"}
+{"type":"assistant","message":{"model":"claude-opus-4-8","role":"assistant","content":[{"type":"tool_use","id":"toolu_1","name":"StructuredOutput","input":{"text":"Reconnaissance complete. No open ports of interest.","tool_calls":[]}}]},"session_id":"s1"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_1","type":"tool_result","content":"Structured output provided successfully"}]},"session_id":"s1"}
+{"type":"result","subtype":"success","is_error":false,"result":"{\"text\":\"Reconnaissance complete. No open ports of interest.\",\"tool_calls\":[]}","structured_output":{"text":"Reconnaissance complete. No open ports of interest.","tool_calls":[]},"usage":{"input_tokens":1200,"output_tokens":45,"cache_read_input_tokens":29225,"cache_creation_input_tokens":24303},"total_cost_usd":0.15,"session_id":"s1"}

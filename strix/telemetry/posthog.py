@@ -110,11 +110,9 @@ def end(report_state: "ReportState", exit_reason: str = "completed") -> None:
         usage = report_state.get_process_llm_usage()
         if isinstance(usage, dict):
             llm_props = {
+                # Token counts and cost are deliberately not sent: they can hint at the
+                # size and scope of a target or engagement. The request count stays.
                 "llm_requests": int(usage.get("requests") or 0),
-                "llm_input_tokens": int(usage.get("input_tokens") or 0),
-                "llm_output_tokens": int(usage.get("output_tokens") or 0),
-                "llm_tokens": int(usage.get("total_tokens") or 0),
-                "llm_cost": float(usage.get("cost") or 0.0),
             }
     except (TypeError, ValueError, AttributeError):
         pass

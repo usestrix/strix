@@ -1208,7 +1208,7 @@ func TestBudgetPauseShowsOneWarningToastUntilResumed(t *testing.T) {
 
 func TestStatsViewShowsSubscription(t *testing.T) {
 	model := New(nil)
-	model.snapshot.Model = "gpt-5"
+	model.snapshot.Model = "chatgpt/gpt-5.4"
 	model.snapshot.Subscription = true
 	model.snapshot.Usage = map[string]any{"total_tokens": float64(1200), "cost": 3.5}
 	stats := ansi.Strip(model.statsView())
@@ -1217,6 +1217,36 @@ func TestStatsViewShowsSubscription(t *testing.T) {
 	}
 	if strings.Contains(stats, "$") {
 		t.Fatalf("subscription runs must not show a cost: %q", stats)
+	}
+}
+
+func TestStatsViewNamesTheSubscriptionBackend(t *testing.T) {
+	model := New(nil)
+	model.snapshot.Model = "claude-code/claude-opus-5"
+	model.snapshot.Subscription = true
+	model.snapshot.Usage = map[string]any{"total_tokens": float64(1200)}
+	stats := ansi.Strip(model.statsView())
+	if !strings.Contains(stats, "Claude subscription") {
+		t.Fatalf("a claude-code run must not be labelled ChatGPT: %q", stats)
+	}
+	if strings.Contains(stats, "ChatGPT") {
+		t.Fatalf("a claude-code run must not be labelled ChatGPT: %q", stats)
+	}
+}
+
+func TestStatsViewSubscriptionDefaultsToNeutralLabel(t *testing.T) {
+	// A subscription run whose model string didn't survive must not be guessed as
+	// ChatGPT; it falls back to a neutral label instead of mislabelling the backend.
+	model := New(nil)
+	model.snapshot.Model = ""
+	model.snapshot.Subscription = true
+	model.snapshot.Usage = map[string]any{"total_tokens": float64(10)}
+	stats := ansi.Strip(model.statsView())
+	if !strings.Contains(stats, "Subscription") {
+		t.Fatalf("expected a neutral subscription label: %q", stats)
+	}
+	if strings.Contains(stats, "ChatGPT") {
+		t.Fatalf("an unknown-model subscription run must not be labelled ChatGPT: %q", stats)
 	}
 }
 

@@ -1,0 +1,4 @@
+Shell cwd was reset to C:\Development
+{"type":"system","subtype":"init","session_id":"s4"}
+not json at all
+{"type":"result","subtype":"success","is_error":false,"result":"{\"text\":\"done\",\"tool_calls\":[]}","structured_output":{"text":"done","tool_calls":[]},"usage":{"input_tokens":10,"output_tokens":2},"session_id":"s4"}
