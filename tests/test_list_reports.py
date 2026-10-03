@@ -20,6 +20,15 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 
+BASELINE_RUN_NAME = "baseline-run"
+BASELINE_REPORT_ID = "vuln-0042"
+BASELINE_REPORT_TITLE = "Baseline SQL injection"
+BASELINE_REPORT_SEVERITY = "critical"
+BASELINE_REPORT_TIMESTAMP = "2026-07-27 00:00:00 UTC"
+BASELINE_REPORT_TARGET = "https://baseline.example.com"
+CURRENT_REPORT_TITLE = "Reflected XSS in search"
+
+
 @pytest.fixture
 def report_state(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ReportState:
     monkeypatch.chdir(tmp_path)
@@ -172,6 +181,79 @@ def test_list_reports_metadata_first_and_sorted(report_state: ReportState) -> No
     assert "description_preview" in first
     assert "poc_script_code" not in first
     assert "evidence" not in first
+
+
+def test_list_reports_and_get_report_exclude_baseline_findings(
+    report_state: ReportState,
+) -> None:
+    baseline_report = {
+        "id": BASELINE_REPORT_ID,
+        "title": BASELINE_REPORT_TITLE,
+        "severity": BASELINE_REPORT_SEVERITY,
+        "timestamp": BASELINE_REPORT_TIMESTAMP,
+        "target": BASELINE_REPORT_TARGET,
+    }
+    report_state.load_baseline_vulnerabilities(BASELINE_RUN_NAME, [baseline_report])
+    report_state.add_vulnerability_report(
+        title=CURRENT_REPORT_TITLE,
+        severity="medium",
+        description="q reflects unencoded input.",
+        target="https://app.example.com",
+    )
+
+    listed = _do_list_reports(
+        severity=None,
+        finding_class=None,
+        target=None,
+        search=None,
+        include_details=False,
+    )
+    baseline_lookup = _do_get_report(BASELINE_REPORT_ID)
+
+    assert listed["total_count"] == 1
+    assert listed["severity_counts"] == {"medium": 1}
+    assert [report["title"] for report in listed["reports"]] == [CURRENT_REPORT_TITLE]
+    assert baseline_lookup["success"] is False
+    assert baseline_lookup["report"] is None
+
+
+def test_hydrate_baseline_run_reads_dedupe_only_findings(
+    report_state: ReportState,
+) -> None:
+    baseline_dir = report_state.get_run_dir().parent / BASELINE_RUN_NAME
+    baseline_dir.mkdir()
+    baseline_report = {
+        "id": BASELINE_REPORT_ID,
+        "title": BASELINE_REPORT_TITLE,
+        "severity": BASELINE_REPORT_SEVERITY,
+    }
+    (baseline_dir / "vulnerabilities.json").write_text(
+        json.dumps([baseline_report]),
+        encoding="utf-8",
+    )
+
+    report_state.hydrate_baseline_run(BASELINE_RUN_NAME)
+
+    assert report_state.get_dedupe_vulnerabilities() == [baseline_report]
+    assert report_state.get_existing_vulnerabilities() == []
+
+
+def test_hydrate_baseline_run_ignores_missing_selection(report_state: ReportState) -> None:
+    report_state.hydrate_baseline_run(None)
+
+    assert report_state.get_dedupe_vulnerabilities() == []
+
+
+def test_hydrate_from_run_dir_rejects_corrupt_vulnerabilities(
+    report_state: ReportState,
+) -> None:
+    (report_state.get_run_dir() / "vulnerabilities.json").write_text(
+        "{not-json",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(RuntimeError, match="refusing to start fresh"):
+        report_state.hydrate_from_run_dir()
 
 
 def test_list_reports_filter_severity(report_state: ReportState) -> None:
