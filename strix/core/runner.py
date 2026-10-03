@@ -35,7 +35,7 @@ from strix.core.execution import (
 from strix.core.execution import (
     spawn_child_agent as start_child_agent,
 )
-from strix.core.hooks import BudgetExceededError, ReportUsageHooks, recomputed_budget_flags
+from strix.core.hooks import BudgetExceededError, recomputed_budget_flags
 from strix.core.inputs import (
     build_root_task,
     build_scan_targets,
@@ -44,8 +44,10 @@ from strix.core.inputs import (
 )
 from strix.core.paths import run_dir_for, runtime_state_dir
 from strix.core.sessions import open_agent_session
+from strix.guard.hooks import build_run_hooks
 from strix.report.state import get_global_report_state
 from strix.runtime import session_manager
+from strix.strix2_ext import install_strix2_extensions
 from strix.telemetry import set_scan_phase
 from strix.telemetry.logging import set_scan_id, setup_scan_logging
 from strix.tools.output_store import (
@@ -236,6 +238,8 @@ async def run_strix_scan(
     state_dir.mkdir(parents=True, exist_ok=True)
     teardown_logging = setup_scan_logging(run_dir)
     set_scan_id(scan_id)
+    # Strix 2: register additive agent tools + load the scope policy at run start.
+    install_strix2_extensions(run_dir)
 
     agents_path = state_dir / "agents.json"
     agents_db = state_dir / "agents.db"
@@ -388,7 +392,11 @@ async def run_strix_scan(
             # error: hand it back as a tool result so the agent can correct itself.
             tool_not_found_behavior="return_error_to_model",
         )
-        hooks = ReportUsageHooks(
+        # Strix 2: build_run_hooks returns the usual ReportUsageHooks, or — when
+        # STRIX2_PROGRESS_GUARD is set — a subclass that also injects an advisory
+        # cross-turn no-progress nudge. Same type + extend_budget either way, so the
+        # budget/turn behavior and the line below are unchanged when the guard is off.
+        hooks = build_run_hooks(
             model=resolved_model,
             max_budget_usd=max_budget_usd,
             max_turns=max_turns,

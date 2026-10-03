@@ -1,0 +1,3 @@
+# Put each authorized, deliberately-vulnerable target you host under eval/targets/<name>/
+# (a compose file, an app, IaC, or notes on a lab cloud account). Nothing here is committed by
+# default — targets and their authorization are yours. See ../README.md.

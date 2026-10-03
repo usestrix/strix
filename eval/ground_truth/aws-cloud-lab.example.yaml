@@ -1,0 +1,40 @@
+# Ground-truth template — AWS cloud lab (your own authorized test account).
+#
+# Shape for the cloud domain, exercising the host-side AWS wrapper's read-only checks
+# (strix/mcp_servers/aws.py). Copy to eval/ground_truth/aws-cloud-lab.yaml, replace the account id /
+# bucket / ARNs with YOUR lab's, and keep only the misconfigurations you actually seeded. The scope.yaml
+# you run with must authorize this account (cloud.aws_account_ids) or every cloud tool refuses. Metadata
+# only — this file neither creates resources nor authorizes any account.
+#
+# Targets are matched scheme/trailing-slash-insensitive, so an s3:// URI matches a finding that records
+# the same bucket/key with or without the scheme.
+ground_truth:
+  - id: s3-public-object
+    target: "s3://acme-lab-public-bucket/secret.txt"
+    title_contains: "public"
+    cwe: "CWE-284"
+    domain: cloud
+
+  - id: rds-public-instance
+    target: "arn:aws:rds:us-east-1:123456789012:db:lab-postgres"
+    title_contains: "public"
+    cwe: "CWE-284"
+    domain: cloud
+
+  - id: ebs-public-snapshot
+    target: "arn:aws:ec2:us-east-1::snapshot/snap-0labexposed"
+    title_contains: "snapshot"
+    cwe: "CWE-200"
+    domain: cloud
+
+  - id: kms-wildcard-key-policy
+    target: "arn:aws:kms:us-east-1:123456789012:key/lab-cmk"
+    title_contains: "key policy"
+    cwe: "CWE-284"
+    domain: cloud
+
+  - id: iam-overly-permissive
+    target: "arn:aws:iam::123456789012:user/lab-ci"
+    title_contains: "privilege"
+    cwe: "CWE-269"
+    domain: cloud

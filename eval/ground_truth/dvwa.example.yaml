@@ -1,0 +1,35 @@
+# Ground-truth template — DVWA (Damn Vulnerable Web Application, https://github.com/digininja/DVWA, GPL).
+#
+# DVWA is an intentionally-vulnerable app you host yourself, with a selectable security level. Copy this
+# file to eval/ground_truth/dvwa.yaml, point the targets at YOUR authorized instance, and set the entries
+# to the security level you are testing (issues present depend on low/medium/high). Metadata only.
+ground_truth:
+  - id: dvwa-sqli
+    target: "http://localhost:8080/vulnerabilities/sqli/"
+    title_contains: "sql injection"
+    cwe: "CWE-89"
+    domain: web
+
+  - id: dvwa-command-injection
+    target: "http://localhost:8080/vulnerabilities/exec/"
+    title_contains: "command"
+    cwe: "CWE-78"
+    domain: web
+
+  - id: dvwa-reflected-xss
+    target: "http://localhost:8080/vulnerabilities/xss_r/"
+    title_contains: "xss"
+    cwe: "CWE-79"
+    domain: web
+
+  - id: dvwa-file-inclusion
+    target: "http://localhost:8080/vulnerabilities/fi/"
+    title_contains: "file inclusion"
+    cwe: "CWE-98"
+    domain: web
+
+  - id: dvwa-csrf
+    target: "http://localhost:8080/vulnerabilities/csrf/"
+    title_contains: "csrf"
+    cwe: "CWE-352"
+    domain: web
