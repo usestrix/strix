@@ -321,3 +321,25 @@ func TestCollapseToolOnlyOutputHeavyTools(t *testing.T) {
 		t.Fatal("respond_to_user must never collapse")
 	}
 }
+
+func TestReportSectionsRenderMarkdown(t *testing.T) {
+	body := "**Systemic themes:** zero auth on `/share`\n\n# Recommendations\n1. Merge the **ejs 3.1.10** fix"
+	cases := map[string]string{
+		"finish_scan":                 renderFinishScan(map[string]any{"executive_summary": body}),
+		"create_vulnerability_report": renderVulnerabilityReport(map[string]any{"title": "x", "description": body}, nil),
+		"create_dependency_report":    renderDependencyReport(map[string]any{"title": "x", "description": body}, nil),
+	}
+	for name, out := range cases {
+		plain := ansi.Strip(out)
+		for _, raw := range []string{"**", "`", "# Recommendations"} {
+			if strings.Contains(plain, raw) {
+				t.Fatalf("%s left raw markdown %q in %q", name, raw, plain)
+			}
+		}
+		for _, want := range []string{"Systemic themes:", "/share", "Recommendations", "1. Merge the ejs 3.1.10 fix"} {
+			if !strings.Contains(plain, want) {
+				t.Fatalf("%s lost %q in %q", name, want, plain)
+			}
+		}
+	}
+}
