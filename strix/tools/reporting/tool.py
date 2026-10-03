@@ -11,11 +11,12 @@ import asyncio
 import json
 import logging
 import re
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.report.writer import atomic_write_text
 from strix.tools.nullish import clean_optional
 from strix.tools.proxy.tools import existing_request_ids
 
@@ -171,6 +172,22 @@ _VALID_FIX_EFFORT = frozenset({"trivial", "low", "medium", "high"})
 _VALID_CONFIDENCE = frozenset({"high", "medium", "low"})
 _MAX_HTTP_EXCHANGE_IDS = 10
 _MAX_HTTP_EXCHANGE_ID_CHARS = 128
+_WORKSPACE_ROOT = "/workspace"
+_MARKDOWN_REPORT_SUFFIX = ".md"
+_MAX_EXPORTED_REPORT_BYTES = 1_048_576
+# Names the harness already writes beside the exported report. Overwriting them
+# would replace a scan artifact with agent-authored markdown.
+_RESERVED_REPORT_NAMES = frozenset(
+    {
+        "penetration_test_report.md",
+        "findings.sarif",
+        "vulnerabilities.json",
+        "vulnerabilities.csv",
+        "coverage.json",
+        "run.json",
+        "strix.log",
+    }
+)
 
 
 def _validate_required_text(fields: dict[str, str]) -> list[str]:
@@ -2480,6 +2497,166 @@ def _do_get_report(report_id: str, caller_agent_id: str | None = None) -> dict[s
         "error": f"Report with id '{report_id}' not found",
         "report": None,
     }
+
+
+def _markdown_report_path(path: str) -> tuple[str | None, str | None, str | None]:
+    """Return ``(workspace_path, basename, error)`` for a sandbox markdown file.
+
+    Only a markdown file inside the sandbox workspace can be copied. Absolute
+    paths elsewhere, traversal, and harness-owned artifact names are rejected
+    so an export cannot replace ``findings.sarif`` or the executive report,
+    and cannot read outside the workspace.
+    """
+    raw = (path or "").strip()
+    prefix = f"{_WORKSPACE_ROOT}/"
+    if not raw.startswith(prefix):
+        return (
+            None,
+            None,
+            "path must be an absolute markdown file under /workspace "
+            "(for example /workspace/report.md)",
+        )
+    relative = raw[len(prefix) :].strip("/")
+    parts = relative.split("/")
+    if not relative or any(part in ("", ".", "..") for part in parts):
+        return None, None, "path must stay inside /workspace and must not contain '..'"
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in relative):
+        return None, None, "path must not contain control characters"
+    name = parts[-1]
+    if not name.endswith(_MARKDOWN_REPORT_SUFFIX) or name == _MARKDOWN_REPORT_SUFFIX:
+        return None, None, "path must name a markdown file ending in .md"
+    if name in _RESERVED_REPORT_NAMES:
+        return (
+            None,
+            None,
+            f"'{name}' is written by the scan harness; choose another markdown filename",
+        )
+    return f"{_WORKSPACE_ROOT}/{relative}", name, None
+
+
+def _sandbox_session(ctx: RunContextWrapper) -> Any:
+    inner = ctx.context if isinstance(ctx.context, dict) else {}
+    return inner.get("sandbox_session")
+
+
+def _export_destination(
+    ctx: RunContextWrapper, path: str
+) -> tuple[Any, Path, str, str] | dict[str, Any]:
+    workspace_path, name, path_error = _markdown_report_path(path)
+    if workspace_path is None or name is None:
+        return {"success": False, "error": path_error}
+
+    from strix.report.state import get_global_report_state
+
+    report_state = get_global_report_state()
+    if report_state is None:
+        return {
+            "success": False,
+            "error": "Report state unavailable - the host run directory is not ready",
+        }
+    session = _sandbox_session(ctx)
+    if session is None or not hasattr(session, "read"):
+        return {
+            "success": False,
+            "error": "Sandbox session unavailable - the markdown file cannot be copied",
+        }
+    return session, report_state.get_run_dir(), workspace_path, name
+
+
+async def _read_workspace_markdown(session: Any, path: str) -> tuple[bytes | None, str | None]:
+    try:
+        stream = await session.read(Path(path))
+    except FileNotFoundError:
+        return None, f"Markdown file not found: {path}"
+    except Exception as exc:
+        logger.exception("export_markdown_report read failed")
+        return None, f"Failed to read '{path}' from the sandbox: {exc!s}"
+    try:
+        data = stream.read()
+    finally:
+        close = getattr(stream, "close", None)
+        if callable(close):
+            close()
+    if isinstance(data, str):
+        return data.encode("utf-8"), None
+    if isinstance(data, bytes | bytearray):
+        return bytes(data), None
+    return None, "sandbox read did not return file bytes"
+
+
+def _markdown_text(path: str, payload: bytes) -> tuple[str | None, str | None]:
+    if not payload:
+        return None, f"Markdown file is empty: {path}"
+    if len(payload) > _MAX_EXPORTED_REPORT_BYTES:
+        return None, (
+            f"Markdown file exceeds {_MAX_EXPORTED_REPORT_BYTES} bytes ({len(payload)} bytes)"
+        )
+    if b"\x00" in payload:
+        return None, "path does not contain a markdown text file"
+    try:
+        return payload.decode("utf-8"), None
+    except UnicodeDecodeError:
+        return None, "Markdown file is not valid UTF-8 text"
+
+
+async def _export_markdown_report(ctx: RunContextWrapper, path: str) -> dict[str, Any]:
+    """Copy one named markdown report from the sandbox into the host run dir."""
+    ready = _export_destination(ctx, path)
+    if isinstance(ready, dict):
+        return ready
+    session, run_dir, workspace_path, name = ready
+
+    payload, read_error = await _read_workspace_markdown(session, workspace_path)
+    if payload is None:
+        return {"success": False, "error": read_error}
+    text, text_error = _markdown_text(workspace_path, payload)
+    if text is None:
+        return {"success": False, "error": text_error}
+
+    destination = run_dir / name
+    try:
+        atomic_write_text(destination, text)
+    except OSError as exc:
+        logger.exception("export_markdown_report write failed")
+        return {
+            "success": False,
+            "error": f"Failed to write '{name}' into the host run directory: {exc!s}",
+        }
+
+    logger.info("Exported sandbox markdown report to %s", destination)
+    return {
+        "success": True,
+        "message": (
+            f"Copied {workspace_path} to the host run directory as {name}, "
+            "beside findings.sarif and penetration_test_report.md"
+        ),
+        "filename": name,
+        "bytes": len(payload),
+    }
+
+
+@function_tool(timeout=60)
+async def export_markdown_report(ctx: RunContextWrapper, path: str) -> str:
+    """Copy a markdown report from the sandbox workspace into the host run directory.
+
+    The sandbox ``/workspace`` is not visible on the host. Use this after you
+    have written a named ``.md`` report there (for example
+    ``/workspace/report.md``) so the user can retrieve it beside
+    ``findings.sarif`` and ``penetration_test_report.md``.
+
+    The file is copied under its own basename. It must be a non-empty UTF-8
+    markdown file inside ``/workspace``. Harness-owned names such as
+    ``penetration_test_report.md`` and ``findings.sarif`` are rejected.
+
+    Args:
+        path: Absolute sandbox path of the markdown report, such as
+            ``/workspace/report.md`` or ``/workspace/notes/final-report.md``.
+    """
+    return json.dumps(
+        await _export_markdown_report(ctx, path),
+        ensure_ascii=False,
+        default=str,
+    )
 
 
 @function_tool(timeout=30)
