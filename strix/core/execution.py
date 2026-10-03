@@ -17,6 +17,7 @@ from openai import (
     APIConnectionError,
     APIError,
     APITimeoutError,
+    RateLimitError,
 )
 
 from strix.config import codex
@@ -33,6 +34,7 @@ from strix.core.sessions import (
     seed_initial_input,
     strip_all_images_from_session,
 )
+from strix.guard.stall import load_stall_limits, noninteractive_recovery_limit
 from strix.llm import request_log
 from strix.llm.compaction import is_context_overflow, maybe_compact
 
@@ -123,6 +125,10 @@ async def _compact_session(
 _MAX_TRANSIENT_MODEL_RETRIES = 5
 _TRANSIENT_MODEL_RETRY_BASE_DELAY_S = 2.0
 _TRANSIENT_MODEL_RETRY_MAX_DELAY_S = 90.0
+# Strix 2: a persistent provider rate limit (e.g. "reset after 5m") won't clear in
+# seconds of backoff, so retry it only briefly, then stop the scan cleanly for
+# --resume instead of grinding against the limit until the host time cap.
+_MAX_RATE_LIMIT_RETRIES = 2
 
 
 def _model_error_status_code(exc: BaseException) -> int | None:
@@ -148,6 +154,34 @@ def _is_transient_model_error(exc: BaseException) -> bool:
 def _transient_model_retry_delay(attempt: int) -> float:
     delay = _TRANSIENT_MODEL_RETRY_BASE_DELAY_S * float(2 ** (attempt - 1))
     return min(delay, _TRANSIENT_MODEL_RETRY_MAX_DELAY_S)
+
+
+def _is_rate_limit_error(exc: BaseException) -> bool:
+    """Whether a transient error is specifically a provider rate limit.
+
+    Covers a native ``RateLimitError``, a 429 status, and the 9Router case where an
+    upstream 429 is wrapped in a 503 whose message carries the rate-limit text.
+    """
+    if isinstance(exc, RateLimitError):
+        return True
+    if _model_error_status_code(exc) == 429:
+        return True
+    text = str(exc).lower()
+    return "rate_limit_error" in text or "rate limit" in text or "exceed your account" in text
+
+
+def _as_rate_limit_error(exc: BaseException) -> RateLimitError:
+    """Return ``exc`` if it is already a ``RateLimitError``, else wrap it as one so the
+    runner's dedicated rate-limit handler (clean stop + ``--resume`` hint) catches it."""
+    if isinstance(exc, RateLimitError):
+        return exc
+    import httpx
+
+    request = httpx.Request("POST", "http://localhost/strix")
+    response = httpx.Response(status_code=429, request=request)
+    return RateLimitError(
+        str(exc) or "persistent provider rate limit", response=response, body=None
+    )
 
 
 async def _salvage_stream_to_session(
@@ -511,7 +545,14 @@ async def _run_until_lifecycle(
     """
     result: RunResultBase | None = None
     input_data: Any = initial_input
-    recovery_limit = _INTERACTIVE_TOOL_RECOVERY_LIMIT if interactive else max(1, max_turns)
+    # Strix 2: cap consecutive no-tool-call recoveries so a model that returns empty
+    # turns can't force continuation for the whole max_turns budget (an unbounded
+    # empty-output loop once ground a run to ~$63). A productive turn resets this.
+    recovery_limit = (
+        _INTERACTIVE_TOOL_RECOVERY_LIMIT
+        if interactive
+        else noninteractive_recovery_limit(max_turns, load_stall_limits())
+    )
 
     while True:
         if coordinator.budget_stopped:
@@ -833,23 +874,46 @@ async def _run_cycle(  # noqa: PLR0912, PLR0915
                     )
                     input_data = []
                     continue
-            if model_retries < _MAX_TRANSIENT_MODEL_RETRIES and _is_transient_model_error(exc):
-                model_retries += 1
-                delay = _transient_model_retry_delay(model_retries)
-                logger.warning(
-                    "transient model/provider error for %s; replaying turn "
-                    "(attempt %d/%d, backoff %.1fs): %r",
-                    agent_id,
-                    model_retries,
-                    _MAX_TRANSIENT_MODEL_RETRIES,
-                    delay,
-                    exc,
+            if _is_transient_model_error(exc):
+                is_rate_limit = _is_rate_limit_error(exc)
+                retry_cap = (
+                    _MAX_RATE_LIMIT_RETRIES if is_rate_limit else _MAX_TRANSIENT_MODEL_RETRIES
                 )
-                await asyncio.sleep(delay)
-                request_log.set_retry_attempt(model_retries)
-                if session is not None:
-                    input_data = []
-                continue
+                if model_retries < retry_cap:
+                    model_retries += 1
+                    delay = _transient_model_retry_delay(model_retries)
+                    logger.warning(
+                        "transient model/provider error for %s; replaying turn "
+                        "(attempt %d/%d, backoff %.1fs)%s: %r",
+                        agent_id,
+                        model_retries,
+                        retry_cap,
+                        delay,
+                        " [rate-limit]" if is_rate_limit else "",
+                        exc,
+                    )
+                    await asyncio.sleep(delay)
+                    request_log.set_retry_attempt(model_retries)
+                    if session is not None:
+                        input_data = []
+                    continue
+                if is_rate_limit:
+                    # Strix 2: a persistent provider rate limit won't clear with more
+                    # backoff. Stop the whole scan cleanly — the runner logs a --resume
+                    # hint — instead of failing this agent, which would be resumed and
+                    # grind against the limit until the host time cap kills the run.
+                    logger.warning(
+                        "agent %s: persistent provider rate limit after %d retries; "
+                        "stopping the scan for --resume: %r",
+                        agent_id,
+                        model_retries,
+                        exc,
+                    )
+                    if session is not None:
+                        await _salvage_stream_to_session(session, pre_run_items, stream, agent_id)
+                    raise _as_rate_limit_error(exc) from exc
+                # A non-rate-limit transient error that exhausted its retries falls
+                # through to the terminal-status handling below.
             if session is not None:
                 await _salvage_stream_to_session(session, pre_run_items, stream, agent_id)
             if isinstance(exc, ProviderRefusalError):

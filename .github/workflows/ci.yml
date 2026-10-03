@@ -1,0 +1,92 @@
+name: CI
+
+# Strix 2 test/lint CI. Upstream ships only a tag-triggered release workflow
+# (build-release.yml), so this is net-new and additive.
+#
+# The BLOCKING gate is deterministic: ruff lint + the Strix 2 test suite + an
+# import smoke test. The full upstream pytest suite runs as a NON-BLOCKING
+# baseline job (continue-on-error) for visibility.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-and-strix2:
+    name: Lint + Strix 2 tests (blocking)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
+
+      - name: Ruff lint (Strix 2 code)
+        run: uv run ruff check strix/scope strix/tools/scope strix/candidates strix/tools/candidates strix/findings2 strix/tools/findings2 strix/router strix/guard strix/cache strix/tools/cache strix/eval strix/strix2_ext.py tests/test_strix2_*.py
+
+      - name: Mypy (Strix 2 code)
+        run: uv run mypy strix/scope strix/tools/scope strix/candidates strix/tools/candidates strix/findings2 strix/tools/findings2 strix/router strix/guard strix/cache strix/tools/cache strix/eval strix/strix2_ext.py
+
+      - name: Strix 2 import smoke test
+        run: uv run python -c "import strix; import strix.scope; from strix.scope import load_scope_policy, ScopePolicy; print('strix + strix.scope import OK')"
+
+      - name: Validate shipped scope.yaml template
+        run: uv run python -c "from strix.scope import load_scope_policy; p = load_scope_policy('scope.yaml'); assert p is not None and p.allow_intrusive is False; print('scope.yaml valid')"
+
+      - name: Strix 2 tests
+        run: uv run pytest tests/test_strix2_*.py -q
+
+  upstream-tests:
+    name: Upstream test suite (baseline, non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ matrix.python-version }}
+        run: uv python install ${{ matrix.python-version }}
+
+      - name: Sync dependencies
+        run: uv sync --dev --frozen
+
+      - name: Ruff lint (full repo)
+        # Informational only, and must NOT gate the pytest step below it.
+        continue-on-error: true
+        run: uv run ruff check .
+
+      - name: Full pytest suite
+        run: uv run pytest -q

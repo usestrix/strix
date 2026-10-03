@@ -18,6 +18,8 @@ from pydantic import ValidationError
 
 from strix.agents.prompt import render_system_prompt
 from strix.config import load_settings
+from strix.router import resolve_agent_model
+from strix.scope.enforcement import enforce_shell_command
 from strix.tools.agents_graph.tools import (
     agent_finish,
     create_agent,
@@ -444,6 +446,14 @@ def _wrap_exec_command(tool: FunctionTool) -> FunctionTool:
             if "shell" not in parsed:
                 parsed["shell"] = "bash"
             _apply_shell_output_cap(parsed)
+            # Strix 2: scope-gate network-reaching commands at the shell boundary
+            # (defense-in-depth, mirrors the call_mcp check). No-op without a scope
+            # policy, so upstream behavior is unchanged.
+            command = parsed.get("command")
+            if isinstance(command, str):
+                denial = enforce_shell_command(command)
+                if denial is not None:
+                    return f"Refused (out of scope): {denial.reason}"
             raw_input = json.dumps(parsed)
         try:
             return await invoke_tool(ctx, raw_input)
@@ -725,7 +735,9 @@ def build_strix_agent(
         instructions=instructions,
         tools=tools,
         tool_use_behavior=_finish_tool_use_behavior,
-        model=None,
+        # Strix 2 Phase 5: per-role model routing (opt-in via STRIX2_ROUTER). Returns
+        # None unless enabled → the SDK uses the global provider default, unchanged.
+        model=resolve_agent_model(skills, is_root=is_root),
         capabilities=[
             Filesystem(
                 configure_tools=_make_filesystem_configurator(

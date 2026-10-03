@@ -1,0 +1,38 @@
+# Ground-truth template — OWASP Juice Shop (https://github.com/juice-shop/juice-shop, MIT).
+#
+# Juice Shop is an intentionally-vulnerable training app you host yourself. Copy this file to
+# eval/ground_truth/juice-shop.yaml, replace the base host with YOUR authorized instance, and
+# prune/extend to the challenges present in the version you deployed. This file is expected-finding
+# metadata only — it does not stand up or point at any host.
+#
+# Base host below is the project's documented local default; change it to your lab.
+ground_truth:
+  - id: js-login-sqli
+    target: "http://localhost:3000/rest/user/login"
+    title_contains: "sql injection"
+    cwe: "CWE-89"
+    domain: web
+
+  - id: js-basket-idor
+    target: "http://localhost:3000/rest/basket/1"
+    title_contains: "access"
+    cwe: "CWE-639"
+    domain: web
+
+  - id: js-dom-xss-search
+    target: "http://localhost:3000/#/search"
+    title_contains: "xss"
+    cwe: "CWE-79"
+    domain: web
+
+  - id: js-sensitive-ftp-traversal
+    target: "http://localhost:3000/ftp"
+    title_contains: "traversal"
+    cwe: "CWE-22"
+    domain: web
+
+  - id: js-admin-broken-access-control
+    target: "http://localhost:3000/#/administration"
+    title_contains: "access control"
+    cwe: "CWE-284"
+    domain: web
