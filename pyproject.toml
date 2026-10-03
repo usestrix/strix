@@ -311,6 +311,9 @@ ignore = [
 # LiteLLM is imported lazily: the request log is wired at startup on every
 # route, including the native OpenAI ones that never load LiteLLM.
 "strix/llm/request_log.py" = ["PLC0415"]
+# The agents SDK's chat-completions classes are imported lazily so CLI paths
+# that never touch a model do not pay for them.
+"strix/llm/chat_content_compat.py" = ["PLC0415"]
 # Heavy inference deps (httpx, openai) imported lazily so auth-status checks
 # don't pull them in.
 "strix/config/codex.py" = ["PLC0415"]
