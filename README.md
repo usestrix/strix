@@ -95,6 +95,26 @@ strix --target ./app-directory
 > [!NOTE]
 > First run automatically pulls the sandbox Docker image. Results are saved to `strix_runs/<run-name>`
 
+#### Windows & PowerShell Installation
+
+If you are running Windows natively (via PowerShell or Command Prompt), use **pipx** instead of the bash installation script:
+
+1. **Prerequisites**: Ensure you have [Python 3.12 or newer](https://www.python.org/) and [Docker Desktop](https://www.docker.com/) installed and running (with Linux containers enabled).
+2. **Install `pipx`** (if you haven't already):
+   ```powershell
+   winget install pipx
+   pipx ensurepath
+   ```
+3. **Install Strix Agent**:
+   ```powershell
+   pipx install strix-agent
+   ```
+4. **Configure your AI provider & run**:
+   ```powershell
+   $env:STRIX_LLM="openrouter/z-ai/glm-5.3"
+   $env:LLM_API_KEY="your-api-key"
+   strix --target ./app-directory
+   ```
 ---
 
 ## Ways to Run Strix
