@@ -343,3 +343,14 @@ func TestReportSectionsRenderMarkdown(t *testing.T) {
 		}
 	}
 }
+
+func TestReportSectionsKeepBlankLinesInFencedCode(t *testing.T) {
+	body := "Intro.\n\n\n\nRequest:\n```http\nGET /share HTTP/1.1\nHost: target\n\n\nbody\n```\n\n\n\nAfter."
+	plain := ansi.Strip(renderVulnerabilityReport(map[string]any{"title": "x", "technical_analysis": body}, nil))
+	if !strings.Contains(plain, "Host: target\n\n\nbody") {
+		t.Fatalf("fenced code lost its blank lines in %q", plain)
+	}
+	if strings.Contains(plain, "Intro.\n\n\n") || strings.Contains(plain, "\n\n\nAfter.") {
+		t.Fatalf("blank-line runs outside fenced code were not collapsed in %q", plain)
+	}
+}
