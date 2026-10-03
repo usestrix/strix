@@ -1,0 +1,57 @@
+# Strix 2 — Authorized Scope Policy (TEMPLATE)
+#
+# This file declares exactly what a run is authorized to touch. Every domain tool
+# and MCP wrapper checks its target against this policy before acting; anything not
+# listed here is refused (fail-closed). Intrusive/state-changing actions are gated
+# behind `allow_intrusive` and are OFF by default.
+#
+# Only test systems you are authorized to test. Loaded by `strix.scope.load_scope_policy`.
+# Location: repo root `scope.yaml`, or `$STRIX_SCOPE_CONFIG`, or `.strix/scope.yaml`.
+
+name: "example-engagement"
+authorized_by: "REPLACE WITH THE PERSON/DOC AUTHORIZING THIS TEST"
+notes: "Free-text scope notes, rules of engagement, ticket link, etc."
+
+# When false (default), tools that would change target state (cloud writes/deletes,
+# exploitation that modifies the target) are refused even for in-scope targets.
+# Set true ONLY with explicit written authorization; this mirrors the --allow-intrusive flag.
+allow_intrusive: false
+
+# --- Web ---------------------------------------------------------------------
+# Exact hosts ("example.com") or subdomain wildcards ("*.example.com", which also
+# covers the apex example.com).
+web:
+  domains:
+    - "example.com"
+    - "*.staging.example.com"
+
+# --- API ---------------------------------------------------------------------
+# Authorized API base URLs; a request URL is in scope if it starts with one of these.
+api:
+  base_urls:
+    - "https://api.example.com/v1"
+
+# --- Network -----------------------------------------------------------------
+# Single hosts/IPs, CIDR ranges, and an optional port allowlist (omit `ports` to
+# authorize all ports on in-scope hosts).
+network:
+  hosts:
+    - "scanme.example.com"
+    - "10.0.0.5"
+  cidrs:
+    - "10.0.0.0/24"
+  ports: null   # e.g. [80, 443, 8080] to restrict; null = all ports
+
+# --- Cloud -------------------------------------------------------------------
+# Authorized cloud accounts by provider. Targets are named "aws:123456789012",
+# a bare 12-digit AWS id, or an AWS ARN (account id read from the ARN).
+# Left EMPTY in this template on purpose: listing an AWS account here auto-attaches
+# the read-only AWS MCP wrapper to every run started from this directory. Add your
+# authorized account id(s) only when you intend to test cloud, e.g.:
+#   aws_account_ids:
+#     - "123456789012"
+cloud:
+  aws_account_ids: []
+  azure_subscription_ids: []
+  gcp_project_ids: []
+  regions: null   # e.g. ["us-east-1"] to restrict; null = all regions

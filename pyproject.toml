@@ -137,6 +137,8 @@ module = [
     "pypdf.*",
     "yaml.*",
     "pygments.*",
+    "boto3.*",
+    "botocore.*",
 ]
 ignore_missing_imports = true
 disable_error_code = ["import-untyped"]
@@ -288,6 +290,11 @@ ignore = [
 "strix/runtime/caido_bootstrap.py" = ["PLC0415"]
 "strix/tools/agents_graph/tools.py" = ["TC002"]
 "strix/agents/factory.py" = ["TC002"]
+# boto3 / botocore are imported lazily inside the wrapper's functions so that
+# merely listing wrapper configs (registry) or importing the module never drags
+# the heavy boto3 stack into the main run process; only the wrapper subprocess
+# that actually talks to AWS pays for it.
+"strix/mcp_servers/aws.py" = ["PLC0415"]
 # Entry point: ``Path`` is used at runtime by the typing of the
 # session_manager call; importing under TYPE_CHECKING would defer
 # resolution past where mypy needs it.
