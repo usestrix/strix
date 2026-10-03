@@ -16,6 +16,8 @@ from pygments.lexers import PythonLexer, get_lexer_by_name, guess_lexer
 from pygments.lexers.special import TextLexer
 from pygments.util import ClassNotFound
 
+from strix.candidates.store import get_candidate_store
+from strix.candidates.writer import render_leads_markdown
 from strix.core.paths import run_record_path
 
 
@@ -142,7 +144,26 @@ def write_executive_report(run_dir: Path, final_scan_result: str) -> None:
         f.write("# Security Penetration Test Report\n\n")
         f.write(f"**Generated:** {datetime.now(UTC).strftime('%Y-%m-%d %H:%M:%S UTC')}\n\n")
         f.write(f"{final_scan_result}\n")
+        leads = _strix2_leads_section()
+        if leads:
+            f.write(f"\n---\n\n{leads}\n")
     logger.info("Saved final penetration test report to: %s", path)
+
+
+def _strix2_leads_section() -> str:
+    """Strix 2: the unvalidated-leads section, or '' when there are none.
+
+    Best-effort — never blocks the report if the candidate store is absent
+    (e.g. an upstream-only run) or empty.
+    """
+    try:
+        store = get_candidate_store()
+        if store is None or not store.candidates:
+            return ""
+        return render_leads_markdown(store.candidates)
+    except Exception:  # noqa: BLE001 - leads are additive; a failure must not lose the report
+        logger.debug("Strix 2 leads section skipped", exc_info=True)
+        return ""
 
 
 def write_vulnerabilities(
