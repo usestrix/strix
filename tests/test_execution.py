@@ -793,6 +793,7 @@ async def test_salvage_stream_to_session_preserves_full_history(tmp_path: Any) -
     # A crash mid-run: the stream produced two turns the SDK never committed.
     stream = _SalvageStream(
         [
+            *pre_run,
             {"role": "assistant", "content": "recon turn 1"},
             {"role": "assistant", "content": "recon turn 2"},
         ]
