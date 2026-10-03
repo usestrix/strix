@@ -12,12 +12,14 @@ from __future__ import annotations
 import asyncio
 import logging
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from strix.config import Settings, codex, load_settings
 from strix.core.paths import run_dir_for
 from strix.interface.utils import (
     assign_workspace_subdirs,
+    check_mountable_dir,
     clone_repository,
     collect_local_sources,
     dedupe_local_targets,
@@ -206,10 +208,16 @@ def attach_workspace_mount(args: argparse.Namespace) -> None:
     it stays out of ``targets_info``, so it carries no authorized scope, and it
     is attached after diff-scope resolution so it contributes no diff context.
     The instruction is the only source of truth for what to do with it.
+
+    Still runs the mount admission check (with ``allow_home=True``): system
+    trees and credential directories must not reach the sandbox even when the
+    operator confirmed a working directory. Exact ``$HOME`` remains allowed
+    for the target-less TUI flow.
     """
     mount = getattr(args, "workspace_mount", None)
     if not mount:
         return
+    check_mountable_dir(Path(mount).expanduser(), allow_home=True)
     args.workspace_subdir = derive_local_base_name(mount)
     local_sources = list(getattr(args, "local_sources", None) or [])
     local_sources.append(
