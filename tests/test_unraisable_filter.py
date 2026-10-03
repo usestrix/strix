@@ -40,7 +40,7 @@ def test_passes_through_other_unraisables() -> None:
 def test_installed_hook_filters_and_delegates(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[object] = []
     monkeypatch.setattr(sys, "unraisablehook", calls.append)
-    monkeypatch.setattr(tlog, "_unraisable_hook_installed", False)
+    tlog._silence_urllib3_finalizer_noise.cache_clear()
     tlog._silence_urllib3_finalizer_noise()
     hook = sys.unraisablehook
     assert hook is not calls.append
