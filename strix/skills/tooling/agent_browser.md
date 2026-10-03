@@ -189,6 +189,59 @@ After any page-changing action, pick one:
 Avoid bare `wait 2000` except when debugging — it makes scripts slow and
 flaky. Timeouts default to 25 seconds.
 
+## Bot protection (read before fighting a login)
+
+Many targets sit behind a bot check (Cloudflare Turnstile, hCaptcha, Datadome).
+You will see it in a snapshot as a challenge iframe plus inputs that go
+`[disabled]` when you submit:
+
+```
+- textbox "Email address" [disabled, ref=e18]: user@example.com
+- button "Continue with email" [disabled, ref=e12]
+- Iframe "Widget containing a Cloudflare security challenge" [ref=e15]
+  - checkbox "Verify you are human" [checked=false, ref=e22]
+```
+
+`checked=false` that never flips means the challenge is refusing you, not that
+the click missed. Headless Chrome is itself one of the strongest signals these
+systems key on, so switch to a real browser window instead of retrying:
+
+```bash
+agent-browser close --all              # a running daemon makes --headed a no-op
+export AGENT_BROWSER_HEADED=1          # applies to every later command
+agent-browser open https://target.tld/login
+agent-browser get url                  # confirm it actually launched
+```
+
+The sandbox provides a virtual display and `DISPLAY` is already exported, so this
+works with no setup. Three traps:
+
+- **Set the env var, don't just pass `--headed` to `open`.** The flag is
+  per-invocation: the next bare `agent-browser snapshot` tries to start a
+  *headless* daemon and dies with `Multiple targets are not supported in headless
+  mode`. Export `AGENT_BROWSER_HEADED=1` (or pass `--headed` to every command).
+- **`--headed` is ignored when a daemon is already running** — it prints
+  `⚠ --headed ignored: daemon already running`. Always `close --all` first.
+- **A failed launch still exits 0.** Read the output text: `✗ Chrome exited
+  early` or `Missing X server` means you are not headed, whatever the exit code
+  says. Confirm with `agent-browser get url` before concluding anything.
+
+Then behave like a person rather than a script:
+
+- Drive real input events — `click`, `hover`, `keyboard type` — never `eval` with
+  `element.value = ...`. Assigning `value` directly leaves React-controlled
+  inputs internally empty, so the form submits blank or stays disabled.
+- `focus` the field, then `keyboard type "text"` when `fill` appears to work but
+  the app doesn't react.
+- Click the challenge checkbox by its ref inside the iframe, then
+  `wait --text` / `wait --url` for the *result*; don't re-click while it verifies.
+- Save the session once you're through (`state save`, or `--session-name`) so a
+  browser restart doesn't send you back to the challenge.
+
+If the challenge still refuses after a couple of honest attempts, stop. Report
+that the target is gated and hand back a bounded result — burning your whole
+window on one login costs more coverage than the login was worth.
+
 ## Common workflows
 
 ### Log in
@@ -397,12 +450,12 @@ agent-browser dialog dismiss          # cancel
 
 ## Readiness & recovery
 
-The first `agent-browser open` in a session launches the headless-Chrome
-daemon; later commands reuse it. A daemon left idle for 3 minutes shuts itself
-down to free memory for the other agents, so an `open` after a long gap is a
-fresh browser rather than a resumed one — expect to re-navigate, and re-`state
-load` if you were logged in. Distinguish the failure modes and react differently
-— do **not** blindly re-run the same failing command in a loop:
+The first `agent-browser open` in a session launches the Chrome daemon (headless
+unless you pass `--headed`); later commands reuse it. A daemon left idle for 3
+minutes shuts itself down to free memory for the other agents, so an `open` after
+a long gap is a fresh browser rather than a resumed one — expect to re-navigate,
+and re-`state load` if you were logged in. Distinguish the failure modes and react
+differently — do **not** blindly re-run the same failing command in a loop:
 
 - **Daemon / connection failure** (`Failed to connect`, `connection refused`,
   socket missing, `browser not running`): the daemon isn't up or has died. Run
@@ -490,7 +543,7 @@ and [references/authentication.md](references/authentication.md).
 ```bash
 --session <name>        # isolated browser session
 --json                  # JSON output (for machine parsing)
---headed                # show the window (default is headless)
+--headed                # real browser window (default is headless); see "Bot protection"
 --auto-connect          # connect to an already-running Chrome
 --cdp <port>            # connect to a specific CDP port
 --profile <name|path>   # use a Chrome profile (login state survives)
