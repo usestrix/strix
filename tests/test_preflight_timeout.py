@@ -3,15 +3,19 @@
 from __future__ import annotations
 
 import asyncio
+import importlib
 import time
 from typing import TYPE_CHECKING, Any
 
 import pytest
 
-import strix.interface.main as cli_main
 from strix.config import load_settings, loader
 from strix.interface import scan_setup
 from strix.interface.scan_setup import preflight_model_connection, preflight_request
+
+
+# ``strix.interface`` re-exports the ``main`` function, which shadows the submodule name.
+cli_main: Any = importlib.import_module("strix.interface.main")
 
 
 if TYPE_CHECKING:
@@ -108,6 +112,7 @@ def test_warm_up_checks_the_dedupe_model_with_its_own_headers_and_the_preflight_
 
     monkeypatch.setattr(scan_setup, "preflight_request", record)
     monkeypatch.setattr(cli_main, "preflight_request", record)
+    monkeypatch.setattr("strix.config.models.configure_sdk_model_defaults", lambda _settings: None)
     monkeypatch.setattr(
         "strix.report.dedupe.resolve_dedupe_model", lambda _dedupe, _name: dedupe_model
     )
