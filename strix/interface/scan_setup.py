@@ -117,6 +117,7 @@ async def preflight_model_connection(
         model_name=model_name,
         extra_headers=resolved_settings.llm.extra_headers,
         timeout=resolved_settings.llm.preflight_timeout,
+        api_base_setting="LLM_API_BASE",
     )
 
 
@@ -126,8 +127,13 @@ async def preflight_request(
     model_name: str,
     extra_headers: dict[str, str] | None,
     timeout: int,
+    api_base_setting: str,
 ) -> None:
-    """Send one tiny request to ``model`` and fail if it does not answer in ``timeout`` seconds."""
+    """Send one tiny request to ``model`` and fail if it does not answer in ``timeout`` seconds.
+
+    ``api_base_setting`` names the environment variable that points at this
+    model's endpoint, so the timeout message sends the user to the right one.
+    """
     from agents.models.interface import ModelTracing
 
     from strix.core.inputs import make_model_settings
@@ -158,8 +164,8 @@ async def preflight_request(
         )
     except TimeoutError:
         raise TimeoutError(
-            f"{model_name} did not answer within {timeout}s "
-            "(LLM_PREFLIGHT_TIMEOUT). Check LLM_API_BASE and that the endpoint is reachable."
+            f"{model_name} did not answer within {timeout}s (LLM_PREFLIGHT_TIMEOUT). "
+            f"Check {api_base_setting} and that the endpoint is reachable."
         ) from None
 
 

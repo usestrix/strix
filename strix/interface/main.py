@@ -169,6 +169,7 @@ async def warm_up_llm() -> None:
                 model_name=dedupe_model,
                 extra_headers=settings.dedupe.extra_headers,
                 timeout=llm.preflight_timeout,
+                api_base_setting="DEDUPE_LLM_API_BASE",
             )
             logger.info("LLM warm-up succeeded for dedupe model %s", dedupe_model)
 
