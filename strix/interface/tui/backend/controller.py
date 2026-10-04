@@ -152,11 +152,6 @@ class TuiController:
         ]
         self.notify_changed()
 
-    def begin_preparation(self) -> None:
-        """Mark a directly-launched run as preparing behind the live TUI."""
-        self.scan_state = "preparing"
-        self.notify_changed()
-
     def fail_preparation(self, detail: str) -> None:
         self.scan_state = "failed"
         self.error = detail

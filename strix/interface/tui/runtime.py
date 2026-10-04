@@ -127,8 +127,8 @@ class GoTuiRuntime:
     async def check_setup_model(self) -> None:
         """Verify the model route as soon as the start screen is up.
 
-        The same round trip a direct launch makes in prepare_and_start, run in
-        the background so the screen paints first and the outcome lands in the
+        The same round trip main() makes before a direct launch, run in the
+        background so the screen paints first and the outcome lands in the
         setup log before the user has finished typing.
         """
         if not (load_settings().llm.model or "").strip():
@@ -162,13 +162,14 @@ class GoTuiRuntime:
         await preflight_model_connection(model)
         self.model_verified = True
 
-    def _start_preparation(self) -> asyncio.Task[None]:
+    def _start_preparation(self) -> asyncio.Task[None] | None:
         """Kick off the work that runs behind the freshly painted TUI."""
         if self.controller.setup_mode:
             self._setup_preflight = asyncio.create_task(self.check_setup_model())
             return self._setup_preflight
-        self.controller.begin_preparation()
-        return asyncio.create_task(self.prepare_and_start())
+        self.init_run_state()
+        self.start_scan()
+        return None
 
     async def start_from_setup(self) -> None:
         candidate = deepcopy(self.args)
@@ -205,34 +206,6 @@ class GoTuiRuntime:
         telemetry_start(candidate)
 
         vars(self.args).update(vars(candidate))
-        self.init_run_state()
-        self.start_scan()
-
-    async def prepare_and_start(self) -> None:
-        """Prepare a directly-launched scan once the TUI is on screen.
-
-        The model round trip and run preparation run here rather than before
-        launch so the interface appears immediately.
-        """
-        model = (load_settings().llm.model or "").strip()
-        set_scan_phase("preflight")
-        try:
-            await preflight_model_connection(model)
-        except Exception as exc:
-            logger.exception("Go TUI scan preparation failed")
-            report_error("model_connection_failed", exc)
-            self.controller.fail_preparation(str(exc))
-            return
-        try:
-            persist_current()
-            prepare_run(self.args)
-            telemetry_start(self.args)
-        except Exception as exc:
-            logger.exception("Go TUI scan preparation failed")
-            report_error("scan_preparation_failed", exc)
-            self.controller.fail_preparation(str(exc))
-            return
-        self.controller.scan_state = "running"
         self.init_run_state()
         self.start_scan()
 

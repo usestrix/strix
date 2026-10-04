@@ -392,11 +392,10 @@ def _print_model_connection_error(exc: BaseException, model_name: str) -> None:
 
 
 def _bootstrap_scan(args: argparse.Namespace) -> None:
-    """Warm up the model and prepare the run for a non-interactive scan.
+    """Warm up the model and prepare the run before the interface starts.
 
-    Interactive launches skip this: the model preflight and run preparation
-    happen inside the TUI so the interface paints immediately instead of
-    waiting on a model round trip.
+    Start-screen launches skip this: they verify the model and prepare the
+    run once the user has entered a target.
     """
     set_scan_phase("preflight")
     try:
@@ -483,7 +482,7 @@ def main() -> None:
     # Everything below imports the scan engine; do not race the warm-up thread.
     wait_for_import_warmup()
 
-    if args.non_interactive:
+    if args.non_interactive or not args.needs_setup:
         _bootstrap_scan(args)
 
     from strix.report.state import get_global_report_state
