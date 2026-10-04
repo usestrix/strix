@@ -207,6 +207,17 @@ class TuiLiveView:
             },
         )
 
+    def record_system_message(self, agent_id: str, content: str) -> None:
+        self._append_event(
+            agent_id,
+            "chat",
+            {
+                "role": "assistant",
+                "content": content,
+                "metadata": {"source": "tui_system"},
+            },
+        )
+
     def ingest_sdk_event(self, agent_id: str, event: Any) -> None:
         event_type = getattr(event, "type", "")
         if event_type == "raw_response_event":
