@@ -29,6 +29,7 @@ from typing import TYPE_CHECKING, Any
 
 from agents import RunContextWrapper, function_tool
 
+from strix.scope.enforcement import enforce_arguments
 from strix.tools.mcp.client import _errored_tool_output
 from strix.tools.mcp.naming import namespaced_tool_name
 from strix.tools.mcp.registry import MCP_REGISTRY_CONTEXT_KEY, McpRegistry
@@ -43,6 +44,19 @@ def _registry_from_ctx(ctx: RunContextWrapper) -> McpRegistry | None:
     context = ctx.context if isinstance(ctx.context, dict) else {}
     registry = context.get(MCP_REGISTRY_CONTEXT_KEY)
     return registry if isinstance(registry, McpRegistry) else None
+
+
+def _scope_denial(arguments: Any) -> str | None:
+    """Strix 2: refuse an MCP call whose arguments name an out-of-scope target.
+
+    Best-effort defense-in-depth at the wrapper boundary (build brief). No-op when
+    no scope policy is loaded or no high-confidence target is present, so upstream
+    behavior is unchanged; domain wrappers do the authoritative per-target check.
+    """
+    decision = enforce_arguments(arguments)
+    if decision is None:
+        return None
+    return _errored_tool_output(f"Refused (out of scope): {decision.reason}")
 
 
 _NO_CONNECTIONS = "No MCP connections are configured for this run."
@@ -277,6 +291,9 @@ async def call_mcp(
             return invalid_arguments
     if arguments is not None and not isinstance(arguments, dict):
         return invalid_arguments
+    denial = _scope_denial(arguments)
+    if denial is not None:
+        return denial
     try:
         available = await entry.ensure_catalog()
     except McpConnectionUnavailableError as exc:

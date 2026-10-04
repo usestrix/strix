@@ -256,6 +256,23 @@ Strix Cloud:
     )
 
     parser.add_argument(
+        "--scope-config",
+        type=str,
+        metavar="PATH",
+        help="Path to a scope.yaml authorized-scope policy to use instead of ./scope.yaml. "
+        "When set, out-of-scope targets are refused at tool boundaries.",
+    )
+
+    parser.add_argument(
+        "--allow-intrusive",
+        dest="allow_intrusive",
+        action="store_true",
+        help="Permit intrusive, state-changing actions (cloud writes/deletes, exploitation that "
+        "modifies the target) against in-scope targets. Off by default; requires explicit "
+        "authorization. Logged when used.",
+    )
+
+    parser.add_argument(
         "--mcp-server",
         dest="mcp_server",
         action="append",
@@ -333,6 +350,17 @@ Strix Cloud:
         os.environ["STRIX_MCP_ONLY"] = ",".join(args.mcp_server)
     if args.mcp_exclude:
         os.environ["STRIX_MCP_EXCLUDE"] = ",".join(args.mcp_exclude)
+
+    # Strix 2 scope enforcement: the scope loader reads STRIX_SCOPE_CONFIG, and
+    # load_active_policy reads STRIX_ALLOW_INTRUSIVE, so setting them here makes
+    # the flags win over the defaults.
+    if getattr(args, "scope_config", None):
+        scope_config_path = Path(args.scope_config).expanduser()
+        if not scope_config_path.is_file():
+            parser.error(f"--scope-config file not found: {args.scope_config}")
+        os.environ["STRIX_SCOPE_CONFIG"] = str(scope_config_path)
+    if getattr(args, "allow_intrusive", False):
+        os.environ["STRIX_ALLOW_INTRUSIVE"] = "1"
 
     if args.update:
         sys.exit(0 if self_update() else 1)
