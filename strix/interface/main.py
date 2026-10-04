@@ -7,6 +7,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -30,6 +31,7 @@ from strix.interface.environment import (
     validate_environment,
 )
 from strix.interface.interactive import (
+    InteractiveInterfaceExitedError,
     InteractiveSetupUnavailableError,
     run_tui,
 )
@@ -345,6 +347,39 @@ def _print_cli_error(message: str) -> None:
     )
 
 
+HEADLESS_HINT = "If Strix runs without a terminal (CI, nohup, pipes), pass -n to run headless."
+
+
+def _terminal_attached() -> bool:
+    """Whether the TUI can take over the terminal: a tty on both ends, not dumb."""
+    if os.environ.get("TERM", "").strip().lower() == "dumb":
+        return False
+    return all(hasattr(stream, "isatty") and stream.isatty() for stream in (sys.stdin, sys.stdout))
+
+
+def _fall_back_to_headless(args: argparse.Namespace) -> None:
+    """Run headless when there is no terminal for the TUI to attach to.
+
+    CI jobs, ``nohup``, pipes and cron have no tty; the Go TUI exits as soon
+    as it tries to take over the screen. With a target the scan can still run
+    as if ``-n`` was given. Without one the start screen is the only way to
+    enter a target, so stop with the fix instead. A bare ``--resume`` is left
+    to the picker, which already explains itself without a terminal.
+    """
+    if args.non_interactive or args.resume_picker or _terminal_attached():
+        return
+    if args.needs_setup:
+        report_error("no_terminal_for_setup")
+        _print_error_panel(
+            "NO TERMINAL ATTACHED",
+            "The interactive interface needs a terminal and no target was given.\n"
+            "Pass -t <target> -n to run headless.",
+        )
+        sys.exit(1)
+    args.non_interactive = True
+    Console().print("No terminal attached, running headless (same as -n).", style="dim")
+
+
 def _pick_run_to_resume(args: argparse.Namespace) -> None:
     """A bare --resume: let the user pick a run, then load it like --resume <name>."""
     from strix.interface.resume_picker import PickerUnavailableError, pick_run
@@ -443,6 +478,7 @@ def main() -> None:
     start_import_warmup()
 
     args = parse_arguments()
+    _fall_back_to_headless(args)
 
     start_background_check()
     if not args.non_interactive and prompt_update_if_available(Console()):
@@ -480,6 +516,11 @@ def main() -> None:
         exit_reason = "error"
         report_error("interactive_setup_unavailable", exc)
         _print_error_panel("INTERACTIVE SETUP UNAVAILABLE", str(exc))
+        sys.exit(1)
+    except InteractiveInterfaceExitedError as exc:
+        exit_reason = "error"
+        report_error("interactive_interface_exited", exc)
+        _print_error_panel("INTERACTIVE INTERFACE STOPPED", f"{exc}.\n{HEADLESS_HINT}")
         sys.exit(1)
     except KeyboardInterrupt:
         exit_reason = "interrupted"

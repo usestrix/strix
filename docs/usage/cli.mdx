@@ -57,7 +57,9 @@ strix (--target <target> | --target-list <path>) [options]
 </ParamField>
 
 <ParamField path="--non-interactive, -n" type="boolean">
-  Run in headless mode without TUI. Ideal for CI/CD.
+  Run in headless mode without TUI. Ideal for CI/CD. When no terminal is
+  attached (CI, `nohup`, pipes) and a target is given, Strix runs headless
+  automatically and says so on one line.
 </ParamField>
 
 <ParamField path="--fail-on" type="string">
